@@ -17,12 +17,25 @@ import {
   validateAgentSkillContentWrite,
   type AgentSkillWriteAudit,
 } from './agentSkillAuthoring';
+import {
+  AgentDefinitionAuthoringError,
+  resolveAgentDefinitionContentTarget,
+  selfDefinitionRootEntries,
+  validateAgentDefinitionContentWrite,
+  type AgentDefinitionWriteAudit,
+  type SelfDefinitionSurface,
+} from './agentAuthoring';
 
 interface LocalToolOptions {
   localRoot?: string;
   scratchRoot?: string;
   workspace?: AgentLocalWorkspaceContext;
   skillRuntime?: AgentSkillRuntime;
+  agentDefinitionRuntime?: AgentDefinitionRuntime;
+}
+
+export interface AgentDefinitionRuntime {
+  notifyAgentDefinitionContentWritten(filePaths: string[]): Promise<void>;
 }
 
 export interface AgentLocalWorkspaceContext {
@@ -38,6 +51,7 @@ export interface AgentLocalWorkspaceContext {
   permissionRoots: ResolvedAgentLocalPermissionRoot[];
   readFileState: Map<string, ReadFileState>;
   skillRuntime?: AgentSkillRuntime;
+  agentDefinitionRuntime?: AgentDefinitionRuntime;
 }
 
 export interface AgentLocalPermissionRoot {
@@ -177,6 +191,7 @@ interface FileEditData {
   userModified: boolean;
   replaceAll: boolean;
   skillWrite?: AgentSkillWriteAudit;
+  agentDefinitionWrite?: AgentDefinitionWriteAudit;
 }
 
 interface FileWriteParams {
@@ -191,6 +206,7 @@ interface FileWriteData {
   structuredPatch: Hunk[];
   originalFile: string | null;
   skillWrite?: AgentSkillWriteAudit;
+  agentDefinitionWrite?: AgentDefinitionWriteAudit;
 }
 
 interface FileDeleteParams {
@@ -572,7 +588,7 @@ const TASK_STOP_PARAMETERS = {
 };
 
 export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>[] {
-  const workspace = options.workspace ?? createWorkspaceContext(options.localRoot, options.scratchRoot, options.skillRuntime);
+  const workspace = options.workspace ?? createWorkspaceContext(options.localRoot, options.scratchRoot, options.skillRuntime, options.agentDefinitionRuntime);
   return [
     createFileReadTool(workspace),
     createFileGlobTool(workspace),
@@ -629,18 +645,29 @@ function nonBlank(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function createWorkspaceContext(localRoot?: string, scratchRoot?: string, skillRuntime?: AgentSkillRuntime): WorkspaceContext {
+function createWorkspaceContext(
+  localRoot?: string,
+  scratchRoot?: string,
+  skillRuntime?: AgentSkillRuntime,
+  agentDefinitionRuntime?: AgentDefinitionRuntime,
+): WorkspaceContext {
   return {
     root: path.resolve(localRoot ?? process.cwd()),
     scratchRoot: scratchRootForWorkdir(localRoot, scratchRoot),
     permissionRoots: [],
     readFileState: new Map<string, ReadFileState>(),
     skillRuntime,
+    agentDefinitionRuntime,
   };
 }
 
-export function createAgentLocalWorkspaceContext(localRoot?: string, scratchRoot?: string, skillRuntime?: AgentSkillRuntime): AgentLocalWorkspaceContext {
-  return createWorkspaceContext(localRoot, scratchRoot, skillRuntime);
+export function createAgentLocalWorkspaceContext(
+  localRoot?: string,
+  scratchRoot?: string,
+  skillRuntime?: AgentSkillRuntime,
+  agentDefinitionRuntime?: AgentDefinitionRuntime,
+): AgentLocalWorkspaceContext {
+  return createWorkspaceContext(localRoot, scratchRoot, skillRuntime, agentDefinitionRuntime);
 }
 
 export function setAgentLocalPermissionRoots(
@@ -737,34 +764,98 @@ async function notifySuccessfulSkillContentWrite(
   await workspace.skillRuntime?.notifySkillContentWritten([filePath]);
 }
 
-function validateSkillContentWriteOrThrow(input: {
+async function notifySuccessfulAgentDefinitionContentWrite(
+  workspace: WorkspaceContext,
+  filePath: string,
+  agentDefinitionWrite: AgentDefinitionWriteAudit,
+): Promise<void> {
+  await workspace.agentDefinitionRuntime?.notifyAgentDefinitionContentWritten([filePath]);
+  void agentDefinitionWrite;
+}
+
+type SelfDefinitionWrite =
+  | { kind: 'skill'; skillWrite: AgentSkillWriteAudit }
+  | { kind: 'agent'; agentDefinitionWrite: AgentDefinitionWriteAudit };
+
+function validateSelfDefinitionContentWriteOrThrow(input: {
   workspace: WorkspaceContext;
   filePath: string;
   content: string;
   previousContent: string | null;
   operation: 'file_edit' | 'file_write';
-}): AgentSkillWriteAudit | null {
+}): SelfDefinitionWrite | null {
   // One source of truth for "is this a skill write": the live skill registry. Without a
-  // skill runtime there are no skills to govern, so a write is an ordinary file write.
+  // skill runtime there are no skills to govern, so a write under the skill self-dir is refused.
   const target = input.workspace.skillRuntime?.resolveSkillTarget(input.filePath) ?? null;
-  if (!target) return null;
-  try {
-    return validateAgentSkillContentWrite({
-      target,
-      content: input.content,
-      previousContent: input.previousContent,
-      operation: input.operation,
-    });
-  } catch (error) {
-    if (error instanceof AgentSkillAuthoringError) {
-      throw new LocalToolFailure(error.code, error.message, error.instructions);
+  if (target) {
+    try {
+      return {
+        kind: 'skill',
+        skillWrite: validateAgentSkillContentWrite({
+          target,
+          content: input.content,
+          previousContent: input.previousContent,
+          operation: input.operation,
+        }),
+      };
+    } catch (error) {
+      if (error instanceof AgentSkillAuthoringError) {
+        throw new LocalToolFailure(error.code, error.message, error.instructions);
+      }
+      throw error;
     }
-    throw error;
   }
+
+  const agentTarget = resolveAgentDefinitionContentTarget(input.filePath, input.workspace.root);
+  if (agentTarget) {
+    if (!input.workspace.agentDefinitionRuntime) {
+      throw new LocalToolFailure(
+        'agent_definition_runtime_unavailable',
+        'Agent definition writes require a live agent registry reload path.',
+        'Retry inside an agent conversation so the new AGENT.md can be validated and hot-reloaded.',
+      );
+    }
+    try {
+      return {
+        kind: 'agent',
+        agentDefinitionWrite: validateAgentDefinitionContentWrite({
+          target: agentTarget,
+          content: input.content,
+          previousContent: input.previousContent,
+          operation: input.operation,
+        }),
+      };
+    } catch (error) {
+      if (error instanceof AgentDefinitionAuthoringError) {
+        throw new LocalToolFailure(error.code, error.message, error.instructions);
+      }
+      throw error;
+    }
+  }
+
+  const surface = selfDefinitionSurfaceForPath(input.workspace, input.filePath);
+  if (surface) {
+    throw new LocalToolFailure(
+      'ungoverned_self_definition_write',
+      `Self-definition writes must target a governed ${surface} definition file.`,
+      surface === 'skill'
+        ? 'Write a SKILL.md or visible support file under .agents/skills/<skill-name>/ with the skill runtime enabled.'
+        : 'Write a complete AGENT.md under .agents/agents/<agent-name>/AGENT.md.',
+    );
+  }
+
+  return null;
 }
 
 function skillWriteInstructions(skillWrite: AgentSkillWriteAudit): string {
   return `Skill content write validated for ${skillWrite.skillName}; the skill registry has been reloaded. Previous content metadata is retained in tool details for rollback. The skill is slash-invocable now, and model-invocable skills can appear in the automatic model skill listing without a separate trust prompt.`;
+}
+
+function agentDefinitionWriteInstructions(agentDefinitionWrite: AgentDefinitionWriteAudit): string {
+  const availability = agentDefinitionWrite.changeType === 'create'
+    ? 'The new agent is available for future DMs, Channels, and delegation'
+    : 'The updated agent definition is available for future DMs, Channels, and delegation';
+  return `Agent definition write validated for ${agentDefinitionWrite.agentName}; the agent registry has been reloaded. ${availability}, and it remains restricted under the global permission gate.`;
 }
 
 function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileReadData>> {
@@ -1077,7 +1168,7 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         const nextContent = params.replace_all
           ? current.content.split(params.old_string).join(params.new_string)
           : current.content.replace(params.old_string, params.new_string);
-        const skillWrite = validateSkillContentWriteOrThrow({
+        const selfDefinitionWrite = validateSelfDefinitionContentWriteOrThrow({
           workspace,
           filePath,
           content: nextContent,
@@ -1103,12 +1194,21 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           structuredPatch: structuredPatch(current.content, nextContent),
           userModified: false,
           replaceAll: params.replace_all === true,
-          ...(skillWrite ? { skillWrite } : {}),
+          ...(selfDefinitionWrite?.kind === 'skill' ? { skillWrite: selfDefinitionWrite.skillWrite } : {}),
+          ...(selfDefinitionWrite?.kind === 'agent' ? { agentDefinitionWrite: selfDefinitionWrite.agentDefinitionWrite } : {}),
         };
         await notifySuccessfulFileTouch(workspace, filePath);
-        if (skillWrite) await notifySuccessfulSkillContentWrite(workspace, filePath, skillWrite, current.content);
+        if (selfDefinitionWrite?.kind === 'skill') {
+          await notifySuccessfulSkillContentWrite(workspace, filePath, selfDefinitionWrite.skillWrite, current.content);
+        } else if (selfDefinitionWrite?.kind === 'agent') {
+          await notifySuccessfulAgentDefinitionContentWrite(workspace, filePath, selfDefinitionWrite.agentDefinitionWrite);
+        }
         return agentToolResult(successEnvelope('file_edit', data, {
-          instructions: skillWrite ? skillWriteInstructions(skillWrite) : undefined,
+          instructions: selfDefinitionWrite?.kind === 'skill'
+            ? skillWriteInstructions(selfDefinitionWrite.skillWrite)
+            : selfDefinitionWrite?.kind === 'agent'
+              ? agentDefinitionWriteInstructions(selfDefinitionWrite.agentDefinitionWrite)
+              : undefined,
           metrics: metrics(started, data),
         }), visibleFileEdit(data));
       } catch (error) {
@@ -1152,7 +1252,7 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
             metrics: metrics(started, data),
           }), visibleFileWrite(data));
         }
-        const skillWrite = validateSkillContentWriteOrThrow({
+        const selfDefinitionWrite = validateSelfDefinitionContentWriteOrThrow({
           workspace,
           filePath,
           content: params.content,
@@ -1178,12 +1278,21 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
           content: params.content,
           structuredPatch: originalContent === null ? [] : structuredPatch(originalContent, params.content),
           originalFile: originalContent,
-          ...(skillWrite ? { skillWrite } : {}),
+          ...(selfDefinitionWrite?.kind === 'skill' ? { skillWrite: selfDefinitionWrite.skillWrite } : {}),
+          ...(selfDefinitionWrite?.kind === 'agent' ? { agentDefinitionWrite: selfDefinitionWrite.agentDefinitionWrite } : {}),
         };
         await notifySuccessfulFileTouch(workspace, filePath);
-        if (skillWrite) await notifySuccessfulSkillContentWrite(workspace, filePath, skillWrite, originalContent);
+        if (selfDefinitionWrite?.kind === 'skill') {
+          await notifySuccessfulSkillContentWrite(workspace, filePath, selfDefinitionWrite.skillWrite, originalContent);
+        } else if (selfDefinitionWrite?.kind === 'agent') {
+          await notifySuccessfulAgentDefinitionContentWrite(workspace, filePath, selfDefinitionWrite.agentDefinitionWrite);
+        }
         return agentToolResult(successEnvelope('file_write', data, {
-          instructions: skillWrite ? skillWriteInstructions(skillWrite) : undefined,
+          instructions: selfDefinitionWrite?.kind === 'skill'
+            ? skillWriteInstructions(selfDefinitionWrite.skillWrite)
+            : selfDefinitionWrite?.kind === 'agent'
+              ? agentDefinitionWriteInstructions(selfDefinitionWrite.agentDefinitionWrite)
+              : undefined,
           metrics: metrics(started, data),
         }), visibleFileWrite(data));
       } catch (error) {
@@ -1250,6 +1359,13 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
       try {
         const params = normalizeFileDeleteParams(rawParams);
         const filePath = resolveWorkspacePath(workspace, params.file_path, 'write');
+        if (selfDefinitionSurfaceForPath(workspace, filePath)) {
+          throw new LocalToolFailure(
+            'self_definition_delete_not_supported',
+            'Deleting skills or agents through file_delete is not supported.',
+            'Edit or create self-definition files through file_write/file_edit. Delete agents in Settings.',
+          );
+        }
         if (isFileAreaRoot(workspace, filePath)) {
           throw new LocalToolFailure('root_delete_forbidden', 'Cannot delete the allowed file area root.', 'Delete a specific file or subdirectory instead.');
         }
@@ -1538,7 +1654,18 @@ function resolveSingleConvertOutputPath(
     workspace.root,
     `${path.basename(inputPath, path.extname(inputPath))}${CONVERT_FORMAT_EXTENSIONS[params.output_format]}`,
   );
-  return resolveWorkspacePath(workspace, params.output_path ?? fallback, 'write');
+  const outputPath = resolveWorkspacePath(workspace, params.output_path ?? fallback, 'write');
+  assertNotSelfDefinitionConvertOutput(workspace, outputPath);
+  return outputPath;
+}
+
+function assertNotSelfDefinitionConvertOutput(workspace: WorkspaceContext, outputPath: string): void {
+  if (!selfDefinitionSurfaceForPath(workspace, outputPath)) return;
+  throw new LocalToolFailure(
+    'self_definition_convert_output_not_supported',
+    'file_convert cannot write skill or agent definition content.',
+    'Use file_write or file_edit so self-definition content is validated and hot-reloaded.',
+  );
 }
 
 async function assertOutputPathAvailable(outputPath: string, inputPath: string): Promise<void> {
@@ -1605,6 +1732,7 @@ async function convertPdfToImages(
     params.output_dir ?? path.join(workspace.root, `${path.basename(inputPath, path.extname(inputPath))}-pages-${randomUUID().slice(0, 8)}`),
     'write',
   );
+  assertNotSelfDefinitionConvertOutput(workspace, outputDir);
   await ensureDirectoryOutput(outputDir);
 
   const formatFlag = params.output_format === 'png' ? '-png' : '-jpeg';
@@ -2730,6 +2858,7 @@ function visibleFileEdit(data: FileEditData) {
     filePath: data.filePath,
     structuredPatch: data.structuredPatch,
     ...(data.skillWrite ? { skillWrite: visibleSkillWrite(data.skillWrite) } : {}),
+    ...(data.agentDefinitionWrite ? { agentDefinitionWrite: visibleAgentDefinitionWrite(data.agentDefinitionWrite) } : {}),
   };
 }
 
@@ -2775,6 +2904,7 @@ function visibleFileWrite(data: FileWriteData) {
     filePath: data.filePath,
     structuredPatch: data.structuredPatch,
     ...(data.skillWrite ? { skillWrite: visibleSkillWrite(data.skillWrite) } : {}),
+    ...(data.agentDefinitionWrite ? { agentDefinitionWrite: visibleAgentDefinitionWrite(data.agentDefinitionWrite) } : {}),
   };
 }
 
@@ -2793,6 +2923,16 @@ function visibleSkillWrite(skillWrite: AgentSkillWriteAudit) {
     relativePath: skillWrite.relativePath,
     changeType: skillWrite.changeType,
     warnings: skillWrite.warnings,
+  };
+}
+
+function visibleAgentDefinitionWrite(agentDefinitionWrite: AgentDefinitionWriteAudit) {
+  return {
+    agentName: agentDefinitionWrite.agentName,
+    source: agentDefinitionWrite.source,
+    relativePath: agentDefinitionWrite.relativePath,
+    changeType: agentDefinitionWrite.changeType,
+    warnings: agentDefinitionWrite.warnings,
   };
 }
 
@@ -2930,6 +3070,29 @@ function allowedRealRoots(workspace: WorkspaceContext, rootRealPath: string, acc
     }
   }
   return roots;
+}
+
+function selfDefinitionSurfaceForPath(workspace: WorkspaceContext, filePath: string): SelfDefinitionSurface | null {
+  const lexicalPath = path.resolve(filePath);
+  const canonicalPath = resolveCanonicalPath(filePath)?.realPath ?? null;
+  for (const { dir, surface } of selfDefinitionRootEntries(workspace.root)) {
+    const lexicalRoot = path.resolve(dir);
+    if (isSelfDefinitionContentPath(lexicalRoot, lexicalPath)) return surface;
+    const canonicalRoot = resolveCanonicalPath(dir)?.realPath ?? null;
+    if (canonicalPath && canonicalRoot && isSelfDefinitionContentPath(canonicalRoot, canonicalPath)) return surface;
+  }
+  return null;
+}
+
+function isSelfDefinitionContentPath(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return false;
+  if (relative === '') return true;
+  const parts = relative.split(path.sep).filter(Boolean);
+  if (parts.length >= 2) return true;
+  // Root-level docs such as `.agents/skills/README.md` are ordinary workspace
+  // files. Existing direct child directories are definition roots and stay guarded.
+  return isDirectoryPath(candidate);
 }
 
 function isInsideAnyRoot(roots: readonly string[], candidate: string): boolean {

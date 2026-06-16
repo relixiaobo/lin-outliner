@@ -8,8 +8,9 @@ Lin implements agent skills as local `SKILL.md` instruction bundles that the mod
 be shadowed by mutable local skills with the same name. Resource-backed
 built-in skill folders load before code-registered inline built-ins; a duplicate
 built-in name is a product bug and fails loudly instead of being silently
-dropped. The current user-visible built-in skills are `/skillify`, `/research`,
-`/presentation`, `/document`, and `/data-analysis`.
+dropped. The current user-visible built-in skills are `/skillify`,
+`/create-agent`, `/research`, `/presentation`, `/document`, and
+`/data-analysis`.
 
 `/skillify` is a user- and model-invocable workflow for creating or updating
 local skills through normal file tools. Its Skillify v2 body analyzes the current
@@ -22,6 +23,19 @@ runtime also treats explicit natural-language authoring requests such as "save
 this as a skill" or "update the import skill with this workflow" as direct
 `/skillify` user invocations when slash skills are enabled; ordinary questions
 about whether a skill exists or how skills work remain normal conversation.
+
+`/create-agent` is a user- and model-invocable workflow for creating or editing
+a reusable local agent from an explicit user request. It interviews only for
+missing identity/routing/tool details, drafts a complete `AGENT.md` or focused
+update diff, previews the target and change, confirms through
+`ask_user_question` when available, and writes exactly one file under
+`<workspace>/.agents/agents/<agent-name>/AGENT.md` by default, or under
+`~/.agents/agents/<agent-name>/AGENT.md` only when the user explicitly chooses a
+personal/global target and grants that write scope. Agents written through chat
+must set `permission-mode: restricted`; the file-tool gateway rejects support
+files, deletes, trusted permission mode, reserved built-in names, secret-looking
+content, malformed frontmatter, unsafe background mode, unbounded `max-turns`,
+and broad `tools: ["*"]`, then hot-reloads the agent registry on success.
 
 `/research` is a user- and model-invocable `execution: isolated` workflow for
 bounded investigation. It starts an isolated child run of the current agent with
@@ -202,7 +216,7 @@ permission at call time.
 Isolated skill results stay on the normal tool-call disclosure path because they
 carry a real child-run result or error for the parent turn.
 
-Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; it uses ordinary `file_write` / `file_edit` only after preview and confirmation, and the skills it writes are available immediately. Explicit natural-language save/update/fix skill requests are normalized to the same direct `/skillify` prompt path, so they work even when automatic skill listing is disabled, but only while slash skills are enabled. `/research` is also both user- and model-invocable; its `allowed-tools` are only child-run preapproval for expected reads, while read-only safety comes from catalog narrowing.
+Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; it uses ordinary `file_write` / `file_edit` only after preview and confirmation, and the skills it writes are available immediately. `/create-agent` is also both user- and model-invocable; it uses `file_write` only after preview and confirmation, and the agents it writes are available immediately to DMs, Channels, and delegation. Explicit natural-language save/update/fix skill requests are normalized to the same direct `/skillify` prompt path, so they work even when automatic skill listing is disabled, but only while slash skills are enabled. `/research` is also both user- and model-invocable; its `allowed-tools` are only child-run preapproval for expected reads, while read-only safety comes from catalog narrowing.
 
 Path-conditional mutable skills remain hidden until a touched file matches
 `paths`. Directory patterns such as `src` match files under that directory,
@@ -364,10 +378,12 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | `execution: isolated` and `agent` | Supported through the same-conversation `Agent`/delegation runtime. Isolated skill bodies run in a sidechain child run and return only the final result to the parent. Legacy `context: fork` parses as `execution: isolated` for existing skills. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
 | Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes into registry-recognized skill directories use ordinary file-tool permissions, then the file-tool gateway validates them as feedback, emits audit events, carries rollback metadata, records provenance hashes, and hot-reloads the registry. Agent-written skills are available immediately for slash invocation and, when model-invocable, automatic listing without a separate trust prompt. |
+| Agent-managed agent-definition writes | Supported for creating or editing one `AGENT.md` through the built-in `/create-agent` workflow and existing `file_write` / `file_edit`. Writes into `<workspace>/.agents/agents/<agent-name>/AGENT.md` use ordinary project file-tool permissions; writes into `~/.agents/agents/<agent-name>/AGENT.md` require an explicit personal/global write scope. The file-tool gateway validates strict frontmatter/body shape, requires `permission-mode: restricted`, rejects support files/deletes/trusted permission mode/reserved names/secret-looking content/unsafe metadata, and hot-reloads live agent registries on success. Existing-file edits still require file-tool freshness through `file_read`; `file_convert` and shell writes cannot bypass the validated gateway. |
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
 | MCP/plugin/remote skills | Not supported. The current registry is local filesystem skills plus configured additional directories. |
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
 | `skillify` | Supported as the built-in user- and model-invocable Skillify v2 workflow (`when_to_use`-gated to explicit user save requests). It uses the Tenon `.agents/skills/<skill-name>/SKILL.md` shape, previews the complete file or focused update diff, confirms through the instruction-layer `ask_user_question` path when available, and writes with existing file write/edit tools. |
+| `create-agent` | Supported as the built-in user- and model-invocable Create-agent workflow (`when_to_use`-gated to explicit user agent create/edit requests). It uses the Tenon `.agents/agents/<agent-name>/AGENT.md` shape, previews the complete file for creates or a focused diff for edits, confirms through the instruction-layer `ask_user_question` path when available, and writes one restricted `AGENT.md` with existing file write/edit tools. |
 | `research` | Supported as a built-in user- and model-invocable `execution: isolated` workflow with no `agent` override. It starts an isolated child run of the current agent, filters its declared read tools through the `AgentToolActionKind` read-only catalog, and returns a compact findings/evidence report. |
 | `presentation`, `document`, `data-analysis` | Supported as immutable resource-backed built-ins with portable `references/`, `scripts/`, and `assets/`. They are goal-oriented workflows; PPTX, DOCX, XLSX, Markdown, HTML, PDF, CSV, and JSON are handled as input/output routes rather than skill identities. `/document` includes archetype/form-factor guidance plus DOCX/Markdown semantic QA. `/data-analysis` includes profiling, lightweight data contracts, workbook risk inspection, and workbook/report delivery guidance. |
 | Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background conversation review that silently rewrites skills is not supported. |

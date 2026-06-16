@@ -711,11 +711,16 @@ Later layers with the same `name` override earlier layers.
 
 #### Authoring & hot-reload
 
-Agent definitions are **user-authorable in-app** (the model never writes them —
-the write surface is user-driven only, mirroring the closed memory-write
-surface). The settings "Agent Profiles" pane lists agents and opens the dedicated
-`AgentConfigWindow`; that child window is the single create / edit / duplicate /
-delete surface:
+Agent definitions are **user-authorable in-app** through two surfaces. Settings
+remains the full create / edit / duplicate / delete surface. The built-in
+`/create-agent` skill may create or edit one restricted `AGENT.md` after preview
+and confirmation, using the same typed `file_write` / `file_edit` gateway as
+project work. Chat authoring is deliberately narrower than Settings: it cannot
+grant trusted permission, enable background mode, claim a reserved built-in name,
+rename/move, delete, or create support files.
+
+The settings "Agent Profiles" pane lists agents and opens the dedicated
+`AgentConfigWindow`:
 
 - **Format layer** (`src/core/agentMarkdown.ts`, pure — `yaml` only, no fs):
   `serializeAgentMarkdown(AgentAuthoringInput) → AGENT.md` text and its inverses
@@ -730,6 +735,18 @@ delete surface:
   main, so a renderer-supplied name can never escape via traversal. Built-in
   agents (`rootDir === 'built-in'`) are never a write target — editing one means
   **duplicating** to a user copy.
+- **Chat create/edit surface** (`src/main/agentAuthoring.ts` validation plus
+  `src/main/agentLocalTools.ts` execution): `/create-agent` writes exactly one
+  `AGENT.md` under `<workspace>/.agents/agents/<agent-name>/AGENT.md` by default,
+  or under `~/.agents/agents/<agent-name>/AGENT.md` only when that personal/global
+  write scope is explicitly granted. The gateway requires strict frontmatter with
+  `name`, a routing-grade `description`, and `permission-mode: restricted`;
+  rejects trusted permission mode, reserved built-in names, support files,
+  deletes, malformed frontmatter, unsafe metadata, oversize content, and
+  secret-looking content; then notifies the runtime to reload registries on
+  success. Existing-file edits
+  use the ordinary file-tool freshness rules: `file_edit` and replacing
+  `file_write` require a current `file_read`.
 - **Editor UI** (`AgentEditor.tsx`): **one** editor abstraction for every agent —
   built-in, user, or new — with two switchable modes behind a header
   `SegmentedControl`. **Form** = structured controls (name / description / model /

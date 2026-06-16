@@ -23,6 +23,7 @@ import {
   type ToolAccessScope,
   type ToolActionDescriptor,
 } from './agentToolPermissionRules';
+import { selfDefinitionRootEntries } from './agentAuthoring';
 
 export type { AgentPermissionMode } from '../core/types';
 export type {
@@ -63,6 +64,7 @@ export interface AgentPermissionPolicy {
   // a sibling of the workdir. The app places agent-readable bytes here, so a *read* of a
   // scratch path counts as inside the allowed file area; writes are still treated as outside.
   scratchRoot?: string;
+  selfDefinitionRoots: readonly string[];
   denyTools: readonly string[];
   preapprovedToolRules: readonly string[];
   allowOutsideWorkspaceRead: boolean;
@@ -310,17 +312,25 @@ const EXFIL_OPAQUE_SINK_PATTERNS: readonly RegExp[] = [
 ];
 
 export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = {}): AgentPermissionPolicy {
+  const workspaceRoot = path.resolve(input.workspaceRoot ?? process.cwd());
   return {
     mode: input.mode ?? 'trusted',
-    workspaceRoot: path.resolve(input.workspaceRoot ?? process.cwd()),
+    workspaceRoot,
     // A blank scratch root is "unset", not the cwd (`path.resolve('')` === cwd).
     scratchRoot: input.scratchRoot && input.scratchRoot.trim() ? path.resolve(input.scratchRoot) : undefined,
+    selfDefinitionRoots: defaultSelfDefinitionRoots(workspaceRoot),
     denyTools: input.denyTools ?? DEFAULT_DENY_TOOLS,
     preapprovedToolRules: input.preapprovedToolRules ?? [],
     allowOutsideWorkspaceRead: input.allowOutsideWorkspaceRead ?? false,
     allowOutsideWorkspaceWrite: input.allowOutsideWorkspaceWrite ?? false,
     globalPermissions: parseGlobalToolPermissionSettings(input.globalPermissions),
   };
+}
+
+function defaultSelfDefinitionRoots(workspaceRoot: string): string[] {
+  return selfDefinitionRootEntries(workspaceRoot)
+    .filter((entry) => entry.scope === 'project')
+    .map((entry) => path.resolve(entry.dir));
 }
 
 export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInput): AgentPermissionDecision {
@@ -863,6 +873,7 @@ function derivePathDescriptor(input: {
   // a fetched binary, an overflow log) is inside the allowed file area. Writes to scratch stay
   // outside — the agent writes its own outputs to the workdir, never to scratch.
   const isInsideWorkspace = isPathInside(input.policy.workspaceRoot, resolved)
+    || input.policy.selfDefinitionRoots.some((root) => isPathInside(root, resolved))
     || (!isWrite && input.policy.scratchRoot != null && isPathInside(input.policy.scratchRoot, resolved));
 
   if (isWrite && isHardBlockedSensitiveWritePath(resolved)) {
@@ -1102,6 +1113,23 @@ function deriveBashActionDescriptors(
       highConsequence: true,
       command,
       code: 'sensitive_persistence_write',
+      floor: 'permission_self_mod',
+      platformHardBlock: true,
+      redline: true,
+    })];
+  }
+
+  if (floorCommands.some((floorCommand) => looksLikeSelfDefinitionShellWrite(floorCommand, workspaceRoot))) {
+    return [descriptor('bash', 'file.write.sensitive_local_path', {
+      accessScope: 'sensitive_local_path',
+      title: 'blocked self-definition shell write',
+      summary: command,
+      consequence: 'Blocked a shell command that appears to write skill or agent definition content outside the validated file_write/file_edit gateway.',
+      reversible: false,
+      externalEffect: false,
+      highConsequence: true,
+      command,
+      code: 'self_definition_shell_write',
       floor: 'permission_self_mod',
       platformHardBlock: true,
       redline: true,
@@ -1937,6 +1965,22 @@ function looksLikeSoftPersistenceWrite(command: string, workspaceRoot: string): 
     const resolved = resolvePermissionPath(workspaceRoot, cleaned);
     return isSoftBlockedPersistenceWritePath(resolved);
   });
+}
+
+function looksLikeSelfDefinitionShellWrite(command: string, workspaceRoot: string): boolean {
+  const words = parseShellWords(command);
+  if (!hasSensitivePersistenceWriteTrigger(command, words)) return false;
+  return words.some((word) => {
+    const cleaned = stripShellPathDecoration(word);
+    if (!looksLikePath(cleaned) && !cleaned.startsWith('.agents/')) return false;
+    const resolved = resolvePermissionPath(workspaceRoot, cleaned);
+    return isSelfDefinitionPath(resolved, workspaceRoot);
+  });
+}
+
+function isSelfDefinitionPath(filePath: string, workspaceRoot: string): boolean {
+  const resolved = path.resolve(filePath);
+  return selfDefinitionRootEntries(workspaceRoot).some((entry) => isPathInside(path.resolve(entry.dir), resolved));
 }
 
 function hasSensitivePersistenceWriteTrigger(command: string, words: readonly string[]): boolean {

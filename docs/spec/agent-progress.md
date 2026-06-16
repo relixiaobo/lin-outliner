@@ -101,7 +101,8 @@ truth.
   - large-conversation regression coverage for checkpoint replay, indexes, render
     projection, and payload-bounded JSONL
 - [x] Agent skills, compaction, and delegation (child runs):
-  - immutable code-registered built-in skills, including slash-only `/skillify`
+  - immutable code-registered built-in skills, including `/skillify` and
+    `/create-agent` authoring workflows
   - automatic and slash skill loading from `.agents/skills`
   - path-conditional and dynamically discovered skills with gitignore guards
   - governed `.agents/skills/**` writes through normal file tools with

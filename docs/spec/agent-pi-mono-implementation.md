@@ -720,7 +720,7 @@ These agent-level tools are active on top of the P0 local/document surface.
 | `config` | cc-2.1-style config tool | Yes | Reads no, writes yes | Read or update whitelisted runtime settings through runtime-owned paths. |
 | `doctor` | self-diagnostics | Yes | No | Run read-only local agent diagnostics. |
 | `dream` | Tenon agent memory Dream | Yes | Yes | Request runtime-owned memory consolidation for the current agent; cannot specify facts to save. |
-| `skill` | local skill invocation | Yes | Usually no | Invoke installed or built-in skills; `/skillify` is a built-in slash-only workflow. |
+| `skill` | local skill invocation | Yes | Usually no | Invoke installed or built-in skills; `/skillify` and `/create-agent` are built-in user- and model-invocable authoring workflows. |
 
 `task_stop` is active because Tenon's `bash` tool supports background commands.
 
