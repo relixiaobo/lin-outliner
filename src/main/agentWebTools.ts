@@ -35,17 +35,26 @@ export type WebToolHint =
   | { type: 'search_blocked'; reason: 'captcha' | 'rate_limit' | 'unusual_traffic'; origin: string }
   | { type: 'redirected_host'; originalUrl: string; finalUrl: string; finalHost: string };
 
+export type WebSearchKind = 'web' | 'image';
+
 export interface WebSearchResult {
   title: string;
+  // For web results, the result page URL. For image results, the page the image
+  // was found on (the citation/source page), not the image binary itself.
   url: string;
   snippet: string;
   source?: string;
   publishedAt?: string;
+  // Image-result fields (kind === 'image'). imageUrl is the direct full-size
+  // image to download with web_fetch; thumbnailUrl is a smaller preview.
+  imageUrl?: string;
+  thumbnailUrl?: string;
 }
 
 export interface WebSearchData {
   query: string;
   effectiveQuery: string;
+  kind: WebSearchKind;
   provider: 'provider';
   providerName: string;
   finalUrl?: string;
@@ -123,9 +132,12 @@ export interface FetchTextResult {
 
 export interface NormalizedWebSearchParams {
   query: string;
+  kind: WebSearchKind;
   limit: number;
+  // The query with any `site:` operator folded in. Each provider builds its own
+  // results URL from this; there is no provider-specific URL in these
+  // kind-agnostic params.
   effectiveQuery: string;
-  searchUrl: string;
   site?: string;
   recencyDays?: number;
 }
@@ -164,6 +176,11 @@ export function normalizeWebSearchParams(rawParams: unknown): WebParamResult<Nor
     return invalidParams(query.message, 'Call web_search again with a non-empty query.');
   }
 
+  const kind = optionalSearchKindParam(input.kind);
+  if (!kind.ok) {
+    return invalidParams(kind.message, 'Call web_search again with kind "web" or "image", or omit kind.');
+  }
+
   const limit = integerParam(input.limit, 'limit', 1, MAX_SEARCH_LIMIT, DEFAULT_SEARCH_LIMIT);
   if (!limit.ok) return invalidParams(limit.message, 'Call web_search again with a numeric limit.');
 
@@ -180,9 +197,9 @@ export function normalizeWebSearchParams(rawParams: unknown): WebParamResult<Nor
     ok: true,
     params: {
       query: query.value,
+      kind: kind.value,
       limit: limit.value,
       effectiveQuery,
-      searchUrl: buildGoogleSearchUrl(effectiveQuery),
       ...(site.value ? { site: site.value } : {}),
       ...(recencyDays.value !== undefined ? { recencyDays: recencyDays.value } : {}),
     },
@@ -477,14 +494,22 @@ export function sliceContent(content: string, offset: number, maxChars: number):
 // (durationMs, byteLength, finalUrl) are dropped. See agentToolEnvelope's
 // modelData parameter for how this projection is attached.
 export function webSearchModelData(data: WebSearchData): unknown {
+  const isImage = data.kind === 'image';
   const visible: Record<string, unknown> = {
     results: data.results.map((result) => ({
       title: result.title,
       url: result.url,
-      snippet: result.snippet,
+      // Web results always carry snippet (even ''), preserving a stable shape;
+      // image results omit it (it is always empty for them).
+      ...(isImage ? {} : { snippet: result.snippet }),
+      // Image results carry the binary URL the model downloads with web_fetch;
+      // without it the model cannot act on an image hit.
+      ...(result.imageUrl ? { imageUrl: result.imageUrl } : {}),
+      ...(result.thumbnailUrl ? { thumbnailUrl: result.thumbnailUrl } : {}),
       ...(result.publishedAt ? { publishedAt: result.publishedAt } : {}),
     })),
   };
+  if (isImage) visible.kind = 'image';
   if (data.truncated) {
     visible.truncated = true;
     if (data.totalResults !== undefined) visible.totalResults = data.totalResults;
@@ -531,6 +556,11 @@ export function buildEffectiveSearchQuery(query: string, site?: string): string 
 export function buildGoogleSearchUrl(query: string): string {
   const params = new URLSearchParams({ q: query });
   return `https://www.google.com/search?${params.toString()}`;
+}
+
+export function buildBingImagesSearchUrl(query: string): string {
+  const params = new URLSearchParams({ q: query });
+  return `https://www.bing.com/images/search?${params.toString()}`;
 }
 
 function baseFetchData(
@@ -591,6 +621,15 @@ function normalizeOptionalSearchSite(value: unknown): ParamValueResult<string | 
     return { ok: false, message: `invalid site host: ${site.value}` };
   }
   return { ok: true, value: host };
+}
+
+function optionalSearchKindParam(value: unknown): ParamValueResult<WebSearchKind> {
+  if (value === undefined) return { ok: true, value: 'web' };
+  if (typeof value !== 'string') return { ok: false, message: 'kind must be a string' };
+  if (value !== 'web' && value !== 'image') {
+    return { ok: false, message: `unsupported kind: ${value}` };
+  }
+  return { ok: true, value };
 }
 
 function optionalFormatParam(value: unknown): ParamValueResult<WebFetchData['format']> {
