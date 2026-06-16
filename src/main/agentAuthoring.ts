@@ -3,23 +3,47 @@
 // they are trivially testable and reusable. The hot-reload (cache invalidation)
 // is orchestrated by the caller (AgentRuntime) after a successful write.
 //
-// Security (A2/A3): every write target is forced inside one of the known agents
+// Security (A2/A3): every settings write target is forced inside one of the known agents
 // directories (`~/.agents/agents` or `<workspace>/.agents/agents`). Names are
 // slugged to a filesystem-safe segment and path containment is asserted, so a
 // renderer-supplied name can never escape via traversal. Built-in agents
-// (`rootDir === 'built-in'`) are never writable. The *model* never reaches this
-// surface — only the user, through the settings UI (see [[agent-authoring]]).
+// (`rootDir === 'built-in'`) are never writable.
 
 import { existsSync, realpathSync } from 'node:fs';
 import { access, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { serializeAgentMarkdown } from '../core/agentMarkdown';
+import { parse as parseYaml } from 'yaml';
+import { coerceString, parseAgentMarkdownDocument, serializeAgentMarkdown } from '../core/agentMarkdown';
 import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
 import type { AgentDefinition } from '../core/types';
+import { containsSecretLikeContent } from './agentSecretRedaction';
 import { atomicWriteFile } from './jsonFileStore';
 
-const AGENT_FILE_NAME = 'AGENT.md';
+export const AGENT_FILE_NAME = 'AGENT.md';
+const MAX_AGENT_MARKDOWN_BYTES = 256 * 1024;
+const AGENT_DIR_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+export interface AgentDefinitionContentTarget {
+  agentName: string;
+  source: AgentDefinition['source'];
+  agentsDir: string;
+  agentRoot: string;
+  agentFile: string;
+  relativePath: string;
+  isAgentFile: boolean;
+}
+
+export interface AgentDefinitionWriteAudit {
+  agentName: string;
+  source: AgentDefinition['source'];
+  agentRoot: string;
+  relativePath: string;
+  changeType: 'create' | 'patch' | 'replace';
+  previousBytes: number;
+  nextBytes: number;
+  warnings: string[];
+}
 
 export interface WrittenAgentLocation {
   rootDir: string;
@@ -31,6 +55,83 @@ export function agentsDirForStorage(storage: AgentStorageLocation, localRoot: st
   return storage === 'project'
     ? path.join(path.resolve(localRoot), '.agents', 'agents')
     : path.join(homedir(), '.agents', 'agents');
+}
+
+export function defaultAgentDefinitionDirs(localRoot: string): Array<{ dir: string; source: AgentDefinition['source'] }> {
+  return [
+    { dir: agentsDirForStorage('user', localRoot), source: 'user' },
+    { dir: agentsDirForStorage('project', localRoot), source: 'project' },
+  ];
+}
+
+export function resolveAgentDefinitionContentTarget(filePath: string, localRoot: string): AgentDefinitionContentTarget | null {
+  const resolved = path.resolve(filePath);
+  for (const { dir, source } of defaultAgentDefinitionDirs(localRoot)) {
+    const agentsDir = path.resolve(dir);
+    const relative = path.relative(agentsDir, resolved);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) continue;
+    const parts = relative.split(path.sep).filter(Boolean);
+    if (parts.length === 0) continue;
+    const agentName = parts[0] ?? '';
+    const relativePath = parts.slice(1).join('/');
+    return {
+      agentName,
+      source,
+      agentsDir,
+      agentRoot: path.join(agentsDir, agentName),
+      agentFile: path.join(agentsDir, agentName, AGENT_FILE_NAME),
+      relativePath,
+      isAgentFile: parts.length === 2 && parts[1] === AGENT_FILE_NAME,
+    };
+  }
+  return null;
+}
+
+export function validateAgentDefinitionContentWrite(input: {
+  target: AgentDefinitionContentTarget;
+  content: string;
+  previousContent: string | null;
+  operation: 'file_edit' | 'file_write';
+}): AgentDefinitionWriteAudit {
+  const { target } = input;
+  if (!target.isAgentFile) {
+    throw new AgentDefinitionAuthoringError(
+      'unsupported_agent_definition_file',
+      `Only ${AGENT_FILE_NAME} is writable inside agent definition directories.`,
+      `Write a complete ${AGENT_FILE_NAME} at .agents/agents/<agent-name>/${AGENT_FILE_NAME}. Agent support files are not part of this authoring surface.`,
+    );
+  }
+  if (!AGENT_DIR_NAME_PATTERN.test(target.agentName)) {
+    throw new AgentDefinitionAuthoringError(
+      'invalid_agent_directory_name',
+      `Invalid agent directory name: ${target.agentName}`,
+      'Use a simple lowercase directory name with letters, numbers, dots, underscores, or hyphens.',
+    );
+  }
+  if (input.operation === 'file_edit' && input.previousContent === null) {
+    throw new AgentDefinitionAuthoringError(
+      'agent_definition_edit_missing_previous_content',
+      'Agent definition edits require existing AGENT.md content.',
+      `Create a new agent with file_write, or read the existing ${AGENT_FILE_NAME} before editing it.`,
+    );
+  }
+  validateAgentMarkdownForModelWrite(input.content);
+  const previousBytes = Buffer.byteLength(input.previousContent ?? '', 'utf8');
+  const changeType = input.previousContent === null
+    ? 'create'
+    : input.operation === 'file_edit'
+      ? 'patch'
+      : 'replace';
+  return {
+    agentName: target.agentName,
+    source: target.source,
+    agentRoot: target.agentRoot,
+    relativePath: target.relativePath,
+    changeType,
+    previousBytes,
+    nextBytes: Buffer.byteLength(input.content, 'utf8'),
+    warnings: ['Chat-authored agents must remain restricted and still pass through the global permission gate. Delete agents in Settings.'],
+  };
 }
 
 /** Filesystem-safe agent folder slug. Rejects empty / pure-dot names (traversal). */
@@ -150,6 +251,92 @@ function assertContainedInAgentsDir(targetDir: string, localRoot: string): void 
   if (!ok) {
     throw new Error('Refusing to write an agent definition outside the agents directories.');
   }
+}
+
+export class AgentDefinitionAuthoringError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly instructions: string,
+  ) {
+    super(message);
+    this.name = 'AgentDefinitionAuthoringError';
+  }
+}
+
+function validateAgentMarkdownForModelWrite(content: string): void {
+  const bytes = Buffer.byteLength(content, 'utf8');
+  if (bytes > MAX_AGENT_MARKDOWN_BYTES) {
+    throw new AgentDefinitionAuthoringError(
+      'agent_definition_too_large',
+      `${AGENT_FILE_NAME} is too large: ${bytes} bytes.`,
+      `Keep ${AGENT_FILE_NAME} under ${MAX_AGENT_MARKDOWN_BYTES} bytes and keep long references in the agent instructions, not adjacent support files.`,
+    );
+  }
+  if (containsSecretLikeContent(content)) {
+    throw new AgentDefinitionAuthoringError(
+      'secret_like_agent_definition_content',
+      'Agent definition content appears to contain a secret.',
+      'Remove credentials or secret-looking values from the agent definition and describe placeholders instead.',
+    );
+  }
+  const { frontmatter, body } = parseStrictAgentMarkdown(content);
+  const name = coerceString(frontmatter.name);
+  const description = coerceString(frontmatter.description);
+  if (!name) {
+    throw new AgentDefinitionAuthoringError(
+      'missing_agent_name',
+      `${AGENT_FILE_NAME} requires a frontmatter name.`,
+      'Add a concise name field to the AGENT.md frontmatter.',
+    );
+  }
+  if (!description || description.length < 10) {
+    throw new AgentDefinitionAuthoringError(
+      'missing_agent_description',
+      `${AGENT_FILE_NAME} requires a frontmatter description of at least 10 characters.`,
+      'Add a routing-grade description that explains when this agent should be used.',
+    );
+  }
+  const permissionMode = frontmatter['permission-mode'] ?? frontmatter.permissionMode;
+  if (permissionMode !== 'restricted') {
+    throw new AgentDefinitionAuthoringError(
+      'agent_definition_must_be_restricted',
+      `${AGENT_FILE_NAME} written through chat must set permission-mode: restricted.`,
+      'Set permission-mode: restricted. Chat-authored agents do not receive trusted authority.',
+    );
+  }
+  if (!body.trim()) {
+    throw new AgentDefinitionAuthoringError(
+      'missing_agent_body',
+      `${AGENT_FILE_NAME} requires instruction body content after the frontmatter.`,
+      'Add focused Markdown instructions describing the agent role, workflow, constraints, and reporting style.',
+    );
+  }
+}
+
+function parseStrictAgentMarkdown(content: string): { frontmatter: Record<string, unknown>; body: string } {
+  const normalized = content.replace(/^\uFEFF/, '');
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(normalized);
+  if (!match) {
+    throw new AgentDefinitionAuthoringError(
+      'missing_agent_frontmatter',
+      `${AGENT_FILE_NAME} must start with YAML frontmatter.`,
+      'Use the stable AGENT.md shape: frontmatter, a closing marker, then Markdown instructions.',
+    );
+  }
+  try {
+    const parsed = parseYaml(match[1] ?? '');
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new Error('frontmatter is not an object');
+    }
+  } catch (error) {
+    throw new AgentDefinitionAuthoringError(
+      'invalid_agent_frontmatter',
+      `${AGENT_FILE_NAME} frontmatter is not valid YAML: ${error instanceof Error ? error.message : String(error)}`,
+      'Fix the YAML frontmatter and show the corrected AGENT.md before writing again.',
+    );
+  }
+  return parseAgentMarkdownDocument(content);
 }
 
 /**

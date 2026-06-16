@@ -1906,6 +1906,13 @@ Result behavior:
 - Overwriting a file should be treated as a high-signal mutation in logs; the
   global permission policy may still allow it by default.
 - Do not use `file_write` to append small changes; use `file_edit`.
+- Writes under self-definition directories are validated by the file-tool gateway
+  after the ordinary permission decision. Skill writes validate `SKILL.md` /
+  support-file shape and hot-reload the skill registry. Agent-definition writes
+  may create or edit exactly one restricted `AGENT.md` under
+  `.agents/agents/<agent-name>/AGENT.md`; support files, deletes, trusted
+  permission mode, secret-looking content, and malformed frontmatter are rejected
+  before bytes are written.
 
 ## Shell Tools
 
@@ -2535,15 +2542,21 @@ Runtime control tools are not file tools:
 - The agent must not use `file_edit`, `file_write`, or `bash` to mutate provider
   settings, permission config, hook config, skill registry metadata, or
   last-known-good recovery state.
-- Skill maintenance does not add a separate model-facing CRUD tool family in
-  v1. It follows cc-2.1's smaller surface: `/skillify` produces/reviews content,
-  then uses existing `file_write` or `file_edit`.
+- Skill and agent-definition maintenance do not add separate model-facing CRUD
+  tool families in v1. They follow cc-2.1's smaller surface: `/skillify` and
+  `/create-agent` produce/review content, then use existing file tools.
 - Skill files use the ordinary `file_write` / `file_edit` permission decision.
   After that decision, the file-tool gateway recognizes writes under registered
   skill directories, validates frontmatter/support files, carries rollback
   metadata in tool details, emits `skill.created` / `skill.patched` /
   `skill.replaced` audit events on success, records provenance hashes, and
   hot-reloads the skill registry.
+- Agent definition files use the ordinary `file_write` / `file_edit` permission
+  decision. After that decision, the file-tool gateway recognizes writes under
+  user/project agent directories, accepts only `AGENT.md` files with
+  `permission-mode: restricted`, validates strict frontmatter/body shape, rejects
+  support files, deletes, and trusted permission mode, and hot-reloads live agent
+  registries on success.
 
 ## Mapping to Current Lin Commands
 

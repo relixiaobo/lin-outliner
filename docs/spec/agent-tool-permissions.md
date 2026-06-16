@@ -57,6 +57,10 @@ realpath containment:
 
 - **workdir**: the cwd and default write root. Relative file-tool paths resolve
   here.
+- **self-definition roots**: `~/.agents/skills`, `~/.agents/agents`,
+  `<workdir>/.agents/skills`, and `<workdir>/.agents/agents`. These roots are
+  part of the typed file-tool area so `/skillify` and `/create-agent` can use the
+  same file tools as normal project work.
 - **scratch**: app-owned materialized attachments, web-fetch binaries, overflow
   logs, and PDF page images. Reads may use scratch; writes do not.
 - **handed folders**: users may hand Tenon a real folder from Settings ->
@@ -65,10 +69,18 @@ realpath containment:
 
 The boundary is asymmetric:
 
-- Reads may touch workdir, scratch, and handed `read` / `write` scope roots.
-- Writes may touch workdir and handed `write` scope roots.
+- Reads may touch workdir, self-definition roots, scratch, and handed `read` /
+  `write` scope roots.
+- Writes may touch workdir, self-definition roots, and handed `write` scope
+  roots.
 - Relative file-tool paths still resolve against workdir; handed folders are
-  reached through explicit absolute paths.
+  reached through explicit absolute paths. User-scope self-definition roots are
+  also reached through explicit absolute paths.
+
+The self-definition roots only extend where typed file tools may execute; they
+do not bypass the content gateway. Skill writes are validated as skill content,
+agent-definition writes are limited to restricted `AGENT.md` creates/edits, and
+`file_delete` refuses both skill and agent definition content.
 
 Shell commands are the broad local execution surface. They may operate outside
 the typed file boundary unless they hit a hard redline, a built-in soft block, or

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import {
   evaluateAgentToolPermission,
@@ -40,6 +41,31 @@ describe('agent permissions', () => {
     ] as const) {
       const decision = evaluateAgentToolPermission({ toolName, args, policy: { workspaceRoot } });
       expect(decision.behavior, `${toolName} ${JSON.stringify(args)}`).toBe('allow');
+    }
+  });
+
+  test('treats skill and agent self-definition directories as allowed file areas', () => {
+    const paths = [
+      path.join(workspaceRoot, '.agents', 'skills', 'draft-skill', 'SKILL.md'),
+      path.join(workspaceRoot, '.agents', 'agents', 'draft-agent', 'AGENT.md'),
+      path.join(homedir(), '.agents', 'skills', 'user-skill', 'SKILL.md'),
+      path.join(homedir(), '.agents', 'agents', 'user-agent', 'AGENT.md'),
+    ];
+
+    for (const filePath of paths) {
+      const read = evaluateAgentToolPermission({
+        toolName: 'file_read',
+        args: { file_path: filePath },
+        policy: { workspaceRoot },
+      });
+      const write = evaluateAgentToolPermission({
+        toolName: 'file_write',
+        args: { file_path: filePath, content: 'definition' },
+        policy: { workspaceRoot },
+      });
+
+      expect(read.behavior, `read ${filePath}`).toBe('allow');
+      expect(write.behavior, `write ${filePath}`).toBe('allow');
     }
   });
 

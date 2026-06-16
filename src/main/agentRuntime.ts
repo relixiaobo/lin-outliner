@@ -1742,6 +1742,15 @@ export class AgentRuntime {
     return this.listAllAgentDefinitions(conversationId);
   }
 
+  private async notifyAgentDefinitionContentWritten(conversationId: string): Promise<void> {
+    await this.reloadAgentDefinitions(conversationId);
+    const conversation = this.conversations.get(conversationId);
+    if (conversation) {
+      await this.refreshMemberDisplayNames(conversation);
+      this.emitProjection(conversationId, 'agent_definitions_reloaded');
+    }
+  }
+
   private async resolveAgentDefinitionById(conversationId: string, agentId: string): Promise<AgentDefinition> {
     const definitions = await this.listRawAgentDefinitions(conversationId);
     const match = this.withBuiltInAgentDefinitions(definitions)
@@ -2499,8 +2508,15 @@ export class AgentRuntime {
     });
     skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
     skillRuntime.restoreInvokedSkillsFromMessages(activePath);
-    const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, this.scratchRoot(), skillRuntime);
-    const delegationRuntime = new AgentDelegationRuntime({
+    let delegationRuntime: AgentDelegationRuntime;
+    const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, this.scratchRoot(), skillRuntime, {
+      notifyAgentDefinitionContentWritten: async (filePaths) => {
+        delegationRuntime.reloadAgentDefinitions();
+        await this.notifyAgentDefinitionContentWritten(conversationId);
+        void filePaths;
+      },
+    });
+    delegationRuntime = new AgentDelegationRuntime({
       conversationId,
       executingAgentId: defaultAgentId,
       memoryOwnerAgentId: defaultAgentId,
@@ -2548,6 +2564,7 @@ export class AgentRuntime {
           if (!current) return Promise.resolve();
           return this.notifyChildRun(conversationId, current, snapshot);
         },
+        agentDefinitionContentWritten: () => this.notifyAgentDefinitionContentWritten(conversationId),
         reportError: (report) => this.reportError(report),
         restoreChildRunLedger: (runId) => this.restoreChildRunLedger(conversationId, runId),
         persistToolOutputPayload: (toolCallId, toolName, text) => (

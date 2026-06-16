@@ -727,6 +727,98 @@ describe('agent runtime skill integration', () => {
     expect(runRaw).toContain('skill.created');
   });
 
+  test('hot-reloads agent definitions created through file_write', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-agent-authoring-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-agent-authoring-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const agentContent = [
+      '---',
+      'name: Runtime Reviewer',
+      'description: Reviews runtime changes after chat authoring.',
+      'permission-mode: restricted',
+      'tools: [file_read]',
+      '---',
+      'Review runtime changes and report risks with file evidence.',
+      '',
+    ].join('\n');
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('file_write', {
+            file_path: '.agents/agents/runtime-reviewer/AGENT.md',
+            content: agentContent,
+          }, { id: 'tool-agent-write' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Agent authored.')),
+        fauxAssistantMessage([
+          fauxToolCall('file_read', {
+            file_path: '.agents/agents/runtime-reviewer/AGENT.md',
+          }, { id: 'tool-agent-read' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage([
+          fauxToolCall('file_edit', {
+            file_path: '.agents/agents/runtime-reviewer/AGENT.md',
+            old_string: 'Review runtime changes and report risks with file evidence.',
+            new_string: 'Review runtime changes and report risks with focused file evidence and test gaps.',
+          }, { id: 'tool-agent-edit' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Agent updated.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: true,
+          slashSkillsEnabled: true,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(created.conversationId, 'Create the runtime reviewer agent.');
+    const agents = await runtime.listAllAgentDefinitions(created.conversationId);
+    const authored = agents.find((agent) => agent.name.toLowerCase() === 'runtime-reviewer');
+
+    expect(script.pendingCount()).toBe(3);
+    expect(await readFile(path.join(localRoot, '.agents', 'agents', 'runtime-reviewer', 'AGENT.md'), 'utf8'))
+      .toBe(agentContent);
+    expect(authored).toMatchObject({
+      source: 'project',
+      description: 'Reviews runtime changes after chat authoring.',
+      permissionMode: 'restricted',
+      tools: ['file_read'],
+    });
+    expect(authored?.body).toContain('file evidence');
+    expect(sink.events.some((event) => event.type === 'projection' && event.lastEventType === 'agent_definitions_reloaded')).toBe(true);
+
+    await runtime.sendMessage(created.conversationId, 'Update the runtime reviewer agent.');
+    const updatedAgents = await runtime.listAllAgentDefinitions(created.conversationId);
+    const updated = updatedAgents.find((agent) => agent.name.toLowerCase() === 'runtime-reviewer');
+    expect(script.pendingCount()).toBe(0);
+    expect(updated?.body).toContain('test gaps');
+    expect(await readFile(path.join(localRoot, '.agents', 'agents', 'runtime-reviewer', 'AGENT.md'), 'utf8'))
+      .toContain('focused file evidence and test gaps');
+  });
+
   test('projects manual compact as active while the summary request is running', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-compact-active-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-compact-active-data-'));

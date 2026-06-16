@@ -222,6 +222,7 @@ export interface AgentDelegationRuntimeHost {
   /** Status transition: `child_run.updated` (conversation) + run lifecycle event (child ledger). */
   childRunStatusChanged(snapshot: AgentChildRunSnapshot): Promise<void>;
   notifyChildRun(snapshot: AgentChildRunSnapshot): Promise<void>;
+  agentDefinitionContentWritten?(filePaths: string[]): Promise<void>;
   reportError?(report: ErrorReport): void;
   /**
    * Re-register the run's ledger writer and re-derive its transcript from the
@@ -791,7 +792,12 @@ export class AgentDelegationRuntime {
       },
     });
     skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
-    const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, this.scratchRoot, skillRuntime);
+    const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, this.scratchRoot, skillRuntime, {
+      notifyAgentDefinitionContentWritten: async (filePaths) => {
+        childRuntime.reloadAgentDefinitions();
+        await this.host.agentDefinitionContentWritten?.(filePaths);
+      },
+    });
     // Attribution travels with consultee identity (authoritative `contextMode`, not
     // an id heuristic): a FRESH child IS a consultee → attribute to it; a FORK runs
     // as its spawner → INHERIT the spawner's attribution (undefined when the spawner
@@ -1204,6 +1210,7 @@ export class AgentDelegationRuntime {
       childRunCompacted: (snapshot, input) => this.host.childRunCompacted(snapshot, input),
       childRunStatusChanged: (snapshot) => this.host.childRunStatusChanged(snapshot),
       notifyChildRun: (snapshot) => this.host.notifyChildRun(snapshot),
+      agentDefinitionContentWritten: (filePaths) => this.host.agentDefinitionContentWritten?.(filePaths) ?? Promise.resolve(),
       reportError: (report) => this.host.reportError?.(report),
       restoreChildRunLedger: (runId) => this.host.restoreChildRunLedger(runId),
       persistToolOutputPayload: (toolCallId, toolName, text) => (
