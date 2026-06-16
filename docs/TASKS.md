@@ -448,6 +448,22 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **unify-agent-transcript-process-ui** (codex-2, PR #284) — extracts the assistant turn/process-fold
+  renderer into one shared path (`AgentAssistantTurnContent` + `AgentTranscriptMessageList`) used by the
+  DM transcript, the child-run task-detail timeline, and the Channel live-run drill-in — delivering
+  #280's deferred "full DM-style process reuse in the drill-in". Live turns show a locked "Working…"
+  row and default-collapse to "Worked for …" on settle; the final answer always renders as top-level
+  prose (no remount on seal); a tool row is pending only when its id is in `pendingToolCallIds` (or the
+  single trailing in-flight tool), killing stale perpetual spinners. The bespoke child-run transcript UI
+  is removed (raw transcript adapted into shared rows with real `Worked for`/`Interrupted` from
+  `childRun.status`). Design folded into `docs/spec/agent-event-log-rendering.md`. **Gate (main):**
+  `/code-review max` (10 finder angles + verify + sweep) → 14 findings, all addressed by codex-2; the
+  one false positive (channel-live row "remounts per token") was refuted by tracing `updatedAt` to the
+  run lifecycle. A scope expansion — a Channel activity-area rewrite that collided head-on with the
+  just-shipped #280 indicator — was caught at the gate and **dropped on rebase**, so the PR keeps #280's
+  indicator and only swaps the drill-in body. typecheck ✓ · `test:renderer` 525 ✓ · `test:core`
+  1081 pass / 2 skip ✓ · `docs:check` ✓ · `agent-process` e2e 12 ✓ · `agent-composer` (Channel +
+  child-run) e2e 2 ✓.
 - **web-search-image-kind** (cc-2, PR #282) — the `web_search` agent tool gains an optional `kind`
   parameter (`"web"` default, or `"image"`); **no new tool**. `kind: "image"` scrapes Bing Images
   (each result is an `a.iusc[m]` JSON blob → full image / thumbnail / source page) and returns

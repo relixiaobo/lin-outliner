@@ -662,6 +662,33 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Unified agent transcript process UI (PR #284, codex-2)** — the assistant turn/process-fold
+  renderer is extracted into one shared path (`AgentAssistantTurnContent` + `AgentTranscriptMessageList`)
+  now used by the DM transcript, the child-run task-detail timeline, **and** the Channel live-run
+  drill-in — delivering #280's deferred "full DM-style process reuse in the drill-in". A live turn
+  shows a locked **"Working…"** row while active and default-collapses to **"Worked for …"** once it
+  settles; the final answer always renders as top-level prose (never moves in/out of the fold, so it
+  no longer remounts on seal), and live/sealed-resultless process groups auto-expand so interim
+  thinking/tool work is never buried. Tool pending state is tightened: a tool row is pending only when
+  its id is in `pendingToolCallIds` (or the single trailing in-flight tool when the runtime reports
+  none), so a stale/resultless historical tool call no longer shows a perpetual spinner. The bespoke
+  child-run transcript UI is removed — the task-detail panel adapts a raw child-run transcript into the
+  shared rows (with real `Worked for`/`Interrupted` from `childRun.status`), and the Channel drill-in
+  adapts the per-run `streamingText` into the same live assistant-turn UI while the canonical Channel
+  transcript still receives only whole sealed utterances. Spec: `docs/spec/agent-event-log-rendering.md`.
+  **Gate (main):** `/code-review max` (10 finder angles + verify + sweep) → 14 findings, all addressed
+  by codex-2 (final-prose remount removed via `Math.max(0, lastProcessIndex+1)`; inner groups made
+  live-aware `sealed={!turnActive}`; per-tool pending via a `fallbackActiveToolCall` instead of the
+  whole-turn flag; orphan tool-result `compactText` + 280px `<pre>` cap restored; hidden-only
+  `<system-reminder>` user messages dropped instead of rendering an empty bubble; dead
+  `expandState`/`liveCollapsed` reachable-again or removed; shared `processSummaryFacts` + single
+  `toolStatus` closure; live placeholder reuses `createAssistantPlaceholderFromModel` + a real
+  `modelApi`; the `getComputedStyle` test stub now restores). A scope expansion (a Channel
+  activity-area rewrite that collided head-on with the just-shipped #280 indicator) was caught at the
+  gate and **dropped on rebase** — the PR keeps #280's indicator and only swaps the drill-in body.
+  typecheck ✓ · `test:renderer` 525 ✓ · `test:core` 1081 pass / 2 skip ✓ · `docs:check` ✓ ·
+  `agent-process` e2e 12 ✓ · `agent-composer` (Channel + child-run) e2e 2 ✓; light+dark visual not
+  re-run this gate. ([#284](https://github.com/relixiaobo/lin-outliner/pull/284))
 - **Channel "working" indicator rework (PR #280, cc)** — the multi-agent Channel "who's responding"
   surface changes from a corner-anchored floating activity pill (whose translucent list bled
   transcript text — 穿模) to an **in-flow status row** directly above the composer that occupies its
