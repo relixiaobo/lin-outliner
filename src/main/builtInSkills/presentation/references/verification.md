@@ -13,6 +13,8 @@ Approach verification as a bug hunt. First renders often have concrete issues.
 - contrast is projector-readable
 - images are cropped intentionally
 - final artifact opens or renders when local tools allow it
+- every designed slide has a registered layout recipe
+- the deck uses one visual system instead of slide-by-slide styling
 
 ## PPTX Checks
 
@@ -29,6 +31,8 @@ Approach verification as a bug hunt. First renders often have concrete issues.
 - check desktop and narrow viewport framing
 - verify keyboard navigation
 - search generated files for placeholders
+- review visual warnings: layout variety, missing `data-layout`, text-only
+  slides, bullet density, tiny text, remote dependencies, and broken local assets
 
 ## Delivery Report
 

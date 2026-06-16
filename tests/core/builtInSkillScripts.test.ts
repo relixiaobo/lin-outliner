@@ -28,7 +28,9 @@ describe('built-in skill helper scripts', () => {
     expect(report).toMatchObject({
       ok: true,
       errors: [],
-      slide_count: 1,
+      slide_count: 3,
+      layouts: ['cover', 'metric', 'product-stage'],
+      visual_slide_count: 3,
       warnings: ['placeholder_text_found'],
     });
   });
@@ -39,7 +41,7 @@ describe('built-in skill helper scripts', () => {
     const out = path.join(dir, 'report.json');
     await writeFile(input, [
       '<!doctype html><html><head><style>.slide{aspect-ratio:16 / 9}</style></head><body>',
-      '<main data-deck><section class="slide" data-slide="1" aria-current="true">',
+      '<main data-deck><section class="slide" data-slide="1" data-layout="diagram" aria-current="true">',
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>',
       '<h1>Evidence-backed claim</h1>',
       '</section></main><script>window.addEventListener("keydown",()=>{})</script>',
@@ -55,6 +57,41 @@ describe('built-in skill helper scripts', () => {
       warnings: [],
       remote_dependency_references: [],
     });
+  });
+
+  test('presentation html inspector reports visual-system risks', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lin-presentation-skill-html-visual-risk-'));
+    const input = path.join(dir, 'deck.html');
+    const out = path.join(dir, 'report.json');
+    const bullets = '<ul><li>One</li><li>Two</li><li>Three</li><li>Four</li><li>Five</li></ul>';
+    await writeFile(input, [
+      '<!doctype html><html><head><style>.slide{aspect-ratio:16 / 9;font-size:12px}</style></head><body>',
+      '<main data-deck>',
+      `<section class="slide" data-slide="1" data-layout="split"><h1>Claim 1</h1>${bullets}</section>`,
+      `<section class="slide" data-slide="2" data-layout="split"><h1>Claim 2</h1>${bullets}</section>`,
+      `<section class="slide" data-slide="3" data-layout="split"><h1>Claim 3</h1>${bullets}</section>`,
+      `<section class="slide" data-slide="4" data-layout="split"><h1>Claim 4</h1>${bullets}</section>`,
+      '</main><script>window.addEventListener("keydown",()=>{})</script>',
+      '</body></html>',
+    ].join(''), 'utf8');
+
+    await execFile('node', [htmlTool, 'inspect', input, '--out', out]);
+    const report = JSON.parse(await readFile(out, 'utf8'));
+
+    expect(report).toMatchObject({
+      ok: true,
+      errors: [],
+      layouts: ['split'],
+      text_only_slides: [1, 2, 3, 4],
+      bullet_dense_slides: [1, 2, 3, 4],
+      tiny_text_hits: ['12px'],
+    });
+    expect(report.warnings).toEqual([
+      'low_layout_variety',
+      'text_only_slide_found',
+      'bullet_dump_risk',
+      'tiny_text_risk',
+    ]);
   });
 
   test('presentation pptx inspector resolves parent-directory relationship targets', async () => {

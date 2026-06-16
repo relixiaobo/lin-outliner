@@ -5,10 +5,11 @@
 1. Define the audience and outcome.
 2. Extract the core thesis, supporting proof, constraints, data, examples, and must-include assets.
 3. Choose the artifact route: PPTX, HTML deck, PDF handout, speaker outline, or cover image.
-4. Create a deck plan before building slides.
-5. Build from the plan.
-6. Verify visually and structurally.
-7. Fix concrete issues and recheck.
+4. Choose the visual system: design direction, theme tokens, motif, and layout recipe set.
+5. Create a deck plan before building slides.
+6. Build from the plan.
+7. Verify visually and structurally.
+8. Fix concrete issues and recheck.
 
 ## Deck Plan Schema
 
@@ -21,8 +22,9 @@ Capture:
 - `goal`: communication outcome
 - `outputRoute`: PPTX, HTML deck, PDF handout, speaker outline, or cover image
 - `visualTemperament`: editorial narrative, grid analytical, or another deliberate direction
+- `visualSystem`: design direction, style pack, theme, motif, and typography posture
 - `storySpine`: short sequence of messages the deck must carry
-- `slides`: slide objects with `slide`, `purpose`, `headline`, `evidence`, `visual`, and `notes`
+- `slides`: slide objects with `slide`, `purpose`, `headline`, `evidence`, `layout`, `visual`, and `notes`
 - `verificationPlan`: checks to run before delivery
 
 ## Creation Pattern
@@ -32,6 +34,10 @@ Capture:
 - Keep one primary message per slide.
 - Prefer fewer stronger slides over many weak slides.
 - Use section dividers when the audience needs a mental reset.
+- Assign a registered layout recipe to every slide before writing slide code.
+- Use the chosen motif on most slides so the deck reads as one system.
+- For modern keynote-style decks, start from a stage/product/media recipe and
+  keep the page sparse; avoid report cards and decorative business templates.
 
 ## Existing Deck Pattern
 

@@ -38,7 +38,13 @@ that ship as portable skill folders under `src/main/builtInSkills`. They are
 goal-oriented skills rather than file-extension adapters:
 
 - `/presentation` covers slide decks, talks, PPTX inspection, browser HTML
-  decks, PDF handouts, speaker outlines, and deck verification.
+  decks, PDF handouts, speaker outlines, deck verification, and opinionated
+  visual deck construction. Its visual route requires a design direction, theme,
+  motif, and registered layout recipes before generation. It includes a modern
+  Keynote-style stage direction and default HTML template for premium product,
+  launch, and executive decks, then uses the HTML inspector to report layout
+  variety, text-only slide, bullet density, tiny text, placeholder, dependency,
+  and asset-reference risks.
 - `/document` covers professional written documents, DOCX inspection, Markdown
   drafts, review notes, comments, redlines, and document verification.
 - `/data-analysis` covers data profiling, workbook inspection, analytical
