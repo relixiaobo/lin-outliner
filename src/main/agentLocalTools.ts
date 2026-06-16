@@ -767,10 +767,8 @@ async function notifySuccessfulSkillContentWrite(
 async function notifySuccessfulAgentDefinitionContentWrite(
   workspace: WorkspaceContext,
   filePath: string,
-  agentDefinitionWrite: AgentDefinitionWriteAudit,
 ): Promise<void> {
   await workspace.agentDefinitionRuntime?.notifyAgentDefinitionContentWritten([filePath]);
-  void agentDefinitionWrite;
 }
 
 type SelfDefinitionWrite =
@@ -856,6 +854,37 @@ function agentDefinitionWriteInstructions(agentDefinitionWrite: AgentDefinitionW
     ? 'The new agent is available for future DMs, Channels, and delegation'
     : 'The updated agent definition is available for future DMs, Channels, and delegation';
   return `Agent definition write validated for ${agentDefinitionWrite.agentName}; the agent registry has been reloaded. ${availability}, and it remains restricted under the global permission gate.`;
+}
+
+// The skill/agent self-definition outcome maps onto a file-write the same way for
+// both file_edit and file_write: extra `data` fields, a registry-reload notify, and
+// the success `instructions`. These three helpers own that mapping once so the two
+// tools stay in lockstep.
+function selfDefinitionWriteData(
+  write: SelfDefinitionWrite | null,
+): { skillWrite?: AgentSkillWriteAudit; agentDefinitionWrite?: AgentDefinitionWriteAudit } {
+  if (write?.kind === 'skill') return { skillWrite: write.skillWrite };
+  if (write?.kind === 'agent') return { agentDefinitionWrite: write.agentDefinitionWrite };
+  return {};
+}
+
+async function notifySelfDefinitionContentWrite(
+  workspace: WorkspaceContext,
+  filePath: string,
+  write: SelfDefinitionWrite | null,
+  previousContent: string | null,
+): Promise<void> {
+  if (write?.kind === 'skill') {
+    await notifySuccessfulSkillContentWrite(workspace, filePath, write.skillWrite, previousContent);
+  } else if (write?.kind === 'agent') {
+    await notifySuccessfulAgentDefinitionContentWrite(workspace, filePath);
+  }
+}
+
+function selfDefinitionWriteInstructions(write: SelfDefinitionWrite | null): string | undefined {
+  if (write?.kind === 'skill') return skillWriteInstructions(write.skillWrite);
+  if (write?.kind === 'agent') return agentDefinitionWriteInstructions(write.agentDefinitionWrite);
+  return undefined;
 }
 
 function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileReadData>> {
@@ -1194,21 +1223,12 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           structuredPatch: structuredPatch(current.content, nextContent),
           userModified: false,
           replaceAll: params.replace_all === true,
-          ...(selfDefinitionWrite?.kind === 'skill' ? { skillWrite: selfDefinitionWrite.skillWrite } : {}),
-          ...(selfDefinitionWrite?.kind === 'agent' ? { agentDefinitionWrite: selfDefinitionWrite.agentDefinitionWrite } : {}),
+          ...selfDefinitionWriteData(selfDefinitionWrite),
         };
         await notifySuccessfulFileTouch(workspace, filePath);
-        if (selfDefinitionWrite?.kind === 'skill') {
-          await notifySuccessfulSkillContentWrite(workspace, filePath, selfDefinitionWrite.skillWrite, current.content);
-        } else if (selfDefinitionWrite?.kind === 'agent') {
-          await notifySuccessfulAgentDefinitionContentWrite(workspace, filePath, selfDefinitionWrite.agentDefinitionWrite);
-        }
+        await notifySelfDefinitionContentWrite(workspace, filePath, selfDefinitionWrite, current.content);
         return agentToolResult(successEnvelope('file_edit', data, {
-          instructions: selfDefinitionWrite?.kind === 'skill'
-            ? skillWriteInstructions(selfDefinitionWrite.skillWrite)
-            : selfDefinitionWrite?.kind === 'agent'
-              ? agentDefinitionWriteInstructions(selfDefinitionWrite.agentDefinitionWrite)
-              : undefined,
+          instructions: selfDefinitionWriteInstructions(selfDefinitionWrite),
           metrics: metrics(started, data),
         }), visibleFileEdit(data));
       } catch (error) {
@@ -1278,21 +1298,12 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
           content: params.content,
           structuredPatch: originalContent === null ? [] : structuredPatch(originalContent, params.content),
           originalFile: originalContent,
-          ...(selfDefinitionWrite?.kind === 'skill' ? { skillWrite: selfDefinitionWrite.skillWrite } : {}),
-          ...(selfDefinitionWrite?.kind === 'agent' ? { agentDefinitionWrite: selfDefinitionWrite.agentDefinitionWrite } : {}),
+          ...selfDefinitionWriteData(selfDefinitionWrite),
         };
         await notifySuccessfulFileTouch(workspace, filePath);
-        if (selfDefinitionWrite?.kind === 'skill') {
-          await notifySuccessfulSkillContentWrite(workspace, filePath, selfDefinitionWrite.skillWrite, originalContent);
-        } else if (selfDefinitionWrite?.kind === 'agent') {
-          await notifySuccessfulAgentDefinitionContentWrite(workspace, filePath, selfDefinitionWrite.agentDefinitionWrite);
-        }
+        await notifySelfDefinitionContentWrite(workspace, filePath, selfDefinitionWrite, originalContent);
         return agentToolResult(successEnvelope('file_write', data, {
-          instructions: selfDefinitionWrite?.kind === 'skill'
-            ? skillWriteInstructions(selfDefinitionWrite.skillWrite)
-            : selfDefinitionWrite?.kind === 'agent'
-              ? agentDefinitionWriteInstructions(selfDefinitionWrite.agentDefinitionWrite)
-              : undefined,
+          instructions: selfDefinitionWriteInstructions(selfDefinitionWrite),
           metrics: metrics(started, data),
         }), visibleFileWrite(data));
       } catch (error) {
