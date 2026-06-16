@@ -1,10 +1,7 @@
 import {
   BrowserWindow,
   session as electronSession,
-  type Event as ElectronEvent,
   type WebContents,
-  type WebContentsWillNavigateEventParams,
-  type WebContentsWillRedirectEventParams,
 } from 'electron';
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { createHash, randomUUID } from 'node:crypto';
@@ -32,8 +29,11 @@ import {
   MAX_FETCH_CHARS,
   MAX_SEARCH_LIMIT,
   WEB_FETCH_BROWSER_TIMEOUT_MS,
+  WEB_FETCH_CLIENT_HINT_PLATFORM,
+  WEB_FETCH_CLIENT_HINT_UA,
   WEB_FETCH_MAX_REDIRECTS,
   WEB_FETCH_RENDER_SETTLE_MS,
+  WEB_FETCH_RETRY_DELAY_MS,
   WEB_FETCH_USER_AGENT,
   buildBingImagesSearchUrl,
   buildGoogleSearchUrl,
@@ -41,6 +41,7 @@ import {
   extractFetchedPageContent,
   normalizeWebFetchParams,
   normalizeWebSearchParams,
+  normalizeWebUrl,
   webFetchModelData,
   webSearchModelData,
   type FetchTextResult,
@@ -74,9 +75,10 @@ import {
 import {
   assessWebFetchFallback,
   browserFallbackLooksUseful,
+  crossHostRedirectHint,
   detectBrowserChallenge,
   fallbackHint,
-  isPermittedWebFetchRedirect,
+  shouldRetryWebFetch,
   shouldTryBrowserFallbackForHttpFailure,
 } from './agentWebFetchFallback';
 import {
@@ -522,6 +524,24 @@ function searchInstructions(kind: WebSearchKind, hasResults: boolean): string | 
 }
 
 async function fetchText(url: string, scratchRoot: string, signal?: AbortSignal): Promise<FetchTextResult> {
+  try {
+    return await fetchTextOnce(url, scratchRoot, signal);
+  } catch (error) {
+    if (signal?.aborted || !isRetriableFetchFailure(error)) throw error;
+    await delay(WEB_FETCH_RETRY_DELAY_MS, signal);
+    return await fetchTextOnce(url, scratchRoot, signal);
+  }
+}
+
+function isRetriableFetchFailure(error: unknown): boolean {
+  if (error instanceof WebToolFailure) return shouldRetryWebFetch(error.code, error.statusCode);
+  // An AbortError is the parent aborting, not a transient fault.
+  if (error instanceof Error && error.name === 'AbortError') return false;
+  // Any other raw throw from the fetch layer is treated as a transient network error.
+  return true;
+}
+
+async function fetchTextOnce(url: string, scratchRoot: string, signal?: AbortSignal): Promise<FetchTextResult> {
   const startedUrl = url;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort('timeout'), FETCH_TIMEOUT_MS);
@@ -529,7 +549,7 @@ async function fetchText(url: string, scratchRoot: string, signal?: AbortSignal)
   signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
-    return await fetchTextWithPermittedRedirects(startedUrl, startedUrl, controller.signal, scratchRoot);
+    return await fetchTextWithRedirects(startedUrl, startedUrl, controller.signal, scratchRoot);
   } catch (error) {
     if (error instanceof WebToolFailure) throw error;
     if (controller.signal.aborted) {
@@ -545,7 +565,7 @@ async function fetchText(url: string, scratchRoot: string, signal?: AbortSignal)
   }
 }
 
-async function fetchTextWithPermittedRedirects(
+async function fetchTextWithRedirects(
   currentUrl: string,
   startedUrl: string,
   signal: AbortSignal,
@@ -562,8 +582,16 @@ async function fetchTextWithPermittedRedirects(
     signal,
     headers: {
       'user-agent': WEB_FETCH_USER_AGENT,
-      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,application/json;q=0.8,*/*;q=0.4',
+      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
       'accept-language': 'en-US,en;q=0.9',
+      'sec-ch-ua': WEB_FETCH_CLIENT_HINT_UA,
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': WEB_FETCH_CLIENT_HINT_PLATFORM,
+      'sec-fetch-dest': 'document',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-site': 'none',
+      'sec-fetch-user': '?1',
+      'upgrade-insecure-requests': '1',
     },
   });
 
@@ -575,13 +603,20 @@ async function fetchTextWithPermittedRedirects(
         statusCode: response.status,
       });
     }
-    if (isPermittedWebFetchRedirect(currentUrl, redirectUrl)) {
-      return await fetchTextWithPermittedRedirects(redirectUrl, startedUrl, signal, scratchRoot, depth + 1);
+    // Follow redirects across hosts (shorteners, trackers, regional/mobile
+    // subdomains). normalizeWebUrl re-validates each hop is a public http(s)
+    // host and upgrades http→https; a redirect to a local/private target is the
+    // one case we refuse. A cross-host landing is surfaced later as a non-fatal
+    // redirected_host hint, not a failure.
+    const validatedRedirect = normalizeWebUrl(redirectUrl);
+    if (!validatedRedirect.ok) {
+      throw redirectedHostFailure(startedUrl, redirectUrl, response.status);
     }
-    throw redirectedHostFailure(startedUrl, redirectUrl, response.status);
+    return await fetchTextWithRedirects(validatedRedirect.params, startedUrl, signal, scratchRoot, depth + 1);
   }
 
   const finalUrl = response.url || currentUrl;
+  const redirectedHostHint = crossHostRedirectHint(startedUrl, finalUrl);
   const contentType = response.headers.get('content-type') ?? '';
   if (response.status === 401) {
     throw new WebToolFailure('http_401', `authentication required for ${originOf(finalUrl)}`, {
@@ -621,6 +656,7 @@ async function fetchTextWithPermittedRedirects(
       byteLength: bytesResult.byteLength,
       body: '',
       binaryFile,
+      ...(redirectedHostHint ? { redirectedHostHint } : {}),
     };
   }
   const body = new TextDecoder('utf-8', { fatal: false }).decode(bytesResult.bytes);
@@ -632,6 +668,7 @@ async function fetchTextWithPermittedRedirects(
     contentType,
     byteLength: bytesResult.byteLength,
     body,
+    ...(redirectedHostHint ? { redirectedHostHint } : {}),
   };
 }
 
@@ -773,40 +810,6 @@ function extensionFromUrl(finalUrl: string): string {
 
 async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<FetchTextResult> {
   const window = createWebFetchWindow();
-  let blockedNavigation: WebToolFailure | null = null;
-  let rejectBlockedNavigation: ((failure: WebToolFailure) => void) | undefined;
-  const blockedNavigationPromise = new Promise<never>((_resolve, reject) => {
-    rejectBlockedNavigation = reject;
-  });
-  const blockCrossHostNavigation = (targetUrl: string, event: { preventDefault(): void }) => {
-    if (isPermittedWebFetchRedirect(url, targetUrl)) return;
-    blockedNavigation = redirectedHostFailure(url, targetUrl, 0);
-    event.preventDefault();
-    try {
-      window.webContents.stop();
-    } catch {
-      // no-op
-    }
-    rejectBlockedNavigation?.(blockedNavigation);
-  };
-  const onWillRedirect = (
-    event: ElectronEvent<WebContentsWillRedirectEventParams>,
-    redirectUrl: string,
-    _isInPlace: boolean,
-    isMainFrame: boolean,
-  ) => {
-    if (!isMainFrame) return;
-    blockCrossHostNavigation(event.url || redirectUrl, event);
-  };
-  const onWillNavigate = (
-    event: ElectronEvent<WebContentsWillNavigateEventParams>,
-    navigateUrl: string,
-    _isInPlace: boolean,
-    isMainFrame: boolean,
-  ) => {
-    if (!isMainFrame) return;
-    blockCrossHostNavigation(event.url || navigateUrl, event);
-  };
   const onAbort = () => {
     try {
       if (!window.isDestroyed()) {
@@ -819,18 +822,16 @@ async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<
   };
 
   signal?.addEventListener('abort', onAbort, { once: true });
-  window.webContents.on('will-redirect', onWillRedirect);
-  window.webContents.on('will-navigate', onWillNavigate);
+  // Render with the same real-browser identity as the HTTP path so challenge
+  // pages clear; cross-host navigation is followed (the landing host is surfaced
+  // as a non-fatal redirected_host hint below).
+  window.webContents.setUserAgent(WEB_FETCH_USER_AGENT);
 
   try {
-    await Promise.race([
-      navigateAndWait(window.webContents, url, {
-        timeoutMs: WEB_FETCH_BROWSER_TIMEOUT_MS,
-        signal,
-      }),
-      blockedNavigationPromise,
-    ]);
-    if (blockedNavigation) throw blockedNavigation;
+    await navigateAndWait(window.webContents, url, {
+      timeoutMs: WEB_FETCH_BROWSER_TIMEOUT_MS,
+      signal,
+    });
     await waitForRenderedPageSettled(window.webContents, signal);
     const payload = await safeExecuteJs<{ html: string; text: string; title: string }>(
       window.webContents,
@@ -844,11 +845,7 @@ async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<
       throw new WebToolFailure('extraction_failed', 'browser-rendered page did not expose HTML');
     }
     const finalUrl = window.webContents.getURL() || url;
-    const finalHost = hostOf(finalUrl);
-    const startedHost = hostOf(url);
-    if (startedHost && finalHost && !isPermittedWebFetchRedirect(url, finalUrl)) {
-      throw redirectedHostFailure(url, finalUrl, 0);
-    }
+    const redirectedHostHint = crossHostRedirectHint(url, finalUrl);
     return {
       requestedUrl: url,
       finalUrl,
@@ -857,14 +854,10 @@ async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<
       contentType: 'text/html; charset=utf-8',
       byteLength: Buffer.byteLength(payload.html, 'utf8'),
       body: payload.html,
+      ...(redirectedHostHint ? { redirectedHostHint } : {}),
     };
-  } catch (error) {
-    if (blockedNavigation) throw blockedNavigation;
-    throw error;
   } finally {
     signal?.removeEventListener('abort', onAbort);
-    window.webContents.off('will-redirect', onWillRedirect);
-    window.webContents.off('will-navigate', onWillNavigate);
     if (!window.isDestroyed()) {
       window.destroy();
     }

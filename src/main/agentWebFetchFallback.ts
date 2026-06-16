@@ -15,12 +15,17 @@ export function assessWebFetchFallback(
   if (params.format === 'raw') return noFallback();
   if (!isHtmlContentType(fetched.contentType)) return noFallback();
 
+  const contentLength = normalizedTextLength(page.content);
   const challenge = detectBrowserChallenge(fetched.body, fetched.finalUrl, page.metadata.title);
-  if (challenge) {
+  // A challenge marker only means the fetch failed when there is little readable
+  // content: a real interstitial ("Just a moment…") extracts to almost nothing.
+  // A full article that merely embeds a Cloudflare analytics beacon keeps its
+  // content and must NOT be discarded — flagging it would waste a browser round
+  // trip and surface a misleading needs_browser hint on a complete page.
+  if (challenge && contentLength < 1_500) {
     return { shouldFallback: true, reason: challenge, detail: 'browser_challenge' };
   }
 
-  const contentLength = normalizedTextLength(page.content);
   const visibleBodyLength = visibleHtmlTextLength(fetched.body);
   const shell = looksLikeDynamicHtmlShell(fetched.body);
   const hasMetadata = Boolean(
@@ -76,7 +81,9 @@ export function detectBrowserChallenge(
     haystack.includes('cf-browser-verification')
     || haystack.includes('cf-chl-')
     || haystack.includes('cf_chl_')
-    || haystack.includes('cloudflare')
+    || haystack.includes('_cf_chl')
+    || haystack.includes('challenge-platform')
+    || haystack.includes('challenges.cloudflare.com')
     || haystack.includes('checking your browser')
     || haystack.includes('just a moment')
     || haystack.includes('attention required')
@@ -87,6 +94,10 @@ export function detectBrowserChallenge(
   ) {
     return 'cloudflare';
   }
+  // NOTE: a bare "cloudflare" substring is deliberately NOT a marker — it matches
+  // the cloudflareinsights.com / challenges.cloudflare.com beacons embedded in
+  // ordinary Cloudflare-fronted pages and would flag complete articles as
+  // challenges.
 
   try {
     const url = new URL(finalUrl);
@@ -111,6 +122,37 @@ export function looksLikeDynamicHtmlShell(html: string): boolean {
   return (rootMarker && visibleLength < 1_000)
     || (hydrationMarker && visibleLength < 1_500)
     || (looksScriptHeavy(html) && visibleLength < 300);
+}
+
+// web_fetch follows redirects across hosts transparently (link shorteners,
+// trackers, regional/mobile subdomains). When the landing host differs from the
+// requested one, surface a non-fatal redirected_host hint + warning rather than
+// failing — the content still comes back and finalUrl reflects the real page.
+export function crossHostRedirectHint(
+  startedUrl: string,
+  finalUrl: string,
+): Extract<WebToolHint, { type: 'redirected_host' }> | undefined {
+  if (isPermittedWebFetchRedirect(startedUrl, finalUrl)) return undefined;
+  let finalHost = finalUrl;
+  try {
+    finalHost = new URL(finalUrl).host;
+  } catch {
+    // keep the raw URL as the host label when it cannot be parsed
+  }
+  return { type: 'redirected_host', originalUrl: startedUrl, finalUrl, finalHost };
+}
+
+// A single retry is worth it for transient failures; permanent ones (auth walls,
+// 404s, oversized bodies, aborts) are not retried, and 403/Cloudflare route to
+// the embedded-browser fallback instead of a same-headers retry. Timeouts are
+// excluded too: a 45s timeout rarely succeeds on a second identical attempt and
+// retrying it would double the worst-case latency.
+export function shouldRetryWebFetch(code: string, statusCode: number | undefined): boolean {
+  if (code === 'network_error') return true;
+  if (code === 'http_error') {
+    return statusCode === 429 || statusCode === 502 || statusCode === 503 || statusCode === 504;
+  }
+  return false;
 }
 
 export function isPermittedWebFetchRedirect(originalUrl: string, redirectUrl: string): boolean {

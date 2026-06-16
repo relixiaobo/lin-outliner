@@ -19,8 +19,11 @@ export {
   MAX_FETCH_CHARS,
   MAX_SEARCH_LIMIT,
   WEB_FETCH_BROWSER_TIMEOUT_MS,
+  WEB_FETCH_CLIENT_HINT_PLATFORM,
+  WEB_FETCH_CLIENT_HINT_UA,
   WEB_FETCH_MAX_REDIRECTS,
   WEB_FETCH_RENDER_SETTLE_MS,
+  WEB_FETCH_RETRY_DELAY_MS,
   WEB_FETCH_USER_AGENT,
 } from './agentWebConstants';
 export { extractContent, extractMetadata } from './agentWebFetchContent';

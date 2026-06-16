@@ -2,9 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import {
   assessWebFetchFallback,
   browserFallbackLooksUseful,
+  crossHostRedirectHint,
   detectBrowserChallenge,
   isPermittedWebFetchRedirect,
   looksLikeDynamicHtmlShell,
+  shouldRetryWebFetch,
 } from '../../src/main/agentWebFetchFallback';
 import {
   extractFetchedPageContent,
@@ -100,11 +102,59 @@ describe('agent web fetch fallback heuristics', () => {
     });
   });
 
+  test('does not flag a full article that merely embeds a Cloudflare beacon', async () => {
+    const paragraph = 'This is a complete article paragraph with substantial readable body text that Defuddle keeps. ';
+    const html = [
+      '<!doctype html><html><head><title>Real Article</title>',
+      // The kind of analytics/turnstile reference embedded on Cloudflare-fronted
+      // sites — it must NOT be treated as a challenge on a full page.
+      '<script defer src="https://static.cloudflareinsights.com/beacon.min.js"></script>',
+      '</head><body><main><article><h1>Real Article</h1>',
+      `<p>${paragraph.repeat(40)}</p>`,
+      '</article></main></body></html>',
+    ].join('');
+    const params = expectParams(normalizeWebFetchParams({ url: 'https://example.com/article' }));
+    const fetched = fetchedHtml(html);
+    const page = await extractFetchedPageContent(fetched, params);
+
+    // A bare "cloudflare" substring is no longer a challenge marker...
+    expect(detectBrowserChallenge(html, fetched.finalUrl, 'Real Article')).toBeNull();
+    // ...and even if markers appeared, a content-rich page must not fall back.
+    expect(assessWebFetchFallback(fetched, params, page).shouldFallback).toBe(false);
+  });
+
   test('allows only same host or www redirects', () => {
     expect(isPermittedWebFetchRedirect('https://example.com/a', 'https://www.example.com/b')).toBe(true);
     expect(isPermittedWebFetchRedirect('https://www.example.com/a', 'https://example.com/b')).toBe(true);
     expect(isPermittedWebFetchRedirect('https://example.com/a', 'https://evil.example.net/b')).toBe(false);
     expect(isPermittedWebFetchRedirect('https://example.com/a', 'http://example.com/b')).toBe(false);
+  });
+
+  test('crossHostRedirectHint is undefined for same host, set for a different host', () => {
+    expect(crossHostRedirectHint('https://example.com/a', 'https://example.com/b')).toBeUndefined();
+    expect(crossHostRedirectHint('https://example.com/a', 'https://www.example.com/b')).toBeUndefined();
+
+    expect(crossHostRedirectHint('https://t.co/x', 'https://www.wsj.com/article')).toEqual({
+      type: 'redirected_host',
+      originalUrl: 'https://t.co/x',
+      finalUrl: 'https://www.wsj.com/article',
+      finalHost: 'www.wsj.com',
+    });
+  });
+
+  test('shouldRetryWebFetch retries transient faults only', () => {
+    expect(shouldRetryWebFetch('network_error', undefined)).toBe(true);
+    expect(shouldRetryWebFetch('http_error', 429)).toBe(true);
+    expect(shouldRetryWebFetch('http_error', 502)).toBe(true);
+    expect(shouldRetryWebFetch('http_error', 503)).toBe(true);
+    expect(shouldRetryWebFetch('http_error', 504)).toBe(true);
+    // Permanent / browser-routed / abort failures are not retried.
+    expect(shouldRetryWebFetch('http_error', 403)).toBe(false);
+    expect(shouldRetryWebFetch('http_error', 404)).toBe(false);
+    expect(shouldRetryWebFetch('http_error', 500)).toBe(false);
+    expect(shouldRetryWebFetch('timeout', undefined)).toBe(false);
+    expect(shouldRetryWebFetch('http_401', undefined)).toBe(false);
+    expect(shouldRetryWebFetch('aborted', undefined)).toBe(false);
   });
 
   test('uses browser fallback only when it improves extracted content', async () => {

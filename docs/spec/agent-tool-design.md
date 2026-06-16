@@ -2237,12 +2237,26 @@ Result behavior:
   snippets with offsets, similar to `file_grep` over one fetched URL.
 - `offset`/`max_chars` page full content in read mode.
   `match_offset`/`head_limit` page matches in find mode.
-- Same-host redirects may be followed transparently. Cross-host redirects should
-  return `data.hint.type: "redirected_host"` unless the final host is already
-  permitted; the agent can then call `web_fetch` on `finalUrl`.
+- Requests present a real Chrome desktop User-Agent and the matching browser
+  request headers (`sec-ch-ua`, `sec-fetch-*`, `accept-language`,
+  `upgrade-insecure-requests`) so origins that gate on a browser identity serve
+  real content instead of a bot challenge. The embedded-browser fallback renders
+  with the same identity.
+- Redirects are followed transparently across hosts (link shorteners, trackers,
+  regional/mobile subdomains). When the landing host differs from the requested
+  host the result still returns content plus a non-fatal
+  `data.hint.type: "redirected_host"` and a warning, with `finalUrl` reflecting
+  the landing page — the agent does not need to re-fetch. A redirect whose target
+  is a local/private host is the one case that is refused.
+- Transient failures (network drops, HTTP 429/502/503/504) are retried once with
+  a short backoff before surfacing. 403/Cloudflare/JS-shell responses skip the
+  retry and route straight to the embedded-browser render fallback.
 - Authentication walls return `login_required`; JavaScript-only shells,
   Cloudflare, or HTTP errors that might work in a live browser return
-  `needs_browser`.
+  `needs_browser` and trigger the embedded-browser render fallback. A Cloudflare
+  challenge counts only when the extracted content is thin — a full article that
+  merely embeds a Cloudflare analytics/turnstile beacon is returned as-is, not
+  flagged as a challenge.
 - Binary content returns `binary_unsupported` unless Lin implements a binary
   persistence path. If binary persistence is added, return a file path in
   `data.metadata` and keep model-visible text short.
