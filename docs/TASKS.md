@@ -695,6 +695,13 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **agent-debug summary-oracle polish** (cc-2, PR #274) — follow-up hygiene on the already-`done`
+  `agent-debug-run-grounded` (#264): comments + tests only, no behavior change. Corrects a stale
+  comment (cross-run `tool_result.replaced` slimming is matched by globally-unique `toolCallId`, not
+  "stamped with its producing run's id" — the reverted round-1 approach) and adds equivalence tests
+  pinning the light `summarizeRunStream` path to the `summarizeDebugRun` oracle (single- + multi-round
+  in-flight rollup). **Gate (main):** `/code-review xhigh` — no findings; `agentDebugView.test.ts`
+  13 pass. No plan file (polish on top of #264).
 - **NL save-as-skill routing** (codex, PR #271) — part of `agent-skills-authoring`'s Skillify
   Upgrade unit. Explicit natural-language skill-authoring requests ("save this as a skill", "turn
   that workflow into a skill", "update the import skill", "fix the skill that failed") now normalize

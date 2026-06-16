@@ -1265,6 +1265,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **agent-debug: correct stale slimming comment; pin light summary to its oracle (PR #274, cc-2)** —
+  comments + tests only, no behavior change. (1) Fixed a stale comment in `agentDebugView.ts`:
+  cross-run `tool_result.replaced` (output slimming) is matched to its producing run by the
+  globally-unique `toolCallId` (spliced at derivation), **not** "stamped with its producing run's id"
+  — the round-1 approach #264 reverted; the comment now matches the implementation and the spec
+  (`agent-event-log-rendering.md`). (2) Added equivalence tests pinning the light `summarizeRunStream`
+  path to the correct-by-construction `summarizeDebugRun` oracle (single-round + multi-round in-flight
+  usage rollup), enforcing the "summary never disagrees with the detail" invariant both functions'
+  comments promise. **Gate (main):** `/code-review xhigh` — no findings (comment correction verified
+  against spec; equivalence verified by running the suite); `agentDebugView.test.ts` 13 pass.
+  ([#274](https://github.com/relixiaobo/lin-outliner/pull/274))
+
 - **Plan: default #General channel (PR #265, codex-4)** — docs-only. Adds
   `docs/plans/default-general-channel.md`: a Slack-like default **`#General`** Channel — a
   reserved-identity Conversation that exists by default (user + coordinator), **auto-includes every
