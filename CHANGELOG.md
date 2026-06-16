@@ -1435,6 +1435,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **self-definition write dedup in `agentLocalTools` (main, fast-track)** — behavior-preserving
+  cleanup of the #286 self-definition gateway: `file_edit` and `file_write` shared a 4×-duplicated
+  `selfDefinitionWrite?.kind === 'skill'/'agent'` ladder (data spread, registry-reload notify, success
+  `instructions`). Extracted three helpers — `selfDefinitionWriteData`,
+  `notifySelfDefinitionContentWrite`, `selfDefinitionWriteInstructions` — that own the skill/agent
+  mapping once so the two tools stay in lockstep, and dropped the dead `agentDefinitionWrite` parameter
+  `notifySuccessfulAgentDefinitionContentWrite` only `void`-ed. No functional change. typecheck ✓ ·
+  `agentLocalTools` + `agentRuntimeSkillsIntegration` + `agentSkills` core suites 283 pass / 4 skip / 0
+  fail.
 - **agent-debug: correct stale slimming comment; pin light summary to its oracle (PR #274, cc-2)** —
   comments + tests only, no behavior change. (1) Fixed a stale comment in `agentDebugView.ts`:
   cross-run `tool_result.replaced` (output slimming) is matched to its producing run by the
