@@ -154,6 +154,115 @@ export function extractGoogleSerp(document: Document, maxResults: number): Googl
   };
 }
 
+export interface DuckDuckGoSerpExtraction {
+  htmlLength: number;
+  results: WebSearchResult[];
+}
+
+// Single source of truth for the DuckDuckGo HTML-endpoint result link. The
+// readiness gate in agentTools.ts imports this; the extractor below hardcodes the
+// same literal because it is serialized via .toString() and cannot reference a
+// module binding.
+export const DUCKDUCKGO_RESULT_SELECTOR = 'a.result__a';
+
+export function duckDuckGoSerpExtractorExpression(maxResults = MAX_SEARCH_LIMIT): string {
+  return `(${extractDuckDuckGoSerp.toString()})(document, ${normalizeSerpLimit(maxResults)})`;
+}
+
+/**
+ * Pure DOM extractor for DuckDuckGo's no-JS HTML endpoint
+ * (html.duckduckgo.com/html/). Each organic result is an `a.result__a` whose
+ * href is a `//duckduckgo.com/l/?uddg=<target>` redirector; the real URL lives in
+ * the `uddg` param. Sponsored rows (`result--ad`) are skipped. Serialized via
+ * {@link duckDuckGoSerpExtractorExpression} and runs IN the page, so it must stay
+ * fully self-contained — no module-scope helpers.
+ */
+export function extractDuckDuckGoSerp(document: Document, maxResults: number): DuckDuckGoSerpExtraction {
+  const seen = new Set<string>();
+  const results: WebSearchResult[] = [];
+  const limit = Number.isFinite(maxResults) ? Math.max(1, Math.trunc(maxResults)) : 10;
+
+  const compact = (value: unknown): string => String(value || '').replace(/\s+/g, ' ').trim();
+  const textOf = (node: Element | null | undefined): string => {
+    if (!node) return '';
+    const renderedText = 'innerText' in node ? (node as HTMLElement).innerText : undefined;
+    return compact(renderedText || node.textContent);
+  };
+  const hostOf = (url: string): string | undefined => {
+    try {
+      return new URL(url).host;
+    } catch {
+      return undefined;
+    }
+  };
+  const decodeTarget = (href: string | null | undefined): string | null => {
+    if (!href) return null;
+    try {
+      const url = new URL(href, 'https://duckduckgo.com');
+      if (/(^|\.)duckduckgo\.com$/i.test(url.hostname)) {
+        const target = url.searchParams.get('uddg');
+        return target && /^https?:\/\//i.test(target) ? target : null;
+      }
+      return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null;
+    } catch {
+      return null;
+    }
+  };
+
+  // The 'a.result__a' literal must stay in sync with DUCKDUCKGO_RESULT_SELECTOR;
+  // this function is serialized via .toString() and runs in-page, so it cannot
+  // reference the exported constant.
+  for (const anchor of Array.from(document.querySelectorAll('a.result__a'))) {
+    if (results.length >= limit) break;
+    const block = anchor.closest('.result') || anchor.parentElement;
+    if (block && /result--ad|result--sponsored/i.test(block.className || '')) continue;
+    const url = decodeTarget(anchor.getAttribute('href'));
+    if (!url || seen.has(url)) continue;
+    const title = textOf(anchor);
+    if (!title) continue;
+
+    seen.add(url);
+    const snippetEl = block
+      ? block.querySelector('.result__snippet') || block.querySelector('.result__extras')
+      : null;
+    results.push({
+      title,
+      url,
+      snippet: textOf(snippetEl),
+      source: hostOf(url),
+    });
+  }
+
+  return {
+    htmlLength: document.documentElement?.outerHTML?.length || 0,
+    results,
+  };
+}
+
+// Pure decision helpers for the web-search fallback chain (Electron-free so they
+// are unit-testable). A summary of one engine attempt, projected from the
+// SearchOutcome union in agentTools.ts.
+export interface SearchAttemptSummary {
+  kind: 'ok' | 'hint' | 'error';
+  resultCount: number;
+  code?: string;
+}
+
+// Try the secondary engine when the primary loaded but returned nothing, was
+// blocked / needs a browser (hint), or failed with a recoverable error. A bad
+// query or a caller abort is not worth a second engine.
+export function shouldFallbackToSecondaryEngine(summary: SearchAttemptSummary): boolean {
+  if (summary.kind === 'ok') return summary.resultCount === 0;
+  if (summary.kind === 'hint') return true;
+  return summary.code !== 'invalid_args' && summary.code !== 'aborted';
+}
+
+// A transient nav fault is worth one immediate retry; a block, extraction miss,
+// bad query, or abort is not.
+export function isTransientSearchError(code: string): boolean {
+  return code === 'network_error' || code === 'timeout';
+}
+
 function normalizeSerpLimit(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_SEARCH_LIMIT;
   return Math.max(1, Math.min(MAX_SEARCH_LIMIT, Math.trunc(value)));

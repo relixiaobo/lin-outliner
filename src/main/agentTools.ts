@@ -35,7 +35,10 @@ import {
   WEB_FETCH_MAX_REDIRECTS,
   WEB_FETCH_RENDER_SETTLE_MS,
   WEB_FETCH_USER_AGENT,
+  WEB_SEARCH_RETRY_DELAY_MS,
+  WEB_SEARCH_USER_AGENT,
   buildBingImagesSearchUrl,
+  buildDuckDuckGoSearchUrl,
   buildGoogleSearchUrl,
   buildWebFetchSuccessEnvelopeFromPage,
   extractFetchedPageContent,
@@ -81,8 +84,12 @@ import {
 } from './agentWebFetchFallback';
 import {
   BING_IMAGES_RESULT_SELECTOR,
+  DUCKDUCKGO_RESULT_SELECTOR,
   bingImagesExtractorExpression,
+  duckDuckGoSerpExtractorExpression,
   googleSerpExtractorExpression,
+  isTransientSearchError,
+  shouldFallbackToSecondaryEngine,
 } from './agentWebSearchSerp';
 
 const GOOGLE_SEARCH_HOME_URL = 'https://www.google.com/';
@@ -409,9 +416,12 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
       try {
         const search = await provider.run(params, signal);
         const durationMs = elapsed(started);
+        // The outcome may come from a fallback engine, so trust its providerName
+        // when present and only default to the kind's primary provider.
+        const providerName = search.providerName ?? provider.providerName;
         if (search.kind === 'hint') {
           return webSearchToolResult(successEnvelope('web_search', {
-            ...baseSearchData(params, provider.providerName, durationMs, search.finalUrl),
+            ...baseSearchData(params, providerName, durationMs, search.finalUrl),
             resultCount: 0,
             truncated: false,
             hint: search.hint,
@@ -426,7 +436,7 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
         if (search.kind === 'error') {
           return webSearchToolResult(errorEnvelope('web_search', search.code, search.message, {
             data: {
-              ...baseSearchData(params, provider.providerName, durationMs, search.finalUrl),
+              ...baseSearchData(params, providerName, durationMs, search.finalUrl),
               resultCount: 0,
               truncated: false,
               results: [],
@@ -441,14 +451,14 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
         const truncated = allResults.length > results.length;
 
         return webSearchToolResult(successEnvelope('web_search', {
-          ...baseSearchData(params, provider.providerName, durationMs, search.finalUrl),
+          ...baseSearchData(params, providerName, durationMs, search.finalUrl),
           resultCount: results.length,
           totalResults: allResults.length,
           truncated,
           results,
         }, {
           instructions: searchInstructions(params.kind, results.length > 0),
-          warnings: searchWarnings(params),
+          warnings: searchWarnings(params, providerName),
           metrics: { durationMs, truncated, outputBytes: search.htmlBytes },
         }));
       } catch (error) {
@@ -470,13 +480,60 @@ interface SearchProvider {
   run(params: NormalizedWebSearchParams, signal?: AbortSignal): Promise<SearchOutcome>;
 }
 
+const DUCKDUCKGO_PROVIDER = 'duckduckgo_html';
+
 // One descriptor per search kind: which provider runs it and how the normalized
 // query maps onto the provider call. execute() stays kind-agnostic; per-kind copy
 // lives in searchWarnings/searchInstructions so adding a kind touches one place.
+// `web` retries Google on a transient fault, then falls back to DuckDuckGo;
+// `image` retries Bing (it has no secondary engine).
 const SEARCH_PROVIDERS: Record<WebSearchKind, SearchProvider> = {
-  web: { providerName: 'google_serp', run: (params, signal) => searchGoogle(buildGoogleSearchUrl(params.effectiveQuery), signal) },
-  image: { providerName: 'bing_images', run: (params, signal) => searchBingImages(params.effectiveQuery, signal) },
+  web: { providerName: 'google_serp', run: (params, signal) => runWebSearchWithFallback(params, signal) },
+  image: {
+    providerName: 'bing_images',
+    run: (params, signal) => runSearchWithRetry(() => searchBingImages(params.effectiveQuery, signal), signal),
+  },
 };
+
+// Run an engine attempt, retrying once after a short backoff on a transient nav
+// fault (network drop / timeout). Blocks, extraction misses, bad queries, and
+// aborts are returned as-is — retrying them just wastes a round trip.
+async function runSearchWithRetry(
+  attempt: () => Promise<SearchOutcome>,
+  signal?: AbortSignal,
+): Promise<SearchOutcome> {
+  const first = await attempt();
+  if (signal?.aborted || first.kind !== 'error' || !isTransientSearchError(first.code)) return first;
+  await delay(WEB_SEARCH_RETRY_DELAY_MS, signal);
+  return attempt();
+}
+
+// Web search: Google (with one transient retry), then DuckDuckGo when Google is
+// blocked, empty, or failed recoverably. The DuckDuckGo outcome carries its own
+// providerName so the envelope and the fallback warning reflect the real engine.
+async function runWebSearchWithFallback(
+  params: NormalizedWebSearchParams,
+  signal?: AbortSignal,
+): Promise<SearchOutcome> {
+  const google = await runSearchWithRetry(
+    () => searchGoogle(buildGoogleSearchUrl(params.effectiveQuery), signal),
+    signal,
+  );
+  if (signal?.aborted) return google;
+  const summary = {
+    kind: google.kind,
+    resultCount: google.kind === 'ok' ? google.results.length : 0,
+    ...(google.kind === 'error' ? { code: google.code } : {}),
+  };
+  if (!shouldFallbackToSecondaryEngine(summary)) return google;
+
+  const duck = await searchDuckDuckGo(params.effectiveQuery, signal);
+  if (duck.kind === 'ok' && duck.results.length > 0) return duck;
+  // Neither engine produced results: surface the most actionable signal. A
+  // Google hint (search_blocked / needs_browser) tells the agent what to do;
+  // otherwise return the DuckDuckGo outcome.
+  return google.kind === 'hint' ? google : duck;
+}
 
 // The invariant envelope fields shared by the hint / error / success branches —
 // written once so adding or renaming a field cannot drift across the three.
@@ -497,8 +554,11 @@ function baseSearchData(
   };
 }
 
-function searchWarnings(params: NormalizedWebSearchParams): string[] | undefined {
+function searchWarnings(params: NormalizedWebSearchParams, providerName?: string): string[] | undefined {
   const warnings: string[] = [];
+  if (providerName === DUCKDUCKGO_PROVIDER) {
+    warnings.push('Google was unavailable; these results are from the DuckDuckGo fallback engine.');
+  }
   if (params.kind === 'image') {
     warnings.push('Image results may be copyright-protected. Treat them as drafts and confirm licensing with the user before final use.');
   }
@@ -911,9 +971,9 @@ function createWebFetchWindow(): BrowserWindow {
 }
 
 type SearchOutcome =
-  | { kind: 'ok'; finalUrl: string; results: WebSearchResult[]; htmlBytes: number }
-  | { kind: 'hint'; finalUrl: string; hint: WebToolHint }
-  | { kind: 'error'; finalUrl?: string; code: string; message: string };
+  | { kind: 'ok'; finalUrl: string; results: WebSearchResult[]; htmlBytes: number; providerName?: string }
+  | { kind: 'hint'; finalUrl: string; hint: WebToolHint; providerName?: string }
+  | { kind: 'error'; finalUrl?: string; code: string; message: string; providerName?: string };
 
 // Owns the hidden-window lifecycle shared by every search kind: the rate-limit
 // gate, the off-screen BrowserWindow, abort wiring, and guaranteed teardown.
@@ -933,6 +993,10 @@ async function withSearchWindow(
   }
 
   const window = createWebSearchWindow();
+  // Render with a real Chrome desktop UA instead of Electron's default (which
+  // advertises "Electron" + the app name) so engines serve the standard desktop
+  // SERP the scrapers target and are marginally less likely to gate the session.
+  window.webContents.setUserAgent(WEB_SEARCH_USER_AGENT);
   const onAbort = () => {
     try {
       if (!window.isDestroyed()) {
@@ -1059,6 +1123,52 @@ async function searchBingImages(query: string, signal?: AbortSignal): Promise<Se
       return { kind: 'error', code: 'extraction_failed', message: 'could not extract Bing image results', finalUrl };
     }
     return { kind: 'ok', finalUrl, results: payload.results, htmlBytes: payload.htmlLength };
+  });
+}
+
+// DuckDuckGo HTML-endpoint fallback for kind:"web". The /html/ page is
+// server-rendered (no search-box dance, no scroll), so it loads the results
+// directly. Every outcome carries providerName so execute() reports the real
+// engine. It runs the same verification check, recognizing generic
+// reCAPTCHA / Cloudflare / "Just a moment" markers as search_blocked.
+async function searchDuckDuckGo(query: string, signal?: AbortSignal): Promise<SearchOutcome> {
+  if (!query) {
+    return { kind: 'error', code: 'invalid_args', message: 'missing search query', providerName: DUCKDUCKGO_PROVIDER };
+  }
+
+  const searchUrl = buildDuckDuckGoSearchUrl(query);
+  return withSearchWindow(signal, async (webContents) => {
+    try {
+      await navigateAndWait(webContents, searchUrl, {
+        timeoutMs: SEARCH_NAV_TIMEOUT_MS,
+        signal,
+      });
+    } catch (error) {
+      return {
+        kind: 'error',
+        code: classifyWebError(error),
+        message: errorMessage(error),
+        finalUrl: webContents.getURL() || searchUrl,
+        providerName: DUCKDUCKGO_PROVIDER,
+      };
+    }
+
+    const ready = await waitForSelector(webContents, DUCKDUCKGO_RESULT_SELECTOR, 8_000, signal);
+    const finalUrl = webContents.getURL() || searchUrl;
+    if (!ready) {
+      const hint = await detectSearchVerification(webContents, finalUrl);
+      if (hint) return { kind: 'hint', finalUrl, hint, providerName: DUCKDUCKGO_PROVIDER };
+      return { kind: 'hint', finalUrl, hint: { type: 'needs_browser', reason: 'spa_shell' }, providerName: DUCKDUCKGO_PROVIDER };
+    }
+
+    const payload = await safeExecuteJs<{ htmlLength: number; results: WebSearchResult[] }>(
+      webContents,
+      duckDuckGoSerpExtractorExpression(),
+    );
+    if (!payload) {
+      return { kind: 'error', code: 'extraction_failed', message: 'could not extract DuckDuckGo results', finalUrl, providerName: DUCKDUCKGO_PROVIDER };
+    }
+    return { kind: 'ok', finalUrl, results: payload.results, htmlBytes: payload.htmlLength, providerName: DUCKDUCKGO_PROVIDER };
   });
 }
 

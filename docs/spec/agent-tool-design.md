@@ -2121,6 +2121,18 @@ Result behavior:
   `web_fetch` → `file_read`/embed — image search only adds discovery. Image
   results may be copyright-protected, so the success envelope warns to treat them
   as drafts and confirm reuse with the user. `kind: "web"` (default) is unchanged.
+- `kind: "web"` (default) runs Google (`providerName: "google_serp"`) and, when
+  Google is blocked, fails recoverably, or returns zero results, automatically
+  falls back to the DuckDuckGo HTML endpoint (`providerName: "duckduckgo_html"`).
+  When the fallback engine is used, the envelope warns that results came from
+  DuckDuckGo. A bad query (`invalid_args`) or a caller abort does not trigger the
+  fallback.
+- The off-screen search window renders with a real Chrome desktop User-Agent
+  (not Electron's default), so engines serve the standard desktop SERP the
+  scrapers target.
+- A transient navigation fault (network drop / timeout) is retried once with a
+  short backoff per engine before giving up or falling back. Blocks, extraction
+  misses, bad queries, and aborts are not retried.
 - `site` is a convenience parameter for a single host. For multiple hosts, the
   agent should issue multiple searches or put explicit search syntax in
   `query`.
@@ -2128,7 +2140,8 @@ Result behavior:
   it, return results and add a warning.
 - CAPTCHA, unusual traffic, or search-provider block pages return
   `status: "success"` with `data.hint.type: "search_blocked"`, not retries in a
-  loop.
+  loop. For `kind: "web"` this is surfaced only after the DuckDuckGo fallback has
+  also failed to produce results.
 - Empty results return `status: "success"` with `resultCount: 0` and a
   `instructions` suggesting a broader query.
 - The model-visible result should make sources easy to cite. If the adapter
