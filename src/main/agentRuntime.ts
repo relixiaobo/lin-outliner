@@ -283,11 +283,15 @@ import {
   type DoctorDiagnostic,
 } from './agentSelfMaintenanceTools';
 import {
+  applyAgentRenderProjectionPatch,
   buildAgentRenderProjection,
   renderTaskStatusFromRunStatus,
+  type AgentRenderMessageEntity,
   type AgentRenderActivityEntry,
   type AgentRenderActiveCompaction,
   type AgentRenderActiveDream,
+  type AgentRenderProjection,
+  type AgentRenderProjectionPatch,
   type AgentRenderDreamTaskEntity,
   type AgentRenderTaskEntity,
   type AgentRenderTaskStatus,
@@ -495,6 +499,7 @@ interface AgentConversationState {
   pendingEventAppend: Promise<void>;
   pendingProjectionLastEventType: string | null;
   pendingProjectionTimer: ReturnType<typeof setTimeout> | null;
+  lastRenderProjection: AgentRenderProjection | null;
   queuedFollowUpSkillListingReservation: SkillListingReservation | null;
   reactiveCompactRequested: boolean;
   revision: number;
@@ -2391,6 +2396,7 @@ export class AgentRuntime {
       pendingEventAppend: Promise.resolve(),
       pendingProjectionLastEventType: null,
       pendingProjectionTimer: null,
+      lastRenderProjection: null,
       queuedFollowUpSkillListingReservation: null,
       reactiveCompactRequested: false,
       revision: 0,
@@ -4293,9 +4299,11 @@ export class AgentRuntime {
   }
 
   private conversationResponse(conversationId: string, conversation: AgentConversationState) {
+    const renderProjection = this.renderProjection(conversation);
+    conversation.lastRenderProjection = renderProjection;
     return {
       conversationId: conversationId,
-      renderProjection: this.renderProjection(conversation),
+      renderProjection,
       pendingUserQuestion: this.pendingUserQuestionView(conversationId, conversation),
     };
   }
@@ -4342,6 +4350,57 @@ export class AgentRuntime {
     return {
       ...projection,
       conversationTitle: sanitizeConversationTitle(projection.conversationTitle),
+    };
+  }
+
+  private streamingProjectionPatch(
+    conversation: AgentConversationState,
+    revision: number,
+  ): AgentRenderProjectionPatch | null {
+    const previous = conversation.lastRenderProjection;
+    if (!previous || previous.revision !== revision - 1) return null;
+    const members = conversation.eventState.conversation?.members ?? [];
+    if (isMultiAgentConversation(members)) return null;
+    const activeRun = conversation.activeRun;
+    const messageId = activeRun?.assistantMessageId;
+    if (!activeRun || activeRun.channelTurn || !messageId) return null;
+    const previousMessage = previous.entities.messages[messageId];
+    const eventMessage = conversation.eventState.messages[messageId];
+    if (!previousMessage || previousMessage.role !== 'assistant') return null;
+    if (!eventMessage || eventMessage.role !== 'assistant' || eventMessage.status !== 'streaming') return null;
+    if (!previous.transcriptRows.some((row) => row.kind === 'message' && row.messageId === messageId)) return null;
+    if (!isSingleTextPersistedContent(eventMessage.content, activeRun.assistantText)) return null;
+    const runList = this.activeRunList(conversation);
+    const pendingToolCallIds = uniqueStrings([
+      ...Array.from(conversation.agent.state.pendingToolCalls),
+      ...runList.flatMap((run) => Array.from(run.agent.state.pendingToolCalls)),
+    ]);
+    const message: AgentRenderMessageEntity = {
+      ...previousMessage,
+      status: eventMessage.status,
+      content: textPersistedContent(activeRun.assistantText),
+      updatedAt: eventMessage.updatedAt,
+    };
+    return {
+      baseRevision: previous.revision,
+      revision,
+      activeRunId: this.activeRunId(conversation),
+      activeRuns: runList.map((run) => ({
+        runId: run.id,
+        agentId: run.executingAgentId,
+        addressedByMessageId: run.addressedByMessageId,
+        startedAt: run.startedAt,
+      })),
+      dmRunActive: true,
+      channelRunsActive: false,
+      pendingToolCallIds,
+      entities: { messages: { [messageId]: message } },
+      dmStreaming: {
+        messageId,
+        rowId: previous.dmStreaming?.rowId ?? `assistant:${messageId}`,
+        text: activeRun.assistantText,
+        updatedAt: eventMessage.updatedAt,
+      },
     };
   }
 
@@ -4464,9 +4523,32 @@ export class AgentRuntime {
   private emitProjectionNow(conversationId: string, lastEventType: string | null = null) {
     const conversation = this.conversations.get(conversationId);
     if (!conversation) return;
-    conversation.revision += 1;
-    const renderProjection = this.renderProjection(conversation);
+    const revision = conversation.revision + 1;
+    const projectionPatch = lastEventType === 'message_update'
+      ? this.streamingProjectionPatch(conversation, revision)
+      : null;
+    conversation.revision = revision;
     const timestamp = Date.now();
+    if (projectionPatch) {
+      const nextProjection = conversation.lastRenderProjection
+        ? applyAgentRenderProjectionPatch(conversation.lastRenderProjection, projectionPatch)
+        : null;
+      if (nextProjection) {
+        conversation.lastRenderProjection = nextProjection;
+        this.domainEvents.publish({
+          lane: 'renderer-projection',
+          name: 'RendererProjectionUpdated',
+          conversationId,
+          lastEventType,
+          revision: conversation.revision,
+          projectionPatch,
+          createdAt: timestamp,
+        });
+        return;
+      }
+    }
+    const renderProjection = this.renderProjection(conversation);
+    conversation.lastRenderProjection = renderProjection;
     this.domainEvents.publish({
       lane: 'renderer-projection',
       name: 'RendererProjectionUpdated',
@@ -7917,6 +7999,10 @@ function textPersistedContent(text: string): AgentPersistedContent[] {
   return [{ type: 'text', text }];
 }
 
+function isSingleTextPersistedContent(content: AgentPersistedContent[], text: string): boolean {
+  return content.length === 1 && content[0]?.type === 'text' && content[0].text === text;
+}
+
 function isDuplicateTailUserMessage(eventState: AgentEventReplayState, message: UserMessage): boolean {
   const tail = getAgentEventActivePath(eventState).at(-1);
   return tail?.role === 'user'
@@ -9157,6 +9243,16 @@ function slashCommandDescription(displayName: string | undefined, description: s
 }
 
 function rendererProjectionEventFromDomain(event: RendererProjectionDomainEvent): AgentRuntimeEvent {
+  if (event.projectionPatch) {
+    return {
+      type: 'projection_patch',
+      conversationId: event.conversationId,
+      lastEventType: event.lastEventType,
+      revision: event.revision,
+      patch: event.projectionPatch,
+      timestamp: event.createdAt,
+    };
+  }
   return {
     type: 'projection',
     conversationId: event.conversationId,

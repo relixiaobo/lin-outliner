@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import type { AgentMessageEntry, AgentTurnPhase } from '../../agent/runtime';
 import type {
   AssistantMessage,
@@ -59,6 +59,7 @@ import { AgentIdentityAvatar } from './AgentIdentityAvatar';
 
 const USER_MESSAGE_COLLAPSED_LINES = 5;
 const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
+const EMPTY_CHILD_RUN_MAP: ReadonlyMap<string, AgentRenderChildRunEntity> = new Map();
 
 interface AgentMessageRowProps {
   /** Speaker name for Channel attribution; null/undefined renders no badge (DM, user, coordinator). */
@@ -590,7 +591,7 @@ function renderAssistantBlocks(
   return rendered;
 }
 
-export function AgentMessageRow({
+function AgentMessageRowComponent({
   actorLabel = null,
   actorMention,
   busy = false,
@@ -930,3 +931,73 @@ export function AgentMessageRow({
     </AgentMessageFrame>
   );
 }
+
+function sameReadonlySet<T>(left: ReadonlySet<T>, right: ReadonlySet<T>): boolean {
+  if (left === right) return true;
+  if (left.size !== right.size) return false;
+  for (const value of left) {
+    if (!right.has(value)) return false;
+  }
+  return true;
+}
+
+function sameReadonlyMap<K, V>(left: ReadonlyMap<K, V>, right: ReadonlyMap<K, V>): boolean {
+  if (left === right) return true;
+  if (left.size !== right.size) return false;
+  for (const [key, value] of left) {
+    if (right.get(key) !== value) return false;
+  }
+  return true;
+}
+
+function sameReplyAnchor(left: AgentReplyAnchor | null | undefined, right: AgentReplyAnchor | null | undefined): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.targetMessageId === right.targetMessageId && left.quote === right.quote;
+}
+
+function sameMessageEntry(left: AgentMessageEntry, right: AgentMessageEntry): boolean {
+  return left === right || (
+    left.id === right.id
+    && left.nodeId === right.nodeId
+    && left.message === right.message
+    && left.branches === right.branches
+    && left.streaming === right.streaming
+    && left.actor === right.actor
+    && left.runId === right.runId
+    && left.runDurationMs === right.runDurationMs
+    && left.turnInterrupted === right.turnInterrupted
+    && left.addressedByMessageId === right.addressedByMessageId
+  );
+}
+
+function sameAgentMessageRowProps(prev: AgentMessageRowProps, next: AgentMessageRowProps): boolean {
+  return prev.actorLabel === next.actorLabel
+    && prev.actorMention === next.actorMention
+    && prev.busy === next.busy
+    && prev.contentKey === next.contentKey
+    && sameMessageEntry(prev.entry, next.entry)
+    && prev.highlighted === next.highlighted
+    && prev.index === next.index
+    && prev.isLastInTurn === next.isLastInTurn
+    && prev.onCopy === next.onCopy
+    && prev.onEdit === next.onEdit
+    && prev.onRegenerate === next.onRegenerate
+    && prev.onRetry === next.onRetry
+    && prev.onNodeReferenceOpen === next.onNodeReferenceOpen
+    && prev.onOpenChildRunTranscript === next.onOpenChildRunTranscript
+    && prev.onSwitchBranch === next.onSwitchBranch
+    && sameReadonlySet(prev.pendingToolCallIds, next.pendingToolCallIds)
+    && prev.conversationId === next.conversationId
+    && prev.streaming === next.streaming
+    && sameReadonlyMap(prev.childRunsByParentToolCallId ?? EMPTY_CHILD_RUN_MAP, next.childRunsByParentToolCallId ?? EMPTY_CHILD_RUN_MAP)
+    && sameReadonlyMap(prev.toolResults, next.toolResults)
+    && prev.isMultiAgentChannel === next.isMultiAgentChannel
+    && prev.turnPhase === next.turnPhase
+    && prev.speakerLabel === next.speakerLabel
+    && prev.speakerMention === next.speakerMention
+    && sameReplyAnchor(prev.replyAnchor, next.replyAnchor)
+    && prev.onReplyAnchorClick === next.onReplyAnchorClick;
+}
+
+export const AgentMessageRow = memo(AgentMessageRowComponent, sameAgentMessageRowProps);

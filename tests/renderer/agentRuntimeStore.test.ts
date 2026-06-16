@@ -961,6 +961,125 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
+  test('folds streaming projection patches without replacing unchanged derived objects', async () => {
+    const user = userMessage('hello', 42);
+    const streamed = assistantMessage('h', 50);
+    const restoredProjection = projection([
+      { nodeId: 'u1', message: user, branches: null },
+      { nodeId: 'assistant-stream', message: streamed, branches: null },
+    ], { isStreaming: true, streamingMessageId: 'assistant-stream', revision: 1 });
+    const fake = createFakeClient({ latestConversation: conversation('saved', restoredProjection) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+    await flushMicrotasks();
+
+    const before = store.getSnapshot();
+    const userMessageRef = before.entries[0]?.kind === 'message' ? before.entries[0].message : null;
+    const toolResultsRef = before.toolResults;
+    const pendingToolCallIdsRef = before.pendingToolCallIds;
+    const nextAssistant = {
+      ...restoredProjection.entities.messages['assistant-stream']!,
+      content: [{ type: 'text' as const, text: 'hi' }],
+      updatedAt: 51,
+    };
+
+    fake.emit({
+      type: 'projection_patch',
+      conversationId: 'saved',
+      lastEventType: 'message_update',
+      revision: 2,
+      patch: {
+        baseRevision: 1,
+        revision: 2,
+        entities: { messages: { 'assistant-stream': nextAssistant } },
+        dmStreaming: {
+          messageId: 'assistant-stream',
+          rowId: 'assistant:assistant-stream',
+          text: 'hi',
+          updatedAt: 51,
+        },
+      },
+      timestamp: 101,
+    });
+
+    const after = store.getSnapshot();
+    expect(after.entries[0]?.kind === 'message' ? after.entries[0].message : null).toBe(userMessageRef);
+    expect(after.toolResults).toBe(toolResultsRef);
+    expect(after.pendingToolCallIds).toBe(pendingToolCallIdsRef);
+    const streamingAssistant = after.entries[1];
+    expect(streamingAssistant?.kind).toBe('message');
+    expect(streamingAssistant?.id).toBe('active-assistant-42');
+    expect(streamingAssistant?.message.role).toBe('assistant');
+    expect(streamingAssistant?.message.content).toEqual([{ type: 'text', text: 'hi' }]);
+    unsubscribe();
+  });
+
+  test('reloads the target conversation when a projection patch arrives before the baseline projection', async () => {
+    const initial = deferred<AgentConversation>();
+    const restoredProjection = projection([
+      { nodeId: 'u1', message: userMessage('hello'), branches: null },
+    ], { revision: 2 });
+    const fake = createFakeClient({
+      latestConversation: initial.promise,
+      restoreConversation: (conversationId) => conversation(conversationId, restoredProjection),
+    });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    fake.emit({
+      type: 'projection_patch',
+      conversationId: 'saved',
+      lastEventType: 'message_update',
+      revision: 2,
+      patch: {
+        baseRevision: 1,
+        revision: 2,
+      },
+      timestamp: 101,
+    });
+    await flushMicrotasks();
+
+    expect(fake.calls.restoreConversation).toEqual(['saved']);
+    expect(store.getSnapshot().conversationId).toBe('saved');
+    expect(store.getSnapshot().entries.map((entry) => entry.nodeId)).toEqual(['u1']);
+    unsubscribe();
+  });
+
+  test('coalesces repeated projection patch mismatches into one conversation reload', async () => {
+    const user = userMessage('hello', 42);
+    const restoredProjection = projection([
+      { nodeId: 'u1', message: user, branches: null },
+    ], { revision: 1 });
+    const reload = deferred<AgentConversation>();
+    const fake = createFakeClient({
+      latestConversation: conversation('saved', restoredProjection),
+      restoreConversation: () => reload.promise,
+    });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+    await flushMicrotasks();
+
+    const mismatchedPatch = {
+      type: 'projection_patch' as const,
+      conversationId: 'saved',
+      lastEventType: 'message_update',
+      revision: 3,
+      patch: {
+        baseRevision: 2,
+        revision: 3,
+      },
+      timestamp: 101,
+    };
+    fake.emit(mismatchedPatch);
+    fake.emit({ ...mismatchedPatch, revision: 4, patch: { baseRevision: 3, revision: 4 }, timestamp: 102 });
+    await flushMicrotasks();
+
+    expect(fake.calls.restoreConversation).toEqual(['saved']);
+    reload.resolve(conversation('saved', restoredProjection));
+    await flushMicrotasks();
+    unsubscribe();
+  });
+
   test('preserves tool output payload refs for lazy renderer loading', async () => {
     const payload: AgentPayloadRef = {
       kind: 'payload_ref',

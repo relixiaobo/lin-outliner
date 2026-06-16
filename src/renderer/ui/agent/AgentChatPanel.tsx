@@ -811,7 +811,6 @@ export function AgentChatPanel({
     reloadConversation,
     pendingApproval,
     pendingUserQuestion,
-    revision,
     retryMessage,
     resolveApproval,
     resolveUserQuestion,
@@ -860,9 +859,15 @@ export function AgentChatPanel({
   const slashCommandsRequestRef = useRef(0);
   const agentDefinitionsRequestRef = useRef(0);
   const scrollFrameRef = useRef<number | null>(null);
+  const bottomScrollFrameRef = useRef<number | null>(null);
   const highlightTimeoutRef = useRef<number | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
   const copyPayloadTextCacheRef = useRef<PayloadTextPromiseCache>(new Map());
+  const copyAssistantTurnSourceRef = useRef({ entries, toolResults, conversationId });
+  const copyAssistantTurnCallbacksRef = useRef(new Map<string, {
+    endIndex: number;
+    handler: () => Promise<void>;
+  }>());
   const dockOpenRef = useRef(dockOpen);
   const [measureVersion, setMeasureVersion] = useState(0);
   const [scrollMetrics, setScrollMetrics] = useState({ height: 0, top: 0 });
@@ -969,6 +974,7 @@ export function AgentChatPanel({
     ? visibleTranscriptRange(virtualLayout, scrollMetrics.top, scrollMetrics.height)
     : { start: 0, end: conversationRows.length };
   const visibleConversationRows = conversationRows.slice(virtualRange.start, virtualRange.end);
+  copyAssistantTurnSourceRef.current = { entries, toolResults, conversationId };
   const sendMessage = useCallback((
     prompt: string,
     attachments?: AgentMessageAttachmentInput[],
@@ -998,11 +1004,40 @@ export function AgentChatPanel({
     });
   }, [updateScrollMetrics]);
 
+  const scheduleScrollToBottom = useCallback(() => {
+    if (bottomScrollFrameRef.current !== null) return;
+    bottomScrollFrameRef.current = window.requestAnimationFrame(() => {
+      bottomScrollFrameRef.current = null;
+      const element = scrollRef.current;
+      if (!element || !stickToBottomRef.current) return;
+      element.scrollTop = element.scrollHeight;
+      updateScrollMetrics(element);
+    });
+  }, [updateScrollMetrics]);
+
   const measureConversationRow = useCallback((rowKey: string, height: number) => {
     const current = rowHeightsRef.current.get(rowKey);
     if (current !== undefined && Math.abs(current - height) < 1) return;
     rowHeightsRef.current.set(rowKey, height);
     setMeasureVersion((version) => version + 1);
+  }, []);
+
+  const copyAssistantTurnForRow = useCallback((rowKey: string, endIndex: number) => {
+    const cached = copyAssistantTurnCallbacksRef.current.get(rowKey);
+    if (cached?.endIndex === endIndex) return cached.handler;
+    const handler = async () => {
+      const source = copyAssistantTurnSourceRef.current;
+      const text = await buildAssistantTurnCopyText(
+        source.entries,
+        endIndex,
+        source.toolResults,
+        source.conversationId,
+        copyPayloadTextCacheRef.current,
+      );
+      if (text) await navigator.clipboard.writeText(text);
+    };
+    copyAssistantTurnCallbacksRef.current.set(rowKey, { endIndex, handler });
+    return handler;
   }, []);
 
   const revealMessage = useCallback((messageId: string) => {
@@ -1123,13 +1158,13 @@ export function AgentChatPanel({
   useLayoutEffect(() => {
     const element = scrollRef.current;
     if (!element || !stickToBottomRef.current) return;
-    element.scrollTop = element.scrollHeight;
-    updateScrollMetrics(element);
-  }, [conversationRows.length, dmRunActive, revision, updateScrollMetrics, virtualLayout.totalHeight]);
+    scheduleScrollToBottom();
+  }, [conversationRows.length, dmRunActive, scheduleScrollToBottom, virtualLayout.totalHeight]);
 
   useEffect(() => {
     rowHeightsRef.current.clear();
     copyPayloadTextCacheRef.current.clear();
+    copyAssistantTurnCallbacksRef.current.clear();
     setMeasureVersion((version) => version + 1);
   }, [conversationId]);
 
@@ -1137,6 +1172,10 @@ export function AgentChatPanel({
     if (scrollFrameRef.current !== null) {
       window.cancelAnimationFrame(scrollFrameRef.current);
       scrollFrameRef.current = null;
+    }
+    if (bottomScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(bottomScrollFrameRef.current);
+      bottomScrollFrameRef.current = null;
     }
     if (highlightTimeoutRef.current !== null) {
       window.clearTimeout(highlightTimeoutRef.current);
@@ -1393,16 +1432,7 @@ export function AgentChatPanel({
     const replyAnchor = rowMessageId ? replyAnchorByMessageId.get(rowMessageId) ?? null : null;
 
     const copyAssistantTurn = row.isLastInTurn && getEntryRole(row.entry) === 'assistant'
-      ? async () => {
-          const text = await buildAssistantTurnCopyText(
-            entries,
-            row.endIndex,
-            toolResults,
-            conversationId,
-            copyPayloadTextCacheRef.current,
-          );
-          if (text) await navigator.clipboard.writeText(text);
-        }
+      ? copyAssistantTurnForRow(row.key, row.endIndex)
       : undefined;
 
     return (

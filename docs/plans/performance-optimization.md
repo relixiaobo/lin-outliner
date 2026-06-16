@@ -53,13 +53,14 @@ Concretely, in priority order:
 Severity = impact at scale. Effort = rough build size. "Unlocked by P1" means the
 fix is mostly free once stable per-node identity exists in the renderer.
 
-**Execution (complete-per-PR).** Shape (b): each tier item (P0-1, P0-2, P1,
-P2-1…, the P3 items) is an **independent complete optimization shipped as its own
-PR** — the tiers are priority + dependency order, not one optimization sliced
-across PRs. P1's interface-first step is the shared-surface carve-out (the
+**Execution (complete-per-PR).** Shape (b): each listed unit is an independent
+complete optimization. P0, P1, and P3 entries can ship separately; for this
+execution the P2 tier is the complete PR-sized unit, containing P2-1 through
+P2-3. P1's interface-first step is the shared-surface carve-out (the
 delta-projection *feature* still ships complete: core emit + renderer ingestion
-together). "Unlocked by P1" is a measurement/dependency relation, not a partial
-slice — a P3 item still ships whole.
+together).
+"Unlocked by P1" is a measurement/dependency relation, not a partial slice — a P3
+item still ships whole.
 
 ---
 
@@ -157,12 +158,12 @@ below.
 
 ### P2-1 — Default the windowed/flat outliner renderer **(3×)**
 
-The default path is the recursive `OutlinerView → OutlinerItem → nested
+Before this slice, the default path was the recursive `OutlinerView → OutlinerItem → nested
 OutlinerView`, which **mounts every expanded node** (full `RichTextEditor` +
 effects + interaction hook). The windowed renderer exists
-(`OutlinerFlatView.tsx`, `VIRTUALIZE_MIN_ROWS = 60`) but is gated off behind
-`localStorage('lin:flat-outliner') === '1'` (`OutlinerFlatView.tsx:35,41`),
-selected in `NodePanel.tsx:795`. Per-row `React.memo` keeps *re-renders* cheap,
+(`OutlinerFlatView.tsx`, `VIRTUALIZE_MIN_ROWS = 60`); after this slice it is the
+default and the recursive path is retained only as the diagnostic fallback
+`localStorage('lin:recursive-outliner') === '1'`. Per-row `React.memo` keeps *re-renders* cheap,
 but mount cost, DOM size, and memory scale with **total expanded rows**, not the
 viewport — the main scaling cliff for large docs (load/expand/scroll).
 
@@ -201,11 +202,18 @@ Two coupled costs make a streamed turn O(transcript) **per frame** (≈60/s):
 - Auto-scroll `useLayoutEffect` reads `scrollHeight` (forced reflow) every frame
   via the per-frame `revision` dep (`AgentChatPanel.tsx:659-662`).
 
-Fix direction: stream a **delta for the single active message** (append/patch a
-message store) rather than re-emitting the whole projection; structurally reuse
-unchanged entries so identities are stable; then `memo` the transcript rows;
-throttle the live-tail markdown reparse; coalesce auto-scroll into one rAF and
-drop `revision` from its deps.
+Implementation: main keeps the last emitted agent render projection and, for a
+safe single-agent DM `message_update`, emits `projection_patch` for the active
+assistant message instead of re-emitting the whole projection. The patch carries a
+base revision and the renderer reloads the full conversation if the patch cannot
+apply cleanly. The renderer folds the patch into the existing projection,
+preserves unchanged entity references, reuses derived message/tool/pending-run
+objects, memoizes transcript rows, throttles the streaming markdown tail to an
+80 ms parse cadence, and moves tail auto-scroll into one requestAnimationFrame
+without a per-revision forced `scrollHeight` read. Channel turns remain
+result-first and transcript-atomic, so they use the full-projection fallback for
+transcript changes while live activity continues through the Channel activity
+fields.
 
 - Severity: high (streaming UX) · Effort: medium-large · Risk: low-medium.
 
@@ -218,9 +226,13 @@ Text edits are already debounced into a 700 ms undo group before save
 snapshot incl. history** → base64 → stringify each time (`core.ts:227-232`,
 `loroDocument.ts:153`). A burst of structural edits writes once per edit.
 
-- Fix: coalesce/debounce `saveCore` for structural mutations like text edits;
-  consider Loro incremental `export({ mode: 'update' })` + periodic snapshot
-  compaction so the per-save cost is O(change), not O(doc + full history).
+- Implementation: coalesce/debounce `saveCore` for structural mutations with the
+  existing 700 ms text-save window, and flush it before text materialization,
+  explicit transactions, undo/redo, history work, and app shutdown. Loro
+  incremental `export({ mode: 'update' })` plus periodic snapshot compaction is
+  left out of P2 because it changes the persistence format/compaction contract;
+  keep it as a measured storage redesign option if whole-snapshot export remains
+  hot after write coalescing.
 - Severity: medium-high · Effort: medium · Risk: medium (durability/crash-safety
   — keep the mutation queue + before-quit flush; tune the debounce window).
 
@@ -317,8 +329,9 @@ now — recorded so they are not "lost"):
    protocol), then the core emit change, then the renderer ingestion. Establish
    a baseline first (`measureRenderIndex` `index=` time at a known doc size) and
    re-measure after.
-3. **P2-1** (default virtualization) and **P2-2** (streaming delta) in parallel —
-   independent paths, different files.
+3. **P2** — one combined PR for default virtualization, streaming delta, and
+   structural-save coalescing; verify light/dark UI and agent/document tests
+   together.
 4. **P3** — sweep after P1; start with the reverse-reference index (retires
    P3-2/P3-7/P3-8 together), then the search/agent-history items. Re-check the
    **↑P1** items first — several will already be gone.
@@ -327,10 +340,6 @@ now — recorded so they are not "lost"):
 
 - **Delta granularity (P1):** node-level patches vs field-level patches? Start
   node-level (simplest correct unit; matches the projection cache granularity).
-- **Save coalescing window (P2-3):** reuse the 700 ms text window for structural
-  edits, or a shorter one? Trade durability vs write volume — needs a call on
-  acceptable data-loss-on-crash window (crash-safety is also covered by the
-  before-quit flush + mutation queue).
 - **Agent index storage (P3-14):** keep JSON-with-in-memory-cache, or move to
   SQLite once history is large? Decide on measured corpus growth, not now.
 - **Ownership/coordination:** P1 touches `src/core/types.ts` + `projection.ts`
@@ -339,8 +348,8 @@ now — recorded so they are not "lost"):
 
 ## Execution units (build order)
 
-Shape (b) — each is an independent complete optimization; lifecycle status is tracked in
-`docs/TASKS.md`.
+Shape (b) — each line is a complete optimization; lifecycle status is tracked in
+`docs/TASKS.md`. P2 ships as one combined line for this execution.
 
 - P0-1 agent index update at message boundaries (or debounced)
 - P0-2 drop `null, 2` from doc snapshot + agent index writes
@@ -348,9 +357,9 @@ Shape (b) — each is an independent complete optimization; lifecycle status is 
   pass (PR-A: `ProjectionUpdate` union + `buildProjectionUpdate` + `reduceProjection` with
   stable unchanged-node identity; PR-B: incrementalize reverse edges — see
   `incremental-projection.md`)
-- P2-1 default flat/virtual outliner after parity verify (light/dark)
-- P2-2 agent streaming delta + transcript row memo + tail-markdown throttle + rAF auto-scroll
-- P2-3 coalesce structural-mutation saves; evaluate Loro incremental export
+- P2 default flat/virtual outliner, agent streaming delta + transcript row memo +
+  tail-markdown throttle + rAF auto-scroll, and structural-mutation save
+  coalescing
 - P3 reverse-reference index (P3-2/7/8), render memo/lookup cleanups
       (P3-1/3/4/5/6/9/10), search index caching (P3-11/12/13/22),
       agent-history cold-rebuild/clone (P3-14/15/16), main IO (P3-17/18),

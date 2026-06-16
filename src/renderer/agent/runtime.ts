@@ -32,10 +32,12 @@ import type {
   AgentRenderMemberView,
   AgentRenderMessageEntity,
   AgentRenderProjection,
+  AgentRenderProjectionPatch,
   AgentRenderChildRunEntity,
   AgentRenderTaskEntity,
   AgentRenderTaskStatus,
 } from '../../core/agentRenderProjection';
+import { applyAgentRenderProjectionPatch } from '../../core/agentRenderProjection';
 import type { AgentActor, AgentPersistedContent } from '../../core/agentEventLog';
 
 export interface AgentMessageEntry {
@@ -142,6 +144,8 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
 const EMPTY_MEMBERS: AgentRenderMemberView[] = [];
 const EMPTY_ACTIVITY_ENTRIES: AgentRenderActivityEntry[] = [];
 const EMPTY_POV_INSPECTORS: Record<string, AgentPovInspectorView> = {};
+const CONVERSATION_MESSAGE_CACHE = new WeakMap<AgentRenderMessageEntity, AgentConversationMessage>();
+const TOOL_RESULT_CACHE = new WeakMap<AgentRenderMessageEntity, AgentToolResultWithPayloads>();
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -179,6 +183,25 @@ function buildToolResultMap(projection: AgentRenderProjection): Map<string, Agen
     }
   }
   return results;
+}
+
+function mapsHaveSameEntityValues<T>(left: ReadonlyMap<string, T>, right: ReadonlyMap<string, T>): boolean {
+  if (left.size !== right.size) return false;
+  for (const [key, value] of left) {
+    if (right.get(key) !== value) return false;
+  }
+  return true;
+}
+
+function patchLeavesToolResultsUnchanged(
+  projection: AgentRenderProjection,
+  patch: AgentRenderProjectionPatch,
+): boolean {
+  const messages = patch.entities?.messages;
+  if (!messages) return true;
+  return Object.entries(messages).every(([messageId, next]) => (
+    next.role !== 'toolResult' && projection.entities.messages[messageId]?.role !== 'toolResult'
+  ));
 }
 
 function buildEntries(projection: AgentRenderProjection, toolResults: Map<string, AgentToolResultWithPayloads>): {
@@ -385,28 +408,36 @@ function conversationCost(projection: AgentRenderProjection): number {
 }
 
 function conversationMessageFromEntity(entity: AgentRenderMessageEntity): AgentConversationMessage {
+  const cached = CONVERSATION_MESSAGE_CACHE.get(entity);
+  if (cached) return cached;
+  let message: AgentConversationMessage;
   if (entity.role === 'user') {
-    return {
+    message = {
       role: 'user',
       content: toUserContent(entity.content),
       timestamp: entity.createdAt,
     };
+  } else {
+    message = {
+      role: 'assistant',
+      content: toAssistantContent(entity.content),
+      api: entity.apiId ?? '',
+      provider: entity.providerId ?? '',
+      model: entity.modelId ?? '',
+      usage: entity.usage ?? EMPTY_USAGE,
+      stopReason: normalizeStopReason(entity.stopReason),
+      errorMessage: entity.errorMessage,
+      timestamp: entity.createdAt,
+    } as AssistantMessage;
   }
-  return {
-    role: 'assistant',
-    content: toAssistantContent(entity.content),
-    api: entity.apiId ?? '',
-    provider: entity.providerId ?? '',
-    model: entity.modelId ?? '',
-    usage: entity.usage ?? EMPTY_USAGE,
-    stopReason: normalizeStopReason(entity.stopReason),
-    errorMessage: entity.errorMessage,
-    timestamp: entity.createdAt,
-  } as AssistantMessage;
+  CONVERSATION_MESSAGE_CACHE.set(entity, message);
+  return message;
 }
 
 function toolResultFromEntity(entity: AgentRenderMessageEntity): AgentToolResultWithPayloads {
-  return {
+  const cached = TOOL_RESULT_CACHE.get(entity);
+  if (cached) return cached;
+  const message: AgentToolResultWithPayloads = {
     role: 'toolResult',
     toolCallId: entity.toolCallId ?? entity.id,
     toolName: entity.toolName ?? 'unknown',
@@ -415,6 +446,8 @@ function toolResultFromEntity(entity: AgentRenderMessageEntity): AgentToolResult
     isError: !!entity.isError,
     timestamp: entity.createdAt,
   };
+  TOOL_RESULT_CACHE.set(entity, message);
+  return message;
 }
 
 function toUserContent(content: AgentPersistedContent[]): UserMessage['content'] {
@@ -662,6 +695,20 @@ export class AgentRuntimeStore {
   private requestVersion = 0;
   private started = false;
   private view: LinAgentRuntimeView;
+  private toolResultsCache: {
+    messages: Record<string, AgentRenderMessageEntity>;
+    toolEntities: Map<string, AgentRenderMessageEntity>;
+    toolResults: Map<string, AgentToolResultWithPayloads>;
+  } | null = null;
+  private projectionPatchReloadPromise: Promise<void> | null = null;
+  private pendingToolCallCache: {
+    ids: readonly string[];
+    set: Set<string>;
+  } | null = null;
+  private childRunParentCache: {
+    childRuns: Record<string, AgentRenderChildRunEntity>;
+    map: Map<string, AgentRenderChildRunEntity>;
+  } | null = null;
   private readonly conversationPreferenceStore: AgentConversationPreferenceStore | null;
 
   constructor(
@@ -1122,6 +1169,33 @@ export class AgentRuntimeStore {
       this.projection = payload.renderProjection;
       this.error = payload.renderProjection.errorMessage;
       this.publish();
+      return;
+    }
+
+    if (payload.type === 'projection_patch') {
+      if (!this.conversationId) {
+        this.conversationId = payload.conversationId;
+      }
+      if (payload.conversationId !== this.conversationId) return;
+      const previousProjection = this.projection;
+      const nextProjection = applyAgentRenderProjectionPatch(this.projection, payload.patch);
+      if (!nextProjection) {
+        this.reloadAfterProjectionPatchMismatch();
+        return;
+      }
+      const toolResultsCache = this.toolResultsCache;
+      if (
+        toolResultsCache
+        && patchLeavesToolResultsUnchanged(previousProjection, payload.patch)
+      ) {
+        this.toolResultsCache = {
+          ...toolResultsCache,
+          messages: nextProjection.entities.messages,
+        };
+      }
+      this.projection = nextProjection;
+      this.error = nextProjection.errorMessage;
+      this.publish();
     }
   };
 
@@ -1152,14 +1226,63 @@ export class AgentRuntimeStore {
     }
   }
 
-  private buildView(): LinAgentRuntimeView {
+  private reloadAfterProjectionPatchMismatch() {
+    if (this.projectionPatchReloadPromise) return;
+    const reload = this.reloadConversation()
+      .catch((caught) => this.reportError(caught))
+      .finally(() => {
+        if (this.projectionPatchReloadPromise === reload) {
+          this.projectionPatchReloadPromise = null;
+        }
+      });
+    this.projectionPatchReloadPromise = reload;
+  }
+
+  private toolResultsForProjection(): Map<string, AgentToolResultWithPayloads> {
+    if (this.toolResultsCache?.messages === this.projection.entities.messages) {
+      return this.toolResultsCache.toolResults;
+    }
+    const toolEntities = new Map<string, AgentRenderMessageEntity>();
+    for (const entity of Object.values(this.projection.entities.messages)) {
+      if (entity.role === 'toolResult') toolEntities.set(entity.id, entity);
+    }
+    if (this.toolResultsCache && mapsHaveSameEntityValues(this.toolResultsCache.toolEntities, toolEntities)) {
+      this.toolResultsCache = {
+        ...this.toolResultsCache,
+        messages: this.projection.entities.messages,
+      };
+      return this.toolResultsCache.toolResults;
+    }
     const toolResults = buildToolResultMap(this.projection);
+    this.toolResultsCache = { messages: this.projection.entities.messages, toolEntities, toolResults };
+    return toolResults;
+  }
+
+  private pendingToolCallSetForProjection(): Set<string> {
+    const ids = this.projection.pendingToolCallIds;
+    if (this.pendingToolCallCache?.ids === ids) return this.pendingToolCallCache.set;
+    const set = new Set(ids);
+    this.pendingToolCallCache = { ids, set };
+    return set;
+  }
+
+  private childRunsByParentToolCallIdForProjection(
+    childRuns: Record<string, AgentRenderChildRunEntity>,
+  ): Map<string, AgentRenderChildRunEntity> {
+    if (this.childRunParentCache?.childRuns === childRuns) return this.childRunParentCache.map;
+    const map = new Map<string, AgentRenderChildRunEntity>();
+    for (const childRun of Object.values(childRuns)) {
+      if (childRun.parentToolCallId) map.set(childRun.parentToolCallId, childRun);
+    }
+    this.childRunParentCache = { childRuns, map };
+    return map;
+  }
+
+  private buildView(): LinAgentRuntimeView {
+    const toolResults = this.toolResultsForProjection();
     const { entries, turnPhase } = buildEntries(this.projection, toolResults);
     const childRuns = this.projection.entities.childRuns ?? {};
-    const childRunsByParentToolCallId = new Map<string, AgentRenderChildRunEntity>();
-    for (const childRun of Object.values(childRuns)) {
-      if (childRun.parentToolCallId) childRunsByParentToolCallId.set(childRun.parentToolCallId, childRun);
-    }
+    const childRunsByParentToolCallId = this.childRunsByParentToolCallIdForProjection(childRuns);
     return {
       entries,
       error: this.error,
@@ -1167,7 +1290,7 @@ export class AgentRuntimeStore {
       channelRunsActive: this.projection.channelRunsActive,
       modelId: projectionModelValue(this.projection, 'id'),
       providerId: projectionModelValue(this.projection, 'provider'),
-      pendingToolCallIds: new Set(this.projection.pendingToolCallIds),
+      pendingToolCallIds: this.pendingToolCallSetForProjection(),
       reasoningLevel: this.projection.thinkingLevel,
       revision: `${this.conversationId ?? 'pending'}-${this.projection.revision}-${this.projection.rows.length}-${this.projection.transcriptRows.length}-${this.projection.pendingToolCallIds.join(',')}`,
       conversationId: this.conversationId,
