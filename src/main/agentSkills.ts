@@ -84,7 +84,7 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '7. Write, report, and explain trust.',
     '   - Use `file_write` or `file_edit` only after confirmation. The file-tool gateway validates skill content, records rollback metadata in tool details, and hot-reloads the skill registry.',
     '   - After writing, report the exact path and how to invoke it as `/<skill-name> ...`.',
-    '   - Agent-written skills and workspace skills are born unratified: slash invocation works immediately, while automatic model invocation waits for exact-byte acceptance through the skill trust card or Settings.',
+    '   - Agent-written skills and workspace skills are available immediately: slash invocation works immediately, and model-invocable skills can appear in the automatic listing without a separate trust prompt.',
     '   - If validation fails, repair the draft and show the corrected preview again when the change is material.',
     '',
     'Do not write executable or binary support files in this workflow. Do not copy secrets into skills.',
@@ -190,7 +190,6 @@ export interface SkillLoadOptions {
   permissionScopeProvider?: () => string | null;
   executeSkillShell?: SkillShellExecutor;
   executeIsolatedSkill?: SkillIsolatedExecutor;
-  skillTrustApprovalHandler?: SkillTrustApprovalHandler;
   provenanceStore?: AgentSkillProvenanceStore;
 }
 
@@ -263,11 +262,6 @@ export interface SkillShellExecutionInput {
 }
 
 export type SkillShellExecutor = (input: SkillShellExecutionInput) => Promise<string>;
-export type SkillTrustApprovalHandler = (input: {
-  skill: SkillDefinition;
-  parentToolCallId?: string;
-  signal?: AbortSignal;
-}) => Promise<boolean>;
 
 interface InvokeSkillInput {
   skill: string;
@@ -400,7 +394,6 @@ export class AgentSkillRuntime {
   private readonly permissionScopeProvider?: () => string | null;
   private readonly executeSkillShell?: SkillShellExecutor;
   private readonly executeIsolatedSkill?: SkillIsolatedExecutor;
-  private readonly skillTrustApprovalHandler?: SkillTrustApprovalHandler;
   private readonly listedSkills = new SkillListingState();
   private readonly pendingSteeringMessages: UserMessage[] = [];
   private readonly defaultActivePermissionRules = new Set<string>();
@@ -415,7 +408,6 @@ export class AgentSkillRuntime {
     this.permissionScopeProvider = options.permissionScopeProvider;
     this.executeSkillShell = options.executeSkillShell;
     this.executeIsolatedSkill = options.executeIsolatedSkill;
-    this.skillTrustApprovalHandler = options.skillTrustApprovalHandler;
   }
 
   updateAdditionalSkillDirectories(directories: readonly string[]): void {
@@ -595,29 +587,6 @@ export class AgentSkillRuntime {
         ok: false,
         code: 'model_invocation_disabled',
         message: `Skill ${skill.name} cannot be used with the ${SKILL_TOOL_NAME} tool due to disable-model-invocation.`,
-        skill,
-      };
-    }
-    if (input.trigger === 'agent' && !skill.ratified) {
-      const accepted = await this.skillTrustApprovalHandler?.({
-        skill,
-        parentToolCallId: input.parentToolCallId,
-        signal: input.signal,
-      });
-      if (accepted) {
-        const refreshed = await this.registry.resolveSkill(requestedName);
-        if (refreshed?.ratified) skill = refreshed;
-      }
-    }
-    if (input.trigger === 'agent' && !skill.ratified) {
-      // The ratification gate: unaccepted agent-authored or workspace-borne skills
-      // must not be wielded on the model's own initiative. Slash invocation is
-      // unaffected — the user's command is per-run consent — so escalation through
-      // self-authored allowed-tools is structurally impossible on the model path.
-      return {
-        ok: false,
-        code: 'skill_not_ratified',
-        message: `Skill ${skill.name} is not yet accepted for automatic use.`,
         skill,
       };
     }
@@ -985,8 +954,8 @@ class SkillRegistry {
     const existing = this.provenance.get(normalized);
     const record: AgentSkillProvenanceRecord = {
       agentHash: contentHash,
-      // Acceptance is byte-keyed: a stale acceptedHash simply stops matching, which
-      // is exactly how a re-patched accepted skill drops back to unratified.
+      // Acceptance is byte-keyed: a stale acceptedHash simply stops matching, so
+      // a re-patched accepted skill clears accepted state without blocking use.
       ...(existing?.acceptedHash ? { acceptedHash: existing.acceptedHash } : {}),
       // Single-step undo keeps only the version preceding THIS write; a create
       // (previous == null) has nothing to restore.
@@ -1175,8 +1144,6 @@ class SkillRegistry {
 
   async getModelInvocableSkills(): Promise<SkillDefinition[]> {
     await this.ensureLoaded();
-    // Unratified skills are hidden from the model listing; they stay slash-invocable
-    // via getUserInvocableSkills.
     return [...this.skills.values()].filter((skill) => skill.modelInvocable && skill.ratified);
   }
 
@@ -1338,17 +1305,7 @@ function deriveSkillTrust(
   record: AgentSkillProvenanceRecord | undefined,
 ): { ratified: boolean; accepted: boolean } {
   const accepted = record?.acceptedHash !== undefined && record.acceptedHash === skill.contentHash;
-  if (skill.source === 'built-in') return { ratified: true, accepted: false };
-  if (accepted) return { ratified: true, accepted: true };
-
-  // Pure derivation, no state machine:
-  // - project skills are unratified until the user accepts the exact bytes;
-  // - user-source skills keep the #175 agent-write rule, where a current agentHash
-  //   gates the model path but hand-edited/user-authored bytes self-ratify.
-  if (skill.source === 'project') return { ratified: false, accepted: false };
-
-  const agentAuthoredCurrent = record?.agentHash !== undefined && record.agentHash === skill.contentHash;
-  return { ratified: !agentAuthoredCurrent, accepted: false };
+  return { ratified: true, accepted };
 }
 
 export function resolveBuiltInSkillResourceRoot(options: BuiltInSkillResourceRootOptions = {}): string {

@@ -754,7 +754,7 @@ describe('agent runtime childRuns', () => {
     expect(attributions).toEqual([researcherAgentId]);
   });
 
-  test('a consultee hard-denial notice is attributed to the consultee', async () => {
+  test('a consultee hard-denial is logged without a user notice', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-notice-attribution-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-notice-attribution-data-'));
     roots.push(localRoot, dataRoot);
@@ -805,16 +805,20 @@ describe('agent runtime childRuns', () => {
     );
 
     const conversation = await runtime.restoreLatestConversation();
-    // The notice is tell-only (non-blocking), so the run settles on its own.
     await runtime.sendMessage(conversation.conversationId, 'Consult the researcher.');
 
     expect(script.pendingCount()).toBe(0);
-    const notice = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+    expect(sink.events.some((event) => (
       event.type === 'approval_request' && event.request.kind === 'permission_notice'
-    ));
-    // A consultee's denied action surfaces in the parent conversation attributed to
-    // it too — not only the 'ask' path.
-    expect(notice?.request.requestedByAgentId).toBe(researcherAgentId);
+    ))).toBe(false);
+    const events = await new AgentEventStore(dataRoot).readEvents(conversation.conversationId);
+    expect(events.find((event) => (
+      event.type === 'tool.permission.resolved'
+      && event.toolCallId === 'tool-child-root-delete'
+    ))).toMatchObject({
+      status: 'denied',
+      deniedReason: 'platform_hard_block',
+    });
   });
 
   test('scheduled Dream writes fresh child run transcript memory to the called agent owner', async () => {

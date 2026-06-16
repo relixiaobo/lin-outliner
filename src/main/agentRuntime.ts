@@ -45,7 +45,6 @@ import {
   type AgentDebugRunSummary,
   type AgentMessage,
   type AgentRuntimeEvent,
-  type AgentApprovalRequestDetail,
   type AgentApprovalRequestView,
   type AgentApprovalResolutionScope,
   type AgentAuthoringInput,
@@ -214,10 +213,8 @@ import type { AgentRecallEvidence, AgentRecallRuntimeEntry, AgentRecallToolRunti
 import { renderAgentMemoryBriefing, MEMORY_BRIEFING_MAX_ENTRIES } from './agentMemoryBriefing';
 import { redactSecretLikeContent } from './agentSecretRedaction';
 import {
-  approvalNoticeForDeniedDecision,
   evaluateAgentToolPermission,
   type AgentPermissionAskDecision,
-  type AgentPermissionDenyDecision,
   type AgentPermissionSoftBlockDecision,
 } from './agentPermissions';
 import {
@@ -2401,16 +2398,6 @@ export class AgentRuntime {
     return true;
   }
 
-  private async clearPendingPermissionNotices(conversationId: string, conversation: AgentConversationState): Promise<void> {
-    const notices = [...this.pendingApprovals.entries()].filter(([, pending]) => (
-      pending.conversationId === conversationId
-      && pending.request.kind === 'permission_notice'
-    ));
-    for (const [requestId] of notices) {
-      await this.denyPendingApprovalForRuntime(conversationId, conversation, requestId, 'runtime');
-    }
-  }
-
   private async clearPendingUserQuestionsForConversation(conversationId: string, reason: string) {
     for (const pending of [...this.pendingUserQuestions.values()]) {
       if (pending.conversationId === conversationId) await this.cancelUserQuestion(pending.requestId, reason);
@@ -2454,11 +2441,6 @@ export class AgentRuntime {
       permissionScopeProvider: () => (
         this.currentRuntimeConversation(conversationRef.current)?.activeRun?.id ?? null
       ),
-      skillTrustApprovalHandler: async ({ skill, parentToolCallId, signal }) => {
-        const current = this.currentRuntimeConversation(conversationRef.current);
-        if (!current) return false;
-        return this.requestSkillTrustApproval(conversationId, current, skill, parentToolCallId, signal);
-      },
       executeSkillShell: async ({ command, skill, signal }) => {
         const activeSettings = await this.getRuntimeSettings();
         const globalPermissions = await readAgentToolPermissionConfig();
@@ -2476,10 +2458,6 @@ export class AgentRuntime {
           permissionEventHandler: (input) => {
             const currentConversation = this.currentRuntimeConversation(conversationRef.current);
             return currentConversation ? this.appendToolPermissionEvent(conversationId, currentConversation, input) : Promise.resolve();
-          },
-          permissionNoticeHandler: (input, noticeSignal) => {
-            const currentConversation = this.currentRuntimeConversation(conversationRef.current);
-            return currentConversation ? this.showPermissionNotice(conversationId, currentConversation, input, noticeSignal) : Promise.resolve();
           },
           signal,
           toolCallId: `skill-shell-${randomUUID()}`,
@@ -2626,10 +2604,6 @@ export class AgentRuntime {
           permissionEventHandler: (input) => {
             const current = conversationRef.current;
             return current ? this.appendToolPermissionEvent(conversationId, current, input) : Promise.resolve();
-          },
-          permissionNoticeHandler: (input, signal) => {
-            const current = conversationRef.current;
-            return current ? this.showPermissionNotice(conversationId, current, input, signal) : Promise.resolve();
           },
           approvalHandler: (input, signal) => {
             const current = conversationRef.current;
@@ -2916,10 +2890,6 @@ export class AgentRuntime {
       permissionEventHandler: (eventInput) => {
         const parentConversation = this.currentRuntimeConversation(parentConversationRef.current);
         return parentConversation ? this.appendToolPermissionEvent(parentConversationId, parentConversation, eventInput) : Promise.resolve();
-      },
-      permissionNoticeHandler: (noticeInput, signal) => {
-        const parentConversation = this.currentRuntimeConversation(parentConversationRef.current);
-        return parentConversation ? this.showPermissionNotice(parentConversationId, parentConversation, noticeInput, signal, requestedByAgentId) : Promise.resolve();
       },
       systemPrompt: input.systemPrompt,
       l0CacheBreakpointEnabled: input.l0CacheBreakpointEnabled,
@@ -5783,132 +5753,6 @@ export class AgentRuntime {
     });
   }
 
-  private async requestSkillTrustApproval(
-    conversationId: string,
-    conversation: AgentConversationState,
-    skill: SkillDefinition,
-    parentToolCallId?: string,
-    signal?: AbortSignal,
-  ): Promise<boolean> {
-    if (signal?.aborted) return false;
-    if (skill.source !== 'user' && skill.source !== 'project') return false;
-    const contentHash = skill.contentHash;
-    if (!contentHash) return false;
-    const requestId = `skill-trust-${randomUUID()}`;
-    const displayName = skill.displayName || skill.name;
-    const details: AgentApprovalRequestDetail[] = [
-      { label: 'Skill', value: `/${skill.name}` },
-      { label: 'Source', value: skill.source },
-      { label: 'Path', value: skill.skillFile },
-      { label: 'Content hash', value: contentHash },
-    ];
-    if (skill.description.trim()) {
-      details.push({ label: 'Description', value: skill.description.trim() });
-    }
-    const request: AgentApprovalRequestView = {
-      requestId,
-      conversationId,
-      kind: 'skill_trust',
-      toolCallId: parentToolCallId ?? requestId,
-      toolName: 'skill',
-      title: `Skill ${displayName} requests automatic use.`,
-      target: `/${skill.name}`,
-      reason: 'Accept the current skill content hash before Lin can invoke it automatically.',
-      details,
-      skillTrust: {
-        name: skill.name,
-        displayName: skill.displayName,
-        source: skill.source,
-        contentHash,
-      },
-    };
-    await this.emitApprovalCard(conversationId, conversation, request, {
-      request,
-      skill: {
-        name: skill.name,
-        displayName: skill.displayName,
-        source: skill.source,
-        skillFile: skill.skillFile,
-        contentHash,
-      },
-    });
-
-    return new Promise<boolean>((resolve) => {
-      const onAbort = () => {
-        void this.denyPendingApprovalForRuntime(conversationId, conversation, requestId, 'run_aborted');
-      };
-
-      this.pendingApprovals.set(requestId, {
-        conversationId,
-        runId: this.activeRunId(conversation) ?? undefined,
-        request,
-        onApproved: async () => {
-          await this.applySkillTrustAction(conversationId, (skillRuntime) => skillRuntime.acceptSkill(skill.name, contentHash));
-        },
-        resolve: (resolution) => {
-          signal?.removeEventListener('abort', onAbort);
-          resolve(resolution.approved);
-        },
-      });
-      signal?.addEventListener('abort', onAbort, { once: true });
-      if (signal?.aborted) onAbort();
-    });
-  }
-
-  private async showPermissionNotice(
-    conversationId: string,
-    conversation: AgentConversationState,
-    input: {
-      requestId: string;
-      toolCall: ToolCall;
-      args: unknown;
-      decision: AgentPermissionDenyDecision;
-    },
-    signal?: AbortSignal,
-    requestedByAgentId?: string,
-  ): Promise<void> {
-    if (signal?.aborted) return;
-    await this.clearPendingPermissionNotices(conversationId, conversation);
-
-    const notice = approvalNoticeForDeniedDecision(input.toolCall.name, input.decision);
-    const request: AgentApprovalRequestView = {
-      requestId: input.requestId,
-      conversationId,
-      kind: 'permission_notice',
-      toolCallId: input.toolCall.id,
-      toolName: input.toolCall.name,
-      title: notice.title,
-      target: notice.target,
-      reason: input.decision.reason,
-      details: notice.details,
-      requestedByAgentId,
-    };
-    await this.emitApprovalCard(conversationId, conversation, request, {
-      request,
-      decision: {
-        behavior: input.decision.behavior,
-        code: input.decision.code,
-        reason: input.decision.reason,
-        access: input.decision.access,
-      },
-      args: input.args,
-    });
-
-    const onAbort = () => {
-      void this.denyPendingApprovalForRuntime(conversationId, conversation, input.requestId, 'run_aborted');
-    };
-    this.pendingApprovals.set(input.requestId, {
-      conversationId,
-      runId: this.activeRunId(conversation) ?? undefined,
-      request,
-      resolve: () => {
-        signal?.removeEventListener('abort', onAbort);
-      },
-    });
-    signal?.addEventListener('abort', onAbort, { once: true });
-    if (signal?.aborted) onAbort();
-  }
-
   private async emitApprovalCard(
     conversationId: string,
     conversation: AgentConversationState,
@@ -6706,7 +6550,6 @@ export class AgentRuntime {
       completeSimpleFn: this.options.completeSimpleFn,
       providerApiKeyLoader: this.options.providerApiKeyLoader,
       permissionEventHandler: (input) => this.appendToolPermissionEvent(conversationId, getScopedConversation(), input),
-      permissionNoticeHandler: (input, signal) => this.showPermissionNotice(conversationId, getScopedConversation(), input, signal),
       approvalHandler: (input, signal) => this.requestToolApproval(conversationId, getScopedConversation(), input, signal),
       afterToolResult: (toolCallId, toolName, result, isError) => (
         this.contextManager.afterToolResultForModelContext(conversationId, getScopedConversation(), toolCallId, toolName, result, isError)
@@ -8583,12 +8426,6 @@ function createConfiguredAgent(
     preapprovedToolRules?: string[];
     l0CacheBreakpointEnabled?: boolean;
     approvalHandler?: (input: AgentToolApprovalInput, signal?: AbortSignal) => Promise<AgentToolApprovalResolution>;
-    permissionNoticeHandler?: (input: {
-      requestId: string;
-      toolCall: ToolCall;
-      args: unknown;
-      decision: AgentPermissionDenyDecision;
-    }, signal?: AbortSignal) => Promise<void>;
     streamFn?: StreamFn;
     completeSimpleFn?: CompleteSimpleFn;
     permissionEventHandler?: (input: AgentToolPermissionLogInput) => Promise<void> | void;
@@ -8805,12 +8642,6 @@ function createConfiguredAgent(
           deniedReason: permissionDeniedReasonForDecision(decision),
         },
       });
-      await options.permissionNoticeHandler?.({
-        requestId: permissionRequestId,
-        toolCall,
-        args,
-        decision,
-      }, signal);
       return {
         block: true,
         reason: permissionDeniedToolResultMessage({

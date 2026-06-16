@@ -589,14 +589,14 @@ describe('agent runtime skill integration', () => {
     expect(context).not.toContain('The following skills are available for use with the skill tool');
   });
 
-  test('accepts unratified automatic skills from the interrupt card and then loads them', async () => {
+  test('loads mutable automatic skills without skill trust approval', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-trust-card-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-trust-card-data-'));
     roots.push(localRoot, dataRoot);
 
     await createSkill(localRoot, 'card-skill', [
       '---',
-      'description: Use when checking in-flow skill trust.',
+      'description: Use when checking automatic skill loading.',
       '---',
       'CARD_SKILL_BODY',
     ].join('\n'));
@@ -632,105 +632,20 @@ describe('agent runtime skill integration', () => {
     );
 
     const created = await runtime.restoreLatestConversation();
-    const sendPromise = runtime.sendMessage(created.conversationId, 'Use the card skill.');
-    await waitFor(() => sink.events.some((event) => (
-      event.type === 'approval_request'
-      && event.request.kind === 'skill_trust'
-    )));
-    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-      event.type === 'approval_request'
-      && event.request.kind === 'skill_trust'
-    ));
-    if (!approvalEvent) throw new Error('Expected skill trust approval request.');
-
-    expect(approvalEvent.request.toolName).toBe('skill');
-    expect(approvalEvent.request.target).toBe('/card-skill');
-    expect(approvalEvent.request.skillTrust).toMatchObject({
-      name: 'card-skill',
-      source: 'project',
-    });
-
-    await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true);
-    await sendPromise;
+    await runtime.sendMessage(created.conversationId, 'Use the card skill.');
 
     expect(script.pendingCount()).toBe(0);
     expect(contextTexts.join('\n')).toContain('CARD_SKILL_BODY');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(sink.events.some((event) => (
+      event.type === 'approval_request'
+      && event.request.kind === 'skill_trust'
+    ))).toBe(false);
 
     const acceptedSkill = (await runtime.listAllSkills(created.conversationId))
       .find((skill) => skill.name === 'card-skill');
-    expect(acceptedSkill?.accepted).toBe(true);
+    expect(acceptedSkill?.accepted).toBe(false);
     expect(acceptedSkill?.ratified).toBe(true);
-  });
-
-  test('cancels pending skill trust approval when the run stops', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-trust-abort-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-trust-abort-data-'));
-    roots.push(localRoot, dataRoot);
-
-    await createSkill(localRoot, 'abort-skill', [
-      '---',
-      'description: Use when checking skill trust abort cleanup.',
-      '---',
-      'ABORT_SKILL_BODY',
-    ].join('\n'));
-
-    const script = scriptedStream(
-      [
-        fauxAssistantMessage([
-          fauxToolCall('skill', { skill: 'abort-skill' }, { id: 'tool-abort-skill' }),
-        ], { stopReason: 'toolUse' }),
-        fauxAssistantMessage(fauxText('This should not be reached after stop.')),
-      ],
-      () => undefined,
-    );
-
-    const { AgentRuntime: Runtime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new Runtime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        streamFn: script.streamFn,
-      },
-    );
-
-    const created = await runtime.restoreLatestConversation();
-    const sendPromise = runtime.sendMessage(created.conversationId, 'Use the abort skill.')
-      .catch(() => undefined);
-    await waitFor(() => sink.events.some((event) => (
-      event.type === 'approval_request'
-      && event.request.kind === 'skill_trust'
-    )));
-    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-      event.type === 'approval_request'
-      && event.request.kind === 'skill_trust'
-    ));
-    if (!approvalEvent) throw new Error('Expected skill trust approval request.');
-
-    runtime.stopConversation(created.conversationId);
-    await waitFor(() => sink.events.some((event) => (
-      event.type === 'approval_resolved'
-      && event.requestId === approvalEvent.requestId
-      && event.approved === false
-    )));
-    await sendPromise;
-
-    const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
-    expect(events.find((event) => event.type === 'approval.resolved')).toMatchObject({
-      requestId: approvalEvent.requestId,
-      approved: false,
-    });
-    const skill = (await runtime.listAllSkills(created.conversationId))
-      .find((candidate) => candidate.name === 'abort-skill');
-    expect(skill?.accepted).toBe(false);
   });
 
   test('records skill audit events for successful agent-authored skill writes', async () => {
@@ -1322,7 +1237,7 @@ describe('agent runtime skill integration', () => {
     ))).toBe(true);
   });
 
-  test('surfaces hard-denied tool calls as tell-only permission cards', async () => {
+  test('returns hard-denied tool calls to the model without user notice cards', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-deny-notice-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-deny-notice-data-'));
     roots.push(localRoot, dataRoot);
@@ -1369,168 +1284,23 @@ describe('agent runtime skill integration', () => {
     const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Run the blocked shell command.');
 
-    const noticeEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+    expect(sink.events.some((event) => (
       event.type === 'approval_request'
       && event.request.kind === 'permission_notice'
-    ));
-    if (!noticeEvent) throw new Error('Expected permission notice request.');
-
-    expect(noticeEvent.request.title).toContain('Blocked');
-    expect(noticeEvent.request.toolName).toBe('bash');
-    expect(noticeEvent.request.target).toContain('rm -rf /');
+    ))).toBe(false);
     expect(followUpContexts.join('\n')).toContain('permission_denied');
     expect(followUpContexts.join('\n')).toContain('recursively delete');
 
-    await runtime.resolveApproval(created.conversationId, noticeEvent.requestId, false);
-
     const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
-    expect(events.find((event) => event.type === 'approval.requested')).toMatchObject({
-      requestId: noticeEvent.requestId,
-    });
-    expect(events.find((event) => event.type === 'approval.resolved')).toMatchObject({
-      requestId: noticeEvent.requestId,
-      approved: false,
-    });
+    expect(events.some((event) => event.type === 'approval.requested')).toBe(false);
+    expect(events.some((event) => event.type === 'approval.resolved')).toBe(false);
     expect(events.find((event) => (
       event.type === 'tool.permission.resolved'
-      && event.requestId === noticeEvent.requestId
+      && event.toolCallId === 'tool-hard-denied-shell'
     ))).toMatchObject({
       status: 'denied',
       deniedReason: 'platform_hard_block',
     });
-  });
-
-  test('clears pending permission notices when the run stops', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-deny-notice-abort-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-deny-notice-abort-data-'));
-    roots.push(localRoot, dataRoot);
-
-    const script = scriptedStream(
-      [
-        fauxAssistantMessage([
-          fauxToolCall('bash', {
-            command: 'rm -rf /',
-          }, { id: 'tool-aborted-notice-shell' }),
-        ], { stopReason: 'toolUse' }),
-        fauxAssistantMessage(fauxText('This should not be needed after notice abort.')),
-      ],
-      () => undefined,
-    );
-
-    const { AgentRuntime: Runtime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new Runtime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        runtimeSettingsLoader: async () => ({
-          automaticSkillsEnabled: true,
-          slashSkillsEnabled: true,
-          compactEnabled: true,
-          additionalSkillDirectories: [],
-        }),
-        streamFn: script.streamFn,
-      },
-    );
-
-    const created = await runtime.restoreLatestConversation();
-    const sendPromise = runtime.sendMessage(created.conversationId, 'Run the blocked shell command.')
-      .catch(() => undefined);
-    await waitFor(() => sink.events.some((event) => (
-      event.type === 'approval_request'
-      && event.request.kind === 'permission_notice'
-    )));
-    const noticeEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-      event.type === 'approval_request'
-      && event.request.kind === 'permission_notice'
-    ));
-    if (!noticeEvent) throw new Error('Expected permission notice request.');
-
-    runtime.stopConversation(created.conversationId);
-    await waitFor(() => sink.events.some((event) => (
-      event.type === 'approval_resolved'
-      && event.requestId === noticeEvent.requestId
-      && event.approved === false
-    )));
-    await sendPromise;
-
-    const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
-    expect(events.find((event) => event.type === 'approval.resolved')).toMatchObject({
-      requestId: noticeEvent.requestId,
-      approved: false,
-    });
-  });
-
-  test('replaces older permission notices when blocked tool calls repeat', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-deny-notice-replace-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-deny-notice-replace-data-'));
-    roots.push(localRoot, dataRoot);
-
-    const script = scriptedStream(
-      [
-        fauxAssistantMessage([
-          fauxToolCall('bash', {
-            command: 'rm -rf /',
-          }, { id: 'tool-first-denied-shell' }),
-          fauxToolCall('bash', {
-            command: 'diskutil eraseDisk JHFS+ X disk2',
-          }, { id: 'tool-second-denied-shell' }),
-        ], { stopReason: 'toolUse' }),
-        fauxAssistantMessage(fauxText('Saw repeated blocked commands.')),
-      ],
-      () => undefined,
-    );
-
-    const { AgentRuntime: Runtime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new Runtime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        runtimeSettingsLoader: async () => ({
-          automaticSkillsEnabled: true,
-          slashSkillsEnabled: true,
-          compactEnabled: true,
-          additionalSkillDirectories: [],
-        }),
-        streamFn: script.streamFn,
-      },
-    );
-
-    const created = await runtime.restoreLatestConversation();
-    await runtime.sendMessage(created.conversationId, 'Run repeated blocked shell commands.');
-
-    const notices = sink.events.filter((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-      event.type === 'approval_request'
-      && event.request.kind === 'permission_notice'
-    ));
-    expect(notices.map((event) => event.request.toolCallId)).toEqual([
-      'tool-first-denied-shell',
-      'tool-second-denied-shell',
-    ]);
-    expect(sink.events.some((event) => (
-      event.type === 'approval_resolved'
-      && event.requestId === notices[0]!.requestId
-      && event.approved === false
-    ))).toBe(true);
-    expect(sink.events.some((event) => (
-      event.type === 'approval_resolved'
-      && event.requestId === notices[1]!.requestId
-    ))).toBe(false);
   });
 
   test('persists always-allow soft-block exceptions globally', async () => {

@@ -1262,8 +1262,8 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                   <InsetGroup ariaLabel={t.settings.skills.installedAriaLabel} label={t.settings.skills.installedGroup}>
                     {allSkills.map((skill) => {
                       const disabled = isSkillDisabled(skill.name);
-                      // Trust state is derived in main: unratified rows are excluded
-                      // from automatic model use until the user accepts these bytes.
+                      // Trust state is derived in main. Mutable skills are model-usable
+                      // by default; acceptedHash is only a retained management fact.
                       const pending = !skill.ratified;
                       const trustActions: RowMenuAction[] = [];
                       if (skill.accepted) {

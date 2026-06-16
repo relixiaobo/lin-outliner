@@ -232,8 +232,10 @@ Soft-block cards are the permission interruption surface:
 - **Block now**: immediately deny. If the user does nothing, the countdown
   auto-blocks.
 
-Hard redlines show tell-only `permission_notice` cards. Skill trust still uses
-its own accept/not-now approval card.
+Hard redlines do not create user-facing approval or notice cards. The runtime
+records the denial in tool permission events and returns a `permission_denied`
+tool result to the model. Skills are default-ratified and do not use a separate
+trust approval card.
 
 ## Events and Denials
 

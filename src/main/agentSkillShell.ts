@@ -5,7 +5,6 @@ import type { AgentApprovalResolutionScope } from '../core/agentTypes';
 import {
   evaluateAgentToolPermission,
   type AgentPermissionAskDecision,
-  type AgentPermissionDenyDecision,
   type AgentPermissionSoftBlockDecision,
   type GlobalToolPermissionConfig,
 } from './agentPermissions';
@@ -28,13 +27,6 @@ export interface AgentSkillShellApprovalInput {
   decision: AgentPermissionAskDecision | AgentPermissionSoftBlockDecision;
 }
 
-export interface AgentSkillShellPermissionNoticeInput {
-  requestId: string;
-  toolCall: ToolCall;
-  args: { command: string };
-  decision: AgentPermissionDenyDecision;
-}
-
 export interface AgentSkillShellApprovalResolution {
   approved: boolean;
   deniedReason?: PermissionDeniedReason;
@@ -51,7 +43,6 @@ export interface AgentSkillShellCommandInput {
   allowedTools?: readonly string[];
   globalPermissions?: GlobalToolPermissionConfig;
   permissionEventHandler?: (input: AgentToolPermissionLogInput) => Promise<void> | void;
-  permissionNoticeHandler?: (input: AgentSkillShellPermissionNoticeInput, signal?: AbortSignal) => Promise<void> | void;
   signal?: AbortSignal;
   toolCallId?: string;
 }
@@ -174,12 +165,6 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
   } else if (decision.behavior !== 'allow') {
     const reason = permissionDeniedReasonForDecision(decision);
     await appendDeniedPermissionEvent(reason);
-    await input.permissionNoticeHandler?.({
-      requestId: permissionRequestId,
-      toolCall,
-      args: { command: input.command },
-      decision,
-    }, input.signal);
     throw new AgentSkillShellError(
       'permission_denied',
       permissionDeniedToolResultMessage({

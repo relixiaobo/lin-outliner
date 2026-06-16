@@ -971,7 +971,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('agent skill writes are born unratified: model path gated, slash path works', async () => {
+  test('agent skill writes are immediately available to model and slash invocation', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
       const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
@@ -979,8 +979,6 @@ describe('agent local tools', () => {
       const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
       const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'guarded-skill', 'SKILL.md');
 
-      // The agent may author a model-invocable skill (no disable-model-invocation);
-      // the ratification gate, not write-time policy, keeps it off the model path.
       const result = await (fileWrite.execute as any)('write-guarded-skill', {
         file_path: skillFile,
         content: [
@@ -995,21 +993,22 @@ describe('agent local tools', () => {
 
       const skill = await skillRuntime.getSkill('guarded-skill');
       expect(skill?.modelInvocable).toBe(true);
-      expect(skill?.ratified).toBe(false);
+      expect(skill?.ratified).toBe(true);
+      expect(skill?.accepted).toBe(false);
 
-      // Hidden from the model skill listing.
-      const listing = await skillRuntime.buildSkillListingReminderText(200_000);
-      expect(listing ?? '').not.toContain('guarded-skill');
+      const listing = skillRuntime.drainSteeringMessages()
+        .map((message) => message.content[0]?.type === 'text' ? message.content[0].text : '')
+        .join('\n');
+      expect(listing).toContain('guarded-skill');
 
-      // Model-triggered invocation is refused; slash invocation works.
+      // Model-triggered invocation and slash invocation both work without a trust prompt.
       const agentInvocation = await skillRuntime.invokeSkill({ skill: 'guarded-skill', trigger: 'agent' });
-      expect(agentInvocation.ok).toBe(false);
-      if (!agentInvocation.ok) expect(agentInvocation.code).toBe('skill_not_ratified');
+      expect(agentInvocation.ok).toBe(true);
+      expect((await skillRuntime.getSkill('guarded-skill'))?.accepted).toBe(false);
       const slashInvocation = await skillRuntime.invokeSkill({ skill: 'guarded-skill', trigger: 'slash' });
       expect(slashInvocation.ok).toBe(true);
 
-      // A project hand-edit changes the content hash but still needs exact-byte
-      // acceptance before automatic model use.
+      // A project hand-edit changes the content hash but stays model-usable.
       await writeFile(skillFile, [
         '---',
         'description: Guarded skill for local authoring',
@@ -1019,9 +1018,10 @@ describe('agent local tools', () => {
       ].join('\n'), 'utf8');
       await skillRuntime.notifySkillContentWritten([skillFile]);
       const handEdited = await skillRuntime.getSkill('guarded-skill');
-      expect(handEdited?.ratified).toBe(false);
-      await skillRuntime.acceptSkill('guarded-skill', handEdited?.contentHash ?? '');
+      expect(handEdited?.ratified).toBe(true);
+      expect(handEdited?.accepted).toBe(false);
       expect((await skillRuntime.invokeSkill({ skill: 'guarded-skill', trigger: 'agent' })).ok).toBe(true);
+      expect((await skillRuntime.getSkill('guarded-skill'))?.accepted).toBe(false);
     });
   });
 
@@ -1051,16 +1051,14 @@ describe('agent local tools', () => {
       });
       expect((result.details as ToolEnvelope<unknown>).ok).toBe(true);
       const edited = await skillRuntime.getSkill('undoable-skill');
-      expect(edited?.ratified).toBe(false);
+      expect(edited?.ratified).toBe(true);
       expect(edited?.canUndoLastAgentEdit).toBe(true);
 
-      // Undo restores the user's bytes, but project skills still need exact-byte
-      // acceptance before automatic model use. The one-shot previous-version slot
-      // is consumed.
+      // Undo restores the user's bytes and consumes the one-shot previous-version slot.
       await skillRuntime.undoLastAgentSkillEdit('undoable-skill');
       const restored = await skillRuntime.getSkill('undoable-skill');
       expect(restored?.body).toContain('hand-tuned instructions');
-      expect(restored?.ratified).toBe(false);
+      expect(restored?.ratified).toBe(true);
       expect(restored?.canUndoLastAgentEdit).toBe(false);
     });
   });
@@ -1124,12 +1122,12 @@ describe('agent local tools', () => {
       await mkdir(path.dirname(skillFile), { recursive: true });
       await writeFile(skillFile, initialContent, 'utf8');
       const initialSkill = await skillRuntime.getSkill('crlf-skill');
-      expect(initialSkill?.ratified).toBe(false);
+      expect(initialSkill?.ratified).toBe(true);
       await skillRuntime.acceptSkill('crlf-skill', initialSkill?.contentHash ?? '');
       expect((await skillRuntime.getSkill('crlf-skill'))?.ratified).toBe(true);
 
-      // An agent patch must drop the skill to unratified even though writeTextFile
-      // restores CRLF/BOM on disk — the canonical hash normalizes both sides.
+      // An agent patch preserves model usability even though writeTextFile restores
+      // CRLF/BOM on disk; the canonical hash still tracks exact content identity.
       await (fileRead.execute as any)('read-crlf-skill', { file_path: skillFile });
       const result = await (fileEdit.execute as any)('edit-crlf-skill', {
         file_path: skillFile,
@@ -1140,22 +1138,20 @@ describe('agent local tools', () => {
 
       const patched = await skillRuntime.getSkill('crlf-skill');
       expect(patched?.body).toContain('agent-patched');
-      expect(patched?.ratified).toBe(false);
+      expect(patched?.ratified).toBe(true);
       const agentInvocation = await skillRuntime.invokeSkill({ skill: 'crlf-skill', trigger: 'agent' });
-      expect(agentInvocation.ok).toBe(false);
+      expect(agentInvocation.ok).toBe(true);
+      expect((await skillRuntime.getSkill('crlf-skill'))?.ratified).toBe(true);
     });
   });
 
-  test('agent-authored allowed-tools cannot reach the model path (ratification gate)', async () => {
+  test('agent-authored allowed-tools activate after automatic model invocation', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
       const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
       const fileWrite = createLocalTools({ workspace }).find((tool) => tool.name === 'file_write')!;
       const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'risky-skill', 'SKILL.md');
 
-      // Broad allowed-tools are not rejected at write time anymore; escalation is
-      // structurally impossible because the model cannot invoke the unratified skill,
-      // so its allowed-tools never become run-scoped preapproval on the model path.
       const result = await (fileWrite.execute as any)('write-risky-skill', {
         file_path: skillFile,
         content: [
@@ -1170,9 +1166,8 @@ describe('agent local tools', () => {
       expect((result.details as ToolEnvelope<unknown>).ok).toBe(true);
 
       const agentInvocation = await skillRuntime.invokeSkill({ skill: 'risky-skill', trigger: 'agent' });
-      expect(agentInvocation.ok).toBe(false);
-      if (!agentInvocation.ok) expect(agentInvocation.code).toBe('skill_not_ratified');
-      expect(skillRuntime.getActivePermissionRules()).toEqual([]);
+      expect(agentInvocation.ok).toBe(true);
+      expect(skillRuntime.getActivePermissionRules()).toEqual(['file_write', 'Bash(*)']);
     });
   });
 
