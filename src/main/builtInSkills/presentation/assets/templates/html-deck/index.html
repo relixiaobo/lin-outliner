@@ -6,73 +6,336 @@
   <title>Presentation</title>
   <style>
     :root {
-      --bg: #f7f5f2;
+      --paper: #f7f3ed;
+      --surface: #fffdfa;
       --ink: #171717;
-      --muted: #67615b;
-      --accent: #b33951;
+      --muted: #635f58;
       --rule: rgba(23, 23, 23, 0.18);
+      --accent: #b33951;
+      --accent-ink: #ffffff;
+      --shadow: rgba(23, 23, 23, 0.12);
     }
+
     * { box-sizing: border-box; }
+
     body {
       margin: 0;
-      background: var(--bg);
+      background: var(--paper);
       color: var(--ink);
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
+
     .deck {
       min-height: 100vh;
       display: grid;
       place-items: center;
       padding: 24px;
     }
+
     .slide {
       width: min(100%, 1280px);
       aspect-ratio: 16 / 9;
       display: none;
-      padding: 64px;
+      position: relative;
+      overflow: hidden;
+      padding: 58px 64px;
       border: 1px solid var(--rule);
-      background: #fffdfa;
+      background: var(--surface);
+      box-shadow: 0 18px 60px var(--shadow);
     }
+
     .slide[aria-current="true"] { display: grid; }
+
+    .slide.theme-dark {
+      background: var(--ink);
+      color: var(--surface);
+      --muted: rgba(255, 253, 250, 0.68);
+      --rule: rgba(255, 253, 250, 0.22);
+    }
+
+    .chrome {
+      position: absolute;
+      top: 28px;
+      left: 64px;
+      right: 64px;
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
     .kicker {
       color: var(--accent);
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
-    h1 {
-      margin: 16px 0 0;
-      max-width: 900px;
-      font-size: 72px;
-      line-height: 0.95;
+
+    .display {
+      margin: 14px 0 0;
+      max-width: 920px;
+      font-size: 78px;
+      line-height: 0.94;
       letter-spacing: 0;
     }
-    p {
+
+    .lead {
+      margin: 24px 0 0;
       max-width: 720px;
       color: var(--muted);
       font-size: 26px;
-      line-height: 1.35;
+      line-height: 1.32;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 0 12px;
+      border: 1px solid var(--rule);
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .rule {
+      width: 100%;
+      height: 1px;
+      background: var(--rule);
+    }
+
+    .signal {
+      position: absolute;
+      right: 64px;
+      bottom: 58px;
+      width: 210px;
+      height: 210px;
+      border: 1px solid var(--rule);
+      display: grid;
+      place-items: center;
+      color: var(--accent);
+      font-size: 120px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .signal::before,
+    .signal::after {
+      content: "";
+      position: absolute;
+      background: var(--accent);
+    }
+
+    .signal::before {
+      width: 1px;
+      height: 100%;
+      left: 50%;
+      top: 0;
+    }
+
+    .signal::after {
+      width: 100%;
+      height: 1px;
+      left: 0;
+      top: 50%;
+    }
+
+    .layout-cover {
+      align-content: end;
+      gap: 24px;
+    }
+
+    .layout-section {
+      place-items: center start;
+    }
+
+    .layout-split {
+      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+      gap: 42px;
+      align-items: center;
+    }
+
+    .layout-metric {
+      grid-template-rows: auto 1fr;
+      gap: 40px;
+      align-content: center;
+    }
+
+    .layout-compare {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 28px;
+      align-items: stretch;
+    }
+
+    .layout-gallery {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-auto-rows: 1fr;
+      gap: 18px;
+    }
+
+    .panel {
+      border: 1px solid var(--rule);
+      padding: 28px;
+      background: color-mix(in srgb, var(--surface) 88%, var(--paper));
+    }
+
+    .theme-dark .panel {
+      background: rgba(255, 253, 250, 0.06);
+    }
+
+    .metric {
+      display: grid;
+      gap: 10px;
+      align-content: end;
+      min-height: 210px;
+      border-top: 5px solid var(--accent);
+    }
+
+    .number {
+      color: var(--accent);
+      font-size: 92px;
+      font-weight: 800;
+      line-height: 0.92;
+      letter-spacing: 0;
+    }
+
+    .visual-frame {
+      min-height: 360px;
+      border: 1px solid var(--rule);
+      background:
+        linear-gradient(90deg, var(--rule) 1px, transparent 1px),
+        linear-gradient(var(--rule) 1px, transparent 1px);
+      background-size: 42px 42px;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+      text-transform: uppercase;
+    }
+
+    .quote {
+      max-width: 900px;
+      font-size: 54px;
+      font-weight: 750;
+      line-height: 1.04;
+      letter-spacing: 0;
+    }
+
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .timeline .panel {
+      min-height: 230px;
+      display: grid;
+      align-content: space-between;
+    }
+
+    .nav {
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+    }
+
+    .nav button {
+      width: 9px;
+      height: 9px;
+      padding: 0;
+      border: 1px solid var(--ink);
+      border-radius: 50%;
+      background: transparent;
+    }
+
+    .nav button[aria-current="true"] {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    @media (max-width: 900px) {
+      .deck { padding: 12px; }
+      .slide { padding: 42px 32px; }
+      .chrome { left: 32px; right: 32px; top: 20px; }
+      .display { font-size: 48px; }
+      .lead { font-size: 21px; }
+      .signal { width: 124px; height: 124px; right: 32px; bottom: 36px; font-size: 72px; }
+      .layout-split,
+      .layout-compare,
+      .layout-gallery,
+      .timeline { grid-template-columns: 1fr; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { scroll-behavior: auto; }
+    }
+
+    @media print {
+      body { background: var(--surface); }
+      .deck { display: block; padding: 0; }
+      .slide {
+        display: grid;
+        width: 100vw;
+        min-height: 100vh;
+        box-shadow: none;
+        break-after: page;
+      }
+      .nav { display: none; }
     }
   </style>
 </head>
 <body>
   <main class="deck" data-deck>
-    <section class="slide" data-slide="1" aria-current="true">
-      <div>
-        <div class="kicker">Section</div>
-        <h1>Replace with a sharp audience-facing claim</h1>
-        <p>Replace with one supporting point. Remove all placeholder copy before delivery.</p>
+    <section class="slide layout-cover" data-slide="1" data-layout="cover" aria-current="true">
+      <div class="chrome">
+        <span>Deck System</span>
+        <span>01 / 01</span>
       </div>
+      <div>
+        <div class="kicker">Replace section label</div>
+        <h1 class="display">Replace with a sharp audience-facing claim</h1>
+        <p class="lead">Replace this placeholder copy with one strong supporting point. Keep the slide visual and sparse.</p>
+      </div>
+      <div class="signal" aria-hidden="true">1</div>
     </section>
   </main>
+  <nav class="nav" aria-label="Slide navigation"></nav>
   <script>
     const slides = [...document.querySelectorAll('[data-slide]')];
+    const nav = document.querySelector('.nav');
     let index = 0;
+
+    function renderNav() {
+      if (!nav) return;
+      nav.replaceChildren(...slides.map((slide, i) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.setAttribute('aria-label', `Go to slide ${i + 1}`);
+        button.addEventListener('click', () => show(i));
+        return button;
+      }));
+    }
+
     function show(next) {
       index = Math.max(0, Math.min(slides.length - 1, next));
       slides.forEach((slide, i) => slide.setAttribute('aria-current', String(i === index)));
+      [...document.querySelectorAll('.nav button')].forEach((button, i) => {
+        button.setAttribute('aria-current', String(i === index));
+      });
     }
+
+    renderNav();
+    show(0);
     window.addEventListener('keydown', (event) => {
       if (event.key === 'ArrowRight' || event.key === ' ') show(index + 1);
       if (event.key === 'ArrowLeft') show(index - 1);

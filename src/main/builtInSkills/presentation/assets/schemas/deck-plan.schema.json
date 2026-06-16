@@ -9,6 +9,20 @@
     "goal": { "type": "string" },
     "outputRoute": { "type": "string" },
     "visualTemperament": { "type": "string" },
+    "visualSystem": {
+      "type": "object",
+      "properties": {
+        "direction": { "type": "string" },
+        "theme": { "type": "string" },
+        "motif": { "type": "string" },
+        "typography": { "type": "string" },
+        "layoutRules": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
     "sourceMaterials": {
       "type": "array",
       "items": { "type": "string" }
@@ -27,7 +41,10 @@
           "purpose": { "type": "string" },
           "headline": { "type": "string" },
           "evidence": { "type": "string" },
+          "layout": { "type": "string" },
+          "visualRole": { "type": "string" },
           "visual": { "type": "string" },
+          "assetPlan": { "type": "string" },
           "notes": { "type": "string" }
         },
         "additionalProperties": false
