@@ -499,17 +499,22 @@ export function App() {
   }), []);
 
   // The non-node preview "Add to outline" bridge: copy the previewed source into an
-  // asset, create a file node under Today, then bind the requesting file surface to
-  // the new node in place. Confirms only on a real create.
-  useEffect(() => onAddPreviewTargetToOutlineRequest(async ({ panelId, target }) => {
+  // asset and create a file node. The pane-driven path (`panelId`) lands it under
+  // Today and binds the requesting file surface to the new node in place; the
+  // explicit-parent path (`parentId`, e.g. a transcript chip's "Add to Today") lands
+  // it under that parent with no pane to bind. Confirms only on a real create.
+  useEffect(() => onAddPreviewTargetToOutlineRequest(async ({ panelId, parentId, target }) => {
     const currentIndex = indexRef.current;
-    const todayId = currentIndex?.projection.todayId;
-    if (!currentIndex || !todayId || !currentIndex.byId.has(todayId)) return false;
+    const resolvedParentId = parentId ?? currentIndex?.projection.todayId;
+    if (!currentIndex || !resolvedParentId || !currentIndex.byId.has(resolvedParentId)) return false;
     const asset = await ingestPreviewTargetToAsset(target);
     if (!asset) return false;
-    const result = await createAssetNode(run, todayId, null, asset, { applyFocus: false });
+    const result = await createAssetNode(run, resolvedParentId, null, asset, { applyFocus: false });
     const newNodeId = result && 'focus' in result ? result.focus?.nodeId ?? null : null;
     if (!newNodeId) return false;
+    // No requesting pane on the explicit-parent path — nothing to bind, so a real
+    // create is the success signal on its own.
+    if (!panelId) return true;
     const nextTarget = previewTargetForAsset(asset);
     if (!bindPreviewPanelNode(panelId, newNodeId, nextTarget, target)) return false;
     return true;

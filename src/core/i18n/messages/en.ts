@@ -986,6 +986,11 @@ commandPalette: {
       folder: 'Folder',
       modified: ({ date }: { date: string }) => `Modified ${date}`,
       unavailable: 'File unavailable',
+      // Right-click menu on a transcript file chip.
+      menuLabel: 'File actions',
+      addToToday: 'Add to Today',
+      openWithDefaultApp: 'Open with default app',
+      showInFinder: 'Show in Finder',
     },
     // Message-row actions + shared message atoms.
     message: {

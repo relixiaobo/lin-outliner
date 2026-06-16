@@ -352,7 +352,12 @@ export function AgentMarkdown({
   const components = useMarkdownComponents(documentIndex, onNodeReferenceOpen);
 
   return (
-    <div className="agent-markdown">
+    // `data-agent-transcript-chips` marks this as a transcript render root so the
+    // app-wide inline-file layer routes a file chip's click to the OS default app
+    // (and offers the transcript context menu) instead of the in-app preview pane —
+    // the agent-vs-outliner split is by location, never a node field. AgentMarkdown is
+    // mounted only inside agent-transcript surfaces, so the whole subtree qualifies.
+    <div className="agent-markdown" data-agent-transcript-chips>
       {blocks.map((block, blockIndex) => {
         const blockKey = `${keyPrefix}-block-${blockIndex}`;
         if (streaming && blockIndex === blocks.length - 1) {

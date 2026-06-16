@@ -906,6 +906,11 @@ commandPalette: {
       folder: '文件夹',
       modified: ({ date }) => `修改于 ${date}`,
       unavailable: '文件不可用',
+      // Right-click menu on a transcript file chip.
+      menuLabel: '文件操作',
+      addToToday: '添加到今天',
+      openWithDefaultApp: '用默认应用打开',
+      showInFinder: '在访达中显示',
     },
     message: {
       assistantResponding: '助手正在回复',
