@@ -26,6 +26,7 @@ export function ChannelConfigWindow() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [addingAgentId, setAddingAgentId] = useState<string | null>(null);
+  const [removingAgentId, setRemovingAgentId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [seedText, setSeedText] = useState('');
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
@@ -97,8 +98,9 @@ export function ChannelConfigWindow() {
         ),
       ),
       mention: agentMentionToken(agentId),
+      removable: builtInCoordinatorAgentId !== null && agentId !== builtInCoordinatorAgentId,
     })),
-    [agentById, conversations, memberAgentIds],
+    [agentById, builtInCoordinatorAgentId, conversations, memberAgentIds],
   );
   const addableAgents = useMemo(
     () => agents.filter((agent) => agent.agentId !== builtInCoordinatorAgentId && !memberAgentIds.has(agent.agentId)),
@@ -155,6 +157,20 @@ export function ChannelConfigWindow() {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setAddingAgentId(null);
+    }
+  }
+
+  async function removeMember(agentId: string) {
+    setRemovingAgentId(agentId);
+    setError(null);
+    try {
+      await api.agentRemoveConversationMember(conversationId, agentId);
+      await window.lin?.notifySettingsChanged?.();
+      setConversations(await api.agentListConversations());
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setRemovingAgentId(null);
     }
   }
 
@@ -219,6 +235,17 @@ export function ChannelConfigWindow() {
                     leading={<AgentIdentityAvatar label={agent.label} mention={agent.mention} size="sm" />}
                     label={agent.label}
                     sublabel={`@${agent.mention}`}
+                    trailing={agent.removable ? (
+                      <Button
+                        disabled={removingAgentId !== null}
+                        onClick={() => void removeMember(agent.agentId)}
+                        size="sm"
+                        variant="danger"
+                      >
+                        {removingAgentId === agent.agentId ? t.common.loading : t.agent.chat.removeMember}
+                      </Button>
+                    ) : undefined}
+                    wrap
                   />
                 ))}
               </InsetGroup>

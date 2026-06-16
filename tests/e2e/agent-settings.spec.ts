@@ -481,6 +481,19 @@ test.describe('agent and Channel config windows', () => {
     });
     expect(shadows.footer).toBe(shadows.token);
   });
+
+  test('removes an invited member from the Channel config window', async ({ page }) => {
+    const config = await openChannelConfig(page, 'mock-agent-channel-planning');
+    await config.getByRole('button', { name: 'Remove from channel' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_remove_conversation_member')?.args;
+    }).toMatchObject({
+      conversationId: 'mock-agent-channel-planning',
+      agentId: 'user:mock:self',
+    });
+  });
 });
 
 // The per-provider config window (?surface=provider-config) — a standalone surface

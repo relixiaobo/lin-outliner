@@ -160,6 +160,8 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
   'config',
   'doctor',
   'dream',
+  'channel_create',
+  'channel_update',
   'skill',
   'task_stop',
   'node_read',
@@ -193,6 +195,10 @@ const TOOL_ALIASES = new Map<string, string>([
   ['config', 'config'],
   ['doctor', 'doctor'],
   ['dream', 'dream'],
+  ['channelcreate', 'channel_create'],
+  ['channel_create', 'channel_create'],
+  ['channelupdate', 'channel_update'],
+  ['channel_update', 'channel_update'],
   ['skill', 'skill'],
   ['task_stop', 'task_stop'],
   ['agent', 'agent'],
@@ -728,6 +734,30 @@ export function deriveAgentToolActionDescriptors(input: {
       externalEffect: false,
       highConsequence: false,
       capabilities: ['agent_spawn'],
+    })];
+  }
+
+  if (toolName === 'channel_create') {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.channel.create'), {
+      accessScope: 'none',
+      title: 'channel create',
+      summary: 'Create a local multi-agent Channel.',
+      consequence: 'This creates local conversation state and invites selected existing agents; downstream agent activity keeps its own permission gates.',
+      reversible: true,
+      externalEffect: false,
+      highConsequence: false,
+    })];
+  }
+
+  if (toolName === 'channel_update') {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.channel.update'), {
+      accessScope: 'none',
+      title: 'channel update',
+      summary: 'Rename a local Channel or edit its agent members.',
+      consequence: 'This changes local Channel metadata or membership; downstream agent activity keeps its own permission gates.',
+      reversible: true,
+      externalEffect: false,
+      highConsequence: false,
     })];
   }
 
@@ -2123,7 +2153,7 @@ function toolPathArgumentName(toolName: string): string | null {
 
 function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
-  if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'runtime_status' || toolName === 'config' || toolName === 'doctor' || toolName === 'dream') return 'control';
+  if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'channel_create' || toolName === 'channel_update' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'runtime_status' || toolName === 'config' || toolName === 'doctor' || toolName === 'dream') return 'control';
   if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'file_convert' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete') return 'write';
   if (toolName === 'operation_history') {
     return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';

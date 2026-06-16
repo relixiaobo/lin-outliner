@@ -111,6 +111,9 @@ truth.
   - manual, automatic, and reactive compaction with prompt-too-large retry
   - stable tool-output slimming and recent file-context restore across compact
   - same-conversation `Agent`, `AgentStatus`, `AgentSend`, and `AgentStop`
+  - coordinator-only `channel_create` and `channel_update` tools for explicit
+    chat-driven local Channel organization; child/delegated runs do not receive
+    them
   - fresh and fork child runs, each with its OWN run ledger (run unification;
     sidechain transcripts replay from the ledger) and background
     notifications
@@ -183,9 +186,10 @@ truth.
     resurrect a removed member); `addressedTo` persisted on user messages AND on
     handing-off assistant replies
   - Channel creation with a name and optional invited agents; the Channels section
-    action opens New Channel, while DMs never convert or share history; coordinator
-    and DM members are immovable; member removal blocked while a round is active;
-    mention-token collisions rejected at create/add time
+    action opens New Channel, while DMs never convert or share history; the
+    Channel config window can rename, add members, and remove invited members;
+    coordinator and DM members are immovable; member removal blocked while a round
+    is active; mention-token collisions rejected at create/add time
   - routing: explicit user `@`s all run, uncounted (independent answers — each
     run's context cuts at the message that addressed it,
     `cutChannelPathForRun`); no `@` routes to the coordinator (PM-ratified); an

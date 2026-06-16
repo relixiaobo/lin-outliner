@@ -2624,6 +2624,17 @@ export class AgentRuntime {
           selfMaintenance: defaultAgentId === this.agentIdentity.agentId
             ? this.createSelfMaintenanceRuntime(() => conversationId, () => conversationRef.current)
             : undefined,
+          channelOrg: defaultAgentId === this.agentIdentity.agentId
+            ? {
+                currentConversationId: () => conversationId,
+                createConversation: (options) => this.createConversation(options),
+                listConversations: () => this.listConversations(),
+                listAllAgentDefinitions: (targetConversationId) => this.listAllAgentDefinitions(targetConversationId),
+                renameConversation: (targetConversationId, title) => this.renameConversation(targetConversationId, title),
+                addConversationMember: (targetConversationId, agentId) => this.addConversationMember(targetConversationId, agentId),
+                removeConversationMember: (targetConversationId, agentId) => this.removeConversationMember(targetConversationId, agentId),
+              }
+            : undefined,
           allowedTools: defaultAgentProfile?.definition.tools,
           disallowedTools: defaultAgentProfile?.definition.disallowedTools,
           streamFn: this.options.streamFn,
@@ -8455,6 +8466,7 @@ function createConfiguredAgent(
     recall?: AgentToolsOptions['recall'];
     askUserQuestion?: AgentToolsOptions['askUserQuestion'];
     selfMaintenance?: AgentToolsOptions['selfMaintenance'];
+    channelOrg?: AgentToolsOptions['channelOrg'];
     localWorkspace?: AgentLocalWorkspaceContext;
     allowedTools?: string[];
     disallowedTools?: string[];
@@ -8495,6 +8507,7 @@ function createConfiguredAgent(
         recall: options.recall,
         askUserQuestion: options.askUserQuestion,
         selfMaintenance: options.selfMaintenance,
+        channelOrg: options.channelOrg,
         allowedTools: options.allowedTools,
         disallowedTools: options.disallowedTools,
       }),

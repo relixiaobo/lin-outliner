@@ -14,6 +14,7 @@ import { createNodeTools, type OutlinerToolHost } from './agentNodeTools';
 import { createLocalTools, scratchRootForWorkdir, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { createSkillTool, type AgentSkillRuntime } from './agentSkills';
 import { createAgentDelegationTools, type AgentDelegationRuntime } from './agentDelegation';
+import { createChannelOrgTools, type AgentChannelToolRuntime } from './agentChannelTools';
 import { normalizeAgentToolNames } from './agentToolRules';
 import { createRecallTool, type AgentRecallToolRuntime } from './agentRecallTool';
 import { createAskUserQuestionTool, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
@@ -200,6 +201,7 @@ export interface AgentToolsOptions {
   recall?: AgentRecallToolRuntime;
   askUserQuestion?: AgentAskUserQuestionRuntime;
   selfMaintenance?: AgentSelfMaintenanceRuntime;
+  channelOrg?: AgentChannelToolRuntime;
   allowedTools?: string[];
   disallowedTools?: string[];
 }
@@ -218,6 +220,7 @@ export function createAgentTools(outliner?: OutlinerToolHost, options: AgentTool
     ...(options.recall ? [createRecallTool(options.recall)] : []),
     ...(options.askUserQuestion ? [createAskUserQuestionTool(options.askUserQuestion)] : []),
     ...(options.selfMaintenance ? createSelfMaintenanceTools(options.selfMaintenance) : []),
+    ...(options.channelOrg ? createChannelOrgTools(options.channelOrg) : []),
     ...(options.skillRuntime && options.skillToolEnabled !== false ? [createSkillTool(options.skillRuntime)] : []),
     ...(options.delegationRuntime ? createAgentDelegationTools(options.delegationRuntime) : []),
   ];
