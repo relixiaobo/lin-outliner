@@ -181,7 +181,9 @@ export function deriveDebugRun(events: readonly AgentEvent[], context: DerivedRu
 /**
  * Project a fully-derived run into its tree node. A pure projection — every field
  * is copied from the run, so the summary can never disagree with the detail (this
- * is why the anchors are sourced once, in {@link deriveDebugRun}, not twice).
+ * is why the anchors are sourced once, in {@link deriveDebugRun}, not twice). This
+ * is also the reference the light {@link summarizeRunStream} is tested against: a
+ * correct-by-construction oracle for the path that skips building the full detail.
  */
 export function summarizeDebugRun(run: AgentDebugRun): AgentDebugRunSummary {
   return {
@@ -205,7 +207,8 @@ export function summarizeDebugRun(run: AgentDebugRun): AgentDebugRunSummary {
  * tree shows one collapsed node per run, so it never needs the per-round request
  * windows / redaction that {@link deriveDebugRun} materializes ([[agent-debug-run-grounded]]).
  * Round counting mirrors deriveDebugRounds (only after the run's own run.started),
- * so the summary can never disagree with the detail.
+ * so the summary can never disagree with the detail — an equivalence test pins
+ * this output to {@link summarizeDebugRun} of the fully-derived run.
  */
 export function summarizeRunStream(
   events: readonly AgentEvent[],
@@ -406,10 +409,10 @@ function toolResultRow(messageId: string, toolCallId: string, toolName: string, 
 
 /**
  * Attach a tool result to its exchange. A `tool_result.created` lands on the
- * round still in flight; a `tool_result.replaced` (output slimming, stamped with
- * its producing run's id) lands on whichever earlier round made the call — so we
- * search the in-flight round first, then the rest. `isError` is left untouched
- * when undefined (replacements don't restate it).
+ * round still in flight; a `tool_result.replaced` (output slimming, spliced into
+ * this run's events by matching `toolCallId`) lands on whichever earlier round
+ * made the call — so we search the in-flight round first, then the rest. `isError`
+ * is left untouched when undefined (replacements don't restate it).
  *
  * Only a `.created` (which carries `toolName`) may OPEN an exchange — a result
  * arriving before its round's `.completed` seeded the call. A `.replaced`

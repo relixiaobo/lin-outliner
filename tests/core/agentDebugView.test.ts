@@ -6,6 +6,7 @@ import {
   extractRunSnapshotFromPayload,
   snapshotFromRunEvents,
   summarizeDebugRun,
+  summarizeRunStream,
 } from '../../src/main/agentDebugView';
 import type { AgentRunMetaProjection } from '../../src/main/agentEventStore';
 
@@ -255,6 +256,10 @@ describe('deriveDebugRun + snapshot + summary assembly', () => {
     const summary = summarizeDebugRun(run);
     expect(summary).toMatchObject({ runId, agentId: 'built-in:tenon:assistant', kind: 'turn', roundCount: 1, createdAt: 1700 });
     expect(summary.provider).toBe('anthropic');
+
+    // The light tree path must agree with the full-derivation oracle field-for-field
+    // — otherwise a collapsed node could disagree with the run it expands into.
+    expect(summarizeRunStream(events, meta, null)).toEqual(summary);
   });
 
   test('rolls up round usage when meta.usage is absent (in-flight run)', () => {
@@ -280,6 +285,10 @@ describe('deriveDebugRun + snapshot + summary assembly', () => {
     const run = deriveDebugRun(events, { meta, snapshot: null, parentToolCallId: null });
     expect(run.usage?.totalTokens).toBe(165);
     expect(run.usage?.costUsd).toBeCloseTo(0.015, 5);
+
+    // Two rounds + in-flight usage rollup — the case most apt to drift: the light
+    // path must still match the oracle's summary exactly.
+    expect(summarizeRunStream(events, meta, null)).toEqual(summarizeDebugRun(run));
   });
 
   test('snapshotFromRunEvents returns null when no snapshot was captured', () => {
