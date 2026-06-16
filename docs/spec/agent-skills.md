@@ -474,10 +474,10 @@ Intentional omissions:
 
 ## Permission Inputs
 
-The user-facing default policy is the consequence-based delegated-operator model
-described in `agent-tool-permissions.md`: local reversible work is allowed,
-commits ask, and the safety floor is denied. Agent definitions and skills cannot
-widen above that global policy.
+The user-facing default policy is the default-allow delegated-operator model
+described in `agent-tool-permissions.md`: ordinary work runs, hard redlines are
+denied, and built-in or user soft blocks require an explicit exception. Agent
+definitions and skills cannot widen above that global policy.
 
 Agent settings expose only a narrow delegation sandbox:
 

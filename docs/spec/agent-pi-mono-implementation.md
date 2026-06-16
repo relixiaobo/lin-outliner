@@ -592,7 +592,7 @@ adapter around a Electron IPC command.
 ```txt
 AgentTool.execute(args)
   -> validate args
-  -> check approval policy
+  -> check permission/block policy
   -> invoke Electron IPC command
   -> normalize result
   -> return AgentToolResult
@@ -685,23 +685,23 @@ fit into the pi-mono runtime.
 
 These are the active core tool surface.
 
-| Tool | Reference | TypeScript-backed? | Approval intent | Purpose |
+| Tool | Reference | TypeScript-backed? | Permission notes | Purpose |
 |---|---|---:|---|---|
-| `node_search` | nodex `node_search`, Tenon search-node outline | Yes | No | Execute a temporary or saved search node outline without mutating document state. |
-| `node_read` | nodex `node_read` | Yes | No | Read node raw type/data, fields, and bounded children. |
-| `node_create` | nodex `node_create`, Tenon outline parser | Yes | Usually yes | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
-| `node_edit` | nodex `node_edit`, Tenon outline parser | Yes | Usually yes | Edit a known node's annotated outline by exact replacement, or perform explicit move, merge, or reference replacement. |
-| `node_delete` | nodex `node_delete` | Yes | Usually yes | Trash or restore nodes. |
-| `operation_history` | nodex `undo`, Tenon history | Yes | Depends | List, undo, or redo user and agent operations. |
-| `file_read` | local file read role | Yes | Usually no | Read files with bounded output and freshness tracking. |
-| `file_glob` | local file glob role | Yes | No | Find files by path pattern. |
-| `file_grep` | local file grep role | Yes | No | Search file contents with bounded output. |
-| `file_edit` | local exact edit role | Yes | Yes | Perform exact string replacement after reading the file. |
-| `file_write` | local file write role | Yes | Yes | Create files or rewrite whole files. |
-| `bash` | shell execution role | Yes | Usually yes | Run local commands with timeout, approval, and output limits. |
-| `task_stop` | background task stop role | Yes | Usually yes | Stop background commands created by `bash`. |
-| `web_search` | web search role | Optional | Depends | Search the web for current external information. |
-| `web_fetch` | web fetch role | Optional | Depends | Fetch and read a specific URL with pagination or snippet search. |
+| `node_search` | nodex `node_search`, Tenon search-node outline | Yes | Default allow | Execute a temporary or saved search node outline without mutating document state. |
+| `node_read` | nodex `node_read` | Yes | Default allow | Read node raw type/data, fields, and bounded children. |
+| `node_create` | nodex `node_create`, Tenon outline parser | Yes | Default allow unless blocked | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
+| `node_edit` | nodex `node_edit`, Tenon outline parser | Yes | Default allow unless blocked | Edit a known node's annotated outline by exact replacement, or perform explicit move, merge, or reference replacement. |
+| `node_delete` | nodex `node_delete` | Yes | Default allow unless blocked | Trash or restore nodes. |
+| `operation_history` | nodex `undo`, Tenon history | Yes | Default allow unless blocked | List, undo, or redo user and agent operations. |
+| `file_read` | local file read role | Yes | Typed file boundary | Read files with bounded output and freshness tracking. |
+| `file_glob` | local file glob role | Yes | Typed file boundary | Find files by path pattern. |
+| `file_grep` | local file grep role | Yes | Typed file boundary | Search file contents with bounded output. |
+| `file_edit` | local exact edit role | Yes | Typed file boundary | Perform exact string replacement after reading the file. |
+| `file_write` | local file write role | Yes | Typed file boundary | Create files or rewrite whole files. |
+| `bash` | shell execution role | Yes | Hard redlines + soft blocks | Run local commands with timeout, block policy, and output limits. |
+| `task_stop` | background task stop role | Yes | Default allow unless blocked | Stop background commands created by `bash`. |
+| `web_search` | web search role | Optional | Default allow unless host/offline policy blocks | Search the web for current external information. |
+| `web_fetch` | web fetch role | Optional | Default allow unless host/offline policy blocks | Fetch and read a specific URL with pagination or snippet search. |
 
 P0 intentionally follows nodex's compact outliner surface instead of exposing
 one tool per UI command. Tag, field, reference, move, and merge behavior
@@ -824,29 +824,30 @@ TypeScript should validate paths, workspace boundaries, command timeouts, output
 and mutation legality. TypeScript validation is useful for fast feedback, but it
 is not the security boundary.
 
-## Approval Flow
+## Permission Flow
 
-Tool permissions use the consequence-based gate in
-`agent-tool-permissions.md`. Local reversible work is allowed immediately,
-commits pause the run until the user approves, and safety-floor actions are
-denied before execution.
+Tool permissions use the default-allow blocklist gate in
+`agent-tool-permissions.md`. Ordinary local and external work runs immediately.
+Hard redlines deny before execution. Built-in or user soft blocks pause the run
+with an allow-once / always-allow / block card; unattended soft blocks deny
+without waiting.
 
 Flow:
 
 ```txt
 Tool call starts
-  -> adapter asks TypeScript for preview or risk classification
-  -> AgentRuntime appends approval.requested
-  -> tool promise waits
-  -> user approves or rejects
-  -> AgentRuntime appends approval.resolved
+  -> adapter asks TypeScript for descriptors and blocklist classification
+  -> if allowed, tool runs immediately
+  -> if soft-blocked, AgentRuntime appends approval.requested and waits
+  -> user allows once, always allows, blocks, or countdown auto-blocks
+  -> AgentRuntime appends approval.resolved and tool.permission.resolved
   -> adapter resolves tool result
   -> pi-agent-core continues
 ```
 
-Rejected or unattended approval-required tools return a normal tool result that
-says permission was denied. The agent can then explain or propose a safer
-alternative.
+Rejected, auto-blocked, hard-blocked, or unattended soft-blocked tools return a
+normal tool result that says permission was denied. The agent can then explain
+or propose a safer alternative.
 
 ## Event Mapping
 
@@ -1022,12 +1023,13 @@ the outliner. TypeScript must enforce the boundary.
 
 Baseline rules:
 
-- Restrict file tools to the configured local file root unless the user
-  explicitly grants broader access.
+- Restrict typed file tools to the configured local file root unless the user
+  explicitly hands a broader folder to Tenon.
 - Normalize and canonicalize paths in TypeScript.
 - Enforce command timeout and output limits.
 - Redact known secret patterns from tool output where possible.
-- Require approval for destructive file and shell operations.
+- Hard-block catastrophic operations and let users add narrower block rules from
+  the permission log for repeated unwanted behavior.
 - Group document mutations into undoable transactions.
 - Never let a renderer-only check be the final permission check.
 

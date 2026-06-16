@@ -1,4 +1,4 @@
-export type GlobalToolPermissionDecision = 'allow' | 'ask' | 'deny';
+export type GlobalToolPermissionDecision = 'allow' | 'soft_block' | 'deny';
 
 export type AgentPermissionEffectReach =
   | 'local'
@@ -22,6 +22,10 @@ export type AgentPermissionGrant =
   | { kind: 'external'; target: string }
   | { kind: 'command'; form: string };
 
+export type AgentPermissionBlock =
+  | AgentPermissionGrant
+  | { kind: 'action'; actionKind: AgentToolActionKind };
+
 export interface AgentOperationEffect {
   reach: AgentPermissionEffectReach;
   reversible: boolean;
@@ -33,9 +37,7 @@ export interface AgentOperationEffect {
 
 export function decideAgentOperationEffect(effect: AgentOperationEffect): GlobalToolPermissionDecision {
   if (effect.floor) return 'deny';
-  if (effect.reach === 'network_read') return 'allow';
-  if (effect.reach === 'local' && effect.reversible && !effect.touchesCredentials) return 'allow';
-  return 'ask';
+  return 'allow';
 }
 
 export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [

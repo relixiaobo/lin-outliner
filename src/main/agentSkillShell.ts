@@ -6,6 +6,7 @@ import {
   evaluateAgentToolPermission,
   type AgentPermissionAskDecision,
   type AgentPermissionDenyDecision,
+  type AgentPermissionSoftBlockDecision,
   type GlobalToolPermissionConfig,
 } from './agentPermissions';
 import { resolveAgentPermissionAsk, type PermissionDeniedReason } from './agentPermissionAskResolver';
@@ -24,7 +25,7 @@ export interface AgentSkillShellApprovalInput {
   requestId: string;
   toolCall: ToolCall;
   args: { command: string };
-  decision: AgentPermissionAskDecision;
+  decision: AgentPermissionAskDecision | AgentPermissionSoftBlockDecision;
 }
 
 export interface AgentSkillShellPermissionNoticeInput {
@@ -111,62 +112,64 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       },
     });
   }
-  if (decision.behavior === 'ask') {
-    await appendPermissionEvent({ outcome: 'ask' });
+  if (decision.behavior === 'ask' || decision.behavior === 'soft_blocked') {
+    await appendPermissionEvent({ outcome: decision.behavior === 'soft_blocked' ? 'soft_blocked' : 'ask' });
     // Route through the same ask resolver as the main runtime so the unattended
     // fail-safe (no approval channel => deny) applies consistently here.
-    const resolution = await resolveAgentPermissionAsk({
-      decision,
-      interactionAvailable: Boolean(input.approvalHandler),
-      signal: input.signal,
-    });
-    if (resolution.outcome === 'block') {
-      await appendDeniedPermissionEvent(resolution.reason, false);
-      throw new AgentSkillShellError('permission_denied', permissionDeniedToolResultMessage({
-        toolName: 'bash',
-        reason: resolution.reason,
-        message: resolution.message,
-      }));
-    }
-    if (resolution.outcome === 'needs_user') {
-      if (!input.approvalHandler) {
-        await appendDeniedPermissionEvent('runtime', false);
-        throw new AgentSkillShellError(
-          'permission_denied',
-          permissionDeniedToolResultMessage({
-            toolName: 'bash',
-            reason: 'runtime',
-            message: 'Shell command was not run because no approval channel is available.',
-          }),
-        );
-      }
-      const approval = await input.approvalHandler({
-        requestId: permissionRequestId,
-        toolCall,
-        args: { command: input.command },
+    if (decision.behavior === 'ask') {
+      const resolution = await resolveAgentPermissionAsk({
         decision,
-      }, input.signal);
-      const deniedReason = approval.deniedReason ?? 'runtime';
-      await appendPermissionEvent({
-        outcome: approval.approved ? 'allow' : 'blocked',
-        includeChecked: false,
-        source: approval.approved ? 'user' : permissionEventSourceForDeniedReason(deniedReason),
-        resolved: {
-          status: approval.approved ? 'approved' : permissionResolutionStatusForDeniedReason(deniedReason),
-          resolvedBy: approval.approved
-            ? approval.scope === 'always' ? 'allow_rule_update' : 'user_once'
-            : permissionResolvedByForDeniedReason(deniedReason),
-          updatedRule: approval.alwaysAllowRule,
-          deniedReason: approval.approved ? undefined : deniedReason,
-        },
+        interactionAvailable: Boolean(input.approvalHandler),
+        signal: input.signal,
       });
-      if (!approval.approved) {
+      if (resolution.outcome === 'block') {
+        await appendDeniedPermissionEvent(resolution.reason, false);
         throw new AgentSkillShellError('permission_denied', permissionDeniedToolResultMessage({
           toolName: 'bash',
-          reason: deniedReason,
-          message: skillShellApprovalDeniedMessage(deniedReason),
+          reason: resolution.reason,
+          message: resolution.message,
         }));
       }
+    }
+    if (!input.approvalHandler) {
+      await appendDeniedPermissionEvent('runtime', false);
+      throw new AgentSkillShellError(
+        'permission_denied',
+        permissionDeniedToolResultMessage({
+          toolName: 'bash',
+          reason: 'runtime',
+          message: decision.behavior === 'soft_blocked'
+            ? 'Shell command was blocked by default and no exception channel is available.'
+            : 'Shell command was not run because no approval channel is available.',
+        }),
+      );
+    }
+    const approval = await input.approvalHandler({
+      requestId: permissionRequestId,
+      toolCall,
+      args: { command: input.command },
+      decision,
+    }, input.signal);
+    const deniedReason = approval.deniedReason ?? 'runtime';
+    await appendPermissionEvent({
+      outcome: approval.approved ? 'allow' : 'blocked',
+      includeChecked: false,
+      source: approval.approved ? 'user' : permissionEventSourceForDeniedReason(deniedReason),
+      resolved: {
+        status: approval.approved ? 'approved' : permissionResolutionStatusForDeniedReason(deniedReason),
+        resolvedBy: approval.approved
+          ? approval.scope === 'always' ? 'allow_rule_update' : 'user_once'
+          : permissionResolvedByForDeniedReason(deniedReason),
+        updatedRule: approval.alwaysAllowRule,
+        deniedReason: approval.approved ? undefined : deniedReason,
+      },
+    });
+    if (!approval.approved) {
+      throw new AgentSkillShellError('permission_denied', permissionDeniedToolResultMessage({
+        toolName: 'bash',
+        reason: deniedReason,
+        message: skillShellApprovalDeniedMessage(deniedReason),
+      }));
     }
   } else if (decision.behavior !== 'allow') {
     const reason = permissionDeniedReasonForDecision(decision);

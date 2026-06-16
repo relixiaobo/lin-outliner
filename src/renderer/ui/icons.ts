@@ -16,6 +16,7 @@ export {
   AlertTriangle as WarningIcon,
   ArrowDownAZ as SortDescIcon,
   ArrowUpAZ as SortAscIcon,
+  Ban as BlockIcon,
   Bold as BoldIcon,
   Brain as BrainIcon,
   Bug as DebugIcon,

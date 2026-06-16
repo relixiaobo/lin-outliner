@@ -394,6 +394,8 @@ export interface AgentApprovalRequestView {
   reason: string;
   details: AgentApprovalRequestDetail[];
   alwaysAllowRule?: string;
+  alwaysAllowAction?: 'grant' | 'soft_allow' | 'remove_block';
+  autoBlockMs?: number;
   /**
    * Agent id, set when this approval/notice was raised by a CONSULTED agent — a
    * fresh child run that is a different agent than the parent. The card attributes

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { openMockedApp } from './outlinerMock';
+import { commandCalls, openMockedApp } from './outlinerMock';
 
 test.describe('agent debug panel', () => {
   test.beforeEach(async ({ page }) => {
@@ -13,9 +13,9 @@ test.describe('agent debug panel', () => {
     await expect(debugPanel.getByRole('heading', { name: 'Agent Debug' })).toBeVisible();
     await expect(debugPanel).toHaveCSS('background-color', 'rgb(255, 255, 255)');
 
-    // Overview: DM shape + the conversation's run/token rollup.
+    // Overview: Channel shape + the conversation's run/token rollup.
     const overview = debugPanel.getByLabel('Agent debug overview');
-    await expect(overview).toContainText('Direct');
+    await expect(overview).toContainText('Channel');
 
     // One run node, attributed to its agent, showing the model + round count.
     const runHead = debugPanel.locator('.agent-debug-run-head').first();
@@ -32,5 +32,27 @@ test.describe('agent debug panel', () => {
       round.locator('.agent-debug-part-details.is-text summary strong')
         .filter({ hasText: /^Current outline focuses on UI work\.$/ }),
     ).toBeVisible();
+  });
+
+  test('adds a user block rule from a logged tool exchange', async ({ page }) => {
+    await page.getByRole('button', { name: 'Open agent debug' }).click();
+
+    const debugPanel = page.locator('.outline-panel-surface.is-agent-debug');
+    await debugPanel.locator('.agent-debug-run-head').first().click();
+
+    const exchange = debugPanel.locator('.agent-debug-tool-exchange', { hasText: 'bash' }).first();
+    await expect(exchange).toContainText('Pushed to origin/main.');
+
+    await exchange.getByRole('button', { name: 'Add to user blocks' }).click();
+    await expect(exchange.getByRole('button', { name: /User block added: Command\(git push origin main\)/ })).toBeVisible();
+
+    await expect.poll(async () => {
+      const updateCall = (await commandCalls(page)).findLast((call) => call.cmd === 'agent_update_tool_permission_settings');
+      return updateCall?.args.settings;
+    }).toEqual({
+      grants: [],
+      blocks: ['Command(git push origin main)'],
+      softBlockAllows: [],
+    });
   });
 });

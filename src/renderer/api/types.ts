@@ -73,6 +73,8 @@ export type {
 
 export interface AgentToolPermissionSettingsView {
   grants: string[];
+  blocks: string[];
+  softBlockAllows: string[];
   diagnostics: Array<{
     ruleValue: string;
     code: string;
@@ -82,6 +84,8 @@ export interface AgentToolPermissionSettingsView {
 
 export interface AgentToolPermissionSettingsInput {
   grants: string[];
+  blocks: string[];
+  softBlockAllows: string[];
 }
 
 export interface AgentPickScopeFolderResult {

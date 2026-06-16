@@ -579,7 +579,8 @@
   white-space: nowrap;
 }
 
-.agent-debug-copy-button {
+.agent-debug-copy-button,
+.agent-debug-block-button {
   display: inline-flex;
   width: 20px;
   height: 20px;
@@ -590,13 +591,23 @@
   color: var(--text-faint);
 }
 
-.agent-debug-copy-button:hover {
+.agent-debug-copy-button:hover,
+.agent-debug-block-button:hover {
   background: var(--control-hover);
   color: var(--text-strong);
 }
 
+.agent-debug-block-button.is-saved {
+  color: var(--text-strong);
+}
+
+.agent-debug-block-button.is-error {
+  color: var(--danger);
+}
+
 .agent-debug-icon-button:focus-visible,
-.agent-debug-copy-button:focus-visible {
+.agent-debug-copy-button:focus-visible,
+.agent-debug-block-button:focus-visible {
   box-shadow: var(--focus-ring-shadow);
 }
 

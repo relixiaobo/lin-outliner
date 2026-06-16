@@ -171,7 +171,12 @@ import {
   type AgentProviderRuntimeConfig,
 } from './agentSettings';
 import { parseProviderQualifiedModel } from '../core/agentModelId';
-import { appendAgentToolPermissionGrant, readAgentToolPermissionConfig } from './agentToolPermissionStore';
+import {
+  appendAgentToolPermissionGrant,
+  appendAgentToolPermissionSoftBlockAllow,
+  readAgentToolPermissionConfig,
+  removeAgentToolPermissionBlock,
+} from './agentToolPermissionStore';
 import type { OutlinerToolHost } from './agentNodeTools';
 import { AgentUserViewContextReminderTracker, buildUserViewContextReminder } from './agentUserViewContextReminder';
 import { buildConversationEnvironmentReminder } from './agentConversationEnvironmentReminder';
@@ -213,6 +218,7 @@ import {
   evaluateAgentToolPermission,
   type AgentPermissionAskDecision,
   type AgentPermissionDenyDecision,
+  type AgentPermissionSoftBlockDecision,
 } from './agentPermissions';
 import {
   resolveAgentPermissionAsk,
@@ -422,7 +428,7 @@ interface AgentToolApprovalInput {
   requestId: string;
   toolCall: ToolCall;
   args: unknown;
-  decision: AgentPermissionAskDecision;
+  decision: AgentPermissionAskDecision | AgentPermissionSoftBlockDecision;
 }
 
 interface AgentToolApprovalResolution {
@@ -628,6 +634,7 @@ export class AgentRuntime {
     runId?: string;
     request: AgentApprovalRequestView;
     alwaysAllowRule?: string;
+    alwaysAllowAction?: 'grant' | 'soft_allow' | 'remove_block';
     onApproved?: () => Promise<void>;
     resolve: (resolution: AgentToolApprovalResolution) => void;
   }>();
@@ -1337,17 +1344,26 @@ export class AgentRuntime {
     let deniedReason: PermissionDeniedReason | undefined = approved ? undefined : 'user_denied';
     let resolvedScope = scope;
     let alwaysAllowRule = approved && scope === 'always' ? pending.alwaysAllowRule : undefined;
+    let alwaysAllowAction = approved && scope === 'always' ? pending.alwaysAllowAction ?? 'grant' : undefined;
     if (approved && scope === 'always' && !alwaysAllowRule) {
       resolvedScope = 'once';
+      alwaysAllowAction = undefined;
     }
     if (alwaysAllowRule) {
       try {
-        await appendAgentToolPermissionGrant(alwaysAllowRule);
+        if (alwaysAllowAction === 'remove_block') {
+          await removeAgentToolPermissionBlock(alwaysAllowRule);
+        } else if (alwaysAllowAction === 'soft_allow') {
+          await appendAgentToolPermissionSoftBlockAllow(alwaysAllowRule);
+        } else {
+          await appendAgentToolPermissionGrant(alwaysAllowRule);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.emitError(conversationId, `Failed to persist permission grant; approved once instead. ${message}`);
+        this.emitError(conversationId, `Failed to persist permission rule; approved once instead. ${message}`);
         resolvedScope = 'once';
         alwaysAllowRule = undefined;
+        alwaysAllowAction = undefined;
       }
     }
     if (resolvedApproved && pending.onApproved) {
@@ -1360,6 +1376,7 @@ export class AgentRuntime {
         deniedReason = 'runtime';
         resolvedScope = 'once';
         alwaysAllowRule = undefined;
+        alwaysAllowAction = undefined;
       }
     }
 
@@ -5730,6 +5747,8 @@ export class AgentRuntime {
       reason: input.decision.reason,
       details: input.decision.request.details,
       alwaysAllowRule: input.decision.request.alwaysAllowRule,
+      alwaysAllowAction: input.decision.request.alwaysAllowAction,
+      autoBlockMs: input.decision.request.autoBlockMs,
       requestedByAgentId,
     };
     await this.emitApprovalCard(conversationId, conversation, request, {
@@ -5753,6 +5772,7 @@ export class AgentRuntime {
         runId: this.activeRunId(conversation) ?? undefined,
         request,
         alwaysAllowRule: request.alwaysAllowRule,
+        alwaysAllowAction: request.alwaysAllowAction,
         resolve: (resolution) => {
           signal?.removeEventListener('abort', onAbort);
           resolve(resolution);
@@ -8678,40 +8698,42 @@ function createConfiguredAgent(
         });
         return undefined;
       }
-      if (decision.behavior === 'ask') {
+      if (decision.behavior === 'ask' || decision.behavior === 'soft_blocked') {
         await options.permissionEventHandler?.({
           requestId: permissionRequestId,
           toolCall,
           decision,
-          outcome: 'ask',
+          outcome: decision.behavior === 'soft_blocked' ? 'soft_blocked' : 'ask',
         });
-        const askResolution = await resolveAgentPermissionAsk({
-          decision,
-          interactionAvailable: Boolean(options.approvalHandler),
-          signal,
-        });
-        if (askResolution.outcome === 'block') {
-          await options.permissionEventHandler?.({
-            requestId: permissionRequestId,
-            toolCall,
+        if (decision.behavior === 'ask') {
+          const askResolution = await resolveAgentPermissionAsk({
             decision,
-            outcome: 'blocked',
-            includeChecked: false,
-            source: permissionEventSourceForDeniedReason(askResolution.reason),
-            resolved: {
-              status: permissionResolutionStatusForDeniedReason(askResolution.reason),
-              resolvedBy: permissionResolvedByForDeniedReason(askResolution.reason),
-              deniedReason: askResolution.reason,
-            },
+            interactionAvailable: Boolean(options.approvalHandler),
+            signal,
           });
-          return {
-            block: true,
-            reason: permissionDeniedToolResultMessage({
-              toolName: toolCall.name,
-              reason: askResolution.reason,
-              message: askResolution.message,
-            }),
-          };
+          if (askResolution.outcome === 'block') {
+            await options.permissionEventHandler?.({
+              requestId: permissionRequestId,
+              toolCall,
+              decision,
+              outcome: 'blocked',
+              includeChecked: false,
+              source: permissionEventSourceForDeniedReason(askResolution.reason),
+              resolved: {
+                status: permissionResolutionStatusForDeniedReason(askResolution.reason),
+                resolvedBy: permissionResolvedByForDeniedReason(askResolution.reason),
+                deniedReason: askResolution.reason,
+              },
+            });
+            return {
+              block: true,
+              reason: permissionDeniedToolResultMessage({
+                toolName: toolCall.name,
+                reason: askResolution.reason,
+                message: askResolution.message,
+              }),
+            };
+          }
         }
         if (options.approvalHandler) {
           const approval = await options.approvalHandler({
@@ -8765,7 +8787,9 @@ function createConfiguredAgent(
           reason: permissionDeniedToolResultMessage({
             toolName: toolCall.name,
             reason: 'runtime',
-            message: 'Permission requires user approval, but no approval channel is available.',
+            message: decision.behavior === 'soft_blocked'
+              ? 'Action was blocked by default and no exception channel is available.'
+              : 'Permission requires user approval, but no approval channel is available.',
           }),
         };
       }

@@ -374,7 +374,7 @@ export type AgentRunLogEvent =
       toolName: string;
       primaryActionKind?: string;
       actionKinds: string[];
-      outcome: 'allow' | 'ask' | 'blocked';
+      outcome: 'allow' | 'ask' | 'soft_blocked' | 'blocked';
       source: AgentToolPermissionEventSource;
       descriptorRef?: AgentPayloadRef;
     })
@@ -838,7 +838,7 @@ export interface ToolPermissionCheckedEvent extends AgentEventBase {
   toolName: string;
   primaryActionKind?: string;
   actionKinds: string[];
-  outcome: 'allow' | 'ask' | 'blocked';
+  outcome: 'allow' | 'ask' | 'soft_blocked' | 'blocked';
   source: AgentToolPermissionEventSource;
   descriptorRef?: AgentPayloadRef;
 }

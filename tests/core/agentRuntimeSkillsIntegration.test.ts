@@ -1139,14 +1139,13 @@ describe('agent runtime skill integration', () => {
   test('routes skill shell approval requests through the runtime approval flow', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-shell-approval-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-shell-approval-data-'));
-    const outsideTarget = path.join(tmpdir(), `lin-agent-skill-shell-outside-${Date.now()}`);
-    roots.push(localRoot, dataRoot, outsideTarget);
+    roots.push(localRoot, dataRoot);
 
     await createSkill(localRoot, 'shell-approval-skill', [
       '---',
       'description: Use when checking skill shell approval.',
       '---',
-      `Shell output: !\`rm -rf ${outsideTarget} && echo skill-shell-approved\``,
+      'Shell output: !`eval "echo skill-shell-approved"`',
     ].join('\n'));
 
     const contextTexts: string[] = [];
@@ -1197,7 +1196,7 @@ describe('agent runtime skill integration', () => {
 
     expect(approvalEvent.request.toolName).toBe('bash');
     expect(approvalEvent.request.toolCallId).toStartWith('skill-shell-');
-    expect(approvalEvent.request.target).toContain(outsideTarget);
+    expect(approvalEvent.request.target).toContain('eval "echo skill-shell-approved"');
 
     await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true);
     await sendPromise;
@@ -1220,7 +1219,7 @@ describe('agent runtime skill integration', () => {
     ))).toMatchObject({
       requestId: approvalEvent.requestId,
       toolCallId: approvalEvent.request.toolCallId,
-      outcome: 'ask',
+      outcome: 'soft_blocked',
     });
     expect(events.find((event) => (
       event.type === 'tool.permission.resolved'
@@ -1243,9 +1242,9 @@ describe('agent runtime skill integration', () => {
       [
         fauxAssistantMessage([
           fauxToolCall('bash', {
-            command: 'git push --dry-run origin codex/agent-permissions',
-            description: 'Dry-run git push',
-          }, { id: 'tool-denied-push' }),
+            command: 'eval "echo denied-soft-block"',
+            description: 'Soft-blocked eval command',
+          }, { id: 'tool-denied-soft-block' }),
         ], { stopReason: 'toolUse' }),
         (context) => {
           followUpContexts.push(JSON.stringify(context.messages));
@@ -1304,7 +1303,7 @@ describe('agent runtime skill integration', () => {
     expect(persistedApprovalResolution).toMatchObject({ requestId: approvalEvent.requestId, approved: false });
     expect(permissionChecked).toMatchObject({
       requestId: approvalEvent.requestId,
-      outcome: 'ask',
+      outcome: 'soft_blocked',
     });
     expect(permissionResolved).toMatchObject({
       requestId: approvalEvent.requestId,
@@ -1314,7 +1313,7 @@ describe('agent runtime skill integration', () => {
     });
     const deniedToolResult = events.find((event) => (
       event.type === 'tool_result.created'
-      && event.toolCallId === 'tool-denied-push'
+      && event.toolCallId === 'tool-denied-soft-block'
     ));
     expect(deniedToolResult?.runId).toBeDefined();
     expect(events.some((event) => (
@@ -1333,7 +1332,7 @@ describe('agent runtime skill integration', () => {
       [
         fauxAssistantMessage([
           fauxToolCall('bash', {
-            command: '$(cat ./script.sh)',
+            command: 'rm -rf /',
           }, { id: 'tool-hard-denied-shell' }),
         ], { stopReason: 'toolUse' }),
         (context) => {
@@ -1368,7 +1367,7 @@ describe('agent runtime skill integration', () => {
     );
 
     const created = await runtime.restoreLatestConversation();
-    await runtime.sendMessage(created.conversationId, 'Run the ambiguous shell command.');
+    await runtime.sendMessage(created.conversationId, 'Run the blocked shell command.');
 
     const noticeEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
       event.type === 'approval_request'
@@ -1378,9 +1377,9 @@ describe('agent runtime skill integration', () => {
 
     expect(noticeEvent.request.title).toContain('Blocked');
     expect(noticeEvent.request.toolName).toBe('bash');
-    expect(noticeEvent.request.target).toContain('$(cat ./script.sh)');
+    expect(noticeEvent.request.target).toContain('rm -rf /');
     expect(followUpContexts.join('\n')).toContain('permission_denied');
-    expect(followUpContexts.join('\n')).toContain('Dynamic or ambiguous shell execution.');
+    expect(followUpContexts.join('\n')).toContain('recursively delete');
 
     await runtime.resolveApproval(created.conversationId, noticeEvent.requestId, false);
 
@@ -1410,7 +1409,7 @@ describe('agent runtime skill integration', () => {
       [
         fauxAssistantMessage([
           fauxToolCall('bash', {
-            command: '$(cat ./script.sh)',
+            command: 'rm -rf /',
           }, { id: 'tool-aborted-notice-shell' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage(fauxText('This should not be needed after notice abort.')),
@@ -1478,10 +1477,10 @@ describe('agent runtime skill integration', () => {
       [
         fauxAssistantMessage([
           fauxToolCall('bash', {
-            command: '$(cat ./first.sh)',
+            command: 'rm -rf /',
           }, { id: 'tool-first-denied-shell' }),
           fauxToolCall('bash', {
-            command: '$(cat ./second.sh)',
+            command: 'diskutil eraseDisk JHFS+ X disk2',
           }, { id: 'tool-second-denied-shell' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage(fauxText('Saw repeated blocked commands.')),
@@ -1534,7 +1533,7 @@ describe('agent runtime skill integration', () => {
     ))).toBe(false);
   });
 
-  test('persists always-allow approval rules globally', async () => {
+  test('persists always-allow soft-block exceptions globally', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-always-approval-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-always-approval-data-'));
     roots.push(localRoot, dataRoot);
@@ -1543,9 +1542,9 @@ describe('agent runtime skill integration', () => {
       [
         fauxAssistantMessage([
           fauxToolCall('bash', {
-            command: 'rm -rf ./dist',
-            description: 'Remove build output',
-          }, { id: 'tool-always-rm' }),
+            command: 'eval "echo always-soft-block"',
+            description: 'Soft-blocked eval command',
+          }, { id: 'tool-always-soft-block' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage(fauxText('Cleanup handled.')),
       ],
@@ -1584,22 +1583,23 @@ describe('agent runtime skill integration', () => {
     ));
     if (!approvalEvent) throw new Error('Expected approval request event.');
 
-    expect(approvalEvent.request.alwaysAllowRule).toBe('Command(rm -rf ./dist)');
+    expect(approvalEvent.request.alwaysAllowRule).toBe('Command(eval "echo always-soft-block")');
 
     await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true, 'always');
     await sendPromise;
 
     const settings = JSON.parse(await readFile(path.join(electronUserDataRoot, 'agent-tool-permissions.json'), 'utf8')) as {
       grants?: string[];
+      softBlockAllows?: string[];
     };
-    expect(settings.grants).toContain('Command(rm -rf ./dist)');
+    expect(settings.softBlockAllows).toContain('Command(eval "echo always-soft-block")');
 
     const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
     expect(events.some((event) => (
       event.type === 'tool.permission.resolved'
       && event.status === 'approved'
       && event.resolvedBy === 'allow_rule_update'
-      && event.updatedRule === 'Command(rm -rf ./dist)'
+      && event.updatedRule === 'Command(eval "echo always-soft-block")'
     ))).toBe(true);
   });
 
@@ -1612,9 +1612,9 @@ describe('agent runtime skill integration', () => {
       [
         fauxAssistantMessage([
           fauxToolCall('bash', {
-            command: 'rm -rf ./dist',
-            description: 'Remove build output',
-          }, { id: 'tool-always-rm-fail' }),
+            command: 'eval "echo always-soft-block-fail"',
+            description: 'Soft-blocked eval command',
+          }, { id: 'tool-always-soft-block-fail' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage(fauxText('Cleanup handled after downgraded approval.')),
       ],
@@ -1661,7 +1661,7 @@ describe('agent runtime skill integration', () => {
 
     expect(sink.events.some((event) => (
       event.type === 'error'
-      && event.error.includes('Failed to persist permission grant; approved once instead.')
+      && event.error.includes('Failed to persist permission rule; approved once instead.')
     ))).toBe(true);
     expect(sink.events.some((event) => (
       event.type === 'approval_resolved'
@@ -1678,7 +1678,7 @@ describe('agent runtime skill integration', () => {
     ))).toBe(true);
   });
 
-  test('records remembered grants distinctly with all compound shell action kinds', async () => {
+  test('records legacy grants distinctly with all compound shell action kinds', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-global-allow-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-global-allow-data-'));
     roots.push(localRoot, dataRoot);
@@ -1733,7 +1733,6 @@ describe('agent runtime skill integration', () => {
       event.type === 'tool.permission.checked'
       && event.outcome === 'allow'
       && event.source === 'trust_ledger'
-      && event.primaryActionKind === 'file.delete.allowed_file_area'
       && event.actionKinds.includes('shell.unknown')
       && event.actionKinds.includes('file.delete.allowed_file_area')
     ))).toBe(true);
@@ -1753,9 +1752,9 @@ describe('agent runtime skill integration', () => {
       [
         fauxAssistantMessage([
           fauxToolCall('bash', {
-            command: 'git push --dry-run origin codex/agent-permissions',
-            description: 'Dry-run git push',
-          }, { id: 'tool-close-push' }),
+            command: 'eval "echo close-soft-block"',
+            description: 'Soft-blocked eval command',
+          }, { id: 'tool-close-soft-block' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage(fauxText('This should not be needed after close.')),
       ],

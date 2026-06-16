@@ -727,9 +727,36 @@ function AgentApprovalCard({
   const t = useT();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [submitting, setSubmitting] = useState<AgentApprovalResolutionScope | 'deny' | null>(null);
+  const isSkillTrust = approval.kind === 'skill_trust';
+  const isNotice = approval.kind === 'permission_notice';
+  const isSoftBlock = approval.kind === 'tool_permission' && typeof approval.autoBlockMs === 'number' && approval.autoBlockMs > 0;
+  const [remainingMs, setRemainingMs] = useState(approval.autoBlockMs ?? 0);
+  const autoBlockCancelledRef = useRef(false);
+
+  useEffect(() => {
+    if (!isSoftBlock || !approval.autoBlockMs) return undefined;
+    autoBlockCancelledRef.current = false;
+    setRemainingMs(approval.autoBlockMs);
+    let settled = false;
+    const deadline = Date.now() + approval.autoBlockMs;
+    const tick = () => setRemainingMs(Math.max(0, deadline - Date.now()));
+    const interval = window.setInterval(tick, 250);
+    const timeout = window.setTimeout(() => {
+      if (autoBlockCancelledRef.current) return;
+      settled = true;
+      setSubmitting('deny');
+      void onResolve(approval.requestId, false, 'once').finally(() => setSubmitting(null));
+    }, approval.autoBlockMs);
+    tick();
+    return () => {
+      window.clearInterval(interval);
+      if (!settled) window.clearTimeout(timeout);
+    };
+  }, [approval.autoBlockMs, approval.requestId, isSoftBlock, onResolve]);
 
   async function resolve(approved: boolean, scope: AgentApprovalResolutionScope = 'once') {
     if (submitting) return;
+    autoBlockCancelledRef.current = true;
     setSubmitting(approved ? scope : 'deny');
     try {
       await onResolve(approval.requestId, approved, scope);
@@ -740,6 +767,7 @@ function AgentApprovalCard({
 
   async function dismissNotice() {
     if (submitting) return;
+    autoBlockCancelledRef.current = true;
     setSubmitting('deny');
     try {
       await onResolve(approval.requestId, false, 'once');
@@ -748,8 +776,9 @@ function AgentApprovalCard({
     }
   }
 
-  const isSkillTrust = approval.kind === 'skill_trust';
-  const isNotice = approval.kind === 'permission_notice';
+  const blockNowLabel = isSoftBlock
+    ? t.agent.composer.blockNowCountdown({ seconds: Math.max(1, Math.ceil(remainingMs / 1000)) })
+    : t.agent.composer.denyOnce;
 
   return (
     <div className="agent-approval-card" role="group" aria-label={approval.title}>
@@ -834,7 +863,7 @@ function AgentApprovalCard({
                 onClick={() => void resolve(true, 'always')}
                 type="button"
               >
-                {t.agent.composer.alwaysAllowBoundary}
+                {isSoftBlock ? t.agent.composer.alwaysAllow : t.agent.composer.alwaysAllowBoundary}
               </button>
             ) : null}
             <button
@@ -843,7 +872,7 @@ function AgentApprovalCard({
               onClick={() => void resolve(false, 'once')}
               type="button"
             >
-              {t.agent.composer.denyOnce}
+              {blockNowLabel}
             </button>
           </>
         )}

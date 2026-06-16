@@ -171,12 +171,12 @@ for the crash case; the user re-arms or the next occurrence picks it up). A clea
 node (`sysLastAttemptAt <= sysLastRunAt`) is left untouched.
 
 **Unattended permission model.** A scheduled fire runs with no interactive
-approval channel (`unattended: true` → no `approvalHandler` →
-`interactionAvailable: false`), so it can never hang waiting on a human. Tools
-whose policy resolves to **ask** are denied and reported (the run continues and
-records the denial) rather than blocking; the global **always-allow** list is
-still honored, so pre-approved tools run normally. `agent_run_command_now` runs
-attended (the human is present), so it keeps the interactive approval channel.
+approval channel (`unattended: true` → no `approvalHandler`), so it can never
+hang waiting on a human. Tools whose policy resolves to **soft_blocked** are
+denied and reported (the run continues and records the denial) rather than
+blocking; matching `softBlockAllows` exceptions are still honored.
+`agent_run_command_now` runs attended (the human is present), so it can surface
+the soft-block card.
 
 `agent_run_command_now(nodeId)` (agent command) runs the brief attended, right
 now: the same no-human-turn execution with a `{type:'node'}` trigger and **no

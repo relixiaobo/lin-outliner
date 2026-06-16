@@ -35,7 +35,7 @@ export async function readAgentToolPermissionConfig(): Promise<GlobalToolPermiss
 }
 
 export async function readAgentToolPermissionSettings(): Promise<GlobalToolPermissionSettings> {
-  return readJsonOrDefault(permissionPath(), { grants: [] });
+  return readJsonOrDefault(permissionPath(), { grants: [], blocks: [], softBlockAllows: [] });
 }
 
 export async function readAgentToolPermissionSettingsView() {
@@ -59,15 +59,41 @@ export async function writeAgentToolPermissionSettingsView(settings: GlobalToolP
 }
 
 export async function appendAgentToolPermissionGrant(ruleValue: string): Promise<GlobalToolPermissionConfig> {
+  return updateAgentToolPermissionRuleList('grants', ruleValue, 'append');
+}
+
+export async function appendAgentToolPermissionBlock(ruleValue: string): Promise<GlobalToolPermissionConfig> {
+  return updateAgentToolPermissionRuleList('blocks', ruleValue, 'append');
+}
+
+export async function removeAgentToolPermissionBlock(ruleValue: string): Promise<GlobalToolPermissionConfig> {
+  return updateAgentToolPermissionRuleList('blocks', ruleValue, 'remove');
+}
+
+export async function appendAgentToolPermissionSoftBlockAllow(ruleValue: string): Promise<GlobalToolPermissionConfig> {
+  return updateAgentToolPermissionRuleList('softBlockAllows', ruleValue, 'append');
+}
+
+async function updateAgentToolPermissionRuleList(
+  key: 'grants' | 'blocks' | 'softBlockAllows',
+  ruleValue: string,
+  operation: 'append' | 'remove',
+): Promise<GlobalToolPermissionConfig> {
   const filePath = permissionPath();
   const nextSettings = await updateJsonFile(
     filePath,
-    { grants: [] },
+    { grants: [], blocks: [], softBlockAllows: [] },
     parsePermissionSettings,
     (settings) => {
-      const grants = normalizedRuleList(settings.grants);
-      if (!grants.includes(ruleValue)) grants.push(ruleValue);
-      return globalToolPermissionConfigToSettings(parseGlobalToolPermissionSettings({ grants }));
+      const next = {
+        grants: normalizedRuleList(settings.grants),
+        blocks: normalizedRuleList(settings.blocks),
+        softBlockAllows: normalizedRuleList(settings.softBlockAllows),
+      };
+      const rules = next[key];
+      if (operation === 'append' && !rules.includes(ruleValue)) rules.push(ruleValue);
+      if (operation === 'remove') next[key] = rules.filter((candidate) => candidate !== ruleValue);
+      return globalToolPermissionConfigToSettings(parseGlobalToolPermissionSettings(next));
     },
     PRIVATE_JSON_FILE_OPTIONS,
   );
@@ -88,7 +114,9 @@ export function normalizedRuleList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
-function parsePermissionSettings(value: unknown): Required<Pick<GlobalToolPermissionSettings, 'grants'>> {
+function parsePermissionSettings(
+  value: unknown,
+): Required<Pick<GlobalToolPermissionSettings, 'grants' | 'blocks' | 'softBlockAllows'>> {
   return globalToolPermissionConfigToSettings(parseGlobalToolPermissionSettings(value));
 }
 

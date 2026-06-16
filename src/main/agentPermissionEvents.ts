@@ -7,6 +7,7 @@ import type {
   AgentPermissionAllowDecision,
   AgentPermissionAskDecision,
   AgentPermissionDenyDecision,
+  AgentPermissionSoftBlockDecision,
 } from './agentPermissions';
 import type { PermissionDeniedReason } from './agentPermissionAskResolver';
 
@@ -62,8 +63,8 @@ const PERMISSION_DENIED_CONTRACT: Record<PermissionDeniedReason, {
 export interface AgentToolPermissionLogInput {
   requestId: string;
   toolCall: ToolCall;
-  decision: AgentPermissionAllowDecision | AgentPermissionAskDecision | AgentPermissionDenyDecision;
-  outcome: 'allow' | 'ask' | 'blocked';
+  decision: AgentPermissionAllowDecision | AgentPermissionAskDecision | AgentPermissionSoftBlockDecision | AgentPermissionDenyDecision;
+  outcome: 'allow' | 'ask' | 'soft_blocked' | 'blocked';
   includeChecked?: boolean;
   source?: AgentToolPermissionEventSource;
   resolved?: {
@@ -75,14 +76,14 @@ export interface AgentToolPermissionLogInput {
 }
 
 export function permissionActionKinds(
-  decision: AgentPermissionAllowDecision | AgentPermissionAskDecision | AgentPermissionDenyDecision,
+  decision: AgentPermissionAllowDecision | AgentPermissionAskDecision | AgentPermissionSoftBlockDecision | AgentPermissionDenyDecision,
 ): string[] {
   const descriptors = decision.descriptors ?? (decision.descriptor ? [decision.descriptor] : []);
   return [...new Set(descriptors.map((descriptor) => descriptor.actionKind))];
 }
 
 export function permissionPrimaryActionKind(
-  decision: AgentPermissionAllowDecision | AgentPermissionAskDecision | AgentPermissionDenyDecision,
+  decision: AgentPermissionAllowDecision | AgentPermissionAskDecision | AgentPermissionSoftBlockDecision | AgentPermissionDenyDecision,
 ): string | undefined {
   return decision.descriptor?.actionKind ?? permissionActionKinds(decision)[0];
 }
@@ -95,7 +96,7 @@ export function permissionDeniedReasonForDecision(decision: AgentPermissionDenyD
 }
 
 export function permissionEventSourceForDecision(
-  decision: AgentPermissionAllowDecision | AgentPermissionAskDecision | AgentPermissionDenyDecision,
+  decision: AgentPermissionAllowDecision | AgentPermissionAskDecision | AgentPermissionSoftBlockDecision | AgentPermissionDenyDecision,
 ): AgentToolPermissionEventSource {
   if (decision.behavior === 'deny') {
     return permissionEventSourceForDeniedReason(permissionDeniedReasonForDecision(decision));

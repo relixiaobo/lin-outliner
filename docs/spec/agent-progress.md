@@ -223,11 +223,11 @@ Finish runtime polish on top of the event log and delegation foundation.
 - [ ] Add richer non-text media payload lazy loading UI in debug/render details.
 - [ ] Add performance instrumentation around replay, projection, IPC payload size,
   and long transcript rendering.
-- [x] Permission approvals wired end to end: `allow | ask | deny` policy
-  computed in TypeScript, `ask` suspends the tool call and requests user
-  approval (composer card, child-run + skill-shell bubbling, pending-request
-  queue), and joinable `tool.permission.*` plus `approval.*` events persisted to
-  the log (PR #51, hardened after M1).
+- [x] Permission policy wired end to end: default-allow decisions, hard redlines,
+  user blocklist, built-in soft blocks with allow-once / always-allow / auto-block
+  cards (child-run + skill-shell bubbling, pending-request queue), and joinable
+  `tool.permission.*` plus `approval.*` events persisted to the log (PR #51,
+  redesigned for default-allow blocklists in #277).
 - [ ] Emit and render the remaining schema-reserved runtime events that are not
   active yet: persisted follow-ups, metrics, and explicit cancellation details.
 - [ ] Refine checkpoint retention settings if real user conversations show unusual
