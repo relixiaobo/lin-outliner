@@ -612,6 +612,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Perf P2: default flat outliner, streaming projection patches, structural-save coalescing (PR #275, codex-3)** —
+  three independent P2 optimizations from the performance program (`performance-optimization.md`).
+  (1) The main outliner renders through the windowed/flat row producer by default; the recursive
+  `OutlinerView → OutlinerItem → nested OutlinerView` path (which mounts every expanded node) is retained
+  only as a reload-scoped diagnostic fallback behind `localStorage('lin:recursive-outliner') === '1'`.
+  (2) Streamed direct-message turns no longer rebuild and clone the whole agent render projection per
+  coalesced tick: main keeps the last emitted projection and emits a `projection_patch` for the single
+  active assistant message (carrying a base revision; the renderer reloads the conversation if the patch
+  cannot apply cleanly), folds it preserving unchanged entity references, reuses derived
+  message/tool/pending-run objects, memoizes transcript rows, throttles the live markdown tail to an 80 ms
+  parse cadence, and moves tail auto-scroll into one `requestAnimationFrame` without a per-revision forced
+  `scrollHeight` read. Channel turns stay result-first/transcript-atomic and use the full-projection
+  fallback. (3) Structural document mutations coalesce their `saveCore` into the existing 700 ms text-edit
+  window instead of writing a whole workspace snapshot per edit, flushed before text materialization,
+  transactions, undo/redo, and app `before-quit`. Gate: `/code-review xhigh` — every finding addressed and
+  re-verified; merged result passes typecheck + `test:core` + `test:renderer` + `docs:check`. Specs:
+  `docs/spec/architecture.md`, `docs/spec/ui-behavior.md`.
+  ([#275](https://github.com/relixiaobo/lin-outliner/pull/275))
 - **Run-grounded agent debug surface (PR #264, cc-2)** — the agent debug panel is rebuilt as a
   read-only **view of the execution tree** (conversation → runs per agent → rounds → request-window
   / response / tool-exchange), derived directly from the run ledgers the system already writes —

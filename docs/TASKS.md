@@ -675,9 +675,12 @@ PR #273 — see Recently completed; plan archived `done`. Remaining Layer-3 lane
   payload ~2 MB→362 B and index pass 7.0→1.2 ms at 6k nodes; `nodeSignatures` pass deleted;
   unchanged-node identity now stable). **P1 PR-B shipped** (#121: reverse-edge index held in
   `ProjectionState` and patched per delta — retires the last O(N) per-keystroke scan; 6k nodes
-  1.22→0.29 ms). **Next: P2** (default windowed outliner; agent streaming delta) and **P3**
-  (localized O(N) cleanups — the residual `new Map(prev.byId)` + `nextRevisions` whole-map
-  rebuild; several unlocked by the stable-identity foundation P1 PR-A laid).
+  1.22→0.29 ms). **P2 shipped** (#275, codex-3: default windowed/flat outliner renderer with the
+  recursive path behind `lin:recursive-outliner`; agent streaming `projection_patch` path with
+  stable-identity folding + transcript-row memo + throttled markdown tail + rAF auto-scroll;
+  structural-save coalescing into the existing 700 ms window with a flush before durability
+  boundaries). **Next: P3** (localized O(N) cleanups — the residual `new Map(prev.byId)` +
+  `nextRevisions` whole-map rebuild; several unlocked by the stable-identity foundation P1 PR-A laid).
 
 ### Storage & platform hygiene (from the 2026-06-10 pre-release sweep)
 
