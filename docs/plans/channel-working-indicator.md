@@ -108,42 +108,74 @@ assistant message lives in the transcript as a structured `AgentMessageEntry`
 Channel **filters that streaming entry out** of the thread (whole-utterance) and
 keeps only a flat `streamingText` on the activity entry.
 
-Change: stop degrading it to a string. Surface the running run's **in-flight
-`AgentMessageEntry`** (the same shape the DM path renders), keyed by run, and have
-the drill-in render it through `AgentMessageRow` in `streaming` mode — identical
-thinking stream + tool-call rows live, folding to "Worked for {duration}" on
-completion. Delete the `streamingText`-only branch.
+**Constraint found while building (this splits the work):** the in-flight channel
+turn is *not just filtered in the renderer* — the core projection
+**suppresses it at the source**. `buildTranscriptRows`
+(`agentRenderProjection.ts`) drops any message whose run is in the live set
+("a running Channel turn is never a transcript row"), so the structured in-flight
+`AgentMessageEntry` (with thinking + tool-call parts) **never reaches the renderer
+`entries`** for a Channel — only the flat `streamingText` (`run.assistantText`) is
+exposed on the activity entry. The renderer-side thread filter that keys on
+`entry.streaming` is effectively dead for Channels (the `streaming` flag is
+DM-only, set from `dmStreaming`).
 
-Delivery is unchanged: the streaming entry stays **filtered from the main
-transcript** (the thread is still whole-utterance, completion-order); only the
-drill-in surfaces the structured live view. So the only thing that changes is the
-drill-in's fidelity, not the IM model.
+Therefore full DM-process reuse requires a **projection/main change** to expose
+the suppressed in-flight structured message for a running Channel run (keyed by
+run), which the drill-in would then render via `AgentMessageRow` (streaming). That
+is a larger, separable change.
+
+**This PR** keeps the existing `streamingText` live-text drill-in (it works in
+production — `run.assistantText` is populated). The full structured-process reuse
+is a **follow-up** (`channel-drill-in-process-reuse`, to be drafted), since it
+needs the projection to surface the suppressed message. Delivery/IM model is
+unchanged either way.
+
+### Correction after reading the production code
+
+The production producer is **`AgentRuntime.channelActivityEntries`**
+(`src/main/agentRuntime.ts:4557`), fed into `buildAgentRenderProjection` via
+`options.channelActivityEntries` (`:4477`). The core `buildAgentRenderProjection`
+(`agentRenderProjection.ts`) *is* on the production path, but its internal
+`buildDerivedActivityEntries` fallback is test-only. (`src/main/agentRuntime.ts`
+carries an embedded null byte, so plain `grep` skips it as binary — use `rg -a`.)
+
+That producer **already** delivers everything the design needs, so there is **no
+projection/main rewrite**:
+
+- One entry per live run, each with its own `runId` (`:4566-4579`) → per-run Stop
+  works as-is; parallel agents each appear (not collapsed to one "active").
+- Pending (capacity-gated) addressed turns appear as `state: 'received'`
+  (`:4582-4595`).
+- Entries appear at **send time** (turns are enqueued + a projection is emitted on
+  accept) → optimistic light-up is already there at the data level; the only gap
+  was the faint corner UI + round-trip, not missing data.
+- `streamingText` **is** populated (`run.assistantText`, `:4577`) — it was never
+  dead; the null-byte grep hid it.
+
+So the work is **renderer + CSS + i18n only**.
 
 ## Files
 
-- `src/core/agentRenderProjection.ts` — rewrite `buildChannelActivityEntries`
-  (round-based, multi-run, optimistic). Keep the independence-cut invariant
-  untouched (it governs visibility, not this surface). Also surface each running
-  run's in-flight `AgentMessageEntry` for the drill-in (replacing the flat
-  `streamingText` field, which becomes unnecessary).
 - `src/renderer/ui/agent/AgentChatPanel.tsx` — replace `AgentChannelActivityArea`
-  with `ChannelWorkingRow` (in-flow) + the anchored detail popover; wire per-run
-  Stop + Stop all + drill-in. Replace the bespoke `agent-channel-run-panel`
-  drill-in body with `AgentMessageRow` (streaming mode) fed the run's in-flight
-  entry (it already has `index` / `toolResults` / `childRunsByParentToolCallId` in
-  scope to pass through).
+  with `ChannelWorkingRow` (in-flow, above the composer) + an opaque detail popover
+  (absolutely-positioned child, not an over-transcript overlay); collapsed =
+  "X is working", expand = per-agent state; wire per-run Stop + Stop all + drill-in.
+  Drill-in keeps the `streamingText` live-text body for this PR (see the constraint
+  above); full `AgentMessageRow` process reuse is the follow-up.
 - `src/renderer/styles/agent-message.css` (+ `agent-composer.css` as needed) —
-  delete the absolute floating pill; add in-flow row styles, reduced-motion dots;
-  detail popover rides `MenuSurface` styles.
+  delete the `position:absolute` floating pill; add in-flow row styles
+  (`--text-secondary`, fixed height, reduced-motion dots); detail popover rides
+  `MenuSurface`.
 - `src/core/i18n/messages/en.ts`, `src/core/i18n/messages/zh-Hans.ts` — new copy
   (working summary 1 / N, "Stop all"); reuse `activityStates.*`,
   `stopActivityEntry`.
 - Reuse: `MenuSurface`, `useAnchoredOverlay`, `useMenuKeyboard`,
-  `AgentIdentityAvatar`, `IconButton` + `StopIcon`.
-- Tests: projection units (optimistic appears pre-run; parallel multi-run;
-  per-run runId present; agent drops after it replies); renderer test for the
-  working row (collapsed summary copy, expand opens detail, Stop / Stop-all
-  wiring); update existing activity-area tests.
+  `AgentIdentityAvatar`, `IconButton` + `StopIcon`, `AgentMessageRow`.
+- Core/main: **no change expected** (verify the data suffices; only touch
+  `AgentRenderActivityEntry` if a field is genuinely missing).
+- Tests: renderer test for the working row (collapsed summary copy 1 / N, expand
+  opens detail, Stop / Stop-all wiring, drill-in renders `AgentMessageRow`);
+  update existing activity-area tests/e2e to the new DOM.
 
 ## Risks
 

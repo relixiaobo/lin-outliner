@@ -521,12 +521,13 @@ function activityAgentLabel(
   return { label, mention };
 }
 
-function AgentChannelActivityArea({
+function ChannelWorkingRow({
   agentDefinitionById,
   entries,
   memberByAgentId,
   onOpenEntry,
   onStopEntry,
+  onStopAll,
   selectedEntryId,
 }: {
   agentDefinitionById: Map<string, AgentDefinitionView>;
@@ -534,6 +535,7 @@ function AgentChannelActivityArea({
   memberByAgentId: Map<string, AgentRenderMemberView>;
   onOpenEntry: (entryId: string) => void;
   onStopEntry: (entry: AgentRenderActivityEntry) => void;
+  onStopAll: () => void;
   selectedEntryId: string | null;
 }) {
   const t = useT();
@@ -547,82 +549,114 @@ function AgentChannelActivityArea({
       stateLabel: activityStateLabel(entry, t),
     };
   }), [agentDefinitionById, entries, memberByAgentId, t]);
+  const [open, setOpen] = useState(false);
+  // Freeze the list contents while the pointer/focus is inside so a run
+  // completing mid-hover doesn't reshuffle the rows under the cursor.
   const [snapshotItems, setSnapshotItems] = useState<readonly typeof liveItems[number][] | null>(null);
   const visibleItems = snapshotItems ?? liveItems;
   if (visibleItems.length === 0) return null;
 
-  const freezeEntries = () => {
-    if (liveItems.length === 0) return;
+  const freeze = () => {
+    setOpen(true);
     setSnapshotItems((current) => current ?? liveItems);
   };
-  const summaryItems = visibleItems.slice(0, 4);
-  const summaryOverflowCount = visibleItems.length - summaryItems.length;
+  const release = () => {
+    setOpen(false);
+    setSnapshotItems(null);
+  };
+
+  const names = visibleItems.map((item) => item.label);
+  // Collapsed summary shows generic "working" only (≤2 → names, ≥3 → count); the
+  // per-agent state (thinking / using tools / received) lives in the detail list.
+  const summary = visibleItems.length === 1
+    ? t.agent.chat.working({ name: names[0]! })
+    : visibleItems.length === 2
+      ? t.agent.chat.workingPair({ first: names[0]!, second: names[1]! })
+      : t.agent.chat.workingMany({ count: visibleItems.length });
+  const avatarItems = visibleItems.slice(0, 3);
+  const overflowCount = visibleItems.length - avatarItems.length;
+  const anyStoppable = visibleItems.some((item) => item.canStop);
 
   return (
     <div
-      className="agent-channel-activity"
-      aria-label={t.agent.chat.channelActivity}
+      className="agent-channel-working"
+      data-open={open ? 'true' : undefined}
       onBlurCapture={(event) => {
-        const nextTarget = event.relatedTarget;
-        if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
-          setSnapshotItems(null);
+        const next = event.relatedTarget;
+        if (!next || !event.currentTarget.contains(next as Node)) release();
+      }}
+      onFocusCapture={freeze}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && open) {
+          event.stopPropagation();
+          release();
         }
       }}
-      onFocusCapture={freezeEntries}
-      onPointerEnter={freezeEntries}
+      onPointerEnter={freeze}
       onPointerLeave={(event) => {
-        if (!event.currentTarget.matches(':focus-within')) {
-          setSnapshotItems(null);
-        }
+        if (!event.currentTarget.matches(':focus-within')) release();
       }}
     >
-      <div className="agent-channel-activity-summary" aria-hidden="true">
-        <span className="agent-channel-activity-avatar-stack">
-          {summaryItems.map((item) => (
+      <button
+        aria-expanded={open}
+        aria-haspopup="true"
+        aria-label={t.agent.chat.channelActivity}
+        className="agent-channel-working-trigger"
+        onClick={() => (open ? release() : freeze())}
+        type="button"
+      >
+        <span className="agent-channel-working-avatars" aria-hidden="true">
+          {avatarItems.map((item) => (
             <AgentIdentityAvatar key={item.entry.id} label={item.label} mention={item.mention} size="xs" />
           ))}
-          {summaryOverflowCount > 0 ? (
-            <span className="agent-channel-activity-overflow" title={t.agent.chat.activityOverflow({ count: summaryOverflowCount })}>
-              {t.agent.chat.activityOverflow({ count: summaryOverflowCount })}
+          {overflowCount > 0 ? (
+            <span className="agent-channel-working-overflow">
+              {t.agent.chat.activityOverflow({ count: overflowCount })}
             </span>
           ) : null}
         </span>
-      </div>
-      <div className="agent-channel-activity-list">
-        <div className="agent-channel-activity-list-header">
-          <span>{t.agent.chat.channelActivity}</span>
-          <span>{visibleItems.length}</span>
-        </div>
-        <div className="agent-channel-activity-list-scroll">
-          {visibleItems.map((item) => {
-            return (
+        <span className="agent-channel-working-label">{summary}</span>
+        <span className="agent-channel-working-dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
+      </button>
+      {open ? (
+        <div className="agent-channel-working-detail" role="group" aria-label={t.agent.chat.channelActivity}>
+          <div className="agent-channel-working-detail-header">
+            <span>{t.agent.chat.channelActivity}</span>
+            {anyStoppable ? (
+              <button className="agent-channel-working-stop-all" onClick={onStopAll} type="button">
+                {t.agent.chat.stopAll}
+              </button>
+            ) : null}
+          </div>
+          <div className="agent-channel-working-detail-list">
+            {visibleItems.map((item) => (
               <div
-                className={`agent-channel-activity-item-shell is-${item.entry.state}${item.canStop ? ' has-stop' : ''}${selectedEntryId === item.entry.id ? ' is-selected' : ''}`}
+                className={`agent-channel-working-item is-${item.entry.state}${item.canStop ? ' has-stop' : ''}${selectedEntryId === item.entry.id ? ' is-selected' : ''}`}
                 key={item.entry.id}
               >
                 <ButtonControl
                   aria-pressed={selectedEntryId === item.entry.id}
-                  className="agent-channel-activity-item"
+                  className="agent-channel-working-item-main"
                   onClick={() => {
-                    setSnapshotItems(null);
+                    release();
                     onOpenEntry(item.entry.id);
                   }}
                   title={`${item.label} · ${item.stateLabel}`}
                 >
-                  <span className="agent-channel-activity-copy">
-                    <span className="agent-channel-activity-agent-line">
-                      <AgentIdentityAvatar label={item.label} mention={item.mention} size="xs" />
-                      <span className="agent-channel-activity-name">{item.label}</span>
-                    </span>
-                    <small className="agent-channel-activity-state">
-                      <span className="agent-channel-activity-state-dot" aria-hidden="true" />
-                      <span>{item.stateLabel}</span>
-                    </small>
-                  </span>
+                  <AgentIdentityAvatar label={item.label} mention={item.mention} size="xs" />
+                  <span className="agent-channel-working-item-name">{item.label}</span>
+                  <small className="agent-channel-working-item-state">
+                    <span className="agent-channel-working-item-dot" aria-hidden="true" />
+                    <span>{item.stateLabel}</span>
+                  </small>
                 </ButtonControl>
                 {item.canStop ? (
                   <IconButton
-                    className="agent-channel-activity-stop"
+                    className="agent-channel-working-item-stop"
                     icon={StopIcon}
                     label={t.agent.chat.stopActivityEntry({ name: item.label })}
                     onClick={(event) => {
@@ -633,10 +667,10 @@ function AgentChannelActivityArea({
                   />
                 ) : null}
               </div>
-            );
-          })}
+            ))}
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }
@@ -1774,13 +1808,18 @@ export function AgentChatPanel({
 
       <div className="agent-composer-region">
         {isMultiAgentChannel ? (
-          <AgentChannelActivityArea
+          <ChannelWorkingRow
             agentDefinitionById={agentDefinitionById}
             entries={channelActivityEntries}
             memberByAgentId={memberByAgentId}
             onOpenEntry={setSelectedActivityEntryId}
             onStopEntry={(entry) => {
               if (entry.runId) stopRun(entry.runId);
+            }}
+            onStopAll={() => {
+              for (const entry of channelActivityEntries) {
+                if (entry.runId) stopRun(entry.runId);
+              }
             }}
             selectedEntryId={selectedActivityEntryId}
           />
@@ -1842,10 +1881,11 @@ export function AgentChatPanel({
             </header>
             <div className="agent-child-run-details-body">
               {selectedActivityEntry.streamingText ? (
-                // The live token stream of the running Channel agent (PM-ratified
-                // 2026-06-13): retained per-run from message_update and surfaced
-                // ONLY here — never in the whole-utterance message flow. Tool-call
-                // progress shows in the header state label, not a transcript row.
+                // The live token stream of the running Channel agent (retained
+                // per-run from message_update and surfaced ONLY here — never in the
+                // whole-utterance message flow). Full DM-style process reuse needs
+                // the projection to expose the suppressed in-flight structured
+                // message; tracked as a follow-up (see plan).
                 <div className="agent-channel-run-live">
                   <AgentMarkdown
                     keyPrefix={`channel-run-live-${selectedActivityEntry.id}`}

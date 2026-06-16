@@ -1889,7 +1889,7 @@ test.describe('agent composer controls', () => {
     });
   });
 
-  test('shows floating Channel activity with overflow and entry stop affordance', async ({ page }) => {
+  test('shows the in-flow Channel working row with overflow, per-run stop, and stop-all', async ({ page }) => {
     await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Parallel Channel',
       members: [
@@ -1934,70 +1934,57 @@ test.describe('agent composer controls', () => {
       ],
     });
 
-    const activity = page.locator('.agent-channel-activity');
-    await expect(activity).toBeVisible();
-    await expect(activity).toHaveCSS('position', 'absolute');
-    await expect(activity).toHaveCSS('border-top-width', '0px');
-    await expect(activity).not.toHaveCSS('box-shadow', 'none');
-    await expect(activity).toContainText('Alpha');
-    await expect(activity).toContainText('using tools');
-    await expect(activity).toContainText('Beta');
-    await expect(activity.locator('.agent-channel-activity-list')).toHaveCSS('opacity', '0');
-    await expect(activity.locator('.agent-channel-activity-pulse')).toHaveCount(0);
+    const working = page.locator('.agent-channel-working');
+    await expect(working).toBeVisible();
+    // In-flow row above the composer — not an absolute overlay floating over the
+    // transcript (the old corner pill).
+    await expect(working).toHaveCSS('position', 'relative');
+    // Collapsed: a generic "working" summary only (≤2 names, ≥3 count); never the
+    // per-agent state, which lives in the detail list.
+    const trigger = working.locator('.agent-channel-working-trigger');
+    await expect(trigger).toContainText('working');
+    await expect(trigger).not.toContainText('using tools');
+    expect(await working.locator('.agent-channel-working-avatars .agent-identity-avatar').count()).toBe(3);
+    await expect(working.locator('.agent-channel-working-overflow')).toHaveText('+4');
+    // The detail popover is closed until hover/focus.
+    await expect(working.locator('.agent-channel-working-detail')).toHaveCount(0);
 
-    const geometryBefore = await page.locator('.agent-chat-panel').evaluate((panel) => {
-      const activity = panel.querySelector('.agent-channel-activity');
-      const composer = panel.querySelector('.agent-composer');
-      if (!(activity instanceof HTMLElement) || !(composer instanceof HTMLElement)) return null;
-      const summary = activity.querySelector('.agent-channel-activity-summary');
-      const listHeader = activity.querySelector('.agent-channel-activity-list-header');
-      const listScroll = activity.querySelector('.agent-channel-activity-list-scroll');
-      if (!(summary instanceof HTMLElement) || !(listHeader instanceof HTMLElement) || !(listScroll instanceof HTMLElement)) return null;
-      const activityStyle = getComputedStyle(activity);
+    await working.hover();
+    const detail = working.locator('.agent-channel-working-detail');
+    await expect(detail).toBeVisible();
+    // Opaque level-1 popover — NOT the old translucent material that let transcript
+    // text bleed through it (穿模).
+    const detailPaint = await detail.evaluate((node) => {
+      const style = getComputedStyle(node);
       return {
-        activityBottom: activity.getBoundingClientRect().bottom,
-        composerTop: composer.getBoundingClientRect().top,
-        hasBackdrop: activityStyle.backdropFilter !== 'none' || activityStyle.webkitBackdropFilter !== 'none',
-        listHeaderText: listHeader.textContent ?? '',
-        summaryAvatarCount: summary.querySelectorAll('.agent-identity-avatar').length,
-        summaryOverflowCount: summary.querySelectorAll('.agent-channel-activity-overflow').length,
-        listClientHeight: listScroll.clientHeight,
-        listScrollHeight: listScroll.scrollHeight,
-        position: getComputedStyle(activity).position,
-        summaryText: summary.textContent ?? '',
+        backdrop: style.backdropFilter || (style as unknown as { webkitBackdropFilter?: string }).webkitBackdropFilter || 'none',
+        background: style.backgroundColor,
+        boxShadow: style.boxShadow,
       };
     });
-    expect(geometryBefore).not.toBeNull();
-    expect(geometryBefore!.position).toBe('absolute');
-    expect(geometryBefore!.activityBottom).toBeLessThan(geometryBefore!.composerTop);
-    expect(geometryBefore!.hasBackdrop).toBe(true);
-    expect(geometryBefore!.listHeaderText).toContain('Channel activity');
-    expect(geometryBefore!.listHeaderText).toContain('7');
-    expect(geometryBefore!.summaryAvatarCount).toBe(4);
-    expect(geometryBefore!.summaryOverflowCount).toBe(1);
-    expect(geometryBefore!.summaryText).toContain('+3');
-    expect(geometryBefore!.summaryText).not.toContain('Alpha');
-    expect(geometryBefore!.summaryText).not.toContain('using tools');
+    expect(detailPaint.background).not.toBe('rgba(0, 0, 0, 0)');
+    expect(detailPaint.backdrop).toBe('none');
+    expect(detailPaint.boxShadow).not.toBe('none');
+    await expect(detail).toContainText('Channel activity');
+    await expect(detail).toContainText('Alpha');
+    await expect(detail).toContainText('using tools');
+    await expect(detail).toContainText('Gamma');
+    await expect(detail).toContainText('Eta');
+    await expect(detail.locator('.agent-channel-working-item')).toHaveCount(7);
 
-    await activity.hover();
-    await expect(activity.locator('.agent-channel-activity-list')).toHaveCSS('opacity', '1');
-    await expect(activity).toContainText('Gamma');
-    await expect(activity).toContainText('Delta');
-    await expect(activity).toContainText('Eta');
-    expect(geometryBefore!.listScrollHeight).toBeGreaterThan(geometryBefore!.listClientHeight);
-    const alphaShell = activity.locator('.agent-channel-activity-item-shell', { hasText: 'Alpha' });
-    await alphaShell.hover();
-    await expect(alphaShell.getByRole('button', { name: 'Alpha using tools' })).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-    const alphaStateColor = await alphaShell.locator('.agent-channel-activity-state').evaluate((node) => getComputedStyle(node).color);
-    const betaShell = activity.locator('.agent-channel-activity-item-shell', { hasText: 'Beta' });
-    const betaStateColor = await betaShell.locator('.agent-channel-activity-state').evaluate((node) => getComputedStyle(node).color);
-    expect(alphaStateColor).toBe(betaStateColor);
-    const alphaDotColor = await alphaShell.locator('.agent-channel-activity-state-dot').evaluate((node) => getComputedStyle(node).backgroundColor);
-    const betaDotColor = await betaShell.locator('.agent-channel-activity-state-dot').evaluate((node) => getComputedStyle(node).backgroundColor);
-    expect(alphaDotColor).not.toBe(betaDotColor);
-    const stopAlpha = alphaShell.getByRole('button', { name: 'Stop Alpha' });
-    await expect(stopAlpha).toHaveCSS('opacity', '1');
+    // Per-agent dot colour distinguishes an active agent (using tools) from a
+    // received-but-pending one.
+    const alphaItem = detail.locator('.agent-channel-working-item', { hasText: 'Alpha' });
+    const betaItem = detail.locator('.agent-channel-working-item', { hasText: 'Beta' });
+    const alphaDot = await alphaItem.locator('.agent-channel-working-item-dot').evaluate((node) => getComputedStyle(node).backgroundColor);
+    const betaDot = await betaItem.locator('.agent-channel-working-item-dot').evaluate((node) => getComputedStyle(node).backgroundColor);
+    expect(alphaDot).not.toBe(betaDot);
+    const stopAlpha = alphaItem.getByRole('button', { name: 'Stop Alpha' });
+    await expect(stopAlpha).toBeVisible();
+    await expect(detail.getByRole('button', { name: 'Stop all' })).toBeVisible();
 
+    // Snapshot-freeze: a thinner projection does not reshuffle the list while the
+    // pointer is inside it.
     await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Parallel Channel',
       members: [
@@ -2014,7 +2001,9 @@ test.describe('agent composer controls', () => {
         { id: 'user-activity:agent-alpha', agentId: 'agent-alpha', runId: 'run-alpha', messageId: 'assistant-streaming', addressedByMessageId: 'user-activity', state: 'using_tools', updatedAt: 1_800_000_000_300 },
       ],
     }, 2);
-    await expect(activity.locator('.agent-channel-activity-item-shell')).toHaveCount(7);
+    await expect(detail.locator('.agent-channel-working-item')).toHaveCount(7);
+
+    // Per-run stop dispatches agent_stop_run for that run.
     await stopAlpha.click();
     await expect.poll(async () => {
       const calls = await commandCalls(page);
@@ -2025,12 +2014,14 @@ test.describe('agent composer controls', () => {
       ));
     }).toBe(true);
 
-    await activity.hover();
-    await activity.getByRole('button', { name: 'Alpha using tools' }).click();
+    // Drill into the running agent: the per-run detail reuses the DM message row.
+    await working.hover();
+    await working.getByRole('button', { name: 'Alpha using tools' }).click();
     const details = page.getByRole('complementary', { name: 'View working state' });
     await expect(details).toBeVisible();
     await expect(details).toContainText('Alpha · using tools');
 
+    // Empty activity → the in-flow row is removed entirely.
     await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Parallel Channel',
       members: [
@@ -2042,21 +2033,10 @@ test.describe('agent composer controls', () => {
           coordinator: true,
         },
         { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
-        { principal: { type: 'agent', agentId: 'agent-beta' }, mention: 'beta', displayName: 'Beta' },
       ],
       activityEntries: [],
     }, 2);
-    await expect(page.locator('.agent-channel-activity')).toHaveCount(0);
-
-    const geometryAfter = await page.locator('.agent-chat-panel').evaluate((panel) => {
-      const composer = panel.querySelector('.agent-composer');
-      if (!(composer instanceof HTMLElement)) return null;
-      return {
-        composerTop: composer.getBoundingClientRect().top,
-      };
-    });
-    expect(geometryAfter).not.toBeNull();
-    expect(geometryAfter!.composerTop).toBeCloseTo(geometryBefore!.composerTop, 1);
+    await expect(page.locator('.agent-channel-working')).toHaveCount(0);
   });
 
   test('Channel composer stays Send — never Stop or Steer — while agents work', async ({ page }) => {
@@ -2077,8 +2057,8 @@ test.describe('agent composer controls', () => {
       ],
     });
 
-    // Channel work is in flight (the activity overlay is shown)…
-    await expect(page.locator('.agent-channel-activity')).toBeVisible();
+    // Channel work is in flight (the working row is shown)…
+    await expect(page.locator('.agent-channel-working')).toBeVisible();
     // …but the composer is a pure message composer: never Stop, never Steer.
     await expect(page.getByRole('button', { name: 'Stop agent' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Steer agent' })).toHaveCount(0);
@@ -2107,18 +2087,19 @@ test.describe('agent composer controls', () => {
       ],
     });
 
-    const activity = page.locator('.agent-channel-activity');
-    await expect(activity).toBeVisible();
+    const working = page.locator('.agent-channel-working');
+    await expect(working).toBeVisible();
     // The live token stream is filtered from the message flow (whole-utterance
     // only): it is not in the transcript and the detail view starts closed.
     await expect(page.getByText('Composing a live reply token by token.')).toHaveCount(0);
     // It is surfaced in the per-run detail view, reached from the activity entry.
-    await activity.hover();
-    await activity.getByRole('button', { name: 'Alpha using tools' }).click();
+    await working.hover();
+    await working.getByRole('button', { name: 'Alpha using tools' }).click();
     const details = page.getByRole('complementary', { name: 'View working state' });
     await expect(details).toBeVisible();
     await expect(details).toContainText('Composing a live reply token by token.');
   });
+
 
   test('renders reply anchors only for non-adjacent addressed replies', async ({ page }) => {
     await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
