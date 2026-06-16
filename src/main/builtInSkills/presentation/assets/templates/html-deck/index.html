@@ -150,6 +150,23 @@
       align-content: center;
     }
 
+    .layout-gallery,
+    .layout-feature-grid,
+    .layout-timeline {
+      grid-template-rows: auto 1fr;
+      gap: 36px;
+    }
+
+    .layout-quote {
+      align-content: center;
+    }
+
+    .layout-hero-media {
+      grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
+      gap: 44px;
+      align-items: center;
+    }
+
     .stage-visual {
       position: absolute;
       right: 64px;
@@ -264,6 +281,80 @@
       line-height: 1.32;
     }
 
+    .feature-grid,
+    .gallery,
+    .timeline {
+      display: grid;
+      gap: 18px;
+    }
+
+    .feature-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      align-self: stretch;
+    }
+
+    .feature-grid .panel {
+      min-height: 190px;
+      display: grid;
+      align-content: space-between;
+    }
+
+    .visual-frame {
+      min-height: 390px;
+      border: 1px solid var(--rule);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(90deg, rgba(245, 247, 242, 0.07) 1px, transparent 1px),
+        linear-gradient(rgba(245, 247, 242, 0.07) 1px, transparent 1px),
+        var(--surface-2);
+      background-size: 40px 40px;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+      text-transform: uppercase;
+    }
+
+    .timeline {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      align-self: stretch;
+    }
+
+    .timeline .panel {
+      min-height: 210px;
+      display: grid;
+      align-content: space-between;
+    }
+
+    .quote {
+      max-width: 980px;
+      font-size: 62px;
+      font-weight: 800;
+      line-height: 0.98;
+      letter-spacing: 0;
+    }
+
+    .quote cite {
+      display: block;
+      margin-top: 28px;
+      color: var(--muted);
+      font-size: 22px;
+      font-style: normal;
+      font-weight: 600;
+      line-height: 1.25;
+    }
+
+    .gallery {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      align-self: stretch;
+    }
+
+    .gallery .visual-frame,
+    .gallery .panel {
+      min-height: 260px;
+    }
+
     .nav {
       position: fixed;
       left: 50%;
@@ -295,7 +386,12 @@
       .headline { font-size: 40px; }
       .lead { font-size: 21px; }
       .layout-product-stage,
-      .metric-grid { grid-template-columns: 1fr; }
+      .layout-hero-media,
+      .metric-grid,
+      .feature-grid,
+      .gallery,
+      .timeline { grid-template-columns: 1fr; }
+      .quote { font-size: 38px; }
       .stage-visual {
         position: relative;
         right: auto;
