@@ -24,9 +24,11 @@ function runBingImagesExtractorExpression(html: string): { htmlLength: number; r
 // linkedom parse the way they do in a real page.
 function iusc(meta: Record<string, unknown>): string {
   const m = JSON.stringify(meta).replace(/'/g, '&#39;');
+  // Real Bing aria-labels are plain strings; only mirror a string title here.
+  const ariaLabel = typeof meta.t === 'string' ? meta.t : '';
   return [
     '<li class="iuscp">',
-    `<a class="iusc" m='${m}' aria-label="${String(meta.t ?? '')}"><img alt="inner alt"/></a>`,
+    `<a class="iusc" m='${m}' aria-label="${ariaLabel}"><img alt="inner alt"/></a>`,
     '</li>',
   ].join('');
 }
@@ -87,9 +89,25 @@ describe('Bing Images extraction', () => {
       imageUrl: 'https://images.beta.test/banner.png',
       source: 'beta.test',
     });
-    // Dimensions are not scraped from Bing (no reliable source) → always omitted.
-    expect(payload.results[0]!.width).toBeUndefined();
-    expect(payload.results[1]!.height).toBeUndefined();
+  });
+
+  test('uses a non-string title field as garbage-free fallback to host', () => {
+    const html = [
+      '<!doctype html><html><body><ul>',
+      iusc({
+        murl: 'https://cdn.example.com/obj-title.jpg',
+        turl: 'https://tse.example.com/th?id=obj',
+        purl: 'https://example.com/obj-title',
+        // A non-string t (markup drift) must not stringify to '[object Object]'.
+        t: { unexpected: 'object' },
+      }),
+      '</ul></body></html>',
+    ].join('');
+    const payload = runBingImagesExtractor(html);
+    expect(payload.results).toHaveLength(1);
+    // A non-string t is ignored; the title falls through to the inner img alt
+    // rather than stringifying the object to '[object Object]'.
+    expect(payload.results[0]!.title).toBe('inner alt');
   });
 
   test('skips a JSON null payload without aborting the whole extraction', () => {

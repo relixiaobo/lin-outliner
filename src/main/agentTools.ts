@@ -36,6 +36,7 @@ import {
   WEB_FETCH_RENDER_SETTLE_MS,
   WEB_FETCH_USER_AGENT,
   buildBingImagesSearchUrl,
+  buildGoogleSearchUrl,
   buildWebFetchSuccessEnvelopeFromPage,
   extractFetchedPageContent,
   normalizeWebFetchParams,
@@ -473,7 +474,7 @@ interface SearchProvider {
 // query maps onto the provider call. execute() stays kind-agnostic; per-kind copy
 // lives in searchWarnings/searchInstructions so adding a kind touches one place.
 const SEARCH_PROVIDERS: Record<WebSearchKind, SearchProvider> = {
-  web: { providerName: 'google_serp', run: (params, signal) => searchGoogle(params.searchUrl, signal) },
+  web: { providerName: 'google_serp', run: (params, signal) => searchGoogle(buildGoogleSearchUrl(params.effectiveQuery), signal) },
   image: { providerName: 'bing_images', run: (params, signal) => searchBingImages(params.effectiveQuery, signal) },
 };
 
@@ -924,7 +925,11 @@ async function withSearchWindow(
   try {
     await waitForSearchRateLimit(signal);
   } catch {
-    return { kind: 'error', code: 'rate_limited', message: 'search aborted while rate-limited' };
+    // waitForSearchRateLimit only rejects when the caller aborts during the
+    // rate-limit delay — report that as an abort, not a rate-limit.
+    return signal?.aborted
+      ? { kind: 'error', code: 'aborted', message: 'search aborted before it started' }
+      : { kind: 'error', code: 'rate_limited', message: 'search rate-limited' };
   }
 
   const window = createWebSearchWindow();
@@ -1012,8 +1017,10 @@ async function searchGoogle(searchUrl: string, signal?: AbortSignal): Promise<Se
 // Image search navigates straight to the Bing Images results page: Bing exposes
 // every result as `a.iusc[m]` JSON (full image / thumbnail / source page), so no
 // search-box dance is needed and the markup is far more scrapable than Google
-// Images. Shares verification detection so a Bing challenge surfaces as
-// search_blocked rather than a misleading spa_shell hint.
+// Images. It runs the same verification check, which recognizes generic
+// reCAPTCHA / Cloudflare / "Just a moment" challenge markers (so those surface as
+// search_blocked); a Bing-native block that uses none of them falls through to a
+// needs_browser hint.
 async function searchBingImages(query: string, signal?: AbortSignal): Promise<SearchOutcome> {
   if (!query) {
     return { kind: 'error', code: 'invalid_args', message: 'missing search query' };

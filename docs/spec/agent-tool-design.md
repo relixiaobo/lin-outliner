@@ -2105,8 +2105,6 @@ interface WebSearchResult {
   // Image-result fields (kind === "image"):
   imageUrl?: string; // direct full-size image to download with web_fetch
   thumbnailUrl?: string; // smaller preview
-  width?: number; // reserved; not populated by the Bing provider (no reliable source)
-  height?: number; // reserved; not populated by the Bing provider (no reliable source)
 }
 ```
 

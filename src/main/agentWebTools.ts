@@ -46,12 +46,9 @@ export interface WebSearchResult {
   source?: string;
   publishedAt?: string;
   // Image-result fields (kind === 'image'). imageUrl is the direct full-size
-  // image to download with web_fetch; thumbnailUrl is a smaller preview. width/
-  // height are best-effort and may be absent depending on the provider markup.
+  // image to download with web_fetch; thumbnailUrl is a smaller preview.
   imageUrl?: string;
   thumbnailUrl?: string;
-  width?: number;
-  height?: number;
 }
 
 export interface WebSearchData {
@@ -137,8 +134,10 @@ export interface NormalizedWebSearchParams {
   query: string;
   kind: WebSearchKind;
   limit: number;
+  // The query with any `site:` operator folded in. Each provider builds its own
+  // results URL from this; there is no provider-specific URL in these
+  // kind-agnostic params.
   effectiveQuery: string;
-  searchUrl: string;
   site?: string;
   recencyDays?: number;
 }
@@ -201,7 +200,6 @@ export function normalizeWebSearchParams(rawParams: unknown): WebParamResult<Nor
       kind: kind.value,
       limit: limit.value,
       effectiveQuery,
-      searchUrl: buildGoogleSearchUrl(effectiveQuery),
       ...(site.value ? { site: site.value } : {}),
       ...(recencyDays.value !== undefined ? { recencyDays: recencyDays.value } : {}),
     },
@@ -508,9 +506,6 @@ export function webSearchModelData(data: WebSearchData): unknown {
       // without it the model cannot act on an image hit.
       ...(result.imageUrl ? { imageUrl: result.imageUrl } : {}),
       ...(result.thumbnailUrl ? { thumbnailUrl: result.thumbnailUrl } : {}),
-      ...(Number.isFinite(result.width) && Number.isFinite(result.height)
-        ? { width: result.width, height: result.height }
-        : {}),
       ...(result.publishedAt ? { publishedAt: result.publishedAt } : {}),
     })),
   };

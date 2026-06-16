@@ -325,8 +325,6 @@ describe('web tool model-visible projections', () => {
           snippet: '',
           imageUrl: 'https://cdn.example.com/aurora.jpg',
           thumbnailUrl: 'https://tse.example.com/th?id=aurora',
-          width: 2400,
-          height: 1600,
           source: 'example.com',
         },
       ],
@@ -340,8 +338,6 @@ describe('web tool model-visible projections', () => {
           url: 'https://example.com/aurora-article',
           imageUrl: 'https://cdn.example.com/aurora.jpg',
           thumbnailUrl: 'https://tse.example.com/th?id=aurora',
-          width: 2400,
-          height: 1600,
         },
       ],
     });

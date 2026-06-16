@@ -229,12 +229,13 @@ export function extractBingImages(document: Document, maxResults: number): BingI
     const thumbnailUrl = isHttpUrl(record.turl) ? record.turl : undefined;
     const ariaLabel = anchor.getAttribute('aria-label');
     const innerAlt = anchor.querySelector('img')?.getAttribute('alt');
-    // width/height are intentionally not scraped: Bing exposes no reliable
-    // dimension field on the result anchor, and guessing from caption text
-    // mis-attributes numbers. They stay optional on WebSearchResult for a future
-    // provider that returns them directly.
+    // Only trust a string title; a non-string record.t (markup drift) would
+    // short-circuit the fallback chain and stringify to garbage like
+    // '[object Object]'. Dimensions are intentionally not scraped: Bing exposes
+    // no reliable dimension field on the result anchor.
+    const metaTitle = typeof record.t === 'string' ? record.t : '';
     const fallbackTitle = hostOf(pageUrl) ?? pageUrl;
-    const title = compact(record.t || ariaLabel || innerAlt) || fallbackTitle;
+    const title = compact(metaTitle || ariaLabel || innerAlt) || fallbackTitle;
 
     results.push({
       title,
