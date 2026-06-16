@@ -97,92 +97,25 @@ unassigned — future dev is not pre-committed to any clone.
 shipped #111 — needs a dev-drafted build one-pager first) is the largest remaining product item.
 Alongside it: **performance P3** (localized O(N) cleanups, fast-track each), the **UI-quality
 Layer-3 remainder** (`icon-semantics` · `dark-mode-contrast-pass` — `keyboard-a11y` shipped #273),
-and **`agent-skills-authoring` diff/preview** (its NL save-as-skill routing shipped #271). The agent P1s (`agent-conversation-model`,
-`agent-skills-authoring`, `agent-self-modification`, `agent-ask-user-question-tool`,
-`agent-import-skill`) are now sequenced under the **`agent-program`** umbrella
-(foundation **M0** → M3). The **M0 data structure is now specified** in its own
-**`agent-data-model`** plan (the authoritative persistence + context contract: one log
-engine · `session`→`{conversation, run}` · `Principal`/`members`, no stored `kind` · run
-anchored to one conversation · distillation ladder · context cache-discipline invariant),
-extracted from `agent-conversation-model` (which keeps the experience design and now
-references it), with `agent-program` F2/F3/F5/F6 + the event taxonomy + protocol-surface
-list updated to match. **Four
-foundational decisions PM-ratified (2026-06-05):** canonical DM + user-creatable Channels ·
-split-now + mixed-resolution replay (execution incl. `tool_result` in the run log) · memory
-= global-default retrieval · memory writes via a runtime-owned surface. **The agent plans
-were then adversarially reviewed (codex + gemini, 2026-06-06) and the findings closed:**
-two decisions revised — **memory writes = runtime-owned event-sourced append surface** (the
-privileged `file_write` path was mechanically impossible — file tools are realpath-jailed to
-`workspace.root`) and **memory adds opt-in isolation tiers** over the global default (NDA
-leak); plus version-fingerprint + retention state machine + stable `agentId` tuple +
-`meta`-as-projection + forwarding/permission schemas in `agent-data-model`, F2-minimal-join
-+ F4-real-domain-bus + permission-taxonomy in `agent-program`, and the consumer plans
-de-session-ified. **Three review rounds landed (#142/#143/#144);** the final round turned
-the run-log event list into a real `RunEvent` discriminated union with payloads (symmetric
-with `MessageEvent`) and pinned three load-bearing invariants — event log is the sole
-authority (everything else is a rebuildable projection), replay fidelity is gated on
-`RunMeta.retention`, and memory invalidation has one owner (runtime reconciler) + one trigger
-(branch discard/undo). A fourth round (#145) mirrored the real permission-event fields into the
-`RunEvent` union and unified the residual memory paths. **M0 has now started: the data-model
-protocol types landed interface-first (#147)** — `AgentConversationEvent`/`AgentRunLogEvent`/
-`AgentMemoryEvent` unions + `AgentRunMeta`/`AgentIdentityRecord`/`AgentMemoryEntry` declared in
-`agentEventLog.ts`, the flat session log gained `user_question.*`/`widget_state.updated`
-(replay-neutral) + optional `actor`, all spec-aligned and replay-neutral (typecheck + `test:core`
-610/0). **F2a read seam landed next (#149):** replay exposes `getAgentEventConversationPath()`
-(communication only) vs `getAgentEventRuntimeTranscriptPath()` (joined pi-agent-core transcript ≡
-active path today), and `tool_result.created/replaced` gained a `runId` join key (legacy events infer
-it from the parent assistant). Behaviorally a no-op until the renderer adopts the conversation seam.
-**The agent program is now PM-ratified (2026-06-06) and M0 has LANDED (#150):** the full M0 foundation
-shipped — agent persistence re-keyed into `conversations/` + `runs/` + `agents/` split storage with
-joined replay, scoped payloads, run meta + fingerprints + usage, seq checkpoints (byte-offset bounded),
-stable identity records, the internal domain event bus (single-dispatch, IPC as a lane subscriber),
-active-run state isolation, and a **store-owned clean-cut** that auto-deletes pre-M0 `agent/sessions/` +
-stale `indexes/` on first access (no migration, per the pre-release no-back-compat policy). It cleared a
-**5-round adversarial review** (#150): the original 10 findings (3 perf regressions undoing the #116/#117
-write-amplification work, 3 correctness, 4 cleanup/altitude) all fixed; a tail-reader P0 introduced by the
-first fix, then fixed + regression-tested; and a runtime clean-cut session-restore failure (stale index →
-unloadable id) fixed with index/`conversations/` reconciliation + scenario tests. **M0.5 has now also LANDED
-(#151):** the public protocol/IPC/renderer surface is renamed `session*` → `conversation*` (internal
-event-log key stays `sessionId`, same value), joined by a single explicit translation seam
-(`sessionIdFromConversationId`/`conversationIdFromSessionId` at every public boundary + one
-`emitConversationRuntimeEvent` translator + past-chats `entryConversationId`/`conversationFieldsForEntry`);
-the UI-list `AgentConversationMeta` is renamed `AgentConversationListMeta` to clear the M0-data-model
-collision; the `metricConversation` i18n label, the workspace-layout localStorage key (`v2`→`v3`), and an
-orphaned legacy `session-index.json` sweep are all fixed. **M1 has STARTED — memory v1 LANDED (#152):** the
-first M1 slice ships an event-sourced per-agent durable memory layer — `memory` tool (list/remember/update/
-forget), 3 IPC commands, a per-turn bounded `<agent-memory>` reminder (score-ranked relevant ∪ latest, deduped
-to 8), and a Memory settings UI. Per a PM scope call, the three event-log families (conversation/run/memory)
-were **unified onto one `AppendOnlySeqLog<TEvent>` primitive** (single-sourced serialize/read/tail — the #150
-tail-bug class now lives in one place — + seq/queue/cache + offset reads), and memory got a projected-state
-cache + churn-based compaction + clean-cut coverage. **M1 is now substantially LANDED** (#153
-"complete agent M1" + follow-ups): canonical DM + Channels, mixed-resolution memory retrieval/compaction,
-`ask_user_question` v1, `config`/`runtime_status`/doctor tools, skill self-authoring v1 + `/skillify`,
-task panel (#160), notifications/attention M2 (#166), agent authoring (#167), memory render+Dream P1/P2
-(#172), **memory Phase 3: principal-keyed memory + per-principal Dream + membership read (#173, the
-agent-data-model §4 foundation)** — **all shipped**. What remains is **(a) feature-completion tails** on
-already-scaffolded tools (ask-user-question: clarify action + answer @refs/attachments; skills-authoring:
-NL save-as-skill + diff/preview + snapshot/rollback + sandbox gate), **(b) the M3 multi-agent spine**
-(rooms/POV/turn-taking/coordinator routing — its §4 principal/membership prerequisite shipped in #173,
-now unblocked), and **(d) PM-deferred self-mod M2**
-(review/approval + config recovery — security-sensitive, escalate before build). Remaining needs-PM
-decisions: doc snapshot+delta, group default-`addressedTo` (M3), who-configures-whom (M3). Escalate before
-behavior-changing code.
+and **`agent-skills-authoring` diff/preview** (its NL save-as-skill routing shipped #271).
+
+The **agent program** (`agent-program`, `meta`) is PM-ratified and its whole arc — foundation
+through the multi-agent spine, **M0 → M3** — has fully landed (M0/M0.5 foundation · M1
+single-agent self · M2 off-floor + extension · M3 multi-agent; the full PR trail is in Recently
+completed, plans archived `done`). The persistence/context, memory, and experience contracts
+live in `agent-data-model`, `agent-memory-foundations`, and `agent-conversation-model`
+(authorities). The remaining agent work is the small active/deferred set under **Agent
+capabilities** below — feature-completion tails and standalone items, not a milestone push.
 
 ### Command surface & capture
 
 The cmd+k / launcher convergence and the capture pipeline behind it. The
-`lazy-like-global-launcher` first slice shipped (#103, **done**, as-built =
-`spec/launcher.md`); its command-surface follow-ups (`launcher-capture-destinations`,
-`launcher-ai-actions`) were folded into `unified-command-surface` (D1/D4/D5) and the
-resolver track (`launcher-capture-resolvers`) superseded — all archived. The
+`lazy-like-global-launcher` first slice (#103, as-built = `spec/launcher.md`) and the
+`launcher-native-nspanel` dock/⌘Q/fullscreen root-fix (#171) shipped — see Recently completed;
+the command-surface follow-ups (`launcher-capture-destinations` / `launcher-ai-actions`) folded
+into `unified-command-surface` (D1/D4/D5) and the resolver track superseded — all archived. The
 capture-pipeline tracks below stay separate (orthogonal to the surface).
 
-- **launcher-native-nspanel** (P1, **DONE — merged #171**) — root fix for the launcher's
-  missing dock icon + first-⌘Q + fullscreen-float. Shipped approach =
-  `skipTransformProcessType` (the plan's original native-`collectionBehavior` theory was
-  superseded mid-flight; the as-built is recorded in the plan's *Correction* section).
-  Spec synced in-PR (`docs/spec/launcher.md`); plan archived at
-  `docs/plans/archive/launcher-native-nspanel.md`.
 - **unified-command-surface** (P2, **design ratified by PM — needs a dev-drafted
   build one-pager**) — collapse cmd+k and the launcher into **one** context-aware
   command surface (one surface, one hotkey `Cmd+Shift+Space`, context as an ambient
@@ -208,127 +141,16 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
 
 ### Agent capabilities
 
-The agent subsystem is being rebuilt as **one program over a shared foundation**, not a
-loose set of plans. **`agent-program`** (`meta`) is the umbrella: it owns the L0
-foundation (**M0**, interface-first), the cross-plan **event taxonomy**, the consolidated
-protocol-surface change list, the dependency graph, and the milestones **M0 foundation →
-M1 single-agent self → M2 off-floor+extension → M3 multi-agent**. Members below reference
-it; standalone agent items (not in the program) follow at the end. **The program is
-PM-ratified and M0–M3 have all landed.** M0 + M0.5 (#150/#151) · M1 core (memory v1 #152,
-plus #153/#155/#156) · M2 off-floor (recall clean-cut #158 · reflective Dream
-#159/#161/#162/#163 · task panel #160 · agent-owned subagent memory + `dream` tool + Dream
-chat feedback #164 · off-floor notifications + attention #166 · scheduled command nodes +
-anacron #165) · and the **M3 multi-agent sequence — Channel + coordinator #179 · cross-agent
-memory + isolation gate #200 · parallel execution #202 · per-agent POV #212 — is complete**
-(plus the memory-theory realignment, all units shipped, plan archived `done`). **Remaining,
-deferred by PM (2026-06-09):** the rest of self-mod M2 — prompt-only hooks · config recovery ·
-skill curation — plus mid-run `needs-input`; escalate the capability boundary before building.
-The one un-started future item is the **deferred automatic associative retrieval** (memory,
-data-gated — see § memory above). Within the agent program, the remaining *active* build work is
-the skills **diff/preview creative-UX** (`agent-skills-authoring`; its NL save-as-skill routing
-shipped in #271). Cross-agent consultation already shipped (`ungate-contact` #236); only its
-surfacing / A2A items are deferred (backlog). Standalone draft items follow below.
+The agent subsystem is **one program over a shared foundation** — `agent-program` (`meta`) is the
+umbrella (L0 foundation, cross-plan **event taxonomy**, consolidated protocol-surface change list,
+dependency graph, milestones **M0 → M3**). It is **PM-ratified and M0–M3 have all landed** (the
+full PR trail is in Recently completed; the shipped plans are archived `done`). What remains active
+is the small set below: a few feature-completion tails inside the program, the standalone agent
+items at the end, and one explicitly-deferred memory faculty. Escalate the capability boundary
+before any directional/security-sensitive build.
 
-- **agent-permission-redesign** (P1, `done`, PR #252 + #266) — the consequence-model permission
-  redesign: **one pure `decide(effect)`** (`WORK→allow` silent · `COMMIT→confirm`-once-or-remember ·
-  `FORBIDDEN→block` floor), shell inverted to a floor-blocklist (unknown static command = WORK),
-  reversible `file_delete` via `.agent-trash`, and narrow `Scope(read|write)` / `External` / `Command`
-  grants. **Shape (b)** complete: PR-1 model core (#252) → PR-2 folder-handoff gesture + PR-3 typed
-  `file_convert` tool (both shipped in #266). Supersedes the `delegated-scope` draft (#249,
-  `superseded`). See Recently completed; plan archived `done`
-  (`docs/plans/archive/agent-permission-redesign.md`). (A proposed `agent-capability-ceiling`
-  sibling was verified **unnecessary** and dropped — see the next entry.)
-- **agent-capability-ceiling** — **RESOLVED 2026-06-16: verified unnecessary in code, dropped
-  (not built).** The premise — a spawner could hand a child *more* than it holds — does **not
-  hold** after #252/#266: (1) capability is a single **global** model (`decide(effect)` + the
-  non-configurable floor + a global grants ledger), **not per-agent**, so no agent has private
-  authority for a child to exceed; (2) a delegated/authored agent definition's `permissionMode`
-  is **type-locked to `'restricted'`** (`AgentDelegationPermissionMode`, `src/core/types.ts:798`)
-  — it can never be `'trusted'`, so there is no permission-mode escalation lever; (3) `tools`
-  only filters which tools are *wired*, and every call still passes the same global gate. There
-  is therefore no per-agent ceiling to enforce. `conversational-agent-authoring` (#251) safety
-  rests on **human ratification** of the new agent + the **universal floor/`decide(effect)`**
-  model. **Don't re-propose a per-agent clamp.** (Originated as the misframed clamp in the closed
-  `delegated-scope` draft PR #251.)
-- **agent-context-architecture** (P1, **SHIPPED (PR #263, codex, 2026-06-15)** — realizes
-  agent-program decision **C3**) — **one** run-context composer layered by **scope × volatility**
-  (L0 shared foundation → … → per-turn volatile), replacing the ad-hoc per-call prompt
-  assembly. **Shape (b)** shipped in one PR: **PR-1** the unified composer (`composeAgentPrompt`,
-  L0-tagged layers) **and PR-2** the cross-agent cache breakpoint — the PR-2 deferral was lifted by
-  rewriting the **Anthropic provider payload** in `onPayload` (split the stable system block into
-  `L0 firmware` + `rest`, both cache-marked, within Anthropic's 4-breakpoint budget) rather than
-  waiting on engine support for the single-`systemPrompt`-string interface. See Recently completed;
-  plan archived `done`. Plan merged (#254).
-- **agent-debug-run-grounded** (P2, `done`) — recast agent debug as a
-  **view over the run truth source** (the run ledgers) rather than a parallel debug channel.
-  Shipped as **shape (a)**, one clean PR (#264, cc-2) — the seq-renumbering refactor was
-  considered and dropped. See Recently completed; plan archived `done`. Design folded into
-  `docs/spec/agent-event-log-rendering.md`.
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
-- **cross-agent consultation** (P1 active + backlog; design lives in
-  `agent-conversation-model` §"Cross-agent help" — read it for the *why*, this is the *what*) —
-  the **colleague model** is PM-ratified (2026-06-13) and ~**85% already implemented**
-  (fresh-child brief/result exchange + the three non-crossing boundaries + depth/cycle/concurrency
-  guards all conform — audit-verified). #233 closed, absorbed into the authority.
-  - **SHIPPED — `ungate-contact` (PR #236, cc, 2026-06-13)** — ONE complete PR; **security-sensitive** (`/security-review`
-    + PM GO at the gate); **no new plan file** (the *why* = §Cross-agent help "Build note"). **Shipped** (all steps below
-    done; consultee attribution resolved at the **delegation layer** from the authoritative `contextMode` — fresh consult →
-    the consultee, fork → the spawner's inherited attribution — not an id heuristic):
-    1. `src/core/agentPermissionModel.ts` — change `DEFAULT_ACTION_DECISIONS['agent.delegate.spawn']`
-       (~:91) from `'ask'` → `'allow'` so cross-agent **contact** is ungated in *all* safety modes;
-       drop the now-redundant `agent.delegate.spawn` entry in `FULL_ACCESS_ALLOW_ACTIONS`. Leave
-       `delegate.status/send/stop` and the depth/cycle/concurrency guards untouched.
-    2. **Consultee approval attribution** — when a child run hits an `'ask'`-level *capability*, the
-       approval that surfaces in the parent conversation (the child-run `approvalHandler` → parent
-       `requestToolApproval` path in `agentRuntime.ts`) must be **attributed to the consultee**
-       (`executingAgentId`/`agentType`), not a generic "child run"; the approval card renders it.
-    3. Sync `docs/spec/agent-tool-permissions.md`: contact (`agent.delegate.spawn`) is baseline-allow
-       (not gated); the consultee runs under its **own** capability permissions, which still gate and
-       surface attributed to it.
-    4. Tests: spawning a fresh child no longer prompts in balanced/ask_first; the consultee's risky
-       action (e.g. `file.write`) still gates under its own permission + correct attribution;
-       depth/cycle/concurrency guards still fire.
-    - **Non-goals (do NOT scope-creep):** no `purpose` field, no "consulted @B" rendering, no
-      structured brief/result schema, no A2A — those are the backlog below; no new plan file; don't
-      re-open the world-view.
-  - **Backlog (deferred):** (a) *consultation surfacing* — a `purpose` field (consult vs task),
-    "consulted @B" rendering, and a structured brief/result schema (makes today's implicit in-process
-    contract explicit and A2A-ready); (b) *persistent agent↔agent / cross-boundary* — adopt **A2A** as
-    the transport only when consulting agents outside the trust domain.
-- **channel-group-chat-semantics** (P1, agent-program / Channel, **DONE — both PRs shipped**) —
-  a Channel reads like a group chat: members are told how to communicate (lead with the result,
-  keep intermediate thinking/tool steps private), and the human-side thread renders each member's
-  turn under its identity. Shipped as a SET (no committed plan file; fast-tracked across PRs):
-  - **PR 1 — agent side (PR #239, cc-2)** — Channel/DM framing moved from the (now identity-only)
-    member system prompt to a per-turn `<conversation-environment>` reminder keyed off conversation
-    identity (`isCanonicalDmConversationId`), carrying the member roster + the "only your final
-    message is shared" norm.
-  - **PR 2 — human-side render (shipped across #240/#242/#243/#244/#245)** — result-first turn
-    fold for DM + Channel (#240), atomic Channel delivery suppressing in-progress turns (#242),
-    compact avatar+name header over a full-width reply (#243), Interrupted verdict tied to real
-    run status (#244), and colored identity avatars + icon-free "Worked for" header (#245). See
-    Recently completed.
-- **research = a base read-only capability of every agent** (**PM + codex re-decided
-  2026-06-14; no separate agent**) — research is *not* a standalone agent; it is a
-  foundational read-only investigation capability that **all agents** share (like
-  read/grep). **SHIPPED — built-in `/research`, PR #235 (codex-3):** a user/model-invocable
-  `execution: isolated` same-agent read-only child run whose declared read tools are filtered
-  through the `AgentToolActionKind` read-only partition (`readOnlyAgentToolNames`); the live
-  permission classifier derives every tool's action kind from one
-  `AGENT_TOOL_ACTION_KIND_PROFILES` source. Gate green (`test:core` 992/0 · `test:renderer`
-  443/0 · `docs:check` · `/code-review xhigh` 7-findings-all-fixed · `/security-review` no
-  HIGH/MEDIUM). The 2026-06-13 "redirect to a memory-bearing `researcher` agent (R2)" idea was
-  **reconsidered and DROPPED** — research stays a baseline capability, not a consulted
-  specialist (consistent with `agent-conversation-model` §"Cross-agent help → Relationship to
-  /research": research = the agent's own capability, not a consultation). **#232** (the
-  read-only `/research` plan, draft) is now aligned but redundant with the shipped spec →
-  **close, or merge + archive `done`** (codex-3 / PM).
-- **agent-permission-safety-modes** (P1) **merged as PR #193** (codex-2) — see Recently
-  completed; plan archived `done` in-PR. The global `AgentSafetyMode`
-  (Ask First·Balanced·Full Access), three-kind approval card (tool / skill-trust /
-  notice), Full Access escalation, and the Security settings page shipped; the
-  `AgentPermissionMode`→`AgentSafetyMode` rename is recorded in `agent-program` F6.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient
@@ -346,71 +168,41 @@ surfacing / A2A items are deferred (backlog). Standalone draft items follow belo
   (reserved id + runtime invariant). `@all` deferred; coordinate with #251 (conversational agent
   authoring) on the shared auto-membership path. Plan merged (#265). See
   `docs/plans/default-general-channel.md`.
-- **channel-async-message-bus** (P1, plan file, **DONE — shipped #231 (cc)**) — make Channels behave like
-  an async IM group instead of a special case of the single-run DM composer: send a
-  new Channel message while agents are working; explicit `@agent` mentions dispatch
-  independent per-agent runs (co-addressees don't share a turn group, append on
-  completion order); replies delivered as whole utterances **in the message stream**
-  (no token streaming; the live stream stays visible in a **per-run detail view** —
-  runtime retains `message_update`, routes it there, filters it from the transcript);
-  the Channel composer stays a pure message composer (Stop/Steer are DM-only,
-  per-run stop lives in the activity overlay); navigation + unread continue while
-  Channel runs proceed. Most of the runtime model already exists; the gap is the
-  view/command boundary — split the overloaded projection `isStreaming` into
-  mode-specific fields, return from Channel send on acceptance (not on idle), and
-  key concurrent approval/`ask_user_question` requests by `runId` so runs can't
-  steal each other's input. ONE PR (runtime + projection + renderer + tests + spec).
-  No DM behavior change. Plan archived `done` at
-  `docs/plans/archive/channel-async-message-bus.md`.
-- **agent-dream-memory** (P2, M2, **DONE — all three slices landed: ① #161 + ② #162 + ③ #163**) —
-  durable memory write-back as the agent's **reflective run** (no-tools, agent-anchored), on a built-in
-  daily schedule + manual `/dream`, replacing #159's per-turn extraction. Design now lives in
-  `docs/spec/` (agent-tool-design / conversation-model offline-consolidation); plan archived at
-  `docs/plans/archive/agent-dream-memory.md`. **Extended in #164** to **agent-owned subagent
-  memory** (each fresh typed subagent owns its called-agent memory line; forks share the parent's),
-  a model-visible **`dream` trigger tool** (trigger-only, no model-written facts), and a **Dream
-  chat-feedback** boundary. Polish tracked in `agent-dream-followups` (P3) below.
-- **agent-memory-model** (P1, M2, **DONE — render+Dream shipped #172, principal-keyed
-  memory + per-principal Dream #173**) — the **subjective** memory layer atop
-  `agent-data-model`: the render projection (XML-zoned prose briefing) replacing the flat
-  `<agent-memory>` dump, Dream consolidation semantics, and the §4 principal/membership
-  foundation. Plan archived at `docs/plans/archive/agent-memory-model.md`. Its residual
-  **cross-agent sharing proposal** is now M3-B in the debt-first sequencing above (needs
-  the `agent-data-model` §4 extension drafted for PM ratification before code).
-- **memory: academic model (canonical frame PM-ratified 2026-06-10)** — the memory
-  subsystem is canonically framed in the academic vocabulary (episodic/semantic/
-  procedural stores × encoding/consolidation/retrieval/forgetting + transactive layer).
-  **Authority docs:** `agent-memory-foundations.md` (meta — definitions, sources,
-  binding authoring rules for every memory doc/prompt/tool; PM directive: academic
-  definitions bind, PM examples are illustrative only) + the mapping table in
-  `agent-data-model.md` § *Canonical memory vocabulary* + `agent-architecture.md`
-  § *The memory system*. Zero storage change. Work:
-  **`agent-memory-academic-alignment`** (cc-2) **merged as PR #181** — see Recently
-  completed; plan archived `done` in-PR (subsumed the former D2
-  `agent-memory-encoding-signal`, archived `superseded`).
-
-  **Memory-theory realignment program (PM-ratified 2026-06-10, post-#181) — SHIPPED;
-  plan archived `done`.** Realigned memory production/storage/use to the theoretical
-  layering (raw ledgers below memory; constructed episodic layer; pure-pointer index;
-  per-principal semantic store; usage = chronic activation · deliberate recall ·
-  automatic association). All shippable units landed: **Step 0 + PR-1 person rule /
-  read surfaces (#183)** · **PR-2 episodic layer + `sources` discriminated union (#195)**
-  · **PR-3 two-strength forgetting + PR-5 schema/overview = "chronic activation" (#199)**
-  · **PR-4 hybrid retrieval engine (#211; PM embedding gate closed as "no embeddings")**.
-  Design (D-1…D-9) folded into `agent-memory-foundations` + `agent-data-model` canonical
-  table + `agent-architecture` § memory; decision record at
-  `docs/plans/archive/agent-memory-realignment.md`. One item remains, explicitly deferred:
-
-  - **DEFERRED — automatic associative retrieval** (PM call 2026-06-10: wait for
-    data): the runtime-owned per-turn background faculty — current turn as cue,
-    top-k relevant facts/gists auto-surface in the `[5]` volatile tail
-    (will+digestion: association is a digestion-side faculty, the tool call is the
-    volitional act; the `[3]`/`[5]` cache contract already reserves the slot).
-    Reuses the #211 hybrid engine — no second retrieval stack. **Activation gate (PM
-    closes at claim):** pool density ≥100 active facts · ≥200 accumulated retrieval
-    events (≥50 deliberate `recall` hits) from the PR-3/PR-4 instrumentation · PR-4
-    engine shipped (✓). The strength/usage signal must separate from pure recency
-    before association is selection rather than wholesale injection.
+- **agent-capability-ceiling** — **RESOLVED 2026-06-16: verified unnecessary, dropped (not
+  built).** Post-#252/#266 capability is one **global** model (`decide(effect)` + non-configurable
+  floor + a global grants ledger); a delegated/authored agent's `permissionMode` is type-locked to
+  `'restricted'` (`AgentDelegationPermissionMode`, `src/core/types.ts`); and `tools` only filters
+  which tools are wired — so no agent holds private authority a child could exceed, and there is no
+  per-agent ceiling to clamp. `conversational-agent-authoring` (#251) safety rests on human
+  ratification + the universal floor. **Don't re-propose a per-agent clamp.**
+- **cross-agent consultation — backlog** (design = `agent-conversation-model` §"Cross-agent help")
+  — the **colleague model** is PM-ratified (2026-06-13) and shipped: `ungate-contact` (PR #236)
+  made cross-agent contact (`agent.delegate.spawn`) baseline-allow, with the consultee acting under
+  its **own** capability permissions, attributed to it at the delegation layer (#233 closed/
+  absorbed). **Deferred:** (a) *consultation surfacing* — a `purpose` field (consult vs task),
+  "consulted @B" rendering, a structured brief/result schema; (b) *cross-boundary* — adopt **A2A**
+  as the transport only when consulting agents outside the trust domain.
+- **research = a base read-only capability** (PM + codex 2026-06-14) — shipped as built-in
+  `/research` (PR #235): an `execution: isolated` same-agent read-only child run, tools filtered
+  through the read-only `AgentToolActionKind` partition. The "memory-bearing `researcher` agent"
+  redirect was reconsidered and **dropped** — research stays a baseline capability, not a
+  consultation. **Open loose end:** `#232` (the draft `/research` plan) is redundant with the
+  shipped spec → **close, or merge + archive `done`** (codex-3 / PM).
+- **memory** (academic model + theory realignment **shipped**; authorities =
+  `agent-memory-foundations` (`meta`) + `agent-data-model` § *Canonical memory vocabulary* +
+  `agent-architecture.md` § *The memory system*) — the subsystem is canonically framed in academic
+  vocabulary (episodic/semantic/procedural × encoding/consolidation/retrieval/forgetting +
+  transactive). Render projection, Dream consolidation (`agent-dream-memory`), principal-keyed
+  memory, two-strength forgetting, and the hybrid retrieval engine all shipped
+  (#172/#173/#181/#183/#195/#199/#211 — see Recently completed; plans archived `done`). One faculty
+  remains, explicitly deferred:
+  - **DEFERRED — automatic associative retrieval** (PM 2026-06-10: wait for data) — the
+    runtime-owned per-turn background faculty: current turn as cue, top-k relevant facts/gists
+    auto-surface in the `[5]` volatile tail. Reuses the #211 hybrid engine (no second retrieval
+    stack). **Activation gate (PM closes at claim):** pool density ≥100 active facts · ≥200
+    accumulated retrieval events (≥50 deliberate `recall` hits) · PR-4 engine shipped (✓). The
+    strength/usage signal must separate from pure recency before association is selection, not
+    wholesale injection.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
@@ -421,8 +213,6 @@ surfacing / A2A items are deferred (backlog). Standalone draft items follow belo
   now normalize to the direct `/skillify` prompt path (gated on slash skills, not
   automatic listing); remaining active work is the **diff/preview creative-UX**.
   See `docs/plans/agent-skills-authoring.md`.
-- **bundled-built-in-skill-resources** (P1) **merged as PR #269** (codex) — see
-  Recently completed; plan archived `done`.
 - **agent-self-modification** (P1, M1–M3, **slimmed by the reorg**) — controlled
   self-maintenance: self-observation (`runtime_status` / doctor), the cc-2.1-style
   `config` tool (single-agent self-configuration), **hooks** (untrusted consumer of the
@@ -430,11 +220,6 @@ surfacing / A2A items are deferred (backlog). Standalone draft items follow belo
   is `agent-conversation-model`'s.** Directional/security-sensitive — escalate the
   capability boundary to the PM before building. See
   `docs/plans/agent-self-modification.md`.
-- **agent-ask-user-question-tool** (P1, M1) **merged as PR #198** (codex-3) — see
-  Recently completed; plan archived `done` in-gate. v1 shipped in #153; the full
-  version landed here: `@`-refs/attachments in answers (materialized through the same
-  realpath local-root jail as the composer) + the dedicated "discuss" action (closes
-  the card, auto-messages the agent, conversation continues in the composer).
 - **agent-import-skill** (P1, M1–M2 consumer, plan ratified, PR #98) — agent data-import capability:
   bundled deterministic adapters (Tana reference, validated against the real
   10,627-node export) for known formats + agent-authored parsers for unknown ones;
@@ -448,12 +233,7 @@ surfacing / A2A items are deferred (backlog). Standalone draft items follow belo
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
-- **agent-authoring follow-ups** (P2, *fast-track*) — **DONE; all four #167-review-gate
-  cleanups shipped.** (a) AGENT.md parser consolidation in **#184** (run unification —
-  single-source parser); (b) `additionalAgentDirectories` agents render read-only · (c)
-  out-of-catalog `effort` coercion · (d) `TOOL_CATALOG` ↔ `filterAgentTools` guard in
-  **#213** (codex-4). The plan itself was already done (core #167; archived at
-  `docs/plans/archive/agent-authoring.md`). No follow-up remains.
+
 Standalone agent items (not part of the program):
 
 - **third-party-skill-import** (P2, *no plan file yet — draft, to be drafted*) —
@@ -512,67 +292,28 @@ Standalone agent items (not part of the program):
   stays (mutually exclusive) — presentation only. Touches `ProviderConfigWindow.tsx`,
   `ProviderOAuthForm.tsx`, i18n en/zh + `i18nCoverage`; design-system neutral tokens
   (B3/B4), UI gate = light/dark visual. Dev drafts the build one-pager.
-- **security-settings-ia-redesign** — **SHIPPED as PR #215** (codex-3): the one
-  honest **Default + Exceptions** trust model + a shared
-  `src/core/agentPermissionModel.ts` (`effectiveActionDecision`) so the runtime
-  fallback and the Settings → Security display can no longer drift. Plan archived
-  `done` (`docs/plans/archive/security-settings-ia-redesign.md`). See Recently
-  completed.
 
 ### Files & media
 
-- **file-preview-unification** (P2, **SHIPPED (PR #262, codex-2, 2026-06-15)**) — file-node
-  previews and loose agent/local-file previews are unified into **one `nodeId`-keyed
-  `FilePreviewPanel`** with two lifecycle states (`loose` → `ingested`) over a single mounted
-  frame: read-only filename title (fixes the `Untitled` bug), filesystem-vs-outliner-ancestry
-  breadcrumb, the shared `FilePreviewShell` hero, and the file node's children outline +
-  backlinks when ingested. "Add to outline" is an in-place loose→ingested rebind (no
-  remount/jump) that also rewrites the view target to the stored asset. Shipped as **Shape (a)**
-  (one PR; the original PR-1/PR-2 split became build-order within it). Shared panel chrome
-  extracted to `PanelShared.tsx` (`usePanelTitleDock`, `PanelStickyBreadcrumb`,
-  `PanelChildrenOutline`). See Recently completed; plan archived `done`. Design folded into
-  `docs/spec/ui-behavior.md` + `docs/spec/workspace-layout.md`.
-- **agent-file-model** (P1, plan file, **shipped — F1 (#224) + F2 (#229) + F3 (#237)
-  + F4 (#238); plan archived `done`**; see Recently completed. PM-ratified 4 decisions
-  2026-06-13; superseded the closed #218, shipped via #220) — give agent file
-  handling one shape: the agent lives in a path-addressed working directory, the
-  document in the handle-addressed asset store (`asset://`), joined by two symmetric
-  bridges (materialize handle→path on reference-in, ingest path→handle on
-  save-to-outliner). Deleted #218's parallel `<userData>/artifacts` store +
-  `FileArtifactRef` DTO + relative/absolute routing heuristic, and fixed the lossy
-  input path (a referenced outliner file reaches the agent today as a node with no
-  readable bytes). Shape (b), independent PRs: F1 render agent file outputs (the
-  reported bug, **shipped #224**) · F2 app-owned workdir + scratch relocation
-  (**shipped #229**) · F3 materialize bridge (**shipped #237**) · F4 ingest bridge
-  (**shipped #238**). See `docs/plans/archive/agent-file-artifact-model.md`.
-- **file-attachments** (P1) — **shipped** as PR #204 (protocol slice) + PR #206
-  (feature); see Recently completed. Plan archived `done`
-  (`docs/plans/archive/file-attachments.md`).
+The file-node + preview foundation shipped — `file-attachments` (#204/#206), `agent-file-model`
+F1–F4 (#224/#229/#237/#238), `file-preview-unification` (#262), and `file-as-node` (#241) are all
+archived `done` (see Recently completed). Remaining active work:
+
+- **file-preview** (P2, plan refreshed PR #209) — in-app preview panel for every file-shaped
+  source via a source-owned `PreviewTarget` (`local-file` / `asset` / `agent-payload` / `url`):
+  one shell + renderer registry, per-source main-process byte authority. **PR 1 shipped (#210,
+  shell + web-native basics); PR 2 shipped (#227, PDF renderer)** — remaining: **media streaming
+  (PR 3) / Office / URL reader**. PR 3 also retires the `media-types` whole-file-read limitation.
+  See `docs/plans/file-preview.md`.
 - **media-types** (P2, *no plan file*) — audio/video players + PDF thumbnail on the
   `BlockNodeRow` shell **shipped with #206** (inline `<audio>`/`<video controls>`
   + `pdftoppm` thumbnail). Remaining: `serve()` needs a streaming/range response
   for large media (today's whole-file read works but is memory-heavy and breaks
   seeking on big files) — tracked as `file-preview` PR 3 (media streaming).
-- **file-preview** (P2, plan refreshed PR #209) — in-app preview panel for every
-  file-shaped source via a source-owned `PreviewTarget` (`local-file` / `asset` /
-  `agent-payload` / `url`): one shell + renderer registry, per-source
-  main-process byte authority. Structural prerequisite: generalize per-panel
-  history to a discriminated `PanelView` (optionally a standalone PR 0
-  refactor); then PR 1 = shell + web-native basics, PDF / media streaming /
-  Office / URL reader follow as independent PRs. Media streaming (PR 3) also
-  retires the **media-types** whole-file-read limitation. **PR 1 shipped (#210,
-  shell + web-native basics); PR 2 shipped (#227, PDF renderer)** — remaining:
-  media streaming / Office / URL reader. See `docs/plans/file-preview.md`.
-- **file-as-node** (plan-track, **shipped** — PR #241, cc; PM-ratified 2026-06-14) — files
-  (`attachment` / `image` nodes) are first-class outliner nodes: a non-image file renders as a
-  click-to-open **file card** (icon · display-only filename · meta · `⋯`), an image renders **inline as
-  the image itself**, and the **bullet drills to the node page** whose hero is the full preview above the
-  node's children (the chevron expands **children**, not a preview — no inline preview block). The
-  standalone `file-preview` pane now serves only non-node sources (`agent-payload` / `local-file` /
-  `url`) and reuses the same preview body (+ "add to outline"). See Recently completed; plan archived
-  `done` (`docs/plans/archive/file-as-node.md`). **Follow-up (low, pre-release):** restoring a persisted
-  pane whose top view was an `asset` file-preview drops the whole pane instead of salvaging its outliner
-  anchor / backStack (`useWorkspaceLayout` `sanitizePanel`) — dev-only userData, narrow same-day window.
+- **file-as-node follow-up** (low, pre-release bug, *no plan file*) — restoring a persisted pane
+  whose top view was an `asset` file-preview drops the whole pane instead of salvaging its outliner
+  anchor / backStack (`useWorkspaceLayout` `sanitizePanel`). Dev-only userData, narrow same-day
+  window. (Feature shipped #241, archived `done`.)
 - **asset-gc** (P2, *no plan file*) — asset `index.json` rebuild + garbage
   collection for orphaned assets; drag-from-Finder ingest; inline alt-text editing.
 
@@ -652,15 +393,10 @@ Standalone agent items (not part of the program):
 
 ### UI quality (design-system consistency)
 
-The 2026-06-04/05 design-system / UI-consistency review, landed as a plan suite in
-PR #120. `docs/plans/ui-quality-roadmap.md` is the index + **boundary contract**
-(who owns which lines) and the three-layer build order. All nine were validated
-against `main` (post-#118) at the gate; findings are real with `file:line`.
-
-Layer 1 shipped together in PR #228 (`composition-rhythm` + `design-system-consistency`)
-and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` +
-`feedback-states`) — see Recently completed. `keyboard-a11y` (Layer 3) shipped in
-PR #273 — see Recently completed; plan archived `done`. Remaining Layer-3 lanes:
+The 2026-06-04/05 design-system / UI-consistency review, landed as a plan suite in PR #120;
+`docs/plans/ui-quality-roadmap.md` is the index + **boundary contract** (who owns which lines) +
+three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Layer 3, #273) shipped
+— see Recently completed. Remaining Layer-3 lanes:
 
 - **icon-semantics** (P3, Layer 3, small/isolated) — action↔icon collisions (Hash,
   unknown-tool, remove/X-vs-Trash, the gear catch-all that #118 sharpened).
@@ -670,18 +406,13 @@ PR #273 — see Recently completed; plan archived `done`. Remaining Layer-3 lane
 
 ### Performance
 
-- **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a
-  three-way perf audit (`docs/plans/performance-optimization.md`). **P0 shipped** (#117);
-  **P1 PR-A shipped** (#119: `ProjectionUpdate` delta over the `core↔renderer` seam —
-  payload ~2 MB→362 B and index pass 7.0→1.2 ms at 6k nodes; `nodeSignatures` pass deleted;
-  unchanged-node identity now stable). **P1 PR-B shipped** (#121: reverse-edge index held in
-  `ProjectionState` and patched per delta — retires the last O(N) per-keystroke scan; 6k nodes
-  1.22→0.29 ms). **P2 shipped** (#275, codex-3: default windowed/flat outliner renderer with the
-  recursive path behind `lin:recursive-outliner`; agent streaming `projection_patch` path with
-  stable-identity folding + transcript-row memo + throttled markdown tail + rAF auto-scroll;
-  structural-save coalescing into the existing 700 ms window with a flush before durability
-  boundaries). **Next: P3** (localized O(N) cleanups — the residual `new Map(prev.byId)` +
-  `nextRevisions` whole-map rebuild; several unlocked by the stable-identity foundation P1 PR-A laid).
+- **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a three-way
+  perf audit (`docs/plans/performance-optimization.md`). **P0 (#117) · P1 PR-A (#119) + PR-B (#121)
+  · P2 (#275) all shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge
+  index patched per delta, windowed/flat outliner renderer + agent streaming `projection_patch` +
+  structural-save coalescing (metrics in Recently completed). **Next: P3** (localized O(N) cleanups
+  — the residual `new Map(prev.byId)` + `nextRevisions` whole-map rebuild; several unlocked by the
+  stable-identity foundation P1 PR-A laid).
 
 ### Storage & platform hygiene (from the 2026-06-10 pre-release sweep)
 
