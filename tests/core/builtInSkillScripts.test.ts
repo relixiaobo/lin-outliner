@@ -28,9 +28,9 @@ describe('built-in skill helper scripts', () => {
     expect(report).toMatchObject({
       ok: true,
       errors: [],
-      slide_count: 1,
-      layouts: ['cover'],
-      visual_slide_count: 1,
+      slide_count: 3,
+      layouts: ['cover', 'metric', 'product-stage'],
+      visual_slide_count: 3,
       warnings: ['placeholder_text_found'],
     });
   });

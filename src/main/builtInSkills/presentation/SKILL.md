@@ -18,7 +18,9 @@ Treat PPTX, HTML, PDF, and images as output formats selected by the user's goal.
 4. Choose one visual system before building: design direction, theme, motif,
    typography posture, and layout recipe set. Use
    `references/visual-deck-system.md` and `references/layout-recipes.md` for
-   visual decks.
+   visual decks. If the user asks for modern, premium, launch, keynote, or less
+   old-fashioned templates, choose the `Keynote Stage` direction unless the
+   content clearly needs another system.
 5. Create a deck plan before building. Include slide number, purpose, headline,
    evidence/source, layout recipe, visual treatment, and output notes. If
    emitting JSON, keep it compatible with

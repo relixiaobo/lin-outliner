@@ -6,14 +6,16 @@
   <title>Presentation</title>
   <style>
     :root {
-      --paper: #f7f3ed;
-      --surface: #fffdfa;
-      --ink: #171717;
-      --muted: #635f58;
-      --rule: rgba(23, 23, 23, 0.18);
-      --accent: #b33951;
-      --accent-ink: #ffffff;
-      --shadow: rgba(23, 23, 23, 0.12);
+      --paper: #050607;
+      --surface: #0b0d0f;
+      --surface-2: #121518;
+      --ink: #f5f7f2;
+      --muted: rgba(245, 247, 242, 0.66);
+      --rule: rgba(245, 247, 242, 0.16);
+      --accent: #d7ff4f;
+      --accent-ink: #101214;
+      --shadow: rgba(0, 0, 0, 0.42);
+      --radius: 8px;
     }
 
     * { box-sizing: border-box; }
@@ -22,14 +24,14 @@
       margin: 0;
       background: var(--paper);
       color: var(--ink);
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
     .deck {
       min-height: 100vh;
       display: grid;
       place-items: center;
-      padding: 24px;
+      padding: 22px;
     }
 
     .slide {
@@ -38,19 +40,25 @@
       display: none;
       position: relative;
       overflow: hidden;
-      padding: 58px 64px;
+      padding: 56px 64px;
       border: 1px solid var(--rule);
+      border-radius: var(--radius);
       background: var(--surface);
-      box-shadow: 0 18px 60px var(--shadow);
+      box-shadow: 0 24px 80px var(--shadow);
+      isolation: isolate;
     }
 
     .slide[aria-current="true"] { display: grid; }
 
-    .slide.theme-dark {
-      background: var(--ink);
-      color: var(--surface);
-      --muted: rgba(255, 253, 250, 0.68);
-      --rule: rgba(255, 253, 250, 0.22);
+    .slide.stage-light {
+      --surface: #f6f7f2;
+      --surface-2: #ffffff;
+      --ink: #101214;
+      --muted: rgba(16, 18, 20, 0.62);
+      --rule: rgba(16, 18, 20, 0.16);
+      --shadow: rgba(16, 18, 20, 0.16);
+      background: var(--surface);
+      color: var(--ink);
     }
 
     .chrome {
@@ -58,6 +66,7 @@
       top: 28px;
       left: 64px;
       right: 64px;
+      z-index: 2;
       display: flex;
       justify-content: space-between;
       gap: 24px;
@@ -72,178 +81,193 @@
       color: var(--accent);
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 14px;
-      font-weight: 700;
+      font-weight: 750;
       letter-spacing: 0.08em;
       text-transform: uppercase;
     }
 
     .display {
       margin: 14px 0 0;
-      max-width: 920px;
-      font-size: 78px;
-      line-height: 0.94;
+      max-width: 940px;
+      font-size: 88px;
+      line-height: 0.9;
+      letter-spacing: 0;
+    }
+
+    .headline {
+      margin: 14px 0 0;
+      max-width: 760px;
+      font-size: 60px;
+      line-height: 0.95;
       letter-spacing: 0;
     }
 
     .lead {
       margin: 24px 0 0;
-      max-width: 720px;
+      max-width: 700px;
       color: var(--muted);
-      font-size: 26px;
+      font-size: 25px;
       line-height: 1.32;
     }
 
-    .tag {
+    .tag,
+    .spec {
       display: inline-flex;
       align-items: center;
-      min-height: 32px;
+      min-height: 34px;
       padding: 0 12px;
       border: 1px solid var(--rule);
+      border-radius: var(--radius);
       color: var(--muted);
       font-size: 14px;
-      font-weight: 650;
+      font-weight: 700;
     }
 
-    .rule {
-      width: 100%;
+    .rail {
+      position: absolute;
+      left: 64px;
+      right: 64px;
+      bottom: 42px;
+      z-index: 1;
       height: 1px;
       background: var(--rule);
     }
 
-    .signal {
-      position: absolute;
-      right: 64px;
-      bottom: 58px;
-      width: 210px;
-      height: 210px;
-      border: 1px solid var(--rule);
-      display: grid;
-      place-items: center;
-      color: var(--accent);
-      font-size: 120px;
-      font-weight: 800;
-      line-height: 1;
-    }
-
-    .signal::before,
-    .signal::after {
-      content: "";
-      position: absolute;
-      background: var(--accent);
-    }
-
-    .signal::before {
-      width: 1px;
-      height: 100%;
-      left: 50%;
-      top: 0;
-    }
-
-    .signal::after {
-      width: 100%;
-      height: 1px;
-      left: 0;
-      top: 50%;
-    }
-
     .layout-cover {
       align-content: end;
-      gap: 24px;
+      gap: 26px;
     }
 
-    .layout-section {
-      place-items: center start;
-    }
-
-    .layout-split {
-      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-      gap: 42px;
+    .layout-product-stage {
+      grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
+      gap: 48px;
       align-items: center;
     }
 
     .layout-metric {
       grid-template-rows: auto 1fr;
-      gap: 40px;
+      gap: 44px;
       align-content: center;
     }
 
-    .layout-compare {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 28px;
-      align-items: stretch;
+    .stage-visual {
+      position: absolute;
+      right: 64px;
+      bottom: 58px;
+      width: 430px;
+      height: 300px;
+      border: 1px solid var(--rule);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(90deg, rgba(245, 247, 242, 0.08) 1px, transparent 1px),
+        linear-gradient(rgba(245, 247, 242, 0.08) 1px, transparent 1px),
+        var(--surface-2);
+      background-size: 44px 44px;
+      display: grid;
+      place-items: center;
+      color: var(--accent);
+      font-size: 128px;
+      font-weight: 850;
+      line-height: 1;
     }
 
-    .layout-gallery {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      grid-auto-rows: 1fr;
-      gap: 18px;
+    .stage-visual::before {
+      content: "";
+      position: absolute;
+      left: 28px;
+      right: 28px;
+      bottom: 34px;
+      height: 1px;
+      background: var(--accent);
+    }
+
+    .device-frame {
+      min-height: 430px;
+      border: 1px solid var(--rule);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+      display: grid;
+      grid-template-rows: 42px 1fr;
+      overflow: hidden;
+    }
+
+    .device-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      border-bottom: 1px solid var(--rule);
+      padding: 0 18px;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+    }
+
+    .device-canvas {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      padding: 28px;
+      align-content: center;
     }
 
     .panel {
       border: 1px solid var(--rule);
-      padding: 28px;
-      background: color-mix(in srgb, var(--surface) 88%, var(--paper));
+      border-radius: var(--radius);
+      padding: 24px;
+      background: rgba(255, 255, 255, 0.04);
     }
 
-    .theme-dark .panel {
-      background: rgba(255, 253, 250, 0.06);
+    .panel strong {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--ink);
+      font-size: 22px;
+    }
+
+    .panel span {
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.35;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+      align-self: end;
     }
 
     .metric {
+      min-height: 250px;
+      border: 1px solid var(--rule);
+      border-radius: var(--radius);
+      padding: 28px;
       display: grid;
-      gap: 10px;
-      align-content: end;
-      min-height: 210px;
-      border-top: 5px solid var(--accent);
+      align-content: space-between;
+      background: rgba(255, 255, 255, 0.035);
     }
 
     .number {
       color: var(--accent);
-      font-size: 92px;
-      font-weight: 800;
-      line-height: 0.92;
+      font-size: 86px;
+      font-weight: 850;
+      line-height: 0.9;
       letter-spacing: 0;
     }
 
-    .visual-frame {
-      min-height: 360px;
-      border: 1px solid var(--rule);
-      background:
-        linear-gradient(90deg, var(--rule) 1px, transparent 1px),
-        linear-gradient(var(--rule) 1px, transparent 1px);
-      background-size: 42px 42px;
-      display: grid;
-      place-items: center;
+    .metric p {
+      margin: 0;
       color: var(--muted);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 14px;
-      text-transform: uppercase;
-    }
-
-    .quote {
-      max-width: 900px;
-      font-size: 54px;
-      font-weight: 750;
-      line-height: 1.04;
-      letter-spacing: 0;
-    }
-
-    .timeline {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 18px;
-    }
-
-    .timeline .panel {
-      min-height: 230px;
-      display: grid;
-      align-content: space-between;
+      font-size: 19px;
+      line-height: 1.32;
     }
 
     .nav {
       position: fixed;
       left: 50%;
-      bottom: 18px;
+      bottom: 16px;
       transform: translateX(-50%);
       display: flex;
       gap: 8px;
@@ -253,7 +277,7 @@
       width: 9px;
       height: 9px;
       padding: 0;
-      border: 1px solid var(--ink);
+      border: 1px solid rgba(245, 247, 242, 0.42);
       border-radius: 50%;
       background: transparent;
     }
@@ -265,15 +289,23 @@
 
     @media (max-width: 900px) {
       .deck { padding: 12px; }
-      .slide { padding: 42px 32px; }
-      .chrome { left: 32px; right: 32px; top: 20px; }
-      .display { font-size: 48px; }
+      .slide { padding: 40px 30px; }
+      .chrome { left: 30px; right: 30px; top: 20px; }
+      .display { font-size: 50px; }
+      .headline { font-size: 40px; }
       .lead { font-size: 21px; }
-      .signal { width: 124px; height: 124px; right: 32px; bottom: 36px; font-size: 72px; }
-      .layout-split,
-      .layout-compare,
-      .layout-gallery,
-      .timeline { grid-template-columns: 1fr; }
+      .layout-product-stage,
+      .metric-grid { grid-template-columns: 1fr; }
+      .stage-visual {
+        position: relative;
+        right: auto;
+        bottom: auto;
+        width: 100%;
+        height: 180px;
+        font-size: 72px;
+      }
+      .device-frame { min-height: 300px; }
+      .metric { min-height: 180px; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -298,15 +330,58 @@
   <main class="deck" data-deck>
     <section class="slide layout-cover" data-slide="1" data-layout="cover" aria-current="true">
       <div class="chrome">
-        <span>Deck System</span>
-        <span>01 / 01</span>
+        <span>Keynote Stage</span>
+        <span>01 / 03</span>
       </div>
       <div>
-        <div class="kicker">Replace section label</div>
+        <div class="kicker">Replace launch label</div>
         <h1 class="display">Replace with a sharp audience-facing claim</h1>
-        <p class="lead">Replace this placeholder copy with one strong supporting point. Keep the slide visual and sparse.</p>
+        <p class="lead">Replace this placeholder copy with one focused support line. Keep the opening sparse.</p>
       </div>
-      <div class="signal" aria-hidden="true">1</div>
+      <div class="stage-visual" aria-hidden="true">01</div>
+      <div class="rail" aria-hidden="true"></div>
+    </section>
+
+    <section class="slide layout-product-stage" data-slide="2" data-layout="product-stage">
+      <div class="chrome">
+        <span>Product Moment</span>
+        <span>02 / 03</span>
+      </div>
+      <div>
+        <div class="kicker">Replace feature label</div>
+        <h2 class="headline">Replace with the product moment the audience should remember</h2>
+        <p class="lead">Use this area for one claim and two or three spec labels, not a bullet dump.</p>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:28px">
+          <span class="spec">Replace spec</span>
+          <span class="spec">Replace proof</span>
+          <span class="spec">Replace status</span>
+        </div>
+      </div>
+      <div class="device-frame">
+        <div class="device-bar"><span>Replace demo title</span><span>Live</span></div>
+        <div class="device-canvas">
+          <div class="panel"><strong>Replace panel</strong><span>Replace with screenshot, feature state, or proof point.</span></div>
+          <div class="panel"><strong>Replace panel</strong><span>Keep labels short and let the visual own the slide.</span></div>
+          <div class="panel"><strong>Replace panel</strong><span>Use real product evidence when available.</span></div>
+          <div class="panel"><strong>Replace panel</strong><span>Remove unused placeholder panels before delivery.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide layout-metric" data-slide="3" data-layout="metric">
+      <div class="chrome">
+        <span>Proof</span>
+        <span>03 / 03</span>
+      </div>
+      <div>
+        <div class="kicker">Replace evidence label</div>
+        <h2 class="headline">Replace with the strongest proof, not a metric label</h2>
+      </div>
+      <div class="metric-grid">
+        <div class="metric"><span class="number">3x</span><p>Replace with unit, denominator, and source note.</p></div>
+        <div class="metric"><span class="number">42%</span><p>Replace with comparison context and caveat.</p></div>
+        <div class="metric"><span class="number">12</span><p>Replace with the operational takeaway.</p></div>
+      </div>
     </section>
   </main>
   <nav class="nav" aria-label="Slide navigation"></nav>
@@ -329,17 +404,20 @@
     function show(next) {
       index = Math.max(0, Math.min(slides.length - 1, next));
       slides.forEach((slide, i) => slide.setAttribute('aria-current', String(i === index)));
-      [...document.querySelectorAll('.nav button')].forEach((button, i) => {
+      [...nav?.querySelectorAll('button') ?? []].forEach((button, i) => {
         button.setAttribute('aria-current', String(i === index));
       });
     }
 
-    renderNav();
-    show(0);
     window.addEventListener('keydown', (event) => {
       if (event.key === 'ArrowRight' || event.key === ' ') show(index + 1);
       if (event.key === 'ArrowLeft') show(index - 1);
+      if (event.key === 'Home') show(0);
+      if (event.key === 'End') show(slides.length - 1);
     });
+
+    renderNav();
+    show(0);
   </script>
 </body>
 </html>

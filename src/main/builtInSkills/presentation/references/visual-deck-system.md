@@ -10,6 +10,19 @@ and a small set of layout recipes before generating slides.
 
 Choose exactly one direction unless the user supplies a brand system.
 
+### Keynote Stage
+
+Use for modern keynote-style launches, premium product narratives, founder
+updates, executive talks, and decks that should feel crisp, current, and
+presentation-native rather than report-like.
+
+- dark or bright stage canvas with very high type-scale contrast
+- oversized claim headlines and sparse support copy
+- product, screenshot, media, metric, or object stage as the visual anchor
+- minimal chrome, tight folios, precise alignment, and one luminous accent
+- avoid beige paper tones, ornamental frames, busy borders, and generic business
+  card layouts
+
 ### Editorial Report
 
 Use for thought pieces, founder talks, industry narratives, culture, education,
@@ -58,13 +71,13 @@ Define all color in a small token set before building:
 
 ```css
 :root {
-  --paper: #f7f3ed;
-  --surface: #fffdfa;
-  --ink: #171717;
-  --muted: #635f58;
-  --rule: rgba(23, 23, 23, 0.18);
-  --accent: #b33951;
-  --accent-ink: #ffffff;
+  --paper: #050607;
+  --surface: #0b0d0f;
+  --ink: #f5f7f2;
+  --muted: rgba(245, 247, 242, 0.66);
+  --rule: rgba(245, 247, 242, 0.16);
+  --accent: #d7ff4f;
+  --accent-ink: #101214;
 }
 ```
 
@@ -75,6 +88,8 @@ Rules:
 - do not use multiple unrelated saturated accents
 - do not use generic blue by default
 - do not use gradients, blobs, bokeh, or decorative orbs as the main design move
+- use beige or warm paper only when the direction is intentionally editorial;
+  do not make it the default for modern/keynote decks
 
 ## Motif
 
@@ -86,6 +101,7 @@ Pick one repeated motif and carry it across the deck:
 - mono labels above headlines
 - large background numerals
 - diagram nodes with one consistent connector style
+- stage rails, product plinths, or sparse spec labels
 
 Use the motif on most slides. Do not combine all motifs.
 
@@ -109,6 +125,8 @@ Use the motif on most slides. Do not combine all motifs.
   image, or single metric
 - vary recipe families, not styling. A deck can repeat its theme while changing
   cover, split, metric, compare, timeline, gallery, chart, and close pages
+- for Keynote Stage decks, bias toward `cover`, `product-stage`, `hero-media`,
+  `metric`, `feature-grid`, `compare`, and `close` before report-like pages
 
 ## Assets
 

@@ -5,6 +5,8 @@ import path from 'node:path';
 const PLACEHOLDER_RE = /\b(lorem|ipsum|todo|placeholder|sample|dummy|xxxx)\b/gi;
 const REGISTERED_LAYOUTS = new Set([
   'cover',
+  'hero-media',
+  'product-stage',
   'section',
   'split',
   'metric',
@@ -12,12 +14,13 @@ const REGISTERED_LAYOUTS = new Set([
   'timeline',
   'diagram',
   'chart',
+  'feature-grid',
   'gallery',
   'quote',
   'close',
 ]);
 const TEXT_ONLY_LAYOUTS = new Set(['section', 'quote', 'close']);
-const VISUAL_MARKER_RE = /<(img|svg|canvas|video|figure)\b|class\s*=\s*["'][^"']*\b(metric|visual-frame|timeline|quote|gallery|compare|diagram|signal|panel|number|chart)\b/i;
+const VISUAL_MARKER_RE = /<(img|svg|canvas|video|figure)\b|class\s*=\s*["'][^"']*\b(metric|stage-visual|device-frame|feature-grid|visual-frame|timeline|quote|gallery|compare|diagram|signal|panel|number|chart)\b/i;
 const TINY_FONT_RE = /font-size\s*:\s*((?:[0-9](?:\.\d+)?)|(?:1[0-3](?:\.\d+)?))px\b/gi;
 
 function usage() {

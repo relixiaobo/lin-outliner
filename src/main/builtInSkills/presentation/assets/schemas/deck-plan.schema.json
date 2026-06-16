@@ -13,6 +13,7 @@
       "type": "object",
       "properties": {
         "direction": { "type": "string" },
+        "stylePack": { "type": "string" },
         "theme": { "type": "string" },
         "motif": { "type": "string" },
         "typography": { "type": "string" },

@@ -34,7 +34,8 @@ artifact and did not require PowerPoint.
 - Keep text sizes fixed by role, not by viewport width.
 - Use the template component classes before inventing new one-off CSS:
   `.chrome`, `.kicker`, `.display`, `.lead`, `.panel`, `.metric`,
-  `.visual-frame`, `.timeline`, `.quote`, `.gallery`, and `.tag`.
+  `.stage-visual`, `.device-frame`, `.feature-grid`, `.visual-frame`,
+  `.timeline`, `.quote`, `.gallery`, and `.tag`.
 - Keep raw color values inside token declarations; slide CSS should consume tokens.
 - Make screenshots and images part of the recipe, not decorative background filler.
 
@@ -47,6 +48,8 @@ artifact and did not require PowerPoint.
 - Avoid more than two consecutive slides with the same `data-layout`.
 - Avoid text-only slides except `section`, `quote`, and deliberate statement
   pages.
+- Prefer `product-stage`, `hero-media`, `metric`, and `feature-grid` when the
+  user asks for a modern/keynote feel.
 
 ## Verification
 

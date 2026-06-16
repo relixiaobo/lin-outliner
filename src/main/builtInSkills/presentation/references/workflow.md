@@ -22,7 +22,7 @@ Capture:
 - `goal`: communication outcome
 - `outputRoute`: PPTX, HTML deck, PDF handout, speaker outline, or cover image
 - `visualTemperament`: editorial narrative, grid analytical, or another deliberate direction
-- `visualSystem`: design direction, theme, motif, and typography posture
+- `visualSystem`: design direction, style pack, theme, motif, and typography posture
 - `storySpine`: short sequence of messages the deck must carry
 - `slides`: slide objects with `slide`, `purpose`, `headline`, `evidence`, `layout`, `visual`, and `notes`
 - `verificationPlan`: checks to run before delivery
@@ -36,6 +36,8 @@ Capture:
 - Use section dividers when the audience needs a mental reset.
 - Assign a registered layout recipe to every slide before writing slide code.
 - Use the chosen motif on most slides so the deck reads as one system.
+- For modern keynote-style decks, start from a stage/product/media recipe and
+  keep the page sparse; avoid report cards and decorative business templates.
 
 ## Existing Deck Pattern
 
