@@ -358,6 +358,61 @@ describe('agent runtime skill integration', () => {
       .toContain('First request before manual compact.');
   });
 
+  test('a regenerated turn run still splices its triggering user message into round 0', async () => {
+    // Regression guard for the trigger-splice edge: regenerate re-runs the turn
+    // under a NEW run id whose `run.started.trigger` resolves (via the
+    // branch.selected leaf) to the original user message — which lives in the
+    // conversation stream, never the new run's ledger. The detail must still
+    // splice it into round 0, exactly like a fresh turn.
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-regen-debug-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-regen-debug-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const streamFn = (async (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => {
+      await options?.onPayload?.({ kind: 'normal', messages: context.messages }, model);
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        const message = normalizeAssistantMessage(fauxAssistantMessage(fauxText('Normal response.')), model);
+        stream.push({ type: 'start', partial: { ...message, content: [] } });
+        stream.push({ type: 'done', reason: 'stop', message });
+        stream.end(message);
+      });
+      return stream;
+    }) as StreamFn;
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const runtime = new Runtime(
+      () => createWindowSink().window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(created.conversationId, 'Only request, then regenerated.');
+
+    const firstTurn = (await runtime.agentDebugView(created.conversationId)).runs.find((run) => run.kind === 'turn')!;
+    const firstDetail = await runtime.agentDebugRun(created.conversationId, firstTurn.runId);
+    const assistantMessageId = firstDetail!.rounds[0]!.messageId;
+
+    await runtime.regenerateMessage(created.conversationId, assistantMessageId);
+
+    // A second turn run now exists; its round 0 must still carry the user message.
+    const turnRuns = (await runtime.agentDebugView(created.conversationId)).runs.filter((run) => run.kind === 'turn');
+    expect(turnRuns.length).toBe(2);
+    const regenerated = turnRuns[turnRuns.length - 1]!;
+    expect(regenerated.runId).not.toBe(firstTurn.runId);
+    const regenDetail = await runtime.agentDebugRun(created.conversationId, regenerated.runId);
+    const regenWindow = regenDetail!.rounds[0]!.requestWindow;
+    expect(regenWindow.some((row) => row.role === 'user')).toBe(true);
+    expect(regenWindow.map((row) => row.parts.map((part) => part.body).join(' ')).join(' '))
+      .toContain('Only request, then regenerated.');
+  });
+
   test('runs automatic skill loading through a real pi agent conversation and keeps compact replay short', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skills-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-data-'));

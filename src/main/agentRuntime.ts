@@ -1325,6 +1325,10 @@ export class AgentRuntime {
       }
     }
     const context: DebugConversationContext = { latestSeq, parentToolCallByChild, triggerMessages, replacedByToolCall };
+    // Bounded like the run caches: each entry pins a conversation's full trigger /
+    // slimming maps, so an unbounded map would retain every conversation ever
+    // opened in the debug panel for the session. A re-read on eviction is cheap.
+    this.evictForCapacity(this.debugConversationContextCache, conversationId);
     this.debugConversationContextCache.set(conversationId, context);
     return context;
   }
