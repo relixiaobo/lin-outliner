@@ -265,7 +265,8 @@ export type AgentRunLogEventType =
   | 'user_question.requested'
   | 'user_question.answered'
   | 'user_question.cancelled'
-  | 'widget_state.updated';
+  | 'widget_state.updated'
+  | 'debug.run_snapshot.created';
 
 export interface AgentRunEventBase {
   v: typeof AGENT_EVENT_VERSION;
@@ -588,7 +589,7 @@ export type AgentEventType =
   | 'conversation.created'
   | 'conversation.renamed'
   | 'conversation.settings_changed'
-  | 'debug.snapshot.created'
+  | 'debug.run_snapshot.created'
   | 'branch.selected'
   | 'member.added'
   | 'member.removed'
@@ -679,23 +680,26 @@ export interface MemberChangedEvent extends AgentEventBase {
   member: AgentPrincipal;
 }
 
-export interface DebugSnapshotCreatedEvent extends AgentEventBase {
-  type: 'debug.snapshot.created';
-  debugId: string;
-  source: 'provider_payload' | 'provider_response' | 'runtime_state';
-  queryIndex: number;
-  turnIndex: number;
-  payloadRef: AgentPayloadRef;
-  wire: {
-    bytes: number;
-    hash: string;
-  };
-  model: {
-    id: string;
-    provider: string;
-    api?: string;
-    contextWindow?: number | null;
-  };
+/** One tool's schema as captured for the run-grounded debug view. */
+export interface DebugRunToolSchema {
+  name: string;
+  description: string;
+  /** The tool's argument JSON Schema, pretty-printed. */
+  schema: string;
+}
+
+/**
+ * A once-per-run capture of the agent's outbound system prompt + tool schemas
+ * ([[agent-debug-run-grounded]]). Written to the run's OWN stream, hash-deduped
+ * so it re-emits only when the system prompt or tools change mid-run. The
+ * message window the model saw is already in the ledger; this fills the only
+ * request context the ledger lacks. Replay-neutral.
+ */
+export interface DebugRunSnapshotCreatedEvent extends AgentEventBase {
+  type: 'debug.run_snapshot.created';
+  runId: string;
+  systemPrompt: string;
+  tools: DebugRunToolSchema[];
 }
 
 export interface BranchSelectedEvent extends AgentEventBase {
@@ -1072,7 +1076,7 @@ export type AgentEvent =
   | ConversationRenamedEvent
   | ConversationSettingsChangedEvent
   | MemberChangedEvent
-  | DebugSnapshotCreatedEvent
+  | DebugRunSnapshotCreatedEvent
   | BranchSelectedEvent
   | UserMessageCreatedEvent
   | UserMessageEditedEvent
@@ -1612,7 +1616,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       conversation.updatedAt = event.createdAt;
       return;
     }
-    case 'debug.snapshot.created':
+    case 'debug.run_snapshot.created':
       return;
     case 'user_message.created':
       addMessage(state, {

@@ -190,15 +190,7 @@ export interface AgentChildRunActionResult {
   instructions?: string;
 }
 
-export type AgentDebugSnapshotSource = 'provider_payload' | 'provider_response' | 'runtime_state';
-export type AgentDebugTurnStatus = 'running' | 'completed' | 'error' | 'aborted' | 'interrupted';
-
-export interface AgentDebugWirePayload {
-  bytes: number;
-  hash: string;
-  json?: string;
-  payloadRef?: AgentPayloadRef;
-}
+export type AgentDebugTurnStatus = 'running' | 'completed' | 'error' | 'aborted';
 
 export type AgentDebugMessagePart =
   | { kind: 'text'; body: string; isReminder?: boolean }
@@ -212,7 +204,6 @@ export interface AgentDebugMessageRow {
   id: string;
   role: string;
   summary: string;
-  json: string;
   bytes: number;
   parts: AgentDebugMessagePart[];
 }
@@ -224,11 +215,6 @@ export interface AgentDebugToolEntry {
   bytes: number;
 }
 
-export interface AgentDebugReminderSection {
-  body: string;
-  bytes: number;
-}
-
 export interface AgentDebugUsage {
   input: number;
   output: number;
@@ -236,10 +222,6 @@ export interface AgentDebugUsage {
   cacheWrite: number;
   totalTokens: number;
   costUsd: number;
-  costInputUsd: number;
-  costOutputUsd: number;
-  costCacheReadUsd: number;
-  costCacheWriteUsd: number;
 }
 
 export interface AgentDebugTotals extends AgentDebugUsage {
@@ -247,43 +229,91 @@ export interface AgentDebugTotals extends AgentDebugUsage {
   rounds: number;
 }
 
-export interface AgentDebugTokenEstimate {
-  systemPrompt: number;
-  tools: number;
-  messages: number;
-  total: number;
-  contextWindow: number | null;
-  usagePercent: number | null;
+// --- Run-grounded debug surface ([[agent-debug-run-grounded]]) -------------
+// A read-only view over the execution tree: conversation -> runs -> rounds ->
+// request / response / tool-exchange, derived from the run ledgers that are
+// already the system's truth. (Replaced the seq-matched debug-snapshot model.)
+
+export type AgentDebugConversationShape = 'dm' | 'channel';
+
+/** One delegated tool exchange inside a round: the call and (if present) its result. */
+export interface AgentDebugToolExchange {
+  toolCallId: string;
+  toolName: string;
+  /** The model's call arguments, pretty-printed. */
+  args: string;
+  /** The tool result the model saw, or null if still pending / not yet recorded. */
+  result: string | null;
+  isError: boolean;
 }
 
-export interface AgentDebugSnapshot {
-  id: string;
-  source: AgentDebugSnapshotSource;
-  conversationId: string;
-  conversationTitle: string | null;
-  turnIndex: number;
-  queryIndex: number;
-  capturedAt: number;
-  modelId: string;
+/** One provider call = one (request, response) pair. The atomic unit of the view. */
+export interface AgentDebugRound {
+  index: number;
+  /** The assistant message id this round produced. */
+  messageId: string;
   provider: string;
+  modelId: string;
   status: AgentDebugTurnStatus;
-  wire: AgentDebugWirePayload;
-  systemPrompt: string;
-  systemPromptBytes: number;
-  systemPromptHash: string;
-  reminders: AgentDebugReminderSection[];
-  remindersBytes: number;
-  remindersHash: string;
-  tools: AgentDebugToolEntry[];
-  toolsBytes: number;
-  toolsHash: string;
-  messages: AgentDebugMessageRow[];
-  messageCount: number;
-  messagesBytes: number;
-  tokenEstimate: AgentDebugTokenEstimate;
-  usage: AgentDebugUsage | null;
+  /** The NEW context the model saw entering this round (triggering / prior tool-result messages). */
+  requestWindow: AgentDebugMessageRow[];
+  /** The assistant's response content (text / thinking / tool calls). */
   responseParts: AgentDebugMessagePart[];
-  errorMessage: string | null;
+  stopReason: string | null;
+  usage: AgentDebugUsage | null;
+  toolExchanges: AgentDebugToolExchange[];
+  startedAt: number;
+  completedAt: number | null;
+}
+
+/** A run's full execution detail — meta + per-run system/tools snapshot + rounds. */
+export interface AgentDebugRun {
+  runId: string;
+  agentId: string;
+  kind: string;
+  status: AgentDebugTurnStatus;
+  parentRunId: string | null;
+  parentToolCallId: string | null;
+  provider: string | null;
+  modelId: string | null;
+  usage: AgentDebugUsage | null;
+  createdAt: number;
+  /** The agent's system prompt for this run (per-run snapshot), if captured. */
+  systemPrompt: string | null;
+  /** The agent's tool schemas for this run (per-run snapshot), if captured. */
+  tools: AgentDebugToolEntry[];
+  rounds: AgentDebugRound[];
+}
+
+/**
+ * A per-run node in the conversation tree (no rounds — those load lazily per
+ * run). A pure projection of {@link AgentDebugRun}: same fields by `Pick` so the
+ * summary can never drift from the full run, plus a cheap `roundCount`.
+ */
+export interface AgentDebugRunSummary
+  extends Pick<
+    AgentDebugRun,
+    | 'runId'
+    | 'agentId'
+    | 'kind'
+    | 'status'
+    | 'parentRunId'
+    | 'parentToolCallId'
+    | 'provider'
+    | 'modelId'
+    | 'usage'
+    | 'createdAt'
+  > {
+  roundCount: number;
+}
+
+/** The conversation tree summary: shape, per-run nodes (ordered), and rolled-up totals. */
+export interface AgentDebugConversation {
+  conversationId: string;
+  shape: AgentDebugConversationShape;
+  members: string[];
+  runs: AgentDebugRunSummary[];
+  totals: AgentDebugTotals;
 }
 
 export interface AgentMessageBranchState {

@@ -40,8 +40,8 @@ import type {
 } from './types';
 import { replaceAllRichTextPatch } from './types';
 import type {
-  AgentDebugSnapshot,
-  AgentDebugTotals,
+  AgentDebugConversation,
+  AgentDebugRun,
   AgentMessageAttachmentInput,
   AgentChildRunActionResult,
   AgentUserViewContext,
@@ -321,14 +321,10 @@ export const api = {
     command<AgentMemoryEntryView | null>('agent_update_memory', { memoryId, fact }),
   agentForgetMemory: (memoryId: string) =>
     command<AgentMemoryEntryView | null>('agent_forget_memory', { memoryId }),
-  agentDebugSnapshot: (conversationId: string) =>
-    command<AgentDebugSnapshot | null>('agent_debug_snapshot', { conversationId }),
-  agentDebugHistory: (conversationId: string) =>
-    command<AgentDebugSnapshot[]>('agent_debug_history', { conversationId }),
-  agentDebugTotals: (conversationId: string) =>
-    command<AgentDebugTotals>('agent_debug_totals', { conversationId }),
-  agentDebugPayload: (conversationId: string, payloadId: string) =>
-    command<string | null>('agent_debug_payload', { conversationId, payloadId }),
+  agentDebugView: (conversationId: string) =>
+    command<AgentDebugConversation>('agent_debug_view', { conversationId }),
+  agentDebugRun: (conversationId: string, runId: string) =>
+    command<AgentDebugRun | null>('agent_debug_run', { conversationId, runId }),
   agentPayloadText: (conversationId: string, payloadId: string) =>
     command<string | null>('agent_payload_text', { conversationId, payloadId }),
   agentChildRunTranscript: (conversationId: string, runId: string) =>

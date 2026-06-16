@@ -4,36 +4,36 @@ Rebuild the agent **debug surface** from scratch as a faithful, read-only
 **view of the execution tree** — `conversation → runs → rounds →
 request / response / tool-exchange` — sourced entirely from the run ledgers that
 are already the system's truth, plus one gated transport sidecar (the exact
-outbound wire bytes) that the semantic ledger cannot reconstruct.
+outbound wire bytes) the semantic ledger cannot reconstruct.
 
-Designed greenfield (no debug-snapshot baggage), but grounded on the **real** DM
-and Channel implementation: the per-run `AgentRunMetaProjection`, the per-run
-event ledger (`runs/<runId>/events.jsonl`), and the conversation run index.
+Designed greenfield (no debug-snapshot baggage), grounded on the **real** DM and
+Channel implementation: the per-run `AgentRunMetaProjection`, the per-run event
+ledger (`runs/<runId>/events.jsonl`), and the conversation run index.
 
-**Part of finishing [[agent-run-unification]].** That shipped plan dissolved the
-"subagent" entity — *"there is only Agent; a delegation is just a Run whose
-`parentRunId` points at another run"* — and made **child** runs independent
-`{seq, eventId}` streams. It left **turn** runs on the conversation-shared seq
-scheme. This plan pays down that asymmetry (PR 1) and builds the debug view on
-the resulting uniform model (PR 2).
+**Shape: (a) ONE complete PR.** The run streams are **already** independent and
+replayable today — verified on-disk: a `turn` run's `runs/<id>/events.jsonl` holds
+its full `run.started … assistant_message.* … run.completed` stream and
+`replayRunStream(runId)` replays it alone, exactly as a `delegation` run does. The
+only difference is the *seq numbering* (turn runs carry conversation-global seq,
+delegation runs carry run-private seq), and **the debug read model is agnostic to
+it** — it walks one run's events in order. So the debug surface reads the current
+streams directly; there is **no** event-storage refactor. The only new writes are
+a small, additive capture (per-run `system`/`tools` snapshot + transport metadata
++ the already-existing gated wire). Everything else is deletion + a read model + a
+UI rewrite — a net code removal.
 
-**Shape: (b) a SET of two independent complete PRs, ordered by genuine
-dependency.**
-- **PR 1 — Foundation (refactor):** finish run-unification — every run is an
-  independent, private-seq stream; the conversation transcript is assembled by
-  *splice*, not global-seq merge. All existing consumers (chat transcript,
-  search, dream evidence, *and the current debug panel*) keep working
-  identically. Independently shippable: it is a debt-paydown refactor with
-  standalone value, not scaffold — every consumer runs on it the moment it lands.
-- **PR 2 — Consumer (feature):** the run-grounded debug surface. Deletes the
-  debug-snapshot stream, its provider-wire parser, and its seq-matching
-  projection; replaces them with a per-run execution-tree view. Depends on PR 1.
-
-PR 1 is the [[agent-program]] A7 foundation; PR 2 is its consumer. They are split
-(not one PR) because PR 1 keeps `readEvents` returning an ordered merged stream —
-a *general* capability used by search / checkpoints / past-chats / dream
-evidence, not a debug-only bridge — so the current debug panel survives PR 1 with
-no throwaway, and PR 2 then replaces it cleanly.
+**Why no seq-renumbering (considered and dropped).** An earlier framing made this
+two PRs: a "finish run-unification" foundation (renumber turn runs to private seq,
+assemble the transcript by splice) then the debug view. Code-grounding showed the
+renumbering buys only seq-value *uniformity* — turn runs already replay alone — at
+the cost of rewriting the most load-bearing invariant in the agent store: the
+single conversation-global `seq` that the conversation index, search index,
+checkpoint tail-match, dream evidence ranges, and unread/attention all use as a
+monotonic *change cursor*. Per-stream seq removes that single value (a run can
+advance without the backbone moving), forcing a conversation change-cursor rework
+**and** a per-stream checkpoint reshape — none of which the debug surface needs.
+No current consumer needs the uniformity; if one ever does, it is its own scoped
+refactor, not bundled here where it only adds risk. See **Decisions**.
 
 ## Goal
 
@@ -53,20 +53,20 @@ A developer opens the debug panel on any conversation and sees, faithfully:
 
 ## Non-goals
 
+- **No event-storage refactor.** Seq numbering, `readEvents` merge, checkpoint
+  format, and the search/dream/attention watermarks are untouched. This is a
+  read model + additive capture + a UI rewrite.
 - No migration / back-compat. Pre-release: a format change wipes
   `~/.lin-outliner-*` dev userData ([[agent-data-model]] cut-over discipline).
-- Not a redesign of the agent runtime's *behavior* — only its event-stream
-  storage uniformity (PR 1) and the debug *view* (PR 2).
-- Not a new chat-transcript UX. PR 1's invariant is that the visible transcript
-  is **byte-for-byte identical**; only its assembly changes.
+  Removing `debug.snapshot.created` is exactly such a change.
+- Not a new chat-transcript UX — only the developer debug panel.
 - Reflective / `dream` runs (anchored to a principal, not a conversation) are out
   of the conversation debug view (see Decisions).
 
 ## Background: the truth source today (code-grounded)
 
 A conversation's LLM activity is already fully event-sourced. Verified against
-real on-disk data (`~/.lin-outliner-main`, DM `lin-agent-dm-2c31f9f55b1c0da1`
-and Channel `lin-agent-channel-f78952f6…`):
+real on-disk data (`~/.lin-outliner-main`):
 
 - **`runs/<runId>/meta.json` = `AgentRunMetaProjection`** is the per-run truth:
   `agentId`, `kind` (`turn` / `delegation` / `reflective`), `status`,
@@ -74,26 +74,19 @@ and Channel `lin-agent-channel-f78952f6…`):
   (the conversation-timeline anchor), **real `usage` + `cost`**, `fingerprint`
   (`promptHash` / `modelConfig`), `parentRunId`, `latestSeq`, `createdAt`.
 - **`runs/<runId>/events.jsonl`** is the run's ledger: `payload.created`
-  (`role:'debug'`, the sanitized outbound request bytes), `assistant_message.started`
+  (`role:'debug'`, sanitized outbound request bytes), `assistant_message.started`
   (`providerId` / `modelId` / `apiId`), `assistant_message.completed` (content +
   usage + stopReason), `tool_call.*`, `tool_result.created`, `tool.permission.*`,
-  `run.started` / `run.completed`.
+  `run.started` / `run.completed`. **Every run has one** — turn runs included
+  (observed turn run: `run.started … assistant_message.delta ×30 …
+  assistant_message.completed … run.completed`).
 - **`conversations/<id>/runs.json`** indexes the conversation's runs (`runIds`,
   `delegationRunIds`, `latestSeqByRunId`).
 - **DM** = a single agent (`built-in:tenon:assistant`): one `turn` run per user
   message, an occasional `delegation` child run.
-- **Channel** = multiple agents: `turn` runs carry differing `agentId`
-  (observed: `built-in:tenon:assistant` ×10 interleaved with
-  `user:…:my-agent` ×7), each anchored to its addressing message via
+- **Channel** = multiple agents: `turn` runs carry differing `agentId`, each
+  anchored to its addressing message via
   `run.started.addressedByMessageId` / `trigger.messageId`.
-
-**The asymmetry this plan removes.** Run-unification made child runs independent
-`{seq, eventId}` streams (observed child `latestSeq` ≈ 68, run-private), but turn
-runs still ride the **conversation-shared** seq via the write-time split
-(`agentEventStore.appendSplitEvents` + `isRunLogEvent`): observed turn-run
-`latestSeq` values 168, 229, … 1190 are conversation-global. So one
-`runs/<id>/` directory holds **two seq conventions** depending on run kind, and a
-consumer must branch on kind. PR 1 makes every run identical.
 
 **Why the current debug panel shows nothing useful.** `agentDebugProjection`
 re-pairs `debug.snapshot.created` (provider_payload) with
@@ -101,89 +94,17 @@ re-pairs `debug.snapshot.created` (provider_payload) with
 provider wire JSON into message rows. This is a *parallel representation* of what
 the ledger already holds. Every round also writes a second, content-free
 `provider_response` snapshot (status/headers only), and `slice(-20)` then halves
-the visible rounds. The data is all in the ledger; the snapshot layer is
-redundant and noisy.
+the visible rounds. The data is all in the ledger; the snapshot layer is redundant
+and noisy — and `replayRunStream(runId)` already gives the clean per-run truth the
+snapshot layer reconstructs.
 
-## Design
-
-### PR 1 — Finish run-unification: every run is an independent stream
-
-**Target invariant.** A run stream is self-contained and portable: it replays
-*alone* into its own `AgentEventReplayState`, in its own private seq space,
-written by **one** writer — identical for `turn`, `delegation`, `background`,
-`scheduled`, and Channel-peer runs. The only difference between runs is
-`meta.kind` and `meta.anchor`. This is the symmetry [[agent-run-unification]]
-already asserts for the model; PR 1 makes turn runs honor it.
-
-**One run-stream writer.** Generalize `AgentRunLedgerWriter`
-(`src/main/agentRunLedger.ts`) — today scoped to child runs — into the writer for
-*every* run (`AgentRunStreamWriter`). Turn runs stop routing their run-scoped
-events through `appendConversationEvents → appendEvents → appendSplitEvents`
-(conversation seq) and instead append to their own stream via
-`appendRunStreamEvents` (private seq), exactly as child runs do today. The
-write-time `isRunLogEvent` split and `compareAgentEventsForReplay`'s global-seq
-merge stop being load-bearing for run content.
-
-**Conversation = backbone + splice.** The conversation log keeps only genuinely
-conversation-scoped events (`conversation.*`, `user_message.created`,
-`branch.selected`, `member.*`, `follow_up.*`, `checkpoint.created`, and the
-conversation-level `compaction.completed` / `dream.finished` markers). The
-visible transcript is assembled by **splicing** each run's replayed messages into
-the backbone at its anchor (`run.started.addressedByMessageId` /
-`trigger.messageId`), ordered among sibling runs by anchor then `createdAt`. This
-**generalizes the splice that already exists** for Channel peer replies
-(`agentEventLog.getAgentEventVisibleTranscriptPath` /
-`activeChannelReplySlotsForParent`) from "channel reply slots" to "every run".
-
-**`readEvents` stays an ordered merged stream.** Existing consumers that want a
-single ordered event list (search indexing, checkpoints, past-chats, dream
-evidence, *and the current debug projection*) keep getting one — now produced by
-ordering run streams by their anchor + private seq, rather than a naive global
-seq sort. This is the seam that lets PR 1 ship without touching debug and without
-a throwaway bridge.
-
-**Two-tier request capture (the irreducible part is small and gated).** The
-outbound request splits into what the ledger can reconstruct and what it cannot:
-- **Structured request — always on, free, retroactive.** What the model saw
-  *semantically* = the run's replayed messages (already in the ledger) + the
-  agent's `system` and `tools`. System/tools are near-constant within a run, so
-  capture them **once per run** (deduped by hash) rather than per round. No
-  growing-context duplication; available for every past round by replay.
-- **Byte-exact wire — gated, default-off, capped.** The exact serialized payload
-  (provider encoding, `cache_control` markers, ordering) per round — the only
-  thing reconstruction can't reproduce, needed only for serialization / cache /
-  encoding bugs. `createConfiguredAgent`'s `onPayload` (`src/main/agentRuntime.ts`)
-  already receives it for *every* agent (DM, Channel peer, delegation); when the
-  wire toggle is on, route it through the run-stream writer —
-  `writer.recordRequestWire(runId, sanitizeForDebug(payload))` appending the
-  existing `payload.created` (`role:'debug'`, run scope). Retention is bounded
-  (cap last-N rounds / by size). When off, nothing is written and the structured
-  view is unaffected.
-
-Because the writer is uniform, **delegated child runs get the same capture for
-free** — closing the observed gap where child ledgers have zero request payloads.
-
-**Checkpoints / indexes / resume.**
-- *Indexes:* search + conversation indexes already must fold run-stream
-  `assistant_message.completed`; centralize that in the writer's append path
-  (today partial via `updateRunMeta` / `updateRunIndexes`).
-- *Resume / restore:* turn-run resume generalizes child-run restore
-  (`AgentRunLedgerWriter.restore` / `restoreChildRunLedger` →
-  `restoreRunLedger` for all kinds).
-- *Checkpoints:* re-scope to `{conversation-backbone latestSeq}` + per-run
-  cursors (runs replayed lazily), instead of a single merged-state checkpoint.
-
-**Guard invariant.** A guard test asserts the spliced visible transcript equals
-today's `getAgentEventVisibleTranscript` output for representative DM, Channel,
-and delegation fixtures — the refactor is correct iff the transcript is identical.
-
-### PR 2 — The debug surface as an execution-tree view
+## Design — the debug surface as an execution-tree view
 
 **The unit is the round** = one provider call = `(request, response)`. Above it:
 `conversation → run (per agent) → round → request / response / tool-exchange` —
 the literal shape of run-meta + run-ledger.
 
-**Read model (main process).** Two IPC reads replace
+**Read model (main process).** New IPC reads replace
 `agent_debug_snapshot` / `_history` / `_totals` / `_payload`:
 - `agentDebugView(conversationId)` → the tree summary. Enumerate `runs.json.runIds`
   (exclude principal-anchored reflective runs; include `delegation`), read each
@@ -193,27 +114,28 @@ the literal shape of run-meta + run-ledger.
   `meta.members`) and totals (sum of run usage).
 - `agentDebugRun(conversationId, runId)` → one run's rounds, derived lazily by
   `replayRunStream(runId)` (reusing the `childRunTranscript` cache-by-`latestSeq`
-  pattern).
+  pattern). Works for `turn` and `delegation` runs alike — the seq convention is
+  irrelevant to a single-stream walk.
 
 **Round derivation (from a run's replayed stream).** Walk the run's events in
 order; each `assistant_message.started` opens a round (this boundary is *always*
 present, independent of the gated wire capture), its `.completed` closes the
 response, and the intervening `tool_call.*` / `tool_result.created` are that
 round's tool exchanges. The round's **structured request** = the run's
-`system` / `tools` (shown once at run level — flag a per-round change by hash) +
-the message window the model saw, reconstructed by replaying the run up to that
-round; so a round renders the *new* context (preceding tool results / the
+`system` / `tools` (the once-per-run capture below — flag a per-round change by
+hash) + the message window the model saw, reconstructed by replaying the run up to
+that round; so a round renders the *new* context (preceding tool results / the
 triggering message) + the response, not the whole growing history. The
 **byte-exact wire** (`payload.created` `role:'debug'`) attaches to its round when
-wire capture was on, else the raw disclosure is empty with a "enable wire
-capture" hint. Transport metadata (`status` / `latency` / `request-id`) folds
-into the round from the always-on capture.
+wire capture was on, else the raw disclosure is empty with an "enable wire capture"
+hint. Transport metadata (`status` / `latency` / `request-id`) folds into the
+round from the always-on capture.
 
 | Debug concept | Real event / field |
 |---|---|
 | run node (agent / kind / status / usage / model) | `AgentRunMetaProjection` |
 | round boundary | `assistant_message.started` (always present) |
-| round request — structured (always) | run `system` / `tools` snapshot + message window from `replayRunStream` |
+| round request — structured (always) | per-run `system` / `tools` snapshot + message window from `replayRunStream` |
 | round request — byte-exact (gated) | `payload.created` `role:'debug'` (sanitized), via `readPayload`, when wire capture on |
 | round response — content / usage / stop | `assistant_message.completed` |
 | round transport — status / latency / request-id | `onResponse` capture, folded into the round (always) |
@@ -223,15 +145,22 @@ into the round from the always-on capture.
 | delegation nesting | `parentRunId` + `child_run.started.parentToolCallId` |
 | agent attribution | per-run `meta.agentId` |
 
-**What is always on vs gated.** The whole semantic tree — structured request
-(system / tools / message window), response, usage, tools, stop reasons,
-transport metadata (status / latency / request-id) — is *always* available and
-*retroactive*, because it is the run itself plus tiny once-per-run / per-response
-captures. The **only** gated thing is the byte-exact serialized wire payload
-(default-off, capped): large, per-round, duplicative of the ledger's messages,
-and needed only for serialization / cache / encoding bugs. So the panel is
-full-fidelity by default; turning wire capture on adds the raw `<pre>` bytes for
-rounds that run while it is on.
+**Capture (the only new writes — additive, per-run stream).** The whole semantic
+tree is *already* in the ledger; capture fills the two gaps the ledger lacks, both
+written to the run's own stream (turn runs via the conversation append path's
+split, child runs via the run-ledger writer — each unchanged, just one new event):
+- **Per-run `system` / `tools` snapshot — always on, once per run, hash-deduped.**
+  `createConfiguredAgent`'s `onPayload` (`src/main/agentRuntime.ts`) receives the
+  outbound payload (system + tools + messages) for *every* agent (DM, Channel peer,
+  delegation). The messages are already in the ledger; persist only `system` +
+  `tools` once per run (skip if the hash is unchanged). Closes the observed gap
+  where delegation ledgers carry no request context.
+- **Transport metadata — always on, per round.** `onResponse` captures
+  `status` / `latency` / `request-id`; fold it into the round (tiny).
+- **Byte-exact wire — gated, default-off, capped.** Already exists as
+  `payload.created` (`role:'debug'`); keep it behind the wire toggle, bounded
+  retention (cap last-N rounds / by size). When off, nothing is written and the
+  structured view is unaffected.
 
 **One timeline for DM and Channel.** A single `DebugTimeline` renders both: runs
 ordered by anchor; each run a group with an agent-attributed badge/color; rounds
@@ -242,25 +171,28 @@ this view with one member.
 
 **Deletions (net code removal = the cleanliness signal).**
 - `debug.snapshot.created` event type + `DebugSnapshotCreatedEvent`
-  (`src/core/agentEventLog.ts`); the `provider_response` and `runtime_state`
-  sources.
+  (`src/core/agentEventLog.ts`) and its replay-neutral handling; the
+  `provider_response` and `runtime_state` snapshot sources.
 - `src/main/agentDebugProjection.ts` (the seq-matching projection) — gone.
 - `agentDebug`'s provider-wire parser (`extractPayload` / `extractMessages` /
   `extractContentBlockParts` / `extractOpenAiToolCall`, ~250 lines) — gone;
   response comes from the ledger's structured `AgentPersistedContent`, the raw
   payload is shown as bytes, not parsed.
 - The double-snapshot capture (provider_payload + provider_response per round) →
-  an always-on structured request + transport, plus one gated byte-exact sidecar.
+  an always-on per-run snapshot + transport, plus the one gated byte-exact wire.
 
 **Files.**
 - `src/core/agentTypes.ts` — replace `AgentDebugSnapshot*` with execution-tree
   types (`AgentDebugConversation` / `AgentDebugRunSummary` / `AgentDebugRun` /
   `AgentDebugRound`); keep `AgentDebugUsage` / `AgentDebugTotals`.
-- `src/core/agentEventLog.ts` — remove the debug-snapshot event variant.
+- `src/core/agentEventLog.ts` — remove the debug-snapshot event variant; add the
+  per-run `system`/`tools` snapshot event (small, additive).
 - `src/main/agentDebug.ts` — rewrite as round derivation; delete the parser.
 - `src/main/agentDebugProjection.ts` — delete.
 - `src/main/agentRuntime.ts` — new debug IPC (`agentDebugView` / `agentDebugRun`
-  / gated `agentDebugWire`); capture via the unified writer.
+  / gated `agentDebugWire`); the additive `onPayload` snapshot + `onResponse`
+  transport capture.
+- `src/main/agentRunLedger.ts` — emit the per-run snapshot for child runs too.
 - `src/renderer/api/client.ts` — new IPC methods.
 - `src/renderer/ui/agent/AgentDebugPanel.tsx` — rewrite as `DebugTimeline`.
 - `src/renderer/styles/agent-debug.css` — restyle.
@@ -269,13 +201,32 @@ this view with one member.
 - `docs/spec/agent-debug.md` (new) + `docs/spec/README.md` map entry
   (index is main-owned — coordinate).
 
+**Build order (within this one PR — A7 build-order, not separate releases).**
+1. Additive capture (per-run `system`/`tools` snapshot + transport) — green,
+   nothing reads it yet.
+2. Read model + execution-tree types (`agentDebugView` / `agentDebugRun`) — green,
+   alongside the old IPC.
+3. `DebugTimeline` UI on the new IPC — green.
+4. Delete the old (`debug.snapshot.created`, `agentDebugProjection`, the wire
+   parser, the old IPC + types) once nothing references them — green.
+
+**Guard.** The visible-transcript store round-trip guard
+(`tests/core/agentRunUnificationGuard.test.ts`, DM / Channel / delegation) stays
+green throughout — this PR must not perturb the conversation transcript. Plus a
+round-derivation test: a fixture run stream → the expected rounds (boundaries,
+tool exchanges, usage).
+
 ## Decisions (settled — folded into Design above)
 
-- **Capture is two-tier.** Structured request (system / tools once-per-run +
+- **No seq-renumbering / run-unification refactor.** Turn runs already replay
+  alone; the debug read model is agnostic to the seq convention. Renumbering buys
+  only cosmetic uniformity at the cost of rewriting the conversation change-cursor
+  + checkpoint format — dropped. (The path-not-taken is preserved in git history;
+  the foundation spike — a per-stream-tolerant replay + a lifted run-stream
+  classifier — was reverted to keep the store at `main`.)
+- **Capture is two-tier.** Structured request (per-run `system`/`tools` once +
   message window from replay) is always on, free, retroactive; the byte-exact
-  wire payload is gated **default-off** and capped. Resolves the earlier
-  "default on/off" and "system/tools exactness" questions together — exactness
-  is the gated tier; the always-on tier is faithful-but-not-byte-identical.
+  wire payload is gated **default-off** and capped.
 - **Transport metadata** (status / latency / request-id) is folded into the
   round, **always on** (tiny; latency profiling + provider escalation are worth
   it).
@@ -286,33 +237,36 @@ this view with one member.
 
 ## Open questions
 
-1. **PR 1 checkpoint re-scoping** is the riskiest sub-piece — settle the
-   backbone-cursor + per-run-cursor shape before the splice lands.
+- *(none open)* — the seq/checkpoint question is moot under the no-renumbering
+  decision.
 
-## Checklists
+## Checklist
 
-**PR 1 — finish run-unification (foundation)**
-- [ ] Generalize `AgentRunLedgerWriter` → one writer for all run kinds (private seq).
-- [ ] Turn runs append to their own stream; remove the write-time conversation-seq split for run content.
-- [ ] Conversation transcript assembled by splice (generalize the channel-reply splice to all runs).
-- [ ] `readEvents` keeps yielding an ordered merged stream (consumers unaffected).
-- [ ] Per-run `system` / `tools` snapshot (once, hash-deduped); `recordRequestWire` (gated, capped) on the writer, wired once in `createConfiguredAgent.onPayload` (covers child runs).
-- [ ] Transport metadata (status / latency / request-id) captured in `onResponse`, folded into the round (always on).
-- [ ] Generalize resume/restore and index folding; re-scope checkpoints.
-- [ ] Guard: visible transcript identical for DM / Channel / delegation fixtures.
-
-**PR 2 — run-grounded debug surface (consumer)**
-- [ ] Execution-tree types; remove snapshot types + `debug.snapshot.created`.
-- [ ] `agentDebugView` / `agentDebugRun` / gated `agentDebugWire` IPC; delete old debug IPC.
-- [ ] Round derivation from `replayRunStream` (boundary = `assistant_message.started`; structured request from run snapshot + replayed window); delete `agentDebugProjection` + the wire parser.
-- [ ] `DebugTimeline` (DM = single-member Channel); agent attribution + filter; delegation nesting; always-on structured request + transport; gated raw-wire disclosure.
-- [ ] i18n + CSS; `docs/spec/agent-debug.md`.
+- [x] Visible-transcript store round-trip guard (DM / Channel / delegation),
+  green against `main`.
+- [ ] Additive capture: per-run `system`/`tools` snapshot (once, hash-deduped) in
+  `onPayload`, emitted for turn AND child runs; transport metadata
+  (status/latency/request-id) in `onResponse`.
+- [ ] Execution-tree types (`AgentDebugConversation` / `AgentDebugRunSummary` /
+  `AgentDebugRun` / `AgentDebugRound`).
+- [ ] `agentDebugView` / `agentDebugRun` / gated `agentDebugWire` IPC; round
+  derivation from `replayRunStream` (boundary = `assistant_message.started`;
+  structured request from per-run snapshot + replayed window).
+- [ ] `DebugTimeline` (DM = single-member Channel); agent attribution + filter;
+  delegation nesting; always-on structured request + transport; gated raw-wire
+  disclosure.
+- [ ] Delete `debug.snapshot.created` + `DebugSnapshotCreatedEvent`,
+  `agentDebugProjection.ts`, the wire parser, the old debug IPC + types.
+- [ ] i18n + CSS; `docs/spec/agent-debug.md` + `docs/spec/README.md` map entry.
 
 ## Sequencing & collision
 
-PR 2 depends on PR 1. Collision self-check (open PRs + `docs/TASKS.md` + file
-grep): no overlap with the three open PRs (`agent-context-architecture`,
-`agent-permission-redesign`, `conversational-agent-authoring`); the
-`agentDebug*` and panel files are unclaimed. PR 1 touches the protocol-adjacent
-`agentEventLog.ts` event union and the conversation-replay path — coordinate as
-a shared-interface-first change before building PR 2 on top.
+ONE PR. Collision self-check (open PRs + `docs/TASKS.md` + file grep): the
+`agentDebug*`, `AgentDebugPanel`, and `agent-debug.css` files are unclaimed; open
+PRs #251 (`conversational-agent-authoring`, docs only) and #261
+(`codex-4/remember-agent-conversation`, `src/renderer/agent/runtime.ts`) do not
+overlap. The change touches the protocol-adjacent `agentEventLog.ts` event union
+(remove `debug.snapshot.created`, add the per-run snapshot event) and
+`agentTypes.ts` debug types — additive-then-delete, coordinated as the diff is
+small and self-contained. `docs/spec/README.md` map entry is main-owned —
+coordinate at the gate.

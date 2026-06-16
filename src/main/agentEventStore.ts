@@ -491,6 +491,18 @@ export class AgentEventStore {
     return this.runEventLog.readIfExists(this.runPaths(runId).runEventsPath);
   }
 
+  /**
+   * Read ONLY the conversation segment (not the joined run streams). The
+   * run-grounded debug view ([[agent-debug-run-grounded]]) reads it once to recover
+   * the conversation-stream events a run's own ledger lacks — the triggering user
+   * message, `child_run.started` parent links, and conversation-budget
+   * `tool_result.replaced` slimming — far cheaper than the full merged `readEvents`.
+   */
+  async readConversationStreamEvents(conversationId: string): Promise<AgentEvent[]> {
+    await this.ensureStorageLayout();
+    return this.agentEventLog.readIfExists(this.paths(conversationId).conversationEventsPath);
+  }
+
   /** Replay a delegated run's ledger into its own independent state. */
   async replayRunStream(runId: string): Promise<AgentEventReplayState> {
     return replayAgentEvents(await this.readRunStreamEvents(runId));
@@ -683,6 +695,32 @@ export class AgentEventStore {
   }
 
   /** Reflective runs anchored to one principal (the runs maintaining that principal's pool). */
+  /**
+   * EVERY run anchored to a conversation (turn + delegation), in creation order.
+   * The run-grounded debug view ([[agent-debug-run-grounded]]) enumerates these,
+   * then derives each run's rounds from its own stream.
+   */
+  async listConversationRunMetaProjections(conversationId: string): Promise<AgentRunMetaProjection[]> {
+    await this.ensureStorageLayout();
+    const index = await this.ensureConversationRunIndex(conversationId);
+    const metas: AgentRunMetaProjection[] = [];
+    for (const runId of index.runIds) {
+      const meta = await this.readRunMeta(runId);
+      if (meta) metas.push(meta);
+    }
+    return metas.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+  }
+
+  /**
+   * The conversation's member roster + meta (a cheap meta-file read, no replay).
+   * The run-grounded debug view ([[agent-debug-run-grounded]]) reads it to decide
+   * shape (DM vs Channel) from the authoritative roster, not from run executors.
+   */
+  async readConversationMetaProjection(conversationId: string): Promise<AgentConversationMetaProjection | null> {
+    await this.ensureStorageLayout();
+    return this.readConversationMeta(conversationId);
+  }
+
   async listPrincipalRunMetaProjections(
     principal: AgentPrincipal,
     options: { limit?: number } = {},

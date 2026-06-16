@@ -5,7 +5,6 @@ import type {
   AssistantMessage,
   ImageContent as PiImageContent,
   Model,
-  ProviderResponse,
   TextContent as PiTextContent,
 } from '@earendil-works/pi-ai';
 import type { AgentMessage, UserMessage } from '../core/agentTypes';
@@ -122,8 +121,6 @@ export interface AgentRuntimeContextHost<TConversation extends AgentRuntimeConte
     text: string,
     runId?: string,
   ): Promise<{ payload: AgentPayloadRef; label: string }>;
-  captureDebugPayload(conversationId: string, payload: unknown, model: Model<any>): Promise<void>;
-  captureDebugResponse(conversationId: string, response: ProviderResponse, model: Model<any>): Promise<void>;
   emitError(conversationId: string, message: string): void;
   getActiveProviderConfig(): Promise<AgentProviderRuntimeConfig | null>;
   getProviderApiKey(providerId: string): Promise<string | undefined> | string | undefined;
@@ -447,21 +444,6 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
         // pi-ai stream option (provider cache affinity) — the lib's own field name.
         sessionId: conversationId,
         signal: options.signal,
-        onPayload: async (payload, payloadModel) => {
-          try {
-            await this.host.captureDebugPayload(conversationId, payload, payloadModel);
-          } catch (error) {
-            this.host.emitError(conversationId, error instanceof Error ? error.message : String(error));
-          }
-          return undefined;
-        },
-        onResponse: async (responsePayload, responseModel) => {
-          try {
-            await this.host.captureDebugResponse(conversationId, responsePayload, responseModel);
-          } catch (error) {
-            this.host.emitError(conversationId, error instanceof Error ? error.message : String(error));
-          }
-        },
       }), { signal: options.signal });
 
       const canRetry = (response.stopReason === 'error' || response.stopReason === 'aborted')

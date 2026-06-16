@@ -112,7 +112,7 @@ describe('agent event log', () => {
     expect(deriveAgentPiMessages(state).map(textOf)).toEqual(['Question', 'Hello']);
   });
 
-  test('keeps debug snapshot events as replay-neutral diagnostics', () => {
+  test('keeps run-snapshot debug events as replay-neutral diagnostics', () => {
     const debugPayload: AgentPayloadRef = {
       kind: 'payload_ref',
       id: 'debug-payload-1',
@@ -130,14 +130,10 @@ describe('agent event log', () => {
         payload: debugPayload,
       },
       {
-        ...base(3, 'debug.snapshot.created'),
-        debugId: 'debug-1',
-        source: 'provider_payload',
-        queryIndex: 1,
-        turnIndex: 1,
-        payloadRef: debugPayload,
-        wire: { bytes: 42, hash: 'wire-hash' },
-        model: { id: 'gpt-test', provider: 'openai', api: 'responses', contextWindow: 128_000 },
+        ...base(3, 'debug.run_snapshot.created'),
+        runId: 'run-1',
+        systemPrompt: 'You are Tenon.',
+        tools: [{ name: 'list_files', description: 'List', schema: '{}' }],
       },
     ];
 

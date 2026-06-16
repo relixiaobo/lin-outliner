@@ -379,8 +379,7 @@
 }
 
 .agent-debug-status-pill.is-error,
-.agent-debug-status-pill.is-aborted,
-.agent-debug-status-pill.is-interrupted {
+.agent-debug-status-pill.is-aborted {
   background: color-mix(in srgb, var(--status-danger) 12%, transparent);
   color: var(--danger);
 }
@@ -508,8 +507,7 @@
 }
 
 .agent-debug-round-meta .agent-debug-status-pill.is-error,
-.agent-debug-round-meta .agent-debug-status-pill.is-aborted,
-.agent-debug-round-meta .agent-debug-status-pill.is-interrupted {
+.agent-debug-round-meta .agent-debug-status-pill.is-aborted {
   color: var(--danger);
 }
 
@@ -636,4 +634,254 @@
   .agent-debug-overview-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* Run-grounded execution tree ([[agent-debug-run-grounded]]). Neutral functional
+   state throughout (B3/B4): agent attribution is the badge LABEL, not a hue. */
+
+.agent-debug-panel .is-muted {
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
+}
+
+.agent-debug-filter {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.agent-debug-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  font-weight: 600;
+  line-height: var(--line-ui-xs);
+  padding: 1px var(--space-4);
+}
+
+.agent-debug-chip:hover {
+  background: var(--control-hover);
+  color: var(--text-strong);
+}
+
+.agent-debug-chip.is-active {
+  background: var(--fill-2);
+  color: var(--text-strong);
+}
+
+.agent-debug-run-stack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.agent-debug-run-node {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.agent-debug-run-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-4);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: var(--space-5) var(--space-6);
+  font: inherit;
+}
+
+.agent-debug-run-head:hover {
+  background: var(--control-hover);
+}
+
+.agent-debug-agent-badge {
+  flex: 0 0 auto;
+  border-radius: var(--radius-sm);
+  background: var(--fill-1);
+  color: var(--text-strong);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: var(--font-ui-xs);
+  font-weight: 600;
+  line-height: var(--line-ui-xs);
+  padding: 1px var(--space-3);
+}
+
+.agent-debug-run-kind,
+.agent-debug-run-parent {
+  flex: 0 0 auto;
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.agent-debug-run-parent {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.agent-debug-run-model {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-debug-run-rounds {
+  flex: 0 0 auto;
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  white-space: nowrap;
+}
+
+/* The run head is a button, not <details>, so it toggles the chevron via a
+   class; the base .agent-debug-summary-chevron supplies the -90deg rest +
+   transition (which reduced-motion already neutralizes globally). */
+.agent-debug-run-head .agent-debug-summary-chevron.is-open {
+  transform: rotate(0deg);
+}
+
+.agent-debug-run-body,
+.agent-debug-run-detail {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+  padding: var(--space-6);
+}
+
+/* The run's request-context block: system-prompt + tools disclosures grouped. */
+.agent-debug-context-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  background: var(--fill-1);
+}
+
+.agent-debug-run-body {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.agent-debug-run-children {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: 0 var(--space-6) var(--space-6) var(--space-8);
+}
+
+.agent-debug-round-usage {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.agent-debug-round-response,
+.agent-debug-round-tools {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.agent-debug-tool-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.agent-debug-tool-exchange {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.agent-debug-tool-exchange.is-error {
+  border-color: color-mix(in srgb, var(--status-danger) 35%, var(--border-subtle));
+}
+
+.agent-debug-tool-exchange > summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-4);
+  list-style: none;
+  padding: var(--space-4) var(--space-5);
+}
+
+.agent-debug-tool-exchange > summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-debug-tool-exchange > summary code {
+  flex: 0 0 auto;
+  color: var(--text-strong);
+  font-size: var(--font-ui-xs);
+  font-weight: 600;
+}
+
+.agent-debug-tool-exchange > summary strong {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-debug-tool-flag {
+  flex: 0 0 auto;
+  color: var(--danger);
+  font-size: var(--font-ui-2xs);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.agent-debug-tool-exchange-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  padding: var(--space-5);
+}
+
+.agent-debug-tool-exchange-body small {
+  color: var(--muted-2);
+  font-size: var(--font-ui-2xs);
+  font-weight: 500;
+  text-transform: uppercase;
 }
