@@ -373,6 +373,7 @@ export function AgentComposer({
         {pendingApproval ? (
           <AgentApprovalCard
             approval={pendingApproval}
+            key={pendingApproval.requestId}
             onResolve={onResolveApproval}
           />
         ) : pendingUserQuestion ? (
@@ -732,6 +733,11 @@ function AgentApprovalCard({
   const isSoftBlock = approval.kind === 'tool_permission' && typeof approval.autoBlockMs === 'number' && approval.autoBlockMs > 0;
   const [remainingMs, setRemainingMs] = useState(approval.autoBlockMs ?? 0);
   const autoBlockCancelledRef = useRef(false);
+  const onResolveRef = useRef(onResolve);
+
+  useEffect(() => {
+    onResolveRef.current = onResolve;
+  }, [onResolve]);
 
   useEffect(() => {
     if (!isSoftBlock || !approval.autoBlockMs) return undefined;
@@ -740,19 +746,19 @@ function AgentApprovalCard({
     let settled = false;
     const deadline = Date.now() + approval.autoBlockMs;
     const tick = () => setRemainingMs(Math.max(0, deadline - Date.now()));
-    const interval = window.setInterval(tick, 250);
+    const interval = window.setInterval(tick, 1000);
     const timeout = window.setTimeout(() => {
       if (autoBlockCancelledRef.current) return;
       settled = true;
       setSubmitting('deny');
-      void onResolve(approval.requestId, false, 'once').finally(() => setSubmitting(null));
+      void onResolveRef.current(approval.requestId, false, 'once').finally(() => setSubmitting(null));
     }, approval.autoBlockMs);
     tick();
     return () => {
       window.clearInterval(interval);
       if (!settled) window.clearTimeout(timeout);
     };
-  }, [approval.autoBlockMs, approval.requestId, isSoftBlock, onResolve]);
+  }, [approval.autoBlockMs, approval.requestId, isSoftBlock]);
 
   async function resolve(approved: boolean, scope: AgentApprovalResolutionScope = 'once') {
     if (submitting) return;

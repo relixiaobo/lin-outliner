@@ -1237,6 +1237,94 @@ describe('agent runtime skill integration', () => {
     ))).toBe(true);
   });
 
+  test('auto-blocks soft-block approvals in main when the renderer does not respond', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-auto-block-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-auto-block-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const followUpContexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('bash', {
+            command: 'eval "echo auto-blocked-soft-block"',
+            description: 'Soft-blocked eval command',
+          }, { id: 'tool-auto-blocked-soft-block' }),
+        ], { stopReason: 'toolUse' }),
+        (context) => {
+          followUpContexts.push(JSON.stringify(context.messages));
+          return fauxAssistantMessage(fauxText('Auto-block handled.'));
+        },
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: true,
+          slashSkillsEnabled: true,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const originalSetTimeout = globalThis.setTimeout;
+    const fastSetTimeout = ((
+      handler: (...args: unknown[]) => void,
+      timeout?: number,
+      ...args: unknown[]
+    ) => originalSetTimeout(handler, timeout === 10_000 ? 5 : timeout, ...args)) as typeof setTimeout;
+    globalThis.setTimeout = fastSetTimeout;
+
+    try {
+      const created = await runtime.restoreLatestConversation();
+      const sendPromise = runtime.sendMessage(created.conversationId, 'Try an unattended soft-block.');
+      await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
+      const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+        event.type === 'approval_request'
+      ));
+      if (!approvalEvent) throw new Error('Expected approval request event.');
+
+      await sendPromise;
+
+      const contextText = followUpContexts.join('\n');
+      expect(contextText).toContain('User denied permission. The requested tool call was not executed.');
+      expect(sink.events.some((event) => (
+        event.type === 'approval_resolved'
+        && event.requestId === approvalEvent.requestId
+        && event.approved === false
+      ))).toBe(true);
+
+      const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
+      expect(events.find((event) => event.type === 'approval.resolved')).toMatchObject({
+        requestId: approvalEvent.requestId,
+        approved: false,
+      });
+      expect(events.find((event) => event.type === 'tool.permission.resolved')).toMatchObject({
+        requestId: approvalEvent.requestId,
+        status: 'denied',
+        deniedReason: 'user_denied',
+      });
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+    }
+  });
+
   test('returns hard-denied tool calls to the model without user notice cards', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-deny-notice-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-deny-notice-data-'));

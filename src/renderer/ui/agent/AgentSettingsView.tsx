@@ -61,6 +61,7 @@ interface AgentSettingsViewProps {
 type SettingsCategory = SettingsCategoryTarget;
 type SettingsRoute = { type: 'category'; category: SettingsCategory };
 type RequestScope = 'settings' | 'section' | 'mutation';
+type PermissionRuleListKind = 'grants' | 'blocks' | 'softBlockAllows';
 
 interface DraftConfig {
   providerId: string;
@@ -548,28 +549,38 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     void window.lin?.openProviderConfig?.({ providerId: '', mode: 'custom' });
   }
 
-  function revokePermissionGrant(grant: string) {
+  function revokePermissionRule(kind: PermissionRuleListKind, rule: string) {
     const base = permissionDraft ?? permissionSettings ?? emptyPermissionSettings();
     setPermissionDraft({
       ...base,
-      grants: base.grants.filter((candidate) => candidate !== grant),
+      [kind]: base[kind].filter((candidate) => candidate !== rule),
     });
   }
 
-  function revokePermissionBlock(rule: string) {
-    const base = permissionDraft ?? permissionSettings ?? emptyPermissionSettings();
-    setPermissionDraft({
-      ...base,
-      blocks: base.blocks.filter((candidate) => candidate !== rule),
-    });
-  }
-
-  function revokePermissionSoftAllow(rule: string) {
-    const base = permissionDraft ?? permissionSettings ?? emptyPermissionSettings();
-    setPermissionDraft({
-      ...base,
-      softBlockAllows: base.softBlockAllows.filter((candidate) => candidate !== rule),
-    });
+  function renderPermissionRuleRows(
+    rules: readonly string[],
+    kind: PermissionRuleListKind,
+    emptyLabel: string,
+    actionLabel: string,
+  ) {
+    if (rules.length === 0) return <InsetRow disabled label={emptyLabel} />;
+    return rules.map((rule) => (
+      <InsetRow
+        key={rule}
+        label={permissionRuleLabel(rule, t)}
+        sublabel={<span className="inset-row-code">{rule}</span>}
+        trailing={(
+          <Button
+            onClick={() => revokePermissionRule(kind, rule)}
+            size="sm"
+            variant="ghost"
+          >
+            {actionLabel}
+          </Button>
+        )}
+        wrap
+      />
+    ));
   }
 
   async function handScopeFolder() {
@@ -997,24 +1008,11 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                   ariaLabel={t.settings.permissions.blocksAriaLabel}
                   label={t.settings.permissions.blocksGroup}
                 >
-                  {permissionBlocks.length > 0 ? permissionBlocks.map((rule) => (
-                    <InsetRow
-                      key={rule}
-                      label={permissionRuleLabel(rule, t)}
-                      sublabel={<span className="inset-row-code">{rule}</span>}
-                      trailing={(
-                        <Button
-                          onClick={() => revokePermissionBlock(rule)}
-                          size="sm"
-                          variant="ghost"
-                        >
-                          {t.settings.permissions.removeRule}
-                        </Button>
-                      )}
-                      wrap
-                    />
-                  )) : (
-                    <InsetRow disabled label={t.settings.permissions.noBlocks} />
+                  {renderPermissionRuleRows(
+                    permissionBlocks,
+                    'blocks',
+                    t.settings.permissions.noBlocks,
+                    t.settings.permissions.removeRule,
                   )}
                 </InsetGroup>
 
@@ -1023,24 +1021,11 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                   footnote={t.settings.permissions.softAllowsFootnote}
                   label={t.settings.permissions.softAllowsGroup}
                 >
-                  {permissionSoftAllows.length > 0 ? permissionSoftAllows.map((rule) => (
-                    <InsetRow
-                      key={rule}
-                      label={permissionRuleLabel(rule, t)}
-                      sublabel={<span className="inset-row-code">{rule}</span>}
-                      trailing={(
-                        <Button
-                          onClick={() => revokePermissionSoftAllow(rule)}
-                          size="sm"
-                          variant="ghost"
-                        >
-                          {t.settings.permissions.removeRule}
-                        </Button>
-                      )}
-                      wrap
-                    />
-                  )) : (
-                    <InsetRow disabled label={t.settings.permissions.noSoftAllows} />
+                  {renderPermissionRuleRows(
+                    permissionSoftAllows,
+                    'softBlockAllows',
+                    t.settings.permissions.noSoftAllows,
+                    t.settings.permissions.removeRule,
                   )}
                 </InsetGroup>
 
@@ -1064,24 +1049,11 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                     )}
                     wrap
                   />
-                  {permissionGrants.length > 0 ? permissionGrants.map((grant) => (
-                    <InsetRow
-                      key={grant}
-                      label={permissionRuleLabel(grant, t)}
-                      sublabel={<span className="inset-row-code">{grant}</span>}
-                      trailing={(
-                        <Button
-                          onClick={() => revokePermissionGrant(grant)}
-                          size="sm"
-                          variant="ghost"
-                        >
-                          {t.settings.permissions.revokeGrant}
-                        </Button>
-                      )}
-                      wrap
-                    />
-                  )) : (
-                    <InsetRow disabled label={t.settings.permissions.noBoundaries} />
+                  {renderPermissionRuleRows(
+                    permissionGrants,
+                    'grants',
+                    t.settings.permissions.noBoundaries,
+                    t.settings.permissions.revokeGrant,
                   )}
                 </InsetGroup>
 

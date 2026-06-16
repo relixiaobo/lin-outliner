@@ -107,7 +107,9 @@ Recommended split:
   shell forms, and explicit `eval` / interpreter-eval forms that execute opaque
   generated code;
 - **OS-level persistence / self-amplification**: writes to shell startup files,
-  cron, LaunchAgents, systemd user units, and git hooks.
+  cron, LaunchAgents, systemd user units, and git internals that can persist or
+  rewrite repository behavior (`.git/hooks/*`, `.git/config`, `.git/refs/**`,
+  `.git/objects/**`).
 
 Do **not** soft-block these by default:
 
@@ -115,9 +117,7 @@ Do **not** soft-block these by default:
   message sends). They default to allow, and users can block them from the log;
 - ordinary shell command substitution (`$(...)` or backticks) when it is not
   combined with sensitive-path access, network exfiltration, remote-code pipes,
-  or another redline/soft-block trigger;
-- project-local `.git/config` writes. They default to allow; `.git/hooks/*`
-  remains a soft block because hooks create command execution persistence.
+  or another redline/soft-block trigger.
 
 Everything else defaults to allow, including:
 

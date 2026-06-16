@@ -118,17 +118,21 @@ The built-in blocklist is intentionally minimal and user-overridable:
   shell forms, and explicit `eval` / interpreter-eval forms that execute opaque
   generated code.
 - **OS-level persistence / self-amplification**: writes to shell startup files,
-  cron, LaunchAgents, systemd user units, and `.git/hooks/*`.
+  cron, LaunchAgents, systemd user units, and git internals that can persist or
+  rewrite repository behavior: `.git/hooks/*`, `.git/config`, `.git/refs/**`, and
+  `.git/objects/**`.
 
 These do not soft-block by default:
 
 - `git push`, GitHub CLI mutations, deploys, package publishes, and message
   sends;
 - ordinary shell command substitution using `$(...)` or backticks;
-- project-local `.git/config` writes.
+- ordinary project-local file edits that do not hit a redline, soft block, or
+  user block.
 
 When a built-in soft block fires, **Always allow** adds a narrow
-`softBlockAllows` rule, usually `Command(exact command)`.
+`softBlockAllows` rule, usually `Command(exact command)` for shell calls or
+`Scope(write:/absolute/path)` for path-specific file writes.
 
 ## User Blocklist
 
@@ -149,6 +153,10 @@ Rule syntax:
 - `External(git push origin main)`
 - `Scope(read:/some/folder)`
 - `Scope(write:/some/folder)`
+
+Command rules are displayed and persisted in their original spelling, but
+matching normalizes whitespace outside quotes so debug-panel blocks and
+soft-block exceptions keep working across formatting-only command variants.
 
 `blocks` are user blacklists. A match returns `soft_blocked`. **Always allow** on
 a user block removes the matching block rule.
@@ -200,6 +208,9 @@ Static heredocs are parsed as one outer shell command. The heredoc body is not
 split on shell operators and does not trigger shell redlines or soft blocks by
 accident; the outer command still classifies as local code execution. This keeps
 generated Python/Node artifacts from producing fake `hidden_exec` decisions.
+Heredoc detection ignores quoted `<<`, comments, and here-strings (`<<<`) so a
+live command following those forms still participates in redline and soft-block
+scans.
 
 ## Restricted Skill Sandbox
 
@@ -230,7 +241,9 @@ Soft-block cards are the permission interruption surface:
 - **Always allow**: for a built-in soft block, add a matching
   `softBlockAllows` rule; for a user block, remove that block rule.
 - **Block now**: immediately deny. If the user does nothing, the countdown
-  auto-blocks.
+  auto-blocks. The renderer shows the countdown, and the main process owns the
+  authoritative timeout so a renderer crash or unmount cannot leave a tool call
+  pending forever.
 
 Hard redlines do not create user-facing approval or notice cards. The runtime
 records the denial in tool permission events and returns a `permission_denied`

@@ -435,6 +435,17 @@ interface AgentToolApprovalResolution {
   alwaysAllowRule?: string;
 }
 
+interface AgentPendingApproval {
+  conversationId: string;
+  runId?: string;
+  request: AgentApprovalRequestView;
+  alwaysAllowRule?: string;
+  alwaysAllowAction?: 'grant' | 'soft_allow' | 'remove_block';
+  autoBlockTimer?: ReturnType<typeof setTimeout>;
+  onApproved?: () => Promise<void>;
+  resolve: (resolution: AgentToolApprovalResolution) => void;
+}
+
 interface AgentPendingUserQuestion {
   conversationId: string;
   runId: string;
@@ -626,15 +637,7 @@ export class AgentRuntime {
   private debugRunCache = new Map<string, { latestSeq: number; contextSeq: number; parentToolCallId: string | null; run: AgentDebugRun }>();
   private eventStore: AgentEventStore | null = null;
   private pastChatsService: AgentPastChatsService | null = null;
-  private pendingApprovals = new Map<string, {
-    conversationId: string;
-    runId?: string;
-    request: AgentApprovalRequestView;
-    alwaysAllowRule?: string;
-    alwaysAllowAction?: 'grant' | 'soft_allow' | 'remove_block';
-    onApproved?: () => Promise<void>;
-    resolve: (resolution: AgentToolApprovalResolution) => void;
-  }>();
+  private pendingApprovals = new Map<string, AgentPendingApproval>();
   private pendingUserQuestions = new Map<string, AgentPendingUserQuestion>();
   private nextConversationId = 1;
   private dreamMemoryExtractionTail: Promise<void> = Promise.resolve();
@@ -1336,6 +1339,7 @@ export class AgentRuntime {
     if (!pending || pending.conversationId !== conversationId) return { resolved: false };
     const conversation = this.conversations.get(conversationId);
     if (!conversation) return { resolved: false };
+    this.clearPendingApprovalAutoBlock(pending);
 
     let resolvedApproved = approved;
     let deniedReason: PermissionDeniedReason | undefined = approved ? undefined : 'user_denied';
@@ -2346,6 +2350,7 @@ export class AgentRuntime {
     for (const [requestId, pending] of [...this.pendingApprovals]) {
       if (pending.conversationId !== conversationId) continue;
       this.pendingApprovals.delete(requestId);
+      this.clearPendingApprovalAutoBlock(pending);
       resolvedEvents.push({
         type: 'approval.resolved',
         actor: systemActor(),
@@ -2376,6 +2381,7 @@ export class AgentRuntime {
     if (!pending || pending.conversationId !== conversationId) return false;
 
     this.pendingApprovals.delete(requestId);
+    this.clearPendingApprovalAutoBlock(pending);
     try {
       await this.appendConversationEvents(conversationId, conversation, [{
         type: 'approval.resolved',
@@ -2396,6 +2402,12 @@ export class AgentRuntime {
       pending.resolve({ approved: false, deniedReason });
     }
     return true;
+  }
+
+  private clearPendingApprovalAutoBlock(pending: AgentPendingApproval) {
+    if (!pending.autoBlockTimer) return;
+    clearTimeout(pending.autoBlockTimer);
+    pending.autoBlockTimer = undefined;
   }
 
   private async clearPendingUserQuestionsForConversation(conversationId: string, reason: string) {
@@ -5737,7 +5749,7 @@ export class AgentRuntime {
         void this.denyPendingApprovalForRuntime(conversationId, conversation, requestId, 'run_aborted');
       };
 
-      this.pendingApprovals.set(requestId, {
+      const pendingApproval: AgentPendingApproval = {
         conversationId,
         runId: this.activeRunId(conversation) ?? undefined,
         request,
@@ -5747,7 +5759,14 @@ export class AgentRuntime {
           signal?.removeEventListener('abort', onAbort);
           resolve(resolution);
         },
-      });
+      };
+      if (request.autoBlockMs && request.autoBlockMs > 0) {
+        pendingApproval.autoBlockTimer = setTimeout(() => {
+          void this.denyPendingApprovalForRuntime(conversationId, conversation, requestId, 'user_denied');
+        }, request.autoBlockMs);
+        pendingApproval.autoBlockTimer.unref?.();
+      }
+      this.pendingApprovals.set(requestId, pendingApproval);
       signal?.addEventListener('abort', onAbort, { once: true });
       if (signal?.aborted) onAbort();
     });

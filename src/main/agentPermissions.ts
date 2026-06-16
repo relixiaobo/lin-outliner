@@ -263,7 +263,7 @@ const BASH_SOFT_BLOCK_RULES: readonly BashSoftBlockRule[] = [
   {
     code: 'known_shell_obfuscation',
     reason: 'This appears to decode or evaluate opaque shell code.',
-    pattern: /\b(?:base64\s+(?:--decode|-d)|openssl\s+enc\s+-d)[\s\S]*\|\s*(?:sh|bash|zsh|fish|eval)\b|\beval\s+["'`$]|\b(?:python[0-9.]*|node|deno|bun|perl|ruby|php|osascript)\b[^\n|;&]*\s(?:-(?:c|e|r|E)\b|--(?:eval|exec|command|run)\b)[\s\S]*\b(?:eval|exec)\s*\(/i,
+    pattern: /\b(?:base64\s+(?:--decode|-d)|openssl\s+enc\s+-d)[^\n|;&]{0,2048}\|\s*(?:sh|bash|zsh|fish|eval)\b|\beval\s+["'`$]|\b(?:python[0-9.]*|node|deno|bun|perl|ruby|php|osascript)\b[^\n|;&]{0,512}\s(?:-(?:c|e|r|E)\b|--(?:eval|exec|command|run)\b)[^\n|;&]{0,2048}\b(?:eval|exec)\s*\(/i,
   },
   {
     code: 'persistence_crontab',
@@ -893,6 +893,7 @@ function derivePathDescriptor(input: {
       code: 'persistence_write',
       softBlock: true,
       softBlockAllowRule: `Scope(write:${resolved})`,
+      requestTarget: resolved,
       grantAccess: 'write',
     });
   }
@@ -1112,7 +1113,7 @@ function deriveBashActionDescriptors(
       accessScope: 'sensitive_local_path',
       title: 'soft-blocked persistence write',
       summary: command,
-      consequence: 'This appears to write a shell startup file, cron entry, LaunchAgent, systemd user unit, or git hook.',
+      consequence: 'This appears to write a shell startup file, cron entry, LaunchAgent, systemd user unit, or git-internal path.',
       reversible: false,
       externalEffect: false,
       highConsequence: true,
@@ -1512,12 +1513,33 @@ function descriptor(
   const effectValues = floor === undefined
     ? { ...descriptorValues, grantAccess }
     : { ...descriptorValues, grantAccess, floor };
+  const resolvedEffect = effect ?? inferEffect(actionKind, effectValues);
+  assertDescriptorConsistency(toolName, actionKind, {
+    effect: resolvedEffect,
+    ...descriptorValues,
+  });
   return {
     toolName,
     actionKind,
-    effect: effect ?? inferEffect(actionKind, effectValues),
+    effect: resolvedEffect,
     ...descriptorValues,
   };
+}
+
+function assertDescriptorConsistency(
+  toolName: string,
+  actionKind: AgentToolActionKind,
+  descriptorValues: Omit<DerivedToolActionDescriptor, 'toolName' | 'actionKind'>,
+) {
+  const hasHardFloor = descriptorValues.effect.floor !== undefined
+    || descriptorValues.platformHardBlock === true
+    || descriptorValues.redline === true;
+  if (descriptorValues.softBlock && hasHardFloor) {
+    throw new Error(`Invalid permission descriptor ${toolName}:${actionKind}: softBlock cannot be combined with a hard floor.`);
+  }
+  if (!descriptorValues.softBlock && (descriptorValues.softBlockRule || descriptorValues.softBlockAllowRule)) {
+    throw new Error(`Invalid permission descriptor ${toolName}:${actionKind}: soft-block rules require softBlock.`);
+  }
 }
 
 function hiddenShellDescriptor(reason: string, command = ''): DerivedToolActionDescriptor {
@@ -1532,7 +1554,7 @@ function hiddenShellDescriptor(reason: string, command = ''): DerivedToolActionD
     command,
     code: 'hidden_exec',
     softBlock: true,
-    softBlockAllowRule: command ? `Command(${command})` : 'Action(shell.unknown)',
+    ...(command ? { softBlockAllowRule: `Command(${command})` } : {}),
     effect: {
       reach: 'local',
       reversible: false,
@@ -1718,8 +1740,46 @@ function redactStaticHereDocBodies(command: string): string {
 }
 
 function hereDocTerminatorFromLine(line: string): string | null {
-  const match = /<<-?\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z_][A-Za-z0-9_]*))/u.exec(line);
-  return match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]!;
+    const next = line[index + 1];
+    const afterNext = line[index + 2];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\' && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '#' && (index === 0 || /\s/u.test(line[index - 1]!))) return null;
+    if (char !== '<' || next !== '<' || line[index - 1] === '<' || afterNext === '<') continue;
+
+    let cursor = index + 2;
+    if (line[cursor] === '-') cursor += 1;
+    while (cursor < line.length && /\s/u.test(line[cursor]!)) cursor += 1;
+
+    const delimiterQuote = line[cursor];
+    if (delimiterQuote === '"' || delimiterQuote === "'") {
+      const end = line.indexOf(delimiterQuote, cursor + 1);
+      return end > cursor + 1 ? line.slice(cursor + 1, end) : null;
+    }
+
+    const match = /^[A-Za-z_][A-Za-z0-9_]*/u.exec(line.slice(cursor));
+    return match?.[0] ?? null;
+  }
+  return null;
 }
 
 function splitShellByOperators(command: string): string[] {
@@ -1840,7 +1900,7 @@ function isHardBlockedSensitiveWritePath(filePath: string): boolean {
 }
 
 function isSoftBlockedPersistenceWritePath(filePath: string): boolean {
-  return isPersistencePath(filePath) || isGitHookPath(filePath);
+  return isPersistencePath(filePath) || isGitInternalWritePath(filePath);
 }
 
 function isPersistencePath(filePath: string): boolean {
@@ -1849,8 +1909,8 @@ function isPersistencePath(filePath: string): boolean {
     || /(?:^|\/)\.config\/systemd\/user(?:\/|$)/i.test(filePath);
 }
 
-function isGitHookPath(filePath: string): boolean {
-  return /(?:^|\/)\.git\/hooks(?:\/|$)/i.test(filePath);
+function isGitInternalWritePath(filePath: string): boolean {
+  return /(?:^|\/)\.git\/(?:hooks(?:\/|$)|config$|refs(?:\/|$)|objects(?:\/|$))/i.test(filePath);
 }
 
 function isAgentPermissionConfigPath(filePath: string): boolean {
