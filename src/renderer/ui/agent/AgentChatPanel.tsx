@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type RefObject,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -77,8 +76,7 @@ import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { EmptyState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
-import { MenuItem } from '../primitives/MenuItem';
-import { MenuSurface } from '../primitives/MenuSurface';
+import { AnchoredActionMenu } from '../primitives/AnchoredActionMenu';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { useI18n, useT } from '../../i18n/I18nProvider';
@@ -183,83 +181,20 @@ function ConversationRowMoreMenu({
         <MoreIcon size={ICON_SIZE.menu} />
       </button>
       {open ? (
-        <FloatingConversationRowMenu
+        <AnchoredActionMenu
           actions={actions}
           anchorRef={anchorRef}
-          menuLabel={menuLabel}
+          ariaLabel={menuLabel}
+          className="agent-conversation-row-menu"
+          itemClassName="agent-conversation-row-menu-item"
+          itemLabelClassName="agent-conversation-row-menu-item-label"
           onClose={() => onOpenChange(false)}
+          // The history menu's outside-pointer handler ignores clicks inside this menu.
+          surfaceProps={{ 'data-agent-conversation-row-menu': 'true' }}
+          width={196}
         />
       ) : null}
     </>
-  );
-}
-
-function FloatingConversationRowMenu({
-  actions,
-  anchorRef,
-  menuLabel,
-  onClose,
-}: {
-  actions: ConversationRowMenuAction[];
-  anchorRef: RefObject<HTMLElement | null>;
-  menuLabel: string;
-  onClose: () => void;
-}) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const style = useAnchoredOverlay(menuRef, {
-    anchorRef,
-    layoutKey: actions.map((action) => action.label).join('|'),
-    maxHeight: 320,
-    placement: 'bottom-end',
-    width: 196,
-  });
-  // focus-in, roving Arrow/Home/End, Escape-to-close, focus-restore to the
-  // trigger; the effect below stays pointer-only since the hook owns Escape.
-  const { onKeyDown } = useMenuKeyboard({
-    surfaceRef: menuRef,
-    onClose,
-    kind: 'menu',
-    getRestoreTarget: () => (anchorRef.current instanceof HTMLElement ? anchorRef.current : null),
-  });
-
-  useEffect(() => {
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Node;
-      if (menuRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
-      onClose();
-    }
-    document.addEventListener('pointerdown', handlePointerDown, true);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown, true);
-    };
-  }, [anchorRef, onClose]);
-
-  return createPortal(
-    <MenuSurface
-      aria-label={menuLabel}
-      className="agent-conversation-row-menu"
-      data-agent-conversation-row-menu="true"
-      onKeyDown={onKeyDown}
-      ref={menuRef}
-      role="menu"
-      style={style}
-    >
-      {actions.map((action) => (
-        <MenuItem
-          className="agent-conversation-row-menu-item"
-          disabled={action.disabled}
-          key={action.id ?? action.label}
-          label={action.label}
-          labelClassName="agent-conversation-row-menu-item-label"
-          onClick={() => {
-            onClose();
-            action.onSelect();
-          }}
-          role="menuitem"
-        />
-      ))}
-    </MenuSurface>,
-    document.body,
   );
 }
 

@@ -449,11 +449,16 @@ function GroupSection({
   const groupable = choices.filter((choice) => !GROUP_FIELD_DENYLIST.has(choice.id));
   const groups = bySection(groupable);
   const current = view.groupField ?? '';
+  // When the active group field is not in the visible list (denylisted/removed),
+  // no option is selected — keep "No grouping" the Tab stop so the group stays
+  // keyboard-reachable.
+  const groupedOnVisible = groupable.some((choice) => choice.id === current);
   return (
     <RadioOptionGroup className="view-toolbar-options" label={t.outliner.viewToolbar.groupBy}>
       <OptionRow
         label={t.outliner.viewToolbar.noGrouping}
         selected={current === ''}
+        tabIndex={groupedOnVisible ? -1 : 0}
         variant="radio"
         onSelect={() => void run(() => api.setGroupField(node.id, null))}
       />
@@ -727,15 +732,19 @@ function BooleanFilterBody({ field, rule, run }: { field: string; rule: FilterRu
     : [tv.booleanYes, tv.booleanNo];
   return (
     <RadioOptionGroup className="view-toolbar-options" label={tv.filterValuesLabel}>
+      {/* A freshly-added boolean filter has neither value selected; keep the first
+          option as the Tab stop so the group stays keyboard-reachable. */}
       <OptionRow
         label={onLabel}
         selected={selected === 'true'}
+        tabIndex={selected === 'false' ? -1 : 0}
         variant="radio"
         onSelect={() => void run(() => api.updateFilterRule(rule.id, { operator: 'is', values: ['true'] }))}
       />
       <OptionRow
         label={offLabel}
         selected={selected === 'false'}
+        tabIndex={selected === 'false' ? 0 : -1}
         variant="radio"
         onSelect={() => void run(() => api.updateFilterRule(rule.id, { operator: 'is', values: ['false'] }))}
       />
@@ -833,19 +842,26 @@ function OptionRow({
   selected,
   variant,
   onSelect,
+  tabIndex,
 }: {
   label: ReactNode;
   icon?: ReactNode;
   selected: boolean;
   variant: 'checkbox' | 'radio';
   onSelect: () => void;
+  // Radio variant only: the roving tab stop. Defaults to the selected option
+  // (each radiogroup has exactly one selected); pass explicitly when a group can
+  // momentarily have none selected, so one option stays Tab-reachable.
+  tabIndex?: number;
 }) {
+  const resolvedTabIndex = variant === 'radio' ? (tabIndex ?? (selected ? 0 : -1)) : tabIndex;
   return (
     <ButtonControl
       role={variant === 'checkbox' ? 'checkbox' : 'radio'}
       aria-checked={selected}
       className={`view-toolbar-option ${selected ? 'is-selected' : ''}`}
       onClick={onSelect}
+      tabIndex={resolvedTabIndex}
     >
       {variant === 'checkbox' ? (
         <CheckboxMark checked={selected} />
@@ -858,11 +874,12 @@ function OptionRow({
   );
 }
 
-// A radiogroup wrapper for single-select OptionRows: roving tabindex (only the
-// checked option is a tab stop) + Arrow keys that move-and-select across the
-// radios, matching SegmentedControl. The radios may be interleaved with section
-// headers (GroupSection), so navigation queries `[role="radio"]` descendants
-// rather than assuming flat siblings.
+// A radiogroup wrapper for single-select OptionRows. The roving tab stop is
+// declarative (each radio's `tabIndex` follows its selected state — see
+// OptionRow); this wrapper adds the group role/label and Arrow-key
+// move-and-select, matching SegmentedControl. The radios may be interleaved with
+// section headers (GroupSection), so navigation queries `[role="radio"]`
+// descendants rather than assuming flat siblings.
 function RadioOptionGroup({
   label,
   className,
@@ -873,15 +890,6 @@ function RadioOptionGroup({
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const group = ref.current;
-    if (!group) return;
-    const radios = [...group.querySelectorAll<HTMLElement>('[role="radio"]')];
-    const checkedIndex = radios.findIndex((radio) => radio.getAttribute('aria-checked') === 'true');
-    const tabIndex = checkedIndex >= 0 ? checkedIndex : 0;
-    radios.forEach((radio, index) => { radio.tabIndex = index === tabIndex ? 0 : -1; });
-  });
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (isImeComposingEvent(event)) return;
@@ -897,6 +905,8 @@ function RadioOptionGroup({
     const nextIndex = forward
       ? (currentIndex + 1) % radios.length
       : (currentIndex <= 0 ? radios.length - 1 : currentIndex - 1);
+    // Moving selection follows focus (radio convention); the click re-renders the
+    // group, which shifts the declarative tab stop onto the newly-selected option.
     const next = radios[nextIndex];
     next?.focus();
     next?.click();

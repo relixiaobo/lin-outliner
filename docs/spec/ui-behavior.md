@@ -443,8 +443,10 @@ keystrokes are never hijacked, and it makes the surface programmatically focusab
 two compose. Adopted by: `NodeContextMenu` (menu in `main` mode, dialog in
 tag/move submodes), `SettingsRowMenu`, the agent conversation row menu and the
 agent history/session menu (which previously had **no** Escape), the view-toolbar
-section popovers, and the date-value picker. Surfaces already on `Dialog`
-(Command Palette, Confirm, Launcher) are unchanged.
+section popovers, and the date-value picker. The two `⋯`-style row menus (settings
+row, conversation row) share one `primitives/AnchoredActionMenu` that bundles the
+anchored positioning, the hook, and trigger-aware outside-pointer dismissal.
+Surfaces already on `Dialog` (Command Palette, Confirm, Launcher) are unchanged.
 
 **Outliner tree** (`PanelChildrenOutline`, `OutlinerRowShell`). The outline
 container is `role="tree"` + `aria-multiselectable="true"` + `aria-label`. Each
