@@ -14,6 +14,7 @@ from typing import Optional
 from xml.etree import ElementTree as ET
 
 PLACEHOLDER_RE = re.compile(r"\b(lorem|ipsum|todo|placeholder|sample|dummy|xxxx)\b", re.I)
+FORMULA_ERROR_RE = re.compile(r"^#(?:REF!|DIV/0!|VALUE!|N/A|NAME\?|NUM!|NULL!)$", re.I)
 REL_NS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 S_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 R_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -48,6 +49,10 @@ def normalized_target(source_part: str, target: str) -> str:
     return posixpath.normpath(posixpath.join(posixpath.dirname(source_part), target))
 
 
+def relationship_kind(rel_type: str) -> str:
+    return rel_type.rstrip("/").rsplit("/", 1)[-1] if rel_type else ""
+
+
 def shared_strings(zf: zipfile.ZipFile) -> list[str]:
     root = read_xml(zf, "xl/sharedStrings.xml")
     if root is None:
@@ -68,8 +73,17 @@ def inspect_sheet(zf: zipfile.ZipFile, names: set[str], sheet_name: str, sheet_p
         "part": sheet_part,
         "dimension": None,
         "row_count": 0,
+        "hidden_row_count": 0,
+        "hidden_column_count": 0,
         "cell_count": 0,
         "formula_count": 0,
+        "formula_error_count": 0,
+        "formula_error_cells": [],
+        "merged_cell_count": 0,
+        "table_count": 0,
+        "drawing_count": 0,
+        "data_validation_count": 0,
+        "conditional_format_count": 0,
         "placeholder_hits": [],
         "missing_relationship_targets": [],
     }
@@ -86,14 +100,24 @@ def inspect_sheet(zf: zipfile.ZipFile, names: set[str], sheet_name: str, sheet_p
     rows = list(root.iter(f"{S_NS}row"))
     cells = list(root.iter(f"{S_NS}c"))
     report["row_count"] = len(rows)
+    report["hidden_row_count"] = sum(1 for row in rows if row.attrib.get("hidden") == "1")
+    report["hidden_column_count"] = len([col for col in root.iter(f"{S_NS}col") if col.attrib.get("hidden") == "1"])
     report["cell_count"] = len(cells)
     report["formula_count"] = len(list(root.iter(f"{S_NS}f")))
+    report["merged_cell_count"] = len(list(root.iter(f"{S_NS}mergeCell")))
+    report["table_count"] = len(list(root.iter(f"{S_NS}tablePart")))
+    report["data_validation_count"] = len(list(root.iter(f"{S_NS}dataValidation")))
+    report["conditional_format_count"] = len(list(root.iter(f"{S_NS}conditionalFormatting")))
 
     text_values = []
     for cell in cells:
         value = cell.find(f"{S_NS}v")
         if value is None or value.text is None:
             continue
+        if cell.attrib.get("t") == "e" or FORMULA_ERROR_RE.match(value.text.strip()):
+            report["formula_error_count"] += 1
+            if len(report["formula_error_cells"]) < 25:
+                report["formula_error_cells"].append({"cell": cell.attrib.get("r", ""), "value": value.text.strip()})
         if cell.attrib.get("t") == "s":
             try:
                 text_values.append(shared[int(value.text)])
@@ -106,6 +130,8 @@ def inspect_sheet(zf: zipfile.ZipFile, names: set[str], sheet_name: str, sheet_p
 
     rels_name = str(Path(sheet_part).parent / "_rels" / f"{Path(sheet_part).name}.rels")
     for rel_id, rel in rels_for(zf, rels_name).items():
+        if relationship_kind(rel.get("type", "")) == "drawing":
+            report["drawing_count"] += 1
         if rel.get("mode") == "External":
             continue
         target = rel.get("target", "")
@@ -124,7 +150,14 @@ def inspect_xlsx(path: Path) -> dict:
         "sheets": [],
         "sheet_count": 0,
         "formula_count": 0,
+        "formula_error_count": 0,
         "shared_string_count": 0,
+        "defined_name_count": 0,
+        "table_count": 0,
+        "chart_count": 0,
+        "pivot_table_count": 0,
+        "hidden_sheets": [],
+        "calculation_mode": None,
         "external_relationships": [],
         "placeholder_hits": [],
         "missing_relationship_targets": [],
@@ -150,11 +183,21 @@ def inspect_xlsx(path: Path) -> dict:
             workbook_rels = rels_for(zf, "xl/_rels/workbook.xml.rels")
             shared = shared_strings(zf)
             result["shared_string_count"] = len(shared)
+            result["table_count"] = len([name for name in names if name.startswith("xl/tables/") and name.endswith(".xml")])
+            result["chart_count"] = len([name for name in names if name.startswith("xl/charts/") and name.endswith(".xml")])
+            result["pivot_table_count"] = len([name for name in names if name.startswith("xl/pivotTables/") and name.endswith(".xml")])
             sheet_refs = []
             if workbook is not None:
+                result["defined_name_count"] = len(list(workbook.iter(f"{S_NS}definedName")))
+                calc_pr = workbook.find(f"{S_NS}calcPr")
+                if calc_pr is not None:
+                    result["calculation_mode"] = calc_pr.attrib.get("calcMode")
                 for sheet in workbook.iter(f"{S_NS}sheet"):
                     rid = sheet.attrib.get(f"{R_NS}id")
                     name = sheet.attrib.get("name", f"sheet-{len(sheet_refs) + 1}")
+                    state = sheet.attrib.get("state", "visible")
+                    if state != "visible":
+                        result["hidden_sheets"].append({"name": name, "state": state})
                     rel = workbook_rels.get(rid or "", {})
                     target = rel.get("target", "")
                     part = normalized_target("xl/workbook.xml", target) if target else ""
@@ -164,6 +207,7 @@ def inspect_xlsx(path: Path) -> dict:
                 sheet_report = inspect_sheet(zf, names, sheet_name, sheet_part, shared)
                 result["sheets"].append(sheet_report)
                 result["formula_count"] += sheet_report["formula_count"]
+                result["formula_error_count"] += sheet_report["formula_error_count"]
                 for hit in sheet_report["placeholder_hits"]:
                     result["placeholder_hits"].append({"sheet": sheet_name, "text": hit})
                 result["missing_relationship_targets"].extend(sheet_report["missing_relationship_targets"])
@@ -186,6 +230,12 @@ def inspect_xlsx(path: Path) -> dict:
                 result["warnings"].append("external_relationships_present")
             if result["formula_count"]:
                 result["warnings"].append("formulas_present_not_recalculated")
+            if result["formula_error_count"]:
+                result["warnings"].append("formula_errors_found")
+            if result["hidden_sheets"]:
+                result["warnings"].append("hidden_sheets_present")
+            if result["calculation_mode"] == "manual":
+                result["warnings"].append("manual_calculation_mode")
             result["ok"] = len(result["errors"]) == 0 and len(result["missing_relationship_targets"]) == 0
             return result
     except zipfile.BadZipFile:

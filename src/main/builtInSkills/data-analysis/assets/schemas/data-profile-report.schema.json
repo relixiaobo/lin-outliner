@@ -17,6 +17,13 @@
     "format": { "type": ["string", "null"] },
     "row_count": { "type": "integer" },
     "column_count": { "type": "integer" },
+    "duplicate_row_count": { "type": "integer" },
+    "candidate_key_columns": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "quality": { "type": "object" },
+    "suggested_contract": { "type": "object" },
     "columns": {
       "type": "array",
       "items": { "type": "object" }

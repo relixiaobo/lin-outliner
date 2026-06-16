@@ -8,6 +8,11 @@ State the analytical question and decision this analysis supports.
 
 List source files, date ranges, row counts, and known caveats.
 
+## Data Quality
+
+Summarize missingness, duplicate/key risks, type issues, outliers, validation
+results, and accepted limitations.
+
 ## Method
 
 Describe profiling, cleaning, transformations, grouping, joins, and calculations.

@@ -5,11 +5,13 @@ Approach verification as a source-fidelity and format-integrity pass.
 ## Universal Checks
 
 - source claims are represented faithfully
+- archetype, design preset, and form factors fit the reader's job
 - title and section order match the requested outcome
 - no lorem, TODO, placeholder, sample, dummy, or xxxx text remains
 - headings are hierarchical and skimmable
 - links and local asset references are not broken
 - tables are readable and not needlessly wide
+- lists use real list semantics when delivered as DOCX
 - comments/redlines are intentional and reported
 - final artifact opens or renders when local tools allow it
 
@@ -17,6 +19,7 @@ Approach verification as a source-fidelity and format-integrity pass.
 
 - inspect package structure with `scripts/docx_tool.py`
 - check relationship targets and content types
+- check heading sequence, manual bullet risks, table geometry risks, headers/footers, and notes
 - check comments and tracked changes
 - render or convert when possible
 - verify headers, footers, footnotes, and endnotes when relevant
@@ -25,6 +28,7 @@ Approach verification as a source-fidelity and format-integrity pass.
 
 - inspect static structure with `scripts/markdown_tool.mjs`
 - check heading hierarchy
+- check long paragraphs, excessive table width, and remote image dependencies
 - check local asset references
 - search generated files for placeholders
 

@@ -45,11 +45,21 @@ goal-oriented skills rather than file-extension adapters:
   launch, and executive decks, then uses the HTML inspector to report layout
   variety, text-only slide, bullet density, tiny text, placeholder, dependency,
   and asset-reference risks.
-- `/document` covers professional written documents, DOCX inspection, Markdown
-  drafts, review notes, comments, redlines, and document verification.
-- `/data-analysis` covers data profiling, workbook inspection, analytical
-  planning, reproducible transformations, chart/report output, and analytical
-  verification.
+- `/document` covers professional written documents, archetype/form-factor
+  planning, DOCX inspection, Markdown drafts, review notes, comments, redlines,
+  and document verification. Its portable scripts report DOCX package integrity
+  plus document-semantics risks such as heading jumps, manual bullets, table
+  geometry gaps, comment references, headers/footers, and notes; the Markdown
+  inspector reports heading hierarchy, long paragraphs, wide tables, local
+  assets, remote images, and placeholder text.
+- `/data-analysis` covers data profiling, portable data-contract validation,
+  workbook inspection, analytical planning, reproducible transformations,
+  chart/report output, workbook handoff, and analytical verification. Its
+  standard-library scripts profile CSV/TSV/JSON/JSONL files for types,
+  missingness, duplicates, candidate keys, dates, outliers, and suggested
+  contracts; validate lightweight contracts; and inspect XLSX packages for
+  hidden sheets, formulas, formula error literals, defined names, tables,
+  charts, external links, and calculation-mode risks.
 
 Each of these built-ins includes its own `SKILL.md`, route-specific references,
 portable scripts, schemas, and lightweight templates. The app does not inject
@@ -359,7 +369,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
 | `skillify` | Supported as the built-in user- and model-invocable Skillify v2 workflow (`when_to_use`-gated to explicit user save requests). It uses the Tenon `.agents/skills/<skill-name>/SKILL.md` shape, previews the complete file or focused update diff, confirms through the instruction-layer `ask_user_question` path when available, and writes with existing file write/edit tools. |
 | `research` | Supported as a built-in user- and model-invocable `execution: isolated` workflow with no `agent` override. It starts an isolated child run of the current agent, filters its declared read tools through the `AgentToolActionKind` read-only catalog, and returns a compact findings/evidence report. |
-| `presentation`, `document`, `data-analysis` | Supported as immutable resource-backed built-ins with portable `references/`, `scripts/`, and `assets/`. They are goal-oriented workflows; PPTX, DOCX, XLSX, Markdown, HTML, PDF, CSV, and JSON are handled as input/output routes rather than skill identities. |
+| `presentation`, `document`, `data-analysis` | Supported as immutable resource-backed built-ins with portable `references/`, `scripts/`, and `assets/`. They are goal-oriented workflows; PPTX, DOCX, XLSX, Markdown, HTML, PDF, CSV, and JSON are handled as input/output routes rather than skill identities. `/document` includes archetype/form-factor guidance plus DOCX/Markdown semantic QA. `/data-analysis` includes profiling, lightweight data contracts, workbook risk inspection, and workbook/report delivery guidance. |
 | Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background conversation review that silently rewrites skills is not supported. |
 | Per-skill invocation permission suggestions | Not supported as a dedicated UI. The `skill` tool still goes through the global runtime permission policy, and the skill's own `allowed-tools` narrow downstream tool calls. |
 
