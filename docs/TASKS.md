@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped ungate-contact #236, channel async-bus #231) |
-| Claude Code 2 | `lin-outliner-cc-2/` | `cc-2/agent-debug-run-grounded` · `cc-2/conversational-agent-authoring` | `agent-debug-run-grounded` (#264, rebasing after review) + `conversational-agent-authoring` (#251, DRAFT/redirect) |
+| Claude Code 2 | `lin-outliner-cc-2/` | `cc-2/conversational-agent-authoring` | shipped `agent-debug-run-grounded` (#264); `conversational-agent-authoring` (#251, DRAFT/redirect) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped agent-context-architecture #263, bundled-built-in-skills #269) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped file-preview-unification #262) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped permission folder-handoff + `file_convert` #266) |
@@ -33,17 +33,12 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 **In flight (2026-06-16).**
 
-1. **`agent-debug-run-grounded`** (cc-2, PR #264) — recast agent debug as a view over the
-   run truth source. Plan merged (#257); main reviewed the implementation and handed back to
-   cc-2, who is addressing review + rebasing onto current `main` (the branch was ~18 commits
-   behind; conflicts expected on `agentRuntime.ts` / `client.ts` — the runtime-trio hot files).
-   Last open item of the 2026-06-15 portfolio wave.
-2. **`conversational-agent-authoring`** (cc-2, PR #251, DRAFT) — REDIRECT: rewrite to drop the
+1. **`conversational-agent-authoring`** (cc-2, PR #251, DRAFT) — REDIRECT: rewrite to drop the
    dead "clamp to the creator's grants" framing (grants are a single **global** ledger post-#252;
    `agent-capability-ceiling` was verified **unnecessary** and dropped — see Backlog § Agent
    capabilities). Its safety then rests on human ratification of the new agent + the universal
    floor/`decide(effect)` model. Unblocked once rewritten.
-3. **`three-built-in-skills`** (codex-4, PR #270, DRAFT) — goal-oriented built-in skills on top
+2. **`three-built-in-skills`** (codex-4, PR #270, DRAFT) — goal-oriented built-in skills on top
    of the shipped `bundled-built-in-skill-resources` (#269).
 
 **The 2026-06-14/15 portfolio wave shipped** (all in Recently completed): the agent-permission
@@ -265,12 +260,11 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   `L0 firmware` + `rest`, both cache-marked, within Anthropic's 4-breakpoint budget) rather than
   waiting on engine support for the single-`systemPrompt`-string interface. See Recently completed;
   plan archived `done`. Plan merged (#254).
-- **agent-debug-run-grounded** (P2, `in-progress`) — recast agent debug as a
-  **view over the run truth source** (the three run-log families) rather than a parallel debug
-  channel. **Shape (b):** **PR-1** re-scope the settle checkpoint to the run log → **PR-2** the
-  debug view over it. Plan merged (#257); **implementation in flight as PR #264 (cc-2)** —
-  reviewed by main, cc-2 addressing review + rebasing onto current `main` (conflicts expected on
-  `agentRuntime.ts` / `client.ts`). See `docs/plans/agent-debug-run-grounded.md`.
+- **agent-debug-run-grounded** (P2, `done`) — recast agent debug as a
+  **view over the run truth source** (the run ledgers) rather than a parallel debug channel.
+  Shipped as **shape (a)**, one clean PR (#264, cc-2) — the seq-renumbering refactor was
+  considered and dropped. See Recently completed; plan archived `done`. Design folded into
+  `docs/spec/agent-event-log-rendering.md`.
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
 - **cross-agent consultation** (P1 active + backlog; design lives in
@@ -701,6 +695,21 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Run-grounded agent debug surface** (cc-2, PR #264) — completes the
+  `agent-debug-run-grounded` plan (**shape (a)**, one clean PR; the seq-renumbering refactor was
+  considered and dropped). The debug panel is now a read-only **view of the execution tree**
+  (conversation → runs per agent → rounds → request-window / response / tool-exchange), derived
+  from the run ledgers the system already writes — no seq-matching, no provider-wire re-parsing.
+  Per-run system-prompt/tools captured once (hash-deduped) into the run's own stream; the
+  triggering user message + cross-run tool-result slimming are spliced in at derivation time
+  (matched by globally-unique `toolCallId`), read from a single `latestSeq`-cached
+  conversation-segment pass. All on-screen text runs through one secret-redaction gate
+  (key-name + value-pattern incl. `ghp_`/`github_pat`/JWT/`Bearer`/`password`, + large-blob
+  elision, consolidated in `agentSecretRedaction.ts`). Deletes the old snapshot/projection
+  surface (`agentDebug.ts` + `agentDebugProjection.ts`, ~800 lines) and its IPC/commands/types.
+  Two main-gate review rounds (xhigh recall → 15 findings; round-2 re-review confirmed 14 fixed
+  + 1 deferred with a spec note). Design folded into `docs/spec/agent-event-log-rendering.md`;
+  plan archived `done`.
 - **Plan status single-source** (main, shipped `9d6cd7f`, 2026-06-13) — `docs/TASKS.md` is the
   single source of plan status/priority; plan files are frontmatter-free pure design; the
   `bun run docs:check` guard enforces C1 (every plan link resolves) + C2 (no orphan plans).

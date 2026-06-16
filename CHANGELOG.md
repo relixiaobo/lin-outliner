@@ -575,6 +575,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Run-grounded agent debug surface (PR #264, cc-2)** — the agent debug panel is rebuilt as a
+  read-only **view of the execution tree** (conversation → runs per agent → rounds → request-window
+  / response / tool-exchange), derived directly from the run ledgers the system already writes —
+  no parallel snapshot representation, no provider-wire re-parsing, no cross-stream seq-matching.
+  Each round is one provider call, bounded by `assistant_message.started`. The agent's outbound
+  system prompt + tool schemas are captured once per run (hash-deduped) into the run's own stream;
+  the triggering user message and any cross-run tool-result slimming are spliced into a run's
+  derivation from a single `latestSeq`-cached read of the conversation segment (slimming matched
+  to its producing run by globally-unique `toolCallId`). Every on-screen string passes one
+  secret-redaction gate — key-name + value-pattern (`sk-`/`ghp_`/`github_pat`/JWT/`Bearer`/
+  `password`/`api_key`…) + large-blob elision, consolidated in `agentSecretRedaction.ts`.
+  Replaces the four `agent_debug_*` commands with `agent_debug_view` / `agent_debug_run`, and
+  deletes the old snapshot/projection surface (`agentDebug.ts` + `agentDebugProjection.ts`,
+  ~800 lines) with its IPC, types, and the `debug.snapshot.created` event (now
+  `debug.run_snapshot.created`, run-stream-scoped and replay-neutral). Pre-release: no migration —
+  old debug payloads are simply gone. Spec: `docs/spec/agent-event-log-rendering.md`.
 - **Providers own the connection, the agent profile owns model + effort (PR #267, cc)** — a provider
   config is now a **connection record only** (`{ providerId; baseUrl?; enabled }`); `modelId` /
   `reasoningLevel` are dropped from the stored config and from the `AgentProviderConfigView` /
