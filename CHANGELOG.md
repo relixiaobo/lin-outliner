@@ -627,6 +627,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Channel "working" indicator rework (PR #280, cc)** — the multi-agent Channel "who's responding"
+  surface changes from a corner-anchored floating activity pill (whose translucent list bled
+  transcript text — 穿模) to an **in-flow status row** directly above the composer that occupies its
+  own height, never overlaps the transcript, and is removed entirely when nothing is in flight.
+  Collapsed, it is a quiet `menu` trigger: an avatar stack (`+n` overflow), a generic working summary
+  (≤2 working → names, ≥3 → count), and reduced-motion-safe typing dots. Clicking it opens an
+  **opaque level-1 menu** built on the shared overlay primitives (`MenuSurface` + `useAnchoredOverlay`
+  for viewport flip/clamp + `useMenuKeyboard` for Escape / roving / focus-restore, portaled to
+  `<body>`) — so it can never get stuck open or run off-screen, and the opaque `--overlay-bg` ends
+  the bleed-through. Each row shows the per-agent state (thinking / using tools / received) with a
+  semantic status dot, a per-run **Stop**, and a header **Stop all**; clicking a row drills into that
+  run's live-text view. The producer already emits one entry per live run plus pending `received`
+  turns, so this is a renderer + CSS + i18n change with no projection/main rewrite. DM / single-agent
+  is unchanged; full DM-style process reuse in the drill-in is a tracked follow-up. Specs:
+  `docs/spec/design-system.md`, `docs/spec/agent-event-log-rendering.md`.
+  ([#280](https://github.com/relixiaobo/lin-outliner/pull/280))
 - **Default-allow agent tool permissions (plan #277 → PR #279, codex)** — the agent tool permission
   model changes from the consequence model's COMMIT→`ask` tier to **default-allow + blocklist**.
   `decideAgentOperationEffect` returns `allow` for every effect except a non-overridable **hard

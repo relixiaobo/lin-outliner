@@ -448,6 +448,22 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **channel-working-indicator** (cc, PR #280) — reworks the multi-agent Channel "who's responding"
+  UX. The corner-anchored floating activity pill (whose translucent list bled transcript text — 穿模)
+  becomes an **in-flow status row** above the composer that occupies its own height (never overlaps
+  the transcript) and is removed entirely when nothing is in flight. Collapsed: a quiet `menu`
+  trigger with an avatar stack (`+n` overflow), a generic working summary (≤2 → names, ≥3 → count),
+  and reduced-motion-safe typing dots. Click opens an **opaque level-1 menu** rebuilt on the shared
+  overlay infra (`MenuSurface` + `useAnchoredOverlay` flip/clamp + `useMenuKeyboard` Escape/roving/
+  focus-restore, portaled to `<body>`) — per-agent state + semantic dot, per-run **Stop**, header
+  **Stop all**, click-to-drill-in. Renderer + CSS + i18n only (the producer already emits per-run +
+  pending entries). **Gate (main):** `/code-review xhigh` round 1 surfaced 13 findings (bespoke
+  overlay vs shared infra, stuck-open popover, no viewport flip, autoscroll fight, stale snapshot,
+  spec drift, …); cc rebuilt the detail on the shared overlay stack (outside-pointer close +
+  `useAnchoredOverlay` + `useMenuKeyboard`) and addressed all, round 2 re-verified. typecheck ✓ ·
+  `agent-composer` e2e 54 ✓ · token/hex guards ✓ · light+dark visual verified (dark menu =
+  `#2e2e30` elevated surface, light text). #7 (drill-in closes on run completion) folded into the
+  follow-up scope. Design folded into `docs/spec/design-system.md`; plan archived `done`.
 - **agent-permission-blacklist-default-allow** (codex, plan #277 → impl PR #279) — the agent tool
   permission model flips from the consequence model's COMMIT→`ask` tier to **default-allow +
   blocklist**. `decideAgentOperationEffect` now returns `allow` for every non-floor effect; a tiny
