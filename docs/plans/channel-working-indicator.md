@@ -222,6 +222,11 @@ releases.
 - Drill-in DM-process reuse: **split to a follow-up PR** (PM-ratified after the
   build surfaced that the in-flight Channel message is suppressed at the
   projection source — see the constraint above). This PR keeps the working
-  `streamingText` live-text drill-in. Follow-up: expose the suppressed in-flight
-  structured Channel message (keyed by run) so the drill-in renders via
-  `AgentMessageRow` (streaming), matching DM.
+  `streamingText` live-text drill-in. Follow-up scope: expose the suppressed
+  in-flight structured Channel message (keyed by run) so the drill-in renders via
+  `AgentMessageRow` (streaming), matching DM; **and keep the drill-in open across
+  run completion** — today the activity entry (hence the live-text drill-in)
+  disappears the instant the run leaves the active set, so a just-finished agent's
+  detail closes out from under the reader. The follow-up should bind the drill-in
+  to the completed turn (the now-visible transcript row) rather than the transient
+  activity entry, so completion is a seamless live→final swap.
