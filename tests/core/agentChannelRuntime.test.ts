@@ -1386,4 +1386,53 @@ describe('agent channel runtime', () => {
     ]);
     await expect(runtime.addConversationMember(channel.conversationId, 'project:nope:ghost')).rejects.toThrow('not found');
   });
+
+  test('batch Channel update reports actual deltas and fails before partial edits', async () => {
+    const fixture = await setupChannelFixture([]);
+    const { runtime, reviewerAgentId, observerAgentId, dataRoot } = fixture;
+    const reviewer = agentPrincipal(reviewerAgentId);
+    const observer = agentPrincipal(observerAgentId);
+    const channel = await runtime.createConversation({ agentIds: [observerAgentId], title: 'Batch before' });
+
+    await expect(runtime.updateConversationChannel(channel.conversationId, {
+      title: 'Should not land',
+      addAgentIds: ['project:nope:ghost'],
+      removeAgentIds: [observerAgentId],
+    })).rejects.toThrow('not found');
+    let state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(state.conversation?.title).toBe('Batch before');
+    expect(state.conversation?.members).toContainEqual(observer);
+    await expect(runtime.updateConversationChannel(channel.conversationId, {
+      addAgentIds: [observerAgentId],
+      removeAgentIds: [observerAgentId],
+    })).rejects.toThrow(`Agent ${observerAgentId} cannot be both added and removed in one update.`);
+
+    const result = await runtime.updateConversationChannel(channel.conversationId, {
+      title: 'Batch after',
+      addAgentIds: [reviewerAgentId],
+      removeAgentIds: [observerAgentId, 'project:nope:ghost'],
+    });
+    expect(result).toMatchObject({
+      addedAgentIds: [reviewerAgentId],
+      removedAgentIds: [observerAgentId],
+      renamed: true,
+    });
+    state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(state.conversation?.title).toBe('Batch after');
+    expect(state.conversation?.members).toContainEqual(reviewer);
+    expect(state.conversation?.members).not.toContainEqual(observer);
+
+    const eventsBeforeNoop = (await new AgentEventStore(dataRoot).readEvents(channel.conversationId)).length;
+    const noop = await runtime.updateConversationChannel(channel.conversationId, {
+      title: 'Batch after',
+      addAgentIds: [reviewerAgentId],
+      removeAgentIds: [observerAgentId],
+    });
+    expect(noop).toMatchObject({
+      addedAgentIds: [],
+      removedAgentIds: [],
+      renamed: false,
+    });
+    expect((await new AgentEventStore(dataRoot).readEvents(channel.conversationId))).toHaveLength(eventsBeforeNoop);
+  });
 });

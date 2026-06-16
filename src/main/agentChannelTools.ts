@@ -12,11 +12,25 @@ import {
 export interface AgentChannelToolRuntime {
   currentConversationId(): string;
   createConversation(options: AgentCreateConversationOptions): Promise<AgentConversation>;
+  updateConversation(
+    conversationId: string,
+    options: AgentChannelUpdateOptions,
+  ): Promise<AgentChannelUpdateResult>;
   listConversations(): Promise<AgentConversationListMeta[]>;
   listAllAgentDefinitions(conversationId: string): Promise<AgentDefinitionView[]>;
-  renameConversation(conversationId: string, title: string): Promise<AgentConversationListMeta | null>;
-  addConversationMember(conversationId: string, agentId: string): Promise<AgentConversation>;
-  removeConversationMember(conversationId: string, agentId: string): Promise<AgentConversation>;
+}
+
+export interface AgentChannelUpdateOptions {
+  title?: string;
+  addAgentIds?: readonly string[];
+  removeAgentIds?: readonly string[];
+}
+
+export interface AgentChannelUpdateResult {
+  conversation: AgentConversationListMeta;
+  addedAgentIds: string[];
+  removedAgentIds: string[];
+  renamed: boolean;
 }
 
 export interface ChannelToolMemberData {
@@ -176,27 +190,21 @@ export function createChannelOrgTools(runtime: AgentChannelToolRuntime): AgentTo
           const removeMemberAgentIds = await resolveAgentRefs(runtime, conversationId, params.removeMemberRefs, 'remove member reference');
           const overlap = addMemberAgentIds.find((agentId) => removeMemberAgentIds.includes(agentId));
           if (overlap) throw new Error(`Agent ${overlap} cannot be both added and removed in one update.`);
-          let renamed = false;
-          if (params.name) {
-            await runtime.renameConversation(conversationId, params.name);
-            renamed = true;
-          }
-          for (const agentId of addMemberAgentIds) {
-            await runtime.addConversationMember(conversationId, agentId);
-          }
-          for (const agentId of removeMemberAgentIds) {
-            await runtime.removeConversationMember(conversationId, agentId);
-          }
+          const updated = await runtime.updateConversation(conversationId, {
+            ...(params.name ? { title: params.name } : {}),
+            ...(addMemberAgentIds.length > 0 ? { addAgentIds: addMemberAgentIds } : {}),
+            ...(removeMemberAgentIds.length > 0 ? { removeAgentIds: removeMemberAgentIds } : {}),
+          });
           return channelToolResult(
             CHANNEL_UPDATE_TOOL,
             {
               ...(await summarizeChannel(runtime, conversationId)),
-              ...(renamed ? { renamed: true } : {}),
-              ...(addMemberAgentIds.length > 0 ? { added_member_agent_ids: addMemberAgentIds } : {}),
-              ...(removeMemberAgentIds.length > 0 ? { removed_member_agent_ids: removeMemberAgentIds } : {}),
+              ...(updated.renamed ? { renamed: true } : {}),
+              ...(updated.addedAgentIds.length > 0 ? { added_member_agent_ids: updated.addedAgentIds } : {}),
+              ...(updated.removedAgentIds.length > 0 ? { removed_member_agent_ids: updated.removedAgentIds } : {}),
             },
             started,
-            'Summarize the Channel changes. If a requested member was missing or ambiguous, ask the user to clarify instead of guessing.',
+            'Summarize the Channel changes that actually applied. If nothing changed, say the Channel already matched the request.',
           );
         } catch (error) {
           return channelToolError(CHANNEL_UPDATE_TOOL, 'CHANNEL_UPDATE_FAILED', errorMessage(error), started);
@@ -213,9 +221,15 @@ async function resolveChannelTarget(
   if (params.conversationId && params.channelName) {
     throw new Error('Pass either conversation_id or channel_name, not both.');
   }
-  if (params.conversationId) return params.conversationId;
 
   const conversations = await runtime.listConversations();
+  if (params.conversationId) {
+    const match = conversations.find((conversation) => conversation.id === params.conversationId);
+    if (!match) throw new Error(`No Channel with conversation_id "${params.conversationId}" was found.`);
+    if (!isMutableChannelRow(match)) throw new Error('#General and DMs cannot be edited.');
+    return match.id;
+  }
+
   if (params.channelName) {
     const normalized = normalizeTitle(params.channelName);
     const matches = channelRows(conversations).filter((conversation) => normalizeTitle(conversation.title) === normalized);

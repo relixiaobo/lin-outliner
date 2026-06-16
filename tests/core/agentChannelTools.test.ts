@@ -5,6 +5,7 @@ import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
 import {
   createChannelOrgTools,
   type AgentChannelToolRuntime,
+  type AgentChannelUpdateOptions,
 } from '../../src/main/agentChannelTools';
 
 const COORDINATOR_ID = 'built-in:tenon:assistant';
@@ -52,9 +53,14 @@ describe('agent channel org tools', () => {
       remove_member_names: ['Reviewer'],
     });
 
-    expect(runtime.calls.renameConversation).toEqual([['channel-1', 'Renamed planning']]);
-    expect(runtime.calls.addConversationMember).toEqual([['channel-1', WRITER_ID]]);
-    expect(runtime.calls.removeConversationMember).toEqual([['channel-1', REVIEWER_ID]]);
+    expect(runtime.calls.updateConversation).toEqual([[
+      'channel-1',
+      {
+        title: 'Renamed planning',
+        addAgentIds: [WRITER_ID],
+        removeAgentIds: [REVIEWER_ID],
+      },
+    ]]);
     expect(JSON.parse(result.content[0]!.text)).toMatchObject({
       ok: true,
       data: {
@@ -65,6 +71,40 @@ describe('agent channel org tools', () => {
         renamed: true,
       },
     });
+  });
+
+  test('reports only the Channel changes that actually applied', async () => {
+    const runtime = fakeRuntime();
+    const tool = createChannelOrgTools(runtime).find((candidate) => candidate.name === 'channel_update')!;
+
+    const result = await tool.execute('call-noop', {
+      name: 'Planning',
+      add_member_names: ['Reviewer'],
+      remove_member_names: ['writer'],
+    });
+
+    expect(runtime.calls.updateConversation).toEqual([[
+      'channel-1',
+      {
+        title: 'Planning',
+        addAgentIds: [REVIEWER_ID],
+        removeAgentIds: [WRITER_ID],
+      },
+    ]]);
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      ok: true,
+      data: {
+        conversation_id: 'channel-1',
+        name: 'Planning',
+        members: [
+          { agent_id: COORDINATOR_ID, mention: 'assistant', name: 'Neva' },
+          { agent_id: REVIEWER_ID, mention: 'reviewer', name: 'Reviewer' },
+        ],
+      },
+    });
+    expect(JSON.parse(result.content[0]!.text).data).not.toHaveProperty('added_member_agent_ids');
+    expect(JSON.parse(result.content[0]!.text).data).not.toHaveProperty('removed_member_agent_ids');
+    expect(JSON.parse(result.content[0]!.text).data).not.toHaveProperty('renamed');
   });
 
   test('reports recoverable errors for ambiguous or invalid updates', async () => {
@@ -84,6 +124,8 @@ describe('agent channel org tools', () => {
 
     const currentDm = await tool.execute('call-current-dm', { name: 'Nope' });
     const general = await tool.execute('call-general', { channel_name: '#General', name: 'Nope' });
+    const directGeneral = await tool.execute('call-direct-general', { conversation_id: DEFAULT_GENERAL_CHANNEL_ID, name: 'Nope' });
+    const missingChannel = await tool.execute('call-missing-channel', { conversation_id: 'missing-channel', name: 'Nope' });
     const ambiguous = await tool.execute('call-ambiguous', { channel_name: 'Same', name: 'Nope' });
     const missingAgent = await tool.execute('call-missing-agent', {
       conversation_id: 'channel-a',
@@ -102,6 +144,14 @@ describe('agent channel org tools', () => {
     expect(JSON.parse(general.content[0]!.text)).toMatchObject({
       ok: false,
       error: { code: 'CHANNEL_UPDATE_FAILED', message: '#General and DMs cannot be edited.' },
+    });
+    expect(JSON.parse(directGeneral.content[0]!.text)).toMatchObject({
+      ok: false,
+      error: { code: 'CHANNEL_UPDATE_FAILED', message: '#General and DMs cannot be edited.' },
+    });
+    expect(JSON.parse(missingChannel.content[0]!.text)).toMatchObject({
+      ok: false,
+      error: { code: 'CHANNEL_UPDATE_FAILED', message: 'No Channel with conversation_id "missing-channel" was found.' },
     });
     expect(JSON.parse(ambiguous.content[0]!.text)).toMatchObject({
       ok: false,
@@ -124,16 +174,12 @@ function fakeRuntime(overrides: {
 } = {}): AgentChannelToolRuntime & {
   calls: {
     createConversation: unknown[];
-    renameConversation: Array<[string, string]>;
-    addConversationMember: Array<[string, string]>;
-    removeConversationMember: Array<[string, string]>;
+    updateConversation: Array<[string, AgentChannelUpdateOptions]>;
   };
 } {
   const calls = {
     createConversation: [] as unknown[],
-    renameConversation: [] as Array<[string, string]>,
-    addConversationMember: [] as Array<[string, string]>,
-    removeConversationMember: [] as Array<[string, string]>,
+    updateConversation: [] as Array<[string, AgentChannelUpdateOptions]>,
   };
   let conversations = overrides.conversations ?? [
     conversation('channel-1', 'Planning', [COORDINATOR_ID, REVIEWER_ID]),
@@ -155,30 +201,32 @@ function fakeRuntime(overrides: {
     },
     listConversations: async () => conversations,
     listAllAgentDefinitions: async () => definitions,
-    renameConversation: async (conversationId, title) => {
-      calls.renameConversation.push([conversationId, title]);
-      conversations = conversations.map((item) => (
-        item.id === conversationId ? { ...item, title, goal: title } : item
-      ));
-      return conversations.find((item) => item.id === conversationId) ?? null;
-    },
-    addConversationMember: async (conversationId, agentId) => {
-      calls.addConversationMember.push([conversationId, agentId]);
-      conversations = conversations.map((item) => (
-        item.id === conversationId
-          ? { ...item, members: [...item.members, { type: 'agent' as const, agentId }] }
-          : item
-      ));
-      return { conversationId, renderProjection: {} } as AgentConversation;
-    },
-    removeConversationMember: async (conversationId, agentId) => {
-      calls.removeConversationMember.push([conversationId, agentId]);
+    updateConversation: async (conversationId, options) => {
+      calls.updateConversation.push([conversationId, options]);
+      const before = conversations.find((item) => item.id === conversationId);
+      if (!before) throw new Error(`No Channel with conversation_id "${conversationId}" was found.`);
+      const beforeAgentIds = before.members.flatMap((member) => member.type === 'agent' ? [member.agentId] : []);
+      const addedAgentIds = (options.addAgentIds ?? []).filter((agentId) => !beforeAgentIds.includes(agentId));
+      const removedAgentIds = (options.removeAgentIds ?? []).filter((agentId) => beforeAgentIds.includes(agentId));
+      const renamed = options.title !== undefined && options.title !== before.title;
       conversations = conversations.map((item) => (
         item.id === conversationId
-          ? { ...item, members: item.members.filter((member) => member.type !== 'agent' || member.agentId !== agentId) }
+          ? {
+              ...item,
+              ...(options.title ? { title: options.title, goal: options.title } : {}),
+              members: [
+                ...item.members.filter((member) => member.type !== 'agent' || !(options.removeAgentIds ?? []).includes(member.agentId)),
+                ...addedAgentIds.map((agentId) => ({ type: 'agent' as const, agentId })),
+              ],
+            }
           : item
       ));
-      return { conversationId, renderProjection: {} } as AgentConversation;
+      return {
+        conversation: conversations.find((item) => item.id === conversationId)!,
+        addedAgentIds,
+        removedAgentIds,
+        renamed,
+      };
     },
   };
   return runtime;

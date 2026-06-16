@@ -484,6 +484,9 @@ test.describe('agent and Channel config windows', () => {
 
   test('removes an invited member from the Channel config window', async ({ page }) => {
     const config = await openChannelConfig(page, 'mock-agent-channel-planning');
+    const members = config.getByRole('list', { name: 'Channel members' });
+    await expect(members.getByText('@self')).toBeVisible();
+
     await config.getByRole('button', { name: 'Remove from channel' }).click();
 
     await expect.poll(async () => {
@@ -493,6 +496,7 @@ test.describe('agent and Channel config windows', () => {
       conversationId: 'mock-agent-channel-planning',
       agentId: 'user:mock:self',
     });
+    await expect(members.getByText('@self')).toHaveCount(0);
   });
 });
 
