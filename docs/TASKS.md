@@ -24,7 +24,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Codex | `lin-outliner-codex/` | — | idle (shipped agent-context-architecture #263, bundled-built-in-skills #269) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped file-preview-unification #262) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped permission folder-handoff + `file_convert` #266) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
@@ -448,6 +448,30 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **document-data-skills-upgrade** (codex-4, PR #283) — strengthens the `/document` and
+  `/data-analysis` built-in skills (follow-up to #270). `/document` gains archetype/form-factor
+  routing, design presets, and table gates; `docx_tool.py` now reports heading jumps, manual bullets,
+  table-grid risks, comment refs, sections, headers/footers, notes, styles, and numbering;
+  `markdown_tool.mjs` reports heading jumps, long paragraphs, wide tables, and word/paragraph counts.
+  `/data-analysis` gains portable data contracts + validation and workbook-delivery guidance;
+  `data_tool.py` adds `profile`/`validate` subcommands (duplicate-row, candidate-key, date, outlier,
+  quality-flag, suggested-contract, contract validation) and `xlsx_tool.py` reports hidden sheets,
+  manual calc mode, formula-error literals, defined names, tables, charts, pivots, merged cells, and
+  hidden rows/cols. All scripts stay stdlib-only (no new deps; XLSX/DOCX parsed as zip+XML). **Gate
+  (main):** review surfaced 2 SHOULD-FIX (`validate` leaked a raw Python traceback on a non-object
+  contract / non-integer `rowCount`) → codex-4 hardened `validate` with a contract-type guard +
+  `contract_int` helper (and bonus-fixed grouped-number/boolean-inference NITs); crashes re-verified
+  fixed, typecheck + `builtInSkillScripts`/`agentSkills` tests green, merged onto #281 (trivial
+  `agent-skills.md` union conflict resolved at the gate).
+- **presentation-skill-visual-polish** (codex-4, PR #281) — turns `/presentation` from broad deck
+  guidance into an opinionated visual deck system: required design direction/theme/motif + registered
+  `data-layout` recipes (`references/layout-recipes.md`), a stronger portable HTML template (tokens,
+  chrome, cover/split/metric/compare/gallery/timeline/quote component classes), a Keynote-style stage
+  direction, and `html_tool.mjs` visual-quality warnings (missing/unknown layouts, low layout variety,
+  text-only slides, bullet dumps, tiny text) kept as warnings, not structural failures. **Gate
+  (main):** review surfaced 1 SHOULD-FIX (`html-deck.md` advertised 5 component classes the template
+  didn't style) → codex-4 added the missing component CSS (all 14 classes now styled); template
+  re-verified to inspect clean, typecheck + tests green; merged first.
 - **channel-working-indicator** (cc, PR #280) — reworks the multi-agent Channel "who's responding"
   UX. The corner-anchored floating activity pill (whose translucent list bled transcript text — 穿模)
   becomes an **in-flow status row** above the composer that occupies its own height (never overlaps

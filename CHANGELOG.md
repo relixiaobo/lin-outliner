@@ -12,6 +12,27 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Document & data-analysis skill hardening (PR #283, codex-4)** — strengthens the `/document` and
+  `/data-analysis` built-in skills (follow-up to #270), staying **stdlib-only** (no new dependencies;
+  XLSX/DOCX parsed as zip+XML). `/document` gains archetype/form-factor routing, design presets, and
+  table gates; `docx_tool.py` reports heading jumps, manual bullets, table-grid risks, comment
+  references, sections, headers/footers, notes, styles, and numbering, and `markdown_tool.mjs` reports
+  heading jumps, long paragraphs, wide tables, and word/paragraph counts. `/data-analysis` gains
+  portable data contracts (`data-contract.schema.json`), a `data-validation-report` schema, and
+  workbook-delivery guidance; `data_tool.py` adds `profile`/`validate` subcommands (duplicate-row,
+  candidate-key, date, outlier, quality-flag, suggested-contract, and contract validation), and
+  `xlsx_tool.py` reports hidden sheets, manual calculation mode, formula-error literals, defined names,
+  tables, charts, pivots, merged cells, and hidden rows/columns. `validate` returns a structured
+  `{ok,errors,warnings}` envelope (no raw tracebacks) on malformed contracts. Spec:
+  `docs/spec/agent-skills.md`.
+- **Presentation visual skill hardening (PR #281, codex-4)** — turns `/presentation` (follow-up to
+  #270) from broad deck guidance into an opinionated visual deck system. The visual route now requires
+  a design direction, theme, motif, and registered `data-layout` recipes (`references/layout-recipes.md`)
+  before generation; the portable HTML template gains design tokens, chrome, and
+  cover/split/metric/compare/gallery/timeline/quote component classes plus a Keynote-style stage
+  direction for premium decks; and `html_tool.mjs` reports visual-quality risks (missing/unknown
+  layouts, low layout variety, text-only slides, bullet dumps, tiny text) as warnings rather than
+  structural failures. Spec: `docs/spec/agent-skills.md`.
 - **Default `#General` agent Channel (PR #278, codex-2)** — the runtime reserves
   `lin-agent-channel-general` as a normal named Channel (`title/goal = General`, no stored
   conversation `kind` — its reserved id plus a runtime invariant make it special) that always
