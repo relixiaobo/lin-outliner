@@ -94,6 +94,10 @@
   color: var(--text-soft);
 }
 
+.agent-process-toggle.is-locked {
+  color: var(--text-soft);
+}
+
 .agent-process-toggle:hover .agent-disclosure-indicator.is-interactive .agent-disclosure-status,
 .agent-process-toggle:focus-visible .agent-disclosure-indicator.is-interactive .agent-disclosure-status,
 .agent-thinking-row.is-toggle:hover .agent-disclosure-indicator.is-interactive .agent-disclosure-status,
@@ -154,6 +158,22 @@
   margin-left: 6.5px;
   border-left: 1px solid var(--border-subtle);
   padding-left: var(--space-5);
+}
+
+.agent-process-flat {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-5);
+  margin-top: var(--space-3);
+  color: var(--text-strong);
+  font-size: var(--font-content);
+  line-height: var(--line-content);
+}
+
+.agent-process-flat-narration {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .agent-thinking-row {

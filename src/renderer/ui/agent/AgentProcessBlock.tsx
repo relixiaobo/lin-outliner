@@ -1,6 +1,7 @@
 import type { AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
+import type { ReactNode } from 'react';
 import {
   ChevronDownIcon,
   ICON_SIZE,
@@ -9,7 +10,7 @@ import {
 import { ButtonControl } from '../primitives/ButtonControl';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentProcessTimeline } from './AgentProcessTimeline';
-import { getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
+import { childRunToolStatus, getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
 import { firstLine, formatRunDuration, previewText } from './agentProcessTypes';
 import { useT } from '../../i18n/I18nProvider';
@@ -27,6 +28,17 @@ function lastNonEmptyThinking(
     if (text) return text;
   }
   return null;
+}
+
+function childRunMapFromToolSegments(blocks: AgentProcessSegmentBlock[]): ReadonlyMap<string, AgentRenderChildRunEntity> | undefined {
+  let map: Map<string, AgentRenderChildRunEntity> | undefined;
+  for (const block of blocks) {
+    if (block.kind === 'toolCall' && block.childRun) {
+      map ??= new Map<string, AgentRenderChildRunEntity>();
+      map.set(block.toolCall.id, block.childRun);
+    }
+  }
+  return map;
 }
 
 interface AgentProcessBlockProps {
@@ -56,12 +68,42 @@ interface AgentProcessBlockProps {
   workedForMs: number | null;
 }
 
+interface AgentTurnProcessFoldProps extends Omit<AgentProcessBlockProps, 'conversationId' | 'childRunsByParentToolCallId' | 'index' | 'onNodeReferenceOpen' | 'onOpenChildRunTranscript' | 'results'> {
+  children: ReactNode;
+  results: Map<string, AgentToolResultWithPayloads>;
+}
+
+interface ProcessSummaryFacts {
+  childRunsByToolCallId?: ReadonlyMap<string, AgentRenderChildRunEntity>;
+  firstThinkingText: string | null;
+  lastThinkingText: string | null;
+  thinkingCount: number;
+  toolCalls: ToolCall[];
+}
+
+function processSummaryFacts(blocks: AgentProcessSegmentBlock[]): ProcessSummaryFacts {
+  const thinkingBlocks = blocks.filter(
+    (block): block is Extract<AgentProcessSegmentBlock, { kind: 'thinking' }> => block.kind === 'thinking',
+  );
+  const toolCalls = blocks
+    .filter((block): block is Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }> => block.kind === 'toolCall')
+    .map((block) => block.toolCall);
+  return {
+    childRunsByToolCallId: childRunMapFromToolSegments(blocks),
+    firstThinkingText: firstLine(thinkingBlocks[0]?.text ?? ''),
+    lastThinkingText: lastNonEmptyThinking(thinkingBlocks),
+    thinkingCount: thinkingBlocks.length,
+    toolCalls,
+  };
+}
+
 export function summarizeProcess({
   firstThinkingText,
   lastThinkingText,
   thinkingCount,
   pendingToolCallIds,
   results,
+  childRunsByToolCallId,
   toolCalls,
   turnActive,
   liveCollapsed,
@@ -77,6 +119,7 @@ export function summarizeProcess({
   thinkingCount: number;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
+  childRunsByToolCallId?: ReadonlyMap<string, AgentRenderChildRunEntity>;
   toolCalls: ToolCall[];
   liveCollapsed: boolean;
   turnActive: boolean;
@@ -88,6 +131,19 @@ export function summarizeProcess({
   thinkingLabel: string;
 }): string {
   const toolCount = toolCalls.length;
+  const fallbackActiveToolCallId = turnActive && pendingToolCallIds.size === 0
+    ? [...toolCalls].reverse().find((toolCall) => !results.has(toolCall.id) && !childRunsByToolCallId?.has(toolCall.id))?.id ?? null
+    : null;
+  const toolStatus = (toolCall: ToolCall) => {
+    const childRun = childRunsByToolCallId?.get(toolCall.id);
+    if (childRun) return childRunToolStatus(childRun);
+    return getToolCallStatus(
+      toolCall.id,
+      results.get(toolCall.id),
+      pendingToolCallIds,
+      fallbackActiveToolCallId === toolCall.id,
+    );
+  };
 
   // While the turn is live AND the block is collapsed, the header doubles as a
   // live status line: whichever tool is currently running, else the latest
@@ -96,7 +152,7 @@ export function summarizeProcess({
   if (liveCollapsed) {
     for (let i = toolCalls.length - 1; i >= 0; i -= 1) {
       const toolCall = toolCalls[i]!;
-      const status = getToolCallStatus(toolCall.id, results.get(toolCall.id), pendingToolCallIds, turnActive);
+      const status = toolStatus(toolCall);
       if (status === 'pending') return summarizeToolCall(toolCall, status, toolCallLabels);
     }
     if (lastThinkingText) return previewText(lastThinkingText, 80);
@@ -125,7 +181,7 @@ export function summarizeProcess({
 
   if (thinkingCount === 0 && toolCount === 1) {
     const toolCall = toolCalls[0]!;
-    const status = getToolCallStatus(toolCall.id, results.get(toolCall.id), pendingToolCallIds, turnActive);
+    const status = toolStatus(toolCall);
     return summarizeToolCall(toolCall, status, toolCallLabels);
   }
 
@@ -139,7 +195,7 @@ export function summarizeProcess({
 
   if (thinkingCount > 0 && toolCount === 1) {
     const toolCall = toolCalls[0]!;
-    const status = getToolCallStatus(toolCall.id, results.get(toolCall.id), pendingToolCallIds, turnActive);
+    const status = toolStatus(toolCall);
     return process.thoughtAndTool({ tool: summarizeToolCall(toolCall, status, toolCallLabels) });
   }
 
@@ -166,19 +222,12 @@ export function AgentProcessBlock({
   workedForMs,
 }: AgentProcessBlockProps) {
   const t = useT();
-  const thinkingBlocks = blocks.filter(
-    (block): block is Extract<AgentProcessSegmentBlock, { kind: 'thinking' }> => block.kind === 'thinking',
-  );
-  const toolCalls = blocks
-    .filter((block): block is Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }> => block.kind === 'toolCall')
-    .map((block) => block.toolCall);
-  const firstThinkingText = firstLine(thinkingBlocks[0]?.text ?? '');
-  const lastThinkingText = lastNonEmptyThinking(thinkingBlocks);
+  const facts = processSummaryFacts(blocks);
   const liveSegment = turnActive && !sealed;
   // Codex-style live disclosure: a DM turn auto-expands **while it is working**
-  // (`liveSegment` — thinking/tools streaming) so the process is visible, then
-  // auto-collapses to "Worked for …" the moment it seals (final text begins) or
-  // the turn ends. A resultless turn we're surfacing (`surfaceResultlessProcess` —
+  // (`liveSegment` — thinking/tools/final prose streaming) so the process is
+  // visible, then auto-collapses to "Worked for …" the moment the turn settles.
+  // A resultless turn we're surfacing (`surfaceResultlessProcess` —
   // a genuine interruption in either mode, or a sealed resultless DM turn per #240)
   // also auto-expands so its interim work / error context stays visible. Everything
   // else defaults collapsed — including a cleanly-completed resultless Channel turn,
@@ -206,12 +255,9 @@ export function AgentProcessBlock({
             running tool row in the timeline. */}
         <span className="agent-process-title">
           {summarizeProcess({
-            firstThinkingText,
-            lastThinkingText,
-            thinkingCount: thinkingBlocks.length,
+            ...facts,
             pendingToolCallIds,
             results,
-            toolCalls,
             turnActive,
             liveCollapsed,
             turnFailedWithoutProse,
@@ -246,6 +292,70 @@ export function AgentProcessBlock({
           childRunsByParentToolCallId={childRunsByParentToolCallId}
           turnActive={turnActive}
         />
+      ) : null}
+    </div>
+  );
+}
+
+export function AgentTurnProcessFold({
+  blocks,
+  children,
+  expandState,
+  id,
+  pendingToolCallIds,
+  results,
+  sealed,
+  turnActive,
+  turnFailedWithoutProse,
+  surfaceResultlessProcess,
+  workedForMs,
+}: AgentTurnProcessFoldProps) {
+  const t = useT();
+  const liveSegment = turnActive && !sealed;
+  const defaultExpanded = surfaceResultlessProcess || liveSegment;
+  const expanded = liveSegment ? true : expandState.isExpanded(id, defaultExpanded);
+  const title = turnActive ? t.agent.process.working : (() => {
+    const facts = processSummaryFacts(blocks);
+    return summarizeProcess({
+      ...facts,
+      pendingToolCallIds,
+      results,
+      turnActive,
+      liveCollapsed: false,
+      turnFailedWithoutProse,
+      surfaceResultlessProcess,
+      workedForMs,
+      process: t.agent.process,
+      toolCallLabels: t.agent.toolCall,
+      thinkingLabel: t.agent.thinking.thinking,
+    });
+  })();
+
+  return (
+    <div className={`agent-process-block ${turnFailedWithoutProse ? 'is-error' : ''}`}>
+      <ButtonControl
+        aria-expanded={expanded}
+        className={`agent-process-toggle${liveSegment ? ' is-locked' : ''}`}
+        disabled={liveSegment}
+        onClick={liveSegment ? undefined : () => expandState.toggle(id, expanded)}
+      >
+        <span className="agent-process-title">
+          {title}
+        </span>
+        {liveSegment ? (
+          <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
+        ) : (
+          <ChevronDownIcon
+            aria-hidden
+            className={`agent-process-chevron${expanded ? ' is-expanded' : ''}`}
+            size={14}
+          />
+        )}
+      </ButtonControl>
+      {expanded ? (
+        <div className="agent-process-flat">
+          {children}
+        </div>
       ) : null}
     </div>
   );

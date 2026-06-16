@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { ToolCall } from '../../src/core/agentTypes';
-import { getToolIcon, summarizeToolCall } from '../../src/renderer/ui/agent/AgentToolCallBlock';
+import { getToolCallStatus, getToolIcon, summarizeToolCall } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import { BrainIcon, NodeCreateToolIcon } from '../../src/renderer/ui/icons';
 import { getMessages } from '../../src/core/i18n';
 
@@ -34,6 +34,13 @@ function fileWriteToolCall(args: Record<string, unknown>): ToolCall {
 }
 
 describe('agent tool call block', () => {
+  test('marks only runtime-reported tool ids as pending while a turn is active', () => {
+    expect(getToolCallStatus('tool-running', undefined, new Set(['tool-running']), true)).toBe('pending');
+    expect(getToolCallStatus('tool-stale', undefined, new Set(['tool-running']), false)).toBe('error');
+    expect(getToolCallStatus('tool-finishing', undefined, new Set(), true)).toBe('pending');
+    expect(getToolCallStatus('tool-idle', undefined, new Set(), false)).toBe('error');
+  });
+
   test('uses memory icon and summarizes recall', () => {
     expect(getToolIcon(recallToolCall({ query: 'preferences' }))).toBe(BrainIcon);
     expect(summarizeToolCall(recallToolCall({ query: 'preferences' }), 'pending', labels)).toBe('Recalling memory "preferences"');

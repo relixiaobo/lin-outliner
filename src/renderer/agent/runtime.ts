@@ -148,7 +148,7 @@ const EMPTY_POV_INSPECTORS: Record<string, AgentPovInspectorView> = {};
 const CONVERSATION_MESSAGE_CACHE = new WeakMap<AgentRenderMessageEntity, AgentConversationMessage>();
 const TOOL_RESULT_CACHE = new WeakMap<AgentRenderMessageEntity, AgentToolResultWithPayloads>();
 
-const EMPTY_USAGE: Usage = {
+export const EMPTY_USAGE: Usage = {
   input: 0,
   output: 0,
   cacheRead: 0,
@@ -162,6 +162,23 @@ const EMPTY_USAGE: Usage = {
     total: 0,
   },
 };
+
+export function createAssistantPlaceholderFromModel(
+  model: AgentRenderProjection['model'],
+  timestamp: number,
+  content: AssistantMessage['content'] = [],
+): AssistantMessage {
+  return {
+    role: 'assistant',
+    content,
+    api: modelValue(model, 'api') ?? '',
+    provider: modelValue(model, 'provider') ?? '',
+    model: modelValue(model, 'id') ?? '',
+    usage: EMPTY_USAGE,
+    stopReason: 'stop',
+    timestamp,
+  };
+}
 
 function assistantHasText(message: AssistantMessage | undefined): boolean {
   return message?.content.some((block) => block.type === 'text' && block.text.trim().length > 0) ?? false;
@@ -380,16 +397,7 @@ function createActiveAssistantPlaceholder(
   projection: AgentRenderProjection,
   entries: AgentConversationEntry[],
 ): AssistantMessage {
-  return {
-    role: 'assistant',
-    content: [],
-    api: projectionModelValue(projection, 'api') ?? '',
-    provider: projectionModelValue(projection, 'provider') ?? '',
-    model: projectionModelValue(projection, 'id') ?? '',
-    usage: EMPTY_USAGE,
-    stopReason: 'stop',
-    timestamp: activeAssistantAnchorTimestamp(entries, projection),
-  };
+  return createAssistantPlaceholderFromModel(projection.model, activeAssistantAnchorTimestamp(entries, projection));
 }
 
 function textContent(text: string): TextContent[] {
@@ -397,7 +405,11 @@ function textContent(text: string): TextContent[] {
 }
 
 function projectionModelValue(projection: AgentRenderProjection, key: string): string | null {
-  const value = projection.model[key];
+  return modelValue(projection.model, key);
+}
+
+function modelValue(model: AgentRenderProjection['model'], key: string): string | null {
+  const value = model[key];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
@@ -563,6 +575,7 @@ export interface LinAgentRuntimeView {
   dmRunActive: boolean;
   /** True while any addressed Channel run is active or pending (the async work surface). */
   channelRunsActive: boolean;
+  modelApi: string | null;
   modelId: string | null;
   providerId: string | null;
   pendingToolCallIds: Set<string>;
@@ -1297,6 +1310,7 @@ export class AgentRuntimeStore {
       error: this.error,
       dmRunActive: this.projection.dmRunActive,
       channelRunsActive: this.projection.channelRunsActive,
+      modelApi: projectionModelValue(this.projection, 'api'),
       modelId: projectionModelValue(this.projection, 'id'),
       providerId: projectionModelValue(this.projection, 'provider'),
       pendingToolCallIds: this.pendingToolCallSetForProjection(),

@@ -454,16 +454,7 @@
   padding: var(--space-6) var(--space-6) var(--space-8);
 }
 
-/* The per-run live token stream (a running Channel agent composing). The
-   enclosing .agent-child-run-details-body supplies padding + scroll; this rule
-   only sets content typography and wraps long unbroken token runs. */
-.agent-channel-run-live {
-  overflow-wrap: anywhere;
-  color: var(--text-default);
-  font-size: var(--font-content);
-  line-height: var(--line-content);
-}
-
+.agent-channel-run-live,
 .agent-child-run-transcript-list {
   display: flex;
   min-width: 0;
@@ -471,26 +462,14 @@
   gap: var(--space-6);
 }
 
-.agent-child-run-transcript-message {
+.agent-transcript-tool-result-row {
   min-width: 0;
   border-left: 2px solid var(--border-subtle);
-  padding-left: var(--space-5);
-}
-
-.agent-child-run-transcript-message.is-user {
-  border-left-color: var(--agent-accent);
-}
-
-.agent-child-run-transcript-message.is-assistant {
-  border-left-color: var(--text-faint);
-}
-
-.agent-child-run-transcript-message.is-system {
-  border-left-color: var(--border-strong);
-}
-
-.agent-child-run-transcript-message.is-tool-result {
   border-left-color: var(--semantic-warning);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  padding-left: var(--space-5);
 }
 
 .agent-child-run-transcript-head {
@@ -505,23 +484,7 @@
   text-transform: lowercase;
 }
 
-.agent-child-run-assistant-body {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.agent-child-run-thinking {
-  min-width: 0;
-  color: var(--text-faint);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
-}
-
-
-.agent-child-run-thinking pre,
-.agent-child-run-transcript-message.is-tool-result pre,
+.agent-transcript-tool-result-row pre,
 .agent-child-run-result-box pre,
 .agent-pov-inspector-part pre {
   max-height: 280px;

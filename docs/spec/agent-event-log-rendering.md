@@ -897,17 +897,27 @@ Rules:
 - Long output rows are collapsed by default.
 - **Result-first turn fold (DM and Channel alike).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last
-  thinking/tool block and shows as prose; **everything before it — thinking, tool
-  calls, AND interim narration text** ("let me check X first") — folds into ONE
-  collapsed process block. A turn with no thinking/tools is a direct answer and
-  renders without a fold. This is one mechanism, not two: there is no
-  channel-specific text-only path (a Channel turn renders the same fold once its
-  utterance lands) and no single-tool inline special case.
+  thinking/tool block and shows as prose. A turn-level **"Worked for …"** fold sits
+  above that final answer and collapses/expands every earlier block. When expanded,
+  earlier content stays in original order: interim narration text ("let me check X
+  first") renders as normal prose, while adjacent thinking/tool blocks collapse
+  into compact process groups with their own detail disclosure. A turn with no
+  thinking/tools is a direct answer and renders without a fold. This is one
+  mechanism, not two: there is no channel-specific text-only path (a Channel turn
+  renders the same fold once its utterance lands) and no single-tool inline special
+  case.
 - **Codex-style live disclosure.** A DM turn's process block **auto-expands while
-  it is working** (thinking/tools streaming live, `liveSegment`) so the process is
-  visible, then **auto-collapses the moment it seals** — when the final answer
-  begins streaming or the turn ends. A Channel turn is delivered atomically (its
-  rows are `idle`, never `liveSegment`), so it lands already collapsed.
+  it is working** (thinking/tools/final prose streaming live, `liveSegment`) so the
+  process is visible while the final answer streams below it. While live, the
+  outer `Working...` row is locked open and non-interactive; a user can only
+  collapse/expand it after the turn settles. The live row renders immediately for
+  an active assistant turn, even before the first thinking/tool block, so later
+  tool events do not insert a new header above already-streamed text. A tool-free
+  live answer keeps its prose in the normal answer position (not inside process
+  narration), so the same markdown subtree survives the live→sealed transition.
+  The process **auto-collapses when the turn settles**. A Channel turn is
+  delivered atomically (its rows are `idle`, never `liveSegment`), so it lands
+  already collapsed.
   - A **resultless** turn (last visible block is a thought/tool — no trailing
     answer prose) drives two SEPARATE decisions, decoupled so a Channel never
     mislabels:
@@ -935,23 +945,46 @@ Rules:
     resultless turn from burying interim narration behind a collapsed header.)
   - Every other steady state defaults collapsed. The **sticky override wins**: once
   a user toggles the block it keeps that choice and never auto-collapses on seal.
-- The collapsed header carries the single activity spinner and, while a turn is
-  live **and the user has collapsed it**, acts as a status line (current running
-  tool with status, else the latest streaming thought). Once the turn **seals**,
-  the collapsed header reads **"Worked for {duration}"** (codex-style; duration =
+- The live header carries the single activity spinner. In a live DM turn, the
+  outer process fold stays expanded while final answer prose streams below it and
+  its top header stays the neutral **"Working..."** label; concrete thought/tool
+  summaries belong to the adjacent inner process groups. This row is a status row
+  while active, not a disclosure control. The process collapses only after the
+  turn settles. Once the turn **seals**, the
+  collapsed header reads **"Worked for {duration}"** (codex-style; duration =
   the producing run's `updatedAt − startedAt`, threaded as `runDurationMs` on the
   message entity **only once the run is sealed** — a still-`running` run, whether
   live or left running after a crash, has `updatedAt === startedAt` and so no
   meaningful wall-clock, and is left unknown rather than shown as "<1s"; a multi-run
   turn sums each run's wall-clock). When the duration is unknown the header falls
   back to the static group summary (e.g. "Thought · used N tools"). Expanding the
-  block moves the spinner to the running tool row inside the timeline. A
+  block moves the spinner to the running tool row inside the timeline. A tool row
+  is running only when its id is present in `pendingToolCallIds`; the renderer
+  may only use an active-turn fallback for the latest resultless tool when the
+  projection currently reports no pending ids at all. It must not treat every
+  resultless tool call in an active turn as pending, because later continuation
+  text can coexist with an earlier resultless/stale tool row. A
   **genuinely interrupted** turn (run `failed`/`cancelled`/crash-orphaned —
   `turnInterrupted` — with no trailing answer) keeps the "Interrupted…" label,
   never a duration. A cleanly `completed` resultless turn never shows "Interrupted":
   in a Channel it folds to "Worked for {duration}"; in a DM it surfaces its process
   (per the result-first design) under the descriptive group summary rather than the
   "Worked for …" resting header.
+- **One assistant-turn renderer.** The DM transcript, child-run task detail
+  timeline, and Channel live-run detail all render assistant content through the
+  same assistant turn/process fold components. The task detail panel reads a raw
+  child-run transcript, but only adapts it into normal transcript rows; it does
+  not own separate thinking/tool/result UI. A running task only marks the
+  transcript's last assistant turn live when that turn is actually unfinished
+  (pending tool call or null stop reason); task-level running status stays in the
+  panel header/actions. The child-run adapter also threads the run terminal
+  status and wall-clock into the last assistant row, skips hidden-only context
+  user rows, and renders orphan tool results as capped plain text rather than
+  markdown. The Channel live-run detail adapts the current `streamingText` into a
+  temporary live assistant turn so it uses the same `Working...` surface while the
+  run is active; the canonical Channel transcript still receives only whole
+  sealed utterances. This keeps the differences at the data-adapter boundary
+  instead of forking presentation behavior.
 - Large details are refs, not row payloads.
 - A run/provider failure rides on the terminal assistant message: the run marks
   it `assistant_message.failed` (error stop reason + `errorMessage`), so it

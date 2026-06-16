@@ -1,4 +1,5 @@
 import type { ToolCall } from '../../../core/agentTypes';
+import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 
 export interface AgentExpandState {
   isExpanded: (id: string, defaultExpanded?: boolean) => boolean;
@@ -14,6 +15,7 @@ export type AgentProcessSegmentBlock =
   }
   | {
     kind: 'toolCall';
+    childRun?: AgentRenderChildRunEntity;
     toolCall: ToolCall;
   }
   // Interim narration: assistant text emitted before the turn's final answer

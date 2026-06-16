@@ -40,6 +40,14 @@ export function AgentProcessTimeline({
   // captures the solo case without three throwaway classification passes.
   const onlyBlock = blocks.length === 1 ? blocks[0]! : null;
   const soloThinkingBlock = onlyBlock?.kind === 'thinking' ? onlyBlock : null;
+  const fallbackActiveToolCall = turnActive && pendingToolCallIds.size === 0
+    ? [...blocks].reverse().find((block): block is Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }> => (
+      block.kind === 'toolCall'
+      && !results.has(block.toolCall.id)
+      && !(block.childRun ?? childRunsByParentToolCallId?.get(block.toolCall.id))
+    ))
+    : undefined;
+  const fallbackActiveToolCallId = fallbackActiveToolCall?.toolCall.id ?? null;
 
   return (
     <div className="agent-process-timeline">
@@ -71,6 +79,7 @@ export function AgentProcessTimeline({
               </div>
             );
           }
+          const childRun = block.childRun ?? childRunsByParentToolCallId?.get(block.toolCall.id);
           return (
             <AgentToolCallBlock
               expanded={expandState.isExpanded(`tool:${block.toolCall.id}`, false)}
@@ -85,9 +94,9 @@ export function AgentProcessTimeline({
               pendingToolCallIds={pendingToolCallIds}
               result={results.get(block.toolCall.id)}
               conversationId={conversationId}
-              childRun={childRunsByParentToolCallId?.get(block.toolCall.id)}
+              childRun={childRun}
               toolCall={block.toolCall}
-              turnActive={turnActive}
+              turnActive={pendingToolCallIds.has(block.toolCall.id) || fallbackActiveToolCallId === block.toolCall.id}
             />
           );
         })

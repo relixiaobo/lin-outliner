@@ -35,7 +35,7 @@ describe('agent process summary', () => {
       firstThinkingText: 'Identify relevant outline nodes',
       lastThinkingText: 'Identify relevant outline nodes',
       thinkingCount: 1,
-      pendingToolCallIds: new Set(),
+      pendingToolCallIds: new Set([readTool.id]),
       results: new Map(),
       toolCalls: [readTool],
       turnActive: true,
@@ -47,6 +47,25 @@ describe('agent process summary', () => {
       toolCallLabels,
       thinkingLabel,
     })).toBe('Reading node "node-alpha"');
+  });
+
+  test('live + collapsed header ignores resultless tool calls that are no longer pending', () => {
+    expect(summarizeProcess({
+      firstThinkingText: 'Identify relevant outline nodes',
+      lastThinkingText: 'Now search the design system',
+      thinkingCount: 2,
+      pendingToolCallIds: new Set([searchTool.id]),
+      results: new Map(),
+      toolCalls: [readTool, searchTool],
+      turnActive: true,
+      liveCollapsed: true,
+      turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
+      workedForMs: null,
+      process,
+      toolCallLabels,
+      thinkingLabel,
+    })).toBe('Searching nodes "design system"');
   });
 
   test('live + collapsed header previews the latest thought while still thinking', () => {
@@ -187,7 +206,7 @@ describe('agent process summary', () => {
       firstThinkingText: 'Identify relevant outline nodes',
       lastThinkingText: 'Identify relevant outline nodes',
       thinkingCount: 1,
-      pendingToolCallIds: new Set(),
+      pendingToolCallIds: new Set([readTool.id]),
       results: new Map(),
       toolCalls: [readTool],
       turnActive: true,
