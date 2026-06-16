@@ -63,6 +63,18 @@ describe('AgentTranscriptFileMenu', () => {
     ]);
   });
 
+  test('a directory chip omits "Add to Today" (only files ingest into an asset node)', () => {
+    const rendered = render(
+      { path: '/workdir/logs', name: 'logs', entryKind: 'directory' },
+      {},
+    );
+    const items = Array.from(rendered.document.body.querySelectorAll('.node-context-item'));
+    expect(items.map((item) => item.textContent)).toEqual([
+      labels.openWithDefaultApp,
+      labels.showInFinder,
+    ]);
+  });
+
   test('"Add to Today" fires the ingest bridge with the file target (App owns the destination)', async () => {
     const invokeCalls: Array<{ command: string; args?: Record<string, unknown> }> = [];
     const requests: AddRequest[] = [];

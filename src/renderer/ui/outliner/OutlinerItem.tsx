@@ -350,7 +350,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   };
   // A non-image file row's chevron toggles its inline preview (peek), not the
   // trailing-child-draft toggle a childless content row uses. It flips this row's
-  // membership in the expanded set, which `row.expanded` reads.
+  // membership in the expanded set (which `row.expanded` reads) and selects the row —
+  // like `toggleExpandOrSelect`, so clicking a file row's chevron makes it the active
+  // row rather than leaving focus/selection on whatever row was active before.
   const toggleFilePreview = () => {
     props.setUi((prev) => {
       const expandedSet = new Set(prev.expanded);
@@ -358,6 +360,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       else expandedSet.add(props.nodeId);
       return { ...prev, expanded: expandedSet };
     });
+    row.updateSelection();
   };
   const childReferencePath = [...props.referencePath, childParentId];
   const pendingReferenceConversion = props.ui.pendingReferenceConversion?.nodeId === props.nodeId;

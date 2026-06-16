@@ -304,6 +304,11 @@
    natural height. */
 .file-node-preview {
   min-width: 0;
+  /* Keep content clear of the bottom-center floating pill in every state — the pill
+     shows over the peek (collapsed), the full scroll (expanded), and the
+     metadata/loading card alike, so the clearance lives on the base, not just
+     `.expanded`. */
+  padding-bottom: calc(var(--control-size-md) + var(--space-5));
 }
 
 .file-node-preview.collapsed {
@@ -314,8 +319,6 @@
 .file-node-preview.expanded {
   max-height: var(--file-preview-expanded-height, min(70vh, 720px));
   overflow-y: auto;
-  /* Keep the last page clear of the floating pill. */
-  padding-bottom: calc(var(--control-size-md) + var(--space-5));
 }
 
 /* The single bottom-center floating control over the preview (B5 material on chrome;
@@ -416,6 +419,14 @@
   color: var(--text-main);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Keyboard nav lands on the row's hidden filename anchor; ring the name row so the
+   focused (but not yet selected) file row has a visible focus indicator (B8) — the
+   mirror of the image row's `:focus-within` ring above. */
+.row.file-node-row:focus-within .file-node-row-main {
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring-shadow);
 }
 
 /* The ⋯ menu reveals on row hover / focus, and stays put while open (the menu is

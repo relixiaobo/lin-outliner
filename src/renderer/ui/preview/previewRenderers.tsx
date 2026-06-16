@@ -187,14 +187,20 @@ export function FilePreviewShell({
           <PreviewRenderer source={state.source} onOpenTarget={onOpenTarget} scrollRootRef={previewRef} />
         )}
       </div>
-      <FilePreviewPill
-        previewable={previewable}
-        expanded={expanded}
-        onToggleExpand={() => setExpanded((value) => !value)}
-        primaryOpen={primaryOpen}
-        menuActions={menuActions}
-        meta={meta}
-      />
+      {state.status !== 'loading' ? (
+        // Hold the pill until the source resolves: while loading, `previewable` is
+        // false, so the primary would briefly be "Open with default app" and a click
+        // in that window would open the file externally instead of toggling the
+        // preview it is about to become.
+        <FilePreviewPill
+          previewable={previewable}
+          expanded={expanded}
+          onToggleExpand={() => setExpanded((value) => !value)}
+          primaryOpen={primaryOpen}
+          menuActions={menuActions}
+          meta={meta}
+        />
+      ) : null}
     </div>
   );
 }
@@ -424,7 +430,18 @@ function PdfPreview({ source, scrollRootRef }: PreviewRendererProps) {
   if (state.status === 'loading') return <PreviewMessage>{labels.loading}</PreviewMessage>;
   if (state.status === 'error') return <MetadataPreview source={source} />;
 
-  return <PdfPages document={state.document} pageCount={state.pageCount} scrollRootRef={scrollRootRef} />;
+  // Key on the document fingerprint so navigating this same pane to a different PDF
+  // remounts the page list: otherwise the position-keyed LazyPdfPages keep their
+  // `visible`/rendered canvases and the previous document's pages flash through until
+  // the new pages re-render.
+  return (
+    <PdfPages
+      key={state.document.fingerprints?.[0] ?? undefined}
+      document={state.document}
+      pageCount={state.pageCount}
+      scrollRootRef={scrollRootRef}
+    />
+  );
 }
 
 /**

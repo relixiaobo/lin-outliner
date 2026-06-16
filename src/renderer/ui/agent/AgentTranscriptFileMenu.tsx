@@ -91,13 +91,17 @@ export function AgentTranscriptFileMenu({ file, x, y, onClose }: AgentTranscript
       onKeyDown={onKeyDown}
       onMouseDown={(event) => event.stopPropagation()}
     >
-      <MenuItem
-        className="node-context-item"
-        icon={<AddChildIcon size={ICON_SIZE.menu} />}
-        label={labels.addToToday}
-        onClick={run(addToToday)}
-        role="menuitem"
-      />
+      {file.entryKind !== 'directory' ? (
+        // A directory can't be ingested into the asset store as a file node, so
+        // "Add to Today" applies to files only; a directory still opens / reveals.
+        <MenuItem
+          className="node-context-item"
+          icon={<AddChildIcon size={ICON_SIZE.menu} />}
+          label={labels.addToToday}
+          onClick={run(addToToday)}
+          role="menuitem"
+        />
+      ) : null}
       <MenuItem
         className="node-context-item"
         icon={<OpenIcon size={ICON_SIZE.menu} />}

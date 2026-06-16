@@ -506,11 +506,16 @@ export function App() {
   // into the projection/index — so the new parent is usable immediately (a bare
   // `api.ensureDateNode` would leave the renderer index stale until the next commit).
   // Confirms only on a real create.
+  // Read the failure copy through a ref so the single-handler subscription does not
+  // depend on the whole `t` object: a locale change must not tear down and re-add the
+  // bridge mid-flight (it would unbind an in-progress "Add to Today").
+  const addFailedMessageRef = useRef(t.shell.filePreview.addToOutlineFailed);
+  addFailedMessageRef.current = t.shell.filePreview.addToOutlineFailed;
   useEffect(() => onAddPreviewTargetToOutlineRequest(async ({ panelId, target }) => {
     // Surface a failure toast for both callers (the menu / pill fire-and-forget the
     // result), so an add that can't complete is never silent.
     const fail = () => {
-      setError(t.shell.filePreview.addToOutlineFailed);
+      setError(addFailedMessageRef.current);
       return false;
     };
     const todayId = await ensureTodayNode();
@@ -526,7 +531,7 @@ export function App() {
     const nextTarget = previewTargetForAsset(asset);
     if (!bindPreviewPanelNode(panelId, newNodeId, nextTarget, target)) return fail();
     return true;
-  }), [ensureTodayNode, bindPreviewPanelNode, run, t, setError]);
+  }), [ensureTodayNode, bindPreviewPanelNode, run]);
 
   if (!index) {
     return (

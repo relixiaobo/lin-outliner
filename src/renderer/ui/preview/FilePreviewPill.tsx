@@ -6,6 +6,7 @@ import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
+import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 
 export interface FilePreviewMenuAction {
   key: string;
@@ -132,13 +133,22 @@ function PillMenu({
     placement: 'top-end',
     width: 220,
   });
-  useDismissibleOverlay(menuRef, onClose);
+  // Outside-pointer dismissal; Escape + roving Arrow/Home/End + focus-in/restore come
+  // from useMenuKeyboard (escape:false here so the two do not both handle Escape).
+  useDismissibleOverlay(menuRef, onClose, { escape: false });
+  const { onKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose,
+    kind: 'menu',
+    getRestoreTarget: () => (anchorRef.current instanceof HTMLElement ? anchorRef.current : null),
+  });
 
   return createPortal(
     <MenuSurface
       aria-label={ariaLabel}
       className="node-context-menu"
       preserveSelection
+      onKeyDown={onKeyDown}
       onMouseDown={(event) => event.stopPropagation()}
       ref={menuRef}
       role="menu"
