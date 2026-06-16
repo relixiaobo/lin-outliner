@@ -194,25 +194,6 @@ before any directional/security-sensitive build.
   which tools are wired — so no agent holds private authority a child could exceed, and there is no
   per-agent ceiling to clamp. `conversational-agent-authoring` (re-planned, Backlog draft)
   safety rests on human ratification + the universal floor. **Don't re-propose a per-agent clamp.**
-- **agent-permission-blacklist-default-allow** (P1, `draft` — **PM-ratified direction
-  2026-06-16**) — replace the consequence model's COMMIT→`ask` tier with a **default-allow +
-  blocklist** model for the novice user base: ordinary agent work runs silently; a tiny
-  non-overridable **hard redline** (credential exfiltration, permission/provider/secret
-  self-mod, payment, root/home/whole-workdir host destruction) plus a small user-overridable
-  **soft-block** tier (remote-code pipes, OS-persistence writes) with an allow-once / always-allow /
-  block-now card that **defaults to block on countdown**; users add narrow blocks from the
-  execution log after the fact. **PM ratified (overriding the main-agent review push-back) that
-  irreversible external/destructive actions — `git push`, deploy, message-send, `rm -rf` outside
-  the workdir root — AND credential reads default to SILENT allow.** This consciously reverses the
-  1-day-old consequence model's `ask` tier and its `credential-read = confirm` decision
-  (#250/#252): the safety bet shifts from "interrupt before commits" to "model judgment + durable
-  audit + fast user blocklist correction." Mandatory sub-fix: **static heredoc parsing** so
-  `python3 - <<'PY' … PY` artifact generation stops false-blocking as `hidden_exec` (the motivating
-  Fable-5 PPTX bug; `hasDynamicShellConstruction` currently scans the heredoc body as shell).
-  **Shape (a)** one PR; impl requests `/security-review` + `/code-review ultra`. Implementation
-  note: the log correction surface today is the developer `AgentDebugPanel` — keep correction
-  lightweight, don't over-invest, since the PM's model is model-judgment-as-gate, not log-driven
-  consent. Plan merged (#277). See `docs/plans/agent-permission-blacklist-default-allow.md`.
 - **cross-agent consultation — backlog** (design = `agent-conversation-model` §"Cross-agent help")
   — the **colleague model** is PM-ratified (2026-06-13) and shipped: `ungate-contact` (PR #236)
   made cross-agent contact (`agent.delegate.spawn`) baseline-allow, with the consultee acting under
@@ -467,6 +448,24 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **agent-permission-blacklist-default-allow** (codex, plan #277 → impl PR #279) — the agent tool
+  permission model flips from the consequence model's COMMIT→`ask` tier to **default-allow +
+  blocklist**. `decideAgentOperationEffect` now returns `allow` for every non-floor effect; a tiny
+  non-overridable **hard redline** (credential exfiltration, permission/provider/secret self-mod,
+  payment, root/home/whole-workdir host destruction) stays `deny`, and a small **soft-block** tier
+  (remote-code pipes, OS-persistence + git-internal writes, opaque/obfuscated exec, unparseable
+  shell) raises an allow-once / always-allow / **block-now-on-countdown** card; the countdown
+  auto-block is authoritative in the main process. Users add narrow `Command()` / `Action()` /
+  `Scope()` blocks from the execution log; a user blocklist + a soft-block-allow exception list join
+  the grants ledger. Static **heredoc redaction** keeps `python3 - <<'PY' … PY` artifact generation
+  from false-blocking as `hidden_exec`. A follow-up commit also removed notice-only approval cards
+  and the runtime auto skill-trust prompt. **Gate (main):** `/code-review xhigh` (13 findings) → all
+  addressed in follow-up commits `aba4f7f7` / `7ad6399c` and re-verified — the persistence-write
+  always-allow round-trip, a heredoc `<<<`/comment redline bypass, dropped `.git/config|refs|objects`
+  gating, and a soft-block-regex ReDoS were the load-bearing fixes (ReDoS + heredoc re-checked
+  empirically). typecheck ✓ · `test:core` 1066 pass / 2 skip ✓ · `test:renderer` 521 ✓; e2e +
+  light/dark visual not re-run this gate. Design folded into `docs/spec/agent-tool-permissions.md`
+  (+ `agent-skills.md`); plan archived `done`.
 - **default-general-channel** (codex-2, PR #278) — a Slack-like default **`#General`** Channel.
   The runtime reserves `lin-agent-channel-general` as a normal named Channel (`title/goal =
   General`, **no stored `kind`** — reserved id + runtime invariant make it special) holding the

@@ -627,6 +627,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Default-allow agent tool permissions (plan #277 → PR #279, codex)** — the agent tool permission
+  model changes from the consequence model's COMMIT→`ask` tier to **default-allow + blocklist**.
+  `decideAgentOperationEffect` returns `allow` for every effect except a non-overridable **hard
+  redline** (`deny`): credential exfiltration, permission/provider/secret self-modification,
+  payment, and root/home/whole-workdir host destruction. A small user-overridable **soft-block**
+  tier (remote-code pipes, OS-persistence + git-internal writes, opaque/obfuscated execution,
+  unparseable shell) raises an **allow-once / always-allow / block-now** approval card that defaults
+  to block on a countdown; the auto-block now fires authoritatively in the main process. Tool
+  permission settings gain a **user blocklist** and a **soft-block-allow exception** list alongside
+  the grants ledger (`blocks` / `softBlockAllows`, persisted via
+  `agent_append_tool_permission_block` and the Settings → Security panel), and the agent debug log
+  can add a narrow `Command()` / `Action()` block after the fact. Static **heredoc redaction** stops
+  `python3 - <<'PY' … PY` artifact generation from false-blocking as `hidden_exec`. Notice-only
+  permission cards and the runtime auto skill-trust prompt are removed. **Pre-release: no
+  migration** — the permission config gains `blocks` / `softBlockAllows` arrays; wipe
+  `~/.lin-outliner-*` dev userData if needed. Spec: `docs/spec/agent-tool-permissions.md`,
+  `docs/spec/agent-skills.md`.
+  ([#279](https://github.com/relixiaobo/lin-outliner/pull/279))
 - **Perf P2: default flat outliner, streaming projection patches, structural-save coalescing (PR #275, codex-3)** —
   three independent P2 optimizations from the performance program (`performance-optimization.md`).
   (1) The main outliner renders through the windowed/flat row producer by default; the recursive
