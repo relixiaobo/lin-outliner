@@ -2,23 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent }
 import type {
   AgentMessage,
   AgentToolResultWithPayloads,
-  AssistantMessage,
-  ImageContent,
-  TextContent,
-  ThinkingContent,
-  ToolCall,
   ToolResultMessage,
-  UserMessage,
 } from '../../../core/agentTypes';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
-import { isHiddenAgentContextBlock } from '../../../core/agentAttachments';
+import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import {
   AgentIcon,
   CheckIcon,
   CloseIcon,
   CopyIcon,
-  FileTextIcon,
   ICON_SIZE,
   LoaderIcon,
   WarningIcon,
@@ -31,16 +24,18 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { Textarea } from '../primitives/Textarea';
 import { AgentMarkdown } from './AgentMarkdown';
-import { AgentThinkingBody } from './AgentThinkingBlock';
-import { AgentToolCallBlock } from './AgentToolCallBlock';
+import { AgentTranscriptMessageList } from './AgentTranscriptMessageList';
+import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { formatRunDuration } from './agentProcessTypes';
 import { useT } from '../../i18n/I18nProvider';
 
 interface AgentChildRunDetailsPanelProps {
   onClose: () => void;
   conversationId: string | null;
+  index: DocumentIndex;
   childRun: AgentRenderChildRunEntity | null;
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
+  onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
 }
 
 /** Live-run transcript poll cadence (the fetch is meta-keyed in main, near-free when unchanged). */
@@ -48,28 +43,6 @@ const LIVE_TRANSCRIPT_POLL_MS = 1_500;
 
 function formatDuration(startedAt: number, endedAt: number): string {
   return formatRunDuration(endedAt - startedAt);
-}
-
-function formatTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString(undefined, {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-}
-
-function compactText(text: string, maxLength = 280): string {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  return normalized.length > maxLength ? `${normalized.slice(0, maxLength).trim()}...` : normalized;
-}
-
-function stripSystemReminder(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed.startsWith('<system-reminder>')) return text;
-  return trimmed
-    .replace(/^<system-reminder>\s*/, '')
-    .replace(/\s*<\/system-reminder>$/, '')
-    .trim();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -115,38 +88,19 @@ function collectPendingToolCallIds(messages: readonly AgentMessage[], running: b
   return pending;
 }
 
-function textFromUserContent(content: UserMessage['content']): {
-  hidden: boolean;
-  images: ImageContent[];
-  text: string;
-} {
-  if (typeof content === 'string') {
-    return {
-      hidden: isHiddenAgentContextBlock(content),
-      images: [],
-      text: isHiddenAgentContextBlock(content) ? stripSystemReminder(content) : content,
-    };
+function transcriptHasActiveAssistantTurn(
+  messages: readonly AgentMessage[],
+  running: boolean,
+  pendingToolCallIds: ReadonlySet<string>,
+): boolean {
+  if (!running) return false;
+  if (pendingToolCallIds.size > 0) return true;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (message.role === 'assistant') return message.stopReason === null;
+    if (message.role === 'user') return false;
   }
-  const textBlocks: string[] = [];
-  const images: ImageContent[] = [];
-  let hidden = false;
-  for (const block of content) {
-    if (block.type === 'image') {
-      images.push(block);
-      continue;
-    }
-    if (isHiddenAgentContextBlock(block.text)) hidden = true;
-    textBlocks.push(isHiddenAgentContextBlock(block.text) ? stripSystemReminder(block.text) : block.text);
-  }
-  return { hidden, images, text: textBlocks.join('\n\n') };
-}
-
-function textFromToolResult(message: ToolResultMessage): string {
-  return message.content
-    .filter((block): block is TextContent => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n')
-    .trim();
+  return false;
 }
 
 function ResultText({ text }: { text: string }) {
@@ -179,105 +133,6 @@ function ResultText({ text }: { text: string }) {
   );
 }
 
-function TranscriptUserMessage({ message }: { message: UserMessage }) {
-  const t = useT();
-  const content = textFromUserContent(message.content);
-  return (
-    <article className={content.hidden ? 'agent-child-run-transcript-message is-system' : 'agent-child-run-transcript-message is-user'}>
-      <div className="agent-child-run-transcript-head">
-        <span>{content.hidden ? t.agent.childRun.roleSystem : t.agent.childRun.roleUser}</span>
-        <time>{formatTime(message.timestamp)}</time>
-      </div>
-      {content.text.trim() ? <AgentMarkdown keyPrefix={`child-run-user-${message.timestamp}`} text={content.text} /> : null}
-      {content.images.length > 0 ? (
-        <div className="agent-child-run-image-list">
-          {content.images.map((image, index) => (
-            <img
-              alt=""
-              key={`${image.mimeType}-${index}`}
-              src={`data:${image.mimeType};base64,${image.data}`}
-            />
-          ))}
-        </div>
-      ) : null}
-    </article>
-  );
-}
-
-function TranscriptThinking({ block, index }: { block: ThinkingContent; index: number }) {
-  const t = useT();
-  if (block.redacted || !block.thinking.trim()) return null;
-  return (
-    <details className="agent-child-run-thinking">
-      <summary>{t.agent.childRun.thoughtNumbered({ index: index + 1 })}</summary>
-      <AgentThinkingBody streaming={false} text={block.thinking} />
-    </details>
-  );
-}
-
-function TranscriptAssistantMessage({
-  message,
-  pendingToolCallIds,
-  conversationId,
-  childRunsByParentToolCallId,
-  toolResults,
-}: {
-  message: AssistantMessage;
-  pendingToolCallIds: ReadonlySet<string>;
-  conversationId: string | null;
-  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
-  toolResults: Map<string, AgentToolResultWithPayloads>;
-}) {
-  const t = useT();
-  return (
-    <article className="agent-child-run-transcript-message is-assistant">
-      <div className="agent-child-run-transcript-head">
-        <span>{t.agent.childRun.roleAssistant}</span>
-        <time>{formatTime(message.timestamp)}</time>
-      </div>
-      <div className="agent-child-run-assistant-body">
-        {message.content.map((block, index) => {
-          if (block.type === 'text') {
-            return block.text.trim()
-              ? <AgentMarkdown key={`text-${index}`} keyPrefix={`child-run-assistant-${message.timestamp}-${index}`} text={block.text} />
-              : null;
-          }
-          if (block.type === 'thinking') {
-            return <TranscriptThinking block={block} index={index} key={`thinking-${index}`} />;
-          }
-          return (
-            <AgentToolCallBlock
-              defaultExpanded={false}
-              key={`tool-${block.id}`}
-              pendingToolCallIds={pendingToolCallIds}
-              result={toolResults.get(block.id)}
-              conversationId={conversationId}
-              childRun={childRunsByParentToolCallId?.get(block.id)}
-              toolCall={block as ToolCall}
-              turnActive={pendingToolCallIds.has(block.id)}
-            />
-          );
-        })}
-      </div>
-    </article>
-  );
-}
-
-function TranscriptOrphanToolResult({ message }: { message: ToolResultMessage }) {
-  const t = useT();
-  const text = textFromToolResult(message);
-  if (!text) return null;
-  return (
-    <article className="agent-child-run-transcript-message is-tool-result">
-      <div className="agent-child-run-transcript-head">
-        <span>{t.agent.childRun.roleToolResult}</span>
-        <time>{formatTime(message.timestamp)}</time>
-      </div>
-      <pre>{compactText(text, 1200)}</pre>
-    </article>
-  );
-}
-
 function TranscriptTimeline({
   error,
   loading,
@@ -287,6 +142,8 @@ function TranscriptTimeline({
   conversationId,
   childRun,
   childRunsByParentToolCallId,
+  index,
+  onNodeReferenceOpen,
   toolResults,
 }: {
   error: string | null;
@@ -297,6 +154,8 @@ function TranscriptTimeline({
   conversationId: string | null;
   childRun: AgentRenderChildRunEntity;
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
+  index: DocumentIndex;
+  onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   toolResults: Map<string, AgentToolResultWithPayloads>;
 }) {
   const t = useT();
@@ -326,42 +185,30 @@ function TranscriptTimeline({
     return <EmptyState className="agent-child-run-empty" title={t.agent.childRun.noTranscriptMessages} />;
   }
 
-  const assistantToolCallIds = new Set<string>();
-  for (const message of messages) {
-    if (message.role !== 'assistant') continue;
-    for (const block of message.content) {
-      if (block.type === 'toolCall') assistantToolCallIds.add(block.id);
-    }
-  }
-
   return (
-    <div className="agent-child-run-transcript-list">
-      {messages.map((message, index) => {
-        if (message.role === 'user') return <TranscriptUserMessage key={`user-${index}`} message={message} />;
-        if (message.role === 'assistant') {
-          return (
-            <TranscriptAssistantMessage
-              key={`assistant-${index}`}
-              message={message}
-              pendingToolCallIds={pendingToolCallIds}
-              conversationId={conversationId}
-              childRunsByParentToolCallId={childRunsByParentToolCallId}
-              toolResults={toolResults}
-            />
-          );
-        }
-        if (assistantToolCallIds.has(message.toolCallId)) return null;
-        return <TranscriptOrphanToolResult key={`tool-result-${index}`} message={message} />;
-      })}
-    </div>
+    <AgentTranscriptMessageList
+      active={transcriptHasActiveAssistantTurn(messages, childRun.status === 'running', pendingToolCallIds)}
+      childRun={childRun}
+      childRunsByParentToolCallId={childRunsByParentToolCallId}
+      className="agent-child-run-transcript-list"
+      conversationId={conversationId}
+      index={index}
+      messages={messages}
+      onNodeReferenceOpen={onNodeReferenceOpen}
+      onOpenChildRunTranscript={undefined}
+      pendingToolCallIds={pendingToolCallIds}
+      toolResults={toolResults}
+    />
   );
 }
 
 export function AgentChildRunDetailsPanel({
   onClose,
   conversationId,
+  index,
   childRun,
   childRunsByParentToolCallId,
+  onNodeReferenceOpen,
 }: AgentChildRunDetailsPanelProps) {
   const t = useT();
   const [activeTab, setActiveTab] = useState<'timeline' | 'result' | 'metadata'>('timeline');
@@ -611,6 +458,8 @@ export function AgentChildRunDetailsPanel({
             conversationId={conversationId}
             childRun={childRun}
             childRunsByParentToolCallId={childRunsByParentToolCallId}
+            index={index}
+            onNodeReferenceOpen={onNodeReferenceOpen}
             toolResults={toolResults}
           />
         ) : null}

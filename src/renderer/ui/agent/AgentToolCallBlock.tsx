@@ -45,7 +45,7 @@ interface AgentToolCallBlockProps {
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onToggle?: () => void;
   onOpenChildRunTranscript?: (childRunId: string) => void;
-  pendingToolCallIds?: ReadonlySet<string>;
+  pendingToolCallIds: ReadonlySet<string>;
   result?: AgentToolResultWithPayloads;
   conversationId?: string | null;
   childRun?: AgentRenderChildRunEntity;
@@ -71,11 +71,11 @@ interface LoadedSkillDetails {
 export function getToolCallStatus(
   toolCallId: string,
   result: AgentToolResultWithPayloads | undefined,
-  pendingToolCallIds: ReadonlySet<string> | undefined,
-  turnActive: boolean | undefined,
+  pendingToolCallIds: ReadonlySet<string>,
+  toolActive: boolean | undefined,
 ): ToolStatus {
   if (!result) {
-    return pendingToolCallIds?.has(toolCallId) || turnActive ? 'pending' : 'error';
+    return pendingToolCallIds.has(toolCallId) || toolActive ? 'pending' : 'error';
   }
   return result.isError ? 'error' : 'done';
 }
@@ -204,7 +204,7 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
   );
 }
 
-function childRunToolStatus(childRun: AgentRenderChildRunEntity): ToolStatus {
+export function childRunToolStatus(childRun: AgentRenderChildRunEntity): ToolStatus {
   if (childRun.status === 'running') return 'pending';
   if (childRun.status === 'failed' || childRun.status === 'stopped') return 'error';
   return 'done';

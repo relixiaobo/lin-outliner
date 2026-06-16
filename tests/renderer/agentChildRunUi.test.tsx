@@ -6,6 +6,7 @@ import { parseHTML } from 'linkedom';
 import type { ToolCall, Usage } from '../../src/core/agentTypes';
 import type { AgentRenderChildRunEntity } from '../../src/core/agentRenderProjection';
 import type { AgentTaskEntry } from '../../src/renderer/agent/runtime';
+import type { DocumentIndex } from '../../src/renderer/state/document';
 import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import { AgentChildRunDetailsPanel } from '../../src/renderer/ui/agent/AgentChildRunDetailsPanel';
 import { AgentTaskPanel } from '../../src/renderer/ui/agent/AgentTaskPanel';
@@ -19,6 +20,10 @@ interface RenderedComponent {
 }
 
 const mounted: RenderedComponent[] = [];
+const TEST_INDEX = {
+  projection: { nodes: [], libraryId: 'library', trashId: 'trash' },
+  byId: new Map(),
+} as unknown as DocumentIndex;
 
 afterEach(() => {
   while (mounted.length) mounted.pop()?.cleanup();
@@ -102,6 +107,7 @@ describe('agent child run UI', () => {
       <AgentChildRunDetailsPanel
         onClose={() => undefined}
         conversationId="conversation-1"
+        index={TEST_INDEX}
         childRun={childRunEntity()}
       />,
       {
@@ -110,14 +116,141 @@ describe('agent child run UI', () => {
     );
 
     await waitForText(rendered, 'Inspect the current UI.');
-    expect(rendered.container.textContent).toContain('Find relevant node context.');
-    expect(rendered.container.textContent).toContain('Read node "today"');
+    expect(rendered.container.textContent).toContain('Thought · Read node "today"');
     expect(rendered.container.textContent).toContain('The UI path is ready.');
     expect(rendered.container.textContent).not.toContain('Daily note content.');
+    expect(rendered.container.textContent).toContain('Find relevant node context.');
+    expect(rendered.container.textContent).toContain('Read node "today"');
 
-    await click(rendered, textButton(rendered, 'Read node "today"'));
+    await click(rendered, firstToolCallToggle(rendered));
 
     expect(rendered.container.textContent).toContain('Daily note content.');
+  });
+
+  test('threads child run duration and failure into shared transcript rows', async () => {
+    const completedRun = {
+      ...childRunEntity(),
+      completedAt: 63_100,
+      updatedAt: 63_100,
+    };
+    const completed = renderComponent(
+      <AgentChildRunDetailsPanel
+        onClose={() => undefined}
+        conversationId="conversation-1"
+        index={TEST_INDEX}
+        childRun={completedRun}
+      />,
+      {
+        payloads: {
+          'child-1': JSON.stringify({
+            v: 1,
+            runId: 'child-1',
+            messageCount: 3,
+            messages: [
+              {
+                role: 'assistant',
+                timestamp: 120,
+                api: 'openai-completions',
+                provider: 'openai',
+                model: 'gpt-5.4',
+                usage: emptyUsage(),
+                stopReason: 'stop',
+                content: [
+                  { type: 'thinking', thinking: 'Inspect the relevant node.', redacted: false },
+                  { type: 'toolCall', id: 'tool-read-duration', name: 'node_read', arguments: { nodeId: 'today' } },
+                  { type: 'text', text: 'The UI path is ready.' },
+                ],
+              },
+              {
+                role: 'toolResult',
+                toolCallId: 'tool-read-duration',
+                toolName: 'node_read',
+                timestamp: 140,
+                content: [{ type: 'text', text: 'Daily note content.' }],
+                isError: false,
+              },
+            ],
+          }),
+        },
+      },
+    );
+
+    await waitForText(completed, 'Worked for 1m 3s');
+
+    const failedRun = {
+      ...childRunEntity(),
+      completedAt: 63_100,
+      result: undefined,
+      status: 'failed' as const,
+      updatedAt: 63_100,
+    };
+    const failed = renderComponent(
+      <AgentChildRunDetailsPanel
+        onClose={() => undefined}
+        conversationId="conversation-1"
+        index={TEST_INDEX}
+        childRun={failedRun}
+      />,
+      {
+        payloads: {
+          'child-1': JSON.stringify({
+            v: 1,
+            runId: 'child-1',
+            messageCount: 1,
+            messages: [{
+              role: 'assistant',
+              timestamp: 120,
+              api: 'openai-completions',
+              provider: 'openai',
+              model: 'gpt-5.4',
+              usage: emptyUsage(),
+              stopReason: 'toolUse',
+              content: [
+                { type: 'thinking', thinking: 'Inspect the relevant node.', redacted: false },
+                { type: 'toolCall', id: 'tool-read-failed', name: 'node_read', arguments: { nodeId: 'today' } },
+              ],
+            }],
+          }),
+        },
+      },
+    );
+
+    await waitForText(failed, 'Interrupted after thinking');
+  });
+
+  test('renders orphan tool results as capped plain text', async () => {
+    const longOutput = `# not markdown\n${'stdout '.repeat(260)}`;
+    const rendered = renderComponent(
+      <AgentChildRunDetailsPanel
+        onClose={() => undefined}
+        conversationId="conversation-1"
+        index={TEST_INDEX}
+        childRun={childRunEntity()}
+      />,
+      {
+        payloads: {
+          'child-1': JSON.stringify({
+            v: 1,
+            runId: 'child-1',
+            messageCount: 1,
+            messages: [{
+              role: 'toolResult',
+              toolCallId: 'orphan-tool',
+              toolName: 'bash',
+              timestamp: 140,
+              content: [{ type: 'text', text: longOutput }],
+              isError: false,
+            }],
+          }),
+        },
+      },
+    );
+
+    await waitForText(rendered, '# not markdown');
+    const pre = rendered.container.querySelector('.agent-transcript-tool-result-row pre');
+    expect(pre).not.toBeNull();
+    expect(pre?.textContent?.length ?? 0).toBeLessThanOrEqual(1203);
+    expect(rendered.container.querySelector('.agent-transcript-tool-result-row h1')).toBeNull();
   });
 
   test('sends follow-ups and stops running childRuns through runtime commands', async () => {
@@ -125,6 +258,7 @@ describe('agent child run UI', () => {
       <AgentChildRunDetailsPanel
         onClose={() => undefined}
         conversationId="conversation-1"
+        index={TEST_INDEX}
         childRun={{
           ...childRunEntity(),
           completedAt: undefined,
@@ -236,6 +370,7 @@ describe('agent child run UI', () => {
         <AgentChildRunDetailsPanel
           onClose={() => undefined}
           conversationId="conversation-1"
+          index={TEST_INDEX}
           childRun={childRun}
         />
       );
@@ -308,7 +443,7 @@ function renderComponent(
   options: { payloads?: Record<string, string> } = {},
 ): RenderedComponent {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
-  const commands = installDomGlobals(window, options.payloads ?? {});
+  const { commands, restore } = installDomGlobals(window, options.payloads ?? {});
 
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
@@ -320,6 +455,7 @@ function renderComponent(
   const rendered = {
     cleanup: () => {
       act(() => root.unmount());
+      restore();
     },
     commands,
     container,
@@ -332,6 +468,19 @@ function renderComponent(
 
 function installDomGlobals(window: Window, payloads: Record<string, string>) {
   const commands: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+  const previousGlobalGetComputedStyle = Object.getOwnPropertyDescriptor(globalThis, 'getComputedStyle');
+  const getComputedStyle = () => ({
+    lineHeight: '26px',
+    getPropertyValue: (property: string) => (property === 'line-height' ? '26px' : ''),
+  });
+  Object.defineProperty(window, 'getComputedStyle', {
+    configurable: true,
+    value: getComputedStyle,
+  });
+  Object.defineProperty(globalThis, 'getComputedStyle', {
+    configurable: true,
+    value: getComputedStyle,
+  });
   Object.assign(globalThis, {
     document: window.document,
     window,
@@ -403,7 +552,16 @@ function installDomGlobals(window: Window, payloads: Record<string, string>) {
       throw new Error(`Unexpected command: ${cmd}`);
     },
   };
-  return commands;
+  return {
+    commands,
+    restore: () => {
+      if (previousGlobalGetComputedStyle) {
+        Object.defineProperty(globalThis, 'getComputedStyle', previousGlobalGetComputedStyle);
+      } else {
+        delete (globalThis as typeof globalThis & { getComputedStyle?: unknown }).getComputedStyle;
+      }
+    },
+  };
 }
 
 async function click(rendered: RenderedComponent, element: Element | null) {
@@ -440,6 +598,12 @@ function textButton(rendered: RenderedComponent, text: string): HTMLButtonElemen
   const found = Array.from(rendered.document.querySelectorAll<HTMLButtonElement>('button'))
     .find((candidate) => candidate.textContent?.includes(text));
   if (!found) throw new Error(`Missing button: ${text}`);
+  return found;
+}
+
+function firstToolCallToggle(rendered: RenderedComponent): HTMLButtonElement {
+  const found = rendered.document.querySelector<HTMLButtonElement>('.agent-tool-call-toggle');
+  if (!found) throw new Error('Missing tool call toggle');
   return found;
 }
 

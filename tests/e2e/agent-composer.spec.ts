@@ -2723,7 +2723,7 @@ test.describe('agent composer controls', () => {
     // the turn removes it), NOT a free-floating conversation-level boundary. So there
     // is no boundary region, and the run surfaces as a process row in the bubble.
     await expect(page.getByRole('region', { name: 'Agent task · Inspect child run UI' })).toHaveCount(0);
-    await expect(page.getByText('Agent task · Inspect child run UI', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Running agent task "Inspect child run UI"' }).first()).toBeVisible();
 
     await page.getByRole('button', { name: 'Open task panel' }).click();
     const tasks = page.getByRole('complementary', { name: 'Agent tasks' });
@@ -2740,9 +2740,11 @@ test.describe('agent composer controls', () => {
     await expect(details).toBeVisible();
     await expect(details.getByText('Timeline (4)')).toBeVisible();
     await expect(details.getByText('Inspect the current UI.')).toBeVisible();
-    await expect(details.getByText('Read node "today"')).toBeVisible();
+    const thoughtToggles = details.getByRole('button', { name: 'Thought · Read node "today"' });
+    await expect(thoughtToggles.first()).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Working...' })).toHaveCount(0);
 
-    await details.getByText('Read node "today"').click();
+    await details.locator('.agent-tool-call-toggle').first().click();
     await expect(details.getByText('Daily note content from child run.')).toBeVisible();
 
     await details.getByLabel('Agent task follow-up').fill('Continue with layout risks.');

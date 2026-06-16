@@ -13,6 +13,7 @@ import { createPortal } from 'react-dom';
 import type {
   AgentMessageAttachmentInput,
   AgentToolResultWithPayloads,
+  AssistantMessage,
   AgentUserViewContext,
 } from '../../../core/agentTypes';
 import { nodeReferenceMarkersToText } from '../../../core/referenceMarkup';
@@ -32,7 +33,7 @@ import type {
 } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
-import { linAgentRuntimeStore, useLinAgentRuntime } from '../../agent/runtime';
+import { createAssistantPlaceholderFromModel, linAgentRuntimeStore, useLinAgentRuntime } from '../../agent/runtime';
 import { onAgentRevealRequest } from '../../agent/agentReveal';
 import type {
   AgentConversationEntry,
@@ -68,6 +69,7 @@ import {
 } from './agentConversationRows';
 import type { AgentConversationRenderRow } from './agentConversationRows';
 import { AgentMarkdown } from './AgentMarkdown';
+import { AgentTranscriptMessageList } from './AgentTranscriptMessageList';
 import { AgentChildRunDetailsPanel } from './AgentChildRunDetailsPanel';
 import { AgentTaskPanel } from './AgentTaskPanel';
 import { composerCurrentNodeId } from './userViewContext';
@@ -88,6 +90,8 @@ const TRANSCRIPT_ROW_ESTIMATE_PX = 104;
 const TRANSCRIPT_VIRTUAL_MIN_ROWS = 40;
 const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
 const MESSAGE_TIME_SEPARATOR_GAP_MS = 60 * 60 * 1000;
+const EMPTY_PENDING_TOOL_CALL_IDS: ReadonlySet<string> = new Set();
+const EMPTY_TOOL_RESULTS: Map<string, AgentToolResultWithPayloads> = new Map();
 
 interface AgentChatPanelProps {
   index: DocumentIndex;
@@ -836,6 +840,9 @@ export function AgentChatPanel({
     error,
     dmRunActive,
     channelRunsActive,
+    modelApi,
+    modelId,
+    providerId,
     clearSteer,
     editMessage,
     pendingToolCallIds,
@@ -1907,8 +1914,10 @@ export function AgentChatPanel({
       <AgentChildRunDetailsPanel
         onClose={() => setSelectedChildRunId(null)}
         conversationId={conversationId}
+        index={index}
         childRun={selectedChildRun}
         childRunsByParentToolCallId={childRunsByParentToolCallId}
+        onNodeReferenceOpen={onOpenNodeReference}
       />
       {selectedPovInspector && selectedPovMember ? (
         <AgentPovInspectorPanel
@@ -1920,6 +1929,17 @@ export function AgentChatPanel({
       {selectedActivityEntry ? (() => {
         const { label, mention } = activityAgentLabel(selectedActivityEntry, memberByAgentId, agentDefinitionById);
         const stateLabel = activityStateLabel(selectedActivityEntry, t);
+        const liveMessage: AssistantMessage | null = selectedActivityEntry.streamingText
+          ? createAssistantPlaceholderFromModel(
+              {
+                api: modelApi ?? '',
+                provider: providerId ?? '',
+                id: modelId ?? '',
+              },
+              selectedActivityEntry.updatedAt,
+              [{ type: 'text', text: selectedActivityEntry.streamingText }],
+            )
+          : null;
         return (
           <aside className="agent-child-run-details-panel agent-channel-run-panel" aria-label={t.agent.chat.openTypingDetails}>
             <header className="agent-child-run-details-header">
@@ -1938,19 +1958,22 @@ export function AgentChatPanel({
               />
             </header>
             <div className="agent-child-run-details-body">
-              {selectedActivityEntry.streamingText ? (
-                // The live token stream of the running Channel agent (retained
-                // per-run from message_update and surfaced ONLY here — never in the
-                // whole-utterance message flow). Full DM-style process reuse needs
-                // the projection to expose the suppressed in-flight structured
-                // message; tracked as a follow-up (see plan).
-                <div className="agent-channel-run-live">
-                  <AgentMarkdown
-                    keyPrefix={`channel-run-live-${selectedActivityEntry.id}`}
-                    streaming
-                    text={selectedActivityEntry.streamingText}
-                  />
-                </div>
+              {liveMessage ? (
+                // The live token stream of the running Channel agent (PM-ratified
+                // 2026-06-13): retained per-run from message_update and surfaced
+                // ONLY here — never in the whole-utterance message flow. Render it
+                // through the same live assistant-turn UI as DM so "Working..." /
+                // process behavior stays single-sourced.
+                <AgentTranscriptMessageList
+                  active
+                  className="agent-channel-run-live"
+                  conversationId={conversationId}
+                  index={index}
+                  messages={[liveMessage]}
+                  onNodeReferenceOpen={onOpenNodeReference}
+                  pendingToolCallIds={EMPTY_PENDING_TOOL_CALL_IDS}
+                  toolResults={EMPTY_TOOL_RESULTS}
+                />
               ) : (
                 <EmptyState className="agent-child-run-empty" title={t.agent.chat.typingNoDetailYet} />
               )}

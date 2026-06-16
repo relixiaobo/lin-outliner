@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
+import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
 import { clipboardText, commandCalls, emitAgentProjection, openMockedApp } from './outlinerMock';
 
 const usage = {
@@ -84,7 +85,9 @@ test.describe('agent process disclosure', () => {
       const win = window as Window & {
         __LIN_E2E__?: { calls: Array<{ cmd: string }> };
       };
-      return win.__LIN_E2E__?.calls.some((call) => call.cmd === 'agent_restore_latest_conversation') ?? false;
+      return win.__LIN_E2E__?.calls.some((call) => (
+        call.cmd === 'agent_restore_conversation' || call.cmd === 'agent_restore_latest_conversation'
+      )) ?? false;
     })).toBe(true);
   });
 
@@ -105,7 +108,7 @@ test.describe('agent process disclosure', () => {
       content: [{ type: 'text', text: '你好，我在。' }],
     };
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -121,12 +124,17 @@ test.describe('agent process disclosure', () => {
     const assistantRows = page.locator('.agent-message-row.assistant');
     await expect(assistantRows).toHaveCount(1);
     const row = assistantRows.last();
+    const liveProcess = row.locator('.agent-process-block').first();
+    const liveProcessToggle = liveProcess.locator('.agent-process-toggle').first();
+    await expect(liveProcess.locator('.agent-process-title').first()).toHaveText('Working...');
+    await expect(liveProcessToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(liveProcessToggle).toBeDisabled();
     const indicator = row.getByLabel('Assistant is responding');
     await expect(indicator).toBeVisible();
     const before = await indicator.boundingBox();
     expect(before).toBeTruthy();
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -141,6 +149,8 @@ test.describe('agent process disclosure', () => {
 
     await expect(assistantRows).toHaveCount(1);
     const streamedText = row.getByText('你好，我在。');
+    await expect(liveProcess.locator('.agent-process-title').first()).toHaveText('Working...');
+    await expect(liveProcessToggle).toHaveAttribute('aria-expanded', 'true');
     await expect(streamedText).toBeVisible();
     const textBox = await streamedText.boundingBox();
     const after = await indicator.boundingBox();
@@ -157,7 +167,7 @@ test.describe('agent process disclosure', () => {
       timestamp: 1_800_000_000_300,
     };
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -225,7 +235,7 @@ test.describe('agent process disclosure', () => {
       timestamp: 1_800_000_000_350,
     };
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -332,7 +342,7 @@ test.describe('agent process disclosure', () => {
       }],
     };
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -413,7 +423,7 @@ test.describe('agent process disclosure', () => {
       ],
     };
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -449,13 +459,18 @@ test.describe('agent process disclosure', () => {
     });
 
     const process = page.locator('.agent-process-block').first();
-    const processToggle = process.locator('.agent-process-toggle');
-    await expect(process.locator('.agent-process-title')).toHaveText('Thought · used 2 tools');
+    const processToggle = process.locator('.agent-process-toggle').first();
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Thought · used 2 tools');
     await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByText('Current outline focuses on design-system inventory')).toBeVisible();
 
     await processToggle.click();
     await expect(processToggle).toHaveAttribute('aria-expanded', 'true');
+
+    const processGroupToggle = process.locator('.agent-process-flat .agent-process-toggle').first();
+    await expect(processGroupToggle).toHaveAttribute('aria-expanded', 'false');
+    await processGroupToggle.click();
+    await expect(processGroupToggle).toHaveAttribute('aria-expanded', 'true');
 
     const thinkingToggle = page.locator('.agent-thinking-row.is-toggle').first();
     await expect(thinkingToggle).toContainText('Identify relevant outline nodes and tag patterns.');
@@ -495,7 +510,7 @@ test.describe('agent process disclosure', () => {
       ],
     };
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -525,10 +540,129 @@ test.describe('agent process disclosure', () => {
     });
 
     const process = page.locator('.agent-process-block').first();
-    await expect(process.locator('.agent-process-title')).toHaveText('Worked for 1m 3s');
-    await expect(process.locator('.agent-process-toggle')).toHaveAttribute('aria-expanded', 'false');
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Worked for 1m 3s');
+    await expect(process.locator('.agent-process-toggle').first()).toHaveAttribute('aria-expanded', 'false');
     // The final answer renders as prose OUTSIDE the fold.
     await expect(page.getByText('Done — the outline is updated.')).toBeVisible();
+  });
+
+  test('keeps DM process expanded while final prose streams, then collapses after settle', async ({ page }) => {
+    const assistant = {
+      role: 'assistant',
+      api: 'responses',
+      provider: 'openai',
+      model: 'gpt-5.4',
+      usage,
+      stopReason: 'stop',
+      timestamp: 1_800_000_001_100,
+      content: [
+        { type: 'thinking', thinking: 'Read the source node before answering.' },
+        { type: 'toolCall', id: 'tool-read-live', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+        { type: 'text', text: 'The final answer is now streaming below the process.' },
+      ],
+    };
+    const toolResult = {
+      role: 'toolResult',
+      toolCallId: 'tool-read-live',
+      toolName: 'node_read',
+      content: [{ type: 'text', text: 'Alpha node content' }],
+      isError: false,
+      timestamp: 1_800_000_001_101,
+    };
+
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
+      conversationTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [toolResult],
+      conversation: [],
+      streamingMessage: assistant,
+      isStreaming: true,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    });
+
+    const process = page.locator('.agent-process-block').first();
+    await expect(process.locator('.agent-process-toggle').first()).toHaveAttribute('aria-expanded', 'true');
+    await expect(process.locator('.agent-process-toggle').first()).toBeDisabled();
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Working...');
+    await expect(process.locator('.agent-process-flat .agent-process-title').first()).toHaveText('Thought · Read node "node-alpha"');
+    await expect(page.getByText('The final answer is now streaming below the process.')).toBeVisible();
+
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
+      conversationTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [toolResult],
+      conversation: [{
+        nodeId: 'assistant-node-live-settled',
+        message: assistant,
+        branches: null,
+        runDurationMs: 63_000,
+      }],
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    }, 2);
+
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Worked for 1m 3s');
+    await expect(process.locator('.agent-process-toggle').first()).toHaveAttribute('aria-expanded', 'false');
+    await expect(process.locator('.agent-process-toggle').first()).not.toBeDisabled();
+    await expect(page.getByText('The final answer is now streaming below the process.')).toBeVisible();
+  });
+
+  test('keeps tool-free streaming prose outside the temporary Working fold', async ({ page }) => {
+    const assistant = {
+      role: 'assistant',
+      api: 'responses',
+      provider: 'openai',
+      model: 'gpt-5.4',
+      usage,
+      stopReason: 'stop',
+      timestamp: 1_800_000_001_300,
+      content: [{ type: 'text', text: 'A direct answer is streaming without tools.' }],
+    };
+
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
+      conversationTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [],
+      conversation: [],
+      streamingMessage: assistant,
+      isStreaming: true,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    });
+
+    await expect(page.locator('.agent-process-title').first()).toHaveText('Working...');
+    await expect(page.locator('.agent-process-flat-narration')).toHaveCount(0);
+    await expect(page.getByText('A direct answer is streaming without tools.')).toBeVisible();
+
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
+      conversationTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [],
+      conversation: [{
+        nodeId: 'assistant-node-direct-settled',
+        message: assistant,
+        branches: null,
+        runDurationMs: 3_000,
+      }],
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    }, 2);
+
+    await expect(page.locator('.agent-process-block')).toHaveCount(0);
+    await expect(page.getByText('A direct answer is streaming without tools.')).toBeVisible();
   });
 
   test('auto-expands a sealed turn that ended on a tool, surfacing its interim text instead of hiding it', async ({ page }) => {
@@ -550,7 +684,7 @@ test.describe('agent process disclosure', () => {
       ],
     };
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -580,8 +714,8 @@ test.describe('agent process disclosure', () => {
 
     const process = page.locator('.agent-process-block').first();
     // Resultless sealed turn → auto-expanded (not collapsed to "Worked for …").
-    await expect(process.locator('.agent-process-toggle')).toHaveAttribute('aria-expanded', 'true');
-    await expect(process.locator('.agent-process-title')).not.toHaveText(/Worked for/);
+    await expect(process.locator('.agent-process-toggle').first()).toHaveAttribute('aria-expanded', 'true');
+    await expect(process.locator('.agent-process-title').first()).not.toHaveText(/Worked for/);
     // The interim text is visible inside the fold, not hidden.
     await expect(page.getByText('Let me read the alpha node before answering.')).toBeVisible();
   });
@@ -619,7 +753,7 @@ test.describe('agent process disclosure', () => {
       }],
     };
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -658,6 +792,11 @@ test.describe('agent process disclosure', () => {
       pendingToolCallIds: [],
       errorMessage: null,
     });
+
+    const process = page.locator('.agent-process-block').first();
+    const processGroupToggle = process.locator('.agent-process-flat .agent-process-toggle').first();
+    await expect(process.locator('.agent-process-toggle').first()).toHaveAttribute('aria-expanded', 'true');
+    await expect(processGroupToggle).toHaveAttribute('aria-expanded', 'true');
 
     const loadedCall = page.locator('.agent-tool-call').filter({ has: page.locator('.agent-loaded-skill') });
     const loaded = loadedCall.locator('.agent-loaded-skill');
@@ -718,7 +857,7 @@ test.describe('agent process disclosure', () => {
       };
     });
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Long Agent Conversation',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -767,7 +906,7 @@ test.describe('agent process disclosure', () => {
       ],
     };
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -788,7 +927,7 @@ test.describe('agent process disclosure', () => {
               byteLength: 38,
               sha256: 'payload-sha',
               role: 'tool_output',
-              scope: { type: 'run', conversationId: 'mock-agent-conversation', runId: 'run-payload-output' },
+              scope: { type: 'run', conversationId: DEFAULT_GENERAL_CHANNEL_ID, runId: 'run-payload-output' },
               summary: 'large.log output',
               truncated: true,
             },
@@ -817,8 +956,9 @@ test.describe('agent process disclosure', () => {
     expect(await clipboardText(page)).not.toContain('Preview only');
 
     // The lone tool call now folds into the result-first process block; open the
-    // fold first, then the tool row inside its timeline.
-    await row.locator('.agent-process-toggle').click();
+    // turn fold, then the adjacent tool group, then the tool row inside it.
+    await row.locator('.agent-process-toggle').first().click();
+    await row.locator('.agent-process-flat .agent-process-toggle').first().click();
     await row.locator('.agent-tool-call-toggle').click();
     await row.getByRole('button', { name: 'Preview output' }).click();
     const panel = page.locator('.outline-panel-surface.active-panel.is-file-preview');
