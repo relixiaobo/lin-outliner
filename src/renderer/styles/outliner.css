@@ -1880,6 +1880,14 @@
   display: block;
 }
 
+/* A non-image file node shows its file-type glyph as the bullet (mask-driven via the
+   shared inline-file-icon, which is 0.95em + currentColor), sized to the bullet box and
+   tinted like a field/command glyph. The bullet still drills to the node page on click. */
+.row-bullet-shape.file {
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .row-bullet-dot {
   display: block;
   width: 5px;

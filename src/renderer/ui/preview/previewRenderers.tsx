@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
@@ -13,20 +13,16 @@ import type {
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import {
-  ChevronLeftIcon,
-  ChevronRightIcon,
   FileTextIcon,
   FolderIcon,
   ICON_SIZE,
-  ZoomInIcon,
-  ZoomOutIcon,
 } from '../icons';
 import { inlineFileIconKind, INLINE_FILE_ICON_CLASS } from '../editor/inlineFileIcon';
 import { highlightCode, isKnownCodeLanguage, plainCodeHtml } from '../editor/shikiHighlighter';
 import { normalizeCodeLanguage } from '../editor/codeLanguages';
-import { IconButton } from '../primitives/IconButton';
 import { wantsNewPaneFromClick } from '../shared';
 import { formatBytes } from './fileNode';
+import { FilePreviewPill, type FilePreviewMenuAction } from './FilePreviewPill';
 import { usePreviewObjectUrl } from './usePreviewObjectUrl';
 
 type FilePreviewLabels = ReturnType<typeof useT>['shell']['filePreview'];
@@ -71,10 +67,14 @@ export function usePreviewSource(target: PreviewTarget): PreviewSourceState {
 const MARKDOWN_REMARK_PLUGINS = [remarkGfm];
 const MAX_TABLE_ROWS = 100;
 const MAX_TABLE_COLUMNS = 24;
-const PDF_DEFAULT_SCALE = 1;
-const PDF_MIN_SCALE = 0.5;
-const PDF_MAX_SCALE = 2.5;
-const PDF_SCALE_STEP = 0.25;
+// A4-ish fallback aspect (height / width) for a not-yet-measured PDF page, so the
+// placeholder reserves roughly the right height before its canvas lazily renders.
+const PDF_FALLBACK_ASPECT = 1.414;
+// Cap the device-pixel render scale so a wide pane on a Retina display does not
+// rasterize an enormous canvas per page.
+const PDF_MAX_RENDER_SCALE = 3;
+// Render a page when it is within this many pixels of the scroll viewport.
+const PDF_LAZY_ROOT_MARGIN = '800px 0px';
 
 type PdfJsModule = typeof import('pdfjs-dist');
 
@@ -83,6 +83,10 @@ let pdfJsModulePromise: Promise<PdfJsModule> | null = null;
 export interface PreviewRendererProps {
   onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
   source: PreviewFileSource;
+  // The internally-scrolling preview container. The PDF renderer uses it as the
+  // IntersectionObserver root so pages render lazily as they scroll into view;
+  // other renderers ignore it.
+  scrollRootRef?: RefObject<HTMLElement | null>;
 }
 
 interface PreviewRendererEntry {
@@ -103,56 +107,92 @@ const FILE_PREVIEW_RENDERERS: PreviewRendererEntry[] = [
   { id: 'metadata', match: () => true, component: MetadataPreview },
 ];
 
+/**
+ * Whether a resolved source has a real content renderer (anything but the metadata
+ * fallback). Drives the preview pill: a previewable source gets Expand/Collapse; a
+ * non-previewable one (the metadata card) gets Open-with-default-app as its primary.
+ */
+export function isPreviewableSource(source: PreviewSourceDescriptor): boolean {
+  if (source.kind !== 'file') return false;
+  const entry = FILE_PREVIEW_RENDERERS.find((candidate) => candidate.match(source));
+  return entry ? entry.id !== 'metadata' : false;
+}
+
 export function PreviewRenderer({
   onOpenTarget,
   source,
+  scrollRootRef,
 }: {
   onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
   source: PreviewSourceDescriptor;
+  scrollRootRef?: RefObject<HTMLElement | null>;
 }) {
   const labels = useT().shell.filePreview;
   if (source.kind === 'url') {
     return <PreviewMessage>{labels.unsupported}</PreviewMessage>;
   }
   const Renderer = FILE_PREVIEW_RENDERERS.find((entry) => entry.match(source))?.component ?? MetadataPreview;
-  return <Renderer onOpenTarget={onOpenTarget} source={source} />;
+  return <Renderer onOpenTarget={onOpenTarget} source={source} scrollRootRef={scrollRootRef} />;
+}
+
+export interface FilePreviewShellProps {
+  state: PreviewSourceState;
+  onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
+  /** The OS-default-app open action (asset / local file / url). Null when not openable. */
+  primaryOpen?: { label: string; run: () => void } | null;
+  /** Secondary actions for the `⋯` menu (reveal in Finder, copy, add to outline). */
+  menuActions?: FilePreviewMenuAction[];
+  /** A quiet caption (type · size · pages) shown in the `⋯` menu header. */
+  meta?: string | null;
+  /** Start expanded (a dedicated node page) vs collapsed/peek (an inline outliner row). */
+  initialExpanded?: boolean;
 }
 
 /**
- * The shared body of a file preview: a `meta · actions` toolbar over the rendered
- * content. Both lifecycle states reuse it so a loose preview is visually identical
- * to an ingested file-node preview — same toolbar, same content render, same CSS
- * (`.file-node-*`). Callers supply their own meta string and action buttons (a node
- * carries open/reveal/copy; a non-node source carries open / add-to-outline); only
- * the resolved-source rendering is common.
+ * The shared body of a file preview: the rendered content in an internally-scrolling
+ * stage with a single bottom-center floating pill (primary + `⋯`), replacing the old
+ * top meta+actions toolbar. Both lifecycle states reuse it so a loose preview reads
+ * identically to an ingested file-node preview (same `.file-node-*` CSS). A previewable
+ * source toggles a collapsed/peek vs expanded/full-scroll height; a non-previewable one
+ * (the metadata card) renders at natural height with Open-with-default-app as the pill
+ * primary. Callers supply the open action + the `⋯` menu actions; the resolved-source
+ * rendering and the pill are common.
  */
 export function FilePreviewShell({
-  meta,
-  actions,
   state,
   onOpenTarget,
-}: {
-  meta: string | null;
-  actions?: ReactNode;
-  state: PreviewSourceState;
-  onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
-}) {
+  primaryOpen = null,
+  menuActions = [],
+  meta = null,
+  initialExpanded = false,
+}: FilePreviewShellProps) {
   const labels = useT().shell.filePreview;
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const [expanded, setExpanded] = useState(initialExpanded);
+  const previewable = state.status === 'ready' && isPreviewableSource(state.source);
+  const stageClass = [
+    'file-node-preview',
+    previewable ? (expanded ? 'expanded' : 'collapsed') : 'static',
+  ].join(' ');
   return (
     <div className="file-node-body">
-      <div className="file-node-toolbar">
-        <span className="file-node-meta">{meta ?? ' '}</span>
-        {actions ? <div className="file-node-actions">{actions}</div> : null}
-      </div>
-      <div className="file-node-preview">
+      <div className={stageClass} ref={previewRef}>
         {state.status === 'loading' ? (
           <PreviewMessage>{labels.loading}</PreviewMessage>
         ) : state.status === 'missing' ? (
           <PreviewMessage>{state.error === 'too-large' ? labels.tooLarge : labels.unavailable}</PreviewMessage>
         ) : (
-          <PreviewRenderer source={state.source} onOpenTarget={onOpenTarget} />
+          <PreviewRenderer source={state.source} onOpenTarget={onOpenTarget} scrollRootRef={previewRef} />
         )}
       </div>
+      <FilePreviewPill
+        previewable={previewable}
+        expanded={expanded}
+        onToggleExpand={() => setExpanded((value) => !value)}
+        primaryOpen={primaryOpen}
+        menuActions={menuActions}
+        meta={meta}
+      />
     </div>
   );
 }
@@ -335,22 +375,18 @@ function TextPreview({ source }: PreviewRendererProps) {
   return <div className="file-preview-code" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-function PdfPreview({ source }: PreviewRendererProps) {
+function PdfPreview({ source, scrollRootRef }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const [state, setState] = useState<
     | { status: 'loading' }
     | { status: 'ready'; document: PDFDocumentProxy; pageCount: number }
     | { status: 'error'; error?: string }
   >({ status: 'loading' });
-  const [pageNumber, setPageNumber] = useState(1);
-  const [scale, setScale] = useState(PDF_DEFAULT_SCALE);
 
   useEffect(() => {
     let cancelled = false;
     let loadingTask: PDFDocumentLoadingTask | null = null;
     setState({ status: 'loading' });
-    setPageNumber(1);
-    setScale(PDF_DEFAULT_SCALE);
 
     void (async () => {
       const bytesResult = await api.readPreviewBytes(source.target);
@@ -386,69 +422,118 @@ function PdfPreview({ source }: PreviewRendererProps) {
   if (state.status === 'loading') return <PreviewMessage>{labels.loading}</PreviewMessage>;
   if (state.status === 'error') return <MetadataPreview source={source} />;
 
-  const canGoPrevious = pageNumber > 1;
-  const canGoNext = pageNumber < state.pageCount;
-  const canZoomOut = scale > PDF_MIN_SCALE;
-  const canZoomIn = scale < PDF_MAX_SCALE;
-  const zoomPercent = Math.round(scale * 100);
+  return <PdfPages document={state.document} pageCount={state.pageCount} scrollRootRef={scrollRootRef} />;
+}
+
+/**
+ * Every PDF page stacked vertically, scrolled to navigate (no page-nav, no zoom).
+ * Each page renders lazily as it nears the scroll viewport; until then a placeholder
+ * sized by the first page's aspect reserves its height so mounting never jumps.
+ */
+function PdfPages({
+  document: pdfDocument,
+  pageCount,
+  scrollRootRef,
+}: {
+  document: PDFDocumentProxy;
+  pageCount: number;
+  scrollRootRef?: RefObject<HTMLElement | null>;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(0);
+  const [aspect, setAspect] = useState(PDF_FALLBACK_ASPECT);
+
+  useEffect(() => {
+    let cancelled = false;
+    void pdfDocument.getPage(1).then((page) => {
+      const viewport = page.getViewport({ scale: 1 });
+      if (!cancelled && viewport.width > 0) setAspect(viewport.height / viewport.width);
+      page.cleanup();
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfDocument]);
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver((entries) => {
+      const next = entries[0]?.contentRect.width ?? 0;
+      if (next > 0) setWidth(next);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   return (
-    <div className="file-preview-pdf">
-      <div className="file-preview-pdf-toolbar" aria-label={labels.pdfToolbar}>
-        <div className="file-preview-pdf-control-group">
-          <IconButton
-            className="file-preview-pdf-icon-button"
-            disabled={!canGoPrevious}
-            icon={ChevronLeftIcon}
-            label={labels.pdfPreviousPage}
-            onClick={() => setPageNumber((current) => Math.max(1, current - 1))}
-            variant="toolbar"
-          />
-          <span className="file-preview-pdf-page-label">
-            {labels.pdfPage({ page: pageNumber, total: state.pageCount })}
-          </span>
-          <IconButton
-            className="file-preview-pdf-icon-button"
-            disabled={!canGoNext}
-            icon={ChevronRightIcon}
-            label={labels.pdfNextPage}
-            onClick={() => setPageNumber((current) => Math.min(state.pageCount, current + 1))}
-            variant="toolbar"
-          />
-        </div>
-        <div className="file-preview-pdf-control-group">
-          <IconButton
-            className="file-preview-pdf-icon-button"
-            disabled={!canZoomOut}
-            icon={ZoomOutIcon}
-            label={labels.pdfZoomOut}
-            onClick={() => setScale((current) => clampPdfScale(current - PDF_SCALE_STEP))}
-            variant="toolbar"
-          />
-          <span className="file-preview-pdf-zoom-label">{labels.pdfZoom({ percent: zoomPercent })}</span>
-          <IconButton
-            className="file-preview-pdf-icon-button"
-            disabled={!canZoomIn}
-            icon={ZoomInIcon}
-            label={labels.pdfZoomIn}
-            onClick={() => setScale((current) => clampPdfScale(current + PDF_SCALE_STEP))}
-            variant="toolbar"
-          />
-        </div>
-      </div>
-      <PdfPageCanvas document={state.document} pageNumber={pageNumber} scale={scale} />
+    <div className="file-preview-pdf" ref={containerRef}>
+      {Array.from({ length: pageCount }, (_, index) => (
+        <LazyPdfPage
+          key={index}
+          aspect={aspect}
+          document={pdfDocument}
+          pageNumber={index + 1}
+          scrollRootRef={scrollRootRef}
+          width={width}
+        />
+      ))}
+    </div>
+  );
+}
+
+function LazyPdfPage({
+  aspect,
+  document: pdfDocument,
+  pageNumber,
+  scrollRootRef,
+  width,
+}: {
+  aspect: number;
+  document: PDFDocumentProxy;
+  pageNumber: number;
+  scrollRootRef?: RefObject<HTMLElement | null>;
+  width: number;
+}) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (visible) return;
+    const element = wrapperRef.current;
+    if (!element) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { root: scrollRootRef?.current ?? null, rootMargin: PDF_LAZY_ROOT_MARGIN },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [scrollRootRef, visible]);
+
+  // Reserve the page height (width × aspect) up front so lazy mounting never jumps.
+  const reservedHeight = width > 0 ? Math.round(width * aspect) : undefined;
+  return (
+    <div className="file-preview-pdf-page" ref={wrapperRef} style={{ minHeight: reservedHeight }}>
+      {visible && width > 0 ? (
+        <PdfPageCanvas document={pdfDocument} pageNumber={pageNumber} width={width} />
+      ) : null}
     </div>
   );
 }
 
 function PdfPageCanvas({
-  document,
+  document: pdfDocument,
   pageNumber,
-  scale,
+  width,
 }: {
   document: PDFDocumentProxy;
   pageNumber: number;
-  scale: number;
+  width: number;
 }) {
   const labels = useT().shell.filePreview;
   const [state, setState] = useState<
@@ -466,11 +551,15 @@ function PdfPageCanvas({
     void (async () => {
       const canvas = canvasRef.current;
       if (!canvas) throw new Error('canvas-unavailable');
-      const page = await document.getPage(pageNumber);
+      const page = await pdfDocument.getPage(pageNumber);
       try {
         if (cancelled) return;
-        const viewport = page.getViewport({ scale });
-        const pixelRatio = window.devicePixelRatio || 1;
+        const baseViewport = page.getViewport({ scale: 1 });
+        // Fit each page to the available width; cap the device-pixel scale so a wide
+        // Retina pane does not allocate an oversized canvas.
+        const fitScale = baseViewport.width > 0 ? width / baseViewport.width : 1;
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, PDF_MAX_RENDER_SCALE);
+        const viewport = page.getViewport({ scale: fitScale });
         const context = canvas.getContext('2d');
         if (!context) throw new Error('canvas-unavailable');
         canvas.width = Math.ceil(viewport.width * pixelRatio);
@@ -497,7 +586,7 @@ function PdfPageCanvas({
       cancelled = true;
       renderTask?.cancel();
     };
-  }, [document, pageNumber, scale]);
+  }, [pdfDocument, pageNumber, width]);
 
   return (
     <div className="file-preview-pdf-stage">
@@ -711,10 +800,6 @@ export function formatModifiedDate(value: number): string {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(value));
-}
-
-function clampPdfScale(value: number): number {
-  return Math.min(PDF_MAX_SCALE, Math.max(PDF_MIN_SCALE, Number(value.toFixed(2))));
 }
 
 function loadPdfJs(): Promise<PdfJsModule> {

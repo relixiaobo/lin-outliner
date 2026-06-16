@@ -20,6 +20,7 @@ interface RowLeadingProps {
   processing?: boolean;
   bulletColors?: string[];
   tagDefColor?: string;
+  fileIconKind?: string;
   onToggleExpand: () => void;
   onDrillDown: () => void;
   draggable?: boolean;
@@ -37,6 +38,7 @@ export function RowLeading({
   processing,
   bulletColors = [],
   tagDefColor,
+  fileIconKind,
   onToggleExpand,
   onDrillDown,
   draggable,
@@ -87,6 +89,7 @@ export function RowLeading({
           className={markerClassName}
           bulletColors={bulletColors}
           tagDefColor={tagDefColor}
+          fileIconKind={fileIconKind}
         />
       </ButtonControl>
     </div>

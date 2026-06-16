@@ -10,7 +10,7 @@ type ImageNode = Extract<FileNode, { type: 'image' }>;
 /**
  * An image file node's outliner row content: the image itself, rendered inline as a
  * bounded preview — an image's content is its identity, so it shows directly instead
- * of a file-type icon + filename (other file kinds use FileNodeCard). The filename is
+ * of a file-type icon + filename (other file kinds use the lightweight name row). The filename is
  * displayed read-only on the file preview surface, not in the row. A ⋯ menu sits at
  * the image's top-right, revealed on hover or keyboard focus, offering Maximize
  * (open the preview) plus the asset actions (Open / Reveal / Copy). Clicking the

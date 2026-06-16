@@ -70,9 +70,11 @@ import {
 import { renderedTextRightEdge, resolveTextOffsetFromPoint } from '../interactions/domCaret';
 import { TagBar } from '../tags/TagBar';
 import { inlineReferenceTextColor, resolveTagColor, tagBulletColors } from '../tags/tagColors';
-import { fileNodeTitle, isFileNode } from '../preview/fileNode';
-import { FileNodeCard } from '../preview/FileNodeCard';
+import { fileNodeIconKind, fileNodeTitle, isFileNode } from '../preview/fileNode';
+import { FileNodeActionMenu } from '../preview/FileNodeActionMenu';
 import { FileNodeImage } from '../preview/FileNodeImage';
+import { FilePreviewBody } from '../preview/FilePreviewBody';
+import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
 import { CodeBlockRow } from './CodeBlockRow';
 import { TriggerPopover } from './TriggerPopover';
 import { DoneCheckbox } from './DoneCheckbox';
@@ -202,12 +204,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     && Boolean(referenceTargetId)
     && props.referencePath.includes(childParentId);
   const rowChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId);
-  // A file node is a full node — the chevron expands its children, and the bullet
-  // opens the ingested file preview. Its row content depends on the kind: a non-image
-  // file renders a uniform card (FileNodeCard: file-type icon, read-only filename,
-  // meta, ⋯ menu); an image renders the image itself inline (FileNodeImage: an
-  // image's content is its identity), with the filename displayed read-only on the
-  // preview surface.
+  // A file node is a full node — the bullet drills to the node page, the chevron
+  // expands an inline preview. Its row content depends on the kind: a non-image file is
+  // a lightweight name row (file-type bullet, read-only filename, hover ⋯ menu); an
+  // image renders the image itself inline (FileNodeImage: an image's content is its
+  // identity), with the filename displayed read-only on the preview surface.
   // A reference whose target is a file node must still render as a reference row,
   // not as the file's own card/image: `displayed` resolves to the target only when
   // `referenceTargetId` is set, so guard on `!referenceTargetId`. Otherwise an
@@ -216,6 +217,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // the reference. Only a row that IS the file node gets the file presentation.
   const fileNodeRow = !referenceTargetId && isFileNode(displayed) ? displayed : null;
   const imageFileRow = fileNodeRow?.type === 'image' ? fileNodeRow : null;
+  // A non-image file renders as a lightweight row (file-icon bullet + read-only
+  // filename, expand → inline preview); an image keeps its inline-image presentation.
+  const nonImageFileRow = fileNodeRow && fileNodeRow.type !== 'image' ? fileNodeRow : null;
   const row = useOutlinerRowInteraction({
     rowId: props.nodeId,
     parentId: props.parentId,
@@ -344,11 +348,23 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       }));
     });
   };
+  // A non-image file row's chevron toggles its inline preview (peek), not the
+  // trailing-child-draft toggle a childless content row uses. It flips this row's
+  // membership in the expanded set, which `row.expanded` reads.
+  const toggleFilePreview = () => {
+    props.setUi((prev) => {
+      const expandedSet = new Set(prev.expanded);
+      if (expandedSet.has(props.nodeId)) expandedSet.delete(props.nodeId);
+      else expandedSet.add(props.nodeId);
+      return { ...prev, expanded: expandedSet };
+    });
+  };
   const childReferencePath = [...props.referencePath, childParentId];
   const pendingReferenceConversion = props.ui.pendingReferenceConversion?.nodeId === props.nodeId;
   const pendingReferenceTypeAhead = props.ui.pendingReferenceTypeAhead?.nodeId === props.nodeId;
-  // A file node keeps the neutral content bullet (its file-type icon lives on the
-  // card, not the bullet) so the bullet stays a plain node handle that drills.
+  // A non-image file node shows its file-type icon as the bullet (the row text is the
+  // read-only filename); an image keeps the neutral content bullet (its inline image is
+  // its identity). The bullet still drills to the node page on click.
   const leadingVariant = node.type === 'reference' || pendingReferenceConversion
     ? 'reference'
     : displayed.type === 'tagDef'
@@ -357,7 +373,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         ? 'fieldDef'
         : displayed.type === 'command'
           ? 'command'
-          : 'content';
+          : nonImageFileRow
+            ? 'file'
+            : 'content';
   const isCommandNode = leadingVariant === 'command';
   const appliedTags = displayed.tags
     .map((tagId) => props.index.byId.get(tagId))
@@ -1836,6 +1854,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       wrapProps={row.wrapProps}
       rowClassName={row.rowClassName([
         referenceLikeRow ? 'reference-row' : '',
+        // A non-image file row is a lightweight name row (file-icon bullet, read-only
+        // filename) that expands to an inline preview; the class shows the chevron and
+        // styles the name/preview.
+        nonImageFileRow ? 'file-node-row' : '',
         pendingReferenceConversion ? 'ref-converting' : '',
         pendingReferenceTypeAhead ? 'ref-typeahead' : '',
         // A not-yet-materialized trailing draft reads as a fainter bullet, so it
@@ -1851,10 +1873,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           expanded={row.expanded}
           variant={leadingVariant}
           fieldType={projectFieldTypeById(props.index.byId, displayed.id)}
+          fileIconKind={nonImageFileRow ? fileNodeIconKind(nonImageFileRow) : undefined}
           processing={isCommandNode && commandRun.running}
           bulletColors={appliedTagColors}
           tagDefColor={tagDefColor}
-          onToggleExpand={row.toggleExpandOrSelect}
+          onToggleExpand={nonImageFileRow ? toggleFilePreview : row.toggleExpandOrSelect}
           onDrillDown={() => props.onRoot(drillDownId)}
           draggable={row.dragHandleProps.draggable}
           onDragStart={row.dragHandleProps.onDragStart}
@@ -1883,23 +1906,29 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             />
           )}
           {fileNodeRow ? (
-            // A file node is click-to-open with a display-only filename: an image
-            // renders inline as the image itself, every other file as a uniform card.
-            // It carries no inline text editor; a lightweight visually-hidden anchor
-            // gives the row full keyboard parity (arrow nav, Enter → sibling, etc.)
-            // without a read-only ProseMirror that could not even drive nav. The
-            // leading bullet/chevron stay on the row, so it is still a full node
-            // (chevron → children, bullet → ingested preview).
+            // A file node carries no inline text editor; a lightweight visually-hidden
+            // anchor gives the row full keyboard parity (arrow nav, Enter → sibling,
+            // etc.). An image renders inline as the image itself (its content is its
+            // identity); every other file is a lightweight name row — the read-only
+            // filename plus a hover ⋯ menu — whose file-type bullet drills to the node
+            // page and whose chevron expands an inline preview (rendered below the row).
             <>
               {imageFileRow ? (
                 <FileNodeImage node={imageFileRow} onMaximize={() => props.onRoot(drillDownId)} />
-              ) : (
-                <FileNodeCard
-                  node={fileNodeRow}
-                  onOpen={() => props.onRoot(drillDownId)}
-                  onOpenSplit={() => props.onRoot(drillDownId, { newPane: true })}
-                />
-              )}
+              ) : nonImageFileRow ? (
+                <span className="file-node-row-main">
+                  <span className="file-node-row-name" title={fileNodeTitle(nonImageFileRow)}>
+                    {fileNodeTitle(nonImageFileRow)}
+                  </span>
+                  <span className="file-node-row-actions" data-preserve-selection>
+                    <FileNodeActionMenu
+                      node={nonImageFileRow}
+                      primaryLabel={tf.attachment.openInSplit}
+                      onPrimary={() => props.onRoot(drillDownId, { newPane: true })}
+                    />
+                  </span>
+                </span>
+              ) : null}
               <FileNodeKeyboardAnchor
                 label={fileNodeTitle(fileNodeRow)}
                 onFocus={() => row.updateSelection()}
@@ -2074,8 +2103,21 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       )}
     >
 
-      {row.expanded && (
+      {row.expanded && (!nonImageFileRow || row.hasChildren) && (
         <IndentGuide onToggleChildren={row.toggleDirectChildrenExpansion} />
+      )}
+
+      {nonImageFileRow && row.expanded && (
+        // The inline file preview lives below the row (inside row-wrap, outside .row),
+        // so it is not painted by the row's selection highlight; it starts collapsed
+        // (peek) and the pill's Expand grows it to a full vertical scroll.
+        <div className="file-node-row-preview">
+          <FilePreviewBody
+            node={nonImageFileRow}
+            onOpenTarget={(target, options) => dispatchPreviewTargetOpen({ target, newPane: options?.newPane })}
+            initialExpanded={false}
+          />
+        </div>
       )}
 
       {activeTrigger && (
