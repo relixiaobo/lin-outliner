@@ -9,7 +9,7 @@ single files.
 Use:
 
 ```bash
-python3 ${AGENT_SKILL_DIR}/scripts/pptx_tool.py inspect input.pptx --out report.json
+python3 scripts/pptx_tool.py inspect input.pptx --out report.json
 ```
 
 Read the report for:

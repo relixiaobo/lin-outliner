@@ -11,7 +11,7 @@ import statistics
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 MISSING = {"", "na", "n/a", "null", "none", "nan", "-"}
 
@@ -22,7 +22,7 @@ def is_missing(value: Any) -> bool:
     return str(value).strip().lower() in MISSING
 
 
-def parse_number(value: Any) -> float | None:
+def parse_number(value: Any) -> Optional[float]:
     if is_missing(value):
         return None
     text = str(value).strip().replace(",", "")

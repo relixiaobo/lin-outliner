@@ -27,6 +27,21 @@ function slideElementCount(html) {
   return count;
 }
 
+function remoteDependencies(html) {
+  const remoteSrcs = attrValues(html, 'src').filter((value) => /^https?:/i.test(value.trim()));
+  const remoteCssUrls = [];
+  const cssUrlRe = /url\(\s*["']?(https?:[^"')\s]+)["']?\s*\)/gi;
+  for (const match of html.matchAll(cssUrlRe)) remoteCssUrls.push(match[1]);
+
+  const remoteLinks = [];
+  const linkRe = /<link\b[^>]*>/gi;
+  for (const match of html.matchAll(linkRe)) {
+    const href = attrValues(match[0], 'href')[0];
+    if (href && /^https?:/i.test(href.trim())) remoteLinks.push(href);
+  }
+  return sortedUnique([...remoteSrcs, ...remoteCssUrls, ...remoteLinks]);
+}
+
 async function existingLocalReference(filePath, ref) {
   const cleanRef = ref.split('#')[0].split('?')[0];
   if (!cleanRef) return true;
@@ -49,23 +64,27 @@ async function inspectHtml(filePath, html) {
     return true;
   });
   const placeholders = sortedUnique([...html.matchAll(PLACEHOLDER_RE)].map((match) => match[0].toLowerCase()));
+  const remoteDependencyRefs = remoteDependencies(html);
+  const errors = [];
   const warnings = [];
   const brokenLocalReferences = [];
   for (const ref of localRefs) {
     if (!(await existingLocalReference(filePath, ref))) brokenLocalReferences.push(ref);
   }
-  if (slideCount === 0) warnings.push('no_slide_elements_found');
+  if (slideCount === 0) errors.push('no_slide_elements_found');
   if (placeholders.length > 0) warnings.push('placeholder_text_found');
-  if (brokenLocalReferences.length > 0) warnings.push('broken_local_asset_reference_found');
-  if (/https?:\/\/|cdn\./i.test(html)) warnings.push('remote_dependency_reference_found');
+  if (brokenLocalReferences.length > 0) errors.push('broken_local_asset_reference_found');
+  if (remoteDependencyRefs.length > 0) warnings.push('remote_dependency_reference_found');
   if (!/keydown|data-deck|data-slide/i.test(html)) warnings.push('navigation_not_obvious');
   if (!/aspect-ratio\s*:\s*16\s*\/\s*9/i.test(html)) warnings.push('missing_16_9_aspect_ratio_hint');
 
   return {
     file: filePath,
-    ok: warnings.length === 0,
+    ok: errors.length === 0,
+    errors,
     slide_count: slideCount,
     local_references: sortedUnique(localRefs),
+    remote_dependency_references: remoteDependencyRefs,
     broken_local_references: sortedUnique(brokenLocalReferences),
     placeholder_hits: placeholders,
     warnings,

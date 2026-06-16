@@ -35,7 +35,7 @@ artifact and did not require PowerPoint.
 Run:
 
 ```bash
-node ${AGENT_SKILL_DIR}/scripts/html_tool.mjs inspect path/to/index.html --out verification.json
+node scripts/html_tool.mjs inspect path/to/index.html --out verification.json
 ```
 
 Then inspect or screenshot the deck in a browser when available.

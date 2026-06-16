@@ -1,6 +1,6 @@
 ---
 name: data-analysis
-description: Analyze, clean, profile, summarize, validate, and explain data from CSV, TSV, JSON, JSONL, XLSX workbooks, tables, metrics exports, logs, and user-provided datasets. Use whenever the user asks for data analysis, spreadsheet analysis, workbook inspection, charts, trends, segmentation, anomaly checks, reproducible calculations, or evidence-backed analytical conclusions.
+description: Analyze, clean, profile, summarize, validate, chart, and explain CSV, TSV, JSON, JSONL, XLSX workbooks, spreadsheets, tables, metrics exports, logs, and datasets with reproducible calculations.
 ---
 
 # Data Analysis

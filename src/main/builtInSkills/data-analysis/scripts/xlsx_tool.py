@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import posixpath
 import re
 import sys
 import zipfile
 from pathlib import Path
+from typing import Optional
 from xml.etree import ElementTree as ET
 
 PLACEHOLDER_RE = re.compile(r"\b(lorem|ipsum|todo|placeholder|sample|dummy|xxxx)\b", re.I)
@@ -17,7 +19,7 @@ S_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 R_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 
 
-def read_xml(zf: zipfile.ZipFile, name: str) -> ET.Element | None:
+def read_xml(zf: zipfile.ZipFile, name: str) -> Optional[ET.Element]:
     try:
         return ET.fromstring(zf.read(name))
     except Exception:
@@ -43,8 +45,7 @@ def rels_for(zf: zipfile.ZipFile, rels_name: str) -> dict[str, dict[str, str]]:
 def normalized_target(source_part: str, target: str) -> str:
     if target.startswith("/"):
         return target.lstrip("/")
-    base = Path(source_part).parent
-    return str((base / target).as_posix())
+    return posixpath.normpath(posixpath.join(posixpath.dirname(source_part), target))
 
 
 def shared_strings(zf: zipfile.ZipFile) -> list[str]:

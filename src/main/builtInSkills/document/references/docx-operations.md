@@ -9,7 +9,7 @@ as structured packages, not as single files.
 Use:
 
 ```bash
-python3 ${AGENT_SKILL_DIR}/scripts/docx_tool.py inspect input.docx --out report.json
+python3 scripts/docx_tool.py inspect input.docx --out report.json
 ```
 
 Read the report for:

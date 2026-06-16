@@ -1,6 +1,6 @@
 ---
 name: document
-description: Create, edit, analyze, review, or polish professional documents including memos, briefs, proposals, reports, policies, contracts, DOCX files, Markdown drafts, PDF handouts, comments, redlines, and document-derived summaries. Use whenever the user asks for a document, Word file, docx, report, memo, brief, policy, proposal, redline, review notes, or structured writing meant for reading rather than slides.
+description: Create, edit, analyze, review, or polish professional documents including Word/DOCX files, Markdown drafts, reports, memos, briefs, proposals, policies, contracts, PDF handouts, comments, redlines, and summaries.
 ---
 
 # Document

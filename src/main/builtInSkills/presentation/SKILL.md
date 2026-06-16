@@ -1,6 +1,6 @@
 ---
 name: presentation
-description: Create, edit, analyze, or improve presentation artifacts including slide decks, talks, pitch decks, PowerPoint or .pptx files, HTML decks, PDF handouts, speaker-ready outlines, and deck-derived cover images. Use whenever the user asks for slides, a deck, a presentation, PPT, PowerPoint, keynote-style material, an investor deck, a conference deck, a lecture deck, or references a .pptx file.
+description: Create, edit, analyze, or improve slide decks, presentations, PPT/PowerPoint or .pptx files, HTML decks, pitch decks, talks, lecture decks, PDF handouts, speaker outlines, and deck cover images.
 ---
 
 # Presentation

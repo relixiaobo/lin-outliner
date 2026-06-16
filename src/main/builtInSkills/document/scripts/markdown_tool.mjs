@@ -59,16 +59,18 @@ async function inspectMarkdown(filePath, markdown) {
     if (!(await existingLocalReference(filePath, ref))) brokenLocalReferences.push(ref);
   }
   const placeholders = sortedUnique([...markdown.matchAll(PLACEHOLDER_RE)].map((match) => match[0].toLowerCase()));
+  const errors = [];
   const warnings = [];
   if (headings.length === 0) warnings.push('no_headings_found');
   if (headings[0] && headings[0].level !== 1) warnings.push('first_heading_not_h1');
   if (placeholders.length > 0) warnings.push('placeholder_text_found');
-  if (brokenLocalReferences.length > 0) warnings.push('broken_local_asset_reference_found');
+  if (brokenLocalReferences.length > 0) errors.push('broken_local_asset_reference_found');
   if (remoteImageRefs.length > 0) warnings.push('remote_image_reference_found');
 
   return {
     file: filePath,
-    ok: warnings.length === 0,
+    ok: errors.length === 0,
+    errors,
     heading_count: headings.length,
     headings,
     local_references: sortedUnique(refs),
