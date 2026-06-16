@@ -415,9 +415,11 @@ data-gated — see § memory above). The remaining *active* build work is the sk
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
   hot-reload, no allowed-tools self-escalation, opt-in curation). Extracted from
   conversation-model (§Skills) + self-modification (§7/§8) so skills live in one place.
-  **Skillify v2 body shipped (#230)** — the structured authoring workflow on the
-  built-in `/skillify` skill; remaining active work is the **NL save-as-skill +
-  diff/preview creative-UX**. See `docs/plans/agent-skills-authoring.md`.
+  **Skillify v2 body shipped (#230)** and **NL save-as-skill routing shipped
+  (#271)** — explicit natural-language "save/update/fix this as a skill" requests
+  now normalize to the direct `/skillify` prompt path (gated on slash skills, not
+  automatic listing); remaining active work is the **diff/preview creative-UX**.
+  See `docs/plans/agent-skills-authoring.md`.
 - **bundled-built-in-skill-resources** (P1) **merged as PR #269** (codex) — see
   Recently completed; plan archived `done`.
 - **agent-self-modification** (P1, M1–M3, **slimmed by the reorg**) — controlled
@@ -693,6 +695,21 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **NL save-as-skill routing** (codex, PR #271) — part of `agent-skills-authoring`'s Skillify
+  Upgrade unit. Explicit natural-language skill-authoring requests ("save this as a skill", "turn
+  that workflow into a skill", "update the import skill", "fix the skill that failed") now normalize
+  to the same direct `/skillify` prompt path via a conservative parser (`parseNaturalLanguageSkillifyRequest`),
+  so authoring works even when automatic skill listing is off — gated on slash skills being enabled.
+  Reuses the existing slash-invocation path, so Skillify v2 preview/confirm, file-tool writes, and
+  unratified-after-write semantics are unchanged. **Gate (main):** `/code-review`-depth read +
+  empirical regex probing surfaced one Medium finding — the first draft hijacked ordinary outliner
+  content ("update the skills list in my outline", "improve my coding skills", "make a skill tree",
+  "fix the skill check", "tell me about skillify"); codex tightened the patterns (skill-artifact
+  anchors + singular-only `skill` for update/fix + negative lookahead on tree/check/list/sheet/…,
+  question/explain guard) and made NL invoke failures degrade to normal chat instead of throwing.
+  Re-verified by main on the merged tree (`#271` + `#270`): typecheck + skill suites (100/0) +
+  `docs:check` green; all confirmed false positives now fall back to normal chat. Spec folded into
+  `docs/spec/agent-skills.md`; diff/preview creative-UX still pending on the plan.
 - **Goal-oriented built-in skills** (codex-4, PR #270) — three resource-backed `built-in` skills on
   top of the shipped `bundled-built-in-skill-resources` (#269): **`/presentation`** (decks/talks/PPTX/
   HTML decks/PDF handouts), **`/document`** (memos/briefs/reports/DOCX/Markdown/redlines), and

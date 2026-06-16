@@ -12,6 +12,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Natural-language Skillify routing (PR #271, codex)** — explicit natural-language skill-authoring
+  requests ("save this as a skill", "turn that workflow into a skill", "update the import skill",
+  "fix the skill that failed") are now normalized to the same direct `/skillify` prompt path, so
+  authoring works even when automatic skill listing is disabled — gated on slash skills being enabled.
+  A conservative parser (`parseNaturalLanguageSkillifyRequest`) requires a skill-artifact anchor
+  (singular `skill` for update/fix, with a negative lookahead on `tree`/`check`/`list`/`sheet`/…) and a
+  question/explain guard, so ordinary outliner content ("update the skills list", "improve my coding
+  skills", "make a skill tree") stays normal conversation; an NL match that cannot be invoked (e.g.
+  Skillify disabled) degrades to normal chat rather than erroring. Reuses the existing slash-invocation
+  path, so Skillify v2 preview/confirmation, `file_write`/`file_edit` writes, and the
+  born-unratified-after-write semantics are unchanged. Spec: `docs/spec/agent-skills.md`.
 - **Goal-oriented built-in skills: `/presentation`, `/document`, `/data-analysis` (PR #270, codex-4)** —
   three resource-backed `built-in` skills built on the bundled-resource loader (#269). Each ships its own
   `SKILL.md`, route-specific `references/`, **stdlib-only** portable inspection `scripts/` (Python
