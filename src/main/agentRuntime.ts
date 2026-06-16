@@ -45,7 +45,6 @@ import {
   type AgentDebugRunSummary,
   type AgentMessage,
   type AgentRuntimeEvent,
-  type AgentApprovalRequestDetail,
   type AgentApprovalRequestView,
   type AgentApprovalResolutionScope,
   type AgentAuthoringInput,
@@ -171,7 +170,12 @@ import {
   type AgentProviderRuntimeConfig,
 } from './agentSettings';
 import { parseProviderQualifiedModel } from '../core/agentModelId';
-import { appendAgentToolPermissionGrant, readAgentToolPermissionConfig } from './agentToolPermissionStore';
+import {
+  appendAgentToolPermissionGrant,
+  appendAgentToolPermissionSoftBlockAllow,
+  readAgentToolPermissionConfig,
+  removeAgentToolPermissionBlock,
+} from './agentToolPermissionStore';
 import type { OutlinerToolHost } from './agentNodeTools';
 import { AgentUserViewContextReminderTracker, buildUserViewContextReminder } from './agentUserViewContextReminder';
 import { buildConversationEnvironmentReminder } from './agentConversationEnvironmentReminder';
@@ -209,10 +213,9 @@ import type { AgentRecallEvidence, AgentRecallRuntimeEntry, AgentRecallToolRunti
 import { renderAgentMemoryBriefing, MEMORY_BRIEFING_MAX_ENTRIES } from './agentMemoryBriefing';
 import { redactSecretLikeContent } from './agentSecretRedaction';
 import {
-  approvalNoticeForDeniedDecision,
   evaluateAgentToolPermission,
   type AgentPermissionAskDecision,
-  type AgentPermissionDenyDecision,
+  type AgentPermissionSoftBlockDecision,
 } from './agentPermissions';
 import {
   resolveAgentPermissionAsk,
@@ -422,7 +425,7 @@ interface AgentToolApprovalInput {
   requestId: string;
   toolCall: ToolCall;
   args: unknown;
-  decision: AgentPermissionAskDecision;
+  decision: AgentPermissionAskDecision | AgentPermissionSoftBlockDecision;
 }
 
 interface AgentToolApprovalResolution {
@@ -430,6 +433,17 @@ interface AgentToolApprovalResolution {
   deniedReason?: PermissionDeniedReason;
   scope?: AgentApprovalResolutionScope;
   alwaysAllowRule?: string;
+}
+
+interface AgentPendingApproval {
+  conversationId: string;
+  runId?: string;
+  request: AgentApprovalRequestView;
+  alwaysAllowRule?: string;
+  alwaysAllowAction?: 'grant' | 'soft_allow' | 'remove_block';
+  autoBlockTimer?: ReturnType<typeof setTimeout>;
+  onApproved?: () => Promise<void>;
+  resolve: (resolution: AgentToolApprovalResolution) => void;
 }
 
 interface AgentPendingUserQuestion {
@@ -623,14 +637,7 @@ export class AgentRuntime {
   private debugRunCache = new Map<string, { latestSeq: number; contextSeq: number; parentToolCallId: string | null; run: AgentDebugRun }>();
   private eventStore: AgentEventStore | null = null;
   private pastChatsService: AgentPastChatsService | null = null;
-  private pendingApprovals = new Map<string, {
-    conversationId: string;
-    runId?: string;
-    request: AgentApprovalRequestView;
-    alwaysAllowRule?: string;
-    onApproved?: () => Promise<void>;
-    resolve: (resolution: AgentToolApprovalResolution) => void;
-  }>();
+  private pendingApprovals = new Map<string, AgentPendingApproval>();
   private pendingUserQuestions = new Map<string, AgentPendingUserQuestion>();
   private nextConversationId = 1;
   private dreamMemoryExtractionTail: Promise<void> = Promise.resolve();
@@ -1332,22 +1339,32 @@ export class AgentRuntime {
     if (!pending || pending.conversationId !== conversationId) return { resolved: false };
     const conversation = this.conversations.get(conversationId);
     if (!conversation) return { resolved: false };
+    this.clearPendingApprovalAutoBlock(pending);
 
     let resolvedApproved = approved;
     let deniedReason: PermissionDeniedReason | undefined = approved ? undefined : 'user_denied';
     let resolvedScope = scope;
     let alwaysAllowRule = approved && scope === 'always' ? pending.alwaysAllowRule : undefined;
+    let alwaysAllowAction = approved && scope === 'always' ? pending.alwaysAllowAction ?? 'grant' : undefined;
     if (approved && scope === 'always' && !alwaysAllowRule) {
       resolvedScope = 'once';
+      alwaysAllowAction = undefined;
     }
     if (alwaysAllowRule) {
       try {
-        await appendAgentToolPermissionGrant(alwaysAllowRule);
+        if (alwaysAllowAction === 'remove_block') {
+          await removeAgentToolPermissionBlock(alwaysAllowRule);
+        } else if (alwaysAllowAction === 'soft_allow') {
+          await appendAgentToolPermissionSoftBlockAllow(alwaysAllowRule);
+        } else {
+          await appendAgentToolPermissionGrant(alwaysAllowRule);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.emitError(conversationId, `Failed to persist permission grant; approved once instead. ${message}`);
+        this.emitError(conversationId, `Failed to persist permission rule; approved once instead. ${message}`);
         resolvedScope = 'once';
         alwaysAllowRule = undefined;
+        alwaysAllowAction = undefined;
       }
     }
     if (resolvedApproved && pending.onApproved) {
@@ -1360,6 +1377,7 @@ export class AgentRuntime {
         deniedReason = 'runtime';
         resolvedScope = 'once';
         alwaysAllowRule = undefined;
+        alwaysAllowAction = undefined;
       }
     }
 
@@ -2332,6 +2350,7 @@ export class AgentRuntime {
     for (const [requestId, pending] of [...this.pendingApprovals]) {
       if (pending.conversationId !== conversationId) continue;
       this.pendingApprovals.delete(requestId);
+      this.clearPendingApprovalAutoBlock(pending);
       resolvedEvents.push({
         type: 'approval.resolved',
         actor: systemActor(),
@@ -2362,6 +2381,7 @@ export class AgentRuntime {
     if (!pending || pending.conversationId !== conversationId) return false;
 
     this.pendingApprovals.delete(requestId);
+    this.clearPendingApprovalAutoBlock(pending);
     try {
       await this.appendConversationEvents(conversationId, conversation, [{
         type: 'approval.resolved',
@@ -2384,14 +2404,10 @@ export class AgentRuntime {
     return true;
   }
 
-  private async clearPendingPermissionNotices(conversationId: string, conversation: AgentConversationState): Promise<void> {
-    const notices = [...this.pendingApprovals.entries()].filter(([, pending]) => (
-      pending.conversationId === conversationId
-      && pending.request.kind === 'permission_notice'
-    ));
-    for (const [requestId] of notices) {
-      await this.denyPendingApprovalForRuntime(conversationId, conversation, requestId, 'runtime');
-    }
+  private clearPendingApprovalAutoBlock(pending: AgentPendingApproval) {
+    if (!pending.autoBlockTimer) return;
+    clearTimeout(pending.autoBlockTimer);
+    pending.autoBlockTimer = undefined;
   }
 
   private async clearPendingUserQuestionsForConversation(conversationId: string, reason: string) {
@@ -2437,11 +2453,6 @@ export class AgentRuntime {
       permissionScopeProvider: () => (
         this.currentRuntimeConversation(conversationRef.current)?.activeRun?.id ?? null
       ),
-      skillTrustApprovalHandler: async ({ skill, parentToolCallId, signal }) => {
-        const current = this.currentRuntimeConversation(conversationRef.current);
-        if (!current) return false;
-        return this.requestSkillTrustApproval(conversationId, current, skill, parentToolCallId, signal);
-      },
       executeSkillShell: async ({ command, skill, signal }) => {
         const activeSettings = await this.getRuntimeSettings();
         const globalPermissions = await readAgentToolPermissionConfig();
@@ -2459,10 +2470,6 @@ export class AgentRuntime {
           permissionEventHandler: (input) => {
             const currentConversation = this.currentRuntimeConversation(conversationRef.current);
             return currentConversation ? this.appendToolPermissionEvent(conversationId, currentConversation, input) : Promise.resolve();
-          },
-          permissionNoticeHandler: (input, noticeSignal) => {
-            const currentConversation = this.currentRuntimeConversation(conversationRef.current);
-            return currentConversation ? this.showPermissionNotice(conversationId, currentConversation, input, noticeSignal) : Promise.resolve();
           },
           signal,
           toolCallId: `skill-shell-${randomUUID()}`,
@@ -2609,10 +2616,6 @@ export class AgentRuntime {
           permissionEventHandler: (input) => {
             const current = conversationRef.current;
             return current ? this.appendToolPermissionEvent(conversationId, current, input) : Promise.resolve();
-          },
-          permissionNoticeHandler: (input, signal) => {
-            const current = conversationRef.current;
-            return current ? this.showPermissionNotice(conversationId, current, input, signal) : Promise.resolve();
           },
           approvalHandler: (input, signal) => {
             const current = conversationRef.current;
@@ -2899,10 +2902,6 @@ export class AgentRuntime {
       permissionEventHandler: (eventInput) => {
         const parentConversation = this.currentRuntimeConversation(parentConversationRef.current);
         return parentConversation ? this.appendToolPermissionEvent(parentConversationId, parentConversation, eventInput) : Promise.resolve();
-      },
-      permissionNoticeHandler: (noticeInput, signal) => {
-        const parentConversation = this.currentRuntimeConversation(parentConversationRef.current);
-        return parentConversation ? this.showPermissionNotice(parentConversationId, parentConversation, noticeInput, signal, requestedByAgentId) : Promise.resolve();
       },
       systemPrompt: input.systemPrompt,
       l0CacheBreakpointEnabled: input.l0CacheBreakpointEnabled,
@@ -5730,6 +5729,8 @@ export class AgentRuntime {
       reason: input.decision.reason,
       details: input.decision.request.details,
       alwaysAllowRule: input.decision.request.alwaysAllowRule,
+      alwaysAllowAction: input.decision.request.alwaysAllowAction,
+      autoBlockMs: input.decision.request.autoBlockMs,
       requestedByAgentId,
     };
     await this.emitApprovalCard(conversationId, conversation, request, {
@@ -5748,145 +5749,27 @@ export class AgentRuntime {
         void this.denyPendingApprovalForRuntime(conversationId, conversation, requestId, 'run_aborted');
       };
 
-      this.pendingApprovals.set(requestId, {
+      const pendingApproval: AgentPendingApproval = {
         conversationId,
         runId: this.activeRunId(conversation) ?? undefined,
         request,
         alwaysAllowRule: request.alwaysAllowRule,
+        alwaysAllowAction: request.alwaysAllowAction,
         resolve: (resolution) => {
           signal?.removeEventListener('abort', onAbort);
           resolve(resolution);
         },
-      });
-      signal?.addEventListener('abort', onAbort, { once: true });
-      if (signal?.aborted) onAbort();
-    });
-  }
-
-  private async requestSkillTrustApproval(
-    conversationId: string,
-    conversation: AgentConversationState,
-    skill: SkillDefinition,
-    parentToolCallId?: string,
-    signal?: AbortSignal,
-  ): Promise<boolean> {
-    if (signal?.aborted) return false;
-    if (skill.source !== 'user' && skill.source !== 'project') return false;
-    const contentHash = skill.contentHash;
-    if (!contentHash) return false;
-    const requestId = `skill-trust-${randomUUID()}`;
-    const displayName = skill.displayName || skill.name;
-    const details: AgentApprovalRequestDetail[] = [
-      { label: 'Skill', value: `/${skill.name}` },
-      { label: 'Source', value: skill.source },
-      { label: 'Path', value: skill.skillFile },
-      { label: 'Content hash', value: contentHash },
-    ];
-    if (skill.description.trim()) {
-      details.push({ label: 'Description', value: skill.description.trim() });
-    }
-    const request: AgentApprovalRequestView = {
-      requestId,
-      conversationId,
-      kind: 'skill_trust',
-      toolCallId: parentToolCallId ?? requestId,
-      toolName: 'skill',
-      title: `Skill ${displayName} requests automatic use.`,
-      target: `/${skill.name}`,
-      reason: 'Accept the current skill content hash before Lin can invoke it automatically.',
-      details,
-      skillTrust: {
-        name: skill.name,
-        displayName: skill.displayName,
-        source: skill.source,
-        contentHash,
-      },
-    };
-    await this.emitApprovalCard(conversationId, conversation, request, {
-      request,
-      skill: {
-        name: skill.name,
-        displayName: skill.displayName,
-        source: skill.source,
-        skillFile: skill.skillFile,
-        contentHash,
-      },
-    });
-
-    return new Promise<boolean>((resolve) => {
-      const onAbort = () => {
-        void this.denyPendingApprovalForRuntime(conversationId, conversation, requestId, 'run_aborted');
       };
-
-      this.pendingApprovals.set(requestId, {
-        conversationId,
-        runId: this.activeRunId(conversation) ?? undefined,
-        request,
-        onApproved: async () => {
-          await this.applySkillTrustAction(conversationId, (skillRuntime) => skillRuntime.acceptSkill(skill.name, contentHash));
-        },
-        resolve: (resolution) => {
-          signal?.removeEventListener('abort', onAbort);
-          resolve(resolution.approved);
-        },
-      });
+      if (request.autoBlockMs && request.autoBlockMs > 0) {
+        pendingApproval.autoBlockTimer = setTimeout(() => {
+          void this.denyPendingApprovalForRuntime(conversationId, conversation, requestId, 'user_denied');
+        }, request.autoBlockMs);
+        pendingApproval.autoBlockTimer.unref?.();
+      }
+      this.pendingApprovals.set(requestId, pendingApproval);
       signal?.addEventListener('abort', onAbort, { once: true });
       if (signal?.aborted) onAbort();
     });
-  }
-
-  private async showPermissionNotice(
-    conversationId: string,
-    conversation: AgentConversationState,
-    input: {
-      requestId: string;
-      toolCall: ToolCall;
-      args: unknown;
-      decision: AgentPermissionDenyDecision;
-    },
-    signal?: AbortSignal,
-    requestedByAgentId?: string,
-  ): Promise<void> {
-    if (signal?.aborted) return;
-    await this.clearPendingPermissionNotices(conversationId, conversation);
-
-    const notice = approvalNoticeForDeniedDecision(input.toolCall.name, input.decision);
-    const request: AgentApprovalRequestView = {
-      requestId: input.requestId,
-      conversationId,
-      kind: 'permission_notice',
-      toolCallId: input.toolCall.id,
-      toolName: input.toolCall.name,
-      title: notice.title,
-      target: notice.target,
-      reason: input.decision.reason,
-      details: notice.details,
-      requestedByAgentId,
-    };
-    await this.emitApprovalCard(conversationId, conversation, request, {
-      request,
-      decision: {
-        behavior: input.decision.behavior,
-        code: input.decision.code,
-        reason: input.decision.reason,
-        access: input.decision.access,
-      },
-      args: input.args,
-    });
-
-    const onAbort = () => {
-      void this.denyPendingApprovalForRuntime(conversationId, conversation, input.requestId, 'run_aborted');
-    };
-    this.pendingApprovals.set(input.requestId, {
-      conversationId,
-      runId: this.activeRunId(conversation) ?? undefined,
-      request,
-      resolve: () => {
-        signal?.removeEventListener('abort', onAbort);
-      },
-    });
-    signal?.addEventListener('abort', onAbort, { once: true });
-    if (signal?.aborted) onAbort();
   }
 
   private async emitApprovalCard(
@@ -6686,7 +6569,6 @@ export class AgentRuntime {
       completeSimpleFn: this.options.completeSimpleFn,
       providerApiKeyLoader: this.options.providerApiKeyLoader,
       permissionEventHandler: (input) => this.appendToolPermissionEvent(conversationId, getScopedConversation(), input),
-      permissionNoticeHandler: (input, signal) => this.showPermissionNotice(conversationId, getScopedConversation(), input, signal),
       approvalHandler: (input, signal) => this.requestToolApproval(conversationId, getScopedConversation(), input, signal),
       afterToolResult: (toolCallId, toolName, result, isError) => (
         this.contextManager.afterToolResultForModelContext(conversationId, getScopedConversation(), toolCallId, toolName, result, isError)
@@ -8563,12 +8445,6 @@ function createConfiguredAgent(
     preapprovedToolRules?: string[];
     l0CacheBreakpointEnabled?: boolean;
     approvalHandler?: (input: AgentToolApprovalInput, signal?: AbortSignal) => Promise<AgentToolApprovalResolution>;
-    permissionNoticeHandler?: (input: {
-      requestId: string;
-      toolCall: ToolCall;
-      args: unknown;
-      decision: AgentPermissionDenyDecision;
-    }, signal?: AbortSignal) => Promise<void>;
     streamFn?: StreamFn;
     completeSimpleFn?: CompleteSimpleFn;
     permissionEventHandler?: (input: AgentToolPermissionLogInput) => Promise<void> | void;
@@ -8678,40 +8554,42 @@ function createConfiguredAgent(
         });
         return undefined;
       }
-      if (decision.behavior === 'ask') {
+      if (decision.behavior === 'ask' || decision.behavior === 'soft_blocked') {
         await options.permissionEventHandler?.({
           requestId: permissionRequestId,
           toolCall,
           decision,
-          outcome: 'ask',
+          outcome: decision.behavior === 'soft_blocked' ? 'soft_blocked' : 'ask',
         });
-        const askResolution = await resolveAgentPermissionAsk({
-          decision,
-          interactionAvailable: Boolean(options.approvalHandler),
-          signal,
-        });
-        if (askResolution.outcome === 'block') {
-          await options.permissionEventHandler?.({
-            requestId: permissionRequestId,
-            toolCall,
+        if (decision.behavior === 'ask') {
+          const askResolution = await resolveAgentPermissionAsk({
             decision,
-            outcome: 'blocked',
-            includeChecked: false,
-            source: permissionEventSourceForDeniedReason(askResolution.reason),
-            resolved: {
-              status: permissionResolutionStatusForDeniedReason(askResolution.reason),
-              resolvedBy: permissionResolvedByForDeniedReason(askResolution.reason),
-              deniedReason: askResolution.reason,
-            },
+            interactionAvailable: Boolean(options.approvalHandler),
+            signal,
           });
-          return {
-            block: true,
-            reason: permissionDeniedToolResultMessage({
-              toolName: toolCall.name,
-              reason: askResolution.reason,
-              message: askResolution.message,
-            }),
-          };
+          if (askResolution.outcome === 'block') {
+            await options.permissionEventHandler?.({
+              requestId: permissionRequestId,
+              toolCall,
+              decision,
+              outcome: 'blocked',
+              includeChecked: false,
+              source: permissionEventSourceForDeniedReason(askResolution.reason),
+              resolved: {
+                status: permissionResolutionStatusForDeniedReason(askResolution.reason),
+                resolvedBy: permissionResolvedByForDeniedReason(askResolution.reason),
+                deniedReason: askResolution.reason,
+              },
+            });
+            return {
+              block: true,
+              reason: permissionDeniedToolResultMessage({
+                toolName: toolCall.name,
+                reason: askResolution.reason,
+                message: askResolution.message,
+              }),
+            };
+          }
         }
         if (options.approvalHandler) {
           const approval = await options.approvalHandler({
@@ -8765,7 +8643,9 @@ function createConfiguredAgent(
           reason: permissionDeniedToolResultMessage({
             toolName: toolCall.name,
             reason: 'runtime',
-            message: 'Permission requires user approval, but no approval channel is available.',
+            message: decision.behavior === 'soft_blocked'
+              ? 'Action was blocked by default and no exception channel is available.'
+              : 'Permission requires user approval, but no approval channel is available.',
           }),
         };
       }
@@ -8781,12 +8661,6 @@ function createConfiguredAgent(
           deniedReason: permissionDeniedReasonForDecision(decision),
         },
       });
-      await options.permissionNoticeHandler?.({
-        requestId: permissionRequestId,
-        toolCall,
-        args,
-        decision,
-      }, signal);
       return {
         block: true,
         reason: permissionDeniedToolResultMessage({

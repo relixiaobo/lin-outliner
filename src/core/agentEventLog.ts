@@ -23,6 +23,9 @@ export type AgentPermissionDeniedReason =
 export type AgentToolPermissionEventSource =
   | 'default'
   | 'trust_ledger'
+  | 'built_in_soft_block'
+  | 'user_blocklist'
+  | 'soft_block_allow'
   | 'configured_deny'
   | 'policy_denied'
   | 'user'
@@ -374,7 +377,7 @@ export type AgentRunLogEvent =
       toolName: string;
       primaryActionKind?: string;
       actionKinds: string[];
-      outcome: 'allow' | 'ask' | 'blocked';
+      outcome: 'allow' | 'ask' | 'soft_blocked' | 'blocked';
       source: AgentToolPermissionEventSource;
       descriptorRef?: AgentPayloadRef;
     })
@@ -838,7 +841,7 @@ export interface ToolPermissionCheckedEvent extends AgentEventBase {
   toolName: string;
   primaryActionKind?: string;
   actionKinds: string[];
-  outcome: 'allow' | 'ask' | 'blocked';
+  outcome: 'allow' | 'ask' | 'soft_blocked' | 'blocked';
   source: AgentToolPermissionEventSource;
   descriptorRef?: AgentPayloadRef;
 }

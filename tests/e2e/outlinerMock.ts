@@ -48,6 +48,10 @@ interface MockFixtureOptions {
   additionalAgentDirectoryAgent?: boolean;
   /** Preloads remembered permission grants for settings/security specs. */
   permissionGrants?: string[];
+  /** Preloads user blocklist rules for settings/security specs. */
+  permissionBlocks?: string[];
+  /** Preloads built-in soft-block exceptions for settings/security specs. */
+  permissionSoftBlockAllows?: string[];
 }
 
 type E2EWindow = Window & {
@@ -397,6 +401,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     }
     const agentToolPermissions = {
       grants: [...(options.permissionGrants ?? [])] as string[],
+      blocks: [...(options.permissionBlocks ?? [])] as string[],
+      softBlockAllows: [...(options.permissionSoftBlockAllows ?? [])] as string[],
       diagnostics: [{
         ruleValue: 'Action(file.read.outside_allowed_file_area)',
         code: 'unsupported_grant',
@@ -583,6 +589,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       runs: [debugRunSummary],
       totals: { ...debugUsage, queries: 1, rounds: 1 },
     };
+    const debugChannelView = {
+      ...debugView,
+      conversationId: GENERAL_CHANNEL_ID,
+      shape: 'channel',
+      members: [MAIN_AGENT_ID, USER_AGENT_ID, REVIEWER_AGENT_ID],
+    };
     const debugRun = {
       ...debugRunSummary,
       systemPrompt: 'You are Lin agent.',
@@ -607,12 +619,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }],
         responseParts: [
           { kind: 'thinking', body: 'Identify relevant outline nodes.' },
-          { kind: 'toolCall', name: 'node_read', toolUseId: 'tool-1', body: '{"nodeId":"today"}' },
+          { kind: 'toolCall', name: 'bash', toolUseId: 'tool-1', body: '{"command":"git push origin main"}' },
           { kind: 'text', body: 'Current outline focuses on UI work.', isReminder: false },
         ],
         stopReason: 'stop',
         usage: debugUsage,
-        toolExchanges: [{ toolCallId: 'tool-1', toolName: 'node_read', args: '{"nodeId":"today"}', result: 'Daily note content.', isError: false }],
+        toolExchanges: [{ toolCallId: 'tool-1', toolName: 'bash', args: '{"command":"git push origin main"}', result: 'Pushed to origin/main.', isError: false }],
         startedAt: 1_799_999_999_800,
         completedAt: 1_800_000_000_000,
       }],
@@ -1906,8 +1918,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(agentToolPermissions) as T;
         }
         if (cmd === 'agent_pick_scope_folder') {
-          const next = args.settings as { grants?: string[] };
+          const next = args.settings as { grants?: string[]; blocks?: string[]; softBlockAllows?: string[] };
           agentToolPermissions.grants = Array.isArray(next.grants) ? next.grants.map(String) : agentToolPermissions.grants;
+          agentToolPermissions.blocks = Array.isArray(next.blocks) ? next.blocks.map(String) : agentToolPermissions.blocks;
+          agentToolPermissions.softBlockAllows = Array.isArray(next.softBlockAllows) ? next.softBlockAllows.map(String) : agentToolPermissions.softBlockAllows;
           const path = '/mock/handoff-folder';
           const grant = `Scope(write:${path})`;
           if (!agentToolPermissions.grants.includes(grant)) {
@@ -1968,8 +1982,17 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(entry) as T;
         }
         if (cmd === 'agent_update_tool_permission_settings') {
-          const next = args.settings as { grants?: string[] };
+          const next = args.settings as { grants?: string[]; blocks?: string[]; softBlockAllows?: string[] };
           agentToolPermissions.grants = Array.isArray(next.grants) ? next.grants.map(String) : [];
+          agentToolPermissions.blocks = Array.isArray(next.blocks) ? next.blocks.map(String) : [];
+          agentToolPermissions.softBlockAllows = Array.isArray(next.softBlockAllows) ? next.softBlockAllows.map(String) : [];
+          return clone(agentToolPermissions) as T;
+        }
+        if (cmd === 'agent_append_tool_permission_block') {
+          const ruleValue = String(args.ruleValue ?? '');
+          if (ruleValue && !agentToolPermissions.blocks.includes(ruleValue)) {
+            agentToolPermissions.blocks.push(ruleValue);
+          }
           return clone(agentToolPermissions) as T;
         }
         if (cmd === 'agent_test_provider_connection') {
@@ -2047,9 +2070,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return undefined as T;
         }
         if (cmd === 'agent_debug_view') {
-          return clone(String(args.conversationId) === 'mock-agent-conversation'
-            ? debugView
-            : { conversationId: String(args.conversationId), shape: 'dm', members: [], runs: [], totals: { ...debugUsage, queries: 0, rounds: 0 } }) as T;
+          const conversationId = String(args.conversationId);
+          return clone(conversationId === GENERAL_CHANNEL_ID
+            ? debugChannelView
+            : conversationId === ASSISTANT_DM_ID
+              ? debugView
+              : { conversationId, shape: 'dm', members: [], runs: [], totals: { ...debugUsage, queries: 0, rounds: 0 } }) as T;
         }
         if (cmd === 'agent_debug_run') {
           return clone(String(args.runId) === 'mock-run-1' ? debugRun : null) as T;

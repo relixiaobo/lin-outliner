@@ -10,10 +10,12 @@ import {
 import {
   ARBITRARY_CODE_SHELL_PREFIXES,
   OUTWARD_FACING_SHELL_PREFIXES,
-  alwaysAllowRuleForDescriptor,
   compareToolPermissionResolutionPriority,
+  matchingBlockForDescriptor,
   matchingGrantForEffect,
+  matchingSoftBlockAllowForDescriptor,
   parseGlobalToolPermissionSettings,
+  softBlockAllowRuleForDescriptor,
   type AgentToolActionKind,
   type GlobalToolPermissionConfig,
   type GlobalToolPermissionDecision,
@@ -32,7 +34,13 @@ export type {
   ToolActionDescriptor,
 } from './agentToolPermissionRules';
 export type AgentPermissionAccess = 'read' | 'write' | 'execute' | 'control' | 'unknown';
-export type AgentPermissionBehavior = 'allow' | 'ask' | 'deny';
+export type AgentPermissionBehavior = 'allow' | 'ask' | 'soft_blocked' | 'deny';
+export type AgentPermissionSource =
+  | 'default'
+  | 'trust_ledger'
+  | 'built_in_soft_block'
+  | 'user_blocklist'
+  | 'soft_block_allow';
 
 export interface AgentApprovalDetail {
   label: string;
@@ -44,6 +52,8 @@ export interface AgentApprovalRequest {
   target: string;
   details: AgentApprovalDetail[];
   alwaysAllowRule?: string;
+  alwaysAllowAction?: 'grant' | 'soft_allow' | 'remove_block';
+  autoBlockMs?: number;
 }
 
 export interface AgentPermissionPolicy {
@@ -78,7 +88,7 @@ interface AgentPermissionDecisionBase {
   code?: string;
   preapproved: boolean;
   ruleId?: string;
-  permissionSource?: 'default' | 'trust_ledger';
+  permissionSource?: AgentPermissionSource;
   descriptor?: ToolActionDescriptor;
   descriptors?: readonly ToolActionDescriptor[];
 }
@@ -94,6 +104,14 @@ export interface AgentPermissionAskDecision extends AgentPermissionDecisionBase 
   request: AgentApprovalRequest;
 }
 
+export interface AgentPermissionSoftBlockDecision extends AgentPermissionDecisionBase {
+  behavior: 'soft_blocked';
+  code: string;
+  reason: string;
+  request: AgentApprovalRequest;
+  blockRuleValue?: string;
+}
+
 export interface AgentPermissionDenyDecision extends AgentPermissionDecisionBase {
   behavior: 'deny';
   code: string;
@@ -104,6 +122,7 @@ export interface AgentPermissionDenyDecision extends AgentPermissionDecisionBase
 export type AgentPermissionDecision =
   | AgentPermissionAllowDecision
   | AgentPermissionAskDecision
+  | AgentPermissionSoftBlockDecision
   | AgentPermissionDenyDecision;
 
 export interface AgentPermissionEvaluationInput {
@@ -196,6 +215,12 @@ interface BashDenyRule {
   pattern: RegExp;
 }
 
+interface BashSoftBlockRule {
+  code: string;
+  reason: string;
+  pattern: RegExp;
+}
+
 const BASH_HARD_DENY_RULES: readonly BashDenyRule[] = [
   {
     code: 'dangerous_root_delete',
@@ -227,28 +252,27 @@ const BASH_HARD_DENY_RULES: readonly BashDenyRule[] = [
     floor: 'host_destruction',
     pattern: /\b(?:chmod|chown)\s+-R\s+[^;&|]*\s+\/(?:\s|$)/i,
   },
+];
+
+const BASH_SOFT_BLOCK_RULES: readonly BashSoftBlockRule[] = [
   {
     code: 'remote_code_execution',
-    reason: 'Blocked a command that downloads remote code and pipes it directly into a shell.',
-    floor: 'hidden_exec',
+    reason: 'This downloads remote code and pipes it directly into an interpreter.',
     pattern: /\b(?:curl|wget)\b[\s\S]*\|\s*(?:(?:xargs|env|sudo)\s+)*(?:sh|bash|zsh|fish|python|python3|ruby|perl|node)\b/i,
   },
   {
     code: 'known_shell_obfuscation',
-    reason: 'Blocked a command that appears to decode or evaluate hidden shell code.',
-    floor: 'hidden_exec',
-    pattern: /\b(?:base64\s+(?:--decode|-d)|openssl\s+enc\s+-d)[\s\S]*\|\s*(?:sh|bash|zsh|fish|eval)\b|\beval\s+["'`$]/i,
+    reason: 'This appears to decode or evaluate opaque shell code.',
+    pattern: /\b(?:base64\s+(?:--decode|-d)|openssl\s+enc\s+-d)[^\n|;&]{0,2048}\|\s*(?:sh|bash|zsh|fish|eval)\b|\beval\s+["'`$]|\b(?:python[0-9.]*|node|deno|bun|perl|ruby|php|osascript)\b[^\n|;&]{0,512}\s(?:-(?:c|e|r|E)\b|--(?:eval|exec|command|run)\b)[^\n|;&]{0,2048}\b(?:eval|exec)\s*\(/i,
   },
   {
     code: 'persistence_crontab',
-    reason: 'Blocked a command that changes scheduled persistent jobs.',
-    floor: 'persistence',
+    reason: 'This changes scheduled persistent jobs.',
     pattern: /(?:^|[;&|\n]\s*)crontab\b(?!\s+-l(?:\s|$))/i,
   },
   {
     code: 'persistence_login_item',
-    reason: 'Blocked a command that changes login, service, or defaults persistence.',
-    floor: 'persistence',
+    reason: 'This changes login, service, or defaults persistence.',
     pattern: /\bdefaults\s+write\b|\bsystemctl\b(?=[\s\S]*(?:^|\s)--user(?:\s|$))(?=[\s\S]*\benable\b)|\blaunchctl\s+(?:load|bootstrap|enable)\b/i,
   },
 ];
@@ -357,13 +381,14 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
       },
     );
   }
-  if (effectResolution.decision === 'ask') {
-    return askForDescriptor(
+  if (effectResolution.decision === 'soft_block') {
+    return softBlockForDescriptor(
       effectResolution.descriptor,
       access,
       preapproved,
       effectResolution.source,
       descriptors,
+      effectResolution.blockRuleValue,
     );
   }
   return allow(
@@ -375,18 +400,21 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
     {
       descriptor: effectResolution.descriptor,
       descriptors,
-      permissionSource: effectResolution.source,
+      permissionSource: effectResolution.source === 'trust_ledger' || effectResolution.source === 'soft_block_allow'
+        ? effectResolution.source
+        : 'default',
     },
   );
 }
 
-type EffectDecisionSource = 'default' | 'trust_ledger';
+type EffectDecisionSource = AgentPermissionSource;
 
 interface EffectDecisionResolution {
   decision: GlobalToolPermissionDecision;
   source: EffectDecisionSource;
   descriptor: DerivedToolActionDescriptor;
   grantRuleValue?: string;
+  blockRuleValue?: string;
 }
 
 function resolveEffectDecision(
@@ -395,12 +423,45 @@ function resolveEffectDecision(
 ): EffectDecisionResolution {
   const resolutions = descriptors.map((descriptor): EffectDecisionResolution => {
     const baseDecision = decideAgentOperationEffect(descriptor.effect);
-    const grant = baseDecision === 'ask'
-      ? matchingGrantForEffect(descriptor.effect, globalPermissions)
-      : null;
-    const decision = grant ? 'allow' : baseDecision;
+    if (baseDecision === 'deny') {
+      return {
+        decision: 'deny',
+        source: 'default',
+        descriptor,
+      };
+    }
+
+    const block = matchingBlockForDescriptor(descriptor, globalPermissions);
+    if (block) {
+      return {
+        decision: 'soft_block',
+        source: 'user_blocklist',
+        descriptor,
+        blockRuleValue: block.ruleValue,
+      };
+    }
+
+    if (descriptor.softBlock) {
+      const softAllow = matchingSoftBlockAllowForDescriptor(descriptor, globalPermissions);
+      if (!softAllow) {
+        return {
+          decision: 'soft_block',
+          source: 'built_in_soft_block',
+          descriptor,
+          blockRuleValue: descriptor.softBlockRule,
+        };
+      }
+      return {
+        decision: 'allow',
+        source: 'soft_block_allow',
+        descriptor,
+        grantRuleValue: softAllow.ruleValue,
+      };
+    }
+
+    const grant = matchingGrantForEffect(descriptor.effect, globalPermissions);
     return {
-      decision,
+      decision: 'allow',
       source: grant ? 'trust_ledger' : 'default',
       descriptor,
       grantRuleValue: grant?.ruleValue,
@@ -417,7 +478,10 @@ function resolveEffectDecision(
 }
 
 function permissionSourceRank(source: EffectDecisionSource): number {
-  return source === 'trust_ledger' ? 1 : 0;
+  if (source === 'user_blocklist') return 3;
+  if (source === 'built_in_soft_block') return 2;
+  if (source === 'trust_ledger' || source === 'soft_block_allow') return 1;
+  return 0;
 }
 
 export function matchesAgentToolRule(rule: string, toolNameInput: string, args: unknown): boolean {
@@ -806,13 +870,31 @@ function derivePathDescriptor(input: {
       accessScope: 'sensitive_local_path',
       title: input.copy.hardBlockTitle,
       summary: input.copy.hardBlockSummary(resolved),
-      consequence: input.copy.hardBlockConsequence(resolved),
+      consequence: `Blocked a write to agent permission, provider, or secret configuration: ${resolved}`,
       reversible: false,
       externalEffect: false,
       highConsequence: true,
       code: 'sensitive_persistence_write',
+      floor: 'permission_self_mod',
       platformHardBlock: true,
       redline: true,
+    });
+  }
+
+  if (isWrite && isSoftBlockedPersistenceWritePath(resolved)) {
+    return descriptor(input.toolName, fileActionKind(input.toolName, true, 'sensitive_local_path'), {
+      accessScope: 'sensitive_local_path',
+      title: 'persistence file write',
+      summary: input.copy.hardBlockSummary(resolved),
+      consequence: `This writes an OS persistence or git-hook path: ${resolved}`,
+      reversible: false,
+      externalEffect: false,
+      highConsequence: true,
+      code: 'persistence_write',
+      softBlock: true,
+      softBlockAllowRule: `Scope(write:${resolved})`,
+      requestTarget: resolved,
+      grantAccess: 'write',
     });
   }
 
@@ -914,7 +996,8 @@ function deriveBashActionDescriptors(
     return [hiddenShellDescriptor('Missing shell command.')];
   }
   const { workspaceRoot } = policy;
-  const floorCommands = shellFloorScanCommands(command);
+  const shellSurfaceCommand = redactStaticHereDocBodies(command);
+  const floorCommands = shellFloorScanCommands(shellSurfaceCommand);
 
   for (const floorCommand of floorCommands) {
     for (const rule of BASH_HARD_DENY_RULES) {
@@ -932,6 +1015,25 @@ function deriveBashActionDescriptors(
           floor: rule.floor,
           platformHardBlock: true,
           redline: true,
+        })];
+      }
+    }
+
+    for (const rule of BASH_SOFT_BLOCK_RULES) {
+      if (rule.pattern.test(floorCommand)) {
+        return [descriptor('bash', 'shell.local_code_execution', {
+          accessScope: 'allowed_file_area',
+          title: 'soft-blocked shell command',
+          summary: command,
+          consequence: rule.reason,
+          reversible: false,
+          externalEffect: false,
+          highConsequence: true,
+          command,
+          code: rule.code,
+          softBlock: true,
+          softBlockRule: `Command(${command})`,
+          softBlockAllowRule: `Command(${command})`,
         })];
       }
     }
@@ -989,20 +1091,37 @@ function deriveBashActionDescriptors(
     })];
   }
 
-  if (floorCommands.some((floorCommand) => looksLikeSensitivePersistenceWrite(floorCommand, workspaceRoot))) {
+  if (floorCommands.some((floorCommand) => looksLikePermissionSelfModification(floorCommand, workspaceRoot))) {
     return [descriptor('bash', 'file.write.sensitive_local_path', {
       accessScope: 'sensitive_local_path',
-      title: 'blocked sensitive persistence write',
+      title: 'blocked permission configuration write',
       summary: command,
-      consequence: 'Blocked a command that appears to write credentials, shell startup files, git hooks, or permission configuration.',
+      consequence: 'Blocked a command that appears to modify agent permission, provider, or secret configuration.',
       reversible: false,
       externalEffect: false,
       highConsequence: true,
       command,
       code: 'sensitive_persistence_write',
-      floor: 'persistence',
+      floor: 'permission_self_mod',
       platformHardBlock: true,
       redline: true,
+    })];
+  }
+
+  if (floorCommands.some((floorCommand) => looksLikeSoftPersistenceWrite(floorCommand, workspaceRoot))) {
+    return [descriptor('bash', 'file.write.sensitive_local_path', {
+      accessScope: 'sensitive_local_path',
+      title: 'soft-blocked persistence write',
+      summary: command,
+      consequence: 'This appears to write a shell startup file, cron entry, LaunchAgent, systemd user unit, or git-internal path.',
+      reversible: false,
+      externalEffect: false,
+      highConsequence: true,
+      command,
+      code: 'persistence_write',
+      softBlock: true,
+      softBlockRule: `Command(${command})`,
+      softBlockAllowRule: `Command(${command})`,
     })];
   }
 
@@ -1055,9 +1174,9 @@ function deriveBashActionDescriptors(
     }));
   }
 
-  descriptors.push(...deriveBashScopeDescriptors(command, workspaceRoot));
+  descriptors.push(...deriveBashScopeDescriptors(shellSurfaceCommand, workspaceRoot));
 
-  const segments = parseShellSegments(command);
+  const segments = parseShellSegments(shellSurfaceCommand);
   if (!segments) return [hiddenShellDescriptor('Dynamic or ambiguous shell execution.', command)];
   for (const segment of segments) {
     descriptors.push(classifyShellSegment(segment, command, workspaceRoot));
@@ -1312,28 +1431,37 @@ function deriveBashScopeDescriptors(command: string, workspaceRoot: string): Der
   return descriptors;
 }
 
-function askForDescriptor(
+function softBlockForDescriptor(
   descriptor: DerivedToolActionDescriptor,
   access: AgentPermissionAccess,
   preapproved: boolean,
-  permissionSource: 'default' | 'trust_ledger',
+  permissionSource: EffectDecisionSource,
   descriptors: readonly DerivedToolActionDescriptor[],
-): AgentPermissionAskDecision {
+  blockRuleValue?: string,
+): AgentPermissionSoftBlockDecision {
   const reason = descriptor.consequence;
   const target = descriptor.requestTarget ?? descriptor.command ?? descriptor.summary;
-  return ask(
+  const alwaysAllowRule = permissionSource === 'user_blocklist'
+    ? blockRuleValue
+    : softBlockAllowRuleForDescriptor(descriptor);
+  const alwaysAllowAction = permissionSource === 'user_blocklist'
+    ? 'remove_block'
+    : 'soft_allow';
+  return softBlock(
     descriptor.code ?? descriptor.actionKind,
     reason,
     access,
     preapproved,
     {
-      title: descriptor.requestTitle ?? `Approve ${descriptor.title}?`,
+      title: descriptor.requestTitle ?? `Blocked by default: ${descriptor.title}`,
       target,
-      alwaysAllowRule: alwaysAllowRuleForDescriptor(descriptor),
+      alwaysAllowRule,
+      alwaysAllowAction,
+      autoBlockMs: 10_000,
       details: descriptor.requestDetails ?? [
         { label: 'Action', value: descriptor.title },
         { label: 'Target', value: target },
-        { label: 'Why asking', value: reason },
+        { label: 'Why blocked', value: reason },
         { label: 'Permission kind', value: descriptor.actionKind },
       ],
     },
@@ -1341,6 +1469,7 @@ function askForDescriptor(
       descriptor,
       descriptors,
       permissionSource,
+      blockRuleValue,
     },
   );
 }
@@ -1384,12 +1513,33 @@ function descriptor(
   const effectValues = floor === undefined
     ? { ...descriptorValues, grantAccess }
     : { ...descriptorValues, grantAccess, floor };
+  const resolvedEffect = effect ?? inferEffect(actionKind, effectValues);
+  assertDescriptorConsistency(toolName, actionKind, {
+    effect: resolvedEffect,
+    ...descriptorValues,
+  });
   return {
     toolName,
     actionKind,
-    effect: effect ?? inferEffect(actionKind, effectValues),
+    effect: resolvedEffect,
     ...descriptorValues,
   };
+}
+
+function assertDescriptorConsistency(
+  toolName: string,
+  actionKind: AgentToolActionKind,
+  descriptorValues: Omit<DerivedToolActionDescriptor, 'toolName' | 'actionKind'>,
+) {
+  const hasHardFloor = descriptorValues.effect.floor !== undefined
+    || descriptorValues.platformHardBlock === true
+    || descriptorValues.redline === true;
+  if (descriptorValues.softBlock && hasHardFloor) {
+    throw new Error(`Invalid permission descriptor ${toolName}:${actionKind}: softBlock cannot be combined with a hard floor.`);
+  }
+  if (!descriptorValues.softBlock && (descriptorValues.softBlockRule || descriptorValues.softBlockAllowRule)) {
+    throw new Error(`Invalid permission descriptor ${toolName}:${actionKind}: soft-block rules require softBlock.`);
+  }
 }
 
 function hiddenShellDescriptor(reason: string, command = ''): DerivedToolActionDescriptor {
@@ -1403,14 +1553,14 @@ function hiddenShellDescriptor(reason: string, command = ''): DerivedToolActionD
     highConsequence: true,
     command,
     code: 'hidden_exec',
-    platformHardBlock: true,
-    redline: true,
+    softBlock: true,
+    ...(command ? { softBlockAllowRule: `Command(${command})` } : {}),
     effect: {
       reach: 'local',
       reversible: false,
       touchesCredentials: false,
-      floor: 'hidden_exec',
       label: command || 'hidden shell execution',
+      ...(command ? { grant: { kind: 'command' as const, form: command } } : {}),
     },
   });
 }
@@ -1557,7 +1707,7 @@ function shellFloorScanCommands(command: string): string[] {
 }
 
 function hasDynamicShellConstruction(command: string): boolean {
-  return /`|\$\(|\beval\b|base64\s+(?:--decode|-d)[\s\S]*\|/i.test(command);
+  return /base64\s+(?:--decode|-d)[\s\S]*\|/i.test(command);
 }
 
 function expandStaticShellCommand(command: string): string | null {
@@ -1568,6 +1718,68 @@ function expandStaticShellCommand(command: string): string | null {
     return inner && !hasDynamicShellConstruction(inner) ? inner : null;
   }
   return command;
+}
+
+function redactStaticHereDocBodies(command: string): string {
+  const lines = command.split(/\r?\n/);
+  const redacted: string[] = [];
+  let terminator: string | null = null;
+  for (const line of lines) {
+    if (terminator) {
+      if (line.trim() === terminator) {
+        redacted.push(line);
+        terminator = null;
+      }
+      continue;
+    }
+    redacted.push(line);
+    const marker = hereDocTerminatorFromLine(line);
+    if (marker) terminator = marker;
+  }
+  return redacted.join('\n');
+}
+
+function hereDocTerminatorFromLine(line: string): string | null {
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]!;
+    const next = line[index + 1];
+    const afterNext = line[index + 2];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\' && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '#' && (index === 0 || /\s/u.test(line[index - 1]!))) return null;
+    if (char !== '<' || next !== '<' || line[index - 1] === '<' || afterNext === '<') continue;
+
+    let cursor = index + 2;
+    if (line[cursor] === '-') cursor += 1;
+    while (cursor < line.length && /\s/u.test(line[cursor]!)) cursor += 1;
+
+    const delimiterQuote = line[cursor];
+    if (delimiterQuote === '"' || delimiterQuote === "'") {
+      const end = line.indexOf(delimiterQuote, cursor + 1);
+      return end > cursor + 1 ? line.slice(cursor + 1, end) : null;
+    }
+
+    const match = /^[A-Za-z_][A-Za-z0-9_]*/u.exec(line.slice(cursor));
+    return match?.[0] ?? null;
+  }
+  return null;
 }
 
 function splitShellByOperators(command: string): string[] {
@@ -1684,7 +1896,11 @@ function isOutwardFacingShellCommand(head: string, words: readonly string[]): bo
 }
 
 function isHardBlockedSensitiveWritePath(filePath: string): boolean {
-  return isSensitivePath(filePath) || isPersistencePath(filePath) || isGitInternalWritePath(filePath) || isAgentPermissionConfigPath(filePath);
+  return isAgentPermissionConfigPath(filePath);
+}
+
+function isSoftBlockedPersistenceWritePath(filePath: string): boolean {
+  return isPersistencePath(filePath) || isGitInternalWritePath(filePath);
 }
 
 function isPersistencePath(filePath: string): boolean {
@@ -1694,14 +1910,14 @@ function isPersistencePath(filePath: string): boolean {
 }
 
 function isGitInternalWritePath(filePath: string): boolean {
-  return /(?:^|\/)\.git\/(?:hooks|config|refs|objects)(?:\/|$)/i.test(filePath);
+  return /(?:^|\/)\.git\/(?:hooks(?:\/|$)|config$|refs(?:\/|$)|objects(?:\/|$))/i.test(filePath);
 }
 
 function isAgentPermissionConfigPath(filePath: string): boolean {
   return /(?:^|\/)(?:agent-tool-permissions|agent-permissions|agent-providers|agent-secrets)\.json$/i.test(filePath);
 }
 
-function looksLikeSensitivePersistenceWrite(command: string, workspaceRoot: string): boolean {
+function looksLikePermissionSelfModification(command: string, workspaceRoot: string): boolean {
   const words = parseShellWords(command);
   if (!hasSensitivePersistenceWriteTrigger(command, words)) return false;
   return words.some((word) => {
@@ -1709,6 +1925,17 @@ function looksLikeSensitivePersistenceWrite(command: string, workspaceRoot: stri
     if (!looksLikePath(cleaned)) return false;
     const resolved = resolvePermissionPath(workspaceRoot, cleaned);
     return isHardBlockedSensitiveWritePath(resolved);
+  });
+}
+
+function looksLikeSoftPersistenceWrite(command: string, workspaceRoot: string): boolean {
+  const words = parseShellWords(command);
+  if (!hasSensitivePersistenceWriteTrigger(command, words)) return false;
+  return words.some((word) => {
+    const cleaned = stripShellPathDecoration(word);
+    if (!looksLikePath(cleaned)) return false;
+    const resolved = resolvePermissionPath(workspaceRoot, cleaned);
+    return isSoftBlockedPersistenceWritePath(resolved);
   });
 }
 
@@ -1945,6 +2172,7 @@ function looksLikePath(value: string): boolean {
   return value === '~'
     || value === '$HOME'
     || value === '${HOME}'
+    || isAgentPermissionConfigPath(value)
     || value.startsWith('~/')
     || value.startsWith('/')
     || value.startsWith('./')
@@ -1973,15 +2201,15 @@ function allow(
   return { behavior: 'allow', access, preapproved, reason, ...options };
 }
 
-function ask(
+function softBlock(
   code: string,
   reason: string,
   access: AgentPermissionAccess,
   preapproved: boolean,
   request: AgentApprovalRequest,
-  options: Pick<AgentPermissionAskDecision, 'descriptor' | 'descriptors' | 'permissionSource'>,
-): AgentPermissionAskDecision {
-  return { behavior: 'ask', code, reason, access, preapproved, request, ...options };
+  options: Pick<AgentPermissionSoftBlockDecision, 'descriptor' | 'descriptors' | 'permissionSource' | 'blockRuleValue'>,
+): AgentPermissionSoftBlockDecision {
+  return { behavior: 'soft_blocked', code, reason, access, preapproved, request, ...options };
 }
 
 function deny(

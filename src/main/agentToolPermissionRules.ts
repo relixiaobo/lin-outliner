@@ -1,6 +1,7 @@
 import {
   SUPPORTED_AGENT_TOOL_ACTION_KINDS,
   type AgentOperationEffect,
+  type AgentPermissionBlock,
   type AgentPermissionGrant,
   type AgentPermissionScopeAccess,
   type AgentToolActionKind,
@@ -11,6 +12,7 @@ import path from 'node:path';
 export {
   SUPPORTED_AGENT_TOOL_ACTION_KINDS,
   type AgentOperationEffect,
+  type AgentPermissionBlock,
   type AgentPermissionGrant,
   type AgentToolActionKind,
   type GlobalToolPermissionDecision,
@@ -22,7 +24,7 @@ export type AgentToolCapability =
   | 'permission_management'
   | 'payments';
 
-export type ToolPermissionOutcome = 'allow' | 'ask' | 'blocked';
+export type ToolPermissionOutcome = 'allow' | 'soft_blocked' | 'blocked';
 export type AskResolverOutcome = 'allow' | 'block' | 'needs_user';
 export type ToolAccessScope =
   | 'allowed_file_area'
@@ -46,6 +48,9 @@ export interface ToolActionDescriptor {
   capabilities?: readonly AgentToolCapability[];
   code?: string;
   platformHardBlock?: boolean;
+  softBlock?: boolean;
+  softBlockRule?: string;
+  softBlockAllowRule?: string;
 }
 
 export interface GlobalToolPermissionRule {
@@ -54,19 +59,35 @@ export interface GlobalToolPermissionRule {
   updatedAt?: number;
 }
 
+export interface GlobalToolPermissionBlockRule {
+  ruleValue: string;
+  block: AgentPermissionBlock;
+  updatedAt?: number;
+}
+
 export interface GlobalToolPermissionRuleDiagnostic {
   ruleValue: string;
-  code: 'invalid_grant' | 'unsupported_grant';
+  code:
+    | 'invalid_grant'
+    | 'unsupported_grant'
+    | 'invalid_block'
+    | 'unsupported_block'
+    | 'invalid_soft_allow'
+    | 'unsupported_soft_allow';
   message: string;
 }
 
 export interface GlobalToolPermissionConfig {
   grants: GlobalToolPermissionRule[];
+  blocks: GlobalToolPermissionBlockRule[];
+  softBlockAllows: GlobalToolPermissionBlockRule[];
   diagnostics: GlobalToolPermissionRuleDiagnostic[];
 }
 
 export interface GlobalToolPermissionSettings {
   grants?: unknown;
+  blocks?: unknown;
+  softBlockAllows?: unknown;
   /** Legacy pre-redesign setting. Ignored and normalized away on the next write. */
   permissions?: unknown;
 }
@@ -132,15 +153,21 @@ export const OUTWARD_FACING_SHELL_PREFIXES: readonly string[] = [
 ];
 
 const GRANT_KINDS = new Set(['scope', 'external', 'command']);
+const BLOCK_KINDS = new Set(['scope', 'external', 'command', 'action']);
+const SUPPORTED_ACTION_KIND_SET = new Set<string>(SUPPORTED_AGENT_TOOL_ACTION_KINDS);
 
 export function parseGlobalToolPermissionSettings(input: unknown): GlobalToolPermissionConfig {
-  if (isParsedGlobalToolPermissionConfig(input)) return input;
+  if (looksParsedGlobalToolPermissionConfig(input)) return input;
   const settings = isRecord(input) ? input as GlobalToolPermissionSettings : {};
-  const entries = Array.isArray(settings.grants) ? settings.grants : [];
+  const grantEntries = Array.isArray(settings.grants) ? settings.grants : [];
+  const blockEntries = Array.isArray(settings.blocks) ? settings.blocks : [];
+  const softAllowEntries = Array.isArray(settings.softBlockAllows) ? settings.softBlockAllows : [];
   const grants: GlobalToolPermissionRule[] = [];
+  const blocks: GlobalToolPermissionBlockRule[] = [];
+  const softBlockAllows: GlobalToolPermissionBlockRule[] = [];
   const diagnostics: GlobalToolPermissionRuleDiagnostic[] = [];
 
-  for (const entry of entries) {
+  for (const entry of grantEntries) {
     if (typeof entry !== 'string') {
       diagnostics.push({
         ruleValue: String(entry),
@@ -154,11 +181,45 @@ export function parseGlobalToolPermissionSettings(input: unknown): GlobalToolPer
     else grants.push(parsed.rule);
   }
 
-  return { grants, diagnostics };
+  for (const entry of blockEntries) {
+    if (typeof entry !== 'string') {
+      diagnostics.push({
+        ruleValue: String(entry),
+        code: 'invalid_block',
+        message: 'Permission block rules must be strings.',
+      });
+      continue;
+    }
+    const parsed = parseGlobalToolPermissionBlock(entry, 'block');
+    if ('diagnostic' in parsed) diagnostics.push(parsed.diagnostic);
+    else blocks.push(parsed.rule);
+  }
+
+  for (const entry of softAllowEntries) {
+    if (typeof entry !== 'string') {
+      diagnostics.push({
+        ruleValue: String(entry),
+        code: 'invalid_soft_allow',
+        message: 'Soft-block allow rules must be strings.',
+      });
+      continue;
+    }
+    const parsed = parseGlobalToolPermissionBlock(entry, 'soft allow');
+    if ('diagnostic' in parsed) diagnostics.push(parsed.diagnostic);
+    else softBlockAllows.push(parsed.rule);
+  }
+
+  return { grants, blocks, softBlockAllows, diagnostics };
 }
 
-export function globalToolPermissionConfigToSettings(config: GlobalToolPermissionConfig): Required<Pick<GlobalToolPermissionSettings, 'grants'>> {
-  return { grants: config.grants.map((grant) => grant.ruleValue) };
+export function globalToolPermissionConfigToSettings(
+  config: GlobalToolPermissionConfig,
+): Required<Pick<GlobalToolPermissionSettings, 'grants' | 'blocks' | 'softBlockAllows'>> {
+  return {
+    grants: config.grants.map((grant) => grant.ruleValue),
+    blocks: config.blocks.map((block) => block.ruleValue),
+    softBlockAllows: config.softBlockAllows.map((rule) => rule.ruleValue),
+  };
 }
 
 export function grantRuleValue(grant: AgentPermissionGrant): string {
@@ -173,10 +234,24 @@ export function matchingGrantForEffect(
 ): GlobalToolPermissionRule | null {
   if (!effect.grant || effect.floor) return null;
   const grant = effect.grant;
-  const config = isParsedGlobalToolPermissionConfig(configInput)
-    ? configInput
-    : parseGlobalToolPermissionSettings(configInput);
-  return config.grants.find((rule) => grantsEqual(rule.grant, grant)) ?? null;
+  const config = normalizePermissionConfig(configInput);
+  return config.grants.find((rule) => isParsedGrantRule(rule) && grantsEqual(rule.grant, grant)) ?? null;
+}
+
+export function matchingBlockForDescriptor(
+  descriptor: ToolActionDescriptor,
+  configInput?: unknown,
+): GlobalToolPermissionBlockRule | null {
+  const config = normalizePermissionConfig(configInput);
+  return config.blocks.find((rule) => isParsedBlockRule(rule) && blockMatchesDescriptor(rule.block, descriptor)) ?? null;
+}
+
+export function matchingSoftBlockAllowForDescriptor(
+  descriptor: ToolActionDescriptor,
+  configInput?: unknown,
+): GlobalToolPermissionBlockRule | null {
+  const config = normalizePermissionConfig(configInput);
+  return config.softBlockAllows.find((rule) => isParsedBlockRule(rule) && blockMatchesDescriptor(rule.block, descriptor)) ?? null;
 }
 
 export function compareToolPermissionResolutionPriority<T extends ToolPermissionResolutionPriorityInput>(
@@ -190,9 +265,17 @@ export function compareToolPermissionResolutionPriority<T extends ToolPermission
 }
 
 export function alwaysAllowRuleForDescriptor(descriptor: ToolActionDescriptor): string | undefined {
+  if (descriptor.softBlockAllowRule) return descriptor.softBlockAllowRule;
   return descriptor.effect.floor || !descriptor.effect.grant
     ? undefined
     : grantRuleValue(descriptor.effect.grant);
+}
+
+export function softBlockAllowRuleForDescriptor(descriptor: ToolActionDescriptor): string | undefined {
+  if (descriptor.softBlockAllowRule) return descriptor.softBlockAllowRule;
+  if (descriptor.command) return `Command(${descriptor.command})`;
+  if (descriptor.effect.grant) return grantRuleValue(descriptor.effect.grant);
+  return undefined;
 }
 
 export function normalizePermissionToolName(value: string): string {
@@ -228,13 +311,119 @@ function parseGlobalToolPermissionGrant(
   return { rule: { ruleValue, grant: { kind: 'command', form: rawValue } } };
 }
 
+function parseGlobalToolPermissionBlock(
+  ruleValueInput: string,
+  label: 'block' | 'soft allow',
+): { rule: GlobalToolPermissionBlockRule } | { diagnostic: GlobalToolPermissionRuleDiagnostic } {
+  const ruleValue = ruleValueInput.trim();
+  const code = label === 'block' ? 'invalid_block' : 'invalid_soft_allow';
+  const unsupportedCode = label === 'block' ? 'unsupported_block' : 'unsupported_soft_allow';
+  const match = /^([A-Za-z][A-Za-z0-9_-]*)\(([\s\S]*)\)$/.exec(ruleValue);
+  if (!match) {
+    return diagnostic(ruleValue, code, `Permission ${label} rules must use Kind(value) syntax.`);
+  }
+
+  const kind = normalizePermissionToolName(match[1] ?? '');
+  const rawValue = (match[2] ?? '').trim();
+  if (!rawValue || rawValue === '*') {
+    return diagnostic(ruleValue, unsupportedCode, `Broad or empty permission ${label} rules are not supported.`);
+  }
+  if (!BLOCK_KINDS.has(kind)) {
+    return diagnostic(ruleValue, unsupportedCode, `Unsupported permission ${label} kind: ${kind}.`);
+  }
+
+  if (kind === 'scope') {
+    const scope = parseScopeGrantValue(rawValue);
+    if (!scope) {
+      return diagnostic(ruleValue, unsupportedCode, `Scope ${label} rules must be explicit read: or write: boundaries.`);
+    }
+    return { rule: { ruleValue, block: { kind: 'scope', ...scope } } };
+  }
+  if (kind === 'external') return { rule: { ruleValue, block: { kind: 'external', target: rawValue } } };
+  if (kind === 'command') return { rule: { ruleValue, block: { kind: 'command', form: rawValue } } };
+  const actionKind = rawValue as AgentToolActionKind;
+  if (!SUPPORTED_ACTION_KIND_SET.has(actionKind)) {
+    return diagnostic(ruleValue, unsupportedCode, `Unsupported action kind: ${rawValue}.`);
+  }
+  return { rule: { ruleValue, block: { kind: 'action', actionKind } } };
+}
+
 function grantsEqual(left: AgentPermissionGrant, right: AgentPermissionGrant): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === 'scope' && right.kind === 'scope') {
     return scopeAccessCovers(left.access, right.access) && isPathInside(left.root, right.root);
   }
   if (left.kind === 'external' && right.kind === 'external') return left.target === right.target;
-  return left.kind === 'command' && right.kind === 'command' && left.form === right.form;
+  return left.kind === 'command' && right.kind === 'command' && commandsEqual(left.form, right.form);
+}
+
+function blockMatchesDescriptor(block: AgentPermissionBlock, descriptor: ToolActionDescriptor): boolean {
+  if (block.kind === 'action') return block.actionKind === descriptor.actionKind;
+  if (block.kind === 'command') {
+    return (descriptor.command != null && commandsEqual(descriptor.command, block.form))
+      || (descriptor.effect.grant?.kind === 'command' && commandsEqual(descriptor.effect.grant.form, block.form));
+  }
+  if (!descriptor.effect.grant) return false;
+  return grantsEqual(block, descriptor.effect.grant);
+}
+
+function commandsEqual(left: string, right: string): boolean {
+  return normalizeCommandForPermissionMatch(left) === normalizeCommandForPermissionMatch(right);
+}
+
+function normalizeCommandForPermissionMatch(command: string): string {
+  const trimmed = command.trim();
+  let normalized = '';
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  let pendingSpace = false;
+
+  for (const char of trimmed) {
+    if (escaped) {
+      normalized += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      if (pendingSpace && normalized) {
+        normalized += ' ';
+        pendingSpace = false;
+      }
+      normalized += char;
+      escaped = true;
+      continue;
+    }
+
+    if (quote) {
+      normalized += char;
+      if (char === quote) quote = null;
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      if (pendingSpace && normalized) {
+        normalized += ' ';
+        pendingSpace = false;
+      }
+      quote = char;
+      normalized += char;
+      continue;
+    }
+
+    if (/\s/u.test(char)) {
+      if (normalized) pendingSpace = true;
+      continue;
+    }
+
+    if (pendingSpace && normalized) {
+      normalized += ' ';
+      pendingSpace = false;
+    }
+    normalized += char;
+  }
+
+  return normalized;
 }
 
 function parseScopeGrantValue(value: string): { access: AgentPermissionScopeAccess; root: string } | null {
@@ -266,7 +455,7 @@ function diagnostic(
 
 function decisionRank(decision: GlobalToolPermissionDecision): number {
   if (decision === 'deny') return 2;
-  if (decision === 'ask') return 1;
+  if (decision === 'soft_block') return 1;
   return 0;
 }
 
@@ -282,16 +471,35 @@ function descriptorRiskRank(descriptor: ToolActionDescriptor): number {
   return rank;
 }
 
-function isParsedGlobalToolPermissionConfig(value: unknown): value is GlobalToolPermissionConfig {
+function normalizePermissionConfig(configInput?: unknown): GlobalToolPermissionConfig {
+  return looksParsedGlobalToolPermissionConfig(configInput)
+    ? configInput
+    : parseGlobalToolPermissionSettings(configInput);
+}
+
+function looksParsedGlobalToolPermissionConfig(value: unknown): value is GlobalToolPermissionConfig {
   return isRecord(value)
     && Array.isArray(value.grants)
+    && Array.isArray(value.blocks)
+    && Array.isArray(value.softBlockAllows)
     && Array.isArray(value.diagnostics)
-    && value.grants.every((grant) => (
-      isRecord(grant)
-      && typeof grant.ruleValue === 'string'
-      && isRecord(grant.grant)
-      && typeof grant.grant.kind === 'string'
-    ));
+    && (value.grants.length === 0 || isParsedGrantRule(value.grants[0]))
+    && (value.blocks.length === 0 || isParsedBlockRule(value.blocks[0]))
+    && (value.softBlockAllows.length === 0 || isParsedBlockRule(value.softBlockAllows[0]));
+}
+
+function isParsedGrantRule(value: unknown): value is GlobalToolPermissionRule {
+  return isRecord(value)
+    && typeof value.ruleValue === 'string'
+    && isRecord(value.grant)
+    && typeof value.grant.kind === 'string';
+}
+
+function isParsedBlockRule(value: unknown): value is GlobalToolPermissionBlockRule {
+  return isRecord(value)
+    && typeof value.ruleValue === 'string'
+    && isRecord(value.block)
+    && typeof value.block.kind === 'string';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,57 +1,41 @@
 import { describe, expect, test } from 'bun:test';
 import { resolveAgentPermissionAsk } from '../../src/main/agentPermissionAskResolver';
-import { evaluateAgentToolPermission } from '../../src/main/agentPermissions';
+import type { AgentPermissionAskDecision } from '../../src/main/agentPermissions';
+
+const legacyAskDecision: AgentPermissionAskDecision = {
+  behavior: 'ask',
+  access: 'execute',
+  code: 'legacy_ask',
+  preapproved: false,
+  reason: 'Legacy ask decision.',
+  request: {
+    title: 'Approve legacy action?',
+    target: 'legacy action',
+    details: [],
+  },
+};
 
 describe('agent permission ask resolver', () => {
-  test('asks the user for every commit when interaction is available', async () => {
-    const decision = evaluateAgentToolPermission({
-      toolName: 'bash',
-      args: { command: 'git push origin main' },
-      policy: { workspaceRoot: '/tmp/workspace' },
-    });
-    expect(decision.behavior).toBe('ask');
-    if (decision.behavior !== 'ask') throw new Error('expected ask');
-
+  test('keeps legacy ask decisions interactive when possible', async () => {
     await expect(resolveAgentPermissionAsk({
-      decision,
+      decision: legacyAskDecision,
       interactionAvailable: true,
     })).resolves.toEqual({ outcome: 'needs_user' });
   });
 
-  test('does not auto-allow commits when no interaction channel exists', async () => {
-    const decision = evaluateAgentToolPermission({
-      toolName: 'web_fetch',
-      args: { url: 'https://example.com' },
-      policy: { workspaceRoot: '/tmp/workspace' },
-    });
-    expect(decision.behavior).toBe('allow');
-
-    const commit = evaluateAgentToolPermission({
-      toolName: 'bash',
-      args: { command: 'curl -X POST https://example.com -d hello' },
-      policy: { workspaceRoot: '/tmp/workspace' },
-    });
-    expect(commit.behavior).toBe('ask');
-    if (commit.behavior !== 'ask') throw new Error('expected ask');
-
+  test('keeps legacy ask decisions fail-closed without interaction', async () => {
     await expect(resolveAgentPermissionAsk({
-      decision: commit,
+      decision: legacyAskDecision,
       interactionAvailable: false,
     })).resolves.toEqual({ outcome: 'needs_user' });
   });
 
-  test('aborted runs fail closed before asking', async () => {
+  test('aborted legacy asks fail closed before asking', async () => {
     const controller = new AbortController();
     controller.abort();
-    const decision = evaluateAgentToolPermission({
-      toolName: 'bash',
-      args: { command: 'git push origin main' },
-      policy: { workspaceRoot: '/tmp/workspace' },
-    });
-    if (decision.behavior !== 'ask') throw new Error('expected ask');
 
     await expect(resolveAgentPermissionAsk({
-      decision,
+      decision: legacyAskDecision,
       interactionAvailable: true,
       signal: controller.signal,
     })).resolves.toEqual({

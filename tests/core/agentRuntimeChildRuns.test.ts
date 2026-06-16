@@ -518,7 +518,7 @@ describe('agent runtime childRuns', () => {
     const researcherDir = await createAgent(localRoot, 'researcher', [
       '---',
       'description: Researches focused questions in isolation.',
-      'tools: [file_read]',
+      'tools: ["*"]',
       '---',
       'RESEARCHER_AGENT_BODY.',
     ].join('\n'));
@@ -534,10 +534,9 @@ describe('agent runtime childRuns', () => {
             agent_type: 'researcher',
           }, { id: 'tool-agent-consult' }),
         ], { stopReason: 'toolUse' }),
-        // The consultee hits an 'ask'-level capability under its OWN permissions:
-        // a sensitive-path read asks in every safety mode.
+        // The consultee hits a soft-blocked capability under its OWN permissions.
         fauxAssistantMessage([
-          fauxToolCall('file_read', { file_path: path.join(localRoot, '.env') }, { id: 'tool-child-read' }),
+          fauxToolCall('bash', { command: 'eval "echo child-soft-block"' }, { id: 'tool-child-soft-block' }),
         ], { stopReason: 'toolUse' }),
         // The consultee wraps up after its read is denied.
         fauxAssistantMessage(fauxText('Consultee done.')),
@@ -579,7 +578,7 @@ describe('agent runtime childRuns', () => {
       if (approval) {
         resolved.add(approval.requestId);
         attributions.push(approval.request.requestedByAgentId);
-        // Deny so the sensitive read never touches disk; the run still completes.
+        // Deny so the soft-blocked command never runs; the run still completes.
         await runtime.resolveApproval(conversationId, approval.requestId, false);
         continue;
       }
@@ -588,7 +587,7 @@ describe('agent runtime childRuns', () => {
     await sendPromise;
 
     expect(script.pendingCount()).toBe(0);
-    // EXACTLY one approval surfaced — the consultee's sensitive read — attributed to
+    // EXACTLY one soft-block card surfaced — the consultee's command — attributed to
     // the consultee (resolved to its canonical mention by the card). The ungated
     // spawn raised none, and the parent's own agent is never the requester.
     expect(attributions).toEqual([researcherAgentId]);
@@ -608,9 +607,9 @@ describe('agent runtime childRuns', () => {
             prompt: 'Inspect the local config.',
           }, { id: 'tool-agent-fork' }),
         ], { stopReason: 'toolUse' }),
-        // The fork hits an 'ask'-level capability (sensitive read).
+        // The fork hits a soft-blocked capability.
         fauxAssistantMessage([
-          fauxToolCall('file_read', { file_path: path.join(localRoot, '.env') }, { id: 'tool-fork-read' }),
+          fauxToolCall('bash', { command: 'eval "echo fork-soft-block"' }, { id: 'tool-fork-soft-block' }),
         ], { stopReason: 'toolUse' }),
         // The fork wraps up after its read is denied, then the parent's final turn.
         fauxAssistantMessage(fauxText('Fork done.')),
@@ -696,9 +695,9 @@ describe('agent runtime childRuns', () => {
             prompt: 'Read the env file.',
           }, { id: 'tool-agent-nested-fork' }),
         ], { stopReason: 'toolUse' }),
-        // The fork hits an 'ask'-level capability (sensitive read).
+        // The fork hits a soft-blocked capability.
         fauxAssistantMessage([
-          fauxToolCall('file_read', { file_path: path.join(localRoot, '.env') }, { id: 'tool-nested-fork-read' }),
+          fauxToolCall('bash', { command: 'eval "echo nested-fork-soft-block"' }, { id: 'tool-nested-fork-soft-block' }),
         ], { stopReason: 'toolUse' }),
         // Wrap up each level once the read is denied.
         fauxAssistantMessage(fauxText('Fork done.')),
@@ -755,7 +754,7 @@ describe('agent runtime childRuns', () => {
     expect(attributions).toEqual([researcherAgentId]);
   });
 
-  test('a consultee hard-denial notice is attributed to the consultee', async () => {
+  test('a consultee hard-denial is logged without a user notice', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-notice-attribution-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-notice-attribution-data-'));
     roots.push(localRoot, dataRoot);
@@ -778,10 +777,9 @@ describe('agent runtime childRuns', () => {
             agent_type: 'researcher',
           }, { id: 'tool-agent-consult' }),
         ], { stopReason: 'toolUse' }),
-        // The consultee hits a redline-DENY capability (unknown shell) under its own
-        // permissions — surfaced as a tell-only permission notice, not an 'ask'.
+        // The consultee hits a redline-DENY capability under its own permissions.
         fauxAssistantMessage([
-          fauxToolCall('bash', { command: '$(cat script.sh)' }, { id: 'tool-child-unknown-shell' }),
+          fauxToolCall('bash', { command: 'rm -rf /' }, { id: 'tool-child-root-delete' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage(fauxText('Consultee done.')),
         fauxAssistantMessage(fauxText('Parent final.')),
@@ -807,16 +805,20 @@ describe('agent runtime childRuns', () => {
     );
 
     const conversation = await runtime.restoreLatestConversation();
-    // The notice is tell-only (non-blocking), so the run settles on its own.
     await runtime.sendMessage(conversation.conversationId, 'Consult the researcher.');
 
     expect(script.pendingCount()).toBe(0);
-    const notice = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+    expect(sink.events.some((event) => (
       event.type === 'approval_request' && event.request.kind === 'permission_notice'
-    ));
-    // A consultee's denied action surfaces in the parent conversation attributed to
-    // it too — not only the 'ask' path.
-    expect(notice?.request.requestedByAgentId).toBe(researcherAgentId);
+    ))).toBe(false);
+    const events = await new AgentEventStore(dataRoot).readEvents(conversation.conversationId);
+    expect(events.find((event) => (
+      event.type === 'tool.permission.resolved'
+      && event.toolCallId === 'tool-child-root-delete'
+    ))).toMatchObject({
+      status: 'denied',
+      deniedReason: 'platform_hard_block',
+    });
   });
 
   test('scheduled Dream writes fresh child run transcript memory to the called agent owner', async () => {

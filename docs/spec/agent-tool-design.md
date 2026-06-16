@@ -1250,11 +1250,12 @@ Result behavior:
 - `origin: "agent"` means undo/redo the nearest stack operation whose origin is
   agent, stopping at unsafe dependencies.
 - `origin: "user"` means undo/redo the nearest user-origin stack operation and
-  usually requires approval.
+  is still logged through the permission layer.
 - `operation_id` is only a guard for the current stack target or a continuous
   stack range. If it would require skipping unrelated later operations, return
   `boundary` and do nothing.
-- Undoing user-origin operations requires approval by default.
+- User-origin undo/redo defaults to allow under the global policy unless the
+  user adds a matching block rule.
 - Redo follows the redo stack and must fail if a new document mutation has
   invalidated the redo stack.
 - If history storage cannot list operations yet, implement `undo` and `redo`
@@ -1486,8 +1487,8 @@ Path rules:
 - Model-facing `file_path` input values should be absolute paths. Search outputs
   such as `file_glob.filenames` and `file_grep.filenames` are local-root-relative
   to save tokens and keep path output compact.
-- TypeScript must enforce the configured local file root unless the user explicitly
-  grants a broader root.
+- TypeScript must enforce the configured local file root unless the user
+  explicitly hands Tenon a broader root.
 
 `file_convert` is the preferred surface for common conversion workflows that
 previously pushed agents toward shell commands. The runtime invokes converter
@@ -1902,7 +1903,8 @@ Result behavior:
 
 - Creating a new file does not require a prior `file_read`.
 - Updating an existing file requires a prior `file_read` freshness record.
-- Overwriting a file should require approval.
+- Overwriting a file should be treated as a high-signal mutation in logs; the
+  global permission policy may still allow it by default.
 - Do not use `file_write` to append small changes; use `file_edit`.
 
 ## Shell Tools
@@ -1964,7 +1966,8 @@ Result behavior:
 - Completion of a background command should be surfaced through the agent
   runtime event stream with the same output path. Do not add a polling-first
   `TaskOutput` equivalent unless real usage proves `file_read` is insufficient.
-- Risky commands require approval.
+- Risky commands run by default unless they hit a hard redline, a built-in soft
+  block, restricted sandbox rules, or a user blocklist rule.
 - Non-zero command exit is represented through `stdout`, `stderr`, `exitCode`,
   and optional `returnCodeInterpretation`.
 - Do not use `bash` to read, edit, write, glob, or grep files when the dedicated
@@ -2573,12 +2576,12 @@ Read-only tools run immediately when their permission scope is already allowed:
 - `recall`
 - `operation_history(action: "list")`
 
-Web tools are also read-only, but may require host or offline-mode approval:
+Web tools are also read-only, but may be blocked by host/offline policy:
 
 - `web_search`
 - `web_fetch`
 
-Mutating tools may require approval depending on risk:
+Mutating tools still pass through the global permission layer:
 
 - `node_create`
 - `node_edit`

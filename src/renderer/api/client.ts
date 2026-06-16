@@ -389,6 +389,8 @@ export const api = {
     command<AgentToolPermissionSettingsView>('agent_get_tool_permission_settings'),
   agentUpdateToolPermissionSettings: (settings: AgentToolPermissionSettingsInput) =>
     command<AgentToolPermissionSettingsView>('agent_update_tool_permission_settings', { settings }),
+  agentAppendToolPermissionBlock: (ruleValue: string) =>
+    command<AgentToolPermissionSettingsView>('agent_append_tool_permission_block', { ruleValue }),
   agentPickScopeFolder: (settings: AgentToolPermissionSettingsInput) =>
     command<AgentPickScopeFolderResult>('agent_pick_scope_folder', { settings }),
   agentUpsertProviderConfig: (provider: AgentProviderConfigInput) =>

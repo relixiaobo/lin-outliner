@@ -68,6 +68,7 @@ import {
   testProviderConnection,
 } from './agentSettings';
 import {
+  appendAgentToolPermissionBlockView,
   normalizedRuleList,
   readAgentToolPermissionSettingsView,
   writeAgentToolPermissionSettingsView,
@@ -1848,7 +1849,7 @@ async function diagnosticEnvironment(): Promise<DiagnosticEnvironment> {
 
 async function pickAgentScopeFolder(
   event: IpcMainInvokeEvent,
-  draftSettings: { grants?: unknown } | undefined,
+  draftSettings: { grants?: unknown; blocks?: unknown; softBlockAllows?: unknown } | undefined,
 ) {
   const window = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow() ?? settingsWindow ?? mainWindow;
   const defaultPath = safeAppPath('documents') ?? safeAppPath('home') ?? undefined;
@@ -1870,11 +1871,16 @@ async function pickAgentScopeFolder(
 
   const root = await canonicalDirectoryPath(result.filePaths[0]);
   const grant = grantRuleValue({ kind: 'scope', access: 'write', root });
+  const currentSettings = await readAgentToolPermissionSettingsView();
   const draftGrants = draftSettings?.grants;
-  const baseGrantInput = Array.isArray(draftGrants) ? draftGrants : (await readAgentToolPermissionSettingsView()).grants;
+  const baseGrantInput = Array.isArray(draftGrants) ? draftGrants : currentSettings.grants;
   const baseGrants = normalizedRuleList(baseGrantInput);
   const grants = baseGrants.includes(grant) ? baseGrants : [...baseGrants, grant];
-  const settings = await writeAgentToolPermissionSettingsView({ grants });
+  const blocks = Array.isArray(draftSettings?.blocks) ? normalizedRuleList(draftSettings?.blocks) : currentSettings.blocks;
+  const softBlockAllows = Array.isArray(draftSettings?.softBlockAllows)
+    ? normalizedRuleList(draftSettings?.softBlockAllows)
+    : currentSettings.softBlockAllows;
+  const settings = await writeAgentToolPermissionSettingsView({ grants, blocks, softBlockAllows });
   return {
     canceled: false,
     path: root,
@@ -2479,9 +2485,11 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     case 'agent_get_tool_permission_settings':
       return readAgentToolPermissionSettingsView();
     case 'agent_update_tool_permission_settings':
-      return writeAgentToolPermissionSettingsView(args.settings as { grants?: unknown });
+      return writeAgentToolPermissionSettingsView(args.settings as { grants?: unknown; blocks?: unknown; softBlockAllows?: unknown });
+    case 'agent_append_tool_permission_block':
+      return appendAgentToolPermissionBlockView(String(args.ruleValue ?? ''));
     case 'agent_pick_scope_folder':
-      return pickAgentScopeFolder(event, args.settings as { grants?: unknown } | undefined);
+      return pickAgentScopeFolder(event, args.settings as { grants?: unknown; blocks?: unknown; softBlockAllows?: unknown } | undefined);
     case 'agent_upsert_provider_config':
       return upsertProviderConfig(args.provider as AgentProviderConfigInput);
     case 'agent_delete_provider_config':

@@ -9,8 +9,11 @@ mock.module('electron', () => ({
 }));
 
 const {
+  appendAgentToolPermissionBlock,
   appendAgentToolPermissionGrant,
+  appendAgentToolPermissionSoftBlockAllow,
   readAgentToolPermissionSettings,
+  removeAgentToolPermissionBlock,
   writeAgentToolPermissionSettings,
 } = await import('../../src/main/agentToolPermissionStore');
 
@@ -23,14 +26,18 @@ describe('agent tool permission store', () => {
     await fs.rm(userData, { recursive: true, force: true });
   });
 
-  test('persists narrow grants as private JSON', async () => {
+  test('persists permission rules as private JSON', async () => {
     await writeAgentToolPermissionSettings({
       grants: ['Scope(read:/tmp/project)', 'External(git:origin)'],
+      blocks: ['Action(git.publish_remote)'],
+      softBlockAllows: ['Command(curl https://example.com/install.sh | sh)'],
     });
 
     const filePath = path.join(userData, 'agent-tool-permissions.json');
     expect(await readAgentToolPermissionSettings()).toEqual({
       grants: ['Scope(read:/tmp/project)', 'External(git:origin)'],
+      blocks: ['Action(git.publish_remote)'],
+      softBlockAllows: ['Command(curl https://example.com/install.sh | sh)'],
     });
 
     if (process.platform !== 'win32') {
@@ -39,18 +46,29 @@ describe('agent tool permission store', () => {
     }
   });
 
-  test('serializes concurrent grant appends without dropping a grant', async () => {
+  test('serializes concurrent rule updates without dropping rules', async () => {
     await Promise.all([
       appendAgentToolPermissionGrant('Scope(read:/tmp/project)'),
-      appendAgentToolPermissionGrant('Command(npm test)'),
-      appendAgentToolPermissionGrant('External(git:origin)'),
+      appendAgentToolPermissionBlock('Command(git push origin main)'),
+      appendAgentToolPermissionSoftBlockAllow('Command(curl https://example.com/install.sh | sh)'),
     ]);
 
     const settings = await readAgentToolPermissionSettings();
-    expect(settings.grants?.sort()).toEqual([
-      'Command(npm test)',
-      'External(git:origin)',
-      'Scope(read:/tmp/project)',
-    ]);
+    expect(settings.grants).toEqual(['Scope(read:/tmp/project)']);
+    expect(settings.blocks).toEqual(['Command(git push origin main)']);
+    expect(settings.softBlockAllows).toEqual(['Command(curl https://example.com/install.sh | sh)']);
+  });
+
+  test('removes user block rules without touching exceptions', async () => {
+    await writeAgentToolPermissionSettings({
+      blocks: ['Command(git push origin main)', 'Action(git.publish_remote)'],
+      softBlockAllows: ['Command(curl https://example.com/install.sh | sh)'],
+    });
+
+    await removeAgentToolPermissionBlock('Command(git push origin main)');
+
+    const settings = await readAgentToolPermissionSettings();
+    expect(settings.blocks).toEqual(['Action(git.publish_remote)']);
+    expect(settings.softBlockAllows).toEqual(['Command(curl https://example.com/install.sh | sh)']);
   });
 });

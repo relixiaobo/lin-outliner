@@ -19,10 +19,10 @@ describe('agent permission model', () => {
 
     expect(decideAgentOperationEffect(base)).toBe('allow');
     expect(decideAgentOperationEffect({ ...base, reach: 'network_read' })).toBe('allow');
-    expect(decideAgentOperationEffect({ ...base, reversible: false })).toBe('ask');
-    expect(decideAgentOperationEffect({ ...base, reach: 'outside_scope' })).toBe('ask');
-    expect(decideAgentOperationEffect({ ...base, reach: 'network_write' })).toBe('ask');
-    expect(decideAgentOperationEffect({ ...base, touchesCredentials: true })).toBe('ask');
+    expect(decideAgentOperationEffect({ ...base, reversible: false })).toBe('allow');
+    expect(decideAgentOperationEffect({ ...base, reach: 'outside_scope' })).toBe('allow');
+    expect(decideAgentOperationEffect({ ...base, reach: 'network_write' })).toBe('allow');
+    expect(decideAgentOperationEffect({ ...base, touchesCredentials: true })).toBe('allow');
     expect(decideAgentOperationEffect({ ...base, floor: 'exfiltration' })).toBe('deny');
   });
 

@@ -134,6 +134,7 @@ export const AGENT_COMMANDS = [
   'agent_update_runtime_settings',
   'agent_get_tool_permission_settings',
   'agent_update_tool_permission_settings',
+  'agent_append_tool_permission_block',
   'agent_pick_scope_folder',
   'agent_upsert_provider_config',
   'agent_delete_provider_config',

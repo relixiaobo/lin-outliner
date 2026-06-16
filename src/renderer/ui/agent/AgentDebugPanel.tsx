@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { agentToolActionKindProfile } from '../../../core/agentPermissionModel';
 import type {
   AgentDebugConversation,
   AgentDebugMessagePart,
@@ -13,7 +14,7 @@ import type {
 } from '../../../core/agentTypes';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
-import { ChevronDownIcon, CopyIcon, RefreshIcon, ICON_SIZE, LoaderIcon } from '../icons';
+import { BlockIcon, ChevronDownIcon, CopyIcon, RefreshIcon, ICON_SIZE, LoaderIcon } from '../icons';
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
 import { formatBytes } from '../preview/fileNode';
@@ -433,6 +434,30 @@ function RoundCard({ round, labels }: { round: AgentDebugRound; labels: DebugLab
 
 function ToolExchangeRow({ exchange, labels }: { exchange: AgentDebugToolExchange; labels: DebugLabels }) {
   const resultBody = exchange.result ?? labels.toolPending;
+  const [blockState, setBlockState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const blockRule = useMemo(() => blockRuleForToolExchange(exchange), [exchange]);
+
+  const addUserBlock = useCallback(async (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!blockRule || blockState === 'saving') return;
+    setBlockState('saving');
+    try {
+      await api.agentAppendToolPermissionBlock(blockRule);
+      setBlockState('saved');
+    } catch {
+      setBlockState('error');
+    }
+  }, [blockRule, blockState]);
+
+  const blockButtonLabel = blockState === 'saving'
+    ? labels.userBlockSaving
+    : blockState === 'saved'
+      ? labels.userBlockAdded({ rule: blockRule ?? '' })
+      : blockState === 'error'
+        ? labels.userBlockError
+        : labels.addUserBlockLabel;
+
   return (
     <details className={`agent-debug-tool-exchange${exchange.isError ? ' is-error' : ''}`}>
       <summary>
@@ -440,6 +465,18 @@ function ToolExchangeRow({ exchange, labels }: { exchange: AgentDebugToolExchang
         <code>{exchange.toolName}</code>
         <strong>{truncate(exchange.result ?? (exchange.args || ''), 96)}</strong>
         {exchange.isError ? <span className="agent-debug-tool-flag">{labels.toolError}</span> : null}
+        {blockRule ? (
+          <IconButton
+            className={`agent-debug-block-button is-${blockState}`}
+            disabled={blockState === 'saving'}
+            icon={BlockIcon}
+            iconSize={ICON_SIZE.tiny}
+            label={blockButtonLabel}
+            onClick={addUserBlock}
+            title={blockState === 'idle' ? labels.addUserBlockTitle({ rule: blockRule }) : blockButtonLabel}
+            variant="panel"
+          />
+        ) : null}
       </summary>
       <div className="agent-debug-tool-exchange-body">
         {exchange.args ? (
@@ -455,6 +492,32 @@ function ToolExchangeRow({ exchange, labels }: { exchange: AgentDebugToolExchang
       </div>
     </details>
   );
+}
+
+function blockRuleForToolExchange(exchange: AgentDebugToolExchange): string | null {
+  const parsedArgs = parseDebugArgs(exchange.args);
+  const command = stringRecordValue(parsedArgs, 'command');
+  if (command) return `Command(${command})`;
+
+  const actionKinds = agentToolActionKindProfile(exchange.toolName, parsedArgs);
+  if (actionKinds?.length === 1) return `Action(${actionKinds[0]})`;
+  return null;
+}
+
+function parseDebugArgs(args: string): unknown {
+  if (!args.trim()) return null;
+  try {
+    return JSON.parse(args);
+  } catch {
+    return null;
+  }
+}
+
+function stringRecordValue(value: unknown, key: string): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const raw = record[key];
+  return typeof raw === 'string' && raw.trim() ? raw : null;
 }
 
 // --- shared bits ----------------------------------------------------------

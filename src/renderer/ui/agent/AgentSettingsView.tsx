@@ -61,6 +61,7 @@ interface AgentSettingsViewProps {
 type SettingsCategory = SettingsCategoryTarget;
 type SettingsRoute = { type: 'category'; category: SettingsCategory };
 type RequestScope = 'settings' | 'section' | 'mutation';
+type PermissionRuleListKind = 'grants' | 'blocks' | 'softBlockAllows';
 
 interface DraftConfig {
   providerId: string;
@@ -533,6 +534,8 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
 
   const permissionDiagnostics = permissionDraft?.diagnostics ?? permissionSettings?.diagnostics ?? [];
   const permissionGrants = permissionDraft?.grants ?? permissionSettings?.grants ?? [];
+  const permissionBlocks = permissionDraft?.blocks ?? permissionSettings?.blocks ?? [];
+  const permissionSoftAllows = permissionDraft?.softBlockAllows ?? permissionSettings?.softBlockAllows ?? [];
   const acceptedSkillTrustGrants = allSkills.filter((skill) => skill.accepted);
   const runtimeDraftDirty = settings ? hasRuntimeDraftChanged(draft, settings) : false;
   const permissionDraftDirty = permissionDraft !== permissionSettings;
@@ -546,21 +549,47 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     void window.lin?.openProviderConfig?.({ providerId: '', mode: 'custom' });
   }
 
-  function revokePermissionGrant(grant: string) {
-    const base = permissionDraft ?? permissionSettings ?? { grants: [], diagnostics: [] };
+  function revokePermissionRule(kind: PermissionRuleListKind, rule: string) {
+    const base = permissionDraft ?? permissionSettings ?? emptyPermissionSettings();
     setPermissionDraft({
       ...base,
-      grants: base.grants.filter((candidate) => candidate !== grant),
+      [kind]: base[kind].filter((candidate) => candidate !== rule),
     });
   }
 
+  function renderPermissionRuleRows(
+    rules: readonly string[],
+    kind: PermissionRuleListKind,
+    emptyLabel: string,
+    actionLabel: string,
+  ) {
+    if (rules.length === 0) return <InsetRow disabled label={emptyLabel} />;
+    return rules.map((rule) => (
+      <InsetRow
+        key={rule}
+        label={permissionRuleLabel(rule, t)}
+        sublabel={<span className="inset-row-code">{rule}</span>}
+        trailing={(
+          <Button
+            onClick={() => revokePermissionRule(kind, rule)}
+            size="sm"
+            variant="ghost"
+          >
+            {actionLabel}
+          </Button>
+        )}
+        wrap
+      />
+    ));
+  }
+
   async function handScopeFolder() {
-    const base = permissionDraft ?? permissionSettings ?? { grants: [], diagnostics: [] };
+    const base = permissionDraft ?? permissionSettings ?? emptyPermissionSettings();
     setScopeFolderBusy(true);
     setError(null);
     setNotice(null);
     try {
-      const result = await api.agentPickScopeFolder({ grants: base.grants });
+      const result = await api.agentPickScopeFolder(base);
       if (!mountedRef.current || result.canceled) return;
       setPermissionSettings(result.settings);
       setPermissionDraft(result.settings);
@@ -595,7 +624,11 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
         disabledAgents: draft.disabledAgents,
       });
       const nextPermissions = permissionDraft && permissionDraft !== permissionSettings
-        ? await api.agentUpdateToolPermissionSettings({ grants: permissionDraft.grants })
+        ? await api.agentUpdateToolPermissionSettings({
+            grants: permissionDraft.grants,
+            blocks: permissionDraft.blocks,
+            softBlockAllows: permissionDraft.softBlockAllows,
+          })
         : null;
 
       const next = await api.agentGetProviderSettings();
@@ -972,8 +1005,33 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                 </InsetGroup>
 
                 <InsetGroup
-                  ariaLabel={t.settings.permissions.grantsAriaLabel}
-                  label={t.settings.permissions.grantsGroup}
+                  ariaLabel={t.settings.permissions.blocksAriaLabel}
+                  label={t.settings.permissions.blocksGroup}
+                >
+                  {renderPermissionRuleRows(
+                    permissionBlocks,
+                    'blocks',
+                    t.settings.permissions.noBlocks,
+                    t.settings.permissions.removeRule,
+                  )}
+                </InsetGroup>
+
+                <InsetGroup
+                  ariaLabel={t.settings.permissions.softAllowsAriaLabel}
+                  footnote={t.settings.permissions.softAllowsFootnote}
+                  label={t.settings.permissions.softAllowsGroup}
+                >
+                  {renderPermissionRuleRows(
+                    permissionSoftAllows,
+                    'softBlockAllows',
+                    t.settings.permissions.noSoftAllows,
+                    t.settings.permissions.removeRule,
+                  )}
+                </InsetGroup>
+
+                <InsetGroup
+                  ariaLabel={t.settings.permissions.boundariesAriaLabel}
+                  label={t.settings.permissions.boundariesGroup}
                 >
                   <InsetRow
                     label={t.settings.permissions.handFolderLabel}
@@ -991,24 +1049,11 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                     )}
                     wrap
                   />
-                  {permissionGrants.length > 0 ? permissionGrants.map((grant) => (
-                    <InsetRow
-                      key={grant}
-                      label={grantLabel(grant, t)}
-                      sublabel={<span className="inset-row-code">{grant}</span>}
-                      trailing={(
-                        <Button
-                          onClick={() => revokePermissionGrant(grant)}
-                          size="sm"
-                          variant="ghost"
-                        >
-                          {t.settings.permissions.revokeGrant}
-                        </Button>
-                      )}
-                      wrap
-                    />
-                  )) : (
-                    <InsetRow disabled label={t.settings.permissions.noGrants} />
+                  {renderPermissionRuleRows(
+                    permissionGrants,
+                    'grants',
+                    t.settings.permissions.noBoundaries,
+                    t.settings.permissions.revokeGrant,
                   )}
                 </InsetGroup>
 
@@ -1189,8 +1234,8 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                   <InsetGroup ariaLabel={t.settings.skills.installedAriaLabel} label={t.settings.skills.installedGroup}>
                     {allSkills.map((skill) => {
                       const disabled = isSkillDisabled(skill.name);
-                      // Trust state is derived in main: unratified rows are excluded
-                      // from automatic model use until the user accepts these bytes.
+                      // Trust state is derived in main. Mutable skills are model-usable
+                      // by default; acceptedHash is only a retained management fact.
                       const pending = !skill.ratified;
                       const trustActions: RowMenuAction[] = [];
                       if (skill.accepted) {
@@ -1461,11 +1506,16 @@ function memoryPoolLabel(entry: AgentMemoryEntryView, t: Messages): string {
   return entry.principal.type === 'user' ? t.settings.memory.poolUserLabel : t.settings.memory.poolAgentLabel;
 }
 
-function grantLabel(grant: string, t: Messages): string {
-  if (grant.startsWith('Scope(')) return t.settings.permissions.scopeGrantLabel;
-  if (grant.startsWith('External(')) return t.settings.permissions.externalGrantLabel;
-  if (grant.startsWith('Command(')) return t.settings.permissions.commandGrantLabel;
+function permissionRuleLabel(rule: string, t: Messages): string {
+  if (rule.startsWith('Scope(')) return t.settings.permissions.scopeGrantLabel;
+  if (rule.startsWith('External(')) return t.settings.permissions.externalGrantLabel;
+  if (rule.startsWith('Command(')) return t.settings.permissions.commandGrantLabel;
+  if (rule.startsWith('Action(')) return t.settings.permissions.actionRuleLabel;
   return t.settings.permissions.unknownGrantLabel;
+}
+
+function emptyPermissionSettings(): AgentToolPermissionSettingsView {
+  return { grants: [], blocks: [], softBlockAllows: [], diagnostics: [] };
 }
 
 function formatSettingsDate(timestamp: number): string {
