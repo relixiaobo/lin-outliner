@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
 import {
   commandCalls,
   e2eProjection,
@@ -11,10 +12,15 @@ import {
   setAgentMessageContextMenuAction,
 } from './outlinerMock';
 
+const DEFAULT_CONVERSATION_ID = DEFAULT_GENERAL_CHANNEL_ID;
+
 async function waitForAgentConversation(page: import('@playwright/test').Page) {
   await expect.poll(async () => {
     const calls = await commandCalls(page);
-    return calls.some((call) => call.cmd === 'agent_restore_latest_conversation');
+    return calls.some((call) => (
+      call.cmd === 'agent_restore_conversation'
+      && call.args.conversationId === DEFAULT_CONVERSATION_ID
+    )) || calls.some((call) => call.cmd === 'agent_restore_latest_conversation');
   }).toBe(true);
 }
 
@@ -105,11 +111,11 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'collapsed');
     await emitAgentEvent(page, {
       type: 'user_question_request',
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_CONVERSATION_ID,
       requestId,
       question: {
         requestId,
-        conversationId: 'mock-agent-conversation',
+        conversationId: DEFAULT_CONVERSATION_ID,
         runId: 'run-question-focus-e2e',
         toolCallId: 'tool-question-focus-e2e',
         request: {
@@ -136,7 +142,7 @@ test.describe('agent composer controls', () => {
     await expect(rowEditor(page, ids.beta)).toBeFocused();
     await emitAgentEvent(page, {
       type: 'user_question_resolved',
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_CONVERSATION_ID,
       requestId,
       timestamp: 1_800_000_002_100,
     });
@@ -156,11 +162,11 @@ test.describe('agent composer controls', () => {
       return calls.find((call) => call.cmd === 'agent_send_message')?.args;
     }).toMatchObject({
       message: 'Summarize current outline.',
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_CONVERSATION_ID,
     });
   });
 
-  test('shows every configured agent as a default DM and opens DMs without creating one', async ({ page }) => {
+  test('shows #General, every configured agent DM, and opens DMs without creating one', async ({ page }) => {
     await page.getByRole('button', { name: 'Show conversations' }).click();
     const menu = page.getByRole('dialog', { name: 'Channels' });
     await expect(menu).toBeVisible();
@@ -169,6 +175,7 @@ test.describe('agent composer controls', () => {
     await expect(menu.getByRole('button', { name: 'New Channel' })).toBeVisible();
     await expect(menu.getByRole('button', { name: /Neva/ })).toBeVisible();
     await expect(menu.getByRole('button', { name: /self/ })).toBeVisible();
+    await expect(menu.getByText('General', { exact: true })).toBeVisible();
     await expect(menu.getByText('Planning Channel')).toBeVisible();
     const headerBorders = await menu.locator('.agent-conversation-menu-header').evaluateAll((headers) => (
       headers.map((header) => {
@@ -186,7 +193,10 @@ test.describe('agent composer controls', () => {
     await expect(dmList.locator('.agent-conversation-members')).toHaveCount(0);
     await expect(channelsList.locator('.agent-conversation-meta')).toHaveCount(0);
     await expect(channelsList.locator('.agent-conversation-members')).toHaveCount(0);
-    await expect(channelsList.locator('.agent-conversation-channel-icon')).toHaveCount(1);
+    await expect(channelsList.locator('.agent-conversation-channel-icon')).toHaveCount(2);
+    const generalRow = channelsList.locator('.agent-conversation-row', { hasText: 'General' }).first();
+    await expect(channelsList.locator('.agent-conversation-row').first()).toContainText('General');
+    await expect(generalRow.getByRole('button', { name: 'Channel options' })).toHaveCount(0);
     await expect(channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).locator('.agent-conversation-unread')).toHaveText('3');
 
     await menu.getByRole('button', { name: /self/ }).click();
@@ -330,11 +340,11 @@ test.describe('agent composer controls', () => {
   test('renders skill trust approvals as accept/not-now cards', async ({ page }) => {
     await emitAgentEvent(page, {
       type: 'approval_request',
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_CONVERSATION_ID,
       requestId: 'skill-trust-e2e',
       request: {
         requestId: 'skill-trust-e2e',
-        conversationId: 'mock-agent-conversation',
+        conversationId: DEFAULT_CONVERSATION_ID,
         kind: 'skill_trust',
         toolCallId: 'tool-skill-trust-e2e',
         toolName: 'skill',
@@ -364,7 +374,7 @@ test.describe('agent composer controls', () => {
       const calls = await commandCalls(page);
       return calls.find((call) => call.cmd === 'agent_resolve_approval' && call.args.requestId === 'skill-trust-e2e')?.args;
     }).toMatchObject({
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_CONVERSATION_ID,
       requestId: 'skill-trust-e2e',
       approved: true,
       scope: 'once',
@@ -374,11 +384,11 @@ test.describe('agent composer controls', () => {
   test('renders permission notices as dismiss-only cards', async ({ page }) => {
     await emitAgentEvent(page, {
       type: 'approval_request',
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_CONVERSATION_ID,
       requestId: 'permission-notice-e2e',
       request: {
         requestId: 'permission-notice-e2e',
-        conversationId: 'mock-agent-conversation',
+        conversationId: DEFAULT_CONVERSATION_ID,
         kind: 'permission_notice',
         toolCallId: 'tool-notice-e2e',
         toolName: 'bash',
@@ -403,7 +413,7 @@ test.describe('agent composer controls', () => {
       const calls = await commandCalls(page);
       return calls.find((call) => call.cmd === 'agent_resolve_approval' && call.args.requestId === 'permission-notice-e2e')?.args;
     }).toMatchObject({
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_CONVERSATION_ID,
       requestId: 'permission-notice-e2e',
       approved: false,
       scope: 'once',
@@ -413,11 +423,11 @@ test.describe('agent composer controls', () => {
   test('attributes a consulted agent\'s approval to the consultee', async ({ page }) => {
     await emitAgentEvent(page, {
       type: 'approval_request',
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_CONVERSATION_ID,
       requestId: 'consultee-approval-e2e',
       request: {
         requestId: 'consultee-approval-e2e',
-        conversationId: 'mock-agent-conversation',
+        conversationId: DEFAULT_CONVERSATION_ID,
         kind: 'tool_permission',
         toolCallId: 'tool-consultee-e2e',
         toolName: 'file_read',
@@ -465,11 +475,11 @@ test.describe('agent composer controls', () => {
     await page.emulateMedia({ colorScheme: 'light' });
     await emitAgentEvent(page, {
       type: 'user_question_request',
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_CONVERSATION_ID,
       requestId: 'question-e2e',
       question: {
         requestId: 'question-e2e',
-        conversationId: 'mock-agent-conversation',
+        conversationId: DEFAULT_CONVERSATION_ID,
         runId: 'run-question-e2e',
         toolCallId: 'tool-question-e2e',
         request: {
@@ -537,7 +547,7 @@ test.describe('agent composer controls', () => {
       const calls = await commandCalls(page);
       return calls.find((call) => call.cmd === 'agent_resolve_user_question')?.args;
     }).toMatchObject({
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_CONVERSATION_ID,
       requestId: 'question-e2e',
       result: {
         requestId: 'question-e2e',
@@ -552,11 +562,11 @@ test.describe('agent composer controls', () => {
   test('submits pending question answers with node refs, file refs, and attachments', async ({ page }) => {
     await emitAgentEvent(page, {
       type: 'user_question_request',
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_CONVERSATION_ID,
       requestId: 'question-rich-answer-e2e',
       question: {
         requestId: 'question-rich-answer-e2e',
-        conversationId: 'mock-agent-conversation',
+        conversationId: DEFAULT_CONVERSATION_ID,
         runId: 'run-question-rich-answer-e2e',
         toolCallId: 'tool-question-rich-answer-e2e',
         request: {
@@ -597,7 +607,7 @@ test.describe('agent composer controls', () => {
       const calls = await commandCalls(page);
       return calls.find((call) => call.cmd === 'agent_resolve_user_question')?.args;
     }).toMatchObject({
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_CONVERSATION_ID,
       requestId: 'question-rich-answer-e2e',
       result: {
         requestId: 'question-rich-answer-e2e',
@@ -625,11 +635,11 @@ test.describe('agent composer controls', () => {
   test('resolves pending questions through the discuss action', async ({ page }) => {
     await emitAgentEvent(page, {
       type: 'user_question_request',
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_CONVERSATION_ID,
       requestId: 'question-discuss-e2e',
       question: {
         requestId: 'question-discuss-e2e',
-        conversationId: 'mock-agent-conversation',
+        conversationId: DEFAULT_CONVERSATION_ID,
         runId: 'run-question-discuss-e2e',
         toolCallId: 'tool-question-discuss-e2e',
         request: {
@@ -654,7 +664,7 @@ test.describe('agent composer controls', () => {
       const calls = await commandCalls(page);
       return calls.find((call) => call.cmd === 'agent_resolve_user_question')?.args;
     }).toMatchObject({
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_CONVERSATION_ID,
       requestId: 'question-discuss-e2e',
       result: {
         requestId: 'question-discuss-e2e',
@@ -806,7 +816,7 @@ test.describe('agent composer controls', () => {
   test('renders sent attachment mentions inline without raw image placeholders', async ({ page }) => {
     const imagePath = '/Users/test/Desktop/Screenshot 2026-05-26 at 14.50.16.png';
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
@@ -1498,7 +1508,7 @@ test.describe('agent composer controls', () => {
       },
     });
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
@@ -1546,7 +1556,7 @@ test.describe('agent composer controls', () => {
   });
 
   test('renders node reference markers in assistant and tool output', async ({ page }) => {
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
@@ -1672,7 +1682,7 @@ test.describe('agent composer controls', () => {
   });
 
   test('shows compact progress before expandable summaries', async ({ page }) => {
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       activeCompaction: {
@@ -1688,7 +1698,7 @@ test.describe('agent composer controls', () => {
     await expect(compactStatus).toContainText('Manual');
     await expect(page.getByRole('button', { name: /Compacted/ })).toHaveCount(0);
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
@@ -1787,7 +1797,7 @@ test.describe('agent composer controls', () => {
       },
     };
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Planning Channel',
       members: [
         { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
@@ -1878,7 +1888,7 @@ test.describe('agent composer controls', () => {
   });
 
   test('shows floating Channel activity with overflow and entry stop affordance', async ({ page }) => {
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Parallel Channel',
       members: [
         { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
@@ -1986,7 +1996,7 @@ test.describe('agent composer controls', () => {
     const stopAlpha = alphaShell.getByRole('button', { name: 'Stop Alpha' });
     await expect(stopAlpha).toHaveCSS('opacity', '1');
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Parallel Channel',
       members: [
         { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
@@ -2008,7 +2018,7 @@ test.describe('agent composer controls', () => {
       const calls = await commandCalls(page);
       return calls.some((call) => (
         call.cmd === 'agent_stop_run'
-        && call.args.conversationId === 'mock-agent-conversation'
+        && call.args.conversationId === DEFAULT_CONVERSATION_ID
         && call.args.runId === 'run-alpha'
       ));
     }).toBe(true);
@@ -2019,7 +2029,7 @@ test.describe('agent composer controls', () => {
     await expect(details).toBeVisible();
     await expect(details).toContainText('Alpha · using tools');
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Parallel Channel',
       members: [
         { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
@@ -2048,7 +2058,7 @@ test.describe('agent composer controls', () => {
   });
 
   test('Channel composer stays Send — never Stop or Steer — while agents work', async ({ page }) => {
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Parallel Channel',
       members: [
         { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
@@ -2078,7 +2088,7 @@ test.describe('agent composer controls', () => {
   });
 
   test('a running Channel agent\'s live text appears in the per-run detail view', async ({ page }) => {
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Parallel Channel',
       members: [
         { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
@@ -2109,7 +2119,7 @@ test.describe('agent composer controls', () => {
   });
 
   test('renders reply anchors only for non-adjacent addressed replies', async ({ page }) => {
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Parallel Channel',
       members: [
         { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
@@ -2411,6 +2421,21 @@ test.describe('agent composer controls', () => {
   });
 
   test('keeps the header title compact and free of decorative status dots', async ({ page }) => {
+    await page.getByRole('button', { name: 'Show conversations' }).click();
+    const menu = page.getByRole('dialog', { name: 'Channels' });
+    await menu.getByRole('button', { name: /Neva/ }).click();
+    await expect(page.locator('.agent-dock-title')).toHaveText('Neva');
+    await page.locator('.workspace-canvas').hover();
+    await expect.poll(async () => page.locator('.agent-dock-title-button').evaluate((button) => {
+      const rootStyle = getComputedStyle(document.documentElement);
+      const swatch = document.createElement('span');
+      swatch.style.color = rootStyle.getPropertyValue('--text-soft').trim();
+      document.body.appendChild(swatch);
+      const textSoft = getComputedStyle(swatch).color;
+      swatch.remove();
+      return getComputedStyle(button).color === textSoft;
+    })).toBe(true);
+
     const metrics = await page.locator('.agent-dock-header').evaluate((header) => {
       const titleButton = header.querySelector('.agent-dock-title-button');
       const title = header.querySelector('.agent-dock-title');
@@ -2528,7 +2553,7 @@ test.describe('agent composer controls', () => {
   });
 
   test('renders node reference conversation titles without node ids', async ({ page }) => {
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: '[[node:你好^abcd7362-b2e4-498d-a1b2]] 你好',
       members: [
         { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
@@ -2602,7 +2627,7 @@ test.describe('agent composer controls', () => {
   });
 
   test('switches the primary action between stop and steer while streaming', async ({ page }) => {
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -2639,7 +2664,7 @@ test.describe('agent composer controls', () => {
       return calls.find((call) => call.cmd === 'agent_steer_conversation')?.args;
     }).toMatchObject({
       message: 'Compare tag layout stability.',
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_CONVERSATION_ID,
     });
     await expect(page.getByText('Compare tag layout stability.')).toBeVisible();
   });
@@ -2660,7 +2685,7 @@ test.describe('agent composer controls', () => {
       },
     };
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
@@ -2750,14 +2775,14 @@ test.describe('agent composer controls', () => {
         args: {
           agentId: 'child-run-1',
           message: 'Continue with layout risks.',
-          conversationId: 'mock-agent-conversation',
+          conversationId: DEFAULT_CONVERSATION_ID,
         },
       },
       {
         cmd: 'agent_child_run_stop',
         args: {
           agentId: 'child-run-1',
-          conversationId: 'mock-agent-conversation',
+          conversationId: DEFAULT_CONVERSATION_ID,
         },
       },
     ]);

@@ -15,7 +15,7 @@ import type {
   AgentUserViewContext,
 } from '../../../core/agentTypes';
 import { nodeReferenceMarkersToText } from '../../../core/referenceMarkup';
-import { agentMentionToken } from '../../../core/agentChannel';
+import { DEFAULT_GENERAL_CHANNEL_ID, agentMentionToken } from '../../../core/agentChannel';
 import type {
   AgentPovInspectorView,
   AgentRenderActivityEntry,
@@ -900,7 +900,14 @@ export function AgentChatPanel({
     [conversations],
   );
   const channelRows = useMemo(
-    () => conversations.filter((conversation) => !conversation.canonicalDmAgentId),
+    () => conversations
+      .filter((conversation) => !conversation.canonicalDmAgentId)
+      .sort((left, right) => (
+        (left.id === DEFAULT_GENERAL_CHANNEL_ID ? -1 : 0)
+        || (right.id === DEFAULT_GENERAL_CHANNEL_ID ? 1 : 0)
+        || (right.updatedAt - left.updatedAt)
+        || left.id.localeCompare(right.id)
+      )),
     [conversations],
   );
   const virtualLayout = useMemo(
@@ -1623,6 +1630,7 @@ export function AgentChatPanel({
                 <EmptyState className="agent-conversation-empty" size="inline" title={t.agent.chat.noConversations} />
               ) : channelRows.map((conversation) => {
                 const isCurrent = conversation.id === conversationId;
+                const isDefaultGeneral = conversation.id === DEFAULT_GENERAL_CHANNEL_ID;
                 const title = readableConversationTitle(conversation.title, t.common.untitled);
                 const unread = isCurrent ? 0 : conversation.unreadCount ?? unreadByConversationId.get(conversation.id) ?? 0;
                 const actionMenuKey = `channel:${conversation.id}`;
@@ -1637,12 +1645,15 @@ export function AgentChatPanel({
                     onSelect: () => handleInspectMemberPov(agentId),
                   }];
                 }) : [];
-                const channelActions: ConversationRowMenuAction[] = [{
-                  disabled: anyRunActive,
-                  id: 'configure-channel',
-                  label: t.agent.chat.configureChannel,
-                  onSelect: () => handleConfigureChannel(conversation.id),
-                }, ...povActions];
+                const channelActions: ConversationRowMenuAction[] = [
+                  ...(isDefaultGeneral ? [] : [{
+                    disabled: anyRunActive,
+                    id: 'configure-channel',
+                    label: t.agent.chat.configureChannel,
+                    onSelect: () => handleConfigureChannel(conversation.id),
+                  } satisfies ConversationRowMenuAction]),
+                  ...povActions,
+                ];
                 return (
                   <div
                     className={isCurrent ? 'agent-conversation-row agent-conversation-compact-row is-current' : 'agent-conversation-row agent-conversation-compact-row'}
@@ -1672,16 +1683,18 @@ export function AgentChatPanel({
                         </span>
                       ) : null}
                     </ButtonControl>
-                    <div className="agent-conversation-row-actions">
-                      <ConversationRowMoreMenu
-                        actions={channelActions}
-                        disabled={dmRunActive && povActions.length === 0}
-                        label={t.agent.chat.channelOptions}
-                        menuLabel={t.agent.chat.channelOptions}
-                        onOpenChange={(open) => setRowActionMenu(open ? actionMenuKey : null)}
-                        open={rowActionMenu === actionMenuKey}
-                      />
-                    </div>
+                    {channelActions.length > 0 ? (
+                      <div className="agent-conversation-row-actions">
+                        <ConversationRowMoreMenu
+                          actions={channelActions}
+                          disabled={dmRunActive && povActions.length === 0}
+                          label={t.agent.chat.channelOptions}
+                          menuLabel={t.agent.chat.channelOptions}
+                          onOpenChange={(open) => setRowActionMenu(open ? actionMenuKey : null)}
+                          open={rowActionMenu === actionMenuKey}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}

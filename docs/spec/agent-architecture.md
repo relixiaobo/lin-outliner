@@ -78,6 +78,16 @@ clean-cut, no migration).
   coordinator = the default addressee, PM-ratified 2026-06-10). ✅ (M3-A #179,
   IM group-chat semantics ratified 2026-06-10) — a Channel behaves like an IM
   group, not a streaming DM:
+  - **Default `#General` Channel:** the runtime reserves
+    `lin-agent-channel-general` as a normal named Channel (`title/goal = General`,
+    no stored `kind`). `#General` is ensured on runtime ready, restore, list, and
+    agent-registry reload. It contains the user, the coordinator, and every current
+    durable peer agent; future durable peers auto-join when they appear. Fork,
+    child/delegation, headless, and transient helper agents are not members. The
+    invariant is idempotent and protected: `#General` cannot be renamed, deleted,
+    or manually membership-edited through ordinary conversation commands. It does
+    not change routing: an unaddressed `#General` turn still routes only to the
+    coordinator, while `@agent` routes only to named peers.
   - **Routing:** explicit user `@`s all run, uncounted; no `@` → the
     coordinator; an agent reply `@`-ing members hands off (the addressing is
     persisted on the reply's `assistant_message.completed.addressedTo` and the

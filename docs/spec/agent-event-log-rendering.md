@@ -1190,13 +1190,23 @@ Open-conversation policy:
 - The conversation list combines the configured agent roster with
   `conversation-index.json`: every configured agent has an immutable canonical DM
   row, even before its log exists, and Channels are listed when they have a
-  Channel name. The current event/index storage still carries that name in the
-  legacy `goal` field.
+  Channel name. The reserved `lin-agent-channel-general` row is always ensured
+  and sorted first in the Channels section as `#General`. The current event/index
+  storage still carries Channel names in the legacy `goal` field.
+- `#General` is a normal event-sourced Conversation with `title/goal = General`.
+  It stores no `kind`; its reserved id plus runtime invariant make it special.
+  Runtime ready, restore, list, and agent-registry reload all ensure it exists
+  with the user, coordinator, and every current durable peer agent. The ensure is
+  idempotent: repeated startup/list/reload calls do not append duplicate
+  `member.added` events, and deleted/unavailable durable peers are removed from
+  the active member set when no Channel run is in flight.
 - Restoring a canonical DM id is find-or-create keyed by `{ user, agentId }`.
   DMs have no goal, exactly one agent member, and cannot be renamed, deleted, or
   membership-edited. A Channel is a named room with the user, the coordinator
   agent as an implicit runtime participant, and optional invited agents that can
-  be added later.
+  be added later. The Agent Dock startup path restores a remembered valid
+  DM/Channel id first, then `#General`, and uses the legacy latest/coordinator DM
+  restore only as a defensive fallback.
 - `conversation-index.json` carries list projection fields, including member
   roster, unread count, message count, and the latest visible message snippet /
   timestamp. Opening the conversation menu does not replay each conversation log.

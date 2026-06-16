@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
+import { DEFAULT_GENERAL_CHANNEL_ID, DEFAULT_GENERAL_CHANNEL_TITLE } from '../../src/core/agentChannel';
 import { AGENT_EVENT_VERSION, getAgentEventActivePath, type AgentEvent } from '../../src/core/agentEventLog';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
 import { AgentEventStore } from '../../src/main/agentEventStore';
@@ -228,16 +229,39 @@ describe('agent runtime conversations', () => {
     const roster = await runtime.listConversations();
     const assistantRow = roster.find((entry) => entry.canonicalDmAgentId === ASSISTANT_AGENT_ID);
     const selfRow = roster.find((entry) => entry.canonicalDmAgentId === selfAgent.agentId);
+    const channelRows = roster.filter((entry) => !entry.canonicalDmAgentId);
 
     expect(first.conversationId).toMatch(/^lin-agent-dm-/);
     expect(second.conversationId).toBe(first.conversationId);
-    expect(roster.filter((entry) => !entry.canonicalDmAgentId)).toEqual([]);
-    expect(assistantRow?.id).toBe(first.conversationId);
+    expect(channelRows).toHaveLength(1);
+    expect(channelRows[0]).toMatchObject({
+      id: DEFAULT_GENERAL_CHANNEL_ID,
+      title: DEFAULT_GENERAL_CHANNEL_TITLE,
+      goal: DEFAULT_GENERAL_CHANNEL_TITLE,
+    });
+    expect(channelRows[0]?.members).toEqual(expect.arrayContaining([
+      { type: 'user', userId: 'local-user' },
+      { type: 'agent', agentId: ASSISTANT_AGENT_ID },
+      { type: 'agent', agentId: selfAgent.agentId },
+    ]));
+    expect(assistantRow?.id).toMatch(/^lin-agent-dm-/);
     expect(selfRow?.id).toMatch(/^lin-agent-dm-/);
     expect(selfRow?.messageCount).toBe(0);
+    expect(assistantRow?.id).toBe(first.conversationId);
     expect(state.conversation?.title).toBe('Neva');
     expect(state.conversation?.goal).toBeUndefined();
     expect(state.conversation?.members).toEqual([
+      { type: 'user', userId: 'local-user' },
+      { type: 'agent', agentId: ASSISTANT_AGENT_ID },
+    ]);
+    const generalEvents = await new AgentEventStore(dataRoot).readEvents(DEFAULT_GENERAL_CHANNEL_ID);
+    expect(generalEvents.filter((event) => event.type === 'conversation.created')).toHaveLength(1);
+    expect(generalEvents.filter((event) => event.type === 'member.added')).toHaveLength(0);
+
+    const assistantDm = await runtime.restoreConversation(assistantRow!.id);
+    const assistantState = await new AgentEventStore(dataRoot).replay(assistantDm.conversationId);
+    expect(assistantState.conversation?.goal).toBeUndefined();
+    expect(assistantState.conversation?.members).toEqual([
       { type: 'user', userId: 'local-user' },
       { type: 'agent', agentId: ASSISTANT_AGENT_ID },
     ]);
@@ -250,6 +274,54 @@ describe('agent runtime conversations', () => {
       { type: 'user', userId: 'local-user' },
       { type: 'agent', agentId: selfAgent.agentId },
     ]);
+
+    await runtime.listConversations();
+    const afterRepeatedEnsure = await new AgentEventStore(dataRoot).readEvents(DEFAULT_GENERAL_CHANNEL_ID);
+    expect(afterRepeatedEnsure).toHaveLength(generalEvents.length);
+  });
+
+  test('keeps #General membership in sync with durable agent definitions', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-local-'));
+    roots.push(dataRoot, localRoot);
+    const { runtime } = await createRuntime(dataRoot, localRoot);
+
+    await runtime.restoreConversation(DEFAULT_GENERAL_CHANNEL_ID);
+    let state = await new AgentEventStore(dataRoot).replay(DEFAULT_GENERAL_CHANNEL_ID);
+    expect(state.conversation?.members).toEqual(expect.arrayContaining([
+      { type: 'user', userId: 'local-user' },
+      { type: 'agent', agentId: ASSISTANT_AGENT_ID },
+    ]));
+
+    const definitions = await runtime.createAgentDefinition('workspace', {
+      name: 'writer',
+      description: 'Writes clear product notes.',
+      body: 'You write concise product notes.',
+    }, 'project');
+    const writer = definitions.find((definition) => definition.name === 'writer');
+    expect(writer?.agentId).toBeTruthy();
+
+    state = await new AgentEventStore(dataRoot).replay(DEFAULT_GENERAL_CHANNEL_ID);
+    expect(state.conversation?.members).toContainEqual({ type: 'agent', agentId: writer!.agentId });
+    expect((await new AgentEventStore(dataRoot).readEvents(DEFAULT_GENERAL_CHANNEL_ID))
+      .filter((event) => (
+        event.type === 'member.added'
+        && event.member.type === 'agent'
+        && event.member.agentId === writer!.agentId
+      )))
+      .toHaveLength(1);
+
+    await runtime.deleteAgentDefinition('workspace', writer!.agentId);
+
+    state = await new AgentEventStore(dataRoot).replay(DEFAULT_GENERAL_CHANNEL_ID);
+    expect(state.conversation?.members).not.toContainEqual({ type: 'agent', agentId: writer!.agentId });
+    expect((await new AgentEventStore(dataRoot).readEvents(DEFAULT_GENERAL_CHANNEL_ID))
+      .filter((event) => (
+        event.type === 'member.removed'
+        && event.member.type === 'agent'
+        && event.member.agentId === writer!.agentId
+      )))
+      .toHaveLength(1);
   });
 
   test('creates, renames, and deletes channels without mutating the canonical DM', async () => {
@@ -257,13 +329,16 @@ describe('agent runtime conversations', () => {
     roots.push(dataRoot);
     const { runtime } = await createRuntime(dataRoot);
 
-    const dm = await runtime.restoreLatestConversation();
+    await runtime.restoreLatestConversation();
+    const dmRow = (await runtime.listConversations())
+      .find((entry) => entry.canonicalDmAgentId === ASSISTANT_AGENT_ID);
+    const dm = await runtime.restoreConversation(dmRow!.id);
     const channel = await runtime.createConversation({ title: 'Initial Project' });
     let channels = (await runtime.listConversations()).filter((entry) => !entry.canonicalDmAgentId);
 
     expect(channel.conversationId).toMatch(/^lin-agent-channel-/);
-    expect(channels).toHaveLength(1);
-    expect(channels[0]).toMatchObject({
+    expect(channels.map((entry) => entry.id)).toEqual([DEFAULT_GENERAL_CHANNEL_ID, channel.conversationId]);
+    expect(channels.find((entry) => entry.id === channel.conversationId)).toMatchObject({
       id: channel.conversationId,
       title: 'Initial Project',
       goal: 'Initial Project',
@@ -277,12 +352,16 @@ describe('agent runtime conversations', () => {
     channels = (await runtime.listConversations()).filter((entry) => !entry.canonicalDmAgentId);
 
     expect(renamed).toMatchObject({ title: 'Project Alpha', goal: 'Project Alpha' });
-    expect(channels[0]).toMatchObject({ title: 'Project Alpha', goal: 'Project Alpha' });
+    expect(channels.find((entry) => entry.id === channel.conversationId))
+      .toMatchObject({ title: 'Project Alpha', goal: 'Project Alpha' });
     await expectRejects(() => runtime.renameConversation(dm.conversationId, 'Renamed DM'), 'cannot be renamed');
     await expectRejects(() => runtime.deleteConversation(dm.conversationId), 'cannot be deleted');
+    await expectRejects(() => runtime.renameConversation(DEFAULT_GENERAL_CHANNEL_ID, 'Town Square'), '#General cannot be renamed');
+    await expectRejects(() => runtime.deleteConversation(DEFAULT_GENERAL_CHANNEL_ID), '#General cannot be deleted');
 
     await runtime.deleteConversation(channel.conversationId);
-    expect((await runtime.listConversations()).filter((entry) => !entry.canonicalDmAgentId)).toEqual([]);
+    expect((await runtime.listConversations()).filter((entry) => !entry.canonicalDmAgentId).map((entry) => entry.id))
+      .toEqual([DEFAULT_GENERAL_CHANNEL_ID]);
     expect((await new AgentEventStore(dataRoot).replay(dm.conversationId)).conversation?.title).toBe('Neva');
   });
 

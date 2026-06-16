@@ -17,6 +17,9 @@ import { escapeXml } from './reminderXml';
  * alone — no registry lookups here.
  */
 
+export const DEFAULT_GENERAL_CHANNEL_ID = 'lin-agent-channel-general';
+export const DEFAULT_GENERAL_CHANNEL_TITLE = 'General';
+
 /** A conversation routes between agents iff more than one agent is a member. */
 export function isMultiAgentConversation(members: readonly AgentPrincipal[]): boolean {
   return channelAgentMembers(members).length >= 2;

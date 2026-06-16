@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { api } from '../api/client';
 import { isSystemReminderBlock } from '../../core/agentAttachments';
+import { DEFAULT_GENERAL_CHANNEL_ID } from '../../core/agentChannel';
 import type {
   AgentConversationMessage,
   AgentApprovalRequestView,
@@ -781,7 +782,7 @@ export class AgentRuntimeStore {
     this.clearPendingApprovalState();
     this.publish();
     try {
-      const conversation = await this.client.restoreLatestConversation();
+      const conversation = await this.restoreDefaultConversation();
       if (!this.isCurrentRequest(requestVersion)) return;
       this.hydrateConversation(conversation);
       // Reveal the default/latest conversation → clear unread only if actually viewed.
@@ -1044,7 +1045,7 @@ export class AgentRuntimeStore {
       }
     }
 
-    const conversation = await this.client.restoreLatestConversation();
+    const conversation = await this.restoreDefaultConversation();
     if (!this.isCurrentRequest(requestVersion)) {
       return this.conversationId ?? conversation.conversationId;
     }
@@ -1054,6 +1055,14 @@ export class AgentRuntimeStore {
     // the rail state, covering the mount-order race).
     this.markCurrentConversationReadIfViewing();
     return conversation.conversationId;
+  }
+
+  private async restoreDefaultConversation(): Promise<AgentConversation> {
+    try {
+      return await this.client.restoreConversation(DEFAULT_GENERAL_CHANNEL_ID);
+    } catch {
+      return this.client.restoreLatestConversation();
+    }
   }
 
   private async restoreInitialConversationById(

@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test';
+import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
 
 export const ids = {
   workspace: 'workspace',
@@ -144,7 +145,7 @@ export function e2eNodeInlineRef(offset: number, nodeId: string, displayName?: s
 }
 
 export async function installElectronMock(page: Page, options: MockFixtureOptions = {}) {
-  await page.addInitScript(({ ids, options }) => {
+  await page.addInitScript(({ ids, options, generalChannelId }) => {
     type ReferenceTarget =
       | { kind: 'node'; nodeId: string }
       | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' };
@@ -258,6 +259,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const REVIEWER_AGENT_ID = 'user:mock:reviewer';
     const ASSISTANT_DM_ID = 'mock-agent-conversation';
     const USER_DM_ID = 'mock-agent-dm-self';
+    const GENERAL_CHANNEL_ID = generalChannelId;
     const PLANNING_CHANNEL_ID = 'mock-agent-channel-planning';
     const assets = new Map<string, {
       id: string;
@@ -641,6 +643,23 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         canonicalDmAgentId: USER_AGENT_ID,
         createdAt: now - 200_000,
         updatedAt: now - 80_000,
+        messageCount: 0,
+        lastMessageSnippet: null,
+        lastMessageAt: null,
+        unreadCount: 0,
+      },
+      {
+        id: GENERAL_CHANNEL_ID,
+        title: 'General',
+        members: [
+          { type: 'user', userId: 'local-user' },
+          { type: 'agent', agentId: MAIN_AGENT_ID },
+          { type: 'agent', agentId: USER_AGENT_ID },
+          { type: 'agent', agentId: REVIEWER_AGENT_ID },
+        ],
+        goal: 'General',
+        createdAt: now - 220_000,
+        updatedAt: now - 70_000,
         messageCount: 0,
         lastMessageSnippet: null,
         lastMessageAt: null,
@@ -1647,8 +1666,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       const agentIds = options.agentIds ?? agentIdsForConversation(conversationId);
       const title = options.title ?? (
         conversationId === USER_DM_ID ? 'self'
-          : conversationId === PLANNING_CHANNEL_ID ? 'Planning Channel'
-            : 'Neva'
+          : conversationId === GENERAL_CHANNEL_ID ? 'General'
+            : conversationId === PLANNING_CHANNEL_ID ? 'Planning Channel'
+              : 'Neva'
       );
       const rows: Array<{ id: string; kind: 'message'; messageId: string }> = [];
       const messages: Record<string, unknown> = {};
@@ -2982,7 +3002,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         };
       },
     };
-  }, { ids, options });
+  }, { ids, options, generalChannelId: DEFAULT_GENERAL_CHANNEL_ID });
 }
 
 export function row(page: Page, id: string) {
