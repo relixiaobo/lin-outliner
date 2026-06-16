@@ -15,6 +15,13 @@
       "type": "array",
       "items": { "type": "string" }
     },
+    "dataContract": {
+      "type": "string"
+    },
+    "qualityChecks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
     "methods": {
       "type": "array",
       "items": { "type": "string" }

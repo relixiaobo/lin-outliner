@@ -8,6 +8,8 @@
     "audience": { "type": "string" },
     "goal": { "type": "string" },
     "outputRoute": { "type": "string" },
+    "archetype": { "type": "string" },
+    "designPreset": { "type": "string" },
     "tone": { "type": "string" },
     "sourceMaterials": {
       "type": "array",
@@ -21,6 +23,7 @@
         "properties": {
           "heading": { "type": "string" },
           "purpose": { "type": "string" },
+          "formFactor": { "type": "string" },
           "source": { "type": "string" },
           "notes": { "type": "string" }
         },

@@ -23,3 +23,4 @@
 - Include the chart source data or transformation notes.
 - State filters and denominators near the chart.
 - Prefer accessible colors and direct labels.
+- If delivering a workbook, verify chart ranges and visible labels in the workbook route, not just the source data.

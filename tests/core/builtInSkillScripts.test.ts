@@ -99,6 +99,42 @@ describe('built-in skill helper scripts', () => {
     });
   });
 
+  test('document docx inspector reports semantic structure risks', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lin-document-skill-docx-risk-'));
+    const input = path.join(dir, 'document.docx');
+    const out = path.join(dir, 'report.json');
+    await writeZip(input, {
+      '[Content_Types].xml': '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>',
+      'word/document.xml': [
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+        '<w:body>',
+        '<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Skipped heading level</w:t></w:r></w:p>',
+        '<w:p><w:r><w:t>• Manual bullet text</w:t></w:r></w:p>',
+        '<w:p><w:commentRangeStart w:id="9"/><w:r><w:t>Needs a missing comment</w:t></w:r><w:commentRangeEnd w:id="9"/><w:r><w:commentReference w:id="9"/></w:r></w:p>',
+        '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>',
+        '</w:body></w:document>',
+      ].join(''),
+      'word/_rels/document.xml.rels': '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>',
+    });
+
+    await execFile(python, [docxTool, 'inspect', input, '--out', out]);
+    const report = JSON.parse(await readFile(out, 'utf8'));
+
+    expect(report).toMatchObject({
+      ok: true,
+      heading_count: 1,
+      manual_bullet_count: 1,
+      tables_without_grid_count: 1,
+      missing_comment_references: ['9'],
+    });
+    expect(report.warnings).toEqual(expect.arrayContaining([
+      'heading_level_jump_found',
+      'manual_bullets_found',
+      'missing_comment_references',
+      'tables_without_grid_found',
+    ]));
+  });
+
   test('data-analysis xlsx inspector resolves parent-directory relationship targets', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lin-data-skill-xlsx-'));
     const input = path.join(dir, 'workbook.xlsx');
@@ -119,6 +155,64 @@ describe('built-in skill helper scripts', () => {
       ok: true,
       missing_relationship_targets: [],
     });
+  });
+
+  test('data-analysis xlsx inspector reports workbook calculation risks', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lin-data-skill-xlsx-risk-'));
+    const input = path.join(dir, 'workbook.xlsx');
+    const out = path.join(dir, 'report.json');
+    await writeZip(input, {
+      '[Content_Types].xml': '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>',
+      'xl/workbook.xml': [
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">',
+        '<sheets>',
+        '<sheet name="Summary" sheetId="1" r:id="rId1"/>',
+        '<sheet name="Hidden Assumptions" sheetId="2" state="hidden" r:id="rId2"/>',
+        '</sheets>',
+        '<definedNames><definedName name="Revenue">Summary!$A$1</definedName></definedNames>',
+        '<calcPr calcMode="manual"/>',
+        '</workbook>',
+      ].join(''),
+      'xl/_rels/workbook.xml.rels': [
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>',
+        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>',
+        '</Relationships>',
+      ].join(''),
+      'xl/worksheets/sheet1.xml': [
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
+        '<dimension ref="A1:A2"/>',
+        '<cols><col min="1" max="1" hidden="1"/></cols>',
+        '<sheetData><row r="1" hidden="1"><c r="A1" t="e"><f>1/0</f><v>#DIV/0!</v></c></row></sheetData>',
+        '<mergeCells count="1"><mergeCell ref="A1:B1"/></mergeCells>',
+        '</worksheet>',
+      ].join(''),
+      'xl/worksheets/sheet2.xml': '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData/></worksheet>',
+    });
+
+    await execFile(python, [xlsxTool, 'inspect', input, '--out', out]);
+    const report = JSON.parse(await readFile(out, 'utf8'));
+
+    expect(report).toMatchObject({
+      ok: true,
+      formula_count: 1,
+      formula_error_count: 1,
+      defined_name_count: 1,
+      calculation_mode: 'manual',
+      hidden_sheets: [{ name: 'Hidden Assumptions', state: 'hidden' }],
+    });
+    expect(report.sheets[0]).toMatchObject({
+      hidden_row_count: 1,
+      hidden_column_count: 1,
+      merged_cell_count: 1,
+      formula_error_cells: [{ cell: 'A1', value: '#DIV/0!' }],
+    });
+    expect(report.warnings).toEqual(expect.arrayContaining([
+      'formulas_present_not_recalculated',
+      'formula_errors_found',
+      'hidden_sheets_present',
+      'manual_calculation_mode',
+    ]));
   });
 
   test('data-analysis profiler reports missing values and numeric summaries', async () => {
@@ -145,6 +239,77 @@ describe('built-in skill helper scripts', () => {
         mean: 1090,
       },
     });
+  });
+
+  test('data-analysis profiler reports duplicate rows, dates, outliers, and contract hints', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lin-data-skill-profile-quality-'));
+    const input = path.join(dir, 'events.csv');
+    const out = path.join(dir, 'report.json');
+    await writeFile(input, [
+      'id,amount,created,status',
+      'A,10,2026-01-01T00:00:00Z,open',
+      'A,1000,2026-02-01,closed',
+      'B,12,2026-02-02,open',
+      'B,12,2026-02-02,open',
+      '',
+    ].join('\n'), 'utf8');
+
+    await execFile(python, [dataTool, 'profile', input, '--out', out]);
+    const report = JSON.parse(await readFile(out, 'utf8'));
+
+    expect(report).toMatchObject({
+      ok: true,
+      duplicate_row_count: 1,
+      row_count: 4,
+    });
+    expect(report.warnings).toContain('duplicate_rows_present');
+    expect(report.columns.find((column: { name: string }) => column.name === 'created')).toMatchObject({
+      type: 'date',
+      date: { min: '2026-01-01T00:00:00', max: '2026-02-02T00:00:00' },
+    });
+    expect(report.quality.outlier_columns).toContain('amount');
+    expect(report.suggested_contract.fields.find((field: { name: string }) => field.name === 'amount')).toMatchObject({
+      type: 'number',
+      required: true,
+    });
+  });
+
+  test('data-analysis validator reports portable contract failures', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lin-data-skill-validate-'));
+    const input = path.join(dir, 'events.csv');
+    const contract = path.join(dir, 'contract.json');
+    const out = path.join(dir, 'validation.json');
+    await writeFile(input, [
+      'id,amount,status',
+      'A,10,open',
+      'A,1000,closed',
+      'B,12,draft',
+      '',
+    ].join('\n'), 'utf8');
+    await writeFile(contract, JSON.stringify({
+      fields: [
+        { name: 'id', type: 'string', required: true, unique: true },
+        { name: 'amount', type: 'number', min: 0, max: 100 },
+        { name: 'status', type: 'string', allowedValues: ['open', 'closed'] },
+      ],
+      uniqueKeys: [['id']],
+      rowCountMin: 1,
+    }), 'utf8');
+
+    try {
+      await execFile(python, [dataTool, 'validate', input, '--contract', contract, '--out', out]);
+    } catch {
+      // Expected: validation failures produce a non-zero exit status.
+    }
+    const report = JSON.parse(await readFile(out, 'utf8'));
+
+    expect(report.ok).toBe(false);
+    expect(report.errors).toEqual(expect.arrayContaining([
+      'field:id:unique',
+      'field:amount:range',
+      'field:status:allowedValues',
+      'uniqueKey:id',
+    ]));
   });
 
   test('document markdown inspector allows ordinary external source links', async () => {
@@ -194,6 +359,42 @@ describe('built-in skill helper scripts', () => {
       external_references: ['https://example.com/chart.png'],
       remote_image_references: ['https://example.com/chart.png'],
     });
+  });
+
+  test('document markdown inspector reports hierarchy, paragraph, and table risks', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lin-doc-skill-markdown-risk-'));
+    const input = path.join(dir, 'brief.md');
+    const out = path.join(dir, 'report.json');
+    const longParagraph = Array.from({ length: 121 }, (_, index) => `word${index}`).join(' ');
+    await writeFile(input, [
+      '# Decision Brief',
+      '',
+      '### Skipped Level',
+      '',
+      longParagraph,
+      '',
+      '| A | B | C | D | E | F | G |',
+      '|---|---|---|---|---|---|---|',
+      '| 1 | 2 | 3 | 4 | 5 | 6 | 7 |',
+      '',
+    ].join('\n'), 'utf8');
+
+    await execFile('node', [markdownTool, 'inspect', input, '--out', out]);
+    const report = JSON.parse(await readFile(out, 'utf8'));
+
+    expect(report).toMatchObject({
+      ok: true,
+      heading_count: 2,
+      table_count: 1,
+    });
+    expect(report.long_paragraphs[0]).toMatchObject({ word_count: 121 });
+    expect(report.heading_level_jumps[0]).toMatchObject({ level: 3, previous_level: 1 });
+    expect(report.wide_table_rows[0]).toMatchObject({ column_count: 7 });
+    expect(report.warnings).toEqual(expect.arrayContaining([
+      'heading_level_jump_found',
+      'long_paragraph_found',
+      'wide_table_found',
+    ]));
   });
 });
 

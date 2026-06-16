@@ -5,6 +5,7 @@ import path from 'node:path';
 const PLACEHOLDER_RE = /\b(lorem|ipsum|todo|placeholder|sample|dummy|xxxx)\b/gi;
 const IMAGE_RE = /!\[[^\]]*\]\(([^)]+)\)/g;
 const LINK_RE = /(?<!!)\[[^\]]+\]\(([^)]+)\)/g;
+const TABLE_ROW_RE = /^\s*\|(.+)\|\s*$/;
 
 function usage() {
   console.error('Usage: node scripts/markdown_tool.mjs inspect draft.md [--out report.json]');
@@ -51,6 +52,35 @@ async function inspectMarkdown(filePath, markdown) {
     level: match[1].length,
     text: match[2].trim(),
   }));
+  const headingLevelJumps = [];
+  let previousLevel = 0;
+  headings.forEach((heading, index) => {
+    if (heading.level > previousLevel + 1) {
+      headingLevelJumps.push({ heading_index: index + 1, level: heading.level, previous_level: previousLevel });
+    }
+    previousLevel = heading.level;
+  });
+
+  const paragraphs = markdown
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter((block) => {
+      if (!block) return false;
+      if (/^#{1,6}\s+/m.test(block)) return false;
+      if (/^```/.test(block)) return false;
+      if (/^\s*[-*+]\s+/m.test(block)) return false;
+      if (TABLE_ROW_RE.test(block.split('\n')[0] ?? '')) return false;
+      return true;
+    });
+  const longParagraphs = paragraphs
+    .map((text, index) => ({ index: index + 1, word_count: text.split(/\s+/).filter(Boolean).length }))
+    .filter((item) => item.word_count > 120);
+
+  const tableRows = markdown.split('\n').filter((line) => TABLE_ROW_RE.test(line));
+  const tableCount = countMarkdownTables(markdown);
+  const wideTableRows = tableRows
+    .map((line, index) => ({ row_index: index + 1, column_count: line.split('|').length - 2 }))
+    .filter((row) => row.column_count > 6);
   const refs = localReferences(markdown);
   const externalRefs = externalReferences(markdown);
   const remoteImageRefs = remoteImageReferences(markdown);
@@ -63,6 +93,9 @@ async function inspectMarkdown(filePath, markdown) {
   const warnings = [];
   if (headings.length === 0) warnings.push('no_headings_found');
   if (headings[0] && headings[0].level !== 1) warnings.push('first_heading_not_h1');
+  if (headingLevelJumps.length > 0) warnings.push('heading_level_jump_found');
+  if (longParagraphs.length > 0) warnings.push('long_paragraph_found');
+  if (wideTableRows.length > 0) warnings.push('wide_table_found');
   if (placeholders.length > 0) warnings.push('placeholder_text_found');
   if (brokenLocalReferences.length > 0) errors.push('broken_local_asset_reference_found');
   if (remoteImageRefs.length > 0) warnings.push('remote_image_reference_found');
@@ -71,8 +104,14 @@ async function inspectMarkdown(filePath, markdown) {
     file: filePath,
     ok: errors.length === 0,
     errors,
+    word_count: markdown.split(/\s+/).filter(Boolean).length,
+    paragraph_count: paragraphs.length,
+    long_paragraphs: longParagraphs,
     heading_count: headings.length,
     headings,
+    heading_level_jumps: headingLevelJumps,
+    table_count: tableCount,
+    wide_table_rows: wideTableRows,
     local_references: sortedUnique(refs),
     external_references: sortedUnique(externalRefs),
     remote_image_references: sortedUnique(remoteImageRefs),
@@ -84,6 +123,22 @@ async function inspectMarkdown(filePath, markdown) {
 
 function sortedUnique(values) {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
+}
+
+function countMarkdownTables(markdown) {
+  const lines = markdown.split('\n');
+  let count = 0;
+  let inTable = false;
+  for (const line of lines) {
+    const isRow = TABLE_ROW_RE.test(line);
+    if (isRow && !inTable) {
+      count += 1;
+      inTable = true;
+    } else if (!isRow) {
+      inTable = false;
+    }
+  }
+  return count;
 }
 
 const [command, input, ...rest] = process.argv.slice(2);
