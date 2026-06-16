@@ -901,7 +901,7 @@ export async function createUserSkillPrompt(
     trigger: 'slash',
   });
   if (!invocation.ok) {
-    throw new Error(invocation.message);
+    return null;
   }
   return runtime.createSlashPromptMessage(input, invocation, turnReminder);
 }
@@ -914,13 +914,15 @@ export function parseNaturalLanguageSkillifyRequest(input: string): { skill: 'sk
   if (!/\bskills?\b/.test(normalized) && !/\bskillify\b/.test(normalized)) return null;
   if (isSkillQuestion(normalized)) return null;
 
+  // Update/fix requires a singular skill artifact; plural "skills" is usually
+  // human capability or ordinary outline content, not a Tenon skill file.
   const explicitSkillAuthoring = [
-    /\bskillify\b/,
+    /^(?:please\s+)?skillify\b/,
+    /\b(?:can you|could you|would you|please|let's)\s+skillify\b/,
     /\b(?:save|capture|record|preserve)\b.{0,120}\bas\s+(?:a\s+)?(?:reusable\s+)?skill\b/,
     /\bturn\b.{0,120}\binto\s+(?:a\s+)?(?:reusable\s+)?skill\b/,
-    /\b(?:create|make|write|draft|author)\b.{0,80}\b(?:a\s+)?(?:reusable\s+)?skill\b/,
-    /\b(?:update|patch|amend|revise|improve)\b.{0,80}\bskills?\b/,
-    /\b(?:fix|repair)\b.{0,80}\bskills?\b/,
+    /\b(?:create|make|write|draft|author)\b.{0,80}\b(?:a|an|the|new|reusable|local|tenon)\s+skill\b(?!\s+(?:tree|check|list|sheet|section|node|outline|matrix|map))/,
+    /\b(?:update|patch|amend|revise|improve|fix|repair)\b.{0,80}\b(?:the|this|that|my|our|existing|current)\s+(?:[a-z0-9-]+\s+){0,4}skill\b(?!\s+(?:tree|check|list|sheet|section|node|outline|matrix|map))/,
   ].some((pattern) => pattern.test(normalized));
 
   return explicitSkillAuthoring ? { skill: 'skillify', args } : null;
@@ -928,7 +930,8 @@ export function parseNaturalLanguageSkillifyRequest(input: string): { skill: 'sk
 
 function isSkillQuestion(input: string): boolean {
   return /^(?:how|what|why|when|where|which)\b/.test(input)
-    || /\b(?:how do i|how can i|what is|what are|do we have|is there|are there)\b.{0,120}\bskills?\b/.test(input);
+    || /\b(?:how do i|how can i|what is|what are|do we have|is there|are there)\b.{0,120}\bskills?\b/.test(input)
+    || /\b(?:tell me about|explain|describe)\b.{0,80}\b(?:skillify|skills?)\b/.test(input);
 }
 
 class SkillRegistry {
