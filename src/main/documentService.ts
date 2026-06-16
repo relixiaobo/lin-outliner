@@ -76,6 +76,8 @@ export class DocumentService {
   private transactionContext = new AsyncLocalStorage<boolean>();
   private textEditGroup?: TextEditGroup;
   private readonly textEditFlushDelayMs = 700;
+  private coreSavePending = false;
+  private coreSaveTimer?: ReturnType<typeof setTimeout>;
   private textSearchIndex?: MutableTextSearchIndex;
   private textSearchRevision = -1;
   private textSearchNodes = new Map<string, NodeProjection>();
@@ -195,7 +197,7 @@ export class DocumentService {
       const result = this.core.operationHistory(query);
       if (mutatesHistory && result.count > 0) {
         this.refreshTextSearchIndexFromCoreDelta();
-        await this.saveCore();
+        this.scheduleCoreSave();
         this.emitProjectionChanged(historyChangeOrigin(query.origin));
       }
       return result;
@@ -205,7 +207,10 @@ export class DocumentService {
   }
 
   async flushPendingChanges() {
-    const task = this.mutationQueue.then(() => this.flushTextEditGroupNow());
+    const task = this.mutationQueue.then(async () => {
+      await this.flushTextEditGroupNow();
+      await this.flushCoreSaveNow();
+    });
     this.mutationQueue = task.then(() => undefined, () => undefined);
     return task;
   }
@@ -218,7 +223,7 @@ export class DocumentService {
         this.transactionContext.run(true, fn), transactionMetadata(meta));
       if (this.core.revision() !== revisionBefore) {
         this.refreshTextSearchIndexFromCoreDelta();
-        await this.saveCore();
+        this.scheduleCoreSave();
         this.emitProjectionChanged(meta.origin ?? 'user');
       }
       return result;
@@ -258,8 +263,9 @@ export class DocumentService {
       && args.materialize === true
       && typeof args.id === 'string';
     const task = this.mutationQueue.then(async () => {
-      if (command !== 'apply_node_text_patch') {
-        await this.flushTextEditGroupNow();
+      if (command !== 'apply_node_text_patch') await this.flushTextEditGroupNow();
+      if (command === 'apply_node_text_patch' || isMaterialize) {
+        await this.flushCoreSaveNow();
       }
       const revisionBefore = this.core.revision();
       const effectiveMeta = command === 'apply_node_text_patch'
@@ -282,7 +288,7 @@ export class DocumentService {
         else await this.flushTextEditGroupNow();
       } else if (changed) {
         this.refreshTextSearchIndexFromCoreDelta();
-        await this.saveCore();
+        this.scheduleCoreSave();
       }
       if (changed && (command === 'apply_node_text_patch' || isMaterialize)) this.refreshTextSearchIndexFromCoreDelta();
       if (changed) this.emitProjectionChanged(effectiveMeta.origin ?? 'user');
@@ -356,6 +362,28 @@ export class DocumentService {
     this.core.endUndoGroup();
     await this.saveCore();
     this.emitProjectionChanged(group.origin);
+  }
+
+  private scheduleCoreSave() {
+    this.coreSavePending = true;
+    if (this.coreSaveTimer) clearTimeout(this.coreSaveTimer);
+    this.coreSaveTimer = setTimeout(() => {
+      void this.flushCoreSave();
+    }, this.textEditFlushDelayMs);
+  }
+
+  private async flushCoreSave() {
+    const task = this.mutationQueue.then(() => this.flushCoreSaveNow());
+    this.mutationQueue = task.then(() => undefined, () => undefined);
+    return task;
+  }
+
+  private async flushCoreSaveNow() {
+    const shouldSave = this.coreSavePending;
+    if (this.coreSaveTimer) clearTimeout(this.coreSaveTimer);
+    this.coreSaveTimer = undefined;
+    if (!shouldSave) return;
+    await this.saveCore();
   }
 
   private runMutation(command: DocumentCommand, args: Record<string, unknown>, meta: DocumentMutationMeta) {
@@ -827,6 +855,9 @@ export class DocumentService {
 
   private async saveCore() {
     await atomicWriteFile(workspacePath(), this.core.serializeState());
+    if (this.coreSaveTimer) clearTimeout(this.coreSaveTimer);
+    this.coreSaveTimer = undefined;
+    this.coreSavePending = false;
   }
 
   private emitProjectionChanged(origin: DocumentProjectionChangedEvent['origin']) {

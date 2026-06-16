@@ -49,6 +49,17 @@ function searchResultTargetIds(service: DocumentServiceInstance, searchId: strin
   });
 }
 
+function countCoreSaves(service: DocumentServiceInstance): () => number {
+  const target = service as unknown as { saveCore: () => Promise<void> };
+  const original = target.saveCore.bind(service);
+  let count = 0;
+  target.saveCore = async () => {
+    count += 1;
+    await original();
+  };
+  return () => count;
+}
+
 describe('DocumentService text search index', () => {
   beforeEach(async () => {
     electronUserDataRoot = await mkdtemp(path.join(tmpdir(), 'lin-document-service-text-search-'));
@@ -110,6 +121,23 @@ describe('DocumentService text search index', () => {
     expect(await searchNodeIds(service, 'waiting')).toContain(nodeId);
 
     await service.flushPendingChanges();
+  });
+
+  test('coalesces bursty structural saves until flush', async () => {
+    const service = await createService();
+    const saveCount = countCoreSaves(service);
+    const rootId = service.getProjection().rootId;
+
+    await service.handle('create_node', { parentId: rootId, index: null, text: 'First structural write' });
+    await service.handle('create_node', { parentId: rootId, index: null, text: 'Second structural write' });
+
+    expect(saveCount()).toBe(0);
+
+    await service.flushPendingChanges();
+
+    expect(saveCount()).toBe(1);
+    expect(await searchNodeIds(service, 'first structural write')).toHaveLength(1);
+    expect(await searchNodeIds(service, 'second structural write')).toHaveLength(1);
   });
 
   test('uses indexed relevance when materializing saved searches inside agent transactions', async () => {

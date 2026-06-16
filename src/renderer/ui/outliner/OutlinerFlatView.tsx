@@ -27,19 +27,17 @@ import { ViewToolbar } from './ViewToolbar';
 import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 import { OutlinerEmptyState } from './OutlinerEmptyState';
 
-// Flag-gated flat (windowed) renderer. Reads localStorage once at module load so
-// the choice is stable for the session (toggle then reload):
-//   localStorage.setItem('lin:flat-outliner', '1')   // enable
-//   localStorage.removeItem('lin:flat-outliner')      // back to recursive
-function readFlatFlag(): boolean {
+// The flat renderer is the default outliner path. The old recursive renderer is
+// retained as a reload-scoped diagnostic fallback while parity work settles.
+function readRecursiveFallbackFlag(): boolean {
   try {
-    return typeof window !== 'undefined' && window.localStorage.getItem('lin:flat-outliner') === '1';
+    return typeof window !== 'undefined' && window.localStorage.getItem('lin:recursive-outliner') === '1';
   } catch {
     return false;
   }
 }
 
-export const FLAT_OUTLINER_ENABLED = readFlatFlag();
+export const RECURSIVE_OUTLINER_FALLBACK_ENABLED = readRecursiveFallbackFlag();
 
 // Below this many rows, windowing overhead is not worth it: render the whole flat
 // list in normal flow (rows are direct `.outliner` children, like the recursive

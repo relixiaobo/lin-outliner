@@ -316,6 +316,75 @@ export interface AgentRenderProjection {
   dmStreaming: AgentStreamingRenderState | null;
 }
 
+export interface AgentRenderProjectionPatch {
+  baseRevision: number;
+  revision: number;
+  activeRuns?: AgentRenderActiveRun[];
+  activeRunId?: string | null;
+  channelActivityEntries?: AgentRenderActivityEntry[];
+  dmRunActive?: boolean;
+  channelRunsActive?: boolean;
+  pendingToolCallIds?: string[];
+  entities?: Partial<{
+    messages: Record<string, AgentRenderMessageEntity>;
+    childRuns: Record<string, AgentRenderChildRunEntity>;
+    compactions: Record<string, AgentRenderCompactionEntity>;
+    dreams: Record<string, AgentRenderDreamEntity>;
+    tasks: Record<string, AgentRenderTaskEntity>;
+  }>;
+  dmStreaming?: AgentStreamingRenderState | null;
+}
+
+export function applyAgentRenderProjectionPatch(
+  projection: AgentRenderProjection,
+  patch: AgentRenderProjectionPatch,
+): AgentRenderProjection | null {
+  if (projection.revision !== patch.baseRevision) return null;
+  if (!patchOnlyReplacesExistingEntities(projection, patch)) return null;
+  const entities = patch.entities
+    ? {
+        messages: patch.entities.messages
+          ? { ...projection.entities.messages, ...patch.entities.messages }
+          : projection.entities.messages,
+        childRuns: patch.entities.childRuns
+          ? { ...projection.entities.childRuns, ...patch.entities.childRuns }
+          : projection.entities.childRuns,
+        compactions: patch.entities.compactions
+          ? { ...projection.entities.compactions, ...patch.entities.compactions }
+          : projection.entities.compactions,
+        dreams: patch.entities.dreams
+          ? { ...projection.entities.dreams, ...patch.entities.dreams }
+          : projection.entities.dreams,
+        tasks: patch.entities.tasks
+          ? { ...projection.entities.tasks, ...patch.entities.tasks }
+          : projection.entities.tasks,
+      }
+    : projection.entities;
+  return {
+    ...projection,
+    revision: patch.revision,
+    ...(patch.activeRuns !== undefined ? { activeRuns: patch.activeRuns } : {}),
+    ...(patch.activeRunId !== undefined ? { activeRunId: patch.activeRunId } : {}),
+    ...(patch.channelActivityEntries !== undefined ? { channelActivityEntries: patch.channelActivityEntries } : {}),
+    ...(patch.dmRunActive !== undefined ? { dmRunActive: patch.dmRunActive } : {}),
+    ...(patch.channelRunsActive !== undefined ? { channelRunsActive: patch.channelRunsActive } : {}),
+    ...(patch.pendingToolCallIds !== undefined ? { pendingToolCallIds: patch.pendingToolCallIds } : {}),
+    ...(patch.dmStreaming !== undefined ? { dmStreaming: patch.dmStreaming } : {}),
+    entities,
+  };
+}
+
+function patchOnlyReplacesExistingEntities(
+  projection: AgentRenderProjection,
+  patch: AgentRenderProjectionPatch,
+): boolean {
+  return Object.keys(patch.entities?.messages ?? {}).every((id) => projection.entities.messages[id])
+    && Object.keys(patch.entities?.childRuns ?? {}).every((id) => projection.entities.childRuns[id])
+    && Object.keys(patch.entities?.compactions ?? {}).every((id) => projection.entities.compactions[id])
+    && Object.keys(patch.entities?.dreams ?? {}).every((id) => projection.entities.dreams[id])
+    && Object.keys(patch.entities?.tasks ?? {}).every((id) => projection.entities.tasks[id]);
+}
+
 export interface BuildAgentRenderProjectionOptions {
   revision: number;
   activeRuns?: AgentRenderActiveRun[];

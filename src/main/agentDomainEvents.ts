@@ -1,4 +1,4 @@
-import type { AgentRenderProjection } from '../core/agentRenderProjection';
+import type { AgentRenderProjection, AgentRenderProjectionPatch } from '../core/agentRenderProjection';
 import type { AgentEvent } from '../core/agentEventLog';
 
 export type AgentDomainEventLane =
@@ -33,6 +33,17 @@ export type AgentDomainEvent =
       lastEventType: string | null;
       revision: number;
       projection: AgentRenderProjection;
+      projectionPatch?: never;
+      createdAt: number;
+    }
+  | {
+      lane: 'renderer-projection';
+      name: 'RendererProjectionUpdated';
+      conversationId: string;
+      lastEventType: string | null;
+      revision: number;
+      projection?: never;
+      projectionPatch: AgentRenderProjectionPatch;
       createdAt: number;
     }
   | {

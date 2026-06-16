@@ -47,12 +47,20 @@ React interaction
   -> preload IPC command
   -> Electron main document service
   -> TypeScript core mutation
-  -> persisted workspace snapshot
+  -> persisted workspace snapshot (coalesced for bursty edits)
   -> ProjectionUpdate (delta | full) folded into the renderer index
 ```
 
 No renderer module may directly mutate document state. UI changes that affect
 document content or tree structure must use commands.
+
+The document service keeps command application and projection emission
+synchronous from the renderer's point of view, but it does not write the whole
+workspace snapshot after every bursty mutation. Text edits keep a 700 ms undo
+group before save, and structural mutations use the same 700 ms coalescing
+window. Starting a text edit, starting an eager-materialized row, undo/redo
+history work, explicit transactions, and app `before-quit` all flush pending
+document writes before continuing.
 
 ## Projection Updates (incremental delta)
 
@@ -90,6 +98,26 @@ Per-edit cost scales with what changed, not document size.
   edit allocates nothing), never rebuilt by scanning the document. Consistency
   against a full rebuild is asserted after every command in
   `tests/renderer/projectionDeltaIntegration.test.ts`.
+
+## Agent Runtime Projection Updates
+
+Agent conversations use the same stable-identity rule, but with a separate
+renderer projection type:
+
+- The renderer still accepts a full agent `projection` event for initial load,
+  revision gaps, multi-field changes, and any case where the runtime cannot prove
+  a patch is safe.
+- High-frequency direct-message streaming emits `projection_patch` for the
+  single active assistant message when the previous emitted projection is exactly
+  the patch base revision. The patch carries `baseRevision`, `revision`, the
+  changed message entity, and `dmStreaming`; unchanged entity maps keep their
+  object references.
+- The renderer folds patches with `applyAgentRenderProjectionPatch`. A revision
+  mismatch returns `null` and triggers a full conversation reload instead of
+  guessing across a gap.
+- Multi-agent Channel turns remain result-first and transcript-atomic, so they
+  continue to use the full-projection fallback for transcript changes. Channel
+  live activity is still surfaced through the activity/detail projection fields.
 
 ## Type Boundary
 

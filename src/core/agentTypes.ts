@@ -9,7 +9,7 @@ import type {
   Usage,
   UserMessage,
 } from '@earendil-works/pi-ai';
-import type { AgentRenderProjection } from './agentRenderProjection';
+import type { AgentRenderProjection, AgentRenderProjectionPatch } from './agentRenderProjection';
 import type {
   AgentPayloadRef,
   AgentUserQuestionRequestView,
@@ -330,6 +330,15 @@ export interface AgentProjectionEvent {
   timestamp: number;
 }
 
+export interface AgentProjectionPatchEvent {
+  type: 'projection_patch';
+  conversationId: string;
+  lastEventType: string | null;
+  revision: number;
+  patch: AgentRenderProjectionPatch;
+  timestamp: number;
+}
+
 export interface AgentReadyEvent {
   type: 'ready';
   conversationId: null;
@@ -460,6 +469,7 @@ export interface AgentConversationAttentionEvent {
 
 export type AgentRuntimeEvent =
   | AgentProjectionEvent
+  | AgentProjectionPatchEvent
   | AgentReadyEvent
   | AgentErrorEvent
   | AgentClosedEvent

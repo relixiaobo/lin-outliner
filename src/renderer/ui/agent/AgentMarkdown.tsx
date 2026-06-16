@@ -49,6 +49,7 @@ interface MarkdownAstNode {
 }
 
 const REMARK_PLUGINS = [remarkGfm, remarkNodeReferences];
+const STREAMING_MARKDOWN_THROTTLE_MS = 80;
 
 function splitMarkdownBlocks(text: string): string[] {
   if (!text) return [''];
@@ -290,6 +291,54 @@ const MemoizedMarkdownBlock = memo(
   ),
 );
 
+function useStreamingMarkdownText(text: string, streaming: boolean): string {
+  const [visibleText, setVisibleText] = useState(text);
+  const latestTextRef = useRef(text);
+  const lastCommitRef = useRef(0);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    latestTextRef.current = text;
+    if (!streaming) {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      lastCommitRef.current = Date.now();
+      setVisibleText(text);
+      return undefined;
+    }
+
+    const commit = () => {
+      timerRef.current = null;
+      lastCommitRef.current = Date.now();
+      setVisibleText(latestTextRef.current);
+    };
+    const elapsed = Date.now() - lastCommitRef.current;
+    if (elapsed >= STREAMING_MARKDOWN_THROTTLE_MS) {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      commit();
+      return undefined;
+    }
+    if (timerRef.current === null) {
+      timerRef.current = window.setTimeout(commit, STREAMING_MARKDOWN_THROTTLE_MS - elapsed);
+    }
+    return undefined;
+  }, [streaming, text]);
+
+  useEffect(() => () => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  return streaming ? visibleText : text;
+}
+
 export function AgentMarkdown({
   index: documentIndex,
   keyPrefix,
@@ -297,7 +346,8 @@ export function AgentMarkdown({
   streaming = false,
   text,
 }: AgentMarkdownProps) {
-  const mended = useMemo(() => (streaming ? remend(text) : text), [streaming, text]);
+  const renderText = useStreamingMarkdownText(text, streaming);
+  const mended = useMemo(() => (streaming ? remend(renderText) : renderText), [streaming, renderText]);
   const blocks = useMemo(() => splitMarkdownBlocks(mended), [mended]);
   const components = useMarkdownComponents(documentIndex, onNodeReferenceOpen);
 

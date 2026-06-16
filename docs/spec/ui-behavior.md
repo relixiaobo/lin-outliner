@@ -34,6 +34,12 @@ keyboard or pointer change should be checked against this matrix.
   result row.
 - Rows use a compact bullet/chevron leading control, restrained hover/focus
   states, and no right inspector.
+- The main outliner renders through the flat row producer by default. Small
+  outlines render the full flat list in normal flow; large outlines window the
+  visible rows with overscan, while focused and draft rows stay force-mounted so
+  keyboard navigation and trailing inputs still work. The old recursive renderer
+  remains a reload-scoped diagnostic fallback via
+  `localStorage('lin:recursive-outliner') === '1'`.
 - Page titles are editable rich text. This includes the workspace root title
   (so people can name their workspace), which stays structurally fixed — it can
   be renamed but not moved, deleted, or reparented. The functional system

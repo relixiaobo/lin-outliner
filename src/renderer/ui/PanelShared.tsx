@@ -12,7 +12,7 @@ import type { NodeId } from '../api/types';
 import { useT } from '../i18n/I18nProvider';
 import type { DocumentIndex, UiState } from '../state/document';
 import { ChevronLeftIcon, CloseIcon } from './icons';
-import { FLAT_OUTLINER_ENABLED, OutlinerFlatView } from './outliner/OutlinerFlatView';
+import { RECURSIVE_OUTLINER_FALLBACK_ENABLED, OutlinerFlatView } from './outliner/OutlinerFlatView';
 import { OutlinerView } from './outliner/OutlinerView';
 import { IconButton } from './primitives/IconButton';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from './shared';
@@ -174,28 +174,7 @@ export function PanelChildrenOutline(props: PanelChildrenOutlineProps) {
       onDrop={props.onDrop}
     >
       {props.label}
-      {FLAT_OUTLINER_ENABLED ? (
-        <OutlinerFlatView
-          panelId={props.panelId}
-          parentId={props.parentId}
-          rootId={props.rootId}
-          onRoot={props.onRoot}
-          index={props.index}
-          isNodePinned={props.isNodePinned}
-          ui={props.ui}
-          uiRef={props.uiRef}
-          setUi={props.setUi}
-          run={props.run}
-          onTogglePin={props.onTogglePin}
-          trigger={props.trigger}
-          setTrigger={props.setTrigger}
-          dragId={props.dragId}
-          setDragId={props.setDragId}
-          trailingDraft={props.trailingDraft}
-          draftPlaceholder={props.draftPlaceholder}
-          scrollParentRef={props.scrollParentRef}
-        />
-      ) : (
+      {RECURSIVE_OUTLINER_FALLBACK_ENABLED ? (
         <OutlinerView
           panelId={props.panelId}
           parentId={props.parentId}
@@ -216,6 +195,27 @@ export function PanelChildrenOutline(props: PanelChildrenOutlineProps) {
           rows={props.rows}
           trailingDraft={props.trailingDraft}
           draftPlaceholder={props.draftPlaceholder}
+        />
+      ) : (
+        <OutlinerFlatView
+          panelId={props.panelId}
+          parentId={props.parentId}
+          rootId={props.rootId}
+          onRoot={props.onRoot}
+          index={props.index}
+          isNodePinned={props.isNodePinned}
+          ui={props.ui}
+          uiRef={props.uiRef}
+          setUi={props.setUi}
+          run={props.run}
+          onTogglePin={props.onTogglePin}
+          trigger={props.trigger}
+          setTrigger={props.setTrigger}
+          dragId={props.dragId}
+          setDragId={props.setDragId}
+          trailingDraft={props.trailingDraft}
+          draftPlaceholder={props.draftPlaceholder}
+          scrollParentRef={props.scrollParentRef}
         />
       )}
     </div>
