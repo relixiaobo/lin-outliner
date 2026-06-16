@@ -187,8 +187,10 @@ test.describe('agent composer controls', () => {
       })
     ));
     expect(headerBorders.every((border) => border.borderTopWidth === '0px' && border.borderBottomWidth === '0px')).toBe(true);
-    const dmList = menu.locator('.agent-conversation-list').first();
-    const channelsList = menu.locator('.agent-conversation-list').nth(1);
+    await expect(menu.locator('.agent-conversation-menu-header').nth(0)).toContainText('Channels');
+    await expect(menu.locator('.agent-conversation-menu-header').nth(1)).toContainText('Direct Messages');
+    const channelsList = menu.locator('.agent-conversation-list').first();
+    const dmList = menu.locator('.agent-conversation-list').nth(1);
     await expect(dmList.locator('.agent-conversation-meta')).toHaveCount(0);
     await expect(dmList.locator('.agent-conversation-members')).toHaveCount(0);
     await expect(channelsList.locator('.agent-conversation-meta')).toHaveCount(0);
@@ -232,7 +234,7 @@ test.describe('agent composer controls', () => {
   test('opens row configuration from the conversation More affordance', async ({ page }) => {
     await page.getByRole('button', { name: 'Show conversations' }).click();
     let menu = page.getByRole('dialog', { name: 'Channels' });
-    const dmList = menu.locator('.agent-conversation-list').first();
+    const dmList = menu.locator('.agent-conversation-list').nth(1);
     const selfRow = dmList.locator('.agent-conversation-row', { hasText: 'self' }).first();
     const selfActions = selfRow.locator('.agent-conversation-row-actions');
     const agentMore = selfRow.getByRole('button', { name: 'Agent options' });
@@ -252,7 +254,7 @@ test.describe('agent composer controls', () => {
 
     await page.getByRole('button', { name: 'Show conversations' }).click();
     menu = page.getByRole('dialog', { name: 'Channels' });
-    const channelsList = menu.locator('.agent-conversation-list').nth(1);
+    const channelsList = menu.locator('.agent-conversation-list').first();
     const channelRow = channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
     const channelActions = channelRow.locator('.agent-conversation-row-actions');
     const channelMore = channelRow.getByRole('button', { name: 'Channel options' });
@@ -2583,7 +2585,7 @@ test.describe('agent composer controls', () => {
     const menu = page.getByRole('dialog', { name: 'Channels' });
     await expect(menu).toBeVisible();
 
-    const channelsList = menu.locator('.agent-conversation-list').nth(1);
+    const channelsList = menu.locator('.agent-conversation-list').first();
     const row = channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
     await expect(row).toBeVisible();
 
@@ -2605,13 +2607,13 @@ test.describe('agent composer controls', () => {
     let menu = page.getByRole('dialog', { name: 'Channels' });
     await expect(menu).toBeVisible();
 
-    let channelsList = menu.locator('.agent-conversation-list').nth(1);
+    let channelsList = menu.locator('.agent-conversation-list').first();
     await channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).getByRole('button', { name: /Planning Channel/ }).click();
     await expect(page.locator('.agent-dock-title')).toHaveText('Planning Channel (3)');
 
     await page.getByRole('button', { name: 'Show conversations' }).click();
     menu = page.getByRole('dialog', { name: 'Channels' });
-    channelsList = menu.locator('.agent-conversation-list').nth(1);
+    channelsList = menu.locator('.agent-conversation-list').first();
     const row = channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
     await row.hover();
     await row.getByRole('button', { name: 'Channel options' }).click();

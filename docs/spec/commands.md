@@ -297,8 +297,10 @@ It stores no conversation `kind` and cannot be renamed, deleted, or manually
 membership-edited through ordinary conversation commands. The Agent Dock default
 selection restores a remembered valid DM/Channel first, then `#General`, and only
 then falls back to `agent_restore_latest_conversation` for the legacy coordinator
-DM. Restoring a canonical DM id is find-or-create; DMs are never user-created,
-renamed, deleted, or membership-edited.
+DM. The Agent Dock conversation menu lists Channels before Direct Messages so the
+primary surface recommends `#General`/named Channels first. Restoring a canonical
+DM id is find-or-create; DMs are never user-created, renamed, deleted, or
+membership-edited.
 `agent_create_conversation` is the user-facing New Channel command: it requires a
 Channel name, with optional invited agents and an optional opening message. DMs
 never convert into Channels, and their transcript is never shared into a Channel.

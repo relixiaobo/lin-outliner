@@ -1193,6 +1193,9 @@ Open-conversation policy:
   Channel name. The reserved `lin-agent-channel-general` row is always ensured
   and sorted first in the Channels section as `#General`. The current event/index
   storage still carries Channel names in the legacy `goal` field.
+- The conversation menu presents the Channels section before Direct Messages.
+  This keeps the default collaboration path (`#General` and named Channels) as
+  the primary choice while preserving DMs as explicit per-agent side chats.
 - `#General` is a normal event-sourced Conversation with `title/goal = General`.
   It stores no `kind`; its reserved id plus runtime invariant make it special.
   Runtime ready, restore, list, and agent-registry reload all ensure it exists
