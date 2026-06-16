@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Deck Plan",
+  "type": "object",
+  "required": ["title", "audience", "goal", "outputRoute", "slides"],
+  "properties": {
+    "title": { "type": "string" },
+    "audience": { "type": "string" },
+    "goal": { "type": "string" },
+    "outputRoute": { "type": "string" },
+    "visualTemperament": { "type": "string" },
+    "sourceMaterials": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "storySpine": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "slides": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["slide", "purpose", "headline", "visual"],
+        "properties": {
+          "slide": { "type": ["integer", "string"] },
+          "purpose": { "type": "string" },
+          "headline": { "type": "string" },
+          "evidence": { "type": "string" },
+          "visual": { "type": "string" },
+          "notes": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "verificationPlan": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

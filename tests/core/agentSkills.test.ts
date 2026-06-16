@@ -640,6 +640,37 @@ describe('agent skills', () => {
     expect(text).not.toContain('built-in/skillify/SKILL.md');
   });
 
+  test('ships goal-oriented resource-backed built-in skills', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+    const listing = await runtime.buildSkillListingReminderText(200_000);
+    const expected = ['presentation', 'document', 'data-analysis'];
+
+    for (const name of expected) {
+      const skill = await runtime.getSkill(name);
+      expect(skill).toMatchObject({
+        name,
+        source: 'built-in',
+        modelInvocable: true,
+        userInvocable: true,
+        ratified: true,
+        accepted: false,
+        canUndoLastAgentEdit: false,
+        allowedTools: [],
+      });
+      expect(skill?.rootDir).toContain(path.join('src', 'main', 'builtInSkills', name));
+      expect(skill?.skillFile).toBe(path.join(skill?.rootDir ?? '', 'SKILL.md'));
+      expect(typeof skill?.contentHash).toBe('string');
+      expect(listing).toContain(`- ${name}:`);
+
+      const invocation = await runtime.invokeSkill({ skill: name, trigger: 'agent' });
+      expect(invocation.ok).toBe(true);
+      if (!invocation.ok || !skill) continue;
+      expect(invocation.renderedContent).toContain(`Base directory for this skill: ${skill.rootDir}`);
+      expect(invocation.renderedContent).not.toContain('${AGENT_SKILL_DIR}');
+      expect(invocation.renderedContent).toContain('portable baseline tools');
+    }
+  });
+
   test('loads bundled built-in skills with real resource directories', async () => {
     const { skillsDir, skillDir } = await createBundledBuiltInSkillFixture('bundled-demo', {
       frontmatter: [
@@ -854,7 +885,7 @@ describe('agent skills', () => {
     expect(results[0]).toMatchObject({ status: 'fulfilled', value: { name: 'skillify', source: 'built-in' } });
     expect(results[1]).toMatchObject({ status: 'fulfilled', value: { name: 'research', source: 'built-in' } });
     const allSkills = results[2].status === 'fulfilled' ? results[2].value : [];
-    expect(allSkills.map((skill) => skill.name).sort()).toEqual(['research', 'skillify']);
+    expect(allSkills.map((skill) => skill.name).sort()).toEqual(['data-analysis', 'document', 'presentation', 'research', 'skillify']);
   });
 
   test('resolves bundled built-in resource roots for dev and packaged modes', () => {
