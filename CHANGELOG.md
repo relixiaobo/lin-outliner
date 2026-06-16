@@ -12,6 +12,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Default `#General` agent Channel (PR #278, codex-2)** — the runtime reserves
+  `lin-agent-channel-general` as a normal named Channel (`title/goal = General`, no stored
+  conversation `kind` — its reserved id plus a runtime invariant make it special) that always
+  exists, holding the user, the coordinator, and every current durable peer agent; fork, child,
+  headless, and transient helper agents are excluded, and future durable peers auto-join when they
+  appear. The invariant is ensured idempotently on runtime ready, conversation restore, list, and
+  agent-registry reload (no duplicate `member.added` events; unavailable peers are pruned when no
+  Channel run is in flight) and is protected — `#General` cannot be renamed, deleted, or manually
+  membership-edited, and its channel-configuration affordance is hidden. The Agent Dock conversation
+  menu now presents Channels before Direct Messages with `#General` pinned to the top of the Channels
+  section, and the dock's default selection restores a remembered valid DM/Channel first, then
+  `#General`, then falls back to the legacy coordinator DM. Routing is unchanged: an unaddressed
+  `#General` turn still routes only to the coordinator, while `@agent` routes only to named peers.
+  Specs: `docs/spec/agent-architecture.md`, `docs/spec/agent-event-log-rendering.md`,
+  `docs/spec/commands.md`.
 - **Keyboard & ARIA semantics for menus, tree, and calendar (PR #273, cc)** — Layer-3 behavioral
   accessibility for the renderer, no visual redesign. A shared `useMenuKeyboard` hook gives every
   anchored overlay (not on the modal `Dialog`) focus-in on open, focus-restore to the trigger on

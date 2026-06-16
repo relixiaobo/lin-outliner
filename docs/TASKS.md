@@ -45,7 +45,7 @@ closed and re-planned; next dispatch is from the Backlog.
 redesign (#252 `decide(effect)` core + #266 folder-handoff / typed `file_convert`), unified
 prompt composition + Anthropic L0 cache breakpoints (#263), unified file preview (#262),
 connection-only providers + profile-owned model/effort (#267), bundled built-in skill resources
-(#269), the `default-#General-channel` **plan** (#265, feature still `draft`), remember-selected-
+(#269), the `default-#General-channel` (plan #265, feature shipped #278), remember-selected-
 conversation (#261), and the **Channel group-chat render set** (#240 result-first fold · #242
 atomic delivery · #243 avatar+name header · #244 Interrupted verdict · #245 colored identity
 avatars) + `[[file:]]` deliverable markers (#246) + DM child-run process fold (#247). **The agent
@@ -161,15 +161,6 @@ before any directional/security-sensitive build.
   Code-grounded (stress-tested against the real runtime). Owns the detailed design of the
   M0 seams it analyzed (identity, `actor`, session→conversation, `AgentSessionState`
   split). See `docs/plans/agent-conversation-model.md`.
-- **default-general-channel** (P2, `draft`) — a Slack-like default **`#General`** Channel: a
-  reserved-identity Conversation that exists by default, starts with user + coordinator, and
-  **auto-includes every durable peer agent** as it appears (fork / child / headless runs excluded).
-  Membership = presence + addressability, **not** participation; unaddressed turns still route to the
-  coordinator, so auto-membership never becomes auto-noise. The Agent Dock defaults to `#General`
-  when there is no remembered conversation. **Shape (a)** one PR; **no stored conversation `kind`**
-  (reserved id + runtime invariant). `@all` deferred; coordinate with
-  `conversational-agent-authoring` on the shared auto-membership path. Plan merged (#265). See
-  `docs/plans/default-general-channel.md`.
 - **conversational-agent-authoring** (P2, `draft`, plan re-drafted 2026-06-16) — the `agentify`
   twin of `skillify`, fully symmetric and **with no new tool**: a `create-agent` bundled skill
   interviews → drafts a full AGENT.md → confirms in chat → writes it with the **existing
@@ -462,6 +453,21 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **default-general-channel** (codex-2, PR #278) — a Slack-like default **`#General`** Channel.
+  The runtime reserves `lin-agent-channel-general` as a normal named Channel (`title/goal =
+  General`, **no stored `kind`** — reserved id + runtime invariant make it special) holding the
+  user, the coordinator, and **every current durable peer agent** (fork / child / headless /
+  transient excluded); future durable peers auto-join. The ensure is idempotent — runtime ready,
+  restore, list, and agent-registry reload all reconcile membership without re-appending events —
+  and protected: `#General` cannot be renamed, deleted, or manually membership-edited, and its
+  config affordance is hidden. The Agent Dock conversation menu now lists **Channels before Direct
+  Messages** with `#General` pinned first, and the default selection restores a remembered valid
+  DM/Channel → `#General` → legacy coordinator-DM fallback. Routing is unchanged: an unaddressed
+  `#General` turn still routes only to the coordinator. **Gate (main):** typecheck ✓ · `test:core`
+  1069 pass / 2 skip ✓ · `test:renderer` 521 ✓ · `agent-composer` e2e 54 ✓ · docs:check ✓ ·
+  light+dark visual of the reordered menu verified (neutral selection, B3). Design folded into
+  `docs/spec/agent-architecture.md`, `agent-event-log-rendering.md`, `commands.md`; plan archived
+  `done`.
 - **keyboard-a11y** (cc, PR #273) — UI-quality-roadmap Layer 3. Behavioral a11y for
   anchored overlays + outliner tree + calendar: a shared `useMenuKeyboard` hook
   (focus-in/restore, surface-scoped Escape, roving `menu` / Tab-trap `dialog`,
