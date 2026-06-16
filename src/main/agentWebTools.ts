@@ -496,20 +496,25 @@ export function sliceContent(content: string, offset: number, maxChars: number):
 // (durationMs, byteLength, finalUrl) are dropped. See agentToolEnvelope's
 // modelData parameter for how this projection is attached.
 export function webSearchModelData(data: WebSearchData): unknown {
+  const isImage = data.kind === 'image';
   const visible: Record<string, unknown> = {
     results: data.results.map((result) => ({
       title: result.title,
       url: result.url,
-      ...(result.snippet ? { snippet: result.snippet } : {}),
+      // Web results always carry snippet (even ''), preserving a stable shape;
+      // image results omit it (it is always empty for them).
+      ...(isImage ? {} : { snippet: result.snippet }),
       // Image results carry the binary URL the model downloads with web_fetch;
       // without it the model cannot act on an image hit.
       ...(result.imageUrl ? { imageUrl: result.imageUrl } : {}),
       ...(result.thumbnailUrl ? { thumbnailUrl: result.thumbnailUrl } : {}),
-      ...(result.width && result.height ? { width: result.width, height: result.height } : {}),
+      ...(Number.isFinite(result.width) && Number.isFinite(result.height)
+        ? { width: result.width, height: result.height }
+        : {}),
       ...(result.publishedAt ? { publishedAt: result.publishedAt } : {}),
     })),
   };
-  if (data.kind === 'image') visible.kind = 'image';
+  if (isImage) visible.kind = 'image';
   if (data.truncated) {
     visible.truncated = true;
     if (data.totalResults !== undefined) visible.totalResults = data.totalResults;
@@ -556,6 +561,11 @@ export function buildEffectiveSearchQuery(query: string, site?: string): string 
 export function buildGoogleSearchUrl(query: string): string {
   const params = new URLSearchParams({ q: query });
   return `https://www.google.com/search?${params.toString()}`;
+}
+
+export function buildBingImagesSearchUrl(query: string): string {
+  const params = new URLSearchParams({ q: query });
+  return `https://www.bing.com/images/search?${params.toString()}`;
 }
 
 function baseFetchData(

@@ -164,6 +164,11 @@ export interface BingImagesExtraction {
   results: WebSearchResult[];
 }
 
+// Single source of truth for the Bing result anchor. The readiness gate in
+// agentTools.ts imports this; the extractor below must hardcode the same literal
+// because it is serialized via .toString() and cannot reference a module binding.
+export const BING_IMAGES_RESULT_SELECTOR = 'a.iusc';
+
 export function bingImagesExtractorExpression(maxResults = MAX_SEARCH_LIMIT): string {
   return `(${extractBingImages.toString()})(document, ${normalizeSerpLimit(maxResults)})`;
 }
@@ -198,35 +203,38 @@ export function extractBingImages(document: Document, maxResults: number): BingI
       return false;
     }
   };
-  const dimsFor = (anchor: Element): { width?: number; height?: number } => {
-    const card = anchor.closest('.iuscp') || anchor.closest('.imgpt') || anchor.parentElement;
-    const info = card?.querySelector('.fileInfo, .img_info, .b_caption');
-    const text = compact(info ? info.textContent : '');
-    const match = text.match(/(\d{2,5})\s*[x×]\s*(\d{2,5})/);
-    if (!match) return {};
-    return { width: Number(match[1]), height: Number(match[2]) };
-  };
-
+  // The 'a.iusc' literal must stay in sync with BING_IMAGES_RESULT_SELECTOR; this
+  // function is serialized via .toString() and runs in-page, so it cannot
+  // reference the exported constant.
   for (const anchor of Array.from(document.querySelectorAll('a.iusc'))) {
     if (results.length >= limit) break;
     const raw = anchor.getAttribute('m');
     if (!raw) continue;
-    let meta: Record<string, unknown>;
+    let meta: unknown;
     try {
-      meta = JSON.parse(raw) as Record<string, unknown>;
+      meta = JSON.parse(raw);
     } catch {
       continue;
     }
-    const imageUrl = meta.murl;
-    const pageUrl = meta.purl;
+    // JSON.parse can yield null / an array / a primitive; reading `.murl` off
+    // null would throw out of this whole in-page extractor (the try only guards
+    // the parse), so require a plain object first.
+    if (!meta || typeof meta !== 'object') continue;
+    const record = meta as Record<string, unknown>;
+    const imageUrl = record.murl;
+    const pageUrl = record.purl;
     if (!isHttpUrl(imageUrl) || !isHttpUrl(pageUrl) || seen.has(imageUrl)) continue;
     seen.add(imageUrl);
 
-    const thumbnailUrl = isHttpUrl(meta.turl) ? meta.turl : undefined;
+    const thumbnailUrl = isHttpUrl(record.turl) ? record.turl : undefined;
     const ariaLabel = anchor.getAttribute('aria-label');
     const innerAlt = anchor.querySelector('img')?.getAttribute('alt');
-    const title = compact(meta.t || ariaLabel || innerAlt) || hostOf(pageUrl) || pageUrl;
-    const dims = dimsFor(anchor);
+    // width/height are intentionally not scraped: Bing exposes no reliable
+    // dimension field on the result anchor, and guessing from caption text
+    // mis-attributes numbers. They stay optional on WebSearchResult for a future
+    // provider that returns them directly.
+    const fallbackTitle = hostOf(pageUrl) ?? pageUrl;
+    const title = compact(record.t || ariaLabel || innerAlt) || fallbackTitle;
 
     results.push({
       title,
@@ -234,7 +242,6 @@ export function extractBingImages(document: Document, maxResults: number): BingI
       snippet: '',
       imageUrl,
       ...(thumbnailUrl ? { thumbnailUrl } : {}),
-      ...(dims.width && dims.height ? { width: dims.width, height: dims.height } : {}),
       source: hostOf(pageUrl),
     });
   }

@@ -35,6 +35,7 @@ import {
   WEB_FETCH_MAX_REDIRECTS,
   WEB_FETCH_RENDER_SETTLE_MS,
   WEB_FETCH_USER_AGENT,
+  buildBingImagesSearchUrl,
   buildWebFetchSuccessEnvelopeFromPage,
   extractFetchedPageContent,
   normalizeWebFetchParams,
@@ -43,9 +44,11 @@ import {
   webSearchModelData,
   type FetchTextResult,
   type NormalizedWebFetchParams,
+  type NormalizedWebSearchParams,
   type WebFetchBinaryFile,
   type WebFetchData,
   type WebSearchData,
+  type WebSearchKind,
   type WebSearchResult,
   type WebToolHint,
 } from './agentWebTools';
@@ -75,12 +78,15 @@ import {
   isPermittedWebFetchRedirect,
   shouldTryBrowserFallbackForHttpFailure,
 } from './agentWebFetchFallback';
-import { bingImagesExtractorExpression, googleSerpExtractorExpression } from './agentWebSearchSerp';
+import {
+  BING_IMAGES_RESULT_SELECTOR,
+  bingImagesExtractorExpression,
+  googleSerpExtractorExpression,
+} from './agentWebSearchSerp';
 
 const GOOGLE_SEARCH_HOME_URL = 'https://www.google.com/';
 const GOOGLE_SEARCH_INPUT_SELECTOR = 'textarea[name="q"], input[name="q"]';
 const GOOGLE_SEARCH_RESULT_SELECTOR = '#search, #rso';
-const BING_IMAGES_RESULT_SELECTOR = 'a.iusc';
 const WEB_SEARCH_PARTITION = 'persist:web-search';
 const SEARCH_NAV_TIMEOUT_MS = 60_000;
 const SEARCH_RATE_INTERVAL_MS = 3_000;
@@ -397,83 +403,52 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
       }
 
       const params = normalized.params;
-      const { query, kind, effectiveQuery, limit, searchUrl } = params;
-      const providerName = kind === 'image' ? 'bing_images' : 'google_serp';
+      const provider = SEARCH_PROVIDERS[params.kind];
 
       try {
-        const search = kind === 'image'
-          ? await searchBingImages(effectiveQuery, signal)
-          : await searchGoogle(searchUrl, signal);
+        const search = await provider.run(params, signal);
+        const durationMs = elapsed(started);
         if (search.kind === 'hint') {
           return webSearchToolResult(successEnvelope('web_search', {
-            query,
-            effectiveQuery,
-            kind,
-            provider: 'provider',
-            providerName,
-            finalUrl: search.finalUrl,
+            ...baseSearchData(params, provider.providerName, durationMs, search.finalUrl),
             resultCount: 0,
             truncated: false,
-            durationMs: elapsed(started),
             hint: search.hint,
             results: [],
           }, {
             instructions: search.hint.type === 'search_blocked'
               ? 'Pause searches for a few minutes, ask the user to clear the search challenge, or use a direct URL with web_fetch.'
               : 'Try again, or use a direct URL with web_fetch if one is known.',
-            metrics: { durationMs: elapsed(started) },
+            metrics: { durationMs },
           }));
         }
         if (search.kind === 'error') {
           return webSearchToolResult(errorEnvelope('web_search', search.code, search.message, {
             data: {
-              query,
-              effectiveQuery,
-              kind,
-              provider: 'provider',
-              providerName,
-              finalUrl: search.finalUrl,
+              ...baseSearchData(params, provider.providerName, durationMs, search.finalUrl),
               resultCount: 0,
               truncated: false,
-              durationMs: elapsed(started),
               results: [],
             } satisfies WebSearchData,
             instructions: 'Retry once if this looks transient. If it still fails, try a more specific query or direct URL.',
-            metrics: { durationMs: elapsed(started) },
+            metrics: { durationMs },
           }));
         }
 
         const allResults = search.results;
-        const results = allResults.slice(0, limit);
+        const results = allResults.slice(0, params.limit);
         const truncated = allResults.length > results.length;
-        const warnings = kind === 'image'
-          ? ['Image results may be copyright-protected. Treat them as drafts and confirm licensing with the user before final use.']
-          : params.recencyDays
-            ? ['recency_days is best-effort with the current search provider. Verify dates with web_fetch when freshness matters.']
-            : undefined;
 
         return webSearchToolResult(successEnvelope('web_search', {
-          query,
-          effectiveQuery,
-          kind,
-          provider: 'provider',
-          providerName,
-          finalUrl: search.finalUrl,
+          ...baseSearchData(params, provider.providerName, durationMs, search.finalUrl),
           resultCount: results.length,
           totalResults: allResults.length,
           truncated,
-          durationMs: elapsed(started),
           results,
         }, {
-          instructions: results.length === 0
-            ? (kind === 'image'
-              ? 'Try a broader query, drop the site filter, or retry; if it keeps failing, search the web for a source page and use web_fetch.'
-              : 'Try a broader query or remove site/recency constraints.')
-            : (kind === 'image'
-              ? 'Download a chosen imageUrl with web_fetch (it saves a binaryFile), then file_read or embed it. Use thumbnailUrl to preview which image to pick.'
-              : undefined),
-          warnings,
-          metrics: { durationMs: elapsed(started), truncated, outputBytes: search.htmlBytes },
+          instructions: searchInstructions(params.kind, results.length > 0),
+          warnings: searchWarnings(params),
+          metrics: { durationMs, truncated, outputBytes: search.htmlBytes },
         }));
       } catch (error) {
         return agentToolResult(errorEnvelope('web_search', classifyWebError(error), errorMessage(error), {
@@ -487,6 +462,62 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
 
 function webSearchToolResult(envelope: ToolEnvelope<WebSearchData>) {
   return agentToolResult(envelope, envelope.data ? webSearchModelData(envelope.data) : undefined);
+}
+
+interface SearchProvider {
+  providerName: string;
+  run(params: NormalizedWebSearchParams, signal?: AbortSignal): Promise<SearchOutcome>;
+}
+
+// One descriptor per search kind: which provider runs it and how the normalized
+// query maps onto the provider call. execute() stays kind-agnostic; per-kind copy
+// lives in searchWarnings/searchInstructions so adding a kind touches one place.
+const SEARCH_PROVIDERS: Record<WebSearchKind, SearchProvider> = {
+  web: { providerName: 'google_serp', run: (params, signal) => searchGoogle(params.searchUrl, signal) },
+  image: { providerName: 'bing_images', run: (params, signal) => searchBingImages(params.effectiveQuery, signal) },
+};
+
+// The invariant envelope fields shared by the hint / error / success branches —
+// written once so adding or renaming a field cannot drift across the three.
+function baseSearchData(
+  params: NormalizedWebSearchParams,
+  providerName: string,
+  durationMs: number,
+  finalUrl: string | undefined,
+): Pick<WebSearchData, 'query' | 'effectiveQuery' | 'kind' | 'provider' | 'providerName' | 'finalUrl' | 'durationMs'> {
+  return {
+    query: params.query,
+    effectiveQuery: params.effectiveQuery,
+    kind: params.kind,
+    provider: 'provider',
+    providerName,
+    finalUrl,
+    durationMs,
+  };
+}
+
+function searchWarnings(params: NormalizedWebSearchParams): string[] | undefined {
+  const warnings: string[] = [];
+  if (params.kind === 'image') {
+    warnings.push('Image results may be copyright-protected. Treat them as drafts and confirm licensing with the user before final use.');
+  }
+  // recency_days is best-effort and not encoded into the provider URL, so always
+  // flag it when set — including alongside the image warning.
+  if (params.recencyDays) {
+    warnings.push('recency_days is best-effort with the current search provider. Verify dates with web_fetch when freshness matters.');
+  }
+  return warnings.length ? warnings : undefined;
+}
+
+function searchInstructions(kind: WebSearchKind, hasResults: boolean): string | undefined {
+  if (hasResults) {
+    return kind === 'image'
+      ? 'Download a chosen imageUrl with web_fetch (it saves a binaryFile), then file_read or embed it. Use thumbnailUrl to preview which image to pick.'
+      : undefined;
+  }
+  return kind === 'image'
+    ? 'Try a broader query, drop the site filter, or retry; if it keeps failing, search the web for a source page and use web_fetch.'
+    : 'Try a broader query or remove site/recency constraints.';
 }
 
 async function fetchText(url: string, scratchRoot: string, signal?: AbortSignal): Promise<FetchTextResult> {
@@ -883,119 +914,19 @@ type SearchOutcome =
   | { kind: 'hint'; finalUrl: string; hint: WebToolHint }
   | { kind: 'error'; finalUrl?: string; code: string; message: string };
 
-async function searchGoogle(searchUrl: string, signal?: AbortSignal): Promise<SearchOutcome> {
-  const query = googleQueryFromSearchUrl(searchUrl);
-  if (!query) {
-    return { kind: 'error', code: 'invalid_args', message: 'missing search query', finalUrl: searchUrl };
-  }
-
-  try {
-    await waitForSearchRateLimit(signal);
-  } catch {
-    return { kind: 'error', code: 'rate_limited', message: 'search aborted while rate-limited', finalUrl: searchUrl };
-  }
-
-  const window = createWebSearchWindow();
-  const onAbort = () => {
-    try {
-      if (!window.isDestroyed()) {
-        window.webContents.stop();
-        window.destroy();
-      }
-    } catch {
-      // no-op
-    }
-  };
-  signal?.addEventListener('abort', onAbort, { once: true });
-
-  try {
-    try {
-      await navigateAndWait(window.webContents, GOOGLE_SEARCH_HOME_URL, {
-        timeoutMs: SEARCH_NAV_TIMEOUT_MS,
-        signal,
-      });
-    } catch (error) {
-      return {
-        kind: 'error',
-        code: classifyWebError(error),
-        message: errorMessage(error),
-        finalUrl: window.webContents.getURL() || GOOGLE_SEARCH_HOME_URL,
-      };
-    }
-
-    const inputReady = await waitForSelector(window.webContents, GOOGLE_SEARCH_INPUT_SELECTOR, 5_000, signal);
-    if (!inputReady) {
-      const finalUrl = window.webContents.getURL() || GOOGLE_SEARCH_HOME_URL;
-      const hint = await detectSearchVerification(window.webContents, finalUrl);
-      if (hint) return { kind: 'hint', finalUrl, hint };
-      return { kind: 'error', code: 'extraction_failed', message: 'Google search input did not appear', finalUrl };
-    }
-
-    const submitted = await submitGoogleSearch(window.webContents, query);
-    if (!submitted) {
-      return {
-        kind: 'error',
-        code: 'extraction_failed',
-        message: 'failed to submit Google search form',
-        finalUrl: window.webContents.getURL() || GOOGLE_SEARCH_HOME_URL,
-      };
-    }
-
-    const reachedResults = await waitForGoogleSearchOutcome(window.webContents, signal);
-    const finalUrl = window.webContents.getURL() || searchUrl;
-    const hint = await detectSearchVerification(window.webContents, finalUrl);
-    if (hint) return { kind: 'hint', finalUrl, hint };
-    if (!reachedResults) {
-      return {
-        kind: 'hint',
-        finalUrl,
-        hint: { type: 'needs_browser', reason: 'spa_shell' },
-      };
-    }
-
-    await gentlyScrollSearchResults(window.webContents);
-    const payload = await safeExecuteJs<{ htmlLength: number; results: WebSearchResult[] }>(
-      window.webContents,
-      googleSerpExtractorExpression(),
-    );
-    if (!payload) {
-      return { kind: 'error', code: 'extraction_failed', message: 'could not extract Google results', finalUrl };
-    }
-    return {
-      kind: 'ok',
-      finalUrl,
-      results: payload.results,
-      htmlBytes: payload.htmlLength,
-    };
-  } finally {
-    signal?.removeEventListener('abort', onAbort);
-    if (!window.isDestroyed()) {
-      window.destroy();
-    }
-  }
-}
-
-// Image search reuses the hidden-window + rate-limit + scroll machinery but
-// navigates straight to the Bing Images results page: Bing exposes every result
-// as `a.iusc[m]` JSON (full image / thumbnail / source page), so no search-box
-// dance is needed and the markup is far more scrapable than Google Images.
-function buildBingImagesSearchUrl(query: string): string {
-  const params = new URLSearchParams({ q: query });
-  return `https://www.bing.com/images/search?${params.toString()}`;
-}
-
-async function searchBingImages(query: string, signal?: AbortSignal): Promise<SearchOutcome> {
-  if (!query) {
-    return { kind: 'error', code: 'invalid_args', message: 'missing search query' };
-  }
-
+// Owns the hidden-window lifecycle shared by every search kind: the rate-limit
+// gate, the off-screen BrowserWindow, abort wiring, and guaranteed teardown.
+// Each provider supplies only its navigate-and-extract body.
+async function withSearchWindow(
+  signal: AbortSignal | undefined,
+  run: (webContents: WebContents) => Promise<SearchOutcome>,
+): Promise<SearchOutcome> {
   try {
     await waitForSearchRateLimit(signal);
   } catch {
     return { kind: 'error', code: 'rate_limited', message: 'search aborted while rate-limited' };
   }
 
-  const searchUrl = buildBingImagesSearchUrl(query);
   const window = createWebSearchWindow();
   const onAbort = () => {
     try {
@@ -1010,8 +941,24 @@ async function searchBingImages(query: string, signal?: AbortSignal): Promise<Se
   signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
+    return await run(window.webContents);
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    if (!window.isDestroyed()) {
+      window.destroy();
+    }
+  }
+}
+
+async function searchGoogle(searchUrl: string, signal?: AbortSignal): Promise<SearchOutcome> {
+  const query = googleQueryFromSearchUrl(searchUrl);
+  if (!query) {
+    return { kind: 'error', code: 'invalid_args', message: 'missing search query', finalUrl: searchUrl };
+  }
+
+  return withSearchWindow(signal, async (webContents) => {
     try {
-      await navigateAndWait(window.webContents, searchUrl, {
+      await navigateAndWait(webContents, GOOGLE_SEARCH_HOME_URL, {
         timeoutMs: SEARCH_NAV_TIMEOUT_MS,
         signal,
       });
@@ -1020,36 +967,92 @@ async function searchBingImages(query: string, signal?: AbortSignal): Promise<Se
         kind: 'error',
         code: classifyWebError(error),
         message: errorMessage(error),
-        finalUrl: window.webContents.getURL() || searchUrl,
+        finalUrl: webContents.getURL() || GOOGLE_SEARCH_HOME_URL,
       };
     }
 
-    const ready = await waitForSelector(window.webContents, BING_IMAGES_RESULT_SELECTOR, 8_000, signal);
-    const finalUrl = window.webContents.getURL() || searchUrl;
-    if (!ready) {
+    const inputReady = await waitForSelector(webContents, GOOGLE_SEARCH_INPUT_SELECTOR, 5_000, signal);
+    if (!inputReady) {
+      const finalUrl = webContents.getURL() || GOOGLE_SEARCH_HOME_URL;
+      const hint = await detectSearchVerification(webContents, finalUrl);
+      if (hint) return { kind: 'hint', finalUrl, hint };
+      return { kind: 'error', code: 'extraction_failed', message: 'Google search input did not appear', finalUrl };
+    }
+
+    const submitted = await submitGoogleSearch(webContents, query);
+    if (!submitted) {
+      return {
+        kind: 'error',
+        code: 'extraction_failed',
+        message: 'failed to submit Google search form',
+        finalUrl: webContents.getURL() || GOOGLE_SEARCH_HOME_URL,
+      };
+    }
+
+    const reachedResults = await waitForGoogleSearchOutcome(webContents, signal);
+    const finalUrl = webContents.getURL() || searchUrl;
+    const hint = await detectSearchVerification(webContents, finalUrl);
+    if (hint) return { kind: 'hint', finalUrl, hint };
+    if (!reachedResults) {
       return { kind: 'hint', finalUrl, hint: { type: 'needs_browser', reason: 'spa_shell' } };
     }
 
-    await gentlyScrollSearchResults(window.webContents);
+    await gentlyScrollSearchResults(webContents);
     const payload = await safeExecuteJs<{ htmlLength: number; results: WebSearchResult[] }>(
-      window.webContents,
+      webContents,
+      googleSerpExtractorExpression(),
+    );
+    if (!payload) {
+      return { kind: 'error', code: 'extraction_failed', message: 'could not extract Google results', finalUrl };
+    }
+    return { kind: 'ok', finalUrl, results: payload.results, htmlBytes: payload.htmlLength };
+  });
+}
+
+// Image search navigates straight to the Bing Images results page: Bing exposes
+// every result as `a.iusc[m]` JSON (full image / thumbnail / source page), so no
+// search-box dance is needed and the markup is far more scrapable than Google
+// Images. Shares verification detection so a Bing challenge surfaces as
+// search_blocked rather than a misleading spa_shell hint.
+async function searchBingImages(query: string, signal?: AbortSignal): Promise<SearchOutcome> {
+  if (!query) {
+    return { kind: 'error', code: 'invalid_args', message: 'missing search query' };
+  }
+
+  const searchUrl = buildBingImagesSearchUrl(query);
+  return withSearchWindow(signal, async (webContents) => {
+    try {
+      await navigateAndWait(webContents, searchUrl, {
+        timeoutMs: SEARCH_NAV_TIMEOUT_MS,
+        signal,
+      });
+    } catch (error) {
+      return {
+        kind: 'error',
+        code: classifyWebError(error),
+        message: errorMessage(error),
+        finalUrl: webContents.getURL() || searchUrl,
+      };
+    }
+
+    const ready = await waitForSelector(webContents, BING_IMAGES_RESULT_SELECTOR, 8_000, signal);
+    const finalUrl = webContents.getURL() || searchUrl;
+    if (!ready) {
+      const hint = await detectSearchVerification(webContents, finalUrl);
+      if (hint) return { kind: 'hint', finalUrl, hint };
+      return { kind: 'hint', finalUrl, hint: { type: 'needs_browser', reason: 'spa_shell' } };
+    }
+
+    await gentlyScrollSearchResults(webContents);
+    const payload = await safeExecuteJs<{ htmlLength: number; results: WebSearchResult[] }>(
+      webContents,
       bingImagesExtractorExpression(),
     );
     if (!payload) {
       return { kind: 'error', code: 'extraction_failed', message: 'could not extract Bing image results', finalUrl };
     }
-    return {
-      kind: 'ok',
-      finalUrl,
-      results: payload.results,
-      htmlBytes: payload.htmlLength,
-    };
-  } finally {
-    signal?.removeEventListener('abort', onAbort);
-    if (!window.isDestroyed()) {
-      window.destroy();
-    }
-  }
+    return { kind: 'ok', finalUrl, results: payload.results, htmlBytes: payload.htmlLength };
+  });
 }
 
 async function waitForSearchRateLimit(signal?: AbortSignal): Promise<void> {
