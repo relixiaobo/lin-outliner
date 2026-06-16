@@ -443,13 +443,7 @@ function ToolExchangeRow({ exchange, labels }: { exchange: AgentDebugToolExchang
     if (!blockRule || blockState === 'saving') return;
     setBlockState('saving');
     try {
-      const current = await api.agentGetToolPermissionSettings();
-      const blocks = current.blocks.includes(blockRule) ? current.blocks : [...current.blocks, blockRule];
-      await api.agentUpdateToolPermissionSettings({
-        grants: current.grants,
-        blocks,
-        softBlockAllows: current.softBlockAllows,
-      });
+      await api.agentAppendToolPermissionBlock(blockRule);
       setBlockState('saved');
     } catch {
       setBlockState('error');

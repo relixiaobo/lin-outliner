@@ -35,6 +35,12 @@ export type {
 } from './agentToolPermissionRules';
 export type AgentPermissionAccess = 'read' | 'write' | 'execute' | 'control' | 'unknown';
 export type AgentPermissionBehavior = 'allow' | 'ask' | 'soft_blocked' | 'deny';
+export type AgentPermissionSource =
+  | 'default'
+  | 'trust_ledger'
+  | 'built_in_soft_block'
+  | 'user_blocklist'
+  | 'soft_block_allow';
 
 export interface AgentApprovalDetail {
   label: string;
@@ -82,7 +88,7 @@ interface AgentPermissionDecisionBase {
   code?: string;
   preapproved: boolean;
   ruleId?: string;
-  permissionSource?: 'default' | 'trust_ledger';
+  permissionSource?: AgentPermissionSource;
   descriptor?: ToolActionDescriptor;
   descriptors?: readonly ToolActionDescriptor[];
 }
@@ -394,12 +400,14 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
     {
       descriptor: effectResolution.descriptor,
       descriptors,
-      permissionSource: effectResolution.source === 'trust_ledger' ? 'trust_ledger' : 'default',
+      permissionSource: effectResolution.source === 'trust_ledger' || effectResolution.source === 'soft_block_allow'
+        ? effectResolution.source
+        : 'default',
     },
   );
 }
 
-type EffectDecisionSource = 'default' | 'trust_ledger' | 'built_in_soft_block' | 'user_blocklist' | 'soft_block_allow';
+type EffectDecisionSource = AgentPermissionSource;
 
 interface EffectDecisionResolution {
   decision: GlobalToolPermissionDecision;
@@ -1459,7 +1467,7 @@ function softBlockForDescriptor(
     {
       descriptor,
       descriptors,
-      permissionSource: 'default',
+      permissionSource,
       blockRuleValue,
     },
   );

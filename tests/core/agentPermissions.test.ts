@@ -6,7 +6,9 @@ import {
 } from '../../src/main/agentPermissions';
 import {
   permissionDeniedReasonForDecision,
+  permissionEventSourceForDecision,
   permissionDeniedToolResultMessage,
+  permissionResolvedByForAllowDecision,
 } from '../../src/main/agentPermissionEvents';
 import { parseGlobalToolPermissionSettings } from '../../src/main/agentToolPermissionRules';
 import { executeAgentSkillShellCommand } from '../../src/main/agentSkillShell';
@@ -92,6 +94,8 @@ describe('agent permissions', () => {
       expect(decision.behavior, command).toBe('soft_blocked');
       expect(decision.code).toBe(code);
       if (decision.behavior !== 'soft_blocked') throw new Error('expected soft block');
+      expect(decision.permissionSource).toBe('built_in_soft_block');
+      expect(permissionEventSourceForDecision(decision)).toBe('built_in_soft_block');
       expect(decision.request.alwaysAllowRule, command).toBe(`Command(${command})`);
       expect(decision.request.alwaysAllowAction, command).toBe('soft_allow');
       expect(decision.request.autoBlockMs, command).toBeGreaterThan(0);
@@ -109,6 +113,10 @@ describe('agent permissions', () => {
       },
     });
     expect(decision.behavior).toBe('allow');
+    if (decision.behavior !== 'allow') throw new Error('expected allow');
+    expect(decision.permissionSource).toBe('soft_block_allow');
+    expect(permissionEventSourceForDecision(decision)).toBe('soft_block_allow');
+    expect(permissionResolvedByForAllowDecision(decision)).toBe('allow_rule_update');
   });
 
   test('applies user blocklist rules before default allow', () => {
@@ -123,6 +131,8 @@ describe('agent permissions', () => {
     });
     expect(commandBlock.behavior).toBe('soft_blocked');
     if (commandBlock.behavior !== 'soft_blocked') throw new Error('expected soft block');
+    expect(commandBlock.permissionSource).toBe('user_blocklist');
+    expect(permissionEventSourceForDecision(commandBlock)).toBe('user_blocklist');
     expect(commandBlock.request.alwaysAllowRule).toBe(`Command(${command})`);
     expect(commandBlock.request.alwaysAllowAction).toBe('remove_block');
 
@@ -135,6 +145,7 @@ describe('agent permissions', () => {
       },
     });
     expect(actionBlock.behavior).toBe('soft_blocked');
+    expect(actionBlock.permissionSource).toBe('user_blocklist');
   });
 
   test('does not treat heredoc bodies as shell segments', () => {

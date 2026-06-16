@@ -68,6 +68,7 @@ import {
   testProviderConnection,
 } from './agentSettings';
 import {
+  appendAgentToolPermissionBlockView,
   normalizedRuleList,
   readAgentToolPermissionSettingsView,
   writeAgentToolPermissionSettingsView,
@@ -2485,6 +2486,8 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return readAgentToolPermissionSettingsView();
     case 'agent_update_tool_permission_settings':
       return writeAgentToolPermissionSettingsView(args.settings as { grants?: unknown; blocks?: unknown; softBlockAllows?: unknown });
+    case 'agent_append_tool_permission_block':
+      return appendAgentToolPermissionBlockView(String(args.ruleValue ?? ''));
     case 'agent_pick_scope_folder':
       return pickAgentScopeFolder(event, args.settings as { grants?: unknown; blocks?: unknown; softBlockAllows?: unknown } | undefined);
     case 'agent_upsert_provider_config':

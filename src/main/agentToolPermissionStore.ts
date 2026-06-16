@@ -52,10 +52,7 @@ export async function writeAgentToolPermissionSettings(settings: GlobalToolPermi
 
 export async function writeAgentToolPermissionSettingsView(settings: GlobalToolPermissionSettings) {
   const config = await writeAgentToolPermissionSettings(settings);
-  return {
-    ...globalToolPermissionConfigToSettings(config),
-    diagnostics: config.diagnostics,
-  };
+  return agentToolPermissionSettingsViewFromConfig(config);
 }
 
 export async function appendAgentToolPermissionGrant(ruleValue: string): Promise<GlobalToolPermissionConfig> {
@@ -64,6 +61,10 @@ export async function appendAgentToolPermissionGrant(ruleValue: string): Promise
 
 export async function appendAgentToolPermissionBlock(ruleValue: string): Promise<GlobalToolPermissionConfig> {
   return updateAgentToolPermissionRuleList('blocks', ruleValue, 'append');
+}
+
+export async function appendAgentToolPermissionBlockView(ruleValue: string) {
+  return agentToolPermissionSettingsViewFromConfig(await appendAgentToolPermissionBlock(ruleValue));
 }
 
 export async function removeAgentToolPermissionBlock(ruleValue: string): Promise<GlobalToolPermissionConfig> {
@@ -79,6 +80,8 @@ async function updateAgentToolPermissionRuleList(
   ruleValue: string,
   operation: 'append' | 'remove',
 ): Promise<GlobalToolPermissionConfig> {
+  const normalizedRuleValue = ruleValue.trim();
+  if (!normalizedRuleValue) return readAgentToolPermissionConfig();
   const filePath = permissionPath();
   const nextSettings = await updateJsonFile(
     filePath,
@@ -91,8 +94,8 @@ async function updateAgentToolPermissionRuleList(
         softBlockAllows: normalizedRuleList(settings.softBlockAllows),
       };
       const rules = next[key];
-      if (operation === 'append' && !rules.includes(ruleValue)) rules.push(ruleValue);
-      if (operation === 'remove') next[key] = rules.filter((candidate) => candidate !== ruleValue);
+      if (operation === 'append' && !rules.includes(normalizedRuleValue)) rules.push(normalizedRuleValue);
+      if (operation === 'remove') next[key] = rules.filter((candidate) => candidate !== normalizedRuleValue);
       return globalToolPermissionConfigToSettings(parseGlobalToolPermissionSettings(next));
     },
     PRIVATE_JSON_FILE_OPTIONS,
@@ -104,6 +107,10 @@ async function updateAgentToolPermissionRuleList(
 
 function agentToolPermissionSettingsView(settings: GlobalToolPermissionSettings) {
   const config = parseGlobalToolPermissionSettings(settings);
+  return agentToolPermissionSettingsViewFromConfig(config);
+}
+
+function agentToolPermissionSettingsViewFromConfig(config: GlobalToolPermissionConfig) {
   return {
     ...globalToolPermissionConfigToSettings(config),
     diagnostics: config.diagnostics,

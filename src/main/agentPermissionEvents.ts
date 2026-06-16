@@ -101,15 +101,24 @@ export function permissionEventSourceForDecision(
   if (decision.behavior === 'deny') {
     return permissionEventSourceForDeniedReason(permissionDeniedReasonForDecision(decision));
   }
-  if (decision.permissionSource === 'trust_ledger') {
-    return 'trust_ledger';
+  switch (decision.permissionSource) {
+    case 'trust_ledger':
+      return 'trust_ledger';
+    case 'built_in_soft_block':
+      return 'built_in_soft_block';
+    case 'user_blocklist':
+      return 'user_blocklist';
+    case 'soft_block_allow':
+      return 'soft_block_allow';
+    default:
+      return 'default';
   }
-  return 'default';
 }
 
 export function permissionResolvedByForAllowDecision(decision: AgentPermissionAllowDecision): AgentToolPermissionResolvedBy {
   const source = permissionEventSourceForDecision(decision);
   if (source === 'trust_ledger') return source;
+  if (source === 'soft_block_allow') return 'allow_rule_update';
   return 'default';
 }
 

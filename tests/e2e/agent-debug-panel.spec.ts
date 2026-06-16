@@ -47,12 +47,8 @@ test.describe('agent debug panel', () => {
     await expect(exchange.getByRole('button', { name: /User block added: Command\(git push origin main\)/ })).toBeVisible();
 
     await expect.poll(async () => {
-      const updateCall = (await commandCalls(page)).findLast((call) => call.cmd === 'agent_update_tool_permission_settings');
-      return updateCall?.args.settings;
-    }).toEqual({
-      grants: [],
-      blocks: ['Command(git push origin main)'],
-      softBlockAllows: [],
-    });
+      const appendCall = (await commandCalls(page)).findLast((call) => call.cmd === 'agent_append_tool_permission_block');
+      return appendCall?.args.ruleValue;
+    }).toBe('Command(git push origin main)');
   });
 });

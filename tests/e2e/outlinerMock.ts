@@ -1988,6 +1988,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           agentToolPermissions.softBlockAllows = Array.isArray(next.softBlockAllows) ? next.softBlockAllows.map(String) : [];
           return clone(agentToolPermissions) as T;
         }
+        if (cmd === 'agent_append_tool_permission_block') {
+          const ruleValue = String(args.ruleValue ?? '');
+          if (ruleValue && !agentToolPermissions.blocks.includes(ruleValue)) {
+            agentToolPermissions.blocks.push(ruleValue);
+          }
+          return clone(agentToolPermissions) as T;
+        }
         if (cmd === 'agent_test_provider_connection') {
           // The credential sheet drives this for its async validate step. Echo a
           // deterministic result keyed off the supplied key so a test can exercise

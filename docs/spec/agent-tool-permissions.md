@@ -246,8 +246,9 @@ The runtime persists:
 
 `tool.permission.checked.outcome` is `allow`, `soft_blocked`, or `blocked` for
 new permission decisions. Legacy `ask` may still appear in older logs.
-`tool.permission.checked.source` is `default`, `user`, `configured_deny`,
-`runtime`, `trust_ledger`, or `platform_hard_block` depending on the path.
+`tool.permission.checked.source` is `default`, `built_in_soft_block`,
+`user_blocklist`, `soft_block_allow`, `user`, `configured_deny`, `runtime`,
+`trust_ledger`, or `platform_hard_block` depending on the path.
 
 Denied tool calls return structured `permission_denied` results:
 
