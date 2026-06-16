@@ -24,7 +24,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Codex | `lin-outliner-codex/` | — | idle (shipped agent-context-architecture #263, bundled-built-in-skills #269) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped file-preview-unification #262) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped permission folder-handoff + `file_convert` #266) |
-| Codex 4 | `lin-outliner-codex-4/` | `codex-4/three-built-in-skills` | `three-built-in-skills` (#270, DRAFT) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
@@ -38,8 +38,6 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
    `agent-capability-ceiling` was verified **unnecessary** and dropped — see Backlog § Agent
    capabilities). Its safety then rests on human ratification of the new agent + the universal
    floor/`decide(effect)` model. Unblocked once rewritten.
-2. **`three-built-in-skills`** (codex-4, PR #270, DRAFT) — goal-oriented built-in skills on top
-   of the shipped `bundled-built-in-skill-resources` (#269).
 
 **The 2026-06-14/15 portfolio wave shipped** (all in Recently completed): the agent-permission
 redesign (#252 `decide(effect)` core + #266 folder-handoff / typed `file_convert`), unified
@@ -695,6 +693,25 @@ and Layer 2 shipped together in PR #234 (`button-primitive` + `input-primitive` 
 
 ## Recently completed
 
+- **Goal-oriented built-in skills** (codex-4, PR #270) — three resource-backed `built-in` skills on
+  top of the shipped `bundled-built-in-skill-resources` (#269): **`/presentation`** (decks/talks/PPTX/
+  HTML decks/PDF handouts), **`/document`** (memos/briefs/reports/DOCX/Markdown/redlines), and
+  **`/data-analysis`** (CSV/TSV/JSON/JSONL profiling, XLSX inspection, reproducible analysis). Each ships
+  its own `SKILL.md` + route-specific `references/`, portable **stdlib-only** inspection `scripts/`
+  (Python `pptx/docx/xlsx/data_tool`, Node `html/markdown_tool`), JSON `schemas/`, and templates; they are
+  **goal-oriented** (PPTX/DOCX/XLSX/MD/HTML/PDF/CSV/JSON are I/O routes, not skill identities) and point
+  the model at `${AGENT_SKILL_DIR}` so it loads only what the task needs. **Gate (main):** `/code-review`-
+  depth read + runtime QA in a worktree surfaced one high-severity correctness bug — the OOXML
+  relationship-target resolver used `Path.as_posix()` which does **not** collapse `..`, so standard decks/
+  workbooks/docs (whose slide/sheet rels use `../slideLayouts/`, `../drawings/`, `../customXml/`) were
+  falsely reported `missing_relationship_targets` → `ok:false`/exit-1 — plus thin test coverage and
+  warning/exit-code conflation. codex fixed all: `posixpath.normpath`-based resolution (verified: standard
+  files pass, genuinely-broken files still fail), `errors` vs advisory `warnings` split in the mjs
+  inspectors (no more inline-SVG `xmlns` false positive), tightened ≤250-char descriptions, relative
+  `scripts/` paths in references, and **6 new regression tests** (real `../`-bearing OOXML fixtures built
+  with a no-dep zip writer). Re-verified by main on `9f5dc808`: typecheck + the skill suites (65/0) +
+  `docs:check`, independent OOXML/Python-3.9.6 fixture re-checks green. Spec folded into
+  `docs/spec/agent-skills.md` (no separate plan file — goal-oriented topic on top of #269).
 - **Run-grounded agent debug surface** (cc-2, PR #264) — completes the
   `agent-debug-run-grounded` plan (**shape (a)**, one clean PR; the seq-renumbering refactor was
   considered and dropped). The debug panel is now a read-only **view of the execution tree**

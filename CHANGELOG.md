@@ -12,6 +12,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Goal-oriented built-in skills: `/presentation`, `/document`, `/data-analysis` (PR #270, codex-4)** —
+  three resource-backed `built-in` skills built on the bundled-resource loader (#269). Each ships its own
+  `SKILL.md`, route-specific `references/`, **stdlib-only** portable inspection `scripts/` (Python
+  `pptx_tool`/`docx_tool`/`xlsx_tool`/`data_tool`, Node `html_tool`/`markdown_tool`), JSON `schemas/`, and
+  lightweight templates. They are **goal-oriented**: PPTX, DOCX, XLSX, Markdown, HTML, PDF, CSV, and JSON
+  are treated as input/output routes rather than skill identities, and the body points the model at
+  `${AGENT_SKILL_DIR}` so only task-relevant resources are loaded or executed. The OOXML inspectors resolve
+  relationship targets with `posixpath.normpath` (correctly collapsing `..`-relative `../slideLayouts/`,
+  `../drawings/`, `../customXml/` targets), and the Markdown/HTML inspectors separate structural `errors`
+  (which set `ok:false`) from advisory `warnings`. Spec: `docs/spec/agent-skills.md`.
 - **Bundled built-in skill resources (PR #269, codex)** — app-shipped `built-in` skills can now use the
   **standard Agent Skills folder shape** (`SKILL.md` plus adjacent `references/`/`scripts/`/`assets/`)
   instead of a single monolithic prompt string. Resource-backed built-in folders load from
