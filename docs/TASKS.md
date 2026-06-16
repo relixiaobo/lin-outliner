@@ -173,6 +173,20 @@ before any directional/security-sensitive build.
   created agent is `restricted` by type + globally gated. **Shape (a)** one PR. Old plan (PR #251)
   closed (dead ceiling). Security-sensitive (file-boundary change) → `/security-review`. See
   `docs/plans/conversational-agent-authoring.md`.
+- **coordinator-working-groups** (P2, `draft`) — let the user-facing **coordinator** create a
+  multi-agent **working-group Channel** on the user's request ("set up a group for X with Research
+  and Writing"). A Channel has **no file form** (unlike an AGENT.md), so the only mechanism is a
+  thin **`create_channel` runtime tool** wrapping the existing `agentRuntime.createConversation()`
+  + member-add path the native `ChannelConfigWindow` already uses — wired behind an
+  `options.channelOrg` flag so **only the coordinator** gets it (a `restricted` child does not).
+  Create + add-members only (edit/remove/delete = follow-up); **no new channel/coordinator
+  semantics** (reuse membership + coordinator routing + the async bus); **no stored `kind`**.
+  Silent default-allow + announce-in-chat per `agent-permission-blacklist-default-allow` (#277) +
+  audit; a when-to-create guideline is the anti-channel-spam guardrail. Resolves the M3
+  **who-configures-whom** slice (`agent-conversation-model`) for *coordinator organizes a group*;
+  reuse the shared membership path `default-general-channel` shipped (#278). **Shape (a)** one PR.
+  New model-callable capability → `/security-review` + `/code-review ultra`. See
+  `docs/plans/coordinator-working-groups.md`.
 - **agent-capability-ceiling** — **RESOLVED 2026-06-16: verified unnecessary, dropped (not
   built).** Post-#252/#266 capability is one **global** model (`decide(effect)` + non-configurable
   floor + a global grants ledger); a delegated/authored agent's `permissionMode` is type-locked to
