@@ -103,13 +103,21 @@ Recommended split:
 
 **Soft built-in block, user-overridable**
 
-- **remote code pipe / hidden execution**: `curl|wget ... | sh`,
-  decode-and-pipe shell forms, `eval`, and other obviously obfuscated shell
-  construction;
-- **persistence / self-amplification**: writes to shell startup files, cron,
-  LaunchAgents, systemd user units, and git hooks/config internals;
-- **broad external publishes** if main review decides novices need one remaining
-  default guard for deployment/publish flows.
+- **remote or decoded code execution**: `curl|wget ... | sh`, decode-and-pipe
+  shell forms, and explicit `eval` / interpreter-eval forms that execute opaque
+  generated code;
+- **OS-level persistence / self-amplification**: writes to shell startup files,
+  cron, LaunchAgents, systemd user units, and git hooks.
+
+Do **not** soft-block these by default:
+
+- broad external publishes (`git push`, `gh pr create`, deploy commands,
+  message sends). They default to allow, and users can block them from the log;
+- ordinary shell command substitution (`$(...)` or backticks) when it is not
+  combined with sensitive-path access, network exfiltration, remote-code pipes,
+  or another redline/soft-block trigger;
+- project-local `.git/config` writes. They default to allow; `.git/hooks/*`
+  remains a soft block because hooks create command execution persistence.
 
 Everything else defaults to allow, including:
 
