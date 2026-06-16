@@ -29,11 +29,13 @@ a reusable local agent from an explicit user request. It interviews only for
 missing identity/routing/tool details, drafts a complete `AGENT.md` or focused
 update diff, previews the target and change, confirms through
 `ask_user_question` when available, and writes exactly one file under
-`~/.agents/agents/<agent-name>/AGENT.md` or
-`<workspace>/.agents/agents/<agent-name>/AGENT.md`. Agents written through chat
+`<workspace>/.agents/agents/<agent-name>/AGENT.md` by default, or under
+`~/.agents/agents/<agent-name>/AGENT.md` only when the user explicitly chooses a
+personal/global target and grants that write scope. Agents written through chat
 must set `permission-mode: restricted`; the file-tool gateway rejects support
-files, deletes, trusted permission mode, secret-looking content, and malformed
-frontmatter, then hot-reloads the agent registry on success.
+files, deletes, trusted permission mode, reserved built-in names, secret-looking
+content, malformed frontmatter, unsafe background mode, unbounded `max-turns`,
+and broad `tools: ["*"]`, then hot-reloads the agent registry on success.
 
 `/research` is a user- and model-invocable `execution: isolated` workflow for
 bounded investigation. It starts an isolated child run of the current agent with
@@ -376,7 +378,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | `execution: isolated` and `agent` | Supported through the same-conversation `Agent`/delegation runtime. Isolated skill bodies run in a sidechain child run and return only the final result to the parent. Legacy `context: fork` parses as `execution: isolated` for existing skills. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
 | Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes into registry-recognized skill directories use ordinary file-tool permissions, then the file-tool gateway validates them as feedback, emits audit events, carries rollback metadata, records provenance hashes, and hot-reloads the registry. Agent-written skills are available immediately for slash invocation and, when model-invocable, automatic listing without a separate trust prompt. |
-| Agent-managed agent-definition writes | Supported for creating or editing one `AGENT.md` through the built-in `/create-agent` workflow and existing `file_write` / `file_edit`. Writes into `~/.agents/agents/<agent-name>/AGENT.md` or `<workspace>/.agents/agents/<agent-name>/AGENT.md` use ordinary file-tool permissions, then the file-tool gateway validates strict frontmatter/body shape, requires `permission-mode: restricted`, rejects support files/deletes/trusted permission mode/secret-looking content, and hot-reloads live agent registries on success. Existing-file edits still require file-tool freshness through `file_read`. |
+| Agent-managed agent-definition writes | Supported for creating or editing one `AGENT.md` through the built-in `/create-agent` workflow and existing `file_write` / `file_edit`. Writes into `<workspace>/.agents/agents/<agent-name>/AGENT.md` use ordinary project file-tool permissions; writes into `~/.agents/agents/<agent-name>/AGENT.md` require an explicit personal/global write scope. The file-tool gateway validates strict frontmatter/body shape, requires `permission-mode: restricted`, rejects support files/deletes/trusted permission mode/reserved names/secret-looking content/unsafe metadata, and hot-reloads live agent registries on success. Existing-file edits still require file-tool freshness through `file_read`; `file_convert` and shell writes cannot bypass the validated gateway. |
 | Legacy command directories | Not supported. Lin uses the agent skills standard path under `.agents/skills`. |
 | MCP/plugin/remote skills | Not supported. The current registry is local filesystem skills plus configured additional directories. |
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |

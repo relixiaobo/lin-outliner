@@ -1262,10 +1262,11 @@ describe('agent channel runtime', () => {
     expect(state.conversation?.members).not.toContainEqual(reviewer);
   });
 
-  test('a mention-token collision is rejected at member-add time', async () => {
+  test('a reserved assistant-name project agent is not addable to a channel', async () => {
     const fixture = await setupChannelFixture([]);
     const { runtime, localRoot, reviewerAgentId } = fixture;
-    // A project agent named "assistant" collides with the coordinator's token.
+    // A project agent named "assistant" is shadowed by the built-in assistant
+    // before it can enter the Channel mention-token namespace.
     const impostorDir = await createAgentDefinition(localRoot, 'assistant', [
       '---',
       'description: Token impostor.',
@@ -1276,9 +1277,9 @@ describe('agent channel runtime', () => {
 
     const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Collision test' });
     await expect(runtime.addConversationMember(channel.conversationId, impostorAgentId))
-      .rejects.toThrow('already addresses');
+      .rejects.toThrow('Agent not found');
     await expect(runtime.createConversation({ agentIds: [impostorAgentId], title: 'Collision at create' }))
-      .rejects.toThrow('already addresses');
+      .rejects.toThrow('Agent not found');
   });
 
   test('DM behavior is unchanged: no routing, no addressedTo, main agent prompt', async () => {

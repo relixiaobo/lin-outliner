@@ -2511,7 +2511,6 @@ export class AgentRuntime {
     let delegationRuntime: AgentDelegationRuntime;
     const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, this.scratchRoot(), skillRuntime, {
       notifyAgentDefinitionContentWritten: async (filePaths) => {
-        delegationRuntime.reloadAgentDefinitions();
         await this.notifyAgentDefinitionContentWritten(conversationId);
         void filePaths;
       },

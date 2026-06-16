@@ -19,10 +19,11 @@ import {
 } from './agentSkillAuthoring';
 import {
   AgentDefinitionAuthoringError,
-  defaultAgentDefinitionDirs,
   resolveAgentDefinitionContentTarget,
+  selfDefinitionRootEntries,
   validateAgentDefinitionContentWrite,
   type AgentDefinitionWriteAudit,
+  type SelfDefinitionSurface,
 } from './agentAuthoring';
 
 interface LocalToolOptions {
@@ -1653,7 +1654,18 @@ function resolveSingleConvertOutputPath(
     workspace.root,
     `${path.basename(inputPath, path.extname(inputPath))}${CONVERT_FORMAT_EXTENSIONS[params.output_format]}`,
   );
-  return resolveWorkspacePath(workspace, params.output_path ?? fallback, 'write');
+  const outputPath = resolveWorkspacePath(workspace, params.output_path ?? fallback, 'write');
+  assertNotSelfDefinitionConvertOutput(workspace, outputPath);
+  return outputPath;
+}
+
+function assertNotSelfDefinitionConvertOutput(workspace: WorkspaceContext, outputPath: string): void {
+  if (!selfDefinitionSurfaceForPath(workspace, outputPath)) return;
+  throw new LocalToolFailure(
+    'self_definition_convert_output_not_supported',
+    'file_convert cannot write skill or agent definition content.',
+    'Use file_write or file_edit so self-definition content is validated and hot-reloaded.',
+  );
 }
 
 async function assertOutputPathAvailable(outputPath: string, inputPath: string): Promise<void> {
@@ -1720,6 +1732,7 @@ async function convertPdfToImages(
     params.output_dir ?? path.join(workspace.root, `${path.basename(inputPath, path.extname(inputPath))}-pages-${randomUUID().slice(0, 8)}`),
     'write',
   );
+  assertNotSelfDefinitionConvertOutput(workspace, outputDir);
   await ensureDirectoryOutput(outputDir);
 
   const formatFlag = params.output_format === 'png' ? '-png' : '-jpeg';
@@ -3044,11 +3057,6 @@ function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string, ac
 // by default, already covered by the workdir).
 function allowedRealRoots(workspace: WorkspaceContext, rootRealPath: string, access: FileAccess): string[] {
   const roots = [rootRealPath];
-  for (const selfRoot of selfDefinitionRealRoots(workspace)) {
-    if (!roots.some((root) => isResolvedPathInside(root, selfRoot))) {
-      roots.push(selfRoot);
-    }
-  }
   for (const entry of workspace.permissionRoots) {
     if (access === 'write' && entry.access !== 'write') continue;
     if (!roots.some((root) => isResolvedPathInside(root, entry.realRoot))) {
@@ -3064,35 +3072,27 @@ function allowedRealRoots(workspace: WorkspaceContext, rootRealPath: string, acc
   return roots;
 }
 
-type SelfDefinitionSurface = 'skill' | 'agent';
-
-function selfDefinitionRealRoots(workspace: WorkspaceContext): string[] {
-  const roots: string[] = [];
-  for (const { dir } of selfDefinitionRootEntries(workspace.root)) {
-    const resolved = resolveCanonicalPath(dir);
-    if (resolved && !roots.some((root) => isResolvedPathInside(root, resolved.realPath))) {
-      roots.push(resolved.realPath);
-    }
-  }
-  return roots;
-}
-
-function selfDefinitionRootEntries(localRoot: string): Array<{ dir: string; surface: SelfDefinitionSurface }> {
-  const root = path.resolve(localRoot);
-  return [
-    { dir: path.join(homedir(), '.agents', 'skills'), surface: 'skill' },
-    { dir: path.join(root, '.agents', 'skills'), surface: 'skill' },
-    ...defaultAgentDefinitionDirs(root).map(({ dir }) => ({ dir, surface: 'agent' as const })),
-  ];
-}
-
 function selfDefinitionSurfaceForPath(workspace: WorkspaceContext, filePath: string): SelfDefinitionSurface | null {
-  const resolved = path.resolve(filePath);
+  const lexicalPath = path.resolve(filePath);
+  const canonicalPath = resolveCanonicalPath(filePath)?.realPath ?? null;
   for (const { dir, surface } of selfDefinitionRootEntries(workspace.root)) {
-    const root = path.resolve(dir);
-    if (isResolvedPathInside(root, resolved)) return surface;
+    const lexicalRoot = path.resolve(dir);
+    if (isSelfDefinitionContentPath(lexicalRoot, lexicalPath)) return surface;
+    const canonicalRoot = resolveCanonicalPath(dir)?.realPath ?? null;
+    if (canonicalPath && canonicalRoot && isSelfDefinitionContentPath(canonicalRoot, canonicalPath)) return surface;
   }
   return null;
+}
+
+function isSelfDefinitionContentPath(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return false;
+  if (relative === '') return true;
+  const parts = relative.split(path.sep).filter(Boolean);
+  if (parts.length >= 2) return true;
+  // Root-level docs such as `.agents/skills/README.md` are ordinary workspace
+  // files. Existing direct child directories are definition roots and stay guarded.
+  return isDirectoryPath(candidate);
 }
 
 function isInsideAnyRoot(roots: readonly string[], candidate: string): boolean {
@@ -3104,7 +3104,6 @@ function isFileAreaRoot(workspace: WorkspaceContext, filePath: string): boolean 
   const candidate = resolveCanonicalPath(filePath);
   if (!rootRealPath || !candidate) return false;
   if (rootRealPath === candidate.realPath) return true;
-  if (selfDefinitionRealRoots(workspace).some((root) => root === candidate.realPath)) return true;
   return workspace.permissionRoots.some((entry) => {
     if (entry.access !== 'write') return false;
     return entry.realRoot === candidate.realPath && (entry.isDirectory || isDirectoryPath(entry.realRoot));

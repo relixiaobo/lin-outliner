@@ -76,7 +76,8 @@ end-to-end and the new agent goes live.
 user asks for an agent
   -> agent interviews (purpose / when it runs / tools / tone)
   -> agent drafts a full AGENT.md, shows it in chat, confirms with the user
-  -> agent writes it with the existing file_write into ~/.agents/agents/<name>/AGENT.md
+  -> agent writes it with the existing file_write into <workspace>/.agents/agents/<name>/AGENT.md
+     (or ~/.agents/agents/<name>/AGENT.md after explicit personal/global write scope)
   -> the write-completion path validates the AGENT.md and reloads the agent registry
      (the mirror of skills' notifySkillContentWritten -> reloadAll, for agents)
   -> the new agent is live (durable peer, in the dock, listed in Settings)
@@ -93,14 +94,13 @@ user asks for an agent
    the full AGENT.md, confirm with the user, then `file_write` it.** The direct twin of the
    bundled `skillify` skill.
 
-2. **Self-definition write boundary** (the enabling change). Add the agent's own self-definition
-   directories — `~/.agents/agents` + `~/.agents/skills` (user scope) and their
-   `<localRoot>/.agents/...` project counterparts — as **standing writable roots** for the file
-   tools (extend `allowedRealRoots` in `agentLocalTools.ts`), modeled as a first-class **"agent
-   self-definition surface"**, NOT via the per-session folder-handoff gesture. This is what lets
-   `file_write` reach the real user-scope registry; it also lets `skillify` write user-scope
-   skills (closing the latent gap). Narrow: only these two named directory families, never all
-   of `~`.
+2. **Self-definition write boundary** (the enabling change). Treat project self-definition
+   directories — `<localRoot>/.agents/agents` and `<localRoot>/.agents/skills` — as the standing
+   file-tool surface. Personal/global roots (`~/.agents/agents` and `~/.agents/skills`) remain
+   reachable only through an explicit handed write scope, not implicitly from every workspace.
+   The content gateway still recognizes both project and personal/global targets once the
+   ordinary file-tool permission boundary has allowed the path. This keeps the authoring model
+   first-class without turning a random workspace into a bridge to the user's global registry.
 
 3. **Agent-registry hot-reload hook**. In the file-write completion path (`agentLocalTools.ts`,
    where skill writes are already recognized → validated → reload), recognize writes under the
@@ -121,9 +121,9 @@ user asks for an agent
   (`AgentDelegationPermissionMode`, `types.ts:798/851`; `AgentEditor` offers only `restricted`);
   `tools` only filters wiring; every run hits the global `decideAgentOperationEffect` + floor.
   Nothing escalates — which is why no ceiling and no privileged bridge tool are needed.
-- **The boundary stays narrow + jailed.** `file_write` still realpath-jails every write; this
-  plan adds **exactly** the self-definition dirs to the allowed roots and nothing else. Writes
-  anywhere outside the workdir + self-dirs are still refused.
+- **The boundary stays narrow + jailed.** `file_write` still realpath-jails every write; project
+  self-definition dirs are inside the workdir, and personal/global self-definition dirs require
+  explicit write scope. Writes anywhere outside the workdir + handed scopes are still refused.
 - **Audit.** The write/reload path emits a creation event to the agent event log (initiator =
   `user`, via = `create-agent` skill), consistent with the self-mod event-log requirement.
 - **Aligned with #277.** Writing an agent is **not** on the [[agent-permission-blacklist-default-allow]]
@@ -133,14 +133,14 @@ user asks for an agent
 
 ### Stance & boundary scope (the load-bearing PM decision)
 
-This **deliberately makes the agent's self-definition dirs model-writable** — what the old
-design refused ("the model never reaches this surface — only the user, through the settings
-UI"). Skills already crossed this line conceptually (model-writable via `file_write`, write-gate
-removed, safety = the invocation floor); this **completes** it — agents **and** user-scope skills
-become writable through the same narrow boundary. It is the **minimal, principled slice** of the
-filesystem-contract change #277 deferred: only the agent's own skills/agents dirs, never a
-general jail removal. The created agent is still `restricted` + globally gated, so no new
-capability is unlocked. The reversal is the thing `/security-review` confirms at the gate.
+This **deliberately makes project self-definition dirs model-writable** — what the old design
+refused ("the model never reaches this surface — only the user, through the settings UI").
+Skills already crossed this line conceptually (model-writable via `file_write`, write-gate
+removed, safety = the invocation floor); this **completes** it for project agents and skills.
+Personal/global agents and skills remain writable through existing file tools only after an
+explicit personal/global write scope, not through a new privileged mutation API. The created
+agent is still `restricted` + globally gated, so no new capability is unlocked. The reversal is
+the thing `/security-review` confirms at the gate.
 
 ### Reuse (no new infrastructure)
 
@@ -154,15 +154,15 @@ capability is unlocked. The reversal is the thing `/security-review` confirms at
 
 - **New:** the `create-agent` bundled skill (body + entry in `DEFAULT_BUILT_IN_SKILLS`,
   `agentSkills.ts`).
-- **Changed:** `agentLocalTools.ts` — add the self-definition dirs to `allowedRealRoots` (the
-  write-boundary slice); recognize agent-dir writes in the write-completion path → validate the
-  AGENT.md → `reloadAgentDefinitions()` + surface the new agent (mirror the skills branch); a
-  creation audit event.
+- **Changed:** `agentLocalTools.ts` — recognize agent-dir writes in the write-completion path
+  after the ordinary file boundary allows the path → validate the AGENT.md →
+  `reloadAgentDefinitions()` + surface the new agent (mirror the skills branch); a creation
+  audit event.
 - **Tests + spec:** `docs/spec/agent-tool-permissions.md` (the self-definition write boundary);
   `docs/spec/agent-tool-design.md` (the `create-agent` skill + the agent-write reload affordance);
   **revise the [[agent-self-modification]] / `agentAuthoring` "model never writes the agent
-  registry" stance** — agents (and user-scope skills) join as model-writable, jailed-to-self-dirs,
-  hot-reloaded, invocation-gated.
+  registry" stance** — project agents and skills join as model-writable, hot-reloaded,
+  invocation-gated self-definition content; personal/global targets require explicit write scope.
 - **Not in this plan:** no new tool, no custom UI, no IPC round-trip, no ceiling clamp.
 
 ### Gate
@@ -173,13 +173,11 @@ ultra`. No custom UI ships, so there is no visual gate.
 
 ## Open questions
 
-- **Boundary scope.** Extend writability to the **user** self-dirs only (`~/.agents/{agents,skills}`),
-  or also the **project** counterparts (`<localRoot>/.agents/...`)? *Recommend: both — it is the
-  same `allowedRealRoots` code, and the user dirs are the meaningful ones.*
-- **Fold in the skillify user-scope fix?** Making `~/.agents/skills` writable closes skillify's
-  own gap. Ship it as part of this PR (same boundary line), or note-and-defer? *Recommend:
-  include — leaving skills half-fixed is incoherent. It does expand the PR into skillify
-  behavior; flag at review.*
+- **Boundary scope.** Project self-dirs are standing file-tool roots because they are under the
+  workdir. User/global self-dirs require explicit handed write scope; this avoids making every
+  workspace an ambient bridge to `~/.agents`.
+- **Fold in the skillify user-scope fix?** User/global `~/.agents/skills` is recognized by the
+  content gateway when an explicit write scope reaches it, but it is not implicitly writable.
 - **Confirmation richness.** `skillify`-style in-chat confirm only (recommend — matches the #277
   novice direction), or also offer a one-click "open the existing agent editor prefilled"?
   *Recommend: in-chat only for v1; the Settings editor already handles post-hoc edits.*
@@ -197,15 +195,16 @@ ultra`. No custom UI ships, so there is no visual gate.
 
 - [ ] `create-agent` bundled skill (interview → draft AGENT.md → show → confirm → `file_write`)
       in `DEFAULT_BUILT_IN_SKILLS`.
-- [ ] Self-definition write boundary: add `~/.agents/{agents,skills}` (+ project counterparts) to
-      the file tools' allowed write roots as a standing first-class root (not folder-handoff).
+- [ ] Self-definition write boundary: keep project `.agents/{agents,skills}` under the normal
+      workdir file area, require explicit write scope for user/global `~/.agents/{agents,skills}`,
+      and validate both through the same content gateway.
 - [ ] Agent-registry hot-reload hook in the file-write completion path: recognize agents-dir
       writes, validate the AGENT.md, `reloadAgentDefinitions()` + surface the new agent (mirror
       `notifySkillContentWritten` → `reloadAll`); malformed → graceful file-write error.
 - [ ] Creation audit event (initiator = `user`, via = `create-agent` skill).
-- [ ] Tests: interview → write → agent-live happy path; a user-scope **skill** write now succeeds
-      (skillify gap fix); malformed AGENT.md → graceful error, registry intact; a written agent
-      runs `restricted` + gated; writes outside the workdir + self-dirs are still refused.
+- [ ] Tests: interview → write → agent-live happy path; malformed AGENT.md → graceful error,
+      registry intact; a written agent runs `restricted` + gated; writes outside the workdir +
+      handed scopes are still refused; user/global self-definition writes require explicit scope.
 - [ ] Spec sync: `agent-tool-permissions.md` (self-definition write boundary) +
       `agent-tool-design.md` + revise the [[agent-self-modification]] "model never writes the
       agent registry" stance.

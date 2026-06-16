@@ -23,6 +23,7 @@ import {
   type ToolAccessScope,
   type ToolActionDescriptor,
 } from './agentToolPermissionRules';
+import { selfDefinitionRootEntries } from './agentAuthoring';
 
 export type { AgentPermissionMode } from '../core/types';
 export type {
@@ -327,12 +328,9 @@ export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = 
 }
 
 function defaultSelfDefinitionRoots(workspaceRoot: string): string[] {
-  return [
-    path.join(homedir(), '.agents', 'skills'),
-    path.join(homedir(), '.agents', 'agents'),
-    path.join(workspaceRoot, '.agents', 'skills'),
-    path.join(workspaceRoot, '.agents', 'agents'),
-  ].map((root) => path.resolve(root));
+  return selfDefinitionRootEntries(workspaceRoot)
+    .filter((entry) => entry.scope === 'project')
+    .map((entry) => path.resolve(entry.dir));
 }
 
 export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInput): AgentPermissionDecision {
@@ -1115,6 +1113,23 @@ function deriveBashActionDescriptors(
       highConsequence: true,
       command,
       code: 'sensitive_persistence_write',
+      floor: 'permission_self_mod',
+      platformHardBlock: true,
+      redline: true,
+    })];
+  }
+
+  if (floorCommands.some((floorCommand) => looksLikeSelfDefinitionShellWrite(floorCommand, workspaceRoot))) {
+    return [descriptor('bash', 'file.write.sensitive_local_path', {
+      accessScope: 'sensitive_local_path',
+      title: 'blocked self-definition shell write',
+      summary: command,
+      consequence: 'Blocked a shell command that appears to write skill or agent definition content outside the validated file_write/file_edit gateway.',
+      reversible: false,
+      externalEffect: false,
+      highConsequence: true,
+      command,
+      code: 'self_definition_shell_write',
       floor: 'permission_self_mod',
       platformHardBlock: true,
       redline: true,
@@ -1950,6 +1965,22 @@ function looksLikeSoftPersistenceWrite(command: string, workspaceRoot: string): 
     const resolved = resolvePermissionPath(workspaceRoot, cleaned);
     return isSoftBlockedPersistenceWritePath(resolved);
   });
+}
+
+function looksLikeSelfDefinitionShellWrite(command: string, workspaceRoot: string): boolean {
+  const words = parseShellWords(command);
+  if (!hasSensitivePersistenceWriteTrigger(command, words)) return false;
+  return words.some((word) => {
+    const cleaned = stripShellPathDecoration(word);
+    if (!looksLikePath(cleaned) && !cleaned.startsWith('.agents/')) return false;
+    const resolved = resolvePermissionPath(workspaceRoot, cleaned);
+    return isSelfDefinitionPath(resolved, workspaceRoot);
+  });
+}
+
+function isSelfDefinitionPath(filePath: string, workspaceRoot: string): boolean {
+  const resolved = path.resolve(filePath);
+  return selfDefinitionRootEntries(workspaceRoot).some((entry) => isPathInside(path.resolve(entry.dir), resolved));
 }
 
 function hasSensitivePersistenceWriteTrigger(command: string, words: readonly string[]): boolean {

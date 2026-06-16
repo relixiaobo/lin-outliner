@@ -1210,7 +1210,10 @@ export class AgentDelegationRuntime {
       childRunCompacted: (snapshot, input) => this.host.childRunCompacted(snapshot, input),
       childRunStatusChanged: (snapshot) => this.host.childRunStatusChanged(snapshot),
       notifyChildRun: (snapshot) => this.host.notifyChildRun(snapshot),
-      agentDefinitionContentWritten: (filePaths) => this.host.agentDefinitionContentWritten?.(filePaths) ?? Promise.resolve(),
+      agentDefinitionContentWritten: async (filePaths) => {
+        this.reloadAgentDefinitions();
+        await this.host.agentDefinitionContentWritten?.(filePaths);
+      },
       reportError: (report) => this.host.reportError?.(report),
       restoreChildRunLedger: (runId) => this.host.restoreChildRunLedger(runId),
       persistToolOutputPayload: (toolCallId, toolName, text) => (
@@ -1448,7 +1451,16 @@ class AgentDefinitionRegistry {
   }
 
   private async addLoadedAgent(agent: AgentDefinition): Promise<void> {
-    const fileId = await agentFileIdentity(agent.agentFile);
+    const existing = this.agents.get(agent.name);
+    if (existing?.source === 'built-in') {
+      if (agent.source === 'built-in') {
+        throw new Error(`Duplicate built-in agent "${agent.name}" from ${existing.agentFile} and ${agent.agentFile}.`);
+      }
+      return;
+    }
+    const fileId = agent.source === 'built-in'
+      ? agent.agentFile
+      : await agentFileIdentity(agent.agentFile);
     if (this.seenAgentFileIds.has(fileId)) return;
     this.seenAgentFileIds.add(fileId);
     this.agents.set(agent.name, agent);

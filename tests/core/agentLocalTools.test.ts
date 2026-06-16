@@ -357,6 +357,22 @@ describe('agent local tools', () => {
     });
   });
 
+  test('file_convert cannot target self-definition outputs', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const inputPath = path.join(workspaceRoot, 'image.png');
+      await writeFile(inputPath, makePng(4, 4));
+
+      const result = await executeTool(workspaceRoot, 'file_convert', {
+        input_path: inputPath,
+        output_format: 'pdf',
+        output_path: path.join(workspaceRoot, '.agents', 'agents', 'convert-agent', 'AGENT.md'),
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('self_definition_convert_output_not_supported');
+    });
+  });
+
   test('file_convert renders every PDF page to image files when pages is omitted', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const fakeBin = path.join(workspaceRoot, 'fake-pdf-bin');
@@ -1211,6 +1227,55 @@ describe('agent local tools', () => {
     });
   });
 
+  test('file_write allows root-level self-definition README files', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const skillReadme = path.join(workspaceRoot, '.agents', 'skills', 'README.md');
+      const agentReadme = path.join(workspaceRoot, '.agents', 'agents', 'README.md');
+
+      const skillWrite = await executeTool(workspaceRoot, 'file_write', {
+        file_path: skillReadme,
+        content: 'Skill authoring notes\n',
+      });
+      const agentWrite = await executeTool(workspaceRoot, 'file_write', {
+        file_path: agentReadme,
+        content: 'Agent authoring notes\n',
+      });
+
+      expect(skillWrite.ok).toBe(true);
+      expect(agentWrite.ok).toBe(true);
+      expect(await readFile(skillReadme, 'utf8')).toBe('Skill authoring notes\n');
+      expect(await readFile(agentReadme, 'utf8')).toBe('Agent authoring notes\n');
+    });
+  });
+
+  test('file_write rejects agent definition symlink escapes before validation', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-definition-escape-'));
+      try {
+        await mkdir(path.join(workspaceRoot, '.agents'), { recursive: true });
+        await symlink(outsideRoot, path.join(workspaceRoot, '.agents', 'agents'), 'dir');
+
+        const result = await executeTool(workspaceRoot, 'file_write', {
+          file_path: path.join(workspaceRoot, '.agents', 'agents', 'escape-agent', 'AGENT.md'),
+          content: [
+            '---',
+            'name: Escape Agent',
+            'description: Attempts to escape through symlink.',
+            'permission-mode: restricted',
+            '---',
+            'Do not write outside the workspace.',
+            '',
+          ].join('\n'),
+        });
+
+        expect(result.ok).toBe(false);
+        expect(result.error?.code).toBe('path_outside_local_root');
+      } finally {
+        await rm(outsideRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   test('agent definition writes can edit AGENT.md but reject support files and trusted mode', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const notifications: string[][] = [];
@@ -1291,6 +1356,67 @@ describe('agent local tools', () => {
       expect((supportWrite.details as ToolEnvelope<unknown>).ok).toBe(false);
       expect((supportWrite.details as ToolEnvelope<unknown>).error?.code).toBe('unsupported_agent_definition_file');
       expect(notifications).toEqual([[agentFile], [agentFile]]);
+    });
+  });
+
+  test('agent definition writes reject reserved names, unsafe metadata, and case variants', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, undefined, {
+        notifyAgentDefinitionContentWritten: async () => {},
+      });
+      const fileWrite = createLocalTools({ workspace }).find((tool) => tool.name === 'file_write')!;
+      const validContent = (name: string, extraFrontmatter: string[] = []) => [
+        '---',
+        `name: ${name}`,
+        'description: Safe restricted test agent.',
+        'permission-mode: restricted',
+        ...extraFrontmatter,
+        '---',
+        'Follow the bounded restricted workflow.',
+        '',
+      ].join('\n');
+      const cases = [
+        {
+          filePath: path.join(workspaceRoot, '.agents', 'agents', 'case-agent', 'agent.md'),
+          content: validContent('Case Agent'),
+          code: 'invalid_agent_definition_filename',
+        },
+        {
+          filePath: path.join(workspaceRoot, '.agents', 'agents', 'CaseAgent', 'AGENT.md'),
+          content: validContent('Case Agent'),
+          code: 'invalid_agent_directory_name',
+        },
+        {
+          filePath: path.join(workspaceRoot, '.agents', 'agents', 'assistant-copy', 'AGENT.md'),
+          content: validContent('Assistant'),
+          code: 'reserved_agent_name',
+        },
+        {
+          filePath: path.join(workspaceRoot, '.agents', 'agents', 'background-agent', 'AGENT.md'),
+          content: validContent('Background Agent', ['background: true']),
+          code: 'unsupported_agent_background_mode',
+        },
+        {
+          filePath: path.join(workspaceRoot, '.agents', 'agents', 'turn-agent', 'AGENT.md'),
+          content: validContent('Turn Agent', ['max-turns: 1000000']),
+          code: 'invalid_agent_max_turns',
+        },
+        {
+          filePath: path.join(workspaceRoot, '.agents', 'agents', 'wildcard-agent', 'AGENT.md'),
+          content: validContent('Wildcard Agent', ["tools: ['*']"]),
+          code: 'invalid_agent_tools',
+        },
+      ];
+
+      for (const item of cases) {
+        const result = await (fileWrite.execute as any)(`reject-${item.code}`, {
+          file_path: item.filePath,
+          content: item.content,
+        });
+        const details = result.details as ToolEnvelope<unknown>;
+        expect(details.ok, item.code).toBe(false);
+        expect(details.error?.code, item.code).toBe(item.code);
+      }
     });
   });
 

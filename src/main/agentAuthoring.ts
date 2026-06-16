@@ -14,15 +14,30 @@ import { access, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { coerceString, parseAgentMarkdownDocument, serializeAgentMarkdown } from '../core/agentMarkdown';
+import { coerceString, parseAgentMarkdownDocument, parseBoolean, parseStringList, serializeAgentMarkdown } from '../core/agentMarkdown';
 import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
-import type { AgentDefinition } from '../core/types';
+import { AGENT_REASONING_LADDER, type AgentDefinition } from '../core/types';
 import { containsSecretLikeContent } from './agentSecretRedaction';
 import { atomicWriteFile } from './jsonFileStore';
 
 export const AGENT_FILE_NAME = 'AGENT.md';
 const MAX_AGENT_MARKDOWN_BYTES = 256 * 1024;
-const AGENT_DIR_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const AGENT_DIR_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const RESERVED_AGENT_NAMES = new Set(['assistant', 'fork', 'neva']);
+const MAX_AGENT_LIST_ITEMS = 32;
+const MAX_AGENT_FRONTMATTER_STRING = 160;
+const MAX_CHAT_AUTHORED_MAX_TURNS = 50;
+const AGENT_FRONTMATTER_ITEM_PATTERN = /^[A-Za-z0-9._:/@()[\]*-]+$/;
+const AGENT_SKILL_ITEM_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+
+export type SelfDefinitionSurface = 'skill' | 'agent';
+export type SelfDefinitionScope = 'user' | 'project';
+
+export interface SelfDefinitionRootEntry {
+  dir: string;
+  surface: SelfDefinitionSurface;
+  scope: SelfDefinitionScope;
+}
 
 export interface AgentDefinitionContentTarget {
   agentName: string;
@@ -57,11 +72,20 @@ export function agentsDirForStorage(storage: AgentStorageLocation, localRoot: st
     : path.join(homedir(), '.agents', 'agents');
 }
 
-export function defaultAgentDefinitionDirs(localRoot: string): Array<{ dir: string; source: AgentDefinition['source'] }> {
+export function selfDefinitionRootEntries(localRoot: string): SelfDefinitionRootEntry[] {
+  const root = path.resolve(localRoot);
   return [
-    { dir: agentsDirForStorage('user', localRoot), source: 'user' },
-    { dir: agentsDirForStorage('project', localRoot), source: 'project' },
+    { dir: path.join(homedir(), '.agents', 'skills'), surface: 'skill', scope: 'user' },
+    { dir: agentsDirForStorage('user', root), surface: 'agent', scope: 'user' },
+    { dir: path.join(root, '.agents', 'skills'), surface: 'skill', scope: 'project' },
+    { dir: agentsDirForStorage('project', root), surface: 'agent', scope: 'project' },
   ];
+}
+
+export function defaultAgentDefinitionDirs(localRoot: string): Array<{ dir: string; source: AgentDefinition['source'] }> {
+  return selfDefinitionRootEntries(localRoot)
+    .filter((entry) => entry.surface === 'agent')
+    .map((entry) => ({ dir: entry.dir, source: entry.scope }));
 }
 
 export function resolveAgentDefinitionContentTarget(filePath: string, localRoot: string): AgentDefinitionContentTarget | null {
@@ -71,16 +95,17 @@ export function resolveAgentDefinitionContentTarget(filePath: string, localRoot:
     const relative = path.relative(agentsDir, resolved);
     if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) continue;
     const parts = relative.split(path.sep).filter(Boolean);
-    if (parts.length === 0) continue;
+    if (parts.length < 2) continue;
     const agentName = parts[0] ?? '';
     const relativePath = parts.slice(1).join('/');
+    const isCaseVariantAgentFile = parts.length === 2 && parts[1]?.toLowerCase() === AGENT_FILE_NAME.toLowerCase() && parts[1] !== AGENT_FILE_NAME;
     return {
       agentName,
       source,
       agentsDir,
       agentRoot: path.join(agentsDir, agentName),
       agentFile: path.join(agentsDir, agentName, AGENT_FILE_NAME),
-      relativePath,
+      relativePath: isCaseVariantAgentFile ? parts.slice(1).join('/') : relativePath,
       isAgentFile: parts.length === 2 && parts[1] === AGENT_FILE_NAME,
     };
   }
@@ -95,6 +120,13 @@ export function validateAgentDefinitionContentWrite(input: {
 }): AgentDefinitionWriteAudit {
   const { target } = input;
   if (!target.isAgentFile) {
+    if (target.relativePath.toLowerCase() === AGENT_FILE_NAME.toLowerCase()) {
+      throw new AgentDefinitionAuthoringError(
+        'invalid_agent_definition_filename',
+        `Agent definition files must be named exactly ${AGENT_FILE_NAME}.`,
+        `Rename the file to ${AGENT_FILE_NAME}; lowercase or mixed-case variants are not accepted.`,
+      );
+    }
     throw new AgentDefinitionAuthoringError(
       'unsupported_agent_definition_file',
       `Only ${AGENT_FILE_NAME} is writable inside agent definition directories.`,
@@ -297,6 +329,14 @@ function validateAgentMarkdownForModelWrite(content: string): void {
       'Add a routing-grade description that explains when this agent should be used.',
     );
   }
+  const normalizedName = normalizeAgentSlug(name);
+  if (RESERVED_AGENT_NAMES.has(normalizedName)) {
+    throw new AgentDefinitionAuthoringError(
+      'reserved_agent_name',
+      `${AGENT_FILE_NAME} cannot use reserved built-in agent name: ${name}`,
+      'Choose a project-specific agent name that does not collide with built-in agents.',
+    );
+  }
   const permissionMode = frontmatter['permission-mode'] ?? frontmatter.permissionMode;
   if (permissionMode !== 'restricted') {
     throw new AgentDefinitionAuthoringError(
@@ -305,6 +345,7 @@ function validateAgentMarkdownForModelWrite(content: string): void {
       'Set permission-mode: restricted. Chat-authored agents do not receive trusted authority.',
     );
   }
+  validateBoundedAgentFrontmatter(frontmatter);
   if (!body.trim()) {
     throw new AgentDefinitionAuthoringError(
       'missing_agent_body',
@@ -315,17 +356,9 @@ function validateAgentMarkdownForModelWrite(content: string): void {
 }
 
 function parseStrictAgentMarkdown(content: string): { frontmatter: Record<string, unknown>; body: string } {
-  const normalized = content.replace(/^\uFEFF/, '');
-  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(normalized);
-  if (!match) {
-    throw new AgentDefinitionAuthoringError(
-      'missing_agent_frontmatter',
-      `${AGENT_FILE_NAME} must start with YAML frontmatter.`,
-      'Use the stable AGENT.md shape: frontmatter, a closing marker, then Markdown instructions.',
-    );
-  }
+  const frontmatterText = strictFrontmatterText(content);
   try {
-    const parsed = parseYaml(match[1] ?? '');
+    const parsed = parseYaml(frontmatterText);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       throw new Error('frontmatter is not an object');
     }
@@ -337,6 +370,112 @@ function parseStrictAgentMarkdown(content: string): { frontmatter: Record<string
     );
   }
   return parseAgentMarkdownDocument(content);
+}
+
+function strictFrontmatterText(content: string): string {
+  const normalized = content.replace(/^\uFEFF/, '');
+  if (!normalized.startsWith('---\n') && !normalized.startsWith('---\r\n')) {
+    throw new AgentDefinitionAuthoringError(
+      'missing_agent_frontmatter',
+      `${AGENT_FILE_NAME} must start with YAML frontmatter.`,
+      'Use the stable AGENT.md shape: frontmatter, a closing marker, then Markdown instructions.',
+    );
+  }
+  const lineEnd = normalized.startsWith('---\r\n') ? '\r\n' : '\n';
+  const endMarker = `${lineEnd}---${lineEnd}`;
+  const end = normalized.indexOf(endMarker, 3);
+  if (end < 0) {
+    throw new AgentDefinitionAuthoringError(
+      'missing_agent_frontmatter',
+      `${AGENT_FILE_NAME} must include a closing YAML frontmatter marker.`,
+      'Use the stable AGENT.md shape: frontmatter, a closing marker, then Markdown instructions.',
+    );
+  }
+  return normalized.slice(3 + lineEnd.length, end).trim();
+}
+
+function validateBoundedAgentFrontmatter(frontmatter: Record<string, unknown>): void {
+  if (frontmatter.background !== undefined && parseBoolean(frontmatter.background) !== false) {
+    throw new AgentDefinitionAuthoringError(
+      'unsupported_agent_background_mode',
+      `${AGENT_FILE_NAME} written through chat cannot enable background mode.`,
+      'Remove background, or set background: false. Configure background behavior outside the chat authoring surface.',
+    );
+  }
+
+  const maxTurns = frontmatter['max-turns'] ?? frontmatter.maxTurns;
+  if (maxTurns !== undefined) {
+    const parsed = typeof maxTurns === 'number'
+      ? maxTurns
+      : typeof maxTurns === 'string' && /^\d+$/.test(maxTurns.trim())
+        ? Number(maxTurns.trim())
+        : NaN;
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_CHAT_AUTHORED_MAX_TURNS) {
+      throw new AgentDefinitionAuthoringError(
+        'invalid_agent_max_turns',
+        `${AGENT_FILE_NAME} max-turns must be an integer between 1 and ${MAX_CHAT_AUTHORED_MAX_TURNS}.`,
+        `Use a bounded max-turns value from 1 to ${MAX_CHAT_AUTHORED_MAX_TURNS}, or omit it.`,
+      );
+    }
+  }
+
+  const model = coerceString(frontmatter.model);
+  if (model !== undefined) {
+    validateBoundedScalarField('model', model, /^[A-Za-z0-9._:/-]+$/);
+  }
+
+  const effort = coerceString(frontmatter.effort);
+  if (effort !== undefined && !AGENT_REASONING_LADDER.includes(effort as (typeof AGENT_REASONING_LADDER)[number])) {
+    throw new AgentDefinitionAuthoringError(
+      'invalid_agent_effort',
+      `${AGENT_FILE_NAME} effort must be one of: ${AGENT_REASONING_LADDER.join(', ')}.`,
+      'Use a supported effort value or omit effort.',
+    );
+  }
+
+  validateBoundedStringList('tools', frontmatter.tools, AGENT_FRONTMATTER_ITEM_PATTERN, { disallowWildcardOnly: true });
+  validateBoundedStringList('disallowed-tools', frontmatter['disallowed-tools'] ?? frontmatter.disallowedTools, AGENT_FRONTMATTER_ITEM_PATTERN);
+  validateBoundedStringList('skills', frontmatter.skills, AGENT_SKILL_ITEM_PATTERN);
+}
+
+function validateBoundedScalarField(field: string, value: string, pattern: RegExp): void {
+  if (value.length > MAX_AGENT_FRONTMATTER_STRING || !pattern.test(value)) {
+    throw new AgentDefinitionAuthoringError(
+      `invalid_agent_${field.replace(/-/g, '_')}`,
+      `${AGENT_FILE_NAME} ${field} contains an unsupported value.`,
+      `Use a simple ${field} value under ${MAX_AGENT_FRONTMATTER_STRING} characters, or omit the field.`,
+    );
+  }
+}
+
+function validateBoundedStringList(
+  field: string,
+  rawValue: unknown,
+  itemPattern: RegExp,
+  opts: { disallowWildcardOnly?: boolean } = {},
+): void {
+  if (rawValue === undefined) return;
+  const items = parseStringList(rawValue);
+  if (!items?.length || items.length > MAX_AGENT_LIST_ITEMS) {
+    throw new AgentDefinitionAuthoringError(
+      `invalid_agent_${field.replace(/-/g, '_')}`,
+      `${AGENT_FILE_NAME} ${field} must contain 1-${MAX_AGENT_LIST_ITEMS} items.`,
+      `Use a bounded ${field} list or omit the field.`,
+    );
+  }
+  for (const item of items) {
+    if (
+      item.length > MAX_AGENT_FRONTMATTER_STRING
+      || !itemPattern.test(item)
+      || (opts.disallowWildcardOnly && item === '*')
+    ) {
+      throw new AgentDefinitionAuthoringError(
+        `invalid_agent_${field.replace(/-/g, '_')}`,
+        `${AGENT_FILE_NAME} ${field} contains an unsupported item: ${item}`,
+        `Use simple bounded ${field} entries; do not use broad wildcards in chat-authored agent definitions.`,
+      );
+    }
+  }
 }
 
 /**

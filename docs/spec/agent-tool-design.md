@@ -1911,8 +1911,9 @@ Result behavior:
   support-file shape and hot-reload the skill registry. Agent-definition writes
   may create or edit exactly one restricted `AGENT.md` under
   `.agents/agents/<agent-name>/AGENT.md`; support files, deletes, trusted
-  permission mode, secret-looking content, and malformed frontmatter are rejected
-  before bytes are written.
+  permission mode, reserved built-in names, unsafe metadata, secret-looking
+  content, and malformed frontmatter are rejected before bytes are written.
+  `file_convert` cannot target self-definition outputs.
 
 ## Shell Tools
 
@@ -2555,8 +2556,9 @@ Runtime control tools are not file tools:
   decision. After that decision, the file-tool gateway recognizes writes under
   user/project agent directories, accepts only `AGENT.md` files with
   `permission-mode: restricted`, validates strict frontmatter/body shape, rejects
-  support files, deletes, and trusted permission mode, and hot-reloads live agent
-  registries on success.
+  support files, deletes, trusted permission mode, reserved built-in names, and
+  unsafe metadata, and hot-reloads live agent registries on success. Shell writes
+  and `file_convert` are not self-definition authoring routes.
 
 ## Mapping to Current Lin Commands
 
