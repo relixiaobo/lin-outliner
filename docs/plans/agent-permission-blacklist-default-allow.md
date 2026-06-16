@@ -10,7 +10,8 @@ pretending that frequent permission cards are a safety mechanism.
 Replace tool permission prompts with a **default-allow blocklist model**:
 
 - normal agent work runs silently;
-- the runtime blocks only a small, non-configurable catastrophic safety floor;
+- the runtime keeps a tiny non-configurable redline and a small user-overridable
+  soft blocklist;
 - users can add blocks from the execution log after seeing what happened;
 - logs become the accountability and correction surface, not a stream of
   interruptive preflight prompts.
@@ -22,7 +23,7 @@ hardening are not relaxed.
 
 ## Non-goals
 
-- Do not give the model authority to disable the runtime hard floor. The model
+- Do not give the model authority to disable the runtime redline. The model
   may choose actions, but the host still owns catastrophic blocks.
 - Do not remove logging. Default allow only works if tool calls, permission
   decisions, and results remain durable and inspectable.
@@ -50,40 +51,65 @@ bad behavior; shipping only the UI would misrepresent the runtime.
 The policy becomes:
 
 ```text
-ALLOW  -> default for everything not blocked
-BLOCK  -> runtime hard floor OR user blocklist match
+ALLOW       -> default for everything not blocked
+SOFT BLOCK  -> built-in or user blocklist match; user may allow once/always
+HARD BLOCK  -> tiny redline floor; no in-app override
 ```
 
 There is no default `ask` outcome for agent tool calls.
 
 The practical rule is:
 
-- **Before execution:** block only the most dangerous actions.
+- **Before execution:** block only the most dangerous actions, and make most
+  blocks user-overridable.
 - **During execution:** log every tool call, derived action kind, and result.
 - **After execution:** let the user block repeat behavior directly from the log.
 
 This matches the actual value of a novice approval prompt: approval is removed
-because it does not add reliable judgment. The runtime keeps the only checks that
-must not depend on user comprehension or model judgment.
+because it does not add reliable judgment. The runtime keeps the checks that
+must not depend on model judgment, but only the smallest redline remains
+non-overridable.
 
-### Runtime hard floor
+### Built-in blocks: as small as possible
 
-Keep the hard floor small, named, and non-configurable:
+Built-in blocks should be reduced to the minimum set that protects novices from
+catastrophic or obviously unintended outcomes. A built-in block is not the same
+thing as a permanent ban:
 
-- **host destruction**: root/home/whole-workdir recursive deletion, disk erase,
-  raw disk overwrite, shutdown/reboot, recursive ownership or permission changes
-  at filesystem root;
+- **soft built-in block**: default is block, but the user may allow once or
+  always allow that exact boundary;
+- **hard redline block**: no in-app override; the user can still do the action
+  manually outside Tenon if they truly intend it.
+
+Most built-in blocks should be soft. Hard redlines are for actions where an
+in-app "allow" button would make Tenon a credential-exfiltration, payment, or
+host-destruction launcher.
+
+Recommended split:
+
+**Hard redline, no in-app override**
+
 - **credential exfiltration**: sensitive credential paths combined with network
   or opaque outward sinks;
-- **persistence / self-amplification**: writes to shell startup files, cron,
-  LaunchAgents, systemd user units, git hooks/config internals, provider stores,
-  secret stores, and permission stores;
-- **remote code pipe / hidden execution**: `curl|wget ... | sh`, decode-and-pipe
-  shell forms, `eval`, and other obviously obfuscated shell construction;
 - **permission self-modification**: agent attempts to alter its own permission
   rules through a tool call;
-- **payment / purchase**: any future payment action remains blocked unless a
-  separate product flow exists.
+- **provider/secret store self-modification**: writes to provider credentials or
+  secret stores;
+- **payment / purchase**: any future payment action unless a separate
+  product-owned payment confirmation flow exists;
+- **host destruction**: root/home/whole-workdir recursive deletion, disk erase,
+  raw disk overwrite, shutdown/reboot, recursive ownership or permission changes
+  at filesystem root.
+
+**Soft built-in block, user-overridable**
+
+- **remote code pipe / hidden execution**: `curl|wget ... | sh`,
+  decode-and-pipe shell forms, `eval`, and other obviously obfuscated shell
+  construction;
+- **persistence / self-amplification**: writes to shell startup files, cron,
+  LaunchAgents, systemd user units, and git hooks/config internals;
+- **broad external publishes** if main review decides novices need one remaining
+  default guard for deployment/publish flows.
 
 Everything else defaults to allow, including:
 
@@ -94,7 +120,7 @@ Everything else defaults to allow, including:
 - dependency installs;
 - external CLI actions such as GitHub, git push, deploy commands, and message
   sends, unless the user has added a matching block rule or the action hits the
-  hard floor.
+  built-in blocklist.
 
 This is intentionally wider than the current consequence model. The safety bet
 shifts from "interrupt before commits" to "model judgment + durable audit +
@@ -114,22 +140,25 @@ The implementation should parse static heredocs as a single outer shell command:
 
 - classify the outer command (`python3`, `node`, `bash`, etc.);
 - do not split the heredoc body on shell operators;
-- still run whole-command hard-floor scans for remote-code pipes and sensitive
-  exfiltration where the shell surface actually contains them;
+- still run whole-command redline/soft-block scans where the shell surface
+  actually contains them;
 - treat the heredoc body as local code execution, which defaults to allow unless
-  the hard floor is hit.
+  a redline or soft-block rule is hit.
 
-This parser fix is required even under default allow because the hard floor must
-not be triggered by false shell segments inside ordinary generated content.
+This parser fix is required even under default allow because redline and
+soft-block rules must not be triggered by false shell segments inside ordinary
+generated content.
 
 ### User blocklist
 
-Extend the permission store from "remember grants" to "remember blocks":
+Extend the permission store from "remember grants" to "remember blocks" and
+soft-block overrides:
 
 ```ts
 interface AgentToolPermissionSettings {
   grants?: string[]; // legacy/read-only until removed
   blocks: string[];
+  softBlockAllows: string[];
 }
 ```
 
@@ -157,6 +186,42 @@ Recommended matching semantics:
 
 Invalid or unsupported block strings become diagnostics. Diagnostics are shown
 in Settings -> Security and ignored by the evaluator.
+
+`softBlockAllows` stores user exits from built-in soft blocks. It must not apply
+to hard redlines. It uses the same narrow rule grammar as blocks:
+
+```text
+Command(curl https://example.com/install.sh | sh)
+Scope(write:/Users/me/Library/LaunchAgents/example.plist)
+Action(shell.remote_code_pipe)
+```
+
+For user-created block rules, "always allow" removes the matching user block
+rather than adding a contradictory allow. For built-in soft blocks, it adds a
+narrow `softBlockAllows` exception.
+
+### Soft-block interruption UI
+
+Default allow should remove ordinary approval prompts, but a soft-block hit
+needs an explicit user exit. The UI should render a compact interruption card
+with these actions:
+
+- **Allow once**: execute this tool call once, record the override in the log,
+  do not persist a rule.
+- **Always allow**: for a user block, remove that block; for a built-in soft
+  block, persist a narrow `softBlockAllows` exception.
+- **Block now**: stop the tool call immediately.
+
+The card should default to safe inactivity:
+
+- show a short countdown;
+- if the user does nothing, resolve as blocked when the countdown expires;
+- clicking **Block now** resolves immediately;
+- the countdown length should be long enough to notice but short enough not to
+  stall the agent indefinitely.
+
+This is deliberately different from today's approval card. It appears only when
+the action has already matched a block rule. Normal local work never asks.
 
 ### Log-first correction UI
 
@@ -186,6 +251,11 @@ with no derived path should offer command/action blocks, not a fake folder
 block. A blocked item should show a small "Blocked by your rule" state on future
 log entries.
 
+For soft-blocked built-in behavior, future log entries should distinguish
+"blocked by Tenon default" from "blocked by your rule" so users understand
+whether **Always allow** removes their own block or creates a default-block
+exception.
+
 This converts the log into the user's correction mechanism: let the agent work,
 then let the user say "never do this again" from the concrete thing they saw.
 
@@ -194,7 +264,8 @@ then let the user say "never do this again" from the concrete thing they saw.
 Simplify Security around the new model:
 
 - show one "Default allow" delegated-operator row;
-- list the built-in hard floor as read-only "Always blocked by Tenon";
+- list built-in soft blocks and user-created "always allow" exceptions;
+- list the tiny hard redline as read-only "Always blocked by Tenon";
 - list user block rules with revoke buttons;
 - keep accepted skill hashes and diagnostics;
 - remove any UI that implies ordinary permission prompts are still the primary
@@ -204,7 +275,8 @@ The page should avoid expert-only language where possible. The product truth is:
 
 ```text
 Tenon lets agents act by default. Tenon blocks catastrophic actions. You can
-block repeated behavior from the log.
+block repeated behavior from the log. If Tenon blocks a risky action by default,
+you can allow it once or always allow that narrow behavior.
 ```
 
 ### Runtime behavior
@@ -212,9 +284,10 @@ block repeated behavior from the log.
 `evaluateAgentToolPermission` should resolve in this order:
 
 1. derive descriptors and effects;
-2. block platform hard-floor descriptors;
+2. block hard redline descriptors;
 3. apply the restricted skill/agent sandbox;
-4. block matching user blocklist rules;
+4. if a soft built-in block or user blocklist matches, return `soft_blocked`
+   unless a matching `softBlockAllows` exception applies;
 5. allow everything else.
 
 The evaluator may still emit `tool.permission.checked` and
@@ -222,11 +295,15 @@ The evaluator may still emit `tool.permission.checked` and
 shape:
 
 - `allow` for default or non-matching blocklist;
-- `blocked` for hard floor or user blocklist.
+- `soft_blocked` for user-overridable blocklist hits;
+- `blocked` for hard redlines and expired/explicit soft-block denials.
 
-There is no interactive `ask` state for tool permission. Existing approval
+There is no interactive `ask` state for ordinary permission. Existing approval
 events remain for non-permission approvals such as skill trust and user
-questions, and may remain in the schema for backward compatibility.
+questions, and may remain in the schema for backward compatibility. Soft-block
+interruptions can reuse the approval plumbing internally, but the product copy
+should be "blocked by default; allow an exception" rather than "please approve
+this ordinary action."
 
 ### File boundary
 
@@ -253,8 +330,8 @@ happened later:
 - tool name;
 - derived action kinds;
 - command/path/external target summary;
-- whether the decision came from default allow, built-in hard floor, restricted
-  sandbox, or user blocklist;
+- whether the decision came from default allow, built-in redline, restricted
+  sandbox, built-in soft block, user blocklist, or soft-block exception;
 - result summary and error state.
 
 The log must be good enough for a user or reviewer to answer: "What did the
@@ -265,7 +342,7 @@ agent do, and how do I stop that kind of thing next time?"
 Expected implementation touchpoints:
 
 - `src/core/agentPermissionModel.ts` — decision vocabulary and action metadata.
-- `src/main/agentPermissions.ts` — evaluator, hard floor, heredoc parsing,
+- `src/main/agentPermissions.ts` — evaluator, redline/soft-block matching, heredoc parsing,
   blocklist matching.
 - `src/main/agentToolPermissionRules.ts` — parse and serialize block rules.
 - `src/main/agentToolPermissionStore.ts` — persist `blocks` and diagnostics.
@@ -302,7 +379,7 @@ future permission work.
 ## Risks
 
 - **Model mistakes become real actions.** This is the core product tradeoff.
-  The mitigation is a tiny hard floor, durable logs, and fast user block rules,
+  The mitigation is a tiny redline, durable logs, and fast user block rules,
   not preflight prompts.
 - **External mutations may surprise users.** Default allow includes external
   CLIs unless blocked. If that is too broad in review, the fallback is a very
@@ -313,9 +390,13 @@ future permission work.
   details.
 - **False hard blocks remain costly.** The heredoc parser fix and a broader
   generated-artifact corpus are required before the policy is usable.
+- **Soft-block cards can drift back into approval fatigue.** Keep the built-in
+  soft block set tiny; if users see these cards frequently, the model has
+  reverted to prompt-driven permissions.
 - **Unattended runs get more powerful.** Scheduled/background runs will no
   longer fail just because an action would have asked. They still need the hard
-  floor and user blocklist.
+  redline and user blocklist. A soft-block hit in an unattended run should resolve
+  as blocked after the same countdown policy, without waiting for user input.
 
 ## Open Questions
 
@@ -335,20 +416,29 @@ future permission work.
 4. What should happen to legacy grants?
    - Recommendation: parse them for diagnostics only, then normalize them away
      on next write. Default allow makes grants obsolete.
+5. Which built-in blocks are hard redlines versus soft blocks?
+   - Recommendation: keep the hard redline tiny: credential exfiltration,
+     permission/provider/secret self-modification, payments without product
+     flow, and root/home/disk/whole-workdir host destruction. Make remote-code
+     pipes and persistence writes soft blocks with allow-once/always-allow exits.
 
 ## Implementation Checklist
 
 - [ ] Add blocklist parsing, diagnostics, and persistence.
+- [ ] Add `softBlockAllows` parsing, diagnostics, and persistence.
 - [ ] Change permission evaluator from `allow | ask | deny` defaulting to
-      `allow | blocked`.
-- [ ] Keep hard-floor blocks non-configurable.
+      `allow | soft_blocked | blocked`.
+- [ ] Split built-in blocks into soft user-overridable blocks and tiny hard
+      redlines.
+- [ ] Add soft-block UI with allow once, always allow, block now, and countdown
+      auto-block.
 - [ ] Add static heredoc parsing so generated Python/Node artifacts do not
       create fake shell segments.
 - [ ] Remove ordinary permission approval suspension from runtime tool calls.
 - [ ] Add log row actions to create block rules from concrete executed behavior.
-- [ ] Rebuild Settings -> Security around default allow + hard floor + user
-      blocks.
+- [ ] Rebuild Settings -> Security around default allow + redline + soft blocks
+      + user blocks.
 - [ ] Update specs.
-- [ ] Add core tests for default allow, hard floor, blocklist matching, heredoc
+- [ ] Add core tests for default allow, redline, soft blocks, blocklist matching, heredoc
       commands, and restricted sandbox preservation.
 - [ ] Add renderer tests for log block actions and Security block management.
