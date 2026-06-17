@@ -1150,26 +1150,37 @@ category history; see "Settings window".)
   body is NOT indented into an avatar gutter, so a Channel reply reclaims that
   horizontal space. (A DM assistant row carries no attribution header, so its
   content is full-width already.)
-- Channel activity is an in-flow presence row directly above the composer, not a
-  transcript row, bottom toolbar, or floating corner pill. It lives in normal
-  layout flow (it occupies its own row, so it never overlaps — 穿模 — the last
-  transcript message), and it is removed entirely when nothing is in flight. The
-  collapsed row is a single quiet trigger: a compact stack of up to three working
-  agent avatars (a same-size overlapping `+n` count chip stands in for any
-  beyond), a generic working summary (≤2 working → names, ≥3 → count; never the
-  per-agent state), and an animated typing-dots affordance. The trigger is a real
-  `menu` button (`aria-haspopup="menu"`, `aria-expanded`, `aria-controls`) and
-  carries no hover layout change (B7) and no system accent (B3/B4). Clicking it
-  opens an opaque level-1 menu — NOT translucent material (so transcript text can
-  never bleed through it) — built on the shared overlay primitives
+- Channel activity is an in-flow presence row centered directly above the
+  composer with the standard `--space-3` vertical gap, not a transcript row,
+  bottom toolbar, or floating corner pill. It lives in normal layout flow (it
+  occupies its own row, so it never visually overlaps the last transcript
+  message), and it is removed entirely when nothing is in flight. The collapsed
+  row is a single quiet trigger: a compact stack of up to three working agent
+  avatars (a same-size overlapping `+n` count chip stands in for any beyond), a
+  generic working summary (≤2 working → names, ≥3 → count; never the per-agent
+  state), and an animated typing-dots affordance. The trigger is a real `menu`
+  button (`aria-haspopup="menu"`, `aria-expanded`, `aria-controls`) and carries no
+  hover layout change (B7) and no system accent (B3/B4). Clicking it opens an
+  opaque level-1 menu — NOT translucent material (so transcript text can never
+  bleed through it) — built on the shared overlay primitives
   (`MenuSurface` + `useAnchoredOverlay` for viewport flip/clamp +
   `useMenuKeyboard` for Escape / roving / focus-restore), portaled to `<body>`
   and anchored to the trigger so it can never run off-screen. The menu shows the
   live working set (no frozen snapshot), a compact title with a "Stop all" action
-  for runs that can be stopped, and one row per agent: avatar + name on one line,
-  a quiet state label with a small semantic status dot on the next, and a fixed
-  trailing per-run stop column when stopping is available. Clicking a row drills
-  into that run's detail view and closes the menu. Row hover remains neutral fill.
+  for runs that can be stopped. The menu geometry is fixed and tokenized: 8px
+  outer padding on every side, a 24px header row, 6px between header and list, 28px
+  list rows, 4px horizontal row inset, 6px avatar-to-status text gap, 8px
+  status-to-stop column gap, and a 20px per-run stop control. Each list row shows
+  avatar immediately followed by a natural-language status line such as "Neva is
+  thinking..." / "Neva is using tools..." / "Neva is waiting..." — no color-coded
+  tool-state dots. A per-run stop control uses the same stop glyph as the
+  composer but is an unboxed row action by default: no background in the resting
+  state, no hover box, and only the glyph color deepens on hover/focus. It sits
+  inside the row when stopping is available. "Stop all" is also a quiet text
+  action, not a pill: it has no resting or hover background, and keyboard focus is
+  indicated with text underline plus color deepening instead of a boxed control.
+  Clicking a row drills into that run's detail view and closes the menu. Row hover
+  remains neutral fill.
 - Message metadata is quiet by default. Time separators appear only at meaningful
   transcript gaps; right-click opens the native message menu, whose Details action
   shows timestamp, speaker, model, and token usage in a small anchored popover.

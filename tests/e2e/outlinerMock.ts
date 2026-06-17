@@ -3290,25 +3290,36 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       coordinator: true,
     },
   ];
-  const projectionMultiAgent = projectionMembers
-    .filter((member: any) => member.principal?.type === 'agent').length >= 2;
+  const projectionAgentCount = projectionMembers
+    .filter((member: any) => member.principal?.type === 'agent').length;
+  const projectionChannel = conversationId.startsWith('lin-agent-channel-')
+    || conversationId.startsWith('mock-agent-channel')
+    || projectionAgentCount >= 2;
 
   const childRunRows = [...rows];
   const orderedRuns = Object.values(childRuns).sort(
     (left: any, right: any) => left.startedAt - right.startedAt || String(left.id).localeCompare(String(right.id)),
   );
   for (const run of orderedRuns as any[]) {
-    // Mirror insertChildRunRows: a DM (non-multi-agent) child run spawned by a tool
+    // Mirror insertChildRunRows: a DM child run spawned by a tool
     // call folds into its spawning turn's process (the tool-call row renders it
     // inline), so it gets NO conversation-level boundary row. The boundary stays for
-    // a multi-agent Channel turn and a parentless command fire.
-    if (!projectionMultiAgent && run.parentToolCallId) continue;
+    // a Channel turn and a parentless command fire.
+    if (!projectionChannel && run.parentToolCallId) continue;
     const row = { id: `child-run:${run.id}`, kind: 'child-run', childRunId: run.id };
     const insertAt = childRunInsertIndex(childRunRows, run);
     if (insertAt < 0) childRunRows.push(row);
     else childRunRows.splice(insertAt, 0, row);
   }
   const projectionChannelActivity = state.channelActivityEntries ?? state.activityEntries ?? [];
+  const activeRunId = state.activeRunId ?? (state.isStreaming ? 'run-e2e' : null);
+  const transcriptRows = state.transcriptRows ?? childRunRows;
+  const projectedTranscriptRows = projectionChannel && activeRunId
+    ? transcriptRows.filter((row) => {
+        if (row.kind !== 'message') return true;
+        return entities[row.messageId]?.runId !== activeRunId;
+      })
+    : transcriptRows;
   await emitAgentEvent(page, {
     type: 'projection',
     conversationId,
@@ -3319,27 +3330,27 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       revision,
       conversationTitle: state.conversationTitle ?? null,
       members: projectionMembers,
-      activeRunId: state.activeRunId ?? (state.isStreaming ? 'run-e2e' : null),
+      activeRunId,
       channelActivityEntries: projectionChannelActivity,
       povInspectors: state.povInspectors ?? {},
       activeCompaction: state.activeCompaction ?? null,
       activeDream: state.activeDream ?? null,
-      // Mode-specific run state (mirrors the real projection split): isStreaming
-      // in a single-agent (DM) conversation drives the composer; in a multi-agent
-      // Channel the work shows as activity entries, never the composer.
-      dmRunActive: state.dmRunActive ?? (!!state.isStreaming && !projectionMultiAgent),
+      // Mode-specific run state (mirrors the real projection split): DM
+      // streaming drives the composer; Channel work shows as activity entries,
+      // never the composer.
+      dmRunActive: state.dmRunActive ?? (!!state.isStreaming && !projectionChannel),
       channelRunsActive: state.channelRunsActive
-        ?? (projectionChannelActivity.length > 0 || (!!state.isStreaming && projectionMultiAgent)),
+        ?? (projectionChannelActivity.length > 0 || (!!state.isStreaming && projectionChannel)),
       model: state.model ?? {},
       thinkingLevel: state.thinkingLevel ?? 'off',
       pendingToolCallIds: state.pendingToolCallIds ?? [],
       errorMessage: state.errorMessage ?? null,
       rows,
-      transcriptRows: state.transcriptRows ?? childRunRows,
+      transcriptRows: projectedTranscriptRows,
       taskIds,
       childRunIds,
       entities: { messages: entities, childRuns, compactions, tasks },
-      dmStreaming: projectionMultiAgent ? null : streaming,
+      dmStreaming: projectionChannel ? null : streaming,
     },
     timestamp: Date.now(),
   });

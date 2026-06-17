@@ -25,6 +25,23 @@ export function isMultiAgentConversation(members: readonly AgentPrincipal[]): bo
   return channelAgentMembers(members).length >= 2;
 }
 
+/** Runtime Channel identity is carried by the stable conversation id namespace. */
+export function isChannelConversationId(conversationId: string | null | undefined): boolean {
+  return conversationId?.startsWith('lin-agent-channel-') ?? false;
+}
+
+/**
+ * Whether this conversation uses the Channel async work surface. The id check is
+ * authoritative for real data; the roster fallback keeps older tests/fixtures
+ * that predate Channel ids rendering as Channels.
+ */
+export function usesChannelActivitySurface(
+  conversationId: string | null | undefined,
+  members: readonly AgentPrincipal[],
+): boolean {
+  return isChannelConversationId(conversationId) || isMultiAgentConversation(members);
+}
+
 export function channelAgentMembers(
   members: readonly AgentPrincipal[],
 ): Extract<AgentPrincipal, { type: 'agent' }>[] {

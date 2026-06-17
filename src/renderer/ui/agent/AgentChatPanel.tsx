@@ -515,6 +515,22 @@ function activityStateLabel(entry: AgentRenderActivityEntry, t: ReturnType<typeo
   return t.agent.chat.activityStates.thinking;
 }
 
+function activityLineLabel(
+  entry: AgentRenderActivityEntry,
+  name: string,
+  t: ReturnType<typeof useT>,
+): string {
+  if (entry.state === 'using_tools') return t.agent.chat.activityLines.usingTools({ name });
+  if (entry.state === 'received') return t.agent.chat.activityLines.received({ name });
+  return t.agent.chat.activityLines.thinking({ name });
+}
+
+function activityLiveContent(entry: AgentRenderActivityEntry): AssistantMessage['content'] {
+  if (entry.streamingContent?.length) return entry.streamingContent.map((part) => ({ ...part }));
+  if (entry.streamingText) return [{ type: 'text', text: entry.streamingText }];
+  return [];
+}
+
 function activityAgentLabel(
   entry: AgentRenderActivityEntry,
   memberByAgentId: Map<string, AgentRenderMemberView>,
@@ -533,8 +549,8 @@ type ChannelWorkingItem = {
   canStop: boolean;
   entry: AgentRenderActivityEntry;
   label: string;
+  lineLabel: string;
   mention: string;
-  stateLabel: string;
 };
 
 // The per-agent detail menu. Built on the shared overlay primitives (portaled
@@ -624,23 +640,21 @@ function ChannelWorkingDetail({
                 onOpenEntry(item.entry.id);
               }}
               role="menuitem"
-              title={`${item.label} · ${item.stateLabel}`}
+              title={item.lineLabel}
             >
               <AgentIdentityAvatar label={item.label} mention={item.mention} size="xs" />
-              <span className="agent-channel-working-item-name">{item.label}</span>
-              <small className="agent-channel-working-item-state">
-                <span className="agent-channel-working-item-dot" aria-hidden="true" />
-                <span>{item.stateLabel}</span>
-              </small>
+              <span className="agent-channel-working-item-line">{item.lineLabel}</span>
             </ButtonControl>
             {item.canStop ? (
               <IconButton
-                className="agent-channel-working-item-stop"
+                className="agent-channel-working-item-stop agent-composer-action-button is-stop"
                 icon={StopIcon}
+                iconSize={12}
                 label={t.agent.chat.stopActivityEntry({ name: item.label })}
                 onClick={() => onStopEntry(item.entry)}
                 role="menuitem"
-                variant="message"
+                strokeWidth={0}
+                variant="composerAction"
               />
             ) : null}
           </div>
@@ -675,8 +689,8 @@ function ChannelWorkingRow({
       canStop: entry.runId !== null,
       entry,
       label,
+      lineLabel: activityLineLabel(entry, label, t),
       mention,
-      stateLabel: activityStateLabel(entry, t),
     };
   }), [agentDefinitionById, entries, memberByAgentId, t]);
   // Nothing in flight → the row unmounts entirely (which also closes the menu and
@@ -932,7 +946,6 @@ export function AgentChatPanel({
         agentMembers.length + 1,
       )
     : 0;
-  const isMultiAgentChannel = isChannel && agentMembers.length >= 2;
   const memberByAgentId = useMemo(() => {
     const map = new Map<string, AgentRenderMemberView>();
     for (const member of agentMembers) {
@@ -950,27 +963,27 @@ export function AgentChatPanel({
     return null;
   }, [members]);
   const composerMembers = useMemo(
-    () => (isMultiAgentChannel
+    () => (isChannel
       ? agentMembers.map((member) => ({
           mention: member.mention,
           displayName: member.displayName,
           ...(member.coordinator ? { coordinator: true } : {}),
         }))
       : []),
-    [agentMembers, isMultiAgentChannel],
+    [agentMembers, isChannel],
   );
-  // Multi-agent Channel thread = utterances only: in-flight assistant entries
-  // live in the activity area, and each message appears whole on completion.
-  // DMs and single-agent Channels keep the streaming tail.
+  // Channel thread = utterances only: in-flight assistant entries live in the
+  // activity area, and each message appears whole on completion. DMs keep the
+  // streaming tail directly in the transcript.
   const threadEntries = useMemo(
-    () => (isMultiAgentChannel
+    () => (isChannel
       ? entries.filter((entry) => !(entry.kind === 'message' && entry.message.role === 'assistant' && entry.streaming))
       : entries),
-    [entries, isMultiAgentChannel],
+    [entries, isChannel],
   );
   const conversationRows = useMemo(
-    () => buildConversationRenderRows(threadEntries, isMultiAgentChannel ? 'idle' : turnPhase),
-    [threadEntries, isMultiAgentChannel, turnPhase],
+    () => buildConversationRenderRows(threadEntries, isChannel ? 'idle' : turnPhase),
+    [threadEntries, isChannel, turnPhase],
   );
   const replyAnchorByMessageId = useMemo(
     () => buildReplyAnchorMap(conversationRows),
@@ -1506,7 +1519,7 @@ export function AgentChatPanel({
         streaming={row.streaming}
         childRunsByParentToolCallId={childRunsByParentToolCallId}
         toolResults={toolResults}
-        isMultiAgentChannel={isMultiAgentChannel}
+        isChannel={isChannel}
         turnPhase={row.turnPhase}
         speakerLabel={detailSpeakerLabel}
         speakerMention={detailSpeakerMention}
@@ -1877,7 +1890,7 @@ export function AgentChatPanel({
       </div>
 
       <div className="agent-composer-region">
-        {isMultiAgentChannel ? (
+        {isChannel ? (
           <ChannelWorkingRow
             agentDefinitionById={agentDefinitionById}
             entries={channelActivityEntries}
@@ -1896,7 +1909,7 @@ export function AgentChatPanel({
           index={index}
           isStreaming={dmRunActive}
           members={composerMembers}
-          queueSends={isMultiAgentChannel}
+          queueSends={isChannel}
           onNodeReferenceOpen={onOpenNodeReference}
           onCancelSteer={handleCancelSteer}
           onSend={sendMessage}
@@ -1918,6 +1931,7 @@ export function AgentChatPanel({
         childRun={selectedChildRun}
         childRunsByParentToolCallId={childRunsByParentToolCallId}
         onNodeReferenceOpen={onOpenNodeReference}
+        onOpenChildRunTranscript={setSelectedChildRunId}
       />
       {selectedPovInspector && selectedPovMember ? (
         <AgentPovInspectorPanel
@@ -1929,7 +1943,8 @@ export function AgentChatPanel({
       {selectedActivityEntry ? (() => {
         const { label, mention } = activityAgentLabel(selectedActivityEntry, memberByAgentId, agentDefinitionById);
         const stateLabel = activityStateLabel(selectedActivityEntry, t);
-        const liveMessage: AssistantMessage | null = selectedActivityEntry.streamingText
+        const liveContent = activityLiveContent(selectedActivityEntry);
+        const liveMessage: AssistantMessage | null = liveContent.length > 0
           ? createAssistantPlaceholderFromModel(
               {
                 api: modelApi ?? '',
@@ -1937,7 +1952,7 @@ export function AgentChatPanel({
                 id: modelId ?? '',
               },
               selectedActivityEntry.updatedAt,
-              [{ type: 'text', text: selectedActivityEntry.streamingText }],
+              liveContent,
             )
           : null;
         return (
@@ -1968,11 +1983,12 @@ export function AgentChatPanel({
                   active
                   className="agent-channel-run-live"
                   conversationId={conversationId}
+                  childRunsByParentToolCallId={childRunsByParentToolCallId}
                   index={index}
                   messages={[liveMessage]}
                   onNodeReferenceOpen={onOpenNodeReference}
-                  pendingToolCallIds={EMPTY_PENDING_TOOL_CALL_IDS}
-                  toolResults={EMPTY_TOOL_RESULTS}
+                  pendingToolCallIds={pendingToolCallIds}
+                  toolResults={toolResults}
                 />
               ) : (
                 <EmptyState className="agent-child-run-empty" title={t.agent.chat.typingNoDetailYet} />

@@ -6,8 +6,10 @@ import {
   deriveAgentPovProjection,
   flattenAgentPathForPov,
   handOffTargets,
+  isChannelConversationId,
   isMultiAgentConversation,
   parseAgentMentionTargets,
+  usesChannelActivitySurface,
 } from '../../src/core/agentChannel';
 import {
   getAgentEventRuntimeTranscriptPath,
@@ -54,6 +56,14 @@ describe('agent channel mentions', () => {
   test('multi-agent detection requires two agent members', () => {
     expect(isMultiAgentConversation([userMember, mainMember])).toBe(false);
     expect(isMultiAgentConversation([userMember, mainMember, peerMember])).toBe(true);
+  });
+
+  test('Channel activity surface follows Channel identity even with one agent member', () => {
+    expect(isChannelConversationId('lin-agent-channel-solo')).toBe(true);
+    expect(isChannelConversationId('lin-agent-dm-assistant')).toBe(false);
+    expect(usesChannelActivitySurface('lin-agent-channel-solo', [userMember, mainMember])).toBe(true);
+    expect(usesChannelActivitySurface('lin-agent-dm-assistant', [userMember, mainMember])).toBe(false);
+    expect(usesChannelActivitySurface('legacy-fixture', [userMember, mainMember, peerMember])).toBe(true);
   });
 
   test('parses mentions scoped to the roster, ordered by position, deduplicated', () => {

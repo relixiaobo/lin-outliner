@@ -39,7 +39,7 @@ export function renderAssistantBlocks(
       if (isError && looksLikeRawAgentErrorPayload(block.text)) return false;
       return block.text.trim().length > 0 || streaming;
     }
-    // A child-run-spawn tool call: in a multi-agent Channel the run surfaces as its
+    // A child-run-spawn tool call: in a Channel the run surfaces as its
     // own inline transcript boundary (AgentChildRunBoundary) right after this turn,
     // so drop its tool-call block here to avoid showing it twice. In a DM the run
     // folds into THIS turn's process instead — the tool-call row renders the

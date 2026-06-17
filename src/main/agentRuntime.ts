@@ -106,6 +106,7 @@ import {
   handOffTargets,
   isMultiAgentConversation,
   parseAgentMentionTargets,
+  usesChannelActivitySurface,
 } from '../core/agentChannel';
 import {
   nodeReferenceMarkersToText,
@@ -1411,8 +1412,8 @@ export class AgentRuntime {
   /**
    * Run-grounded debug ([[agent-debug-run-grounded]]): the conversation's
    * execution tree as per-run summary nodes (agent / kind / status / model /
-   * real usage / round count), plus the conversation shape (DM = one member,
-   * Channel = many) and rolled-up totals. Reads the store directly, so it works
+   * real usage / round count), plus the conversation shape (DM or Channel) and
+   * rolled-up totals. Reads the store directly, so it works
    * on any stored conversation without loading it into memory.
    */
   async agentDebugView(conversationId: string): Promise<AgentDebugConversation> {
@@ -1436,7 +1437,7 @@ export class AgentRuntime {
     const memberIds = roster.length > 0
       ? channelAgentMembers(roster).map((member) => member.agentId)
       : [...new Set(summaries.map((summary) => summary.agentId))];
-    const shape: AgentDebugConversationShape = isMultiAgentConversation(roster) ? 'channel' : 'dm';
+    const shape: AgentDebugConversationShape = usesChannelActivitySurface(conversationId, roster) ? 'channel' : 'dm';
     return deriveDebugConversation(conversationId, shape, memberIds, summaries);
   }
 
@@ -1880,15 +1881,15 @@ export class AgentRuntime {
       const messageText = rewriteFileReferenceMarkerPaths(message, materialized.pathMap);
       if (!messageText.trim() && attachments.length === 0) return;
       const channelMembers = conversation.eventState.conversation?.members ?? [];
-      const multiAgent = isMultiAgentConversation(channelMembers);
-      if (this.hasActiveRuns(conversation) && !multiAgent) {
+      const channelSurface = usesChannelActivitySurface(conversationId, channelMembers);
+      if (this.hasActiveRuns(conversation) && !channelSurface) {
         if (attachments.length > 0) {
           throw new Error('Attachments cannot be queued while the agent is running.');
         }
         await this.steerConversation(conversationId, messageText);
         return;
       }
-      const channelActive = multiAgent && this.hasActiveRuns(conversation);
+      const channelActive = channelSurface && this.hasActiveRuns(conversation);
       const runtimeSettings = await this.refreshRuntimeSettings(conversation);
       const compactCommand = attachments.length === 0 && runtimeSettings.compactEnabled
         ? parseCompactSlashCommand(messageText)
@@ -1918,7 +1919,7 @@ export class AgentRuntime {
       // briefing belongs to ONE reader, so it is injected transiently per run at
       // assembly time instead of being written into the shared log. Skill/agent
       // listings are likewise main-agent-POV and stay out of the shared message.
-      const memoryReminder = multiAgent
+      const memoryReminder = channelSurface
         ? null
         : await this.buildMemoryReminder(conversation.defaultAgentId, conversation);
       const turnContextReminder = joinReminderParts([
@@ -1930,10 +1931,10 @@ export class AgentRuntime {
       const userSkillPrompt = attachments.length === 0 && runtimeSettings.slashSkillsEnabled
         ? await createUserSkillPrompt(conversation.skillRuntime, messageText, turnContextReminder)
         : null;
-      const skillListingReminder = userSkillPrompt || multiAgent
+      const skillListingReminder = userSkillPrompt || channelSurface
         ? null
         : await this.buildSkillListingReminder(conversation);
-      const agentListingReminder = userSkillPrompt || multiAgent
+      const agentListingReminder = userSkillPrompt || channelSurface
         ? null
         : await this.buildAgentListingReminder(conversation);
       let prompt: UserMessage;
@@ -1959,7 +1960,7 @@ export class AgentRuntime {
           agentListingReminder,
         }, now);
       }
-      if (multiAgent) {
+      if (channelSurface) {
         const addressedTo = this.resolveAddressedMembers(messageText, channelMembers);
         const messageId = await this.appendUserPromptEvent(conversationId, conversation, prompt, { addressedTo });
         userViewContextReminder.commit();
@@ -2017,10 +2018,10 @@ export class AgentRuntime {
       if (target.role !== 'user') throw new Error('Only user messages can be edited');
       this.userViewContextReminderTracker.reset(conversationId);
       const members = conversation.eventState.conversation?.members ?? [];
-      const multiAgent = isMultiAgentConversation(members);
+      const channelSurface = usesChannelActivitySurface(conversationId, members);
       // The edited text is a fresh addressing message: re-resolve `@` routing
       // (the original event's addressedTo must not silently carry over).
-      const addressedTo = multiAgent ? this.resolveAddressedMembers(trimmed, members) : null;
+      const addressedTo = channelSurface ? this.resolveAddressedMembers(trimmed, members) : null;
       const messageId = this.createMessageId('user');
       await this.appendConversationEvents(conversationId, conversation, [{
         type: 'user_message.created',
@@ -2034,7 +2035,7 @@ export class AgentRuntime {
       conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
       this.emitProjection(conversationId, 'message_edited');
       conversation.skillRuntime.resetRunPermissionRules();
-      if (multiAgent && addressedTo) {
+      if (channelSurface && addressedTo) {
         this.enqueueChannelTurns(
           conversationId,
           conversation,
@@ -2130,7 +2131,7 @@ export class AgentRuntime {
     const owner = channelMessageOwner(originalRecord, conversation.eventState.runs, this.coordinatorAgentId());
     const ownerAgentId = owner.type === 'agent' ? owner.agentId : this.coordinatorAgentId();
     const members = conversation.eventState.conversation?.members ?? [];
-    if (isMultiAgentConversation(members) || ownerAgentId !== this.coordinatorAgentId()) {
+    if (usesChannelActivitySurface(conversationId, members) || ownerAgentId !== this.coordinatorAgentId()) {
       this.enqueueChannelTurns(conversationId, conversation, [{
         agentId: ownerAgentId,
         addressedByMessageId: parentId,
@@ -2188,7 +2189,7 @@ export class AgentRuntime {
     // builds the MAIN agent's private memory briefing into the prompt, which
     // must never enter the reader-neutral shared log; routing also has to
     // re-resolve `@` addressing. sendMessage does both.
-    if (isMultiAgentConversation(conversation.eventState.conversation?.members ?? [])) {
+    if (usesChannelActivitySurface(conversationId, conversation.eventState.conversation?.members ?? [])) {
       void this.sendMessage(conversationId, text, [], userViewContextInput);
       return { queued: true };
     }
@@ -2221,7 +2222,7 @@ export class AgentRuntime {
     // No steer in Channels (ratified): there is no streamed turn to steer, and
     // an explicit `@` must produce the addressed member's run, not an injection
     // into whichever member happens to be running. Route as a normal message.
-    if (isMultiAgentConversation(conversation.eventState.conversation?.members ?? [])) {
+    if (usesChannelActivitySurface(conversationId, conversation.eventState.conversation?.members ?? [])) {
       void this.sendMessage(conversationId, text);
       return { queued: true };
     }
@@ -4459,7 +4460,7 @@ export class AgentRuntime {
 
   private renderProjection(conversation: AgentConversationState) {
     const members = conversation.eventState.conversation?.members ?? [];
-    const multiAgent = isMultiAgentConversation(members);
+    const channelSurface = usesChannelActivitySurface(conversation.eventState.conversation?.id, members);
     const hasActiveRuns = this.hasActiveRuns(conversation);
     // Sort the active-run list once: renderProjection reads it three times below.
     const runList = this.activeRunList(conversation);
@@ -4476,11 +4477,11 @@ export class AgentRuntime {
       channelActivityEntries: this.channelActivityEntries(conversation, runList),
       activeCompaction: conversation.activeCompaction,
       activeDream: conversation.activeDream,
-      // Mode-specific run state: a multi-agent Channel never drives the DM
+      // Mode-specific run state: a Channel never drives the DM
       // composer (its async work shows in channelActivityEntries), and pending
       // (not-yet-launched) addressed turns count as Channel work in flight.
-      dmRunActive: !multiAgent && hasActiveRuns,
-      channelRunsActive: multiAgent && (hasActiveRuns || conversation.pendingChannelTurns.length > 0),
+      dmRunActive: !channelSurface && hasActiveRuns,
+      channelRunsActive: channelSurface && (hasActiveRuns || conversation.pendingChannelTurns.length > 0),
       model: clone(conversation.agent.state.model) as unknown as Record<string, unknown>,
       thinkingLevel: conversation.agent.state.thinkingLevel,
       pendingToolCallIds: uniqueStrings([
@@ -4509,7 +4510,7 @@ export class AgentRuntime {
     const previous = conversation.lastRenderProjection;
     if (!previous || previous.revision !== revision - 1) return null;
     const members = conversation.eventState.conversation?.members ?? [];
-    if (isMultiAgentConversation(members)) return null;
+    if (usesChannelActivitySurface(conversation.eventState.conversation?.id, members)) return null;
     const activeRun = conversation.activeRun;
     const messageId = activeRun?.assistantMessageId;
     if (!activeRun || activeRun.channelTurn || !messageId) return null;

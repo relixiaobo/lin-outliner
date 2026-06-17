@@ -194,17 +194,19 @@ truth.
     never skips siblings
   - delivery: the Channel **message stream is whole-utterance only** — replies
     are not token-streamed into the transcript; whole reply lands on completion;
-    the live `message_update` text is retained on the run and shown in the per-run
-    detail view (`channelActivityEntries[].streamingText`), never in the message
-    flow (PM-ratified 2026-06-13). A Channel send/edit/retry **returns on
+    live assistant content is retained for the per-run detail view
+    (`channelActivityEntries[].streamingContent`, with `streamingText` as the
+    text fallback/summary), never in the message flow (PM-ratified 2026-06-13).
+    A Channel send/edit/retry **returns on
     acceptance** (persist + enqueue, then return; runs drain async — tests use
     `drainChannelTurnsForTest`); a user message sent during any active Channel run
     is persisted immediately and routed independently with its own context cut (no
     steer in Channels); excess addressed turns wait behind the per-conversation
     execution cap, not in a renderer-visible message queue. The projection splits
     the old `isStreaming` into `dmRunActive`/`dmStreaming` (DM composer) and
-    `channelRunsActive`/`channelActivityEntries` (Channel work), so Channel
-    activity never turns the composer into Stop/Steer and navigation/unread
+    `channelRunsActive`/`channelActivityEntries` (Channel work), so every Channel
+    uses the activity surface instead of direct transcript streaming, Channel
+    activity never turns the composer into Stop/Steer, and navigation/unread
     continue while runs work; DM behavior unchanged
   - each peer turn executes as the addressed agent (definition, model/effort,
     skills, memory line, `actor` stamp) and reads the thread through the

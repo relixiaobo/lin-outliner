@@ -82,8 +82,8 @@ interface AgentMessageRowProps {
   streaming?: boolean;
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
-  /** True in a multi-agent Channel: turns deliver atomically and fold result-first rather than surfacing resultless process inline. */
-  isMultiAgentChannel?: boolean;
+  /** True in a Channel: turns deliver atomically and fold result-first rather than surfacing resultless process inline. */
+  isChannel?: boolean;
   turnPhase?: AgentTurnPhase;
   speakerLabel?: string | null;
   speakerMention?: string | null;
@@ -480,7 +480,7 @@ function AgentMessageRowComponent({
   streaming: streamingOverride,
   childRunsByParentToolCallId,
   toolResults,
-  isMultiAgentChannel = false,
+  isChannel = false,
   turnPhase = 'idle',
   speakerLabel = null,
   speakerMention = null,
@@ -705,7 +705,7 @@ function AgentMessageRowComponent({
     toolResults,
     turnActive,
     entry.turnInterrupted,
-    isMultiAgentChannel,
+    isChannel,
     entry.runDurationMs,
   );
   const showToolbar = nodeId !== null && !turnActive && isLastInTurn;
@@ -860,7 +860,7 @@ function sameAgentMessageRowProps(prev: AgentMessageRowProps, next: AgentMessage
     && prev.streaming === next.streaming
     && sameReadonlyMap(prev.childRunsByParentToolCallId ?? EMPTY_CHILD_RUN_MAP, next.childRunsByParentToolCallId ?? EMPTY_CHILD_RUN_MAP)
     && sameReadonlyMap(prev.toolResults, next.toolResults)
-    && prev.isMultiAgentChannel === next.isMultiAgentChannel
+    && prev.isChannel === next.isChannel
     && prev.turnPhase === next.turnPhase
     && prev.speakerLabel === next.speakerLabel
     && prev.speakerMention === next.speakerMention

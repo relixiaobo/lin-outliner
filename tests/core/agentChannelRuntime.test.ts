@@ -524,6 +524,57 @@ describe('agent channel runtime', () => {
     ]);
   });
 
+  test('a coordinator-only Channel exposes active work as Channel activity, not DM streaming', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
+    roots.push(localRoot, dataRoot);
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const calls: RecordedCall[] = [];
+    const streamFn = ((model: Model<Api>, context: Context, _options?: SimpleStreamOptions) => {
+      calls.push({
+        systemPrompt: context.systemPrompt ?? '',
+        serialized: JSON.stringify({ systemPrompt: context.systemPrompt, messages: context.messages }),
+      });
+      const stream = createAssistantMessageEventStream();
+      void started.then(() => {
+        const message = normalizeAssistantMessage(fauxAssistantMessage(fauxText('Finished in the Channel.')), model);
+        stream.push({ type: 'start', partial: { ...message, content: [] } });
+        stream.push({ type: 'done', reason: 'stop', message });
+        stream.end(message);
+      });
+      return stream;
+    }) as StreamFn;
+    const { runtime, sink } = await createRuntime(dataRoot, localRoot, streamFn);
+
+    const channel = await runtime.createConversation({ title: 'Solo activity room' });
+    await runtime.sendMessage(channel.conversationId, 'show this as Channel activity');
+
+    let projection: AgentRenderProjection | null = null;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      projection = latestRenderProjection(sink.events);
+      const activeEntry = projection.channelActivityEntries.find((entry) => entry.runId);
+      if (calls.length === 1 && projection.channelRunsActive && activeEntry) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    expect(calls).toHaveLength(1);
+    expect(projection?.dmRunActive).toBe(false);
+    expect(projection?.dmStreaming).toBeNull();
+    expect(projection?.channelRunsActive).toBe(true);
+    expect(projection?.channelActivityEntries).toHaveLength(1);
+    expect(projection?.channelActivityEntries[0]).toMatchObject({
+      agentId: MAIN_AGENT_ID,
+      runId: expect.any(String),
+      state: 'thinking',
+    });
+
+    release();
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+  });
+
   test('no-@ routes to the coordinator; a hand-off chain is unbounded and ends when a reply stops mentioning', async () => {
     // Four runs — past the old relay budget of 3; the chain ends only because the
     // last reply mentions nobody (stop is the sole circuit breaker otherwise).
