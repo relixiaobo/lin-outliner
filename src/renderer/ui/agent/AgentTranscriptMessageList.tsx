@@ -22,7 +22,7 @@ interface AgentTranscriptMessageListProps {
   className?: string;
   conversationId?: string | null;
   index: DocumentIndex;
-  isMultiAgentChannel?: boolean;
+  isChannel?: boolean;
   messages: readonly AgentMessage[];
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onOpenChildRunTranscript?: (childRunId: string) => void;
@@ -135,7 +135,7 @@ export function AgentTranscriptMessageList({
   className = 'agent-transcript-message-list',
   conversationId,
   index,
-  isMultiAgentChannel = false,
+  isChannel = false,
   messages,
   onNodeReferenceOpen,
   onOpenChildRunTranscript,
@@ -172,7 +172,7 @@ export function AgentTranscriptMessageList({
             entry={entry}
             index={index}
             isLastInTurn={false}
-            isMultiAgentChannel={isMultiAgentChannel}
+            isChannel={isChannel}
             key={entry.id}
             onNodeReferenceOpen={onNodeReferenceOpen}
             onOpenChildRunTranscript={onOpenChildRunTranscript}

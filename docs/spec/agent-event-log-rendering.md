@@ -829,8 +829,8 @@ interface AgentRenderProjection {
   activeRunId: string | null;
   // Mode-specific run state (replaces the old overloaded `isStreaming`): DM
   // composer state vs. Channel work surface never share a flag.
-  dmRunActive: boolean;                              // DM/single-agent run in flight (composer stop/steer)
-  dmStreaming: AgentStreamingRenderState | null;     // DM streaming tail (null for multi-agent Channels)
+  dmRunActive: boolean;                              // DM run in flight (composer stop/steer)
+  dmStreaming: AgentStreamingRenderState | null;     // DM streaming tail (null for Channels)
   channelRunsActive: boolean;                        // any addressed Channel run active or pending
   channelActivityEntries: AgentRenderActivityEntry[]; // per-run Channel activity (in-flow working row + per-run detail view)
   model: Record<string, unknown>;
@@ -847,16 +847,17 @@ Rules:
 - Completed rows are immutable by identity.
 - Only the active streaming row changes during token streaming.
 - `dmRunActive`/`dmStreaming` and `channelRunsActive`/`channelActivityEntries` are
-  mode-specific: a multi-agent Channel keeps `dmRunActive` false so its work never
-  drives the composer's stop/steer, and a DM keeps the Channel fields empty. The
-  split is derived from membership (`isMultiAgentConversation`); conversation
-  `kind` is never stored.
-- A running Channel agent's live `message_update` text rides on
-  `channelActivityEntries[].streamingText` (the per-run detail view), never as a
+  mode-specific: every Channel keeps `dmRunActive` false so its work never drives
+  the composer's stop/steer, and a DM keeps the Channel fields empty. The split is
+  derived from Channel identity (`lin-agent-channel-*`) with a multi-agent roster
+  fallback for older fixtures; conversation `kind` is never stored.
+- A running Channel agent's live assistant content rides on
+  `channelActivityEntries[].streamingContent` for the per-run detail view, with
+  `streamingText` kept as the text-only fallback/summary. It never becomes a
   transcript row — the Channel message stream is whole-utterance only (**delivery**
   is atomic: the whole turn appears on completion). This is enforced in the
   projection: `buildTranscriptRows` **suppresses any message whose producing run is
-  in the live active-run set** in a multi-agent Channel, so an in-flight turn (its
+  in the live active-run set** in a Channel, so an in-flight turn (its
   thinking, interim narration, AND tool-call/segment events — not just streamed
   text) is kept out of the transcript until the run leaves that set, at which point
   its whole turn appears at once. The suppression is keyed off the **live**
@@ -866,7 +867,7 @@ Rules:
   silently vanishing. A child run anchored to a live parent turn is held back the
   same way, so its boundary row never orphans to the transcript end while the
   parent is hidden. (A DM streams its active turn live, so the suppression is gated
-  on `isMultiAgentConversation`.) On completion the turn renders through the same
+  on the Channel activity surface.) On completion the turn renders through the same
   **result-first fold** as a DM (final answer as prose, process collapsed behind
   "Worked for …"); only the live-drill-in vs. inline-stream split differs between
   the two modes.
@@ -884,7 +885,7 @@ Rules:
   record of a run, whose final result is an expandable summary with a "View full
   run" link into the full transcript. **Where** that record renders depends on who
   spawned the run:
-  - **DM fold (non-multi-agent conversation, `parentToolCallId` set).** In a DM a
+  - **DM fold (`parentToolCallId` set).** In a DM a
     child run is the agent's own implicit behavior — it quietly delegated a slice
     of the current turn — so it gets **no conversation-level boundary row**.
     Instead it folds into the spawning turn's process: the `agent` tool-call block
@@ -894,8 +895,8 @@ Rules:
     own message, it is turn-anchored and branch-pruned with that message — editing
     the user message that started the turn removes it, with no orphan left at the
     transcript end.
-  - **Boundary row (multi-agent Channel, or a parentless run).** A run in a
-    multi-agent channel, or a parentless run (a scheduled command fire), becomes a
+  - **Boundary row (Channel, or a parentless run).** A run in a Channel, or a
+    parentless run (a scheduled command fire), becomes a
     dedicated **child-run boundary row** in `transcriptRows` (kind `'child-run'`,
     keyed by run id). A parented channel run anchors right after its tool-result
     row, else after the assistant message that issued the call, and **suppresses
@@ -903,8 +904,8 @@ Rules:
     (an assistant turn left with no other blocks is dropped); a parentless run is
     ordered by start time among the messages.
   - The projection skip (no boundary row) and the renderer keep (tool-call block
-    stays) are gated on the **same** multi-agent flag, so a single-agent channel
-    never loses its child run to a dropped-but-not-folded gap. A running row shows a
+    stays) are gated on the **same** Channel-surface flag, so a Channel never loses
+    its child run to a dropped-but-not-folded gap. A running row shows a
     live status line and is not yet expandable; once it seals it expands to the
     result (or error) and the full-run link. Boundary rows live only in
     `transcriptRows`, never in the active `rows` path.
@@ -994,11 +995,12 @@ Rules:
   panel header/actions. The child-run adapter also threads the run terminal
   status and wall-clock into the last assistant row, skips hidden-only context
   user rows, and renders orphan tool results as capped plain text rather than
-  markdown. The Channel live-run detail adapts the current `streamingText` into a
-  temporary live assistant turn so it uses the same `Working...` surface while the
-  run is active; the canonical Channel transcript still receives only whole
-  sealed utterances. This keeps the differences at the data-adapter boundary
-  instead of forking presentation behavior.
+  markdown. The Channel live-run detail adapts the current `streamingContent`
+  (falling back to `streamingText` for older projections) into a temporary live
+  assistant turn so it uses the same `Working...` surface while the run is active;
+  the canonical Channel transcript still receives only whole sealed utterances.
+  This keeps the differences at the data-adapter boundary instead of forking
+  presentation behavior.
 - Large details are refs, not row payloads.
 - A run/provider failure rides on the terminal assistant message: the run marks
   it `assistant_message.failed` (error stop reason + `errorMessage`), so it

@@ -36,6 +36,7 @@ interface AgentChildRunDetailsPanelProps {
   childRun: AgentRenderChildRunEntity | null;
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
+  onOpenChildRunTranscript?: (childRunId: string) => void;
 }
 
 /** Live-run transcript poll cadence (the fetch is meta-keyed in main, near-free when unchanged). */
@@ -144,6 +145,7 @@ function TranscriptTimeline({
   childRunsByParentToolCallId,
   index,
   onNodeReferenceOpen,
+  onOpenChildRunTranscript,
   toolResults,
 }: {
   error: string | null;
@@ -156,6 +158,7 @@ function TranscriptTimeline({
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   index: DocumentIndex;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
+  onOpenChildRunTranscript?: (childRunId: string) => void;
   toolResults: Map<string, AgentToolResultWithPayloads>;
 }) {
   const t = useT();
@@ -195,7 +198,7 @@ function TranscriptTimeline({
       index={index}
       messages={messages}
       onNodeReferenceOpen={onNodeReferenceOpen}
-      onOpenChildRunTranscript={undefined}
+      onOpenChildRunTranscript={onOpenChildRunTranscript}
       pendingToolCallIds={pendingToolCallIds}
       toolResults={toolResults}
     />
@@ -209,6 +212,7 @@ export function AgentChildRunDetailsPanel({
   childRun,
   childRunsByParentToolCallId,
   onNodeReferenceOpen,
+  onOpenChildRunTranscript,
 }: AgentChildRunDetailsPanelProps) {
   const t = useT();
   const [activeTab, setActiveTab] = useState<'timeline' | 'result' | 'metadata'>('timeline');
@@ -460,6 +464,7 @@ export function AgentChildRunDetailsPanel({
             childRunsByParentToolCallId={childRunsByParentToolCallId}
             index={index}
             onNodeReferenceOpen={onNodeReferenceOpen}
+            onOpenChildRunTranscript={onOpenChildRunTranscript}
             toolResults={toolResults}
           />
         ) : null}

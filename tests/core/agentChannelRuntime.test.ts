@@ -504,6 +504,12 @@ describe('agent channel runtime', () => {
     const fixture = await setupChannelFixture([fauxAssistantMessage(fauxText('On it.'))]);
     const { runtime, calls, dataRoot } = fixture;
 
+    await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal(MAIN_AGENT_ID), {
+      id: 'memory-main-solo-channel',
+      fact: 'Assistant remembers solo Channel context.',
+      sources: [conversationSource('seed-main-solo-channel')],
+    });
+
     const channel = await runtime.createConversation({ title: 'Solo room' });
     await runtime.sendMessage(channel.conversationId, 'kick things off');
     await runtime.drainChannelTurnsForTest(channel.conversationId);
@@ -515,6 +521,9 @@ describe('agent channel runtime', () => {
     expect(calls[0]!.serialized).toContain('conversation-environment');
     expect(calls[0]!.serialized).toContain('Only your final message is shared with the other members');
     expect(calls[0]!.serialized).not.toContain('direct 1:1 conversation');
+    // Coordinator-only Channels keep the DM-equivalent single-reader context,
+    // even though their UI surface is Channel activity.
+    expect(calls[0]!.serialized).toContain('Assistant remembers solo Channel context.');
 
     // It really is coordinator-only: the user plus the coordinator, no other agent.
     const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
@@ -522,6 +531,115 @@ describe('agent channel runtime', () => {
       { type: 'user', userId: 'local-user' },
       { type: 'agent', agentId: MAIN_AGENT_ID },
     ]);
+  });
+
+  test('a coordinator-only Channel exposes active work as Channel activity, not DM streaming', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
+    roots.push(localRoot, dataRoot);
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const calls: RecordedCall[] = [];
+    const streamFn = ((model: Model<Api>, context: Context, _options?: SimpleStreamOptions) => {
+      calls.push({
+        systemPrompt: context.systemPrompt ?? '',
+        serialized: JSON.stringify({ systemPrompt: context.systemPrompt, messages: context.messages }),
+      });
+      const stream = createAssistantMessageEventStream();
+      void started.then(() => {
+        const message = normalizeAssistantMessage(fauxAssistantMessage(fauxText('Finished in the Channel.')), model);
+        stream.push({ type: 'start', partial: { ...message, content: [] } });
+        stream.push({ type: 'done', reason: 'stop', message });
+        stream.end(message);
+      });
+      return stream;
+    }) as StreamFn;
+    const { runtime, sink } = await createRuntime(dataRoot, localRoot, streamFn);
+
+    const channel = await runtime.createConversation({ title: 'Solo activity room' });
+    await runtime.sendMessage(channel.conversationId, 'show this as Channel activity');
+
+    let projection: AgentRenderProjection | null = null;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      projection = latestRenderProjection(sink.events);
+      const activeEntry = projection.channelActivityEntries.find((entry) => entry.runId);
+      if (calls.length === 1 && projection.channelRunsActive && activeEntry) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    expect(calls).toHaveLength(1);
+    expect(projection?.dmRunActive).toBe(false);
+    expect(projection?.dmStreaming).toBeNull();
+    expect(projection?.channelRunsActive).toBe(true);
+    expect(projection?.channelActivityEntries).toHaveLength(1);
+    expect(projection?.channelActivityEntries[0]).toMatchObject({
+      agentId: MAIN_AGENT_ID,
+      runId: expect.any(String),
+      state: 'thinking',
+    });
+
+    release();
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+  });
+
+  test('runtime Channel activity carries live process blocks for the run detail view', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
+    roots.push(localRoot, dataRoot);
+    const calls: RecordedCall[] = [];
+    let liveStream: ReturnType<typeof createAssistantMessageEventStream> | null = null;
+    let liveModel: Model<Api> | null = null;
+    const streamFn = ((model: Model<Api>, context: Context, _options?: SimpleStreamOptions) => {
+      calls.push({
+        systemPrompt: context.systemPrompt ?? '',
+        serialized: JSON.stringify({ systemPrompt: context.systemPrompt, messages: context.messages }),
+      });
+      const stream = createAssistantMessageEventStream();
+      liveStream = stream;
+      liveModel = model;
+      queueMicrotask(() => {
+        const partial = normalizeAssistantMessage(fauxAssistantMessage([
+          { type: 'thinking', thinking: 'Checking the live Channel source.' },
+          fauxToolCall('web_fetch', { url: 'https://example.test/channel' }, { id: 'tool-channel-live' }),
+          fauxText('Drafting live Channel detail.'),
+        ]), model);
+        stream.push({ type: 'start', partial });
+      });
+      return stream;
+    }) as StreamFn;
+    const { runtime, sink } = await createRuntime(dataRoot, localRoot, streamFn);
+
+    const channel = await runtime.createConversation({ title: 'Solo live process room' });
+    await runtime.sendMessage(channel.conversationId, 'show live process blocks');
+
+    let projection: AgentRenderProjection | null = null;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      projection = latestRenderProjection(sink.events);
+      const entry = projection.channelActivityEntries.find((candidate) => candidate.runId);
+      if (entry?.streamingContent?.some((block) => block.type === 'toolCall')) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    expect(calls).toHaveLength(1);
+    const entry = projection?.channelActivityEntries.find((candidate) => candidate.runId);
+    expect(entry).toMatchObject({
+      agentId: MAIN_AGENT_ID,
+      state: 'thinking',
+      streamingText: 'Drafting live Channel detail.',
+      streamingContent: [
+        { type: 'thinking', thinking: 'Checking the live Channel source.' },
+        { type: 'toolCall', id: 'tool-channel-live', name: 'web_fetch', arguments: { url: 'https://example.test/channel' } },
+        { type: 'text', text: 'Drafting live Channel detail.' },
+      ],
+    });
+
+    if (!liveStream || !liveModel) throw new Error('Live stream did not start.');
+    const final = normalizeAssistantMessage(fauxAssistantMessage(fauxText('Finished live Channel detail.')), liveModel);
+    liveStream.push({ type: 'done', reason: 'stop', message: final });
+    liveStream.end(final);
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
   });
 
   test('no-@ routes to the coordinator; a hand-off chain is unbounded and ends when a reply stops mentioning', async () => {

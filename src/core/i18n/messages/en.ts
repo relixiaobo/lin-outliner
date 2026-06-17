@@ -877,6 +877,11 @@ commandPalette: {
         usingTools: 'using tools',
         received: 'received',
       },
+      activityLines: {
+        thinking: ({ name }: { name: string }) => `${name} is thinking…`,
+        usingTools: ({ name }: { name: string }) => `${name} is using tools…`,
+        received: ({ name }: { name: string }) => `${name} is waiting…`,
+      },
       stopActivityEntry: ({ name }: { name: string }) => `Stop ${name}`,
       stopAll: 'Stop all',
       working: ({ name }: { name: string }) => `${name} is working…`,

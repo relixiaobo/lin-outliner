@@ -809,6 +809,11 @@ commandPalette: {
         usingTools: '使用工具',
         received: '已收到',
       },
+      activityLines: {
+        thinking: ({ name }) => `${name} 正在思考……`,
+        usingTools: ({ name }) => `${name} 正在使用工具……`,
+        received: ({ name }) => `${name} 正在等待……`,
+      },
       stopActivityEntry: ({ name }) => `停止 ${name}`,
       stopAll: '全部停止',
       working: ({ name }) => `${name} 正在处理…`,

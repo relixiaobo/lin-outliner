@@ -118,11 +118,11 @@ clean-cut, no migration).
   - **Delivery (typing model, PM-ratified 2026-06-13):** the Channel **message
     stream is whole-utterance only** — replies are never token-streamed into the
     transcript; the whole reply lands in the thread on completion. The running
-    agent's live `message_update` text is **retained on the run and surfaced in the
-    per-run detail view** (the activity drill-in — "watch a Channel agent
-    compose"), never discarded and never in the message flow. It is kept
-    transiently on the run (`assistantText`, exposed as
-    `channelActivityEntries[].streamingText`), not written to the shared log, so
+    agent's live assistant content is **retained for the per-run detail view** (the
+    activity drill-in — "watch a Channel agent compose"), never discarded and never
+    in the message flow. It is exposed as
+    `channelActivityEntries[].streamingContent` (with `streamingText` as the
+    text-only fallback/summary), not rendered into the shared transcript, so
     concurrent runs never collide and the transcript stays whole-utterance.
   - **Rendering (result-first turn fold, PM-ratified 2026-06-14):** once a turn
     lands it renders **result-first** — the final answer as prose, with thinking,
@@ -153,12 +153,13 @@ clean-cut, no migration).
     completes first. DM behavior is untouched (streaming, steer, inline process).
   - **Projection mode split (2026-06-13):** the renderer-facing projection
     exposes mode-specific run state instead of one overloaded `isStreaming`:
-    `dmRunActive` + `dmStreaming` drive the DM (or single-agent) composer's
-    stop/steer; `channelRunsActive` + `channelActivityEntries` drive the Channel
-    activity surface. A multi-agent Channel keeps `dmRunActive` false, so its work
-    never turns the composer into Stop/Steer (the composer stays a pure message
-    composer — empty + active shows a disabled Send, never Stop). Conversation
-    `kind` is never stored; the split is derived (`isMultiAgentConversation`).
+    `dmRunActive` + `dmStreaming` drive the DM composer's stop/steer;
+    `channelRunsActive` + `channelActivityEntries` drive the Channel activity
+    surface. Every Channel keeps `dmRunActive` false, so its work never turns the
+    composer into Stop/Steer (the composer stays a pure message composer — empty
+    + active shows a disabled Send, never Stop). Conversation `kind` is never
+    stored; the split is derived from Channel identity with a multi-agent roster
+    fallback for older fixtures.
     Navigation and unread continue while Channel runs work: switching away from an
     active Channel is allowed (only a busy DM blocks it), and a completed peer reply
     bumps unread for a **backgrounded** Channel through the existing

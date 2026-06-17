@@ -571,7 +571,7 @@ export interface AgentRuntimeClient {
 export interface LinAgentRuntimeView {
   entries: AgentConversationEntry[];
   error: string | null;
-  /** DM (or single-agent) composer run state: drives the composer's stop/steer affordance. Always false in a multi-agent Channel. */
+  /** DM composer run state: drives the composer's stop/steer affordance. Always false in a Channel. */
   dmRunActive: boolean;
   /** True while any addressed Channel run is active or pending (the async work surface). */
   channelRunsActive: boolean;

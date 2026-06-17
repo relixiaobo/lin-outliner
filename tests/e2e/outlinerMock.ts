@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
+import { DEFAULT_GENERAL_CHANNEL_ID, usesChannelActivitySurface } from '../../src/core/agentChannel';
 
 export const ids = {
   workspace: 'workspace',
@@ -264,7 +264,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const ASSISTANT_DM_ID = 'mock-agent-conversation';
     const USER_DM_ID = 'mock-agent-dm-self';
     const GENERAL_CHANNEL_ID = generalChannelId;
-    const PLANNING_CHANNEL_ID = 'mock-agent-channel-planning';
+    const PLANNING_CHANNEL_ID = 'lin-agent-channel-planning';
     const assets = new Map<string, {
       id: string;
       mimeType: string;
@@ -1797,7 +1797,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const agentIds = Array.isArray(args.agentIds) ? args.agentIds.map(String) : [];
           const title = String(args.title ?? args.goal ?? '').trim();
           if (!title) throw new Error('A Channel requires a name.');
-          const conversationId = `mock-agent-channel-created-${++sequence}`;
+          const conversationId = `lin-agent-channel-created-${++sequence}`;
           const members = [
             { type: 'user', userId: 'local-user' },
             ...Array.from(new Set([MAIN_AGENT_ID, ...agentIds])).map((agentId) => ({ type: 'agent', agentId })),
@@ -3102,6 +3102,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
   const entities: Record<string, any> = {};
   const compactions: Record<string, any> = {};
   const rows: Array<{ id: string; kind: string; messageId?: string; compactionId?: string; childRunId?: string }> = [];
+  const now = state.now ?? Date.now();
 
   const persistedContent = (message: any) => {
     const content = typeof message.content === 'string'
@@ -3299,25 +3300,46 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       coordinator: true,
     },
   ];
-  const projectionMultiAgent = projectionMembers
-    .filter((member: any) => member.principal?.type === 'agent').length >= 2;
+  const projectionChannel = usesChannelActivitySurface(
+    conversationId,
+    projectionMembers.map((member: any) => member.principal),
+  );
+  const activeRunId = state.activeRunId ?? (state.isStreaming ? 'run-e2e' : null);
+  const activeRunIds = new Set<string>(
+    (state.activeRuns ?? [])
+      .map((run: any) => run?.runId)
+      .filter((runId: unknown): runId is string => typeof runId === 'string' && runId.length > 0),
+  );
+  if (activeRunId) activeRunIds.add(activeRunId);
 
   const childRunRows = [...rows];
   const orderedRuns = Object.values(childRuns).sort(
     (left: any, right: any) => left.startedAt - right.startedAt || String(left.id).localeCompare(String(right.id)),
   );
   for (const run of orderedRuns as any[]) {
-    // Mirror insertChildRunRows: a DM (non-multi-agent) child run spawned by a tool
+    // Mirror insertChildRunRows: a DM child run spawned by a tool
     // call folds into its spawning turn's process (the tool-call row renders it
     // inline), so it gets NO conversation-level boundary row. The boundary stays for
-    // a multi-agent Channel turn and a parentless command fire.
-    if (!projectionMultiAgent && run.parentToolCallId) continue;
+    // a Channel turn and a parentless command fire.
+    if (!projectionChannel && run.parentToolCallId) continue;
+    if (projectionChannel && run.parentRunId && activeRunIds.has(run.parentRunId)) continue;
     const row = { id: `child-run:${run.id}`, kind: 'child-run', childRunId: run.id };
     const insertAt = childRunInsertIndex(childRunRows, run);
     if (insertAt < 0) childRunRows.push(row);
     else childRunRows.splice(insertAt, 0, row);
   }
   const projectionChannelActivity = state.channelActivityEntries ?? state.activityEntries ?? [];
+  const transcriptRows = state.transcriptRows ?? childRunRows;
+  const projectedTranscriptRows = projectionChannel && activeRunIds.size > 0
+    ? transcriptRows.filter((row) => {
+        if (row.kind === 'message') return !activeRunIds.has(entities[row.messageId ?? '']?.runId);
+        if (row.kind === 'child-run') {
+          const run = childRuns[row.childRunId ?? ''];
+          return !(run?.parentRunId && activeRunIds.has(run.parentRunId));
+        }
+        return true;
+      })
+    : transcriptRows;
   await emitAgentEvent(page, {
     type: 'projection',
     conversationId,
@@ -3328,27 +3350,33 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       revision,
       conversationTitle: state.conversationTitle ?? null,
       members: projectionMembers,
-      activeRunId: state.activeRunId ?? (state.isStreaming ? 'run-e2e' : null),
+      activeRunId,
+      activeRuns: state.activeRuns ?? (activeRunId ? [{
+        runId: activeRunId,
+        agentId: 'built-in:tenon:assistant',
+        addressedByMessageId: null,
+        startedAt: now,
+      }] : []),
       channelActivityEntries: projectionChannelActivity,
       povInspectors: state.povInspectors ?? {},
       activeCompaction: state.activeCompaction ?? null,
       activeDream: state.activeDream ?? null,
-      // Mode-specific run state (mirrors the real projection split): isStreaming
-      // in a single-agent (DM) conversation drives the composer; in a multi-agent
-      // Channel the work shows as activity entries, never the composer.
-      dmRunActive: state.dmRunActive ?? (!!state.isStreaming && !projectionMultiAgent),
+      // Mode-specific run state (mirrors the real projection split): DM
+      // streaming drives the composer; Channel work shows as activity entries,
+      // never the composer.
+      dmRunActive: state.dmRunActive ?? (!!state.isStreaming && !projectionChannel),
       channelRunsActive: state.channelRunsActive
-        ?? (projectionChannelActivity.length > 0 || (!!state.isStreaming && projectionMultiAgent)),
+        ?? (projectionChannelActivity.length > 0 || (!!state.isStreaming && projectionChannel)),
       model: state.model ?? {},
       thinkingLevel: state.thinkingLevel ?? 'off',
       pendingToolCallIds: state.pendingToolCallIds ?? [],
       errorMessage: state.errorMessage ?? null,
       rows,
-      transcriptRows: state.transcriptRows ?? childRunRows,
+      transcriptRows: projectedTranscriptRows,
       taskIds,
       childRunIds,
       entities: { messages: entities, childRuns, compactions, tasks },
-      dmStreaming: projectionMultiAgent ? null : streaming,
+      dmStreaming: projectionChannel ? null : streaming,
     },
     timestamp: Date.now(),
   });

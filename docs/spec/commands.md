@@ -314,7 +314,7 @@ removed, and removal is blocked while a run is active.
 `agent_stop_conversation`.
 
 In a **DM**, `agent_send_message` resolves when the serial run settles (the
-command spans the turn). In a **multi-agent Channel** it **resolves on
+command spans the turn). In a **Channel** it **resolves on
 acceptance**: it persists the user message and enqueues the addressed turns, then
 returns without awaiting them — the runs drain asynchronously (`scheduleChannelIdleEmit`
 emits the final idle projection on drain). `agent_edit_message`/`agent_regenerate_message`/

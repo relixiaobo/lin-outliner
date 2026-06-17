@@ -440,7 +440,7 @@ test.describe('agent and Channel config windows', () => {
   });
 
   test('renders the Channel config as a titled child window with fixed actions', async ({ page }) => {
-    const config = await openChannelConfig(page, 'mock-agent-channel-planning');
+    const config = await openChannelConfig(page, 'lin-agent-channel-planning');
     await expect(config.getByRole('heading', { name: 'Channel settings' })).toBeVisible();
     await expect(config.getByRole('button', { name: 'Cancel' })).toBeVisible();
     await expect(config.getByRole('button', { name: 'Save name' })).toBeVisible();

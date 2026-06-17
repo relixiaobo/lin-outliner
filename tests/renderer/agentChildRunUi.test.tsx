@@ -127,6 +127,61 @@ describe('agent child run UI', () => {
     expect(rendered.container.textContent).toContain('Daily note content.');
   });
 
+  test('child run transcript details can open nested child runs', async () => {
+    let openedChildRunId: string | null = null;
+    const nestedRun = {
+      ...childRunEntity(),
+      id: 'child-2',
+      description: 'Nested child run',
+      parentToolCallId: 'tool-nested-agent',
+    };
+    const payloadText = JSON.stringify({
+      v: 1,
+      runId: 'child-1',
+      messageCount: 1,
+      messages: [
+        {
+          role: 'assistant',
+          timestamp: 120,
+          api: 'openai-completions',
+          provider: 'openai',
+          model: 'gpt-5.4',
+          usage: emptyUsage(),
+          stopReason: 'toolUse',
+          content: [
+            {
+              type: 'toolCall',
+              id: 'tool-nested-agent',
+              name: 'Agent',
+              arguments: { description: 'Nested child run', prompt: 'Inspect the nested UI.' },
+            },
+          ],
+        },
+      ],
+    });
+    const rendered = renderComponent(
+      <AgentChildRunDetailsPanel
+        onClose={() => undefined}
+        onOpenChildRunTranscript={(childRunId) => {
+          openedChildRunId = childRunId;
+        }}
+        conversationId="conversation-1"
+        index={TEST_INDEX}
+        childRun={childRunEntity()}
+        childRunsByParentToolCallId={new Map([[nestedRun.parentToolCallId!, nestedRun]])}
+      />,
+      {
+        payloads: { 'child-1': payloadText },
+      },
+    );
+
+    await waitForText(rendered, 'Agent task · Nested child run');
+    await click(rendered, textButton(rendered, 'Agent task · Nested child run'));
+    await click(rendered, textButton(rendered, 'View transcript'));
+
+    expect(openedChildRunId).toBe('child-2');
+  });
+
   test('threads child run duration and failure into shared transcript rows', async () => {
     const completedRun = {
       ...childRunEntity(),

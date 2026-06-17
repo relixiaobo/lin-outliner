@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { replayAgentEvents, type AgentActor, type AgentEvent } from '../../src/core/agentEventLog';
-import { buildAgentRenderProjection } from '../../src/core/agentRenderProjection';
+import { buildAgentRenderProjection, type AgentRenderActivityEntry } from '../../src/core/agentRenderProjection';
 import { systemReminder } from '../../src/core/agentAttachments';
 
 const conversationId = 'conversation-render';
@@ -747,6 +747,145 @@ describe('agent render projection', () => {
     ]);
   });
 
+  test('carries live Channel activity content for the per-run detail view', () => {
+    const state = replayAgentEvents([
+      {
+        ...base(1, 'conversation.created'),
+        title: 'Channel',
+        members: [
+          { type: 'user', userId: 'user-1' },
+          { type: 'agent', agentId: 'agent-1' },
+          { type: 'agent', agentId: 'agent-2' },
+        ],
+      },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-channel',
+        parentMessageId: null,
+        content: [{ type: 'text', text: '@one @two compare this.' }],
+        addressedTo: [
+          { type: 'agent', agentId: 'agent-1' },
+          { type: 'agent', agentId: 'agent-2' },
+        ],
+      },
+      { ...base(3, 'run.started'), runId: 'run-agent-1', agentId: 'agent-1' },
+      {
+        ...base(4, 'assistant_message.started', agentActor),
+        runId: 'run-agent-1',
+        messageId: 'assistant-agent-1',
+        parentMessageId: 'user-channel',
+        providerId: 'test-provider',
+        modelId: 'test-model',
+      },
+      {
+        ...base(5, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-agent-1',
+        stopReason: 'toolUse',
+        content: [
+          { type: 'thinking', thinking: 'Checking the source.' },
+          { type: 'toolCall', id: 'tool-agent-1', name: 'web_fetch', arguments: { url: 'https://example.test' } },
+          { type: 'text', text: 'Drafting answer.' },
+        ],
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, {
+      revision: 1,
+      activeRunId: 'run-agent-1',
+      activeRunAddressedByMessageId: 'user-channel',
+      pendingToolCallIds: ['tool-agent-1'],
+    });
+
+    expect(projection.channelActivityEntries[0]).toMatchObject({
+      id: 'user-channel:agent-1',
+      agentId: 'agent-1',
+      runId: 'run-agent-1',
+      messageId: 'assistant-agent-1',
+      state: 'using_tools',
+      streamingText: 'Drafting answer.',
+      streamingContent: [
+        { type: 'thinking', thinking: 'Checking the source.' },
+        { type: 'toolCall', id: 'tool-agent-1', name: 'web_fetch', arguments: { url: 'https://example.test' } },
+        { type: 'text', text: 'Drafting answer.' },
+      ],
+    });
+  });
+
+  test('uses the Channel activity surface for a one-agent Channel', () => {
+    const channelConversationId = 'lin-agent-channel-solo';
+    const channelBase = (seq: number, type: AgentEvent['type'], actor: AgentActor = systemActor) => ({
+      ...base(seq, type, actor),
+      conversationId: channelConversationId,
+    });
+    const state = replayAgentEvents([
+      {
+        ...channelBase(1, 'conversation.created'),
+        title: 'Solo Channel',
+        members: [
+          { type: 'user', userId: 'user-1' },
+          { type: 'agent', agentId: 'agent-1' },
+        ],
+      },
+      {
+        ...channelBase(2, 'user_message.created', userActor),
+        messageId: 'user-solo',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Handle this in the Channel.' }],
+        addressedTo: [{ type: 'agent', agentId: 'agent-1' }],
+      },
+      {
+        ...channelBase(3, 'run.started'),
+        runId: 'run-solo',
+        agentId: 'agent-1',
+        addressedByMessageId: 'user-solo',
+      },
+      {
+        ...channelBase(4, 'assistant_message.started', agentActor),
+        runId: 'run-solo',
+        messageId: 'assistant-solo',
+        parentMessageId: 'user-solo',
+        addressedByMessageId: 'user-solo',
+        providerId: 'test-provider',
+        modelId: 'test-model',
+      },
+      {
+        ...channelBase(5, 'assistant_message.delta', agentActor),
+        messageId: 'assistant-solo',
+        delta: { type: 'text_delta', text: 'Working through the Channel detail.' },
+        providerChunkCount: 1,
+        startedAt: 10,
+        endedAt: 11,
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, {
+      revision: 1,
+      activeRunId: 'run-solo',
+      activeRunAddressedByMessageId: 'user-solo',
+      activeRuns: [{
+        runId: 'run-solo',
+        agentId: 'agent-1',
+        addressedByMessageId: 'user-solo',
+        startedAt: 1_700_000_000_003,
+      }],
+    });
+
+    expect(projection.dmRunActive).toBe(false);
+    expect(projection.dmStreaming).toBeNull();
+    expect(projection.transcriptRows).toEqual([
+      { id: 'user:user-solo', kind: 'message', messageId: 'user-solo' },
+    ]);
+    expect(projection.channelActivityEntries[0]).toMatchObject({
+      id: 'user-solo:agent-1',
+      agentId: 'agent-1',
+      runId: 'run-solo',
+      messageId: 'assistant-solo',
+      state: 'thinking',
+      streamingText: 'Working through the Channel detail.',
+      streamingContent: [{ type: 'text', text: 'Working through the Channel detail.' }],
+    });
+  });
+
   test('drops failed Channel addressees from derived activity even if no assistant message landed', () => {
     const state = replayAgentEvents([
       {
@@ -879,7 +1018,8 @@ describe('agent render projection', () => {
         ],
       },
     ]);
-    const activityEntries = [
+    const toolArguments = { url: 'https://example.test/live' };
+    const activityEntries: AgentRenderActivityEntry[] = [
       {
         id: 'user-1:agent-1',
         agentId: 'agent-1',
@@ -888,6 +1028,9 @@ describe('agent render projection', () => {
         addressedByMessageId: 'user-1',
         state: 'thinking' as const,
         updatedAt: 1_700_000_000_010,
+        streamingContent: [
+          { type: 'toolCall', id: 'tool-1', name: 'web_fetch', arguments: toolArguments },
+        ],
       },
       {
         id: 'user-2:agent-2',
@@ -907,6 +1050,9 @@ describe('agent render projection', () => {
 
     expect(projection.channelActivityEntries).toEqual(activityEntries);
     expect(projection.channelActivityEntries).not.toBe(activityEntries);
+    const projectedTool = projection.channelActivityEntries[0]?.streamingContent?.[0];
+    expect(projectedTool).toMatchObject({ type: 'toolCall', arguments: toolArguments });
+    expect(projectedTool?.type === 'toolCall' ? projectedTool.arguments : null).not.toBe(toolArguments);
   });
 
   // The authoritative interrupted verdict — derived from the producing run's REAL

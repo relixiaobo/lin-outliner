@@ -13,6 +13,7 @@ import {
 } from './outlinerMock';
 
 const DEFAULT_CONVERSATION_ID = DEFAULT_GENERAL_CHANNEL_ID;
+const DEFAULT_DM_CONVERSATION_ID = 'mock-agent-conversation';
 
 async function waitForAgentConversation(page: import('@playwright/test').Page) {
   await expect.poll(async () => {
@@ -22,6 +23,17 @@ async function waitForAgentConversation(page: import('@playwright/test').Page) {
       && call.args.conversationId === DEFAULT_CONVERSATION_ID
     )) || calls.some((call) => call.cmd === 'agent_restore_latest_conversation');
   }).toBe(true);
+}
+
+async function openNevaDm(page: Page) {
+  await page.getByRole('button', { name: 'Show conversations' }).click();
+  const menu = page.getByRole('dialog', { name: 'Channels' });
+  await menu.getByRole('button', { name: /Neva/ }).click();
+  await expect(page.locator('.agent-dock-title')).toHaveText('Neva');
+  await expect.poll(async () => {
+    const calls = await commandCalls(page);
+    return calls.findLast((call) => call.cmd === 'agent_restore_conversation')?.args.conversationId;
+  }).toBe(DEFAULT_DM_CONVERSATION_ID);
 }
 
 async function invokeDocumentCommand(page: Page, cmd: string, args: Record<string, unknown>) {
@@ -271,7 +283,7 @@ test.describe('agent composer controls', () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'open_channel_config')?.args;
     }).toMatchObject({
-      conversationId: 'mock-agent-channel-planning',
+      conversationId: 'lin-agent-channel-planning',
       mode: 'configure',
     });
   });
@@ -319,11 +331,11 @@ test.describe('agent composer controls', () => {
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'agent_navigate_conversation')?.args.conversationId;
-    }).toMatch(/^mock-agent-channel-created-/);
+    }).toMatch(/^lin-agent-channel-created-/);
   });
 
   test('adds a member from the channel config window', async ({ page }) => {
-    await page.goto('/?surface=channel-config&mode=configure&conversation=mock-agent-channel-planning');
+    await page.goto('/?surface=channel-config&mode=configure&conversation=lin-agent-channel-planning');
     const config = page.locator('.channel-config-window');
     await expect(config.getByLabel('Channel name')).toHaveValue('Planning Channel');
     await expect(config.getByText('Neva', { exact: true })).toBeVisible();
@@ -334,7 +346,7 @@ test.describe('agent composer controls', () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'agent_add_conversation_member')?.args;
     }).toMatchObject({
-      conversationId: 'mock-agent-channel-planning',
+      conversationId: 'lin-agent-channel-planning',
       agentId: 'user:mock:reviewer',
     });
   });
@@ -1558,7 +1570,8 @@ test.describe('agent composer controls', () => {
   });
 
   test('renders node reference markers in assistant and tool output', async ({ page }) => {
-    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+    await openNevaDm(page);
+    await emitAgentProjection(page, DEFAULT_DM_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
@@ -1684,7 +1697,8 @@ test.describe('agent composer controls', () => {
   });
 
   test('shows compact progress before expandable summaries', async ({ page }) => {
-    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+    await openNevaDm(page);
+    await emitAgentProjection(page, DEFAULT_DM_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       activeCompaction: {
@@ -1700,7 +1714,7 @@ test.describe('agent composer controls', () => {
     await expect(compactStatus).toContainText('Manual');
     await expect(page.getByRole('button', { name: /Compacted/ })).toHaveCount(0);
 
-    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+    await emitAgentProjection(page, DEFAULT_DM_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
@@ -1939,6 +1953,7 @@ test.describe('agent composer controls', () => {
     // In-flow row above the composer — not an absolute overlay floating over the
     // transcript (the old corner pill).
     await expect(working).toHaveCSS('position', 'relative');
+    await expect(working).toHaveCSS('justify-content', 'center');
     // Collapsed: a generic "working" summary only (≤2 names, ≥3 count); never the
     // per-agent state, which lives in the detail menu.
     const trigger = working.locator('.agent-channel-working-trigger');
@@ -1956,7 +1971,7 @@ test.describe('agent composer controls', () => {
     await expect(detail).toBeVisible();
     await expect(detail).toHaveCSS('position', 'fixed');
     // Opaque level-1 popover — NOT the old translucent material that let transcript
-    // text bleed through it (穿模).
+    // text bleed through it.
     const detailPaint = await detail.evaluate((node) => {
       const style = getComputedStyle(node);
       return {
@@ -1969,22 +1984,95 @@ test.describe('agent composer controls', () => {
     expect(detailPaint.backdrop).toBe('none');
     expect(detailPaint.boxShadow).not.toBe('none');
     await expect(detail).toContainText('Channel activity');
-    await expect(detail).toContainText('Alpha');
-    await expect(detail).toContainText('using tools');
+    await expect(detail).toContainText('Alpha is using tools');
+    await expect(detail).toContainText('Beta is waiting');
     await expect(detail).toContainText('Gamma');
     await expect(detail).toContainText('Eta');
     await expect(detail.locator('.agent-channel-working-item')).toHaveCount(7);
-
-    // Per-agent dot colour distinguishes an active agent (using tools) from a
-    // received-but-pending one.
+    await expect(detail.locator('.agent-channel-working-item-dot')).toHaveCount(0);
     const alphaItem = detail.locator('.agent-channel-working-item', { hasText: 'Alpha' });
-    const betaItem = detail.locator('.agent-channel-working-item', { hasText: 'Beta' });
-    const alphaDot = await alphaItem.locator('.agent-channel-working-item-dot').evaluate((node) => getComputedStyle(node).backgroundColor);
-    const betaDot = await betaItem.locator('.agent-channel-working-item-dot').evaluate((node) => getComputedStyle(node).backgroundColor);
-    expect(alphaDot).not.toBe(betaDot);
     const stopAlpha = alphaItem.getByRole('menuitem', { name: 'Stop Alpha' });
+    const stopAll = detail.getByRole('menuitem', { name: 'Stop all' });
     await expect(stopAlpha).toBeVisible();
-    await expect(detail.getByRole('menuitem', { name: 'Stop all' })).toBeVisible();
+    await expect(stopAlpha).toHaveClass(/agent-composer-action-button/);
+    const detailMetrics = await alphaItem.evaluate((node) => {
+      const detailNode = node.closest('.agent-channel-working-detail');
+      const header = detailNode?.querySelector<HTMLElement>('.agent-channel-working-detail-header') ?? null;
+      const main = node.querySelector<HTMLElement>('.agent-channel-working-item-main');
+      const avatar = node.querySelector<HTMLElement>('.agent-identity-avatar');
+      const line = node.querySelector<HTMLElement>('.agent-channel-working-item-line');
+      const stop = node.querySelector<HTMLElement>('.agent-channel-working-item-stop');
+      const stopAllButton = detailNode?.querySelector<HTMLElement>('.agent-channel-working-stop-all') ?? null;
+      const detailStyle = detailNode ? getComputedStyle(detailNode) : null;
+      const itemStyle = getComputedStyle(node);
+      const mainStyle = main ? getComputedStyle(main) : null;
+      const stopAllStyle = stopAllButton ? getComputedStyle(stopAllButton) : null;
+      const itemRect = node.getBoundingClientRect();
+      const headerRect = header?.getBoundingClientRect() ?? null;
+      const mainRect = main?.getBoundingClientRect() ?? null;
+      const avatarRect = avatar?.getBoundingClientRect() ?? null;
+      const lineRect = line?.getBoundingClientRect() ?? null;
+      const stopRect = stop?.getBoundingClientRect() ?? null;
+      const lineCenter = lineRect ? lineRect.left + (lineRect.width / 2) : 0;
+      const itemCenter = itemRect.left + (itemRect.width / 2);
+
+      return {
+        avatarToLineGap: avatarRect && lineRect ? lineRect.left - avatarRect.right : -1,
+        detailGap: detailStyle?.gap ?? '',
+        detailPaddingBottom: detailStyle?.paddingBottom ?? '',
+        detailPaddingLeft: detailStyle?.paddingLeft ?? '',
+        detailPaddingRight: detailStyle?.paddingRight ?? '',
+        detailPaddingTop: detailStyle?.paddingTop ?? '',
+        headerHeight: headerRect?.height ?? 0,
+        headerToFirstItemGap: headerRect ? itemRect.top - headerRect.bottom : -1,
+        itemColumnGap: itemStyle.columnGap,
+        itemHeight: itemRect.height,
+        itemPaddingLeft: itemStyle.paddingLeft,
+        itemPaddingRight: itemStyle.paddingRight,
+        lineCenterOffsetFromItemCenter: Math.abs(lineCenter - itemCenter),
+        lineFlexGrow: line ? getComputedStyle(line).flexGrow : '',
+        mainHeight: mainRect?.height ?? 0,
+        mainJustifyContent: main ? getComputedStyle(main).justifyContent : '',
+        mainTextAlign: mainStyle?.textAlign ?? '',
+        stopBackground: stop ? getComputedStyle(stop).backgroundColor : '',
+        stopAllBackground: stopAllStyle?.backgroundColor ?? '',
+        stopAllBoxShadow: stopAllStyle?.boxShadow ?? '',
+        stopHeight: stopRect?.height ?? 0,
+        stopInsideItem: stopRect
+          ? stopRect.left >= itemRect.left && stopRect.right <= itemRect.right
+          : false,
+        stopWidth: stopRect?.width ?? 0,
+      };
+    });
+    expect(detailMetrics.mainJustifyContent).toBe('flex-start');
+    expect(detailMetrics.mainTextAlign).toBe('left');
+    expect(detailMetrics.detailPaddingTop).toBe('8px');
+    expect(detailMetrics.detailPaddingRight).toBe('8px');
+    expect(detailMetrics.detailPaddingBottom).toBe('8px');
+    expect(detailMetrics.detailPaddingLeft).toBe('8px');
+    expect(detailMetrics.detailGap).toBe('6px');
+    expect(detailMetrics.headerHeight).toBe(24);
+    expect(detailMetrics.itemHeight).toBe(28);
+    expect(detailMetrics.mainHeight).toBe(28);
+    expect(detailMetrics.itemPaddingLeft).toBe('4px');
+    expect(detailMetrics.itemPaddingRight).toBe('4px');
+    expect(detailMetrics.itemColumnGap).toBe('8px');
+    expect(detailMetrics.lineFlexGrow).toBe('0');
+    expect(detailMetrics.avatarToLineGap).toBe(6);
+    expect(detailMetrics.lineCenterOffsetFromItemCenter).toBeGreaterThan(24);
+    expect(detailMetrics.headerToFirstItemGap).toBe(6);
+    expect(detailMetrics.stopWidth).toBe(20);
+    expect(detailMetrics.stopHeight).toBe(20);
+    expect(detailMetrics.stopBackground).toBe('rgba(0, 0, 0, 0)');
+    expect(detailMetrics.stopInsideItem).toBe(true);
+    expect(detailMetrics.stopAllBackground).toBe('rgba(0, 0, 0, 0)');
+    expect(detailMetrics.stopAllBoxShadow).toBe('none');
+    await stopAlpha.hover();
+    await expect(stopAlpha).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(stopAll).toBeVisible();
+    await stopAll.hover();
+    await expect(stopAll).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    await expect(stopAll).toHaveCSS('box-shadow', 'none');
 
     // No snapshot freeze: a thinner projection updates the live list in place.
     await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
@@ -2017,7 +2105,7 @@ test.describe('agent composer controls', () => {
     }).toBe(true);
 
     // Drill into the running agent from the menu (which then closes).
-    await detail.getByRole('menuitem', { name: 'Alpha using tools' }).click();
+    await detail.getByRole('menuitem', { name: /Alpha is using tools/ }).click();
     const details = page.getByRole('complementary', { name: 'View working state' });
     await expect(details).toBeVisible();
     await expect(details).toContainText('Alpha · using tools');
@@ -2070,7 +2158,61 @@ test.describe('agent composer controls', () => {
     await expect(send).toBeEnabled();
   });
 
-  test('a running Channel agent\'s live text appears in the per-run detail view', async ({ page }) => {
+  test('a one-agent Channel uses activity detail instead of transcript streaming', async ({ page }) => {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+      conversationTitle: 'Solo Channel',
+      members: [
+        { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+        {
+          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+          mention: 'assistant',
+          displayName: 'Neva',
+          coordinator: true,
+        },
+      ],
+      activeRunId: 'run-neva',
+      isStreaming: true,
+      streamingMessage: {
+        role: 'assistant',
+        actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        runId: 'run-neva',
+        timestamp: 1_800_000_000_300,
+        api: 'openai-completions',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Solo live reply should stay out of the transcript.' }],
+      },
+      activityEntries: [
+        {
+          id: 'user-activity:built-in:tenon:assistant',
+          agentId: 'built-in:tenon:assistant',
+          runId: 'run-neva',
+          messageId: 'assistant-streaming',
+          addressedByMessageId: 'user-activity',
+          state: 'thinking',
+          updatedAt: 1_800_000_000_300,
+          streamingText: 'Solo live reply should stay out of the transcript.',
+          streamingContent: [{ type: 'text', text: 'Solo live reply should stay out of the transcript.' }],
+        },
+      ],
+    });
+
+    const working = page.locator('.agent-channel-working');
+    await expect(working).toBeVisible();
+    await expect(page.getByText('Solo live reply should stay out of the transcript.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Stop agent' })).toHaveCount(0);
+    const send = page.getByRole('button', { name: 'Send message' });
+    await expect(send).toBeVisible();
+
+    await working.locator('.agent-channel-working-trigger').click();
+    await page.locator('.agent-channel-working-detail').getByRole('menuitem', { name: /Neva is thinking/ }).click();
+    const details = page.getByRole('complementary', { name: 'View working state' });
+    await expect(details).toContainText('Solo live reply should stay out of the transcript.');
+  });
+
+  test('a running Channel agent\'s live process appears in the per-run detail view', async ({ page }) => {
     await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
       conversationTitle: 'Parallel Channel',
       members: [
@@ -2084,8 +2226,23 @@ test.describe('agent composer controls', () => {
         { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
       ],
       activityEntries: [
-        { id: 'user-activity:agent-alpha', agentId: 'agent-alpha', runId: 'run-alpha', messageId: null, addressedByMessageId: 'user-activity', state: 'using_tools', updatedAt: 1_800_000_000_300, streamingText: 'Composing a live reply token by token.' },
+        {
+          id: 'user-activity:agent-alpha',
+          agentId: 'agent-alpha',
+          runId: 'run-alpha',
+          messageId: null,
+          addressedByMessageId: 'user-activity',
+          state: 'using_tools',
+          updatedAt: 1_800_000_000_300,
+          streamingText: 'Composing a live reply token by token.',
+          streamingContent: [
+            { type: 'thinking', thinking: 'Checking the latest source.' },
+            { type: 'toolCall', id: 'tool-alpha', name: 'web_fetch', arguments: { url: 'https://example.test' } },
+            { type: 'text', text: 'Composing a live reply token by token.' },
+          ],
+        },
       ],
+      pendingToolCallIds: ['tool-alpha'],
     });
 
     const working = page.locator('.agent-channel-working');
@@ -2095,9 +2252,11 @@ test.describe('agent composer controls', () => {
     await expect(page.getByText('Composing a live reply token by token.')).toHaveCount(0);
     // It is surfaced in the per-run detail view, reached from the activity entry.
     await working.locator('.agent-channel-working-trigger').click();
-    await page.locator('.agent-channel-working-detail').getByRole('menuitem', { name: 'Alpha using tools' }).click();
+    await page.locator('.agent-channel-working-detail').getByRole('menuitem', { name: /Alpha is using tools/ }).click();
     const details = page.getByRole('complementary', { name: 'View working state' });
     await expect(details).toBeVisible();
+    await expect(details).toContainText('Checking the latest source.');
+    await expect(details).toContainText('Fetching web https://example.test');
     await expect(details).toContainText('Composing a live reply token by token.');
   });
 
@@ -2579,7 +2738,7 @@ test.describe('agent composer controls', () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'open_channel_config')?.args;
     }).toMatchObject({
-      conversationId: 'mock-agent-channel-planning',
+      conversationId: 'lin-agent-channel-planning',
       mode: 'configure',
     });
   });
@@ -2611,7 +2770,8 @@ test.describe('agent composer controls', () => {
   });
 
   test('switches the primary action between stop and steer while streaming', async ({ page }) => {
-    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+    await openNevaDm(page);
+    await emitAgentProjection(page, DEFAULT_DM_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -2648,7 +2808,7 @@ test.describe('agent composer controls', () => {
       return calls.find((call) => call.cmd === 'agent_steer_conversation')?.args;
     }).toMatchObject({
       message: 'Compare tag layout stability.',
-      conversationId: DEFAULT_CONVERSATION_ID,
+      conversationId: DEFAULT_DM_CONVERSATION_ID,
     });
     await expect(page.getByText('Compare tag layout stability.')).toBeVisible();
   });
@@ -2669,7 +2829,8 @@ test.describe('agent composer controls', () => {
       },
     };
 
-    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+    await openNevaDm(page);
+    await emitAgentProjection(page, DEFAULT_DM_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
@@ -2761,14 +2922,14 @@ test.describe('agent composer controls', () => {
         args: {
           agentId: 'child-run-1',
           message: 'Continue with layout risks.',
-          conversationId: DEFAULT_CONVERSATION_ID,
+          conversationId: DEFAULT_DM_CONVERSATION_ID,
         },
       },
       {
         cmd: 'agent_child_run_stop',
         args: {
           agentId: 'child-run-1',
-          conversationId: DEFAULT_CONVERSATION_ID,
+          conversationId: DEFAULT_DM_CONVERSATION_ID,
         },
       },
     ]);
