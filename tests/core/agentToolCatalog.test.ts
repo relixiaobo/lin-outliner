@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { TOOL_CATALOG } from '../../src/core/agentToolCatalog';
+import type { AgentChannelToolRuntime } from '../../src/main/agentChannelTools';
 import type { AgentDelegationRuntime } from '../../src/main/agentDelegation';
 
 mock.module('electron', () => ({
@@ -28,5 +29,18 @@ describe('agent tool catalog', () => {
       .sort();
 
     expect(filteredNames).toEqual([...TOOL_CATALOG].sort());
+  });
+
+  test('keeps channel organization tools out of ordinary child-run catalogs', async () => {
+    const { createAgentTools } = await import('../../src/main/agentTools');
+    const ordinaryNames = createAgentTools(undefined, { localFileRoot: '/tmp' }).map((tool) => tool.name);
+    const coordinatorNames = createAgentTools(undefined, {
+      localFileRoot: '/tmp',
+      channelOrg: {} as AgentChannelToolRuntime,
+    }).map((tool) => tool.name);
+
+    expect(ordinaryNames).not.toContain('channel_create');
+    expect(ordinaryNames).not.toContain('channel_update');
+    expect(coordinatorNames).toEqual(expect.arrayContaining(['channel_create', 'channel_update']));
   });
 });

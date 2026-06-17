@@ -14,6 +14,7 @@ import { createNodeTools, type OutlinerToolHost } from './agentNodeTools';
 import { createLocalTools, scratchRootForWorkdir, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { createSkillTool, type AgentSkillRuntime } from './agentSkills';
 import { createAgentDelegationTools, type AgentDelegationRuntime } from './agentDelegation';
+import { createChannelOrgTools, type AgentChannelToolRuntime } from './agentChannelTools';
 import { normalizeAgentToolNames } from './agentToolRules';
 import { createRecallTool, type AgentRecallToolRuntime } from './agentRecallTool';
 import { createAskUserQuestionTool, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
@@ -38,7 +39,10 @@ import {
   WEB_FETCH_RENDER_SETTLE_MS,
   WEB_FETCH_RETRY_DELAY_MS,
   WEB_FETCH_USER_AGENT,
+  WEB_SEARCH_RETRY_DELAY_MS,
+  WEB_SEARCH_USER_AGENT,
   buildBingImagesSearchUrl,
+  buildDuckDuckGoSearchUrl,
   buildGoogleSearchUrl,
   buildWebFetchSuccessEnvelopeFromPage,
   extractFetchedPageContent,
@@ -89,8 +93,12 @@ import {
 } from './agentWebFetchFallback';
 import {
   BING_IMAGES_RESULT_SELECTOR,
+  DUCKDUCKGO_RESULT_SELECTOR,
   bingImagesExtractorExpression,
+  duckDuckGoSerpExtractorExpression,
   googleSerpExtractorExpression,
+  isTransientSearchError,
+  shouldFallbackToSecondaryEngine,
 } from './agentWebSearchSerp';
 
 const GOOGLE_SEARCH_HOME_URL = 'https://www.google.com/';
@@ -208,6 +216,7 @@ export interface AgentToolsOptions {
   recall?: AgentRecallToolRuntime;
   askUserQuestion?: AgentAskUserQuestionRuntime;
   selfMaintenance?: AgentSelfMaintenanceRuntime;
+  channelOrg?: AgentChannelToolRuntime;
   allowedTools?: string[];
   disallowedTools?: string[];
 }
@@ -226,6 +235,7 @@ export function createAgentTools(outliner?: OutlinerToolHost, options: AgentTool
     ...(options.recall ? [createRecallTool(options.recall)] : []),
     ...(options.askUserQuestion ? [createAskUserQuestionTool(options.askUserQuestion)] : []),
     ...(options.selfMaintenance ? createSelfMaintenanceTools(options.selfMaintenance) : []),
+    ...(options.channelOrg ? createChannelOrgTools(options.channelOrg) : []),
     ...(options.skillRuntime && options.skillToolEnabled !== false ? [createSkillTool(options.skillRuntime)] : []),
     ...(options.delegationRuntime ? createAgentDelegationTools(options.delegationRuntime) : []),
   ];
@@ -414,12 +424,26 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
       const params = normalized.params;
       const provider = SEARCH_PROVIDERS[params.kind];
 
+      // One rate-limit slot per web_search call (not per internal navigation):
+      // the gate throttles how fast the agent fires searches, while the chain's
+      // own retry + fallback run unthrottled within the call it already paid for.
+      try {
+        await waitForSearchRateLimit(signal);
+      } catch {
+        return agentToolResult(errorEnvelope('web_search', 'aborted', 'search aborted before it started', {
+          metrics: { durationMs: elapsed(started) },
+        }));
+      }
+
       try {
         const search = await provider.run(params, signal);
         const durationMs = elapsed(started);
+        // The outcome may come from a fallback engine, so trust its providerName
+        // when present and only default to the kind's primary provider.
+        const providerName = search.providerName ?? provider.providerName;
         if (search.kind === 'hint') {
           return webSearchToolResult(successEnvelope('web_search', {
-            ...baseSearchData(params, provider.providerName, durationMs, search.finalUrl),
+            ...baseSearchData(params, providerName, durationMs, search.finalUrl),
             resultCount: 0,
             truncated: false,
             hint: search.hint,
@@ -434,7 +458,7 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
         if (search.kind === 'error') {
           return webSearchToolResult(errorEnvelope('web_search', search.code, search.message, {
             data: {
-              ...baseSearchData(params, provider.providerName, durationMs, search.finalUrl),
+              ...baseSearchData(params, providerName, durationMs, search.finalUrl),
               resultCount: 0,
               truncated: false,
               results: [],
@@ -449,14 +473,14 @@ function createWebSearchTool(): AgentTool<any, ToolEnvelope<WebSearchData>> {
         const truncated = allResults.length > results.length;
 
         return webSearchToolResult(successEnvelope('web_search', {
-          ...baseSearchData(params, provider.providerName, durationMs, search.finalUrl),
+          ...baseSearchData(params, providerName, durationMs, search.finalUrl),
           resultCount: results.length,
           totalResults: allResults.length,
           truncated,
           results,
         }, {
           instructions: searchInstructions(params.kind, results.length > 0),
-          warnings: searchWarnings(params),
+          warnings: searchWarnings(params, providerName),
           metrics: { durationMs, truncated, outputBytes: search.htmlBytes },
         }));
       } catch (error) {
@@ -478,13 +502,70 @@ interface SearchProvider {
   run(params: NormalizedWebSearchParams, signal?: AbortSignal): Promise<SearchOutcome>;
 }
 
+const DUCKDUCKGO_PROVIDER = 'duckduckgo_html';
+
 // One descriptor per search kind: which provider runs it and how the normalized
 // query maps onto the provider call. execute() stays kind-agnostic; per-kind copy
 // lives in searchWarnings/searchInstructions so adding a kind touches one place.
+// `web` retries Google on a transient fault, then falls back to DuckDuckGo;
+// `image` retries Bing (it has no secondary engine).
 const SEARCH_PROVIDERS: Record<WebSearchKind, SearchProvider> = {
-  web: { providerName: 'google_serp', run: (params, signal) => searchGoogle(buildGoogleSearchUrl(params.effectiveQuery), signal) },
-  image: { providerName: 'bing_images', run: (params, signal) => searchBingImages(params.effectiveQuery, signal) },
+  web: { providerName: 'google_serp', run: (params, signal) => runWebSearchWithFallback(params, signal) },
+  image: {
+    providerName: 'bing_images',
+    run: (params, signal) => runSearchWithRetry(() => searchBingImages(params.effectiveQuery, signal), signal),
+  },
 };
+
+// Run an engine attempt, retrying once after a short backoff on a transient nav
+// fault (network drop / timeout). Blocks, extraction misses, bad queries, and
+// aborts are returned as-is — retrying them just wastes a round trip.
+async function runSearchWithRetry(
+  attempt: () => Promise<SearchOutcome>,
+  signal?: AbortSignal,
+): Promise<SearchOutcome> {
+  const first = await attempt();
+  if (signal?.aborted || first.kind !== 'error' || !isTransientSearchError(first.code)) return first;
+  await delay(WEB_SEARCH_RETRY_DELAY_MS, signal);
+  return attempt();
+}
+
+// Web search: Google (with one transient retry), then DuckDuckGo — itself
+// retried once — when Google is blocked, empty, or failed recoverably. The
+// DuckDuckGo outcome carries its own providerName so the envelope and the
+// fallback warning reflect the real engine.
+async function runWebSearchWithFallback(
+  params: NormalizedWebSearchParams,
+  signal?: AbortSignal,
+): Promise<SearchOutcome> {
+  const google = await runSearchWithRetry(
+    () => searchGoogle(buildGoogleSearchUrl(params.effectiveQuery), signal),
+    signal,
+  );
+  if (signal?.aborted) return google;
+  const summary = {
+    kind: google.kind,
+    resultCount: google.kind === 'ok' ? google.results.length : 0,
+    ...(google.kind === 'error' ? { code: google.code } : {}),
+  };
+  if (!shouldFallbackToSecondaryEngine(summary)) return google;
+
+  // Give the fallback the same one-shot transient retry the primary got.
+  const duck = await runSearchWithRetry(
+    () => searchDuckDuckGo(params.effectiveQuery, signal),
+    signal,
+  );
+  // A DuckDuckGo page that loaded and parsed is authoritative even when empty:
+  // returning it tells the agent "no hits — broaden the query" rather than a
+  // misleading "retry / use a browser", and it is the only branch where a
+  // fallback result is surfaced (so the fallback warning fires exactly here).
+  if (duck.kind === 'ok') return duck;
+  // The fallback did not yield results either. Surface the primary, user-intended
+  // Google outcome — its hint/error is the more diagnostic signal and its
+  // finalUrl points at the google.com SERP the user asked for — rather than
+  // discarding it for DuckDuckGo's own failure.
+  return google;
+}
 
 // The invariant envelope fields shared by the hint / error / success branches —
 // written once so adding or renaming a field cannot drift across the three.
@@ -505,8 +586,13 @@ function baseSearchData(
   };
 }
 
-function searchWarnings(params: NormalizedWebSearchParams): string[] | undefined {
+function searchWarnings(params: NormalizedWebSearchParams, providerName?: string): string[] | undefined {
   const warnings: string[] = [];
+  if (providerName === DUCKDUCKGO_PROVIDER) {
+    // The primary engine may have been blocked, empty, OR unparseable — do not
+    // assert it was "unavailable", which could be false and mislead the agent.
+    warnings.push('These results are from the DuckDuckGo fallback; the primary engine (Google) returned no usable results.');
+  }
   if (params.kind === 'image') {
     warnings.push('Image results may be copyright-protected. Treat them as drafts and confirm licensing with the user before final use.');
   }
@@ -998,28 +1084,25 @@ function createWebFetchWindow(): BrowserWindow {
 }
 
 type SearchOutcome =
-  | { kind: 'ok'; finalUrl: string; results: WebSearchResult[]; htmlBytes: number }
-  | { kind: 'hint'; finalUrl: string; hint: WebToolHint }
-  | { kind: 'error'; finalUrl?: string; code: string; message: string };
+  | { kind: 'ok'; finalUrl: string; results: WebSearchResult[]; htmlBytes: number; providerName?: string }
+  | { kind: 'hint'; finalUrl: string; hint: WebToolHint; providerName?: string }
+  | { kind: 'error'; finalUrl?: string; code: string; message: string; providerName?: string };
 
-// Owns the hidden-window lifecycle shared by every search kind: the rate-limit
-// gate, the off-screen BrowserWindow, abort wiring, and guaranteed teardown.
-// Each provider supplies only its navigate-and-extract body.
+// Owns the hidden-window lifecycle shared by every search kind: the off-screen
+// BrowserWindow, abort wiring, and guaranteed teardown. The rate-limit gate is
+// NOT here — it is acquired once per web_search call in execute(), so a single
+// search's internal cascade (a transient retry, then the DuckDuckGo fallback)
+// never self-throttles or burns the cross-call burst budget mid-call. Each
+// provider supplies only its navigate-and-extract body.
 async function withSearchWindow(
   signal: AbortSignal | undefined,
   run: (webContents: WebContents) => Promise<SearchOutcome>,
 ): Promise<SearchOutcome> {
-  try {
-    await waitForSearchRateLimit(signal);
-  } catch {
-    // waitForSearchRateLimit only rejects when the caller aborts during the
-    // rate-limit delay — report that as an abort, not a rate-limit.
-    return signal?.aborted
-      ? { kind: 'error', code: 'aborted', message: 'search aborted before it started' }
-      : { kind: 'error', code: 'rate_limited', message: 'search rate-limited' };
-  }
-
   const window = createWebSearchWindow();
+  // Render with a real Chrome desktop UA instead of Electron's default (which
+  // advertises "Electron" + the app name) so engines serve the standard desktop
+  // SERP the scrapers target and are marginally less likely to gate the session.
+  window.webContents.setUserAgent(WEB_SEARCH_USER_AGENT);
   const onAbort = () => {
     try {
       if (!window.isDestroyed()) {
@@ -1101,22 +1184,34 @@ async function searchGoogle(searchUrl: string, signal?: AbortSignal): Promise<Se
   });
 }
 
-// Image search navigates straight to the Bing Images results page: Bing exposes
-// every result as `a.iusc[m]` JSON (full image / thumbnail / source page), so no
-// search-box dance is needed and the markup is far more scrapable than Google
-// Images. It runs the same verification check, which recognizes generic
-// reCAPTCHA / Cloudflare / "Just a moment" challenge markers (so those surface as
-// search_blocked); a Bing-native block that uses none of them falls through to a
-// needs_browser hint.
-async function searchBingImages(query: string, signal?: AbortSignal): Promise<SearchOutcome> {
-  if (!query) {
-    return { kind: 'error', code: 'invalid_args', message: 'missing search query' };
-  }
+interface ServerRenderedSerpSpec {
+  searchUrl: string;
+  // Single source of truth for the result anchor (also used as the readiness
+  // gate) and the in-page extractor serialized from the pure SERP function.
+  resultSelector: string;
+  extractorExpression: string;
+  emptyMessage: string;
+  providerName?: string;
+  // Bing lazy-loads image tiles and needs a nudge; DuckDuckGo's /html/ endpoint
+  // is fully server-rendered, so it does not.
+  scroll?: boolean;
+}
 
-  const searchUrl = buildBingImagesSearchUrl(query);
+// Shared scrape skeleton for a server-rendered SERP (Bing Images, DuckDuckGo
+// /html/): navigate → wait for the result selector → on miss run the shared
+// verification check (generic reCAPTCHA / Cloudflare / "Just a moment" markers
+// surface as search_blocked, otherwise a needs_browser hint) → extract. Google
+// is NOT routed through here — it needs the search-box dance. Keeping the two
+// server-rendered engines on one skeleton stops their block/abort/timeout
+// handling from drifting apart.
+async function runServerRenderedSerp(
+  spec: ServerRenderedSerpSpec,
+  signal?: AbortSignal,
+): Promise<SearchOutcome> {
+  const tag = spec.providerName ? { providerName: spec.providerName } : {};
   return withSearchWindow(signal, async (webContents) => {
     try {
-      await navigateAndWait(webContents, searchUrl, {
+      await navigateAndWait(webContents, spec.searchUrl, {
         timeoutMs: SEARCH_NAV_TIMEOUT_MS,
         signal,
       });
@@ -1125,28 +1220,62 @@ async function searchBingImages(query: string, signal?: AbortSignal): Promise<Se
         kind: 'error',
         code: classifyWebError(error),
         message: errorMessage(error),
-        finalUrl: webContents.getURL() || searchUrl,
+        finalUrl: webContents.getURL() || spec.searchUrl,
+        ...tag,
       };
     }
 
-    const ready = await waitForSelector(webContents, BING_IMAGES_RESULT_SELECTOR, 8_000, signal);
-    const finalUrl = webContents.getURL() || searchUrl;
+    const ready = await waitForSelector(webContents, spec.resultSelector, 8_000, signal);
+    const finalUrl = webContents.getURL() || spec.searchUrl;
     if (!ready) {
       const hint = await detectSearchVerification(webContents, finalUrl);
-      if (hint) return { kind: 'hint', finalUrl, hint };
-      return { kind: 'hint', finalUrl, hint: { type: 'needs_browser', reason: 'spa_shell' } };
+      if (hint) return { kind: 'hint', finalUrl, hint, ...tag };
+      return { kind: 'hint', finalUrl, hint: { type: 'needs_browser', reason: 'spa_shell' }, ...tag };
     }
 
-    await gentlyScrollSearchResults(webContents);
+    if (spec.scroll) await gentlyScrollSearchResults(webContents);
     const payload = await safeExecuteJs<{ htmlLength: number; results: WebSearchResult[] }>(
       webContents,
-      bingImagesExtractorExpression(),
+      spec.extractorExpression,
     );
     if (!payload) {
-      return { kind: 'error', code: 'extraction_failed', message: 'could not extract Bing image results', finalUrl };
+      return { kind: 'error', code: 'extraction_failed', message: spec.emptyMessage, finalUrl, ...tag };
     }
-    return { kind: 'ok', finalUrl, results: payload.results, htmlBytes: payload.htmlLength };
+    return { kind: 'ok', finalUrl, results: payload.results, htmlBytes: payload.htmlLength, ...tag };
   });
+}
+
+// Image search navigates straight to the Bing Images results page: Bing exposes
+// every result as `a.iusc[m]` JSON (full image / thumbnail / source page), so no
+// search-box dance is needed and the markup is far more scrapable than Google
+// Images.
+async function searchBingImages(query: string, signal?: AbortSignal): Promise<SearchOutcome> {
+  if (!query) {
+    return { kind: 'error', code: 'invalid_args', message: 'missing search query' };
+  }
+  return runServerRenderedSerp({
+    searchUrl: buildBingImagesSearchUrl(query),
+    resultSelector: BING_IMAGES_RESULT_SELECTOR,
+    extractorExpression: bingImagesExtractorExpression(),
+    emptyMessage: 'could not extract Bing image results',
+    scroll: true,
+  }, signal);
+}
+
+// DuckDuckGo HTML-endpoint fallback for kind:"web". The /html/ page is
+// server-rendered (no search-box dance, no scroll), so it loads the results
+// directly. Its outcomes carry providerName so execute() reports the real engine.
+async function searchDuckDuckGo(query: string, signal?: AbortSignal): Promise<SearchOutcome> {
+  if (!query) {
+    return { kind: 'error', code: 'invalid_args', message: 'missing search query', providerName: DUCKDUCKGO_PROVIDER };
+  }
+  return runServerRenderedSerp({
+    searchUrl: buildDuckDuckGoSearchUrl(query),
+    resultSelector: DUCKDUCKGO_RESULT_SELECTOR,
+    extractorExpression: duckDuckGoSerpExtractorExpression(),
+    emptyMessage: 'could not extract DuckDuckGo results',
+    providerName: DUCKDUCKGO_PROVIDER,
+  }, signal);
 }
 
 async function waitForSearchRateLimit(signal?: AbortSignal): Promise<void> {

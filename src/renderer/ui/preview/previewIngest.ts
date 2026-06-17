@@ -43,12 +43,16 @@ export async function ingestPreviewTargetToAsset(target: PreviewTarget): Promise
   return null;
 }
 
-// The bridge: the preview pane has no path to App's document state (command runner,
+// The bridge: a preview surface has no path to App's document state (command runner,
 // projection, navigation), so — like `agentFileInsert` — it fires a request and App
-// runs ingest + create-node + in-place panel bind. Single-handler: the request
-// returns App's promise so the button confirms only on a real insert.
+// runs ingest + create-node under today's daily note. Single-handler: the request
+// returns App's promise so the caller confirms only on a real insert.
+//
+// `panelId` (the preview pane's "Add to outline") additionally binds the requesting
+// pane to the new node in place; a transcript chip's "Add to Today" omits it (no pane
+// to bind). Either way the new node lands under Today.
 interface AddToOutlineRequest {
-  panelId: string;
+  panelId?: string;
   target: PreviewTarget;
 }
 

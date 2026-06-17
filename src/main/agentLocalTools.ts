@@ -17,12 +17,29 @@ import {
   validateAgentSkillContentWrite,
   type AgentSkillWriteAudit,
 } from './agentSkillAuthoring';
+import {
+  AgentDefinitionAuthoringError,
+  resolveAgentDefinitionContentTarget,
+  selfDefinitionRootEntries,
+  validateAgentDefinitionContentWrite,
+  type AgentDefinitionWriteAudit,
+  type SelfDefinitionSurface,
+} from './agentAuthoring';
+import {
+  optionalNormalizedString,
+  requiredNormalizedString,
+} from './agentToolParams';
 
 interface LocalToolOptions {
   localRoot?: string;
   scratchRoot?: string;
   workspace?: AgentLocalWorkspaceContext;
   skillRuntime?: AgentSkillRuntime;
+  agentDefinitionRuntime?: AgentDefinitionRuntime;
+}
+
+export interface AgentDefinitionRuntime {
+  notifyAgentDefinitionContentWritten(filePaths: string[]): Promise<void>;
 }
 
 export interface AgentLocalWorkspaceContext {
@@ -38,6 +55,7 @@ export interface AgentLocalWorkspaceContext {
   permissionRoots: ResolvedAgentLocalPermissionRoot[];
   readFileState: Map<string, ReadFileState>;
   skillRuntime?: AgentSkillRuntime;
+  agentDefinitionRuntime?: AgentDefinitionRuntime;
 }
 
 export interface AgentLocalPermissionRoot {
@@ -177,6 +195,7 @@ interface FileEditData {
   userModified: boolean;
   replaceAll: boolean;
   skillWrite?: AgentSkillWriteAudit;
+  agentDefinitionWrite?: AgentDefinitionWriteAudit;
 }
 
 interface FileWriteParams {
@@ -191,6 +210,7 @@ interface FileWriteData {
   structuredPatch: Hunk[];
   originalFile: string | null;
   skillWrite?: AgentSkillWriteAudit;
+  agentDefinitionWrite?: AgentDefinitionWriteAudit;
 }
 
 interface FileDeleteParams {
@@ -572,7 +592,7 @@ const TASK_STOP_PARAMETERS = {
 };
 
 export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>[] {
-  const workspace = options.workspace ?? createWorkspaceContext(options.localRoot, options.scratchRoot, options.skillRuntime);
+  const workspace = options.workspace ?? createWorkspaceContext(options.localRoot, options.scratchRoot, options.skillRuntime, options.agentDefinitionRuntime);
   return [
     createFileReadTool(workspace),
     createFileGlobTool(workspace),
@@ -629,18 +649,29 @@ function nonBlank(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function createWorkspaceContext(localRoot?: string, scratchRoot?: string, skillRuntime?: AgentSkillRuntime): WorkspaceContext {
+function createWorkspaceContext(
+  localRoot?: string,
+  scratchRoot?: string,
+  skillRuntime?: AgentSkillRuntime,
+  agentDefinitionRuntime?: AgentDefinitionRuntime,
+): WorkspaceContext {
   return {
     root: path.resolve(localRoot ?? process.cwd()),
     scratchRoot: scratchRootForWorkdir(localRoot, scratchRoot),
     permissionRoots: [],
     readFileState: new Map<string, ReadFileState>(),
     skillRuntime,
+    agentDefinitionRuntime,
   };
 }
 
-export function createAgentLocalWorkspaceContext(localRoot?: string, scratchRoot?: string, skillRuntime?: AgentSkillRuntime): AgentLocalWorkspaceContext {
-  return createWorkspaceContext(localRoot, scratchRoot, skillRuntime);
+export function createAgentLocalWorkspaceContext(
+  localRoot?: string,
+  scratchRoot?: string,
+  skillRuntime?: AgentSkillRuntime,
+  agentDefinitionRuntime?: AgentDefinitionRuntime,
+): AgentLocalWorkspaceContext {
+  return createWorkspaceContext(localRoot, scratchRoot, skillRuntime, agentDefinitionRuntime);
 }
 
 export function setAgentLocalPermissionRoots(
@@ -737,34 +768,127 @@ async function notifySuccessfulSkillContentWrite(
   await workspace.skillRuntime?.notifySkillContentWritten([filePath]);
 }
 
-function validateSkillContentWriteOrThrow(input: {
+async function notifySuccessfulAgentDefinitionContentWrite(
+  workspace: WorkspaceContext,
+  filePath: string,
+): Promise<void> {
+  await workspace.agentDefinitionRuntime?.notifyAgentDefinitionContentWritten([filePath]);
+}
+
+type SelfDefinitionWrite =
+  | { kind: 'skill'; skillWrite: AgentSkillWriteAudit }
+  | { kind: 'agent'; agentDefinitionWrite: AgentDefinitionWriteAudit };
+
+function validateSelfDefinitionContentWriteOrThrow(input: {
   workspace: WorkspaceContext;
   filePath: string;
   content: string;
   previousContent: string | null;
   operation: 'file_edit' | 'file_write';
-}): AgentSkillWriteAudit | null {
+}): SelfDefinitionWrite | null {
   // One source of truth for "is this a skill write": the live skill registry. Without a
-  // skill runtime there are no skills to govern, so a write is an ordinary file write.
+  // skill runtime there are no skills to govern, so a write under the skill self-dir is refused.
   const target = input.workspace.skillRuntime?.resolveSkillTarget(input.filePath) ?? null;
-  if (!target) return null;
-  try {
-    return validateAgentSkillContentWrite({
-      target,
-      content: input.content,
-      previousContent: input.previousContent,
-      operation: input.operation,
-    });
-  } catch (error) {
-    if (error instanceof AgentSkillAuthoringError) {
-      throw new LocalToolFailure(error.code, error.message, error.instructions);
+  if (target) {
+    try {
+      return {
+        kind: 'skill',
+        skillWrite: validateAgentSkillContentWrite({
+          target,
+          content: input.content,
+          previousContent: input.previousContent,
+          operation: input.operation,
+        }),
+      };
+    } catch (error) {
+      if (error instanceof AgentSkillAuthoringError) {
+        throw new LocalToolFailure(error.code, error.message, error.instructions);
+      }
+      throw error;
     }
-    throw error;
   }
+
+  const agentTarget = resolveAgentDefinitionContentTarget(input.filePath, input.workspace.root);
+  if (agentTarget) {
+    if (!input.workspace.agentDefinitionRuntime) {
+      throw new LocalToolFailure(
+        'agent_definition_runtime_unavailable',
+        'Agent definition writes require a live agent registry reload path.',
+        'Retry inside an agent conversation so the new AGENT.md can be validated and hot-reloaded.',
+      );
+    }
+    try {
+      return {
+        kind: 'agent',
+        agentDefinitionWrite: validateAgentDefinitionContentWrite({
+          target: agentTarget,
+          content: input.content,
+          previousContent: input.previousContent,
+          operation: input.operation,
+        }),
+      };
+    } catch (error) {
+      if (error instanceof AgentDefinitionAuthoringError) {
+        throw new LocalToolFailure(error.code, error.message, error.instructions);
+      }
+      throw error;
+    }
+  }
+
+  const surface = selfDefinitionSurfaceForPath(input.workspace, input.filePath);
+  if (surface) {
+    throw new LocalToolFailure(
+      'ungoverned_self_definition_write',
+      `Self-definition writes must target a governed ${surface} definition file.`,
+      surface === 'skill'
+        ? 'Write a SKILL.md or visible support file under .agents/skills/<skill-name>/ with the skill runtime enabled.'
+        : 'Write a complete AGENT.md under .agents/agents/<agent-name>/AGENT.md.',
+    );
+  }
+
+  return null;
 }
 
 function skillWriteInstructions(skillWrite: AgentSkillWriteAudit): string {
   return `Skill content write validated for ${skillWrite.skillName}; the skill registry has been reloaded. Previous content metadata is retained in tool details for rollback. The skill is slash-invocable now, and model-invocable skills can appear in the automatic model skill listing without a separate trust prompt.`;
+}
+
+function agentDefinitionWriteInstructions(agentDefinitionWrite: AgentDefinitionWriteAudit): string {
+  const availability = agentDefinitionWrite.changeType === 'create'
+    ? 'The new agent is available for future DMs, Channels, and delegation'
+    : 'The updated agent definition is available for future DMs, Channels, and delegation';
+  return `Agent definition write validated for ${agentDefinitionWrite.agentName}; the agent registry has been reloaded. ${availability}, and it remains restricted under the global permission gate.`;
+}
+
+// The skill/agent self-definition outcome maps onto a file-write the same way for
+// both file_edit and file_write: extra `data` fields, a registry-reload notify, and
+// the success `instructions`. These three helpers own that mapping once so the two
+// tools stay in lockstep.
+function selfDefinitionWriteData(
+  write: SelfDefinitionWrite | null,
+): { skillWrite?: AgentSkillWriteAudit; agentDefinitionWrite?: AgentDefinitionWriteAudit } {
+  if (write?.kind === 'skill') return { skillWrite: write.skillWrite };
+  if (write?.kind === 'agent') return { agentDefinitionWrite: write.agentDefinitionWrite };
+  return {};
+}
+
+async function notifySelfDefinitionContentWrite(
+  workspace: WorkspaceContext,
+  filePath: string,
+  write: SelfDefinitionWrite | null,
+  previousContent: string | null,
+): Promise<void> {
+  if (write?.kind === 'skill') {
+    await notifySuccessfulSkillContentWrite(workspace, filePath, write.skillWrite, previousContent);
+  } else if (write?.kind === 'agent') {
+    await notifySuccessfulAgentDefinitionContentWrite(workspace, filePath);
+  }
+}
+
+function selfDefinitionWriteInstructions(write: SelfDefinitionWrite | null): string | undefined {
+  if (write?.kind === 'skill') return skillWriteInstructions(write.skillWrite);
+  if (write?.kind === 'agent') return agentDefinitionWriteInstructions(write.agentDefinitionWrite);
+  return undefined;
 }
 
 function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileReadData>> {
@@ -1077,7 +1201,7 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         const nextContent = params.replace_all
           ? current.content.split(params.old_string).join(params.new_string)
           : current.content.replace(params.old_string, params.new_string);
-        const skillWrite = validateSkillContentWriteOrThrow({
+        const selfDefinitionWrite = validateSelfDefinitionContentWriteOrThrow({
           workspace,
           filePath,
           content: nextContent,
@@ -1103,12 +1227,12 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           structuredPatch: structuredPatch(current.content, nextContent),
           userModified: false,
           replaceAll: params.replace_all === true,
-          ...(skillWrite ? { skillWrite } : {}),
+          ...selfDefinitionWriteData(selfDefinitionWrite),
         };
         await notifySuccessfulFileTouch(workspace, filePath);
-        if (skillWrite) await notifySuccessfulSkillContentWrite(workspace, filePath, skillWrite, current.content);
+        await notifySelfDefinitionContentWrite(workspace, filePath, selfDefinitionWrite, current.content);
         return agentToolResult(successEnvelope('file_edit', data, {
-          instructions: skillWrite ? skillWriteInstructions(skillWrite) : undefined,
+          instructions: selfDefinitionWriteInstructions(selfDefinitionWrite),
           metrics: metrics(started, data),
         }), visibleFileEdit(data));
       } catch (error) {
@@ -1152,7 +1276,7 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
             metrics: metrics(started, data),
           }), visibleFileWrite(data));
         }
-        const skillWrite = validateSkillContentWriteOrThrow({
+        const selfDefinitionWrite = validateSelfDefinitionContentWriteOrThrow({
           workspace,
           filePath,
           content: params.content,
@@ -1178,12 +1302,12 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
           content: params.content,
           structuredPatch: originalContent === null ? [] : structuredPatch(originalContent, params.content),
           originalFile: originalContent,
-          ...(skillWrite ? { skillWrite } : {}),
+          ...selfDefinitionWriteData(selfDefinitionWrite),
         };
         await notifySuccessfulFileTouch(workspace, filePath);
-        if (skillWrite) await notifySuccessfulSkillContentWrite(workspace, filePath, skillWrite, originalContent);
+        await notifySelfDefinitionContentWrite(workspace, filePath, selfDefinitionWrite, originalContent);
         return agentToolResult(successEnvelope('file_write', data, {
-          instructions: skillWrite ? skillWriteInstructions(skillWrite) : undefined,
+          instructions: selfDefinitionWriteInstructions(selfDefinitionWrite),
           metrics: metrics(started, data),
         }), visibleFileWrite(data));
       } catch (error) {
@@ -1250,6 +1374,13 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
       try {
         const params = normalizeFileDeleteParams(rawParams);
         const filePath = resolveWorkspacePath(workspace, params.file_path, 'write');
+        if (selfDefinitionSurfaceForPath(workspace, filePath)) {
+          throw new LocalToolFailure(
+            'self_definition_delete_not_supported',
+            'Deleting skills or agents through file_delete is not supported.',
+            'Edit or create self-definition files through file_write/file_edit. Delete agents in Settings.',
+          );
+        }
         if (isFileAreaRoot(workspace, filePath)) {
           throw new LocalToolFailure('root_delete_forbidden', 'Cannot delete the allowed file area root.', 'Delete a specific file or subdirectory instead.');
         }
@@ -1373,7 +1504,7 @@ function createTaskStopTool(): AgentTool<any, ToolEnvelope<TaskStopData>> {
 
 function normalizeFileReadParams(rawParams: unknown): FileReadParams {
   const input = asRecord(rawParams);
-  const filePath = requiredString(input.file_path, 'file_path');
+  const filePath = requiredLocalString(input.file_path, 'file_path');
   return {
     file_path: filePath,
     offset: input.offset === undefined ? undefined : clampInteger(input.offset, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -1385,17 +1516,17 @@ function normalizeFileReadParams(rawParams: unknown): FileReadParams {
 function normalizeFileGlobParams(rawParams: unknown): FileGlobParams {
   const input = asRecord(rawParams);
   return {
-    pattern: requiredString(input.pattern, 'pattern'),
-    path: optionalString(input.path),
+    pattern: requiredLocalString(input.pattern, 'pattern'),
+    path: optionalNormalizedString(input.path),
   };
 }
 
 function normalizeFileGrepParams(rawParams: unknown): FileGrepParams {
   const input = asRecord(rawParams);
   return {
-    pattern: requiredString(input.pattern, 'pattern'),
-    path: optionalString(input.path),
-    glob: optionalString(input.glob),
+    pattern: requiredLocalString(input.pattern, 'pattern'),
+    path: optionalNormalizedString(input.path),
+    glob: optionalNormalizedString(input.glob),
     output_mode: input.output_mode === 'content' || input.output_mode === 'count' || input.output_mode === 'files_with_matches' ? input.output_mode : 'files_with_matches',
     '-B': optionalInteger(input['-B'], 0, 1000),
     '-A': optionalInteger(input['-A'], 0, 1000),
@@ -1403,7 +1534,7 @@ function normalizeFileGrepParams(rawParams: unknown): FileGrepParams {
     context: optionalInteger(input.context, 0, 1000),
     '-n': input['-n'] === false ? false : true,
     '-i': input['-i'] === true,
-    type: optionalString(input.type),
+    type: optionalNormalizedString(input.type),
     head_limit: optionalInteger(input.head_limit, 0, HARD_GREP_OUTPUT_LIMIT),
     offset: optionalInteger(input.offset, 0, Number.MAX_SAFE_INTEGER),
     multiline: input.multiline === true,
@@ -1415,7 +1546,7 @@ function normalizeFileEditParams(rawParams: unknown): FileEditParams {
   if (typeof input.old_string !== 'string') throw new LocalToolFailure('invalid_args', 'old_string is required.');
   if (typeof input.new_string !== 'string') throw new LocalToolFailure('invalid_args', 'new_string is required.');
   return {
-    file_path: requiredString(input.file_path, 'file_path'),
+    file_path: requiredLocalString(input.file_path, 'file_path'),
     old_string: normalizeLineEndings(input.old_string),
     new_string: normalizeLineEndings(input.new_string),
     replace_all: input.replace_all === true,
@@ -1426,17 +1557,17 @@ function normalizeFileWriteParams(rawParams: unknown): FileWriteParams {
   const input = asRecord(rawParams);
   if (typeof input.content !== 'string') throw new LocalToolFailure('invalid_args', 'content is required.');
   return {
-    file_path: requiredString(input.file_path, 'file_path'),
+    file_path: requiredLocalString(input.file_path, 'file_path'),
     content: normalizeLineEndings(input.content),
   };
 }
 
 function normalizeFileConvertParams(rawParams: unknown): FileConvertParams {
   const input = asRecord(rawParams);
-  const inputPath = requiredString(input.input_path, 'input_path');
+  const inputPath = requiredLocalString(input.input_path, 'input_path');
   const outputFormat = normalizeConvertOutputFormat(input.output_format);
-  const outputPath = optionalString(input.output_path);
-  const outputDir = optionalString(input.output_dir);
+  const outputPath = optionalNormalizedString(input.output_path);
+  const outputDir = optionalNormalizedString(input.output_dir);
   const pages = typeof input.pages === 'string' ? input.pages : undefined;
   const extension = path.extname(inputPath).toLowerCase();
   const isPdfToImage = (outputFormat === 'png' || outputFormat === 'jpeg') && extension === '.pdf';
@@ -1464,16 +1595,16 @@ function normalizeFileConvertParams(rawParams: unknown): FileConvertParams {
 function normalizeFileDeleteParams(rawParams: unknown): FileDeleteParams {
   const input = asRecord(rawParams);
   return {
-    file_path: requiredString(input.file_path, 'file_path'),
+    file_path: requiredLocalString(input.file_path, 'file_path'),
   };
 }
 
 function normalizeBashParams(rawParams: unknown): BashParams {
   const input = asRecord(rawParams);
-  const command = requiredString(input.command, 'command');
+  const command = requiredLocalString(input.command, 'command');
   return {
     command,
-    description: optionalString(input.description),
+    description: optionalNormalizedString(input.description),
     timeout: clampInteger(input.timeout, 1, BASH_MAX_TIMEOUT_MS, BASH_DEFAULT_TIMEOUT_MS),
     run_in_background: input.run_in_background === true,
     dangerouslyDisableSandbox: input.dangerouslyDisableSandbox === true,
@@ -1482,7 +1613,7 @@ function normalizeBashParams(rawParams: unknown): BashParams {
 
 function normalizeTaskStopParams(rawParams: unknown): TaskStopParams {
   const input = asRecord(rawParams);
-  return { task_id: requiredString(input.task_id, 'task_id') };
+  return { task_id: requiredLocalString(input.task_id, 'task_id') };
 }
 
 function normalizeConvertOutputFormat(value: unknown): FileConvertOutputFormat {
@@ -1538,7 +1669,18 @@ function resolveSingleConvertOutputPath(
     workspace.root,
     `${path.basename(inputPath, path.extname(inputPath))}${CONVERT_FORMAT_EXTENSIONS[params.output_format]}`,
   );
-  return resolveWorkspacePath(workspace, params.output_path ?? fallback, 'write');
+  const outputPath = resolveWorkspacePath(workspace, params.output_path ?? fallback, 'write');
+  assertNotSelfDefinitionConvertOutput(workspace, outputPath);
+  return outputPath;
+}
+
+function assertNotSelfDefinitionConvertOutput(workspace: WorkspaceContext, outputPath: string): void {
+  if (!selfDefinitionSurfaceForPath(workspace, outputPath)) return;
+  throw new LocalToolFailure(
+    'self_definition_convert_output_not_supported',
+    'file_convert cannot write skill or agent definition content.',
+    'Use file_write or file_edit so self-definition content is validated and hot-reloaded.',
+  );
 }
 
 async function assertOutputPathAvailable(outputPath: string, inputPath: string): Promise<void> {
@@ -1605,6 +1747,7 @@ async function convertPdfToImages(
     params.output_dir ?? path.join(workspace.root, `${path.basename(inputPath, path.extname(inputPath))}-pages-${randomUUID().slice(0, 8)}`),
     'write',
   );
+  assertNotSelfDefinitionConvertOutput(workspace, outputDir);
   await ensureDirectoryOutput(outputDir);
 
   const formatFlag = params.output_format === 'png' ? '-png' : '-jpeg';
@@ -2730,6 +2873,7 @@ function visibleFileEdit(data: FileEditData) {
     filePath: data.filePath,
     structuredPatch: data.structuredPatch,
     ...(data.skillWrite ? { skillWrite: visibleSkillWrite(data.skillWrite) } : {}),
+    ...(data.agentDefinitionWrite ? { agentDefinitionWrite: visibleAgentDefinitionWrite(data.agentDefinitionWrite) } : {}),
   };
 }
 
@@ -2775,6 +2919,7 @@ function visibleFileWrite(data: FileWriteData) {
     filePath: data.filePath,
     structuredPatch: data.structuredPatch,
     ...(data.skillWrite ? { skillWrite: visibleSkillWrite(data.skillWrite) } : {}),
+    ...(data.agentDefinitionWrite ? { agentDefinitionWrite: visibleAgentDefinitionWrite(data.agentDefinitionWrite) } : {}),
   };
 }
 
@@ -2793,6 +2938,16 @@ function visibleSkillWrite(skillWrite: AgentSkillWriteAudit) {
     relativePath: skillWrite.relativePath,
     changeType: skillWrite.changeType,
     warnings: skillWrite.warnings,
+  };
+}
+
+function visibleAgentDefinitionWrite(agentDefinitionWrite: AgentDefinitionWriteAudit) {
+  return {
+    agentName: agentDefinitionWrite.agentName,
+    source: agentDefinitionWrite.source,
+    relativePath: agentDefinitionWrite.relativePath,
+    changeType: agentDefinitionWrite.changeType,
+    warnings: agentDefinitionWrite.warnings,
   };
 }
 
@@ -2932,6 +3087,29 @@ function allowedRealRoots(workspace: WorkspaceContext, rootRealPath: string, acc
   return roots;
 }
 
+function selfDefinitionSurfaceForPath(workspace: WorkspaceContext, filePath: string): SelfDefinitionSurface | null {
+  const lexicalPath = path.resolve(filePath);
+  const canonicalPath = resolveCanonicalPath(filePath)?.realPath ?? null;
+  for (const { dir, surface } of selfDefinitionRootEntries(workspace.root)) {
+    const lexicalRoot = path.resolve(dir);
+    if (isSelfDefinitionContentPath(lexicalRoot, lexicalPath)) return surface;
+    const canonicalRoot = resolveCanonicalPath(dir)?.realPath ?? null;
+    if (canonicalPath && canonicalRoot && isSelfDefinitionContentPath(canonicalRoot, canonicalPath)) return surface;
+  }
+  return null;
+}
+
+function isSelfDefinitionContentPath(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return false;
+  if (relative === '') return true;
+  const parts = relative.split(path.sep).filter(Boolean);
+  if (parts.length >= 2) return true;
+  // Root-level docs such as `.agents/skills/README.md` are ordinary workspace
+  // files. Existing direct child directories are definition roots and stay guarded.
+  return isDirectoryPath(candidate);
+}
+
 function isInsideAnyRoot(roots: readonly string[], candidate: string): boolean {
   return roots.some((root) => isResolvedPathInside(root, candidate));
 }
@@ -3017,15 +3195,12 @@ function localErrorResult<TData>(tool: string, error: unknown, started: number) 
   }));
 }
 
-function requiredString(value: unknown, name: string): string {
-  if (typeof value !== 'string' || !value.trim()) {
-    throw new LocalToolFailure('invalid_args', `${name} is required.`);
-  }
-  return value.trim();
-}
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+function requiredLocalString(value: unknown, name: string): string {
+  return requiredNormalizedString(
+    value,
+    name,
+    (field) => new LocalToolFailure('invalid_args', `${field} is required.`),
+  );
 }
 
 function optionalInteger(value: unknown, min: number, max: number): number | undefined {

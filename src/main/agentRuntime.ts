@@ -108,11 +108,11 @@ import {
   parseAgentMentionTargets,
 } from '../core/agentChannel';
 import {
-  nodeReferenceMarkersToText,
   rewriteFileReferenceMarkerPaths,
   richTextToReferenceMarkup,
   sanitizeFileReferenceRef,
 } from '../core/referenceMarkup';
+import { normalizeConversationTitle, sanitizeConversationTitle } from '../core/agentConversationTitle';
 import { serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
 import { materializeAgentLocalPath, materializePathBackedAttachment } from './agentAttachmentMaterialization';
@@ -599,6 +599,20 @@ interface AgentDreamRunResult {
 }
 
 type AgentEventInput = AgentRuntimeContextEventInput;
+type AgentMemberPrincipal = Extract<AgentPrincipal, { type: 'agent' }>;
+interface AgentConversationChannelUpdateOptions {
+  title?: string;
+  addAgentIds?: readonly string[];
+  removeAgentIds?: readonly string[];
+}
+
+interface AgentConversationChannelUpdateResult {
+  conversation: AgentConversationListMeta;
+  addedAgentIds: string[];
+  removedAgentIds: string[];
+  renamed: boolean;
+}
+
 /** Opt-in OS-notification sink, wired by main.ts (owns the native Electron Notification). */
 export type OsNotifier = (input: { title: string; body?: string; conversationId: string }) => void;
 type AgentUserViewPanel = AgentUserViewContext['nodePanels'][number];
@@ -1036,26 +1050,11 @@ export class AgentRuntime {
    * Canonical DMs are immutable; only named Channels support membership edits.
    */
   async addConversationMember(conversationId: string, agentId: string) {
-    if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) {
-      throw new Error('#General membership is automatic.');
-    }
-    const principal = await this.requireAgentMemberPrincipal(agentId);
+    await this.applyConversationChannelUpdate(conversationId, {
+      addAgentIds: [agentId],
+      emitReason: 'member.added',
+    });
     const conversation = await this.ensureConversationWithId(conversationId);
-    if (this.isCanonicalDmConversationId(conversationId)) {
-      throw new Error('Create a Channel from a DM first.');
-    }
-    const members = conversation.eventState.conversation?.members ?? [];
-    if (!members.some((member) => samePrincipal(member, principal))) {
-      this.assertNoMentionTokenCollision(members, agentId);
-      await this.appendConversationEvents(conversationId, conversation, [{
-        type: 'member.added',
-        actor: userActor(),
-        member: principal,
-      }]);
-      await this.refreshMemberDisplayNames(conversation);
-      this.queuePovInspectorMemoryRefresh(conversationId, conversation);
-      this.emitProjection(conversationId, 'member.added');
-    }
     return this.conversationResponse(conversationId, conversation);
   }
 
@@ -1075,48 +1074,123 @@ export class AgentRuntime {
   }
 
   async removeConversationMember(conversationId: string, agentId: string) {
-    if (this.isCanonicalDmConversationId(conversationId)) throw new Error('The canonical DM membership cannot change.');
-    if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) throw new Error('#General membership is automatic.');
-    if (agentId === this.coordinatorAgentId()) throw new Error('The Channel coordinator cannot be removed.');
+    await this.applyConversationChannelUpdate(conversationId, {
+      removeAgentIds: [agentId],
+      emitReason: 'member.removed',
+    });
     const conversation = await this.ensureConversationWithId(conversationId);
-    const principal: AgentPrincipal = { type: 'agent', agentId };
-    const members = conversation.eventState.conversation?.members ?? [];
-    const memberExists = members.some((member) => samePrincipal(member, principal));
-    // Mid-run removal would yank a member whose run is live (or queued) and
-    // can flip the conversation's POV selection under it — membership changes
-    // wait for the Channel to settle.
-    if (this.hasActiveRuns(conversation) || conversation.pendingChannelTurns.length > 0) {
-      throw new Error('Cannot remove a member while a Channel run is active.');
-    }
-    if (memberExists) {
-      await this.appendConversationEvents(conversationId, conversation, [{
-        type: 'member.removed',
-        actor: userActor(),
-        member: principal,
-      }]);
-      this.queuePovInspectorMemoryRefresh(conversationId, conversation);
-      this.emitProjection(conversationId, 'member.removed');
-    }
     return this.conversationResponse(conversationId, conversation);
   }
 
-  /** Resolve agent ids to member principals, validating each against the registry. */
-  private async resolveAgentMemberPrincipals(agentIds: readonly string[]): Promise<AgentPrincipal[]> {
-    const principals: AgentPrincipal[] = [];
-    for (const agentId of agentIds) {
-      principals.push(await this.requireAgentMemberPrincipal(agentId));
-    }
-    return principals;
+  /**
+   * Atomically apply Channel organization changes for the coordinator's chat tool.
+   * Single-step UI commands keep their narrower methods above; this path reports
+   * the actual delta that was committed, so the model does not over-claim no-ops.
+   */
+  async updateConversationChannel(
+    conversationId: string,
+    options: AgentConversationChannelUpdateOptions,
+  ): Promise<AgentConversationChannelUpdateResult> {
+    return this.applyConversationChannelUpdate(conversationId, {
+      ...options,
+      emitReason: 'channel.updated',
+    });
   }
 
-  private async requireAgentMemberPrincipal(agentId: string): Promise<AgentPrincipal> {
-    if (agentId === this.agentIdentity.agentId) {
-      return { type: 'agent', agentId };
+  private async applyConversationChannelUpdate(
+    conversationId: string,
+    options: AgentConversationChannelUpdateOptions & { emitReason: string },
+  ): Promise<AgentConversationChannelUpdateResult> {
+    if (this.isCanonicalDmConversationId(conversationId)) throw new Error('The canonical DM membership cannot change.');
+    if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) throw new Error('#General membership is automatic.');
+    const conversation = await this.ensureConversationWithId(conversationId);
+    const addAgentIds = uniqueStrings(options.addAgentIds ?? []);
+    const removeAgentIds = uniqueStrings(options.removeAgentIds ?? []);
+    const overlap = addAgentIds.find((agentId) => removeAgentIds.includes(agentId));
+    if (overlap) throw new Error(`Agent ${overlap} cannot be both added and removed in one update.`);
+    const addPrincipals = await this.resolveAgentMemberPrincipals(addAgentIds);
+    const removePrincipals = removeAgentIds.map((agentId): AgentMemberPrincipal => ({ type: 'agent', agentId }));
+    for (const principal of removePrincipals) {
+      if (principal.agentId === this.coordinatorAgentId()) throw new Error('The Channel coordinator cannot be removed.');
     }
-    const definitions = await this.listRawAgentDefinitions('member-resolve');
-    const match = definitions.find((definition) => agentDefinitionAgentId(definition) === agentId);
-    if (!match) throw new Error(`Agent not found for Channel membership: ${agentId}`);
-    return { type: 'agent', agentId };
+    let workingMembers = (conversation.eventState.conversation?.members ?? []).slice();
+    const actualRemovePrincipals = removePrincipals.filter((principal) => (
+      workingMembers.some((member) => samePrincipal(member, principal))
+    ));
+    if (actualRemovePrincipals.length > 0 && (this.hasActiveRuns(conversation) || conversation.pendingChannelTurns.length > 0)) {
+      throw new Error('Cannot remove a member while a Channel run is active.');
+    }
+
+    const inputs: AgentEventInput[] = [];
+    const removedAgentIds: string[] = [];
+    const addedAgentIds: string[] = [];
+
+    for (const principal of actualRemovePrincipals) {
+      inputs.push({
+        type: 'member.removed',
+        actor: userActor(),
+        member: principal,
+      });
+      removedAgentIds.push(principal.agentId);
+      workingMembers = workingMembers.filter((member) => !samePrincipal(member, principal));
+    }
+
+    for (const principal of addPrincipals) {
+      if (workingMembers.some((member) => samePrincipal(member, principal))) continue;
+      this.assertNoMentionTokenCollision(workingMembers, principal.agentId);
+      inputs.push({
+        type: 'member.added',
+        actor: userActor(),
+        member: principal,
+      });
+      addedAgentIds.push(principal.agentId);
+      workingMembers = [...workingMembers, principal];
+    }
+
+    const normalizedTitle = options.title === undefined ? undefined : normalizeConversationTitle(options.title);
+    const currentTitle = sanitizeConversationTitle(conversation.eventState.conversation?.title);
+    const renamed = normalizedTitle !== undefined && normalizedTitle !== currentTitle;
+    if (renamed) {
+      inputs.push({
+        type: 'conversation.renamed',
+        actor: systemActor(),
+        title: normalizedTitle,
+        goal: normalizedTitle,
+      });
+    }
+
+    if (inputs.length > 0) {
+      await this.appendConversationEvents(conversationId, conversation, inputs);
+      if (addedAgentIds.length > 0) await this.refreshMemberDisplayNames(conversation);
+      if (addedAgentIds.length > 0 || removedAgentIds.length > 0) this.queuePovInspectorMemoryRefresh(conversationId, conversation);
+      this.emitProjection(conversationId, options.emitReason);
+    }
+
+    const meta = eventStateToMeta(conversation.eventState);
+    if (!meta) throw new Error(`Channel not found after update: ${conversationId}`);
+    return {
+      conversation: meta,
+      addedAgentIds,
+      removedAgentIds,
+      renamed,
+    };
+  }
+
+  /** Resolve agent ids to member principals, validating each against the registry. */
+  private async resolveAgentMemberPrincipals(agentIds: readonly string[]): Promise<AgentMemberPrincipal[]> {
+    const lookupAgentIds = uniqueStrings(agentIds.filter((agentId) => agentId !== this.agentIdentity.agentId));
+    const definitions = lookupAgentIds.length > 0 ? await this.listRawAgentDefinitions('member-resolve') : [];
+    const availableAgentIds = new Set(definitions.map((definition) => agentDefinitionAgentId(definition)));
+    return agentIds.map((agentId) => {
+      if (agentId === this.agentIdentity.agentId || availableAgentIds.has(agentId)) {
+        return { type: 'agent', agentId };
+      }
+      throw new Error(`Agent not found for Channel membership: ${agentId}`);
+    });
+  }
+
+  private async requireAgentMemberPrincipal(agentId: string): Promise<AgentMemberPrincipal> {
+    return (await this.resolveAgentMemberPrincipals([agentId]))[0]!;
   }
 
   private async displayNameForAgentId(agentId: string): Promise<string> {
@@ -1740,6 +1814,15 @@ export class AgentRuntime {
     }
     await this.ensureGeneralChannelEventState();
     return this.listAllAgentDefinitions(conversationId);
+  }
+
+  private async notifyAgentDefinitionContentWritten(conversationId: string): Promise<void> {
+    await this.reloadAgentDefinitions(conversationId);
+    const conversation = this.conversations.get(conversationId);
+    if (conversation) {
+      await this.refreshMemberDisplayNames(conversation);
+      this.emitProjection(conversationId, 'agent_definitions_reloaded');
+    }
   }
 
   private async resolveAgentDefinitionById(conversationId: string, agentId: string): Promise<AgentDefinition> {
@@ -2499,8 +2582,14 @@ export class AgentRuntime {
     });
     skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
     skillRuntime.restoreInvokedSkillsFromMessages(activePath);
-    const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, this.scratchRoot(), skillRuntime);
-    const delegationRuntime = new AgentDelegationRuntime({
+    let delegationRuntime: AgentDelegationRuntime;
+    const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, this.scratchRoot(), skillRuntime, {
+      notifyAgentDefinitionContentWritten: async (filePaths) => {
+        await this.notifyAgentDefinitionContentWritten(conversationId);
+        void filePaths;
+      },
+    });
+    delegationRuntime = new AgentDelegationRuntime({
       conversationId,
       executingAgentId: defaultAgentId,
       memoryOwnerAgentId: defaultAgentId,
@@ -2548,6 +2637,7 @@ export class AgentRuntime {
           if (!current) return Promise.resolve();
           return this.notifyChildRun(conversationId, current, snapshot);
         },
+        agentDefinitionContentWritten: () => this.notifyAgentDefinitionContentWritten(conversationId),
         reportError: (report) => this.reportError(report),
         restoreChildRunLedger: (runId) => this.restoreChildRunLedger(conversationId, runId),
         persistToolOutputPayload: (toolCallId, toolName, text) => (
@@ -2607,6 +2697,15 @@ export class AgentRuntime {
           askUserQuestion: this.createAskUserQuestionRuntime(() => conversationId, () => conversationRef.current),
           selfMaintenance: defaultAgentId === this.agentIdentity.agentId
             ? this.createSelfMaintenanceRuntime(() => conversationId, () => conversationRef.current)
+            : undefined,
+          channelOrg: defaultAgentId === this.agentIdentity.agentId
+            ? {
+                currentConversationId: () => conversationId,
+                createConversation: (options) => this.createConversation(options),
+                updateConversation: (targetConversationId, updates) => this.updateConversationChannel(targetConversationId, updates),
+                listConversations: () => this.listConversations(),
+                listAllAgentDefinitions: (targetConversationId) => this.listAllAgentDefinitions(targetConversationId),
+              }
             : undefined,
           allowedTools: defaultAgentProfile?.definition.tools,
           disallowedTools: defaultAgentProfile?.definition.disallowedTools,
@@ -8068,15 +8167,6 @@ function deriveTitleFromPersistedContent(content: AgentPersistedContent[]): stri
   return normalized ? normalized.slice(0, 30) : null;
 }
 
-function sanitizeConversationTitle(title: string | null | undefined): string | null {
-  const normalized = nodeReferenceMarkersToText(title ?? '').replace(/\s+/g, ' ').trim();
-  return normalized || null;
-}
-
-function normalizeConversationTitle(title: string): string {
-  return sanitizeConversationTitle(title) ?? 'Untitled';
-}
-
 function summarizeToolResult(message: ToolResultMessage): string {
   const text = piUserText(message.content).replace(/\s+/g, ' ').trim();
   if (text) return text.length > 500 ? `${text.slice(0, 500).trim()}...` : text;
@@ -8439,6 +8529,7 @@ function createConfiguredAgent(
     recall?: AgentToolsOptions['recall'];
     askUserQuestion?: AgentToolsOptions['askUserQuestion'];
     selfMaintenance?: AgentToolsOptions['selfMaintenance'];
+    channelOrg?: AgentToolsOptions['channelOrg'];
     localWorkspace?: AgentLocalWorkspaceContext;
     allowedTools?: string[];
     disallowedTools?: string[];
@@ -8479,6 +8570,7 @@ function createConfiguredAgent(
         recall: options.recall,
         askUserQuestion: options.askUserQuestion,
         selfMaintenance: options.selfMaintenance,
+        channelOrg: options.channelOrg,
         allowedTools: options.allowedTools,
         disallowedTools: options.disallowedTools,
       }),

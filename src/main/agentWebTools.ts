@@ -25,6 +25,8 @@ export {
   WEB_FETCH_RENDER_SETTLE_MS,
   WEB_FETCH_RETRY_DELAY_MS,
   WEB_FETCH_USER_AGENT,
+  WEB_SEARCH_RETRY_DELAY_MS,
+  WEB_SEARCH_USER_AGENT,
 } from './agentWebConstants';
 export { extractContent, extractMetadata } from './agentWebFetchContent';
 
@@ -645,6 +647,13 @@ export function buildGoogleSearchUrl(query: string): string {
 export function buildBingImagesSearchUrl(query: string): string {
   const params = new URLSearchParams({ q: query });
   return `https://www.bing.com/images/search?${params.toString()}`;
+}
+
+// DuckDuckGo's no-JS HTML endpoint: server-rendered results that scrape cleanly
+// and rarely gate, used as the secondary engine when Google is blocked or empty.
+export function buildDuckDuckGoSearchUrl(query: string): string {
+  const params = new URLSearchParams({ q: query });
+  return `https://html.duckduckgo.com/html/?${params.toString()}`;
 }
 
 function baseFetchData(

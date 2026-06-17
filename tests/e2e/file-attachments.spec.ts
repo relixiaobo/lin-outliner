@@ -18,7 +18,7 @@ test.describe('file attachments', () => {
     await openMockedApp(page);
   });
 
-  test('/attachment creates a click-to-open file card (icon · filename · meta · ⋯ menu) that opens as an ingested preview', async ({ page }) => {
+  test('/attachment creates a lightweight file name row whose chevron expands an inline preview and whose bullet drills to the node page', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
     await page.keyboard.type('/attachment');
@@ -52,46 +52,59 @@ test.describe('file attachments', () => {
       win.__LIN_E2E__!.emitDocumentEvent({ type: 'projection_changed', projection });
     }, attachmentId);
 
-    // A non-image file renders a uniform card: a file-type icon, the display-only
-    // filename (a single truncated line), and a meta line. The bullet stays a plain
-    // node handle (the file-type icon is on the card).
+    // A non-image file is a lightweight name row (no card): the file-type icon serves
+    // as the bullet, and the row carries a read-only filename plus a hover-revealed `⋯`
+    // menu. The old uniform `.file-node-card` is gone.
     const attachmentRow = row(page, attachmentId!);
-    const card = attachmentRow.locator('.file-node-card');
-    await expect(card).toBeVisible();
-    await expect(card.locator('.file-node-card-icon')).toBeVisible();
-    await expect(card.locator('.file-node-card-name')).toContainText('picked-report.pdf');
-    await expect(card.locator('.file-node-card-meta')).toContainText('PDF');
+    await expect(attachmentRow.locator('.row-bullet-shape.file')).toHaveCount(1);
+    await expect(attachmentRow.locator('.file-node-card')).toHaveCount(0);
+    const rowMain = attachmentRow.locator('.file-node-row-main');
+    await expect(rowMain).toBeVisible();
+    await expect(rowMain.locator('.file-node-row-name')).toContainText('picked-report.pdf');
+    await expect(rowMain.locator('.file-node-row-name')).not.toContainText('Untitled');
+    await expect(attachmentRow.locator('.file-node-row-actions .file-node-card-menu-trigger')).toBeAttached();
 
-    // A file node is a normal node: expanding it reveals its children area, NOT a
-    // preview inline (the full preview lives on the file preview surface). The chevron is
-    // hover-revealed, so hover the row line before clicking it.
+    // The filename is display-only: a single click selects the row but does NOT
+    // navigate to the node page — the Today outline stays active.
+    await attachmentRow.locator('.file-node-row-name').click();
+    await expect(page.locator(`.outline-panel-surface.active-panel [data-trailing-parent-id="${ids.today}"]`)).toBeVisible();
+    await expect(page.locator('.outline-panel-surface.active-panel .panel-title-file-heading')).toHaveCount(0);
+
+    // The chevron expands an INLINE PREVIEW (not children). The chevron is
+    // hover-revealed, so hover the row line first, then click it.
     const attachmentRowLine = attachmentRow.locator('> .row').first();
     await attachmentRowLine.hover();
     await attachmentRow.locator('.row-chevron-button').first().click();
-    await expect(attachmentRow.locator('.file-node-body')).toHaveCount(0);
+    const inlinePreviewCanvas = attachmentRow.locator('.file-node-row-preview .file-node-body .file-preview-pdf-canvas');
+    await expect(inlinePreviewCanvas).toBeVisible();
 
-    // Because it is a normal node, a file node carries child notes: typing into its
-    // trailing child draft materializes a child under the attachment.
-    await trailingEditor(page, attachmentId!).click();
-    await page.keyboard.type('a note on this file');
+    // Expanding a childless file row must NOT create a phantom editable child draft:
+    // the attachment node stays childless and no new node materializes.
     await expect.poll(async () => {
       const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId);
       return node?.children.length ?? 0;
-    }).toBe(1);
+    }).toBe(0);
+    const childCountAfterExpand = (await todayChildren(page)).length;
+    expect(childCountAfterExpand).toBe(beforeChildren.length + 1);
 
-    // Clicking the card opens the file as an ingested preview: the preview is the
-    // hero, with a read-only filename title and the child-notes outline below it.
-    await card.locator('.file-node-card-name').click();
+    // The file-type bullet drills to the node page.
+    await attachmentRowLine.hover();
+    await attachmentRow.locator('.row-bullet-button').first().click();
     const nodePage = page.locator('.outline-panel-surface.active-panel');
     await expect(nodePage.locator('.panel-title-file-heading')).toContainText('picked-report.pdf');
     await expect(nodePage.locator('.panel-title-file-heading')).not.toContainText('Untitled');
     await expect(nodePage.locator('.panel-title-editor .ProseMirror')).toHaveCount(0);
-    await expect(nodePage.locator('.file-node-meta')).toContainText('PDF');
-    await expect(nodePage.locator('.file-node-meta')).toContainText('1 page');
-    await expect(nodePage.getByText('a note on this file')).toBeVisible();
 
-    const pdfCanvas = nodePage.locator('.file-node-preview .file-preview-pdf-canvas');
+    // The old top meta strip and the actions button row are gone — meta/actions now
+    // live on the bottom pill and its `⋯` menu.
+    await expect(nodePage.locator('.file-node-meta')).toHaveCount(0);
+    await expect(nodePage.locator('.file-node-actions')).toHaveCount(0);
+
+    const pdfCanvas = nodePage.locator('.file-node-body .file-preview-pdf-canvas');
     await expect(pdfCanvas).toBeVisible();
+    // The PDF now renders fit-to-width, so the exact pixel size depends on the pane
+    // width (it is no longer the fixed 612x792 the old hero used). Assert the page
+    // renders real ink at the mock's US-Letter aspect ratio (792/612 ≈ 1.294) instead.
     await expect.poll(async () => pdfCanvas.evaluate((element) => {
       const canvas = element as HTMLCanvasElement;
       const context = canvas.getContext('2d');
@@ -111,26 +124,48 @@ test.describe('file attachments', () => {
           }
         }
       }
-      return { height: canvas.height, hasInk, width: canvas.width };
-    })).toEqual({ height: 792, hasInk: true, width: 612 });
-    await expect(nodePage.locator('.file-node-preview .file-preview-message')).toBeHidden();
+      const aspect = canvas.width > 0 ? canvas.height / canvas.width : 0;
+      return {
+        hasInk,
+        rendered: canvas.width > 0 && canvas.height > 0,
+        usLetterAspect: Math.abs(aspect - 792 / 612) < 0.02,
+      };
+    })).toEqual({ hasInk: true, rendered: true, usLetterAspect: true });
 
-    // The preview header carries the file system actions.
-    const actions = nodePage.locator('.file-node-actions');
-    await actions.getByRole('button', { name: 'Open' }).click();
-    await actions.getByRole('button', { name: 'Reveal in Finder' }).click();
-    await actions.getByRole('button', { name: 'Copy file' }).click();
+    // A single bottom floating pill carries the preview controls: a previewable PDF's
+    // primary toggles Expand/Collapse, and the `⋯` menu holds the file-system actions.
+    const pill = nodePage.locator('.file-preview-pill');
+    await expect(pill).toBeVisible();
+    await expect(pill.locator('.file-preview-pill-primary')).toHaveText(/Expand|Collapse/);
+    await pill.locator('.file-preview-pill-more').click();
+    const pillMenu = page.getByRole('menu', { name: 'Preview actions' });
+    await pillMenu.getByRole('menuitem', { name: 'Open with default app' }).click();
+    await pill.locator('.file-preview-pill-more').click();
+    await pillMenu.getByRole('menuitem', { name: 'Reveal in Finder' }).click();
+    await pill.locator('.file-preview-pill-more').click();
+    await pillMenu.getByRole('menuitem', { name: 'Copy file' }).click();
 
-    // Back returns to the previous node (the Today page the file was drilled from).
+    // A file node carries child notes on its node page: an "always" trailing draft in
+    // the children outline materializes a child under the attachment when typed into.
+    await trailingEditor(page, attachmentId!).click();
+    await page.keyboard.type('a note on this file');
+    await expect.poll(async () => {
+      const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId);
+      return node?.children.length ?? 0;
+    }).toBe(1);
+    await expect(nodePage.getByText('a note on this file')).toBeVisible();
+
+    // Back returns to the Today page the file was drilled from.
     await expect(nodePage.locator('.panel-page-back-button')).toBeEnabled();
     await nodePage.locator('.panel-page-back-button').click();
-    await expect(card.locator('.file-node-card-name')).toContainText('picked-report.pdf');
+    await expect(attachmentRow.locator('.file-node-row-name')).toContainText('picked-report.pdf');
 
-    // The card's ⋯ menu offers Open in split + Reveal in Finder.
-    await card.hover();
-    await card.locator('.file-node-card-menu-trigger').click();
+    // The row's hover `⋯` menu offers Open in split + Reveal in Finder + Copy file.
+    await attachmentRowLine.hover();
+    await attachmentRow.locator('.file-node-row-actions .file-node-card-menu-trigger').click();
     await expect(page.getByRole('menuitem', { name: 'Open in split' })).toBeVisible();
     await expect(page.getByRole('menuitem', { name: 'Reveal in Finder' })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Copy file' })).toBeVisible();
     await page.keyboard.press('Escape');
 
     const calls = await commandCalls(page);
@@ -164,7 +199,7 @@ test.describe('file attachments', () => {
     await expect(imageRow.locator('.file-node-image-button img')).toBeVisible();
     await expect(imageRow.locator('.file-node-card')).toHaveCount(0);
     // The ⋯ menu lives at the image's top-right (its Maximize/Reveal items share the
-    // FileNodeActionMenu exercised by the card test above).
+    // FileNodeActionMenu exercised by the attachment test above).
     await expect(imageRow.locator('.file-node-image-actions .file-node-card-menu-trigger')).toBeAttached();
 
     // …and it is pinned to the image's REAL top-right corner. The mock image is wider
@@ -203,8 +238,8 @@ test.describe('file attachments', () => {
     await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
     const attachmentId = (await todayChildren(page)).at(-1)!;
     const attachmentRow = row(page, attachmentId);
-    const cardName = attachmentRow.locator('.file-node-card-name');
-    await expect(cardName).toContainText('picked-report.pdf');
+    const rowName = attachmentRow.locator('.file-node-row-name');
+    await expect(rowName).toContainText('picked-report.pdf');
 
     // A file row carries no inline editor — just a visually hidden, focusable anchor
     // (a lightweight div, NOT a ProseMirror) that drives the row by keyboard.
@@ -221,12 +256,13 @@ test.describe('file attachments', () => {
     // title nor fires the slash/tag triggers.
     await page.keyboard.type('renamed/#tag');
     await expect(page.getByRole('listbox', { name: 'Slash commands' })).toHaveCount(0);
-    await expect(cardName).toContainText('picked-report.pdf');
-    await expect(cardName).not.toContainText('renamed');
+    await expect(rowName).toContainText('picked-report.pdf');
+    await expect(rowName).not.toContainText('renamed');
 
     // …but structural keyboard nav DOES drive the row. This is the regression we fixed:
     // the old read-only ProseMirror anchor swallowed these (ProseMirror gates
-    // handleKeyDown behind view.editable). Enter on the focused file row adds a sibling.
+    // handleKeyDown behind view.editable). Enter on the focused file row adds a sibling
+    // — guaranteed for file rows regardless of preview state.
     const countBeforeEnter = (await todayChildren(page)).length;
     await anchor.evaluate((element) => (element as HTMLElement).focus());
     await page.keyboard.press('Enter');

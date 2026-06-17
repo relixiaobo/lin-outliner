@@ -644,10 +644,24 @@ written path as a local-file chip — the same `InlineFileReference` the agent's
 prose file references use, so a produced file reads identically to a referenced
 one — plus an inspectable unified diff, instead of the raw model-visible JSON.
 The chip carries `data-inline-ref-kind="local-file"`, so the app-wide
-`InlineFilePreviewLayer` gives it hover preview and click-to-open into the
-`FilePreviewPanel`; the chip shows the basename while the full path stays on the
-preview/open path. (The working file is path-addressed; durability is what
-Save-to-outliner / Export are for — see `docs/plans/agent-file-artifact-model.md`.)
+`InlineFilePreviewLayer` gives it hover preview; the chip shows the basename
+while the full path stays on the preview/open path.
+
+A transcript chip is a **pointer to a working file on disk**, so it does not open
+the in-app preview pane: a **click opens the file with the OS default app**, and a
+**right-click** opens the bespoke `AgentTranscriptFileMenu` — *Add to Today* (copy
+the source into the asset store and create a file node under today's daily note),
+*Open with default app*, *Show in Finder*. The split is **by location**, not by
+node data: a chip is a transcript chip when it has a `[data-agent-transcript-chips]`
+ancestor. That marker is set in exactly **one** place — the live assistant message
+body (`AgentAssistantContent`) — so every chip a live turn renders (answer prose,
+interim narration, and `file_write` / `file_edit` result chips) opens externally,
+while the **same** components on meta surfaces (compaction / child-run summaries, the
+child-run-details and PoV-inspector panels) have no such ancestor and keep the in-app
+preview. An outliner file reference is a node-model field, never under this marker, so
+it too keeps its in-app preview-pane click-to-open and native context menu unchanged.
+(The working file is path-addressed; durability is what Save-to-outliner / Export
+are for — see `docs/plans/agent-file-artifact-model.md`.)
 
 ## Conversation vs Runtime Transcript Projections
 

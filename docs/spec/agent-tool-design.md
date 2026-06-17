@@ -62,6 +62,14 @@ surface.
 | `recall` | agent | No | No | Cued retrieval over active semantic memory entries, with optional nested source evidence. |
 | `ask_user_question` | agent | No | No | Pause the active run for structured user input, including refs/attachments or an explicit discuss outcome. |
 | `dream` | agent | Indirect | Yes | Request runtime-owned Memory Dream (offline consolidation) for the current agent; cannot specify facts to save. |
+| `channel_create` | agent | Yes | No | User-facing coordinator creates a named local Channel for an explicitly requested persistent working group, with optional invited agents and opening message. |
+| `channel_update` | agent | Yes | No | User-facing coordinator renames a local Channel and/or adds/removes invited agent members. DMs and `#General` are not editable through this tool. |
+
+`channel_create` and `channel_update` are wired only for the user-facing
+coordinator run (`options.channelOrg` in `createAgentTools`). A delegated or
+restricted child run does not receive these tools. The operations mutate only
+local conversation metadata/membership; any later agent work inside the Channel
+still runs through the normal model, permission, depth, and concurrency gates.
 
 ### Deferred Tools
 
@@ -80,6 +88,7 @@ permission behavior harder to reason about.
 - Use `recall` for durable agent memory (cued retrieval over the semantic
   store). Raw episodic search is internal to runtime-owned evidence expansion
   and Dream consolidation, not a model-visible tool.
+- Use `channel_*` for local Channel organization by the user-facing coordinator.
 - Use `ask_user_question` for decisions or missing context, not permission
   approval. Permission approval answers "may the agent do this"; this tool
   answers "what information or direction should the agent use next".
@@ -1906,6 +1915,14 @@ Result behavior:
 - Overwriting a file should be treated as a high-signal mutation in logs; the
   global permission policy may still allow it by default.
 - Do not use `file_write` to append small changes; use `file_edit`.
+- Writes under self-definition directories are validated by the file-tool gateway
+  after the ordinary permission decision. Skill writes validate `SKILL.md` /
+  support-file shape and hot-reload the skill registry. Agent-definition writes
+  may create or edit exactly one restricted `AGENT.md` under
+  `.agents/agents/<agent-name>/AGENT.md`; support files, deletes, trusted
+  permission mode, reserved built-in names, unsafe metadata, secret-looking
+  content, and malformed frontmatter are rejected before bytes are written.
+  `file_convert` cannot target self-definition outputs.
 
 ## Shell Tools
 
@@ -2121,6 +2138,28 @@ Result behavior:
   `web_fetch` → `file_read`/embed — image search only adds discovery. Image
   results may be copyright-protected, so the success envelope warns to treat them
   as drafts and confirm reuse with the user. `kind: "web"` (default) is unchanged.
+- `kind: "web"` (default) runs Google (`providerName: "google_serp"`) and, when
+  Google is blocked, fails recoverably, or returns zero results, automatically
+  falls back to the DuckDuckGo HTML endpoint (`providerName: "duckduckgo_html"`).
+  A bad query (`invalid_args`) or a caller abort does not trigger the fallback.
+  A DuckDuckGo page that loads and parses is authoritative even when empty and is
+  returned (so an empty fallback reports "no results — broaden the query" rather
+  than a misleading "retry / use a browser"); the envelope warns — only then —
+  that results came from the DuckDuckGo fallback because the primary returned no
+  usable results (it does not assert Google was "unavailable", which may be
+  false). If DuckDuckGo also fails to produce a parsed page, the primary,
+  user-intended Google outcome is surfaced (its hint/error and its google.com
+  `finalUrl`), not DuckDuckGo's own failure.
+- The off-screen search window renders with a real Chrome desktop User-Agent
+  (not Electron's default), so engines serve the standard desktop SERP the
+  scrapers target.
+- A transient navigation fault is retried once with a short backoff, on both the
+  primary and the fallback engine. Because the engines are fixed reputable hosts,
+  a `navigation_failed` (the dominant outcome of a mid-flight network/DNS blip),
+  `network_error`, or nav `timeout` all count as transient; blocks, extraction
+  misses, bad queries, and aborts do not. The rate-limit gate is acquired once
+  per `web_search` call, so the internal retry + fallback cascade never
+  self-throttles or spends the cross-call burst budget mid-call.
 - `site` is a convenience parameter for a single host. For multiple hosts, the
   agent should issue multiple searches or put explicit search syntax in
   `query`.
@@ -2128,7 +2167,8 @@ Result behavior:
   it, return results and add a warning.
 - CAPTCHA, unusual traffic, or search-provider block pages return
   `status: "success"` with `data.hint.type: "search_blocked"`, not retries in a
-  loop.
+  loop. For `kind: "web"` this is surfaced only after the DuckDuckGo fallback has
+  also failed to produce results.
 - Empty results return `status: "success"` with `resultCount: 0` and a
   `instructions` suggesting a broader query.
 - The model-visible result should make sources easy to cite. If the adapter
@@ -2563,15 +2603,22 @@ Runtime control tools are not file tools:
 - The agent must not use `file_edit`, `file_write`, or `bash` to mutate provider
   settings, permission config, hook config, skill registry metadata, or
   last-known-good recovery state.
-- Skill maintenance does not add a separate model-facing CRUD tool family in
-  v1. It follows cc-2.1's smaller surface: `/skillify` produces/reviews content,
-  then uses existing `file_write` or `file_edit`.
+- Skill and agent-definition maintenance do not add separate model-facing CRUD
+  tool families in v1. They follow cc-2.1's smaller surface: `/skillify` and
+  `/create-agent` produce/review content, then use existing file tools.
 - Skill files use the ordinary `file_write` / `file_edit` permission decision.
   After that decision, the file-tool gateway recognizes writes under registered
   skill directories, validates frontmatter/support files, carries rollback
   metadata in tool details, emits `skill.created` / `skill.patched` /
   `skill.replaced` audit events on success, records provenance hashes, and
   hot-reloads the skill registry.
+- Agent definition files use the ordinary `file_write` / `file_edit` permission
+  decision. After that decision, the file-tool gateway recognizes writes under
+  user/project agent directories, accepts only `AGENT.md` files with
+  `permission-mode: restricted`, validates strict frontmatter/body shape, rejects
+  support files, deletes, trusted permission mode, reserved built-in names, and
+  unsafe metadata, and hot-reloads live agent registries on success. Shell writes
+  and `file_convert` are not self-definition authoring routes.
 
 ## Mapping to Current Lin Commands
 

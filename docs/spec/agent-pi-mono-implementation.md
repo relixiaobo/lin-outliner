@@ -720,9 +720,13 @@ These agent-level tools are active on top of the P0 local/document surface.
 | `config` | cc-2.1-style config tool | Yes | Reads no, writes yes | Read or update whitelisted runtime settings through runtime-owned paths. |
 | `doctor` | self-diagnostics | Yes | No | Run read-only local agent diagnostics. |
 | `dream` | Tenon agent memory Dream | Yes | Yes | Request runtime-owned memory consolidation for the current agent; cannot specify facts to save. |
-| `skill` | local skill invocation | Yes | Usually no | Invoke installed or built-in skills; `/skillify` is a built-in slash-only workflow. |
+| `channel_create` | local Channel organization | Yes | No | User-facing coordinator creates a named local Channel for an explicitly requested persistent working group; selected agents are invited through the same runtime path as the Channel config window. |
+| `channel_update` | local Channel organization | Yes | No | User-facing coordinator renames a local Channel and/or adds/removes invited agent members; DMs and `#General` are immutable through this tool. |
+| `skill` | local skill invocation | Yes | Usually no | Invoke installed or built-in skills; `/skillify` and `/create-agent` are built-in user- and model-invocable authoring workflows. |
 
 `task_stop` is active because Tenon's `bash` tool supports background commands.
+`channel_create` and `channel_update` are active only on the main coordinator's
+tool registry; child/delegated runs do not receive them.
 
 ### P2 Tools
 
@@ -765,6 +769,8 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
   executing agent is recorded separately). Manual `/dream` and foreground
   `dream` tool triggers also write a conversation-side `dream.finished` marker
   so the chat stream shows running/completed feedback.
+- `channel_create` / `channel_update` for local Channel organization by the
+  user-facing coordinator.
 - `web_search` / `web_fetch` for web access.
 
 Do not use:

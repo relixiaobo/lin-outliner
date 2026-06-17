@@ -357,6 +357,22 @@ describe('agent local tools', () => {
     });
   });
 
+  test('file_convert cannot target self-definition outputs', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const inputPath = path.join(workspaceRoot, 'image.png');
+      await writeFile(inputPath, makePng(4, 4));
+
+      const result = await executeTool(workspaceRoot, 'file_convert', {
+        input_path: inputPath,
+        output_format: 'pdf',
+        output_path: path.join(workspaceRoot, '.agents', 'agents', 'convert-agent', 'AGENT.md'),
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('self_definition_convert_output_not_supported');
+    });
+  });
+
   test('file_convert renders every PDF page to image files when pages is omitted', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const fakeBin = path.join(workspaceRoot, 'fake-pdf-bin');
@@ -1168,6 +1184,259 @@ describe('agent local tools', () => {
       const agentInvocation = await skillRuntime.invokeSkill({ skill: 'risky-skill', trigger: 'agent' });
       expect(agentInvocation.ok).toBe(true);
       expect(skillRuntime.getActivePermissionRules()).toEqual(['file_write', 'Bash(*)']);
+    });
+  });
+
+  test('file_write creates AGENT.md through the self-definition gateway and notifies reload hooks', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const notifications: string[][] = [];
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, undefined, {
+        notifyAgentDefinitionContentWritten: async (filePaths) => {
+          notifications.push(filePaths);
+        },
+      });
+      const fileWrite = createLocalTools({ workspace }).find((tool) => tool.name === 'file_write')!;
+      const agentFile = path.join(workspaceRoot, '.agents', 'agents', 'review-agent', 'AGENT.md');
+
+      const result = await (fileWrite.execute as any)('write-agent-definition', {
+        file_path: agentFile,
+        content: [
+          '---',
+          'name: Review Agent',
+          'description: Reviews repository changes before handoff.',
+          'permission-mode: restricted',
+          'tools: [file_read, file_grep]',
+          '---',
+          'Review the change for behavioral regressions and missing tests.',
+          '',
+        ].join('\n'),
+      });
+      const details = result.details as ToolEnvelope<{ agentDefinitionWrite?: { changeType: string; agentName: string; source: string } }>;
+      const written = await readFile(agentFile, 'utf8');
+
+      expect(details.ok).toBe(true);
+      expect(details.data?.agentDefinitionWrite).toMatchObject({
+        changeType: 'create',
+        agentName: 'review-agent',
+        source: 'project',
+      });
+      expect(details.instructions).toContain('agent registry has been reloaded');
+      expect(notifications).toEqual([[agentFile]]);
+      expect(written).toContain('permission-mode: restricted');
+      expect(written).toContain('behavioral regressions');
+    });
+  });
+
+  test('file_write allows root-level self-definition README files', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const skillReadme = path.join(workspaceRoot, '.agents', 'skills', 'README.md');
+      const agentReadme = path.join(workspaceRoot, '.agents', 'agents', 'README.md');
+
+      const skillWrite = await executeTool(workspaceRoot, 'file_write', {
+        file_path: skillReadme,
+        content: 'Skill authoring notes\n',
+      });
+      const agentWrite = await executeTool(workspaceRoot, 'file_write', {
+        file_path: agentReadme,
+        content: 'Agent authoring notes\n',
+      });
+
+      expect(skillWrite.ok).toBe(true);
+      expect(agentWrite.ok).toBe(true);
+      expect(await readFile(skillReadme, 'utf8')).toBe('Skill authoring notes\n');
+      expect(await readFile(agentReadme, 'utf8')).toBe('Agent authoring notes\n');
+    });
+  });
+
+  test('file_write rejects agent definition symlink escapes before validation', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-definition-escape-'));
+      try {
+        await mkdir(path.join(workspaceRoot, '.agents'), { recursive: true });
+        await symlink(outsideRoot, path.join(workspaceRoot, '.agents', 'agents'), 'dir');
+
+        const result = await executeTool(workspaceRoot, 'file_write', {
+          file_path: path.join(workspaceRoot, '.agents', 'agents', 'escape-agent', 'AGENT.md'),
+          content: [
+            '---',
+            'name: Escape Agent',
+            'description: Attempts to escape through symlink.',
+            'permission-mode: restricted',
+            '---',
+            'Do not write outside the workspace.',
+            '',
+          ].join('\n'),
+        });
+
+        expect(result.ok).toBe(false);
+        expect(result.error?.code).toBe('path_outside_local_root');
+      } finally {
+        await rm(outsideRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('agent definition writes can edit AGENT.md but reject support files and trusted mode', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const notifications: string[][] = [];
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, undefined, {
+        notifyAgentDefinitionContentWritten: async (filePaths) => {
+          notifications.push(filePaths);
+        },
+      });
+      const tools = createLocalTools({ workspace });
+      const fileRead = tools.find((tool) => tool.name === 'file_read')!;
+      const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
+      const fileWrite = tools.find((tool) => tool.name === 'file_write')!;
+      const agentFile = path.join(workspaceRoot, '.agents', 'agents', 'existing-agent', 'AGENT.md');
+      const supportFile = path.join(workspaceRoot, '.agents', 'agents', 'existing-agent', 'notes.md');
+      await mkdir(path.dirname(agentFile), { recursive: true });
+      await writeFile(agentFile, [
+        '---',
+        'name: Existing Agent',
+        'description: Existing restricted agent.',
+        'permission-mode: restricted',
+        '---',
+        'Keep the existing instructions.',
+        '',
+      ].join('\n'), 'utf8');
+
+      await (fileRead.execute as any)('read-existing-agent', { file_path: agentFile });
+      const edit = await (fileEdit.execute as any)('edit-agent-definition', {
+        file_path: agentFile,
+        old_string: 'Keep the existing instructions.',
+        new_string: 'Keep the updated instructions.',
+      });
+      const editDetails = edit.details as ToolEnvelope<{ agentDefinitionWrite?: { changeType: string; agentName: string } }>;
+      const replace = await (fileWrite.execute as any)('replace-agent-definition', {
+        file_path: agentFile,
+        content: [
+          '---',
+          'name: Existing Agent',
+          'description: Existing restricted agent.',
+          'permission-mode: restricted',
+          '---',
+          'Replace the existing instructions.',
+          '',
+        ].join('\n'),
+      });
+      const replaceDetails = replace.details as ToolEnvelope<{ agentDefinitionWrite?: { changeType: string; agentName: string } }>;
+      await (fileRead.execute as any)('read-replaced-agent', { file_path: agentFile });
+      const trustedMode = await (fileWrite.execute as any)('write-trusted-agent-definition', {
+        file_path: agentFile,
+        content: [
+          '---',
+          'name: Existing Agent',
+          'description: Existing restricted agent.',
+          'permission-mode: trusted',
+          '---',
+          'Replace the existing instructions.',
+          '',
+        ].join('\n'),
+      });
+      const supportWrite = await (fileWrite.execute as any)('write-agent-support-file', {
+        file_path: supportFile,
+        content: 'extra notes',
+      });
+
+      expect(editDetails.ok).toBe(true);
+      expect(editDetails.data?.agentDefinitionWrite).toMatchObject({
+        changeType: 'patch',
+        agentName: 'existing-agent',
+      });
+      expect(editDetails.instructions).toContain('updated agent definition');
+      expect(replaceDetails.ok).toBe(true);
+      expect(replaceDetails.data?.agentDefinitionWrite).toMatchObject({
+        changeType: 'replace',
+        agentName: 'existing-agent',
+      });
+      expect(replaceDetails.instructions).toContain('updated agent definition');
+      expect((trustedMode.details as ToolEnvelope<unknown>).ok).toBe(false);
+      expect((trustedMode.details as ToolEnvelope<unknown>).error?.code).toBe('agent_definition_must_be_restricted');
+      expect((supportWrite.details as ToolEnvelope<unknown>).ok).toBe(false);
+      expect((supportWrite.details as ToolEnvelope<unknown>).error?.code).toBe('unsupported_agent_definition_file');
+      expect(notifications).toEqual([[agentFile], [agentFile]]);
+    });
+  });
+
+  test('agent definition writes reject reserved names, unsafe metadata, and case variants', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, undefined, {
+        notifyAgentDefinitionContentWritten: async () => {},
+      });
+      const fileWrite = createLocalTools({ workspace }).find((tool) => tool.name === 'file_write')!;
+      const validContent = (name: string, extraFrontmatter: string[] = []) => [
+        '---',
+        `name: ${name}`,
+        'description: Safe restricted test agent.',
+        'permission-mode: restricted',
+        ...extraFrontmatter,
+        '---',
+        'Follow the bounded restricted workflow.',
+        '',
+      ].join('\n');
+      const cases = [
+        {
+          filePath: path.join(workspaceRoot, '.agents', 'agents', 'case-agent', 'agent.md'),
+          content: validContent('Case Agent'),
+          code: 'invalid_agent_definition_filename',
+        },
+        {
+          filePath: path.join(workspaceRoot, '.agents', 'agents', 'CaseAgent', 'AGENT.md'),
+          content: validContent('Case Agent'),
+          code: 'invalid_agent_directory_name',
+        },
+        {
+          filePath: path.join(workspaceRoot, '.agents', 'agents', 'assistant-copy', 'AGENT.md'),
+          content: validContent('Assistant'),
+          code: 'reserved_agent_name',
+        },
+        {
+          filePath: path.join(workspaceRoot, '.agents', 'agents', 'background-agent', 'AGENT.md'),
+          content: validContent('Background Agent', ['background: true']),
+          code: 'unsupported_agent_background_mode',
+        },
+        {
+          filePath: path.join(workspaceRoot, '.agents', 'agents', 'turn-agent', 'AGENT.md'),
+          content: validContent('Turn Agent', ['max-turns: 1000000']),
+          code: 'invalid_agent_max_turns',
+        },
+        {
+          filePath: path.join(workspaceRoot, '.agents', 'agents', 'wildcard-agent', 'AGENT.md'),
+          content: validContent('Wildcard Agent', ["tools: ['*']"]),
+          code: 'invalid_agent_tools',
+        },
+      ];
+
+      for (const item of cases) {
+        const result = await (fileWrite.execute as any)(`reject-${item.code}`, {
+          file_path: item.filePath,
+          content: item.content,
+        });
+        const details = result.details as ToolEnvelope<unknown>;
+        expect(details.ok, item.code).toBe(false);
+        expect(details.error?.code, item.code).toBe(item.code);
+      }
+    });
+  });
+
+  test('file_delete refuses self-definition content', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const skillFile = path.join(workspaceRoot, '.agents', 'skills', 'delete-skill', 'SKILL.md');
+      const agentFile = path.join(workspaceRoot, '.agents', 'agents', 'delete-agent', 'AGENT.md');
+      await mkdir(path.dirname(skillFile), { recursive: true });
+      await mkdir(path.dirname(agentFile), { recursive: true });
+      await writeFile(skillFile, '---\ndescription: Delete skill fixture\n---\nBody\n', 'utf8');
+      await writeFile(agentFile, '---\nname: Delete Agent\ndescription: Delete agent fixture\npermission-mode: restricted\n---\nBody\n', 'utf8');
+
+      const fileDelete = createLocalTools({ localRoot: workspaceRoot }).find((tool) => tool.name === 'file_delete')!;
+      const skillDelete = await (fileDelete.execute as any)('delete-skill', { file_path: skillFile });
+      const agentDelete = await (fileDelete.execute as any)('delete-agent', { file_path: agentFile });
+
+      expect((skillDelete.details as ToolEnvelope<unknown>).ok).toBe(false);
+      expect((skillDelete.details as ToolEnvelope<unknown>).error?.code).toBe('self_definition_delete_not_supported');
+      expect((agentDelete.details as ToolEnvelope<unknown>).ok).toBe(false);
+      expect((agentDelete.details as ToolEnvelope<unknown>).error?.code).toBe('self_definition_delete_not_supported');
     });
   });
 

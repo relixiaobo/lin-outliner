@@ -42,7 +42,17 @@ export function AgentMessageActions({
 }
 
 export function AgentAssistantContent({ children }: { children: ReactNode }) {
-  return <div className="agent-assistant-content">{children}</div>;
+  // `data-agent-transcript-chips` marks the live transcript, and it is the SINGLE
+  // source of truth for "is this the live transcript". Every file chip an assistant
+  // message renders — final-answer prose, interim narration, and file_write/file_edit
+  // result chips — sits inside this wrapper, so the app-wide InlineFilePreviewLayer
+  // (which routes by `closest('[data-agent-transcript-chips]')`) opens them with the
+  // OS default app and offers the transcript context menu. Meta surfaces render the
+  // very same components WITHOUT this ancestor — compaction/child-run boundaries are
+  // sibling rows, and the child-run-details + PoV-inspector panels are sibling
+  // panels — so their chips keep the safe in-app preview default. The agent-vs-outliner
+  // split is by location; this is the one place that location is decided.
+  return <div className="agent-assistant-content" data-agent-transcript-chips>{children}</div>;
 }
 
 export function AgentStreamingCapsule({ labelled = false }: { labelled?: boolean }) {

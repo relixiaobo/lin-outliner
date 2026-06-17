@@ -12,6 +12,52 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Coordinator Channel organization — `channel_create` / `channel_update` (PR #289, codex)** — the
+  user-facing coordinator can create and edit named local Channels from chat. `channel_create` opens
+  a persistent multi-agent working group (required name, optional invited agents, optional opening
+  message); `channel_update` renames a Channel and/or adds/removes invited members. Member references
+  resolve by exact agent id, name, display name, or `@mention` (explicit `@`-mentions match the
+  routing token only; bare names that collide with a token are reported as ambiguous), with
+  recoverable errors for missing/ambiguous refs. Both tools are wired **only** on the coordinator run
+  (`options.channelOrg`) — delegated/child runs never receive them — and reuse the existing runtime
+  `createConversation` + member add/remove/rename path, mutating only local conversation
+  metadata/membership (`#General` and canonical DMs stay immutable; the coordinator cannot be
+  removed; removals still wait for an active Channel run to settle). New permission action kinds
+  `agent.channel.create` / `agent.channel.update` are classified local, reversible, and free of
+  external effect. The native Channel config window also gains removal of non-coordinator members.
+  Single-step membership edits and the batch update now share one `applyConversationChannelUpdate`
+  runtime core. Specs: `docs/spec/agent-architecture.md`, `agent-pi-mono-implementation.md`,
+  `agent-progress.md`, `agent-tool-design.md`. **Gate (main):** `/code-review high` (8 finder angles,
+  recall-biased) → 8 findings (ref-resolver vs `@mention` routing divergence; active-run guard on
+  requested-not-actual removals; config-window coordinator inferred by name; duplicated membership
+  invariants; redundant roster/conversation reloads; duplicated helpers; cold-path agent-dir rescan)
+  all resolved in follow-up commit `12fba60a`; re-verified typecheck + channel/permission/catalog
+  `test:core` 37 pass / 0 fail.
+- **Conversational agent authoring — `/create-agent` (PR #286, codex; plan re-planned by cc-2)** —
+  the `agentify` twin of `/skillify`, **with no new tool**. A built-in, user- and model-invocable
+  `/create-agent` skill interviews for missing identity/routing/tool details, drafts a complete
+  `AGENT.md` (or a focused edit diff), previews + confirms in chat, then writes exactly one file with
+  the existing `file_write` / `file_edit`. The file-tool **self-definition gateway** is extended to
+  govern agent-definition writes alongside skill writes: a chat-authored agent may create or edit one
+  `AGENT.md` under `<workspace>/.agents/agents/<name>/AGENT.md` (user-scope `~/.agents/agents` only
+  when a write scope is handed), must declare `permission-mode: restricted`, and passes bounded
+  frontmatter validation (reserved built-in names rejected; `background` disabled; `max-turns` capped
+  1–50; `model`/`effort`/`tools`/`disallowed-tools`/`skills` shape-checked, no `tools: ["*"]`).
+  Support files, deletes, trusted permission mode, secret-looking content, malformed frontmatter, and
+  oversize bodies are refused; the agent registry **hot-reloads** (including child runtimes) on a
+  successful write. Existing-file edits keep the normal freshness path (`file_read` before
+  `file_edit`/replacing `file_write`). Specs: `docs/spec/agent-skills.md`,
+  `agent-tool-design.md`, `agent-tool-permissions.md`, `agent-delegation-runtime.md`. **Gate (main):**
+  `/code-review xhigh` (10 finder angles + verify + sweep) surfaced 15 findings — a **symlink
+  write-escape** (a workspace `.agents/agents` symlink redirected a restricted write outside the
+  workdir, empirically reproduced), built-in-name shadowing of the default `assistant`, unvalidated
+  `background`/`max-turns`/`tools`, `file_convert` and `bash` gateway bypasses, and a `file_delete`
+  lexical-guard bypass. codex's hardening commit closed them all (self-definition dirs no longer
+  standalone write roots so writes must resolve inside the workdir; `RESERVED_AGENT_NAMES` gateway +
+  registry guard; bounded frontmatter; `file_convert` self-definition refusal; a bash
+  self-definition-write **redline**; realpath-aware delete guard), re-verified by probe (symlink write
+  → `path_outside_local_root`, legit project writes intact); typecheck + affected `test:core` suites
+  (218 pass / 2 skip / 0 fail) green.
 - **`web_search` image kind (PR #282, cc-2)** — the existing `web_search` agent tool gains an
   optional `kind` parameter (`"web"` default, or `"image"`); no new tool. `kind: "image"` scrapes
   Bing Images (every result is an `a.iusc[m]` JSON blob carrying the full image, thumbnail, and source
@@ -662,6 +708,29 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **`web_search` robustness — real UA · transient retry · DuckDuckGo fallback (PR #290, cc-2)** —
+  three reliability improvements to the default `kind: "web"` path, **no new tool** and the result
+  envelope unchanged. (1) The off-screen search window renders with a real Chrome desktop User-Agent
+  (`setUserAgent`) instead of Electron's default (which advertised `Electron` + the app name), so
+  engines serve the standard desktop SERP the scrapers target. (2) A transient navigation fault is
+  retried once with a short backoff on both the primary and the fallback engine — and because the
+  engines are fixed reputable hosts, `navigation_failed` (the dominant outcome of a mid-flight
+  network/DNS blip, via `did-fail-load`), `network_error`, and nav `timeout` all count as transient;
+  blocks, extraction misses, bad queries, and aborts do not. (3) When Google is blocked, fails
+  recoverably, or returns zero results, `web_search` falls back to the DuckDuckGo HTML endpoint
+  (`providerName: "duckduckgo_html"`); a parsed DuckDuckGo page is authoritative even when empty (so
+  the agent hears "no results — broaden" rather than a misleading "retry / use a browser"), and if
+  DuckDuckGo also fails to parse, the primary Google outcome (its hint/error + `google.com` finalUrl)
+  is surfaced rather than discarded. The rate-limit gate moved from per-navigation (`withSearchWindow`)
+  to **once per `web_search` call** (`execute()`), so the internal retry + fallback cascade no longer
+  self-throttles or burns the cross-call burst budget mid-call; Bing Images and the DuckDuckGo
+  fallback now share one `runServerRenderedSerp` skeleton so their block/abort/timeout handling cannot
+  drift. The fallback warning no longer asserts "Google was unavailable" (the primary may have been
+  reachable but empty/unparsed). Spec: `docs/spec/agent-tool-design.md`. **Gate (main):** `/code-review
+  xhigh` (10 finder angles + verify + sweep) → 12 findings; cc-2's fix commit resolved them all (the
+  headline being the retry that never fired because `isTransientSearchError` omitted `navigation_failed`,
+  plus the false fallback warning, the rate-limit-slot multiplication, and Google-diagnostics loss on
+  double failure); re-verified typecheck ✓ · `test:core` 1086 pass / 2 skip / 0 fail ✓ · `docs:check` ✓.
 - **Unified agent transcript process UI (PR #284, codex-2)** — the assistant turn/process-fold
   renderer is extracted into one shared path (`AgentAssistantTurnContent` + `AgentTranscriptMessageList`)
   now used by the DM transcript, the child-run task-detail timeline, **and** the Channel live-run
@@ -1410,6 +1479,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **self-definition write dedup in `agentLocalTools` (main, fast-track)** — behavior-preserving
+  cleanup of the #286 self-definition gateway: `file_edit` and `file_write` shared a 4×-duplicated
+  `selfDefinitionWrite?.kind === 'skill'/'agent'` ladder (data spread, registry-reload notify, success
+  `instructions`). Extracted three helpers — `selfDefinitionWriteData`,
+  `notifySelfDefinitionContentWrite`, `selfDefinitionWriteInstructions` — that own the skill/agent
+  mapping once so the two tools stay in lockstep, and dropped the dead `agentDefinitionWrite` parameter
+  `notifySuccessfulAgentDefinitionContentWrite` only `void`-ed. No functional change. typecheck ✓ ·
+  `agentLocalTools` + `agentRuntimeSkillsIntegration` + `agentSkills` core suites 283 pass / 4 skip / 0
+  fail.
 - **agent-debug: correct stale slimming comment; pin light summary to its oracle (PR #274, cc-2)** —
   comments + tests only, no behavior change. (1) Fixed a stale comment in `agentDebugView.ts`:
   cross-run `tool_result.replaced` (output slimming) is matched to its producing run by the

@@ -15,7 +15,7 @@ import { useT } from '../../i18n/I18nProvider';
 import { type DocumentIndex, type UiState } from '../../state/document';
 import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import { BacklinksSection } from '../BacklinksSection';
-import { AddChildIcon, CheckIcon, FolderIcon, ICON_SIZE, LibraryIcon, LoaderIcon, MoreIcon, OpenIcon } from '../icons';
+import { AddChildIcon, FolderIcon, ICON_SIZE, LibraryIcon, MoreIcon } from '../icons';
 import { buildOutlinerRows } from '../outliner/row-model';
 import { ButtonControl } from '../primitives/ButtonControl';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
@@ -24,13 +24,16 @@ import { PanelChildrenOutline, PanelStickyBreadcrumb, usePanelTitleDock } from '
 import { canAddPreviewTargetToOutline, requestAddPreviewTargetToOutline } from './previewIngest';
 import { fileNodeTarget, fileNodeTitle, isFileNode } from './fileNode';
 import {
-  FileNodePreviewActions,
+  fileNodePreviewControls,
   fileNodePreviewMeta,
 } from './FilePreviewBody';
+import type { FilePreviewMenuAction } from './FilePreviewPill';
 import {
   FilePreviewShell,
   canOpenPreviewSource,
+  canRevealPreviewSource,
   openPreviewSource,
+  revealPreviewSource,
   sourceMeta,
   sourceTitle,
   targetTitleFallback,
@@ -84,6 +87,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     : props.target.label ?? targetTitleFallback(props.target);
   const title = fileRoot ? fileNodeTitle(fileRoot) || previewTitle : previewTitle;
   const canOpen = state.status === 'ready' && canOpenPreviewSource(state.source);
+  const canReveal = state.status === 'ready' && canRevealPreviewSource(state.source);
   const canAdd = canAddPreviewTargetToOutline(props.target);
   const {
     mainPanelRef,
@@ -109,6 +113,11 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const openOriginal = useCallback(() => {
     if (state.status !== 'ready') return;
     void openPreviewSource(state.source);
+  }, [state]);
+
+  const revealOriginal = useCallback(() => {
+    if (state.status !== 'ready') return;
+    void revealPreviewSource(state.source);
   }, [state]);
 
   useEffect(() => {
@@ -152,20 +161,37 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const meta = fileRoot
     ? fileNodePreviewMeta(fileRoot, state, attachmentLabels, previewLabels)
     : state.status === 'ready' ? sourceMeta(state.source, previewLabels) : null;
-  const actions = fileRoot ? (
-    <FileNodePreviewActions node={fileRoot} target={nodeTarget ?? props.target} />
-  ) : (canAdd || canOpen) ? (
-    <>
-      {canAdd ? (
-        <AddToOutlineButton panelId={props.panelId} target={props.target} />
-      ) : null}
-      {canOpen ? (
-        <ButtonControl aria-label={previewLabels.open} className="file-node-action" onClick={openOriginal}>
-          <OpenIcon size={ICON_SIZE.toolbar} />
-        </ButtonControl>
-      ) : null}
-    </>
-  ) : null;
+  // An ingested node carries Open-with-default + Reveal/Copy; a loose source carries
+  // Open (if openable) + Show-in-Finder (on-disk sources) + Add-to-outline.
+  const fileControls = fileRoot
+    ? fileNodePreviewControls(fileRoot, nodeTarget ?? props.target, attachmentLabels, previewLabels)
+    : null;
+  const primaryOpen = fileControls
+    ? fileControls.primaryOpen
+    : canOpen
+      // A url opens in the browser; an on-disk source opens with its default app.
+      ? {
+          label: props.target.kind === 'url' ? previewLabels.openInBrowser : previewLabels.openWithDefault,
+          run: openOriginal,
+        }
+      : null;
+  const menuActions: FilePreviewMenuAction[] = fileControls
+    ? fileControls.menuActions
+    : [
+        ...(canReveal
+          ? [{ key: 'reveal', label: previewLabels.reveal, icon: FolderIcon, run: revealOriginal }]
+          : []),
+        ...(canAdd
+          ? [{
+              key: 'add',
+              label: previewLabels.addToOutline,
+              icon: AddChildIcon,
+              run: () => {
+                void requestAddPreviewTargetToOutline({ panelId: props.panelId, target: props.target });
+              },
+            }]
+          : []),
+      ];
   const ingestedBreadcrumb = fileRoot ? buildPanelBreadcrumb(fileRoot, props.index) : null;
   const ingestedBreadcrumbNodes = ingestedBreadcrumb
     ? ingestedBreadcrumb.collapsed && breadcrumbExpanded
@@ -259,10 +285,12 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
           </div>
         </header>
         <FilePreviewShell
-          meta={meta}
-          actions={actions}
           state={state}
           onOpenTarget={props.onOpenTarget}
+          primaryOpen={primaryOpen}
+          menuActions={menuActions}
+          meta={meta}
+          initialExpanded
         />
         {fileRoot && (
           <>
@@ -299,64 +327,6 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
         )}
       </div>
     </main>
-  );
-}
-
-function AddToOutlineButton({ panelId, target }: { panelId: string; target: PreviewTarget }) {
-  const labels = useT().shell.filePreview;
-  const [state, setState] = useState<'idle' | 'inserting' | 'inserted'>('idle');
-  // A ref guards re-entry: `disabled` only lands next paint, so two clicks in one
-  // frame would both read a stale `idle` and double-insert.
-  const insertingRef = useRef(false);
-  const mountedRef = useRef(true);
-  const resetTimerRef = useRef<number | null>(null);
-
-  useEffect(() => () => {
-    mountedRef.current = false;
-    if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
-  }, []);
-
-  async function add() {
-    if (insertingRef.current) return;
-    insertingRef.current = true;
-    setState('inserting');
-    let added = false;
-    try {
-      added = await requestAddPreviewTargetToOutline({ panelId, target });
-    } catch {
-      added = false;
-    } finally {
-      insertingRef.current = false;
-    }
-    if (!mountedRef.current) return;
-    if (!added) {
-      setState('idle');
-      return;
-    }
-    setState('inserted');
-    if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
-    resetTimerRef.current = window.setTimeout(() => {
-      setState('idle');
-      resetTimerRef.current = null;
-    }, 1200);
-  }
-
-  const label = state === 'inserted' ? labels.addedToOutline : labels.addToOutline;
-  const StateIcon = state === 'inserted' ? CheckIcon : state === 'inserting' ? LoaderIcon : AddChildIcon;
-  return (
-    <ButtonControl
-      aria-label={label}
-      className="file-node-action"
-      disabled={state === 'inserting'}
-      onClick={() => void add()}
-      title={label}
-    >
-      <StateIcon
-        aria-hidden="true"
-        className={state === 'inserting' ? 'agent-tool-call-spinner' : undefined}
-        size={ICON_SIZE.toolbar}
-      />
-    </ButtonControl>
   );
 }
 

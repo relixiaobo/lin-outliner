@@ -137,6 +137,10 @@ export interface LinOpenLocalFileResult {
   opened: boolean;
 }
 
+export interface LinRevealLocalFileResult {
+  revealed: boolean;
+}
+
 export interface LinStageAttachmentInput {
   name: string;
   mimeType: string;
@@ -363,6 +367,8 @@ const api = {
     ipcRenderer.invoke('lin:preview-local-file-reference', options) as Promise<LinPreviewLocalFileReferenceResult>,
   openLocalFile: (options: LinOpenLocalFileOptions) =>
     ipcRenderer.invoke('lin:open-local-file', options) as Promise<LinOpenLocalFileResult>,
+  revealLocalFile: (options: LinOpenLocalFileOptions) =>
+    ipcRenderer.invoke('lin:reveal-local-file', options) as Promise<LinRevealLocalFileResult>,
   recentLocalFiles: (options: LinRecentLocalFilesOptions = {}) =>
     ipcRenderer.invoke('lin:recent-local-files', options) as Promise<LinRecentLocalFilesResult>,
   searchLocalFiles: (options: LinSearchLocalFilesOptions) =>

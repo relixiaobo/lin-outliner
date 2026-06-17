@@ -11,6 +11,18 @@ export const WEB_FETCH_CLIENT_HINT_UA =
   `"Chromium";v="${CHROME_MAJOR}", "Google Chrome";v="${CHROME_MAJOR}", "Not?A_Brand";v="24"`;
 export const WEB_FETCH_CLIENT_HINT_PLATFORM = '"macOS"';
 
+// The off-screen search window renders Google/Bing/DuckDuckGo with a real Chrome
+// desktop identity (not Electron's default UA, which advertises "Electron" and
+// the app name) so the engines serve the standard desktop layout the SERP
+// scrapers target and are marginally less likely to gate the session. Shares the
+// same bundled-Chromium major as the web_fetch identity above.
+export const WEB_SEARCH_USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) '
+  + `Chrome/${CHROME_MAJOR}.0.0.0 Safari/537.36`;
+// One short-backoff retry for a transient search failure (nav network drop /
+// timeout) before giving up or falling back to the secondary engine.
+export const WEB_SEARCH_RETRY_DELAY_MS = 600;
+
 export const FETCH_TIMEOUT_MS = 45_000;
 // Backoff before the single automatic retry, which fires only for a recognized
 // transient transport fault (a dropped/reset connection or network change — see
