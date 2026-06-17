@@ -429,6 +429,22 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **web-search-robustness** (cc-2, PR #290) — three reliability fixes to the default `web_search`
+  `kind: "web"` path, **no new tool**: a real Chrome desktop User-Agent on the off-screen search
+  window (not Electron's default); one short-backoff transient retry per engine (`navigation_failed` /
+  `network_error` / `timeout` count as transient for the fixed reputable hosts); and a DuckDuckGo HTML
+  fallback (`providerName: "duckduckgo_html"`) when Google is blocked, empty, or fails recoverably — a
+  parsed DuckDuckGo page is authoritative even when empty, otherwise the primary Google outcome is
+  surfaced. The rate-limit gate moved to once-per-call so the retry+fallback cascade no longer
+  self-throttles; Bing Images + DuckDuckGo share one `runServerRenderedSerp` skeleton. Fast-track (no
+  plan file). Spec folded into `docs/spec/agent-tool-design.md`. **Gate (main):** `/code-review xhigh`
+  → 12 findings, all resolved by cc-2's fix commit (headline: retry never fired because
+  `isTransientSearchError` omitted `navigation_failed`); typecheck ✓ · `test:core` 1086 pass / 2 skip
+  / 0 fail ✓ · `docs:check` ✓.
+- **file-presentation-redesign** (cc, PR #285) — outliner file row + simplified preview + agent chip
+  external open. Shipped 2026-06-17; plan archived to `docs/plans/archive/` during the #290 gate sweep
+  to clear a `docs:check` orphan the #285 merge left behind (the merge added the plan file but no board
+  entry). Gate/verification detail lives in PR #285 and git history.
 - **conversational-agent-authoring** (re-planned by cc-2, built+shipped by codex, PR #286) — the
   `agentify` twin of `skillify`, fully symmetric and **with no new tool**: a built-in `/create-agent`
   skill interviews → drafts a full `AGENT.md` → confirms in chat → writes it with the **existing

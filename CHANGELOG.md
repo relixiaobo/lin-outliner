@@ -687,6 +687,29 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **`web_search` robustness — real UA · transient retry · DuckDuckGo fallback (PR #290, cc-2)** —
+  three reliability improvements to the default `kind: "web"` path, **no new tool** and the result
+  envelope unchanged. (1) The off-screen search window renders with a real Chrome desktop User-Agent
+  (`setUserAgent`) instead of Electron's default (which advertised `Electron` + the app name), so
+  engines serve the standard desktop SERP the scrapers target. (2) A transient navigation fault is
+  retried once with a short backoff on both the primary and the fallback engine — and because the
+  engines are fixed reputable hosts, `navigation_failed` (the dominant outcome of a mid-flight
+  network/DNS blip, via `did-fail-load`), `network_error`, and nav `timeout` all count as transient;
+  blocks, extraction misses, bad queries, and aborts do not. (3) When Google is blocked, fails
+  recoverably, or returns zero results, `web_search` falls back to the DuckDuckGo HTML endpoint
+  (`providerName: "duckduckgo_html"`); a parsed DuckDuckGo page is authoritative even when empty (so
+  the agent hears "no results — broaden" rather than a misleading "retry / use a browser"), and if
+  DuckDuckGo also fails to parse, the primary Google outcome (its hint/error + `google.com` finalUrl)
+  is surfaced rather than discarded. The rate-limit gate moved from per-navigation (`withSearchWindow`)
+  to **once per `web_search` call** (`execute()`), so the internal retry + fallback cascade no longer
+  self-throttles or burns the cross-call burst budget mid-call; Bing Images and the DuckDuckGo
+  fallback now share one `runServerRenderedSerp` skeleton so their block/abort/timeout handling cannot
+  drift. The fallback warning no longer asserts "Google was unavailable" (the primary may have been
+  reachable but empty/unparsed). Spec: `docs/spec/agent-tool-design.md`. **Gate (main):** `/code-review
+  xhigh` (10 finder angles + verify + sweep) → 12 findings; cc-2's fix commit resolved them all (the
+  headline being the retry that never fired because `isTransientSearchError` omitted `navigation_failed`,
+  plus the false fallback warning, the rate-limit-slot multiplication, and Google-diagnostics loss on
+  double failure); re-verified typecheck ✓ · `test:core` 1086 pass / 2 skip / 0 fail ✓ · `docs:check` ✓.
 - **Unified agent transcript process UI (PR #284, codex-2)** — the assistant turn/process-fold
   renderer is extracted into one shared path (`AgentAssistantTurnContent` + `AgentTranscriptMessageList`)
   now used by the DM transcript, the child-run task-detail timeline, **and** the Channel live-run
