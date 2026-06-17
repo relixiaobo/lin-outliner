@@ -289,11 +289,13 @@ import {
 import {
   applyAgentRenderProjectionPatch,
   buildAgentRenderProjection,
+  renderableAssistantContent,
   renderTaskStatusFromRunStatus,
   type AgentRenderMessageEntity,
   type AgentRenderActivityEntry,
   type AgentRenderActiveCompaction,
   type AgentRenderActiveDream,
+  type AgentRenderLiveContent,
   type AgentRenderProjection,
   type AgentRenderProjectionPatch,
   type AgentRenderDreamTaskEntity,
@@ -467,6 +469,7 @@ interface AgentActiveRunState extends AgentRuntimeActiveRunState {
   resolveSettled: () => void;
   assistantMessageId: string | null;
   assistantText: string;
+  assistantContent: AgentRenderLiveContent[];
   /**
    * This run's own tail: the id of the last message it appended (an assistant
    * segment or a tool result). A run's continuation segments parent to their
@@ -1882,6 +1885,7 @@ export class AgentRuntime {
       if (!messageText.trim() && attachments.length === 0) return;
       const channelMembers = conversation.eventState.conversation?.members ?? [];
       const channelSurface = usesChannelActivitySurface(conversationId, channelMembers);
+      const readerNeutralSharedLog = isMultiAgentConversation(channelMembers);
       if (this.hasActiveRuns(conversation) && !channelSurface) {
         if (attachments.length > 0) {
           throw new Error('Attachments cannot be queued while the agent is running.');
@@ -1915,11 +1919,13 @@ export class AgentRuntime {
       const userViewReminderText = userViewContextReminder.reminder;
       const now = new Date();
       const outlinerContext = buildOutlinerContextReminder(this.outlinerToolHost);
-      // In a Channel the persisted user message stays reader-neutral: a memory
-      // briefing belongs to ONE reader, so it is injected transiently per run at
-      // assembly time instead of being written into the shared log. Skill/agent
-      // listings are likewise main-agent-POV and stay out of the shared message.
-      const memoryReminder = channelSurface
+      // In a multi-agent Channel the persisted user message stays reader-neutral:
+      // a memory briefing belongs to ONE reader, so it is injected transiently
+      // per run at assembly time instead of being written into the shared log.
+      // Skill/agent listings are likewise main-agent-POV and stay out of the
+      // shared message. A coordinator-only Channel still has the Channel UI
+      // surface, but its reader is DM-equivalent and keeps these turn reminders.
+      const memoryReminder = readerNeutralSharedLog
         ? null
         : await this.buildMemoryReminder(conversation.defaultAgentId, conversation);
       const turnContextReminder = joinReminderParts([
@@ -1931,10 +1937,10 @@ export class AgentRuntime {
       const userSkillPrompt = attachments.length === 0 && runtimeSettings.slashSkillsEnabled
         ? await createUserSkillPrompt(conversation.skillRuntime, messageText, turnContextReminder)
         : null;
-      const skillListingReminder = userSkillPrompt || channelSurface
+      const skillListingReminder = userSkillPrompt || readerNeutralSharedLog
         ? null
         : await this.buildSkillListingReminder(conversation);
-      const agentListingReminder = userSkillPrompt || channelSurface
+      const agentListingReminder = userSkillPrompt || readerNeutralSharedLog
         ? null
         : await this.buildAgentListingReminder(conversation);
       let prompt: UserMessage;
@@ -4571,10 +4577,11 @@ export class AgentRuntime {
         addressedByMessageId: run.addressedByMessageId,
         state: pendingToolCalls.size > 0 ? 'using_tools' : 'thinking',
         updatedAt: persistedRun?.updatedAt ?? run.startedAt,
-        // The live composing text for the per-run detail view; retained on the
-        // run (not the shared log) so concurrent runs never collide and the
+        // The live composing blocks for the per-run detail view; retained on
+        // the run (not the shared log) so concurrent runs never collide and the
         // transcript stays whole-utterance.
         streamingText: run.assistantText || undefined,
+        ...(run.assistantContent.length > 0 ? { streamingContent: run.assistantContent } : {}),
       };
       entries.set(entry.id, entry);
     }
@@ -6207,6 +6214,7 @@ export class AgentRuntime {
       resolveSettled,
       assistantMessageId: null,
       assistantText: '',
+      assistantContent: [],
       lastMessageId: null,
       lastSubmittedUserPrompt: prompt,
       toolOutputPayloads: new Map(),
@@ -6800,10 +6808,12 @@ export class AgentRuntime {
           // streaming deltas to the shared log (concurrent runs would interleave,
           // and off-active-path siblings never reach the transcript anyway). The
           // final utterance is appended whole on message_end. Only update on
-          // NON-EMPTY text: each continuation segment opens with an empty
-          // message_start, which would otherwise blank the detail view mid-turn
-          // (and stay blank through a tool-only segment), defeating the
-          // cross-segment retention.
+          // NON-EMPTY content/text: each continuation segment opens with an
+          // empty message_start, which would otherwise blank the detail view
+          // mid-turn (and stay blank through a tool-only segment), defeating
+          // the cross-segment retention.
+          const liveContent = renderableAssistantContent(fromPiAssistantContent(event.message.content));
+          if (liveContent.length > 0) conversation.activeRun.assistantContent = liveContent;
           const visible = assistantVisibleText(event.message);
           if (visible) conversation.activeRun.assistantText = visible;
           return;

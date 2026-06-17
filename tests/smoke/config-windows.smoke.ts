@@ -113,12 +113,12 @@ test.describe('agent and Channel config child windows', () => {
   });
 
   test('opens Channel config as a secure singleton child window', async () => {
-    await openChannelConfig(smoke.window, { conversationId: 'mock-agent-channel-planning', mode: 'configure' });
+    await openChannelConfig(smoke.window, { conversationId: 'lin-agent-channel-planning', mode: 'configure' });
     const first = await waitForSurface(smoke, 'channel-config');
 
     await expect.poll(async () => windowQuery(first)).toMatchObject({
       surface: 'channel-config',
-      conversation: 'mock-agent-channel-planning',
+      conversation: 'lin-agent-channel-planning',
       mode: 'configure',
     });
     await expect.poll(async () => rendererSecurity(first)).toEqual({

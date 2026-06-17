@@ -500,7 +500,7 @@ export function buildAgentRenderProjection(
     channelActivityEntries: options.channelActivityEntries
       ? options.channelActivityEntries.map((entry) => ({
           ...entry,
-          ...(entry.streamingContent ? { streamingContent: entry.streamingContent.map((part) => ({ ...part })) } : {}),
+          ...(entry.streamingContent ? { streamingContent: entry.streamingContent.map(cloneAgentRenderLiveContent) } : {}),
         }))
       : buildDerivedActivityEntries(state, options, pendingToolCallIds),
     povInspectors: buildPovInspectors(state, options),
@@ -613,12 +613,29 @@ function buildDerivedActivityEntries(
     });
 }
 
-function renderableAssistantContent(content: readonly AgentPersistedContent[]): AgentRenderLiveContent[] {
+export function cloneAgentRenderLiveContent(part: AgentRenderLiveContent): AgentRenderLiveContent {
+  if (part.type === 'text') return { type: 'text', text: part.text };
+  if (part.type === 'thinking') {
+    return {
+      type: 'thinking',
+      thinking: part.thinking,
+      ...(part.redacted === undefined ? {} : { redacted: part.redacted }),
+    };
+  }
+  return {
+    type: 'toolCall',
+    id: part.id,
+    name: part.name,
+    arguments: JSON.parse(JSON.stringify(part.arguments)) as Record<string, unknown>,
+  };
+}
+
+export function renderableAssistantContent(content: readonly AgentPersistedContent[]): AgentRenderLiveContent[] {
   return content
     .filter((part): part is AgentRenderLiveContent => (
       part.type === 'text' || part.type === 'thinking' || part.type === 'toolCall'
     ))
-    .map((part) => ({ ...part }));
+    .map(cloneAgentRenderLiveContent);
 }
 
 function buildPovInspectors(

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { replayAgentEvents, type AgentActor, type AgentEvent } from '../../src/core/agentEventLog';
-import { buildAgentRenderProjection } from '../../src/core/agentRenderProjection';
+import { buildAgentRenderProjection, type AgentRenderActivityEntry } from '../../src/core/agentRenderProjection';
 import { systemReminder } from '../../src/core/agentAttachments';
 
 const conversationId = 'conversation-render';
@@ -1018,7 +1018,8 @@ describe('agent render projection', () => {
         ],
       },
     ]);
-    const activityEntries = [
+    const toolArguments = { url: 'https://example.test/live' };
+    const activityEntries: AgentRenderActivityEntry[] = [
       {
         id: 'user-1:agent-1',
         agentId: 'agent-1',
@@ -1027,6 +1028,9 @@ describe('agent render projection', () => {
         addressedByMessageId: 'user-1',
         state: 'thinking' as const,
         updatedAt: 1_700_000_000_010,
+        streamingContent: [
+          { type: 'toolCall', id: 'tool-1', name: 'web_fetch', arguments: toolArguments },
+        ],
       },
       {
         id: 'user-2:agent-2',
@@ -1046,6 +1050,9 @@ describe('agent render projection', () => {
 
     expect(projection.channelActivityEntries).toEqual(activityEntries);
     expect(projection.channelActivityEntries).not.toBe(activityEntries);
+    const projectedTool = projection.channelActivityEntries[0]?.streamingContent?.[0];
+    expect(projectedTool).toMatchObject({ type: 'toolCall', arguments: toolArguments });
+    expect(projectedTool?.type === 'toolCall' ? projectedTool.arguments : null).not.toBe(toolArguments);
   });
 
   // The authoritative interrupted verdict — derived from the producing run's REAL

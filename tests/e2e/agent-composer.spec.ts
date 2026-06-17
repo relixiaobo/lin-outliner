@@ -13,6 +13,7 @@ import {
 } from './outlinerMock';
 
 const DEFAULT_CONVERSATION_ID = DEFAULT_GENERAL_CHANNEL_ID;
+const DEFAULT_DM_CONVERSATION_ID = 'mock-agent-conversation';
 
 async function waitForAgentConversation(page: import('@playwright/test').Page) {
   await expect.poll(async () => {
@@ -22,6 +23,17 @@ async function waitForAgentConversation(page: import('@playwright/test').Page) {
       && call.args.conversationId === DEFAULT_CONVERSATION_ID
     )) || calls.some((call) => call.cmd === 'agent_restore_latest_conversation');
   }).toBe(true);
+}
+
+async function openNevaDm(page: Page) {
+  await page.getByRole('button', { name: 'Show conversations' }).click();
+  const menu = page.getByRole('dialog', { name: 'Channels' });
+  await menu.getByRole('button', { name: /Neva/ }).click();
+  await expect(page.locator('.agent-dock-title')).toHaveText('Neva');
+  await expect.poll(async () => {
+    const calls = await commandCalls(page);
+    return calls.findLast((call) => call.cmd === 'agent_restore_conversation')?.args.conversationId;
+  }).toBe(DEFAULT_DM_CONVERSATION_ID);
 }
 
 async function invokeDocumentCommand(page: Page, cmd: string, args: Record<string, unknown>) {
@@ -271,7 +283,7 @@ test.describe('agent composer controls', () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'open_channel_config')?.args;
     }).toMatchObject({
-      conversationId: 'mock-agent-channel-planning',
+      conversationId: 'lin-agent-channel-planning',
       mode: 'configure',
     });
   });
@@ -319,11 +331,11 @@ test.describe('agent composer controls', () => {
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'agent_navigate_conversation')?.args.conversationId;
-    }).toMatch(/^mock-agent-channel-created-/);
+    }).toMatch(/^lin-agent-channel-created-/);
   });
 
   test('adds a member from the channel config window', async ({ page }) => {
-    await page.goto('/?surface=channel-config&mode=configure&conversation=mock-agent-channel-planning');
+    await page.goto('/?surface=channel-config&mode=configure&conversation=lin-agent-channel-planning');
     const config = page.locator('.channel-config-window');
     await expect(config.getByLabel('Channel name')).toHaveValue('Planning Channel');
     await expect(config.getByText('Neva', { exact: true })).toBeVisible();
@@ -334,7 +346,7 @@ test.describe('agent composer controls', () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'agent_add_conversation_member')?.args;
     }).toMatchObject({
-      conversationId: 'mock-agent-channel-planning',
+      conversationId: 'lin-agent-channel-planning',
       agentId: 'user:mock:reviewer',
     });
   });
@@ -1558,7 +1570,8 @@ test.describe('agent composer controls', () => {
   });
 
   test('renders node reference markers in assistant and tool output', async ({ page }) => {
-    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+    await openNevaDm(page);
+    await emitAgentProjection(page, DEFAULT_DM_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [{
@@ -1684,7 +1697,8 @@ test.describe('agent composer controls', () => {
   });
 
   test('shows compact progress before expandable summaries', async ({ page }) => {
-    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+    await openNevaDm(page);
+    await emitAgentProjection(page, DEFAULT_DM_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       activeCompaction: {
@@ -1700,7 +1714,7 @@ test.describe('agent composer controls', () => {
     await expect(compactStatus).toContainText('Manual');
     await expect(page.getByRole('button', { name: /Compacted/ })).toHaveCount(0);
 
-    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+    await emitAgentProjection(page, DEFAULT_DM_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
@@ -2724,7 +2738,7 @@ test.describe('agent composer controls', () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'open_channel_config')?.args;
     }).toMatchObject({
-      conversationId: 'mock-agent-channel-planning',
+      conversationId: 'lin-agent-channel-planning',
       mode: 'configure',
     });
   });
@@ -2756,7 +2770,8 @@ test.describe('agent composer controls', () => {
   });
 
   test('switches the primary action between stop and steer while streaming', async ({ page }) => {
-    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+    await openNevaDm(page);
+    await emitAgentProjection(page, DEFAULT_DM_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -2793,7 +2808,7 @@ test.describe('agent composer controls', () => {
       return calls.find((call) => call.cmd === 'agent_steer_conversation')?.args;
     }).toMatchObject({
       message: 'Compare tag layout stability.',
-      conversationId: DEFAULT_CONVERSATION_ID,
+      conversationId: DEFAULT_DM_CONVERSATION_ID,
     });
     await expect(page.getByText('Compare tag layout stability.')).toBeVisible();
   });
@@ -2814,7 +2829,8 @@ test.describe('agent composer controls', () => {
       },
     };
 
-    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+    await openNevaDm(page);
+    await emitAgentProjection(page, DEFAULT_DM_CONVERSATION_ID, {
       conversationTitle: 'Neva',
       model: { id: 'gpt-5.4', provider: 'openai' },
       conversation: [
@@ -2906,14 +2922,14 @@ test.describe('agent composer controls', () => {
         args: {
           agentId: 'child-run-1',
           message: 'Continue with layout risks.',
-          conversationId: DEFAULT_CONVERSATION_ID,
+          conversationId: DEFAULT_DM_CONVERSATION_ID,
         },
       },
       {
         cmd: 'agent_child_run_stop',
         args: {
           agentId: 'child-run-1',
-          conversationId: DEFAULT_CONVERSATION_ID,
+          conversationId: DEFAULT_DM_CONVERSATION_ID,
         },
       },
     ]);
