@@ -62,6 +62,14 @@ surface.
 | `recall` | agent | No | No | Cued retrieval over active semantic memory entries, with optional nested source evidence. |
 | `ask_user_question` | agent | No | No | Pause the active run for structured user input, including refs/attachments or an explicit discuss outcome. |
 | `dream` | agent | Indirect | Yes | Request runtime-owned Memory Dream (offline consolidation) for the current agent; cannot specify facts to save. |
+| `channel_create` | agent | Yes | No | User-facing coordinator creates a named local Channel for an explicitly requested persistent working group, with optional invited agents and opening message. |
+| `channel_update` | agent | Yes | No | User-facing coordinator renames a local Channel and/or adds/removes invited agent members. DMs and `#General` are not editable through this tool. |
+
+`channel_create` and `channel_update` are wired only for the user-facing
+coordinator run (`options.channelOrg` in `createAgentTools`). A delegated or
+restricted child run does not receive these tools. The operations mutate only
+local conversation metadata/membership; any later agent work inside the Channel
+still runs through the normal model, permission, depth, and concurrency gates.
 
 ### Deferred Tools
 
@@ -80,6 +88,7 @@ permission behavior harder to reason about.
 - Use `recall` for durable agent memory (cued retrieval over the semantic
   store). Raw episodic search is internal to runtime-owned evidence expansion
   and Dream consolidation, not a model-visible tool.
+- Use `channel_*` for local Channel organization by the user-facing coordinator.
 - Use `ask_user_question` for decisions or missing context, not permission
   approval. Permission approval answers "may the agent do this"; this tool
   answers "what information or direction should the agent use next".

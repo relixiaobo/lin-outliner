@@ -1842,6 +1842,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           }
           return clone(restoreAgentConversation(String(args.conversationId ?? ASSISTANT_DM_ID))) as T;
         }
+        if (cmd === 'agent_remove_conversation_member') {
+          const target = agentConversations.find((conversation) => conversation.id === args.conversationId);
+          const agentId = String(args.agentId ?? '');
+          if (target && agentId) {
+            target.members = target.members.filter((member) => member.type !== 'agent' || member.agentId !== agentId);
+            target.updatedAt = now += 1;
+          }
+          return clone(restoreAgentConversation(String(args.conversationId ?? ASSISTANT_DM_ID))) as T;
+        }
         if (cmd === 'agent_delete_conversation') {
           const index = agentConversations.findIndex((conversation) => conversation.id === args.conversationId);
           if (index >= 0) agentConversations.splice(index, 1);

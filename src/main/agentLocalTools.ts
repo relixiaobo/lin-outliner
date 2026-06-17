@@ -25,6 +25,10 @@ import {
   type AgentDefinitionWriteAudit,
   type SelfDefinitionSurface,
 } from './agentAuthoring';
+import {
+  optionalNormalizedString,
+  requiredNormalizedString,
+} from './agentToolParams';
 
 interface LocalToolOptions {
   localRoot?: string;
@@ -1500,7 +1504,7 @@ function createTaskStopTool(): AgentTool<any, ToolEnvelope<TaskStopData>> {
 
 function normalizeFileReadParams(rawParams: unknown): FileReadParams {
   const input = asRecord(rawParams);
-  const filePath = requiredString(input.file_path, 'file_path');
+  const filePath = requiredLocalString(input.file_path, 'file_path');
   return {
     file_path: filePath,
     offset: input.offset === undefined ? undefined : clampInteger(input.offset, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -1512,17 +1516,17 @@ function normalizeFileReadParams(rawParams: unknown): FileReadParams {
 function normalizeFileGlobParams(rawParams: unknown): FileGlobParams {
   const input = asRecord(rawParams);
   return {
-    pattern: requiredString(input.pattern, 'pattern'),
-    path: optionalString(input.path),
+    pattern: requiredLocalString(input.pattern, 'pattern'),
+    path: optionalNormalizedString(input.path),
   };
 }
 
 function normalizeFileGrepParams(rawParams: unknown): FileGrepParams {
   const input = asRecord(rawParams);
   return {
-    pattern: requiredString(input.pattern, 'pattern'),
-    path: optionalString(input.path),
-    glob: optionalString(input.glob),
+    pattern: requiredLocalString(input.pattern, 'pattern'),
+    path: optionalNormalizedString(input.path),
+    glob: optionalNormalizedString(input.glob),
     output_mode: input.output_mode === 'content' || input.output_mode === 'count' || input.output_mode === 'files_with_matches' ? input.output_mode : 'files_with_matches',
     '-B': optionalInteger(input['-B'], 0, 1000),
     '-A': optionalInteger(input['-A'], 0, 1000),
@@ -1530,7 +1534,7 @@ function normalizeFileGrepParams(rawParams: unknown): FileGrepParams {
     context: optionalInteger(input.context, 0, 1000),
     '-n': input['-n'] === false ? false : true,
     '-i': input['-i'] === true,
-    type: optionalString(input.type),
+    type: optionalNormalizedString(input.type),
     head_limit: optionalInteger(input.head_limit, 0, HARD_GREP_OUTPUT_LIMIT),
     offset: optionalInteger(input.offset, 0, Number.MAX_SAFE_INTEGER),
     multiline: input.multiline === true,
@@ -1542,7 +1546,7 @@ function normalizeFileEditParams(rawParams: unknown): FileEditParams {
   if (typeof input.old_string !== 'string') throw new LocalToolFailure('invalid_args', 'old_string is required.');
   if (typeof input.new_string !== 'string') throw new LocalToolFailure('invalid_args', 'new_string is required.');
   return {
-    file_path: requiredString(input.file_path, 'file_path'),
+    file_path: requiredLocalString(input.file_path, 'file_path'),
     old_string: normalizeLineEndings(input.old_string),
     new_string: normalizeLineEndings(input.new_string),
     replace_all: input.replace_all === true,
@@ -1553,17 +1557,17 @@ function normalizeFileWriteParams(rawParams: unknown): FileWriteParams {
   const input = asRecord(rawParams);
   if (typeof input.content !== 'string') throw new LocalToolFailure('invalid_args', 'content is required.');
   return {
-    file_path: requiredString(input.file_path, 'file_path'),
+    file_path: requiredLocalString(input.file_path, 'file_path'),
     content: normalizeLineEndings(input.content),
   };
 }
 
 function normalizeFileConvertParams(rawParams: unknown): FileConvertParams {
   const input = asRecord(rawParams);
-  const inputPath = requiredString(input.input_path, 'input_path');
+  const inputPath = requiredLocalString(input.input_path, 'input_path');
   const outputFormat = normalizeConvertOutputFormat(input.output_format);
-  const outputPath = optionalString(input.output_path);
-  const outputDir = optionalString(input.output_dir);
+  const outputPath = optionalNormalizedString(input.output_path);
+  const outputDir = optionalNormalizedString(input.output_dir);
   const pages = typeof input.pages === 'string' ? input.pages : undefined;
   const extension = path.extname(inputPath).toLowerCase();
   const isPdfToImage = (outputFormat === 'png' || outputFormat === 'jpeg') && extension === '.pdf';
@@ -1591,16 +1595,16 @@ function normalizeFileConvertParams(rawParams: unknown): FileConvertParams {
 function normalizeFileDeleteParams(rawParams: unknown): FileDeleteParams {
   const input = asRecord(rawParams);
   return {
-    file_path: requiredString(input.file_path, 'file_path'),
+    file_path: requiredLocalString(input.file_path, 'file_path'),
   };
 }
 
 function normalizeBashParams(rawParams: unknown): BashParams {
   const input = asRecord(rawParams);
-  const command = requiredString(input.command, 'command');
+  const command = requiredLocalString(input.command, 'command');
   return {
     command,
-    description: optionalString(input.description),
+    description: optionalNormalizedString(input.description),
     timeout: clampInteger(input.timeout, 1, BASH_MAX_TIMEOUT_MS, BASH_DEFAULT_TIMEOUT_MS),
     run_in_background: input.run_in_background === true,
     dangerouslyDisableSandbox: input.dangerouslyDisableSandbox === true,
@@ -1609,7 +1613,7 @@ function normalizeBashParams(rawParams: unknown): BashParams {
 
 function normalizeTaskStopParams(rawParams: unknown): TaskStopParams {
   const input = asRecord(rawParams);
-  return { task_id: requiredString(input.task_id, 'task_id') };
+  return { task_id: requiredLocalString(input.task_id, 'task_id') };
 }
 
 function normalizeConvertOutputFormat(value: unknown): FileConvertOutputFormat {
@@ -3191,15 +3195,12 @@ function localErrorResult<TData>(tool: string, error: unknown, started: number) 
   }));
 }
 
-function requiredString(value: unknown, name: string): string {
-  if (typeof value !== 'string' || !value.trim()) {
-    throw new LocalToolFailure('invalid_args', `${name} is required.`);
-  }
-  return value.trim();
-}
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+function requiredLocalString(value: unknown, name: string): string {
+  return requiredNormalizedString(
+    value,
+    name,
+    (field) => new LocalToolFailure('invalid_args', `${field} is required.`),
+  );
 }
 
 function optionalInteger(value: unknown, min: number, max: number): number | undefined {

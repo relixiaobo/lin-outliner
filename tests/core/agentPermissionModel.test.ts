@@ -37,6 +37,8 @@ describe('agent permission model', () => {
     expect(isReadOnlyActionKind('file.edit.allowed_file_area')).toBe(false);
     expect(isReadOnlyActionKind('agent.skill.invoke')).toBe(false);
     expect(isReadOnlyActionKind('agent.delegate.spawn')).toBe(false);
+    expect(isReadOnlyActionKind('agent.channel.create')).toBe(false);
+    expect(isReadOnlyActionKind('agent.channel.update')).toBe(false);
 
     const tools = readOnlyAgentToolNames();
     expect(tools).toEqual(expect.arrayContaining([
@@ -57,6 +59,8 @@ describe('agent permission model', () => {
     expect(tools).not.toContain('bash');
     expect(tools).not.toContain('skill');
     expect(tools).not.toContain('Agent');
+    expect(tools).not.toContain('channel_create');
+    expect(tools).not.toContain('channel_update');
 
     expect(readOnlyAgentToolNames(['file_read', 'file_write', 'AgentStatus'])).toEqual([
       'file_read',

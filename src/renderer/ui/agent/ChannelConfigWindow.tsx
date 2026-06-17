@@ -26,9 +26,11 @@ export function ChannelConfigWindow() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [addingAgentId, setAddingAgentId] = useState<string | null>(null);
+  const [removingAgentId, setRemovingAgentId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [seedText, setSeedText] = useState('');
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
+  const [channelCoordinatorAgentId, setChannelCoordinatorAgentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const close = () => { void window.lin?.closeChannelConfig?.(); };
@@ -43,9 +45,15 @@ export function ChannelConfigWindow() {
       ]);
       setConversations(nextConversations);
       setAgents(nextAgents);
+      setChannelCoordinatorAgentId(null);
       if (mode === 'configure') {
         const current = nextConversations.find((conversation) => conversation.id === conversationId);
         setTitle(readableConversationTitle(current?.title, t.common.untitled));
+        if (current) {
+          const restored = await api.agentRestoreConversation(conversationId);
+          const coordinator = restored.renderProjection.members.find((member) => member.coordinator);
+          setChannelCoordinatorAgentId(coordinator?.principal.type === 'agent' ? coordinator.principal.agentId : null);
+        }
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -97,12 +105,14 @@ export function ChannelConfigWindow() {
         ),
       ),
       mention: agentMentionToken(agentId),
+      removable: channelCoordinatorAgentId === null || agentId !== channelCoordinatorAgentId,
     })),
-    [agentById, conversations, memberAgentIds],
+    [agentById, channelCoordinatorAgentId, conversations, memberAgentIds],
   );
+  const addableCoordinatorAgentId = mode === 'create' ? builtInCoordinatorAgentId : channelCoordinatorAgentId;
   const addableAgents = useMemo(
-    () => agents.filter((agent) => agent.agentId !== builtInCoordinatorAgentId && !memberAgentIds.has(agent.agentId)),
-    [agents, builtInCoordinatorAgentId, memberAgentIds],
+    () => agents.filter((agent) => agent.agentId !== addableCoordinatorAgentId && !memberAgentIds.has(agent.agentId)),
+    [agents, addableCoordinatorAgentId, memberAgentIds],
   );
 
   function toggleSelectedAgent(agentId: string) {
@@ -155,6 +165,20 @@ export function ChannelConfigWindow() {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setAddingAgentId(null);
+    }
+  }
+
+  async function removeMember(agentId: string) {
+    setRemovingAgentId(agentId);
+    setError(null);
+    try {
+      await api.agentRemoveConversationMember(conversationId, agentId);
+      await window.lin?.notifySettingsChanged?.();
+      setConversations(await api.agentListConversations());
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setRemovingAgentId(null);
     }
   }
 
@@ -219,6 +243,17 @@ export function ChannelConfigWindow() {
                     leading={<AgentIdentityAvatar label={agent.label} mention={agent.mention} size="sm" />}
                     label={agent.label}
                     sublabel={`@${agent.mention}`}
+                    trailing={agent.removable ? (
+                      <Button
+                        disabled={removingAgentId !== null}
+                        onClick={() => void removeMember(agent.agentId)}
+                        size="sm"
+                        variant="danger"
+                      >
+                        {removingAgentId === agent.agentId ? t.common.loading : t.agent.chat.removeMember}
+                      </Button>
+                    ) : undefined}
+                    wrap
                   />
                 ))}
               </InsetGroup>
