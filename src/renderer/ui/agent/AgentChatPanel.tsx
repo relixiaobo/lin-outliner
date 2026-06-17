@@ -92,7 +92,6 @@ const TRANSCRIPT_ROW_ESTIMATE_PX = 104;
 const TRANSCRIPT_VIRTUAL_MIN_ROWS = 40;
 const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
 const MESSAGE_TIME_SEPARATOR_GAP_MS = 60 * 60 * 1000;
-const EMPTY_LIVE_TOOL_RESULTS: Map<string, AgentToolResultWithPayloads> = new Map();
 
 interface AgentChatPanelProps {
   index: DocumentIndex;
@@ -541,14 +540,39 @@ function liveToolCallIds(content: AssistantMessage['content']): Set<string> {
 }
 
 function scopedPendingToolCallIds(
+  entry: AgentRenderActivityEntry,
   content: AssistantMessage['content'],
-  state: AgentRenderActivityEntry['state'],
 ): Set<string> {
+  const visibleIds = liveToolCallIds(content);
+  if (entry.pendingToolCallIds !== undefined) {
+    return new Set(entry.pendingToolCallIds.filter((id) => visibleIds.has(id)));
+  }
   // Channel live detail has no durable tool result map until the turn seals. While
   // the entry is active, any visible tool call is still part of live work; rendering
   // it as pending avoids a transient/error-looking red state between provider
   // message_end, tool_execution_start, and later continuation segments.
-  return state !== 'received' ? liveToolCallIds(content) : new Set();
+  return entry.state !== 'received' ? visibleIds : new Set();
+}
+
+function syntheticLiveToolResults(
+  content: AssistantMessage['content'],
+  pendingToolCallIds: ReadonlySet<string>,
+  timestamp: number,
+): Map<string, AgentToolResultWithPayloads> {
+  const results = new Map<string, AgentToolResultWithPayloads>();
+  for (const block of content) {
+    if (block.type !== 'toolCall' || pendingToolCallIds.has(block.id)) continue;
+    results.set(block.id, {
+      role: 'toolResult',
+      toolCallId: block.id,
+      toolName: block.name,
+      content: [],
+      payloadRefs: [],
+      isError: false,
+      timestamp,
+    });
+  }
+  return results;
 }
 
 function scopedChildRunsByParentToolCallId(
@@ -1980,7 +2004,12 @@ export function AgentChatPanel({
         const { label, mention } = activityAgentLabel(selectedActivityEntry, memberByAgentId, agentDefinitionById);
         const { stateLabel } = activityCopy(selectedActivityEntry, label, t);
         const liveContent = activityLiveContent(selectedActivityEntry);
-        const livePendingToolCallIds = scopedPendingToolCallIds(liveContent, selectedActivityEntry.state);
+        const livePendingToolCallIds = scopedPendingToolCallIds(selectedActivityEntry, liveContent);
+        const liveToolResults = syntheticLiveToolResults(
+          liveContent,
+          livePendingToolCallIds,
+          selectedActivityEntry.updatedAt,
+        );
         const liveChildRunsByParentToolCallId = scopedChildRunsByParentToolCallId(
           liveContent,
           selectedActivityEntry.runId,
@@ -2036,7 +2065,7 @@ export function AgentChatPanel({
                   onNodeReferenceOpen={onOpenNodeReference}
                   onOpenChildRunTranscript={setSelectedChildRunId}
                   pendingToolCallIds={livePendingToolCallIds}
-                  toolResults={EMPTY_LIVE_TOOL_RESULTS}
+                  toolResults={liveToolResults}
                 />
               ) : (
                 <EmptyState className="agent-child-run-empty" title={t.agent.chat.typingNoDetailYet} />

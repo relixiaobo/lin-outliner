@@ -733,6 +733,7 @@ describe('agent render projection', () => {
         messageId: null,
         addressedByMessageId: 'user-channel',
         state: 'using_tools',
+        pendingToolCallIds: ['tool-call-2'],
         updatedAt: 1_700_000_000_007,
       },
       {
@@ -1028,6 +1029,7 @@ describe('agent render projection', () => {
         addressedByMessageId: 'user-1',
         state: 'thinking' as const,
         updatedAt: 1_700_000_000_010,
+        pendingToolCallIds: ['tool-1'],
         streamingContent: [
           { type: 'toolCall', id: 'tool-1', name: 'web_fetch', arguments: toolArguments },
         ],
@@ -1050,6 +1052,8 @@ describe('agent render projection', () => {
 
     expect(projection.channelActivityEntries).toEqual(activityEntries);
     expect(projection.channelActivityEntries).not.toBe(activityEntries);
+    expect(projection.channelActivityEntries[0]?.pendingToolCallIds).toEqual(['tool-1']);
+    expect(projection.channelActivityEntries[0]?.pendingToolCallIds).not.toBe(activityEntries[0]?.pendingToolCallIds);
     const projectedTool = projection.channelActivityEntries[0]?.streamingContent?.[0];
     expect(projectedTool).toMatchObject({ type: 'toolCall', arguments: toolArguments });
     expect(projectedTool?.type === 'toolCall' ? projectedTool.arguments : null).not.toBe(toolArguments);

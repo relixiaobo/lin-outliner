@@ -168,6 +168,12 @@ export interface AgentRenderActivityEntry {
    * while the main Channel transcript still stays whole-utterance only.
    */
   streamingContent?: AgentRenderLiveContent[];
+  /**
+   * Tool calls within {@link streamingContent} that are still in flight. Channel
+   * live details keep cross-segment history, so this run-scoped list prevents
+   * already-completed historical tool calls from continuing to render as active.
+   */
+  pendingToolCallIds?: string[];
 }
 
 export type AgentPovInspectorMessageRole = 'user' | 'assistant' | 'toolResult';
@@ -500,6 +506,7 @@ export function buildAgentRenderProjection(
     channelActivityEntries: options.channelActivityEntries
       ? options.channelActivityEntries.map((entry) => ({
           ...entry,
+          ...(entry.pendingToolCallIds ? { pendingToolCallIds: [...entry.pendingToolCallIds] } : {}),
           ...(entry.streamingContent ? { streamingContent: entry.streamingContent.map(cloneAgentRenderLiveContent) } : {}),
         }))
       : buildDerivedActivityEntries(state, options, pendingToolCallIds),
@@ -607,6 +614,7 @@ function buildDerivedActivityEntries(
           ? (pendingToolCallIds.length > 0 ? 'using_tools' : 'thinking')
           : 'received',
         updatedAt: activeAgent ? activeRun.updatedAt : addressingMessage?.updatedAt ?? activeRun.startedAt,
+        ...(activeAgent ? { pendingToolCallIds: [...pendingToolCallIds] } : {}),
         ...(activeAgent && activeRunStreamingContent.length > 0 ? { streamingContent: activeRunStreamingContent } : {}),
         ...(activeAgent && activeRunStreamingText ? { streamingText: activeRunStreamingText } : {}),
       };

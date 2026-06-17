@@ -626,13 +626,14 @@ describe('agent channel runtime', () => {
     const entry = projection?.channelActivityEntries.find((candidate) => candidate.runId);
     expect(entry).toMatchObject({
       agentId: MAIN_AGENT_ID,
-      state: 'thinking',
+      state: 'using_tools',
       streamingText: 'Drafting live Channel detail.',
       streamingContent: [
         { type: 'thinking', thinking: 'Checking the live Channel source.' },
         { type: 'toolCall', id: 'tool-channel-live', name: 'web_fetch', arguments: { url: 'https://example.test/channel' } },
         { type: 'text', text: 'Drafting live Channel detail.' },
       ],
+      pendingToolCallIds: ['tool-channel-live'],
     });
 
     if (!liveStream || !liveModel) throw new Error('Live stream did not start.');
@@ -710,6 +711,7 @@ describe('agent channel runtime', () => {
         { type: 'toolCall', id: 'tool-channel-note', name: 'file_read', arguments: { file_path: notePath } },
         { type: 'text', text: 'Now drafting after reading the note.' },
       ],
+      pendingToolCallIds: [],
     });
 
     if (!secondStream || !secondModel) throw new Error('Second stream did not start.');

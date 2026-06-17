@@ -2282,6 +2282,7 @@ test.describe('agent composer controls', () => {
           addressedByMessageId: 'user-activity',
           state: 'thinking',
           updatedAt: 1_800_000_000_300,
+          pendingToolCallIds: ['tool-alpha-prestart'],
           streamingContent: [
             { type: 'thinking', thinking: 'Preparing to fetch context.' },
             { type: 'toolCall', id: 'tool-alpha-prestart', name: 'web_fetch', arguments: { url: 'https://example.test' } },
@@ -2296,6 +2297,48 @@ test.describe('agent composer controls', () => {
     await page.locator('.agent-channel-working-detail').getByRole('menuitem', { name: /Alpha is thinking/ }).click();
     const details = page.getByRole('complementary', { name: 'View working state' });
     await expect(details.locator('.agent-tool-call.is-pending')).toHaveCount(1);
+    await expect(details.locator('.agent-tool-call.is-error')).toHaveCount(0);
+  });
+
+  test('live Channel detail marks previous-segment tools done after continuation text arrives', async ({ page }) => {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+      conversationTitle: 'Parallel Channel',
+      members: [
+        { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+        {
+          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+          mention: 'assistant',
+          displayName: 'Neva',
+          coordinator: true,
+        },
+        { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
+      ],
+      activityEntries: [
+        {
+          id: 'user-activity:agent-alpha',
+          agentId: 'agent-alpha',
+          runId: 'run-alpha',
+          messageId: null,
+          addressedByMessageId: 'user-activity',
+          state: 'thinking',
+          updatedAt: 1_800_000_000_300,
+          pendingToolCallIds: [],
+          streamingContent: [
+            { type: 'thinking', thinking: 'Find the source first.' },
+            { type: 'toolCall', id: 'tool-alpha-search', name: 'web_search', arguments: { query: 'source' } },
+            { type: 'text', text: 'The source has been checked; drafting the answer now.' },
+          ],
+        },
+      ],
+      pendingToolCallIds: [],
+    });
+
+    const working = page.locator('.agent-channel-working');
+    await working.locator('.agent-channel-working-trigger').click();
+    await page.locator('.agent-channel-working-detail').getByRole('menuitem', { name: /Alpha is thinking/ }).click();
+    const details = page.getByRole('complementary', { name: 'View working state' });
+    await expect(details.locator('.agent-tool-call.is-done')).toHaveCount(1);
+    await expect(details.locator('.agent-tool-call.is-pending')).toHaveCount(0);
     await expect(details.locator('.agent-tool-call.is-error')).toHaveCount(0);
   });
 

@@ -4667,7 +4667,7 @@ export class AgentRuntime {
     const entries = new Map<string, AgentRenderActivityEntry>();
     for (const run of runList) {
       if (!run.addressedByMessageId) continue;
-      const pendingToolCalls = run.agent.state.pendingToolCalls;
+      const pendingToolCallIds = channelLivePendingToolCallIds(run, conversation.eventState);
       const persistedRun = conversation.eventState.runs[run.id];
       const entry: AgentRenderActivityEntry = {
         id: `${run.addressedByMessageId}:${run.executingAgentId}`,
@@ -4675,12 +4675,13 @@ export class AgentRuntime {
         runId: run.id,
         messageId: latestAssistantMessageIdForRun(conversation.eventState, run.id),
         addressedByMessageId: run.addressedByMessageId,
-        state: pendingToolCalls.size > 0 ? 'using_tools' : 'thinking',
+        state: pendingToolCallIds.length > 0 ? 'using_tools' : 'thinking',
         updatedAt: persistedRun?.updatedAt ?? run.startedAt,
         // The live composing blocks for the per-run detail view; retained on
         // the run (not the shared log) so concurrent runs never collide and the
         // transcript stays whole-utterance.
         streamingText: run.assistantText || undefined,
+        pendingToolCallIds,
         ...(run.assistantContent.length > 0 ? { streamingContent: run.assistantContent } : {}),
       };
       entries.set(entry.id, entry);
@@ -8157,6 +8158,41 @@ function updateChannelLiveAssistantSegment(run: AgentActiveRunState, content: Ag
     ...content,
   ];
   run.assistantText = liveAssistantText(run.assistantContent);
+}
+
+function channelLivePendingToolCallIds(run: AgentActiveRunState, state: AgentEventReplayState): string[] {
+  const completedToolCallIds = toolResultIdsForRun(state, run.id);
+  const pending = new Set<string>();
+
+  for (const toolCallId of run.agent.state.pendingToolCalls) {
+    if (!completedToolCallIds.has(toolCallId)) pending.add(toolCallId);
+  }
+  for (const toolCallId of run.toolCallMessageIds.keys()) {
+    if (!completedToolCallIds.has(toolCallId)) pending.add(toolCallId);
+  }
+  for (const toolCallId of liveToolCallIds(run.assistantContent.slice(run.assistantLiveSegmentStart))) {
+    if (!completedToolCallIds.has(toolCallId)) pending.add(toolCallId);
+  }
+
+  return [...pending];
+}
+
+function toolResultIdsForRun(state: AgentEventReplayState, runId: string): Set<string> {
+  const ids = new Set<string>();
+  for (const message of Object.values(state.messages)) {
+    if (message.role === 'toolResult' && message.runId === runId && message.toolCallId) {
+      ids.add(message.toolCallId);
+    }
+  }
+  return ids;
+}
+
+function liveToolCallIds(content: readonly AgentRenderLiveContent[]): string[] {
+  const ids: string[] = [];
+  for (const part of content) {
+    if (part.type === 'toolCall') ids.push(part.id);
+  }
+  return ids;
 }
 
 function liveAssistantText(content: readonly AgentRenderLiveContent[]): string {
