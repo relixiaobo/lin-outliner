@@ -32,7 +32,6 @@ function userMessage(text: string, timestamp: number): UserMessage {
 function assistantEntry(opts: {
   id: string;
   agentId: string | null;
-  addressedByMessageId?: string | null;
   text?: string;
   timestamp?: number;
   runId?: string | null;
@@ -48,7 +47,6 @@ function assistantEntry(opts: {
     actor: opts.agentId ? { type: 'agent', agentId: opts.agentId } : null,
     runId: opts.runId !== undefined ? opts.runId : (opts.agentId ? `run-${opts.agentId}` : null),
     runDurationMs: opts.runDurationMs ?? null,
-    addressedByMessageId: opts.addressedByMessageId ?? null,
   };
 }
 
@@ -70,7 +68,6 @@ function userEntry(id: string, timestamp: number): AgentMessageEntry {
     actor: { type: 'user', userId: 'user-1' },
     runId: null,
     runDurationMs: null,
-    addressedByMessageId: null,
   };
 }
 
@@ -79,8 +76,8 @@ describe('buildConversationRenderRows — isLastInTurn', () => {
     const rows = buildConversationRenderRows(
       [
         userEntry('user-1', 0),
-        assistantEntry({ id: 'a-alpha', agentId: 'alpha', addressedByMessageId: 'user-1' }),
-        assistantEntry({ id: 'a-beta', agentId: 'beta', addressedByMessageId: 'user-1' }),
+        assistantEntry({ id: 'a-alpha', agentId: 'alpha' }),
+        assistantEntry({ id: 'a-beta', agentId: 'beta' }),
       ],
       'idle',
     );
@@ -97,8 +94,8 @@ describe('buildConversationRenderRows — isLastInTurn', () => {
     const rows = buildConversationRenderRows(
       [
         userEntry('user-1', 0),
-        assistantEntry({ id: 'a1', agentId: 'alpha', addressedByMessageId: 'user-1' }),
-        assistantEntry({ id: 'a2', agentId: 'alpha', addressedByMessageId: 'user-1' }),
+        assistantEntry({ id: 'a1', agentId: 'alpha' }),
+        assistantEntry({ id: 'a2', agentId: 'alpha' }),
       ],
       'idle',
     );
@@ -114,8 +111,8 @@ describe('buildConversationRenderRows — isLastInTurn', () => {
     // because the next entry was also `assistant` (a different agent's reply).
     const rows = buildConversationRenderRows(
       [
-        assistantEntry({ id: 'a-alpha', agentId: 'alpha', addressedByMessageId: 'user-1' }),
-        assistantEntry({ id: 'a-beta', agentId: 'beta', addressedByMessageId: 'user-1' }),
+        assistantEntry({ id: 'a-alpha', agentId: 'alpha' }),
+        assistantEntry({ id: 'a-beta', agentId: 'beta' }),
       ],
       'idle',
     );
@@ -126,7 +123,7 @@ describe('buildConversationRenderRows — isLastInTurn', () => {
   test('an assistant turn before a user message ends its turn', () => {
     const rows = buildConversationRenderRows(
       [
-        assistantEntry({ id: 'a1', agentId: 'alpha', addressedByMessageId: 'user-1' }),
+        assistantEntry({ id: 'a1', agentId: 'alpha' }),
         userEntry('user-2', 5),
       ],
       'idle',
@@ -143,8 +140,8 @@ describe('buildConversationRenderRows — merged turn duration', () => {
     const rows = buildConversationRenderRows(
       [
         userEntry('user-1', 0),
-        assistantEntry({ id: 'a1', agentId: 'alpha', addressedByMessageId: 'user-1', runId: 'run-1', runDurationMs: 4000 }),
-        assistantEntry({ id: 'a2', agentId: 'alpha', addressedByMessageId: 'user-1', runId: 'run-2', runDurationMs: 8000 }),
+        assistantEntry({ id: 'a1', agentId: 'alpha', runId: 'run-1', runDurationMs: 4000 }),
+        assistantEntry({ id: 'a2', agentId: 'alpha', runId: 'run-2', runDurationMs: 8000 }),
       ],
       'idle',
     );
@@ -155,8 +152,8 @@ describe('buildConversationRenderRows — merged turn duration', () => {
     const rows = buildConversationRenderRows(
       [
         userEntry('user-1', 0),
-        assistantEntry({ id: 'a1', agentId: 'alpha', addressedByMessageId: 'user-1', runId: 'run-1', runDurationMs: 5000 }),
-        assistantEntry({ id: 'a2', agentId: 'alpha', addressedByMessageId: 'user-1', runId: 'run-1', runDurationMs: 5000 }),
+        assistantEntry({ id: 'a1', agentId: 'alpha', runId: 'run-1', runDurationMs: 5000 }),
+        assistantEntry({ id: 'a2', agentId: 'alpha', runId: 'run-1', runDurationMs: 5000 }),
       ],
       'idle',
     );
@@ -169,8 +166,8 @@ describe('buildConversationRenderRows — merged turn duration', () => {
     const rows = buildConversationRenderRows(
       [
         userEntry('user-1', 0),
-        assistantEntry({ id: 'a1', agentId: 'alpha', addressedByMessageId: 'user-1', runId: 'run-1', runDurationMs: null }),
-        assistantEntry({ id: 'a2', agentId: 'alpha', addressedByMessageId: 'user-1', runId: 'run-2', runDurationMs: null }),
+        assistantEntry({ id: 'a1', agentId: 'alpha', runId: 'run-1', runDurationMs: null }),
+        assistantEntry({ id: 'a2', agentId: 'alpha', runId: 'run-2', runDurationMs: null }),
       ],
       'idle',
     );

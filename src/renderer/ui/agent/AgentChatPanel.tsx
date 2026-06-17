@@ -53,7 +53,6 @@ import { AgentComposer } from './AgentComposer';
 import type { AgentComposerNodeReference } from './AgentComposerEditor';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentMessageRow } from './AgentMessageRow';
-import type { AgentReplyAnchor } from './AgentMessageRow';
 import {
   buildConversationRenderRows,
   getEntryRole,
@@ -246,40 +245,6 @@ function textFromConversationEntry(entry: AgentMessageEntry): string {
     .join(' ')
     .replace(/\s+/gu, ' ')
     .trim();
-}
-
-function truncateReplyAnchorQuote(text: string): string {
-  const normalized = text.replace(/\s+/gu, ' ').trim();
-  if (normalized.length <= 72) return normalized;
-  return `${normalized.slice(0, 69).trimEnd()}...`;
-}
-
-function buildReplyAnchorMap(rows: readonly AgentConversationRenderRow[]): Map<string, AgentReplyAnchor> {
-  const messageById = new Map<string, AgentMessageEntry>();
-  for (const row of rows) {
-    if (row.entry.kind === 'message' && row.entry.nodeId) messageById.set(row.entry.nodeId, row.entry);
-  }
-
-  const anchors = new Map<string, AgentReplyAnchor>();
-  let nearestUserMessageId: string | null = null;
-  for (const row of rows) {
-    if (row.entry.kind !== 'message') continue;
-    const messageId = row.entry.nodeId;
-    if (!messageId) continue;
-    if (row.entry.message.role === 'user') {
-      nearestUserMessageId = messageId;
-      continue;
-    }
-    if (row.entry.message.role !== 'assistant') continue;
-    const addressedByMessageId = row.entry.addressedByMessageId;
-    if (!addressedByMessageId || addressedByMessageId === nearestUserMessageId) continue;
-    const source = messageById.get(addressedByMessageId);
-    if (!source) continue;
-    const quote = truncateReplyAnchorQuote(textFromConversationEntry(source));
-    if (!quote) continue;
-    anchors.set(messageId, { targetMessageId: addressedByMessageId, quote });
-  }
-  return anchors;
 }
 
 function estimateTranscriptRowHeight(row: AgentConversationRenderRow): number {
@@ -526,7 +491,6 @@ export function AgentChatPanel({
   const [rowActionMenu, setRowActionMenu] = useState<string | null>(null);
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
   const [selectedChildRunId, setSelectedChildRunId] = useState<string | null>(null);
-  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
@@ -539,7 +503,6 @@ export function AgentChatPanel({
   const agentDefinitionsRequestRef = useRef(0);
   const scrollFrameRef = useRef<number | null>(null);
   const bottomScrollFrameRef = useRef<number | null>(null);
-  const highlightTimeoutRef = useRef<number | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
   const copyPayloadTextCacheRef = useRef<PayloadTextPromiseCache>(new Map());
   const copyAssistantTurnSourceRef = useRef({ entries, toolResults, conversationId });
@@ -580,10 +543,6 @@ export function AgentChatPanel({
   const conversationRows = useMemo(
     () => buildConversationRenderRows(entries, turnPhase),
     [entries, turnPhase],
-  );
-  const replyAnchorByMessageId = useMemo(
-    () => buildReplyAnchorMap(conversationRows),
-    [conversationRows],
   );
   const runningTaskCount = useMemo(() => tasks.filter((task) => task.status === 'running').length, [tasks]);
   const selectedChildRun = selectedChildRunId ? childRuns[selectedChildRunId] ?? null : null;
@@ -685,34 +644,6 @@ export function AgentChatPanel({
     copyAssistantTurnCallbacksRef.current.set(rowKey, { endIndex, handler });
     return handler;
   }, []);
-
-  const revealMessage = useCallback((messageId: string) => {
-    const scrollElement = scrollRef.current;
-    if (!scrollElement) return;
-    const findTarget = () => Array
-      .from(scrollElement.querySelectorAll<HTMLElement>('[data-agent-message-id]'))
-      .find((element) => element.dataset.agentMessageId === messageId) ?? null;
-    const target = findTarget();
-    if (target) {
-      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      target.scrollIntoView({ block: 'center', behavior: reduceMotion ? 'auto' : 'smooth' });
-    } else {
-      const rowIndex = conversationRows.findIndex((row) => (
-        row.entry.kind === 'message' && row.entry.nodeId === messageId
-      ));
-      const item = rowIndex >= 0 ? virtualLayout.items[rowIndex] : undefined;
-      if (item) {
-        scrollElement.scrollTop = Math.max(0, item.top - scrollElement.clientHeight / 3);
-        updateScrollMetrics(scrollElement);
-      }
-    }
-    setHighlightedMessageId(messageId);
-    if (highlightTimeoutRef.current !== null) window.clearTimeout(highlightTimeoutRef.current);
-    highlightTimeoutRef.current = window.setTimeout(() => {
-      setHighlightedMessageId((current) => (current === messageId ? null : current));
-      highlightTimeoutRef.current = null;
-    }, 1400);
-  }, [conversationRows, updateScrollMetrics, virtualLayout.items]);
 
   const loadProviderSettings = useCallback(async () => {
     const requestId = providerSettingsRequestRef.current + 1;
@@ -822,10 +753,6 @@ export function AgentChatPanel({
     if (bottomScrollFrameRef.current !== null) {
       window.cancelAnimationFrame(bottomScrollFrameRef.current);
       bottomScrollFrameRef.current = null;
-    }
-    if (highlightTimeoutRef.current !== null) {
-      window.clearTimeout(highlightTimeoutRef.current);
-      highlightTimeoutRef.current = null;
     }
   }, []);
 
@@ -1040,9 +967,6 @@ export function AgentChatPanel({
     // Result-first turn: the turn renders its final answer as prose with the
     // working process — thinking, tools, interim narration — folded behind the
     // collapsed "Worked for …" disclosure (renderAssistantBlocks).
-    const rowMessageId = row.entry.nodeId;
-    const replyAnchor = rowMessageId ? replyAnchorByMessageId.get(rowMessageId) ?? null : null;
-
     const copyAssistantTurn = row.isLastInTurn && getEntryRole(row.entry) === 'assistant'
       ? copyAssistantTurnForRow(row.key, row.endIndex)
       : undefined;
@@ -1054,7 +978,6 @@ export function AgentChatPanel({
         busy={anyRunActive}
         contentKey={row.contentKey}
         entry={row.entry}
-        highlighted={rowMessageId !== null && rowMessageId === highlightedMessageId}
         index={index}
         isLastInTurn={row.isLastInTurn}
         onCopy={copyAssistantTurn}
@@ -1073,8 +996,6 @@ export function AgentChatPanel({
         turnPhase={row.turnPhase}
         speakerLabel={detailSpeakerLabel}
         speakerMention={detailSpeakerMention}
-        replyAnchor={replyAnchor}
-        onReplyAnchorClick={revealMessage}
       />
     );
   }

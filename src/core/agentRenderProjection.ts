@@ -68,8 +68,6 @@ export interface AgentRenderMessageEntity {
   updatedAt: number;
   branches: AgentRenderBranchState | null;
   actor: AgentActor;
-  addressedTo?: AgentPrincipal[];
-  addressedByMessageId?: string | null;
   apiId?: string;
   providerId?: string;
   modelId?: string;
@@ -100,7 +98,7 @@ export interface AgentRenderMemberView {
   /** `@` token for agent members (composer typeahead + badge); empty for the user. */
   mention: string;
   displayName: string;
-  /** True for the Channel coordinator (default `addressedTo` when no one is `@`-ed). */
+  /** True for the Channel coordinator (default when no one is `@`-ed). */
   coordinator?: boolean;
 }
 
@@ -114,7 +112,6 @@ export interface AgentStreamingRenderState {
 export interface AgentRenderActiveRun {
   runId: string;
   agentId: string;
-  addressedByMessageId: string | null;
   startedAt: number;
 }
 
@@ -328,8 +325,6 @@ export interface BuildAgentRenderProjectionOptions {
   revision: number;
   activeRuns?: AgentRenderActiveRun[];
   activeRunId?: string | null;
-  activeRunAddressedByMessageId?: string | null;
-  messageAddressedByMessageIds?: Record<string, string | null | undefined>;
   activeCompaction?: AgentRenderActiveCompaction | null;
   activeDream?: AgentRenderActiveDream | null;
   runActive?: boolean;
@@ -411,7 +406,6 @@ export function buildAgentRenderProjection(
     entities.tasks[task.id] = task;
     if (!taskIds.includes(task.id)) taskIds.push(task.id);
   }
-  applyMessageAddressing(entities, options);
   const pendingToolCallIds = options.pendingToolCallIds ?? [];
   const activeRunId = options.activeRunId ?? options.activeRuns?.[0]?.runId ?? null;
 
@@ -436,22 +430,6 @@ export function buildAgentRenderProjection(
     entities,
     streaming,
   };
-}
-
-function applyMessageAddressing(
-  entities: AgentRenderEntities,
-  options: BuildAgentRenderProjectionOptions,
-) {
-  for (const [messageId, addressedByMessageId] of Object.entries(options.messageAddressedByMessageIds ?? {})) {
-    const message = entities.messages[messageId];
-    if (message && addressedByMessageId) message.addressedByMessageId = addressedByMessageId;
-  }
-  if (!options.activeRunId || !options.activeRunAddressedByMessageId) return;
-  for (const message of Object.values(entities.messages)) {
-    if (message.role === 'assistant' && message.runId === options.activeRunId) {
-      message.addressedByMessageId = options.activeRunAddressedByMessageId;
-    }
-  }
 }
 
 // One predicate for "this run has not reached a terminal event", mirrored by the
@@ -664,8 +642,6 @@ function toRenderMessageEntity(
     updatedAt: message.updatedAt,
     branches: getAgentEventMessageBranches(state, message.id),
     actor: message.actor,
-    addressedTo: message.addressedTo?.slice(),
-    addressedByMessageId: message.addressedByMessageId ?? null,
     apiId: message.apiId,
     providerId: message.providerId,
     modelId: message.modelId,

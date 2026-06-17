@@ -65,50 +65,6 @@ export function agentMentionToken(agentId: string): string {
   return segment || agentId;
 }
 
-function mentionPattern(token: string): RegExp {
-  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // No lookbehind on the leading edge: "email@bob" should not mention bob, so
-  // require start-of-string or a non-word character before the `@`.
-  return new RegExp(`(?:^|[^a-zA-Z0-9._-])@${escaped}(?![a-zA-Z0-9._-])`, 'i');
-}
-
-/**
- * Resolve `@` mentions in `text` against the conversation's agent members
- * (Slack-style: the candidate set is the roster, nothing else). Returns matched
- * members ordered by first mention position, deduplicated.
- */
-export function parseAgentMentionTargets(
-  text: string,
-  members: readonly AgentPrincipal[],
-  options: { excludeAgentId?: string } = {},
-): Extract<AgentPrincipal, { type: 'agent' }>[] {
-  const candidates = channelAgentMembers(members)
-    .filter((member) => member.agentId !== options.excludeAgentId);
-  const hits: Array<{ index: number; member: Extract<AgentPrincipal, { type: 'agent' }> }> = [];
-  for (const member of candidates) {
-    const match = mentionPattern(agentMentionToken(member.agentId)).exec(text);
-    if (match) hits.push({ index: match.index, member });
-  }
-  return hits
-    .sort((left, right) => left.index - right.index)
-    .map((hit) => hit.member);
-}
-
-/**
- * Hand-off targets named by an agent reply: every `@member` mention that is not
- * the speaker. Hand-off uses the same addressing rule as a user message
- * (PM-ratified 2026-06-10): all addressees run, each addressed BY this reply —
- * so their contexts cut at it (independence rule), and the chain is unbounded
- * (user `stop` is the circuit breaker).
- */
-export function handOffTargets(
-  text: string,
-  members: readonly AgentPrincipal[],
-  speakerAgentId: string,
-): Extract<AgentPrincipal, { type: 'agent' }>[] {
-  return parseAgentMentionTargets(text, members, { excludeAgentId: speakerAgentId });
-}
-
 export type ChannelMessageOwner = AgentPrincipal | { type: 'system' };
 
 /**

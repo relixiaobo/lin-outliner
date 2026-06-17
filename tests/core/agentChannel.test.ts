@@ -2,10 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   agentMentionToken,
   channelMessageOwner,
-  handOffTargets,
   isChannelConversationId,
   isMultiAgentConversation,
-  parseAgentMentionTargets,
   usesChannelActivitySurface,
 } from '../../src/core/agentChannel';
 import {
@@ -63,28 +61,6 @@ describe('agent channel mentions', () => {
     expect(usesChannelActivitySurface('lin-agent-channel-solo', [userMember, mainMember])).toBe(false);
     expect(usesChannelActivitySurface('legacy-fixture', [userMember, mainMember, peerMember])).toBe(false);
   });
-
-  test('parses mentions scoped to the roster, ordered by position, deduplicated', () => {
-    const targets = parseAgentMentionTargets('@writer first, then @reviewer and @writer again', channelMembers);
-    expect(targets.map((target) => target.agentId)).toEqual([OTHER_AGENT_ID, PEER_AGENT_ID]);
-  });
-
-  test('ignores non-member mentions, mid-word @, and token prefixes', () => {
-    expect(parseAgentMentionTargets('@stranger hello', channelMembers)).toEqual([]);
-    expect(parseAgentMentionTargets('email@reviewer is not a mention', channelMembers)).toEqual([]);
-    expect(parseAgentMentionTargets('@reviewers is not @reviewer-bot either', channelMembers)).toEqual([]);
-    expect(parseAgentMentionTargets('(@reviewer) parenthesized works', channelMembers).map((target) => target.agentId))
-      .toEqual([PEER_AGENT_ID]);
-  });
-
-  test('hand-off targets are every mention that is not the speaker, in order', () => {
-    expect(handOffTargets('@reviewer please handle this', channelMembers, PEER_AGENT_ID)).toEqual([]);
-    expect(handOffTargets('@reviewer then @writer', channelMembers, PEER_AGENT_ID).map((target) => target.agentId))
-      .toEqual([OTHER_AGENT_ID]);
-    expect(handOffTargets('@writer and @reviewer, both of you', channelMembers, MAIN_AGENT_ID).map((target) => target.agentId))
-      .toEqual([OTHER_AGENT_ID, PEER_AGENT_ID]);
-    expect(handOffTargets('no mentions here', channelMembers, MAIN_AGENT_ID)).toEqual([]);
-  });
 });
 
 describe('member events replay', () => {
@@ -104,20 +80,6 @@ describe('member events replay', () => {
     expect(removed.conversation?.members).toEqual([userMember, mainMember]);
   });
 
-  test('addressedTo is written on user_message.created and read back from the record', () => {
-    const state = replayAgentEvents([
-      { ...base(1, 'conversation.created'), title: 'Channel', members: channelMembers, goal: 'Channel' },
-      {
-        ...base(2, 'user_message.created', userActor),
-        messageId: 'user-1',
-        parentMessageId: null,
-        content: [{ type: 'text', text: '@reviewer hello' }],
-        addressedTo: [peerMember],
-      },
-    ] as AgentEvent[]);
-    expect(state.messages['user-1']?.addressedTo).toEqual([peerMember]);
-  });
-
   test('render projection exposes member views, coordinator flag, and message actors', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Channel', members: [userMember, mainMember, peerMember], goal: 'Channel' },
@@ -126,7 +88,6 @@ describe('member events replay', () => {
         messageId: 'user-1',
         parentMessageId: null,
         content: [{ type: 'text', text: '@reviewer hello' }],
-        addressedTo: [peerMember],
       },
       {
         ...base(3, 'assistant_message.started', { type: 'agent', agentId: PEER_AGENT_ID }),
@@ -155,7 +116,6 @@ describe('member events replay', () => {
       { principal: peerMember, mention: 'reviewer', displayName: 'Code Reviewer', coordinator: undefined },
     ]);
     expect(projection.entities.messages['assistant-1']?.actor).toEqual({ type: 'agent', agentId: PEER_AGENT_ID });
-    expect(projection.entities.messages['user-1']?.addressedTo).toEqual([peerMember]);
   });
 });
 

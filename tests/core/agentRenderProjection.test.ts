@@ -618,79 +618,6 @@ describe('agent render projection', () => {
     });
   });
 
-  test('accepts explicit message addressing for reply-anchor rendering', () => {
-    const state = replayAgentEvents([
-      { ...base(1, 'conversation.created'), title: 'Anchors' },
-      {
-        ...base(2, 'user_message.created', userActor),
-        messageId: 'user-1',
-        parentMessageId: null,
-        content: [{ type: 'text', text: 'Original question' }],
-      },
-      {
-        ...base(3, 'assistant_message.started', agentActor),
-        runId: 'run-1',
-        messageId: 'assistant-1',
-        parentMessageId: 'user-1',
-        providerId: 'test-provider',
-        modelId: 'test-model',
-      },
-      {
-        ...base(4, 'assistant_message.completed', agentActor),
-        messageId: 'assistant-1',
-        stopReason: 'stop',
-        content: [{ type: 'text', text: 'Later answer' }],
-      },
-    ]);
-
-    const projection = buildAgentRenderProjection(state, {
-      revision: 1,
-      messageAddressedByMessageIds: { 'assistant-1': 'user-1' },
-    });
-
-    expect(projection.entities.messages['assistant-1']?.addressedByMessageId).toBe('user-1');
-  });
-
-  test('projects persisted reply-anchor addressing on completed assistant messages', () => {
-    const state = replayAgentEvents([
-      { ...base(1, 'conversation.created'), title: 'Historical anchors' },
-      {
-        ...base(2, 'user_message.created', userActor),
-        messageId: 'user-original',
-        parentMessageId: null,
-        content: [{ type: 'text', text: 'Original question' }],
-      },
-      {
-        ...base(3, 'user_message.created', userActor),
-        messageId: 'user-newer',
-        parentMessageId: 'user-original',
-        content: [{ type: 'text', text: 'Newer question' }],
-      },
-      { ...base(4, 'run.started'), runId: 'run-late', agentId: 'agent-1' },
-      {
-        ...base(5, 'assistant_message.started', agentActor),
-        runId: 'run-late',
-        messageId: 'assistant-late',
-        parentMessageId: 'user-newer',
-        addressedByMessageId: 'user-original',
-        providerId: 'test-provider',
-        modelId: 'test-model',
-      },
-      {
-        ...base(6, 'assistant_message.completed', agentActor),
-        messageId: 'assistant-late',
-        stopReason: 'stop',
-        content: [{ type: 'text', text: 'Late answer' }],
-      },
-      { ...base(7, 'run.completed'), runId: 'run-late' },
-    ]);
-
-    const projection = buildAgentRenderProjection(state, { revision: 1 });
-
-    expect(projection.entities.messages['assistant-late']?.status).toBe('completed');
-    expect(projection.entities.messages['assistant-late']?.addressedByMessageId).toBe('user-original');
-  });
-
   // The authoritative interrupted verdict — derived from the producing run's REAL
   // status, never from whether the visible blocks end on answer prose. This is the
   // single source of truth that stops the recurring Channel mislabel where a
@@ -760,7 +687,7 @@ describe('agent render projection', () => {
       // Live: the run is in the active set → still working, not interrupted.
       const live = buildAgentRenderProjection(state, {
         revision: 1,
-        activeRuns: [{ runId: 'run-1', agentId: 'agent-1', addressedByMessageId: 'user-1', startedAt: 1 }],
+        activeRuns: [{ runId: 'run-1', agentId: 'agent-1', startedAt: 1 }],
       });
       expect(live.entities.messages['assistant-1']?.turnInterrupted).toBeFalsy();
 

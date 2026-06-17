@@ -87,13 +87,6 @@ interface AgentMessageRowProps {
   turnPhase?: AgentTurnPhase;
   speakerLabel?: string | null;
   speakerMention?: string | null;
-  replyAnchor?: AgentReplyAnchor | null;
-  onReplyAnchorClick?: (targetMessageId: string) => void;
-}
-
-export interface AgentReplyAnchor {
-  targetMessageId: string;
-  quote: string;
 }
 
 interface UserDisplayContent {
@@ -484,8 +477,6 @@ function AgentMessageRowComponent({
   turnPhase = 'idle',
   speakerLabel = null,
   speakerMention = null,
-  replyAnchor = null,
-  onReplyAnchorClick,
 }: AgentMessageRowProps) {
   const t = useT();
   const { locale } = useI18n();
@@ -738,16 +729,6 @@ function AgentMessageRowComponent({
         </div>
       ) : null}
       <AgentAssistantContent>
-        {replyAnchor ? (
-          <ButtonControl
-            className="agent-reply-anchor"
-            onClick={() => onReplyAnchorClick?.(replyAnchor.targetMessageId)}
-            title={t.agent.message.replyAnchorTitle}
-          >
-            <span aria-hidden>↩</span>
-            <span>{`"${replyAnchor.quote}"`}</span>
-          </ButtonControl>
-        ) : null}
         {hasError ? <AgentMessageError message={displayError} /> : null}
         {assistantBlocks}
         {stopped && !turnActive ? (
@@ -818,12 +799,6 @@ function sameReadonlyMap<K, V>(left: ReadonlyMap<K, V>, right: ReadonlyMap<K, V>
   return true;
 }
 
-function sameReplyAnchor(left: AgentReplyAnchor | null | undefined, right: AgentReplyAnchor | null | undefined): boolean {
-  if (left === right) return true;
-  if (!left || !right) return false;
-  return left.targetMessageId === right.targetMessageId && left.quote === right.quote;
-}
-
 function sameMessageEntry(left: AgentMessageEntry, right: AgentMessageEntry): boolean {
   return left === right || (
     left.id === right.id
@@ -835,7 +810,6 @@ function sameMessageEntry(left: AgentMessageEntry, right: AgentMessageEntry): bo
     && left.runId === right.runId
     && left.runDurationMs === right.runDurationMs
     && left.turnInterrupted === right.turnInterrupted
-    && left.addressedByMessageId === right.addressedByMessageId
   );
 }
 
@@ -863,9 +837,7 @@ function sameAgentMessageRowProps(prev: AgentMessageRowProps, next: AgentMessage
     && prev.isChannel === next.isChannel
     && prev.turnPhase === next.turnPhase
     && prev.speakerLabel === next.speakerLabel
-    && prev.speakerMention === next.speakerMention
-    && sameReplyAnchor(prev.replyAnchor, next.replyAnchor)
-    && prev.onReplyAnchorClick === next.onReplyAnchorClick;
+    && prev.speakerMention === next.speakerMention;
 }
 
 export const AgentMessageRow = memo(AgentMessageRowComponent, sameAgentMessageRowProps);

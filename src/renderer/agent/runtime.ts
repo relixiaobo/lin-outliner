@@ -59,8 +59,6 @@ export interface AgentMessageEntry {
    * block structure — see the projection's `turnInterrupted`.
    */
   turnInterrupted: boolean;
-  /** The message that addressed this reply, when the projection can derive it. */
-  addressedByMessageId: string | null;
 }
 
 export interface AgentCompletedCompactionEntry {
@@ -269,7 +267,6 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       runId: entity.runId ?? null,
       runDurationMs: entity.runDurationMs ?? null,
       turnInterrupted: entity.turnInterrupted ?? false,
-      addressedByMessageId: entity.addressedByMessageId ?? null,
     });
   }
 
@@ -331,7 +328,6 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       runId: null,
       runDurationMs: null,
       turnInterrupted: false,
-      addressedByMessageId: null,
     });
   }
 

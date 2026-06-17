@@ -108,7 +108,6 @@ function entryFromMessage(
       runId: null,
       runDurationMs: runDurationMsForMessage(childRun, lastAssistant),
       turnInterrupted: turnInterruptedForMessage(childRun, lastAssistant),
-      addressedByMessageId: null,
     },
     turnPhase: turnPhaseForMessage(message, active, pendingToolCallIds),
   };

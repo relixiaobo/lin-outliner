@@ -100,8 +100,6 @@ import {
   DEFAULT_GENERAL_CHANNEL_TITLE,
   agentMentionToken,
   channelAgentMembers,
-  handOffTargets,
-  isMultiAgentConversation,
 } from '../core/agentChannel';
 import {
   rewriteFileReferenceMarkerPaths,
@@ -473,12 +471,6 @@ interface AgentActiveRunState extends AgentRuntimeActiveRunState {
   toolCallMessageIds: Map<string, string>;
   /** The agent this run executes as (a Channel peer or the main agent). */
   executingAgentId: string;
-  /**
-   * The message that addressed this run (independence cut boundary,
-   * PM-ratified 2026-06-10). Null outside Channel routing (DMs, retries
-   * without a recorded addressing message) — the cut fails open.
-   */
-  addressedByMessageId: string | null;
 }
 
 interface AgentRosterEntry {
@@ -709,11 +701,10 @@ export class AgentRuntime {
         this.finishCompaction(conversationId, conversation, compactionId, lastEventType);
       },
       startReactiveRetryRun: async (conversationId, conversation) => {
-        // The retry continues the SAME turn: same executing member, same
-        // addressing boundary — never the coordinator's identity by default.
+        // The retry continues the SAME turn: same executing member — never the
+        // coordinator's identity by default.
         await this.startRun(conversationId, conversation, conversation.lastRun?.lastSubmittedUserPrompt ?? null, null, {
           executingAgentId: conversation.lastRun?.executingAgentId,
-          addressedByMessageId: conversation.lastRun?.addressedByMessageId ?? null,
         });
       },
       completeSimpleFn: this.options.completeSimpleFn,
@@ -4057,10 +4048,8 @@ export class AgentRuntime {
       activeRuns: runList.map((run) => ({
         runId: run.id,
         agentId: run.executingAgentId,
-        addressedByMessageId: run.addressedByMessageId,
         startedAt: run.startedAt,
       })),
-      activeRunAddressedByMessageId: conversation.activeRun?.addressedByMessageId ?? null,
       activeCompaction: conversation.activeCompaction,
       activeDream: conversation.activeDream,
       runActive: hasActiveRuns,
@@ -4117,7 +4106,6 @@ export class AgentRuntime {
       activeRuns: runList.map((run) => ({
         runId: run.id,
         agentId: run.executingAgentId,
-        addressedByMessageId: run.addressedByMessageId,
         startedAt: run.startedAt,
       })),
       runActive: true,
@@ -5373,7 +5361,6 @@ export class AgentRuntime {
     conversationId: string,
     conversation: AgentConversationState,
     prompt: UserMessage,
-    options: { addressedTo?: AgentPrincipal[] } = {},
   ): Promise<string> {
     const messageId = this.createMessageId('user');
     const persisted = await this.persistPiUserContent(conversationId, prompt.content, {
@@ -5393,7 +5380,6 @@ export class AgentRuntime {
         parentMessageId: conversation.eventState.selectedLeafMessageId,
         content: persisted.content,
         attachments: persisted.payloads.length > 0 ? persisted.payloads : undefined,
-        addressedTo: options.addressedTo,
       },
       {
         type: 'branch.selected',
@@ -5702,7 +5688,6 @@ export class AgentRuntime {
     triggerOverride: AgentRunTrigger | null = null,
     identity: {
       executingAgentId?: string;
-      addressedByMessageId?: string | null;
       agent?: Agent;
       allowConcurrent?: boolean;
     } = {},
@@ -5732,7 +5717,6 @@ export class AgentRuntime {
       toolOutputPayloads: new Map(),
       toolCallMessageIds: new Map(),
       executingAgentId: agentId,
-      addressedByMessageId: identity.addressedByMessageId ?? null,
     };
     conversation.activeRuns.set(runId, runState);
     if (!identity.allowConcurrent) conversation.activeRun = runState;
@@ -5744,7 +5728,6 @@ export class AgentRuntime {
         actor: systemActor(),
         runId,
         agentId,
-        addressedByMessageId: runState.addressedByMessageId,
         anchor: { type: 'conversation', agentId, conversationId },
         kind: 'turn',
         trigger: triggerOverride ?? this.runTrigger(scoped),
@@ -5961,12 +5944,10 @@ export class AgentRuntime {
       actor: this.runActor(conversation),
       runId: this.activeRunId(conversation) ?? randomUUID(),
       messageId,
-      addressedByMessageId: activeRun.addressedByMessageId,
-      // A run's first segment parents to its addressing message (so concurrent
-      // peers fan out as siblings under it); every later segment parents to the
-      // run's own tail (`lastMessageId`) so the run stays a linear spine. Falling
-      // back to the shared `selectedLeafMessageId` would interleave parallel runs.
-      parentMessageId: activeRun.lastMessageId ?? activeRun.addressedByMessageId ?? conversation.eventState.selectedLeafMessageId,
+      // A run's first segment parents to the conversation's selected leaf; every
+      // later segment parents to the run's own tail (`lastMessageId`) so the run
+      // stays a linear spine.
+      parentMessageId: activeRun.lastMessageId ?? conversation.eventState.selectedLeafMessageId,
       providerId: message.provider,
       modelId: message.model,
       apiId: message.api,
@@ -6008,16 +5989,6 @@ export class AgentRuntime {
       && !isContextOverflow(message, conversation.agent.state.model.contextWindow)
       ? message.errorMessage
       : null;
-    // Hand-off routing record: a Channel reply's `@member` mentions are its
-    // addressedTo — persisted so the relay decision lives in the log. Stamped
-    // ONLY on the run's final segment (a `toolUse` stop means the turn
-    // continues), exactly the record the round loop routes from
-    // (`latestAssistantMessageIdForRun`) — the log never claims addressing
-    // that does not route.
-    const members = conversation.eventState.conversation?.members ?? [];
-    const handOffAddressedTo = isMultiAgentConversation(members) && message.stopReason !== 'toolUse'
-      ? handOffTargets(assistantVisibleText(message), members, activeRun.executingAgentId)
-      : [];
     await this.appendConversationEvents(conversationId, conversation, [
       {
         type: 'assistant_message.completed',
@@ -6027,7 +5998,6 @@ export class AgentRuntime {
         stopReason: message.stopReason,
         content: fromPiAssistantContent(message.content),
         usage: message.usage,
-        addressedTo: handOffAddressedTo.length > 0 ? handOffAddressedTo : undefined,
       },
       ...(inlineFailure ? [{
         type: 'assistant_message.failed' as const,
@@ -7362,15 +7332,6 @@ function latestAssistantRecordForRun(eventState: AgentEventReplayState, runId: s
       record.role === 'assistant' && record.runId === runId
     ))
     .sort((left, right) => right.createdAt - left.createdAt || right.id.localeCompare(left.id))[0] ?? null;
-}
-
-/** Visible text of a live pi assistant message (the hand-off mention source at completion time). */
-function assistantVisibleText(message: AssistantMessage): string {
-  return message.content
-    .filter((part): part is TextContent => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n')
-    .trim();
 }
 
 function persistedTextContent(content: readonly AgentPersistedContent[]): string {
