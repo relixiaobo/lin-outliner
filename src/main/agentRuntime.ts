@@ -6150,27 +6150,11 @@ export class AgentRuntime {
     for (const message of getAgentEventRuntimeTranscriptPath(eventState)) {
       messages.push(await this.runtimePiMessageFromRecord(conversationId, message));
     }
-    // Channel/DM environment reminder (the reminder-stack `environment` slot):
-    // the member system prompt is identity-only, so DM-vs-Channel framing + the
-    // member roster + Channel communication norms ride here instead. POV-correct
-    // (written for the executing member) and uniform across the main agent
-    // (whose prompt is built separately) and peers. Keyed off conversation
-    // identity (DM id prefix), not the live headcount or the POV branch above —
-    // a coordinator-only Channel is still a Channel. Only on a real reply run;
-    // restore/Dream/compaction have no activeRun.
+    // Conversation environment reminder (the reminder-stack `environment` slot):
+    // the system prompt is identity-only, so the 1:1 framing rides here instead.
+    // Only on a real reply run; restore/Dream/compaction have no activeRun.
     if (liveConversation && activeRun) {
-      // liveConversation.eventState === eventState by construction, so read the
-      // already-in-scope eventState.conversation (matches the POV branch above).
-      const environment = buildConversationEnvironmentReminder({
-        // Single-agent collapse: every conversation is a (single-agent) channel.
-        // The reminder copy itself is refactored to single-agent in a follow-up.
-        isChannel: true,
-        members: eventState.conversation?.members ?? [],
-        povAgentId: activeRun.executingAgentId,
-        channelName: eventState.conversation?.goal ?? null,
-        displayNames: liveConversation.memberDisplayNames,
-      });
-      if (environment) this.appendTrailingSystemReminder(messages, environment);
+      this.appendTrailingSystemReminder(messages, buildConversationEnvironmentReminder());
     }
     return messages;
   }

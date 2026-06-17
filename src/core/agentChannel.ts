@@ -3,7 +3,6 @@ import {
   type AgentPrincipal,
   type AgentRunRecord,
 } from './agentEventLog';
-import { escapeXml } from './reminderXml';
 
 /**
  * Pure Channel logic ([[agent-conversation-model]], ratified): mention resolution
@@ -89,20 +88,3 @@ export function channelMessageOwner(
   return { type: 'agent', agentId: mainAgentId };
 }
 
-/**
- * The `@mention` + optional display-name label for an agent member, used by the
- * environment reminder's roster. The display name is shown only when it differs
- * from the mention token (case-insensitive) and is `escapeXml`-escaped — the
- * consumer renders it inside a pseudo-XML reminder block where a raw `<`/`&` in a
- * user-authored name could break the tag boundary. The caller supplies the
- * surrounding format.
- */
-export function agentMemberMentionLabel(
-  agentId: string,
-  displayNames?: Record<string, string>,
-): { mention: string; displayName: string | null } {
-  const mention = agentMentionToken(agentId);
-  const raw = displayNames?.[agentId];
-  const displayName = raw && raw.toLowerCase() !== mention.toLowerCase() ? escapeXml(raw) : null;
-  return { mention, displayName };
-}

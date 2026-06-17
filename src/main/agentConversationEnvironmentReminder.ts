@@ -1,73 +1,17 @@
-import type { AgentPrincipal } from '../core/agentEventLog';
-import { agentMemberMentionLabel, channelAgentMembers } from '../core/agentChannel';
-import { xmlAttrs } from './agentReminderXml';
-
 /**
- * The Channel/DM **environment** reminder ([[agent-conversation-model]] reminder
- * stack — the `environment` slot). DM-vs-Channel framing, the member roster, and
- * the Channel communication norms are dynamic environment, NOT identity, so they
- * ride the per-turn `<system-reminder>` stack — never the stable system prompt
- * (which stays identity-only and cacheable across DM and Channel).
+ * The conversation **environment** reminder ([[agent-conversation-model]]
+ * reminder stack — the `environment` slot). The 1:1 framing is dynamic
+ * environment, NOT identity, so it rides the per-turn `<system-reminder>` stack
+ * rather than the stable, cacheable system prompt (which stays identity-only).
  *
- * POV-specific: the reminder is written for `povAgentId` (the in-flight run's
- * executing member), so it must be assembled per run, not on the shared
- * user-turn reminder stack.
+ * Single-agent: there is exactly one agent and every conversation is a direct
+ * 1:1 with the user, so this is a single fixed block (no roster, no POV).
  */
-export interface ConversationEnvironmentReminderInput {
-  /**
-   * Whether this conversation is structurally a Channel. DM-vs-Channel is a
-   * conversation **identity** (DM id prefix / `canonicalDmAgentId`), NOT a live
-   * headcount — a Channel may legitimately have only its coordinator (created
-   * with no extra agents, or shrunk via `member.removed`) yet is still a Channel.
-   * The runtime, which owns the `conversationId`, decides this; the builder only
-   * renders the block it is told to.
-   */
-  isChannel: boolean;
-  members: readonly AgentPrincipal[];
-  /** The in-flight run's executing member — the reminder is written for it. */
-  povAgentId: string;
-  /** The Channel's display name (legacy `goal` field); null for a DM. */
-  channelName?: string | null;
-  /** Display names (agentId → name) to enrich the member roster. */
-  displayNames?: Record<string, string>;
-}
-
-export function buildConversationEnvironmentReminder(
-  input: ConversationEnvironmentReminderInput,
-): string | null {
-  return input.isChannel
-    ? renderChannelEnvironment(input)
-    : renderDirectMessageEnvironment();
-}
-
-function renderChannelEnvironment(input: ConversationEnvironmentReminderInput): string {
-  const roster = channelAgentMembers(input.members)
-    .map((member) => {
-      // Shared mention/display-name label (case-insensitive, escaped) so the
-      // roster never drifts from the POV identity preamble.
-      const { mention, displayName } = agentMemberMentionLabel(member.agentId, input.displayNames);
-      const labelled = displayName ? `@${mention} ("${displayName}")` : `@${mention}`;
-      return member.agentId === input.povAgentId ? `${labelled} (you)` : labelled;
-    });
-  const members = [...roster, 'the user'].join(', ');
-  return [
-    `<conversation-environment${xmlAttrs({ kind: 'channel', name: input.channelName ?? null })}>`,
-    `Members: ${members}.`,
-    '- Speak as yourself; your reply is posted to the shared thread under your name.',
-    "- Other members' turns appear as quoted context with an identity preamble; never imitate another member or speak on their behalf.",
-    '- To hand off to another member, mention them as @<name> — only when they are clearly better suited. Mentions route turns with no relay limit, so mention deliberately and avoid mention loops; the user can stop the round at any time.',
-    '- Only your final message is shared with the other members; your intermediate thinking and tool steps stay private. Lead with the result and keep your final reply self-contained.',
-    '- Stay within your description and instructions; defer outside work to better-suited members.',
-    '</conversation-environment>',
-  ].join('\n');
-}
-
-function renderDirectMessageEnvironment(): string {
+export function buildConversationEnvironmentReminder(): string {
   return [
     '<conversation-environment kind="dm">',
     'You are in a direct 1:1 conversation with the user.',
-    '- Speak as yourself; your reply is posted to this DM under your name.',
-    '- There are no other agent members here; do not hand off or mention another agent as a routing instruction. If the user needs a broader room, suggest creating a Channel.',
+    '- Speak as yourself; your reply is posted to this conversation under your name.',
     '- Stay within your description and instructions.',
     '</conversation-environment>',
   ].join('\n');
