@@ -531,6 +531,83 @@ describe('agent runtime skill integration', () => {
     expect(compactRootText).toContain('- auto-skill');
   });
 
+  test('lets invoked skills read referenced resource files outside the workspace', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-read-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-read-root-data-'));
+    const externalSkillsRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-external-skills-'));
+    roots.push(localRoot, dataRoot, externalSkillsRoot);
+
+    const skillDir = path.join(externalSkillsRoot, 'external-reader');
+    const referencePath = path.join(skillDir, 'references', 'details.md');
+    await mkdir(path.dirname(referencePath), { recursive: true });
+    await writeFile(path.join(skillDir, 'SKILL.md'), [
+      '---',
+      'description: Use when the user asks for an external skill reference check.',
+      'allowed-tools: file_read',
+      '---',
+      'Read ${AGENT_SKILL_DIR}/references/details.md before answering.',
+      '',
+    ].join('\n'), 'utf8');
+    await writeFile(referencePath, 'External skill reference loaded.', 'utf8');
+
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('skill', { skill: 'external-reader' }, { id: 'tool-skill-external-reader' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage([
+          fauxToolCall('file_read', { file_path: referencePath }, { id: 'tool-read-external-skill-reference' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Reference loaded.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          automaticSkillsEnabled: true,
+          slashSkillsEnabled: true,
+          compactEnabled: true,
+          memoryIsolation: 'global',
+          additionalSkillDirectories: [externalSkillsRoot],
+          additionalAgentDirectories: [],
+          providerTimeoutMs: null,
+          providerMaxRetries: null,
+          providerMaxRetryDelayMs: 60_000,
+          providerCacheRetention: 'short',
+          disabledSkills: [],
+          disabledAgents: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(created.conversationId, 'Check the external skill reference.');
+
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(script.pendingCount()).toBe(0);
+    const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
+    const readResult = events.find((event) => (
+      event.type === 'tool_result.created'
+      && event.toolCallId === 'tool-read-external-skill-reference'
+    ));
+    expect(readResult).toMatchObject({ type: 'tool_result.created', isError: false });
+    expect(JSON.stringify(readResult)).toContain('External skill reference loaded.');
+  });
+
   test('loads skillify for explicit natural-language save-as-skill requests', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-nl-skillify-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-nl-skillify-data-'));

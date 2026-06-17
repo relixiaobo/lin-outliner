@@ -36,7 +36,7 @@ export type WebToolHint =
       origin: string;
       detectedVia: 'url_redirect' | 'selector_match' | 'title_keyword' | 'http_401';
     }
-  | { type: 'needs_browser'; reason: 'spa_shell' | 'cloudflare' | 'http_error' }
+  | { type: 'needs_browser'; reason: 'spa_shell' | 'cloudflare' | 'verification' | 'http_error' }
   | { type: 'search_blocked'; reason: 'captcha' | 'rate_limit' | 'unusual_traffic'; origin: string }
   | { type: 'redirected_host'; originalUrl: string; finalUrl: string; finalHost: string };
 

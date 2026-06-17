@@ -105,6 +105,25 @@ describe('agent web fetch fallback heuristics', () => {
     });
   });
 
+  test('detects non-Cloudflare verification pages returned with HTTP 200', async () => {
+    const html = '<html><head><title>Reddit - Please wait for verification</title></head><body>Reddit - Please wait for verification</body></html>';
+    const params = expectParams(normalizeWebFetchParams({ url: 'https://www.reddit.com/r/example/comments/1/test/' }));
+    const fetched = fetchedHtml(html);
+    const page = await extractFetchedPageContent(fetched, params);
+
+    expect(detectBrowserChallenge(html, fetched.finalUrl, 'Reddit - Please wait for verification')).toBe('verification');
+    expect(assessWebFetchFallback(fetched, params, page)).toMatchObject({
+      shouldFallback: true,
+      reason: 'verification',
+    });
+  });
+
+  test('detects DataDome verification markers', () => {
+    const html = '<html><body><script>window.dd={cid:"x"}</script><div id="datadome">Please wait while we verify that you are a human</div></body></html>';
+
+    expect(detectBrowserChallenge(html, 'https://www.reuters.com/article', 'Unauthorized')).toBe('verification');
+  });
+
   test('does not flag a full article that merely embeds a Cloudflare beacon', async () => {
     const paragraph = 'This is a complete article paragraph with substantial readable body text that Defuddle keeps. ';
     const html = [

@@ -776,6 +776,7 @@ describe('agent skills', () => {
     if (!invocation.ok) return;
     expect(invocation.renderedContent).toContain(`Base directory for this skill: ${skillDir}`);
     expect(invocation.renderedContent).toContain(`Read ${skillDir}/references/details.md for deck.md.`);
+    expect(await runtime.getActiveSkillReadRoots()).toEqual([skillDir]);
 
     const reminder = runtime.createInvokedSkillsReminder();
     const reminderText = reminder?.content[0]?.type === 'text' ? reminder.content[0].text : '';
@@ -808,6 +809,7 @@ describe('agent skills', () => {
 
     expect(reminderText).toContain('Path: built-in:bundled-demo');
     expect(reminderText).toContain(`Base directory for this skill: ${skillDir}`);
+    expect(await restored.getActiveSkillReadRoots()).toEqual([skillDir]);
     expect(reminderText).not.toContain(`Path: ${skillDir}`);
   });
 
@@ -1278,6 +1280,7 @@ describe('agent skills', () => {
 
     expect(text).toContain('### Skill: demo');
     expect(text).toContain('Follow demo instructions.');
+    expect(await runtime.getActiveSkillReadRoots()).toEqual([]);
   });
 
   test('persists listed skill names across compact restore without relisting them', async () => {

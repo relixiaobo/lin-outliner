@@ -8605,6 +8605,7 @@ function createConfiguredAgent(
     },
     beforeToolCall: async ({ toolCall, args }, signal) => {
       const globalPermissions = await readAgentToolPermissionConfig();
+      const activeSkillReadRoots = skillRuntime ? await skillRuntime.getActiveSkillReadRoots() : [];
       const shouldSyncLocalPermissionRoots = Boolean(
         options.localWorkspace
         && LOCAL_FILE_TOOL_NAMES.has(toolCall.name.trim().replace(/-/g, '_').toLowerCase()),
@@ -8612,6 +8613,7 @@ function createConfiguredAgent(
       const syncLocalPermissionRoots = (extraGrants: readonly AgentPermissionGrant[] = []) => {
         if (!options.localWorkspace || !shouldSyncLocalPermissionRoots) return;
         const roots = [
+          ...activeSkillReadRoots.map((root) => ({ access: 'read' as const, root })),
           ...globalPermissions.grants.flatMap((rule) => (
             rule.grant.kind === 'scope'
               ? [{ access: rule.grant.access, root: rule.grant.root }]
@@ -8636,6 +8638,7 @@ function createConfiguredAgent(
           mode: options.permissionMode,
           workspaceRoot: localFileRoot,
           scratchRoot: options.localWorkspace?.scratchRoot,
+          trustedReadRoots: activeSkillReadRoots,
           globalPermissions,
           preapprovedToolRules: [
             ...(skillRuntime?.getActivePermissionRules() ?? []),
