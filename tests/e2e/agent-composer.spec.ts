@@ -2260,6 +2260,45 @@ test.describe('agent composer controls', () => {
     await expect(details).toContainText('Composing a live reply token by token.');
   });
 
+  test('live Channel detail keeps pre-start tool calls pending instead of red', async ({ page }) => {
+    await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {
+      conversationTitle: 'Parallel Channel',
+      members: [
+        { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+        {
+          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+          mention: 'assistant',
+          displayName: 'Neva',
+          coordinator: true,
+        },
+        { principal: { type: 'agent', agentId: 'agent-alpha' }, mention: 'alpha', displayName: 'Alpha' },
+      ],
+      activityEntries: [
+        {
+          id: 'user-activity:agent-alpha',
+          agentId: 'agent-alpha',
+          runId: 'run-alpha',
+          messageId: null,
+          addressedByMessageId: 'user-activity',
+          state: 'thinking',
+          updatedAt: 1_800_000_000_300,
+          streamingContent: [
+            { type: 'thinking', thinking: 'Preparing to fetch context.' },
+            { type: 'toolCall', id: 'tool-alpha-prestart', name: 'web_fetch', arguments: { url: 'https://example.test' } },
+          ],
+        },
+      ],
+      pendingToolCallIds: [],
+    });
+
+    const working = page.locator('.agent-channel-working');
+    await working.locator('.agent-channel-working-trigger').click();
+    await page.locator('.agent-channel-working-detail').getByRole('menuitem', { name: /Alpha is thinking/ }).click();
+    const details = page.getByRole('complementary', { name: 'View working state' });
+    await expect(details.locator('.agent-tool-call.is-pending')).toHaveCount(1);
+    await expect(details.locator('.agent-tool-call.is-error')).toHaveCount(0);
+  });
+
 
   test('renders reply anchors only for non-adjacent addressed replies', async ({ page }) => {
     await emitAgentProjection(page, DEFAULT_CONVERSATION_ID, {

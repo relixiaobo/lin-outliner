@@ -544,7 +544,11 @@ function scopedPendingToolCallIds(
   content: AssistantMessage['content'],
   state: AgentRenderActivityEntry['state'],
 ): Set<string> {
-  return state === 'using_tools' ? liveToolCallIds(content) : new Set();
+  // Channel live detail has no durable tool result map until the turn seals. While
+  // the entry is active, any visible tool call is still part of live work; rendering
+  // it as pending avoids a transient/error-looking red state between provider
+  // message_end, tool_execution_start, and later continuation segments.
+  return state !== 'received' ? liveToolCallIds(content) : new Set();
 }
 
 function scopedChildRunsByParentToolCallId(

@@ -470,6 +470,7 @@ interface AgentActiveRunState extends AgentRuntimeActiveRunState {
   assistantMessageId: string | null;
   assistantText: string;
   assistantContent: AgentRenderLiveContent[];
+  assistantLiveSegmentStart: number;
   /**
    * This run's own tail: the id of the last message it appended (an assistant
    * segment or a tool result). A run's continuation segments parent to their
@@ -6314,6 +6315,7 @@ export class AgentRuntime {
       assistantMessageId: null,
       assistantText: '',
       assistantContent: [],
+      assistantLiveSegmentStart: 0,
       lastMessageId: null,
       lastSubmittedUserPrompt: prompt,
       toolOutputPayloads: new Map(),
@@ -6912,9 +6914,7 @@ export class AgentRuntime {
           // mid-turn (and stay blank through a tool-only segment), defeating
           // the cross-segment retention.
           const liveContent = renderableAssistantContent(fromPiAssistantContent(event.message.content));
-          if (liveContent.length > 0) conversation.activeRun.assistantContent = liveContent;
-          const visible = assistantVisibleText(event.message);
-          if (visible) conversation.activeRun.assistantText = visible;
+          if (liveContent.length > 0) updateChannelLiveAssistantSegment(conversation.activeRun, liveContent);
           return;
         }
         await this.ensureAssistantStarted(conversationId, conversation, event.message);
@@ -7077,8 +7077,13 @@ export class AgentRuntime {
         errorMessage: inlineFailure,
       }] : []),
     ]);
+    if (activeRun.channelTurn) {
+      const finalLiveContent = renderableAssistantContent(fromPiAssistantContent(message.content));
+      if (finalLiveContent.length > 0) updateChannelLiveAssistantSegment(activeRun, finalLiveContent);
+      activeRun.assistantLiveSegmentStart = activeRun.assistantContent.length;
+    }
     activeRun.assistantMessageId = null;
-    // Keep a Channel turn's last live-detail text across segments (see ensureAssistantStarted).
+    // Keep a Channel turn's live-detail text across segments (see ensureAssistantStarted).
     if (!activeRun.channelTurn) activeRun.assistantText = '';
   }
 
@@ -8144,6 +8149,22 @@ function assistantText(message: AssistantMessage): string {
     .filter((part): part is PiTextContent => part.type === 'text')
     .map((part) => part.text)
     .join('');
+}
+
+function updateChannelLiveAssistantSegment(run: AgentActiveRunState, content: AgentRenderLiveContent[]) {
+  run.assistantContent = [
+    ...run.assistantContent.slice(0, run.assistantLiveSegmentStart),
+    ...content,
+  ];
+  run.assistantText = liveAssistantText(run.assistantContent);
+}
+
+function liveAssistantText(content: readonly AgentRenderLiveContent[]): string {
+  return content
+    .filter((part): part is Extract<AgentRenderLiveContent, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n')
+    .trim();
 }
 
 function persistedText(content: AgentPersistedContent[]): string {
