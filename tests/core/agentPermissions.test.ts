@@ -76,6 +76,33 @@ describe('agent permissions', () => {
     expect(userGlobalWrite.descriptor?.code).toBe('outside_workspace_write');
   });
 
+  test('treats active skill resource roots as read-only allowed file areas', () => {
+    const skillRoot = '/Applications/Tenon.app/Contents/Resources/built-in-skills/presentation';
+    const referencePath = path.join(skillRoot, 'references', 'workflow.md');
+    const siblingPath = '/Applications/Tenon.app/Contents/Resources/built-in-skills/document/references/workflow.md';
+
+    const readReference = evaluateAgentToolPermission({
+      toolName: 'file_read',
+      args: { file_path: referencePath },
+      policy: { workspaceRoot, trustedReadRoots: [skillRoot] },
+    });
+    const writeReference = evaluateAgentToolPermission({
+      toolName: 'file_write',
+      args: { file_path: referencePath, content: 'no' },
+      policy: { workspaceRoot, trustedReadRoots: [skillRoot] },
+    });
+    const readSibling = evaluateAgentToolPermission({
+      toolName: 'file_read',
+      args: { file_path: siblingPath },
+      policy: { workspaceRoot, trustedReadRoots: [skillRoot] },
+    });
+
+    expect(readReference.behavior).toBe('allow');
+    expect(readReference.descriptor?.accessScope).toBe('allowed_file_area');
+    expect(writeReference.descriptor?.accessScope).toBe('outside_allowed_file_area');
+    expect(readSibling.descriptor?.accessScope).toBe('outside_allowed_file_area');
+  });
+
   test('keeps hard redlines non-overridable', () => {
     const cases = [
       ['rm -rf /', 'dangerous_root_delete'],

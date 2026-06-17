@@ -64,6 +64,7 @@ export interface AgentPermissionPolicy {
   // a sibling of the workdir. The app places agent-readable bytes here, so a *read* of a
   // scratch path counts as inside the allowed file area; writes are still treated as outside.
   scratchRoot?: string;
+  trustedReadRoots: readonly string[];
   selfDefinitionRoots: readonly string[];
   denyTools: readonly string[];
   preapprovedToolRules: readonly string[];
@@ -76,6 +77,7 @@ export interface AgentPermissionPolicyInput {
   mode?: AgentPermissionMode;
   workspaceRoot?: string;
   scratchRoot?: string;
+  trustedReadRoots?: readonly string[];
   denyTools?: readonly string[];
   preapprovedToolRules?: readonly string[];
   allowOutsideWorkspaceRead?: boolean;
@@ -324,6 +326,7 @@ export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = 
     workspaceRoot,
     // A blank scratch root is "unset", not the cwd (`path.resolve('')` === cwd).
     scratchRoot: input.scratchRoot && input.scratchRoot.trim() ? path.resolve(input.scratchRoot) : undefined,
+    trustedReadRoots: normalizeTrustedReadRoots(input.trustedReadRoots),
     selfDefinitionRoots: defaultSelfDefinitionRoots(workspaceRoot),
     denyTools: input.denyTools ?? DEFAULT_DENY_TOOLS,
     preapprovedToolRules: input.preapprovedToolRules ?? [],
@@ -331,6 +334,19 @@ export function createAgentPermissionPolicy(input: AgentPermissionPolicyInput = 
     allowOutsideWorkspaceWrite: input.allowOutsideWorkspaceWrite ?? false,
     globalPermissions: parseGlobalToolPermissionSettings(input.globalPermissions),
   };
+}
+
+function normalizeTrustedReadRoots(roots: readonly string[] | undefined): string[] {
+  if (!roots?.length) return [];
+  const normalized: string[] = [];
+  for (const root of roots) {
+    if (!root.trim()) continue;
+    const resolved = path.resolve(expandHome(root));
+    if (!normalized.some((existing) => isPathInside(existing, resolved))) {
+      normalized.push(resolved);
+    }
+  }
+  return normalized;
 }
 
 function defaultSelfDefinitionRoots(workspaceRoot: string): string[] {
@@ -904,6 +920,7 @@ function derivePathDescriptor(input: {
   // outside — the agent writes its own outputs to the workdir, never to scratch.
   const isInsideWorkspace = isPathInside(input.policy.workspaceRoot, resolved)
     || input.policy.selfDefinitionRoots.some((root) => isPathInside(root, resolved))
+    || (!isWrite && input.policy.trustedReadRoots.some((root) => isPathInside(root, resolved)))
     || (!isWrite && input.policy.scratchRoot != null && isPathInside(input.policy.scratchRoot, resolved));
 
   if (isWrite && isHardBlockedSensitiveWritePath(resolved)) {

@@ -66,7 +66,7 @@ export function shouldTryBrowserFallbackForHttpFailure(
 ): boolean {
   if (format === 'raw') return false;
   if (!hint || hint.type !== 'needs_browser') return false;
-  if (hint.reason === 'cloudflare' || hint.reason === 'spa_shell') return true;
+  if (hint.reason === 'cloudflare' || hint.reason === 'spa_shell' || hint.reason === 'verification') return true;
   return statusCode === 403 || statusCode === 429 || statusCode === 503;
 }
 
@@ -78,6 +78,13 @@ export function detectBrowserChallenge(
 ): Extract<WebToolHint, { type: 'needs_browser' }>['reason'] | null {
   const haystack = `${title}\n${text}\n${html}`.toLowerCase();
   if (!haystack) return null;
+  const hasExplicitVerificationPhrase = haystack.includes('please wait for verification')
+    || haystack.includes('please wait while we verify')
+    || haystack.includes('verify you are a human')
+    || haystack.includes('verify that you are a human')
+    || haystack.includes('human verification')
+    || haystack.includes('security verification');
+  const hasDataDomeMarker = /\b(?:datadome|x-datadome)\b/.test(haystack);
   if (
     haystack.includes('cf-browser-verification')
     || haystack.includes('cf-chl-')
@@ -92,6 +99,12 @@ export function detectBrowserChallenge(
     || haystack.includes('hcaptcha')
   ) {
     return 'cloudflare';
+  }
+  if (
+    hasExplicitVerificationPhrase
+    || (hasDataDomeMarker && (haystack.includes('verification') || haystack.includes('verify') || haystack.includes('captcha')))
+  ) {
+    return 'verification';
   }
   // NOTE: markers are deliberately narrow. A bare "cloudflare" substring, the
   // "challenge-platform" script path, and the "challenges.cloudflare.com" /

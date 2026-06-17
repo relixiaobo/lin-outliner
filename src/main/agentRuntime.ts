@@ -470,6 +470,7 @@ interface AgentActiveRunState extends AgentRuntimeActiveRunState {
   assistantMessageId: string | null;
   assistantText: string;
   assistantContent: AgentRenderLiveContent[];
+  assistantLiveSegmentStart: number;
   /**
    * This run's own tail: the id of the last message it appended (an assistant
    * segment or a tool result). A run's continuation segments parent to their
@@ -4664,9 +4665,10 @@ export class AgentRuntime {
     runList: AgentActiveRunState[] = this.activeRunList(conversation),
   ): AgentRenderActivityEntry[] {
     const entries = new Map<string, AgentRenderActivityEntry>();
+    const toolResultsByRun = toolResultIndexByRun(conversation.eventState);
     for (const run of runList) {
       if (!run.addressedByMessageId) continue;
-      const pendingToolCalls = run.agent.state.pendingToolCalls;
+      const toolCallStatus = channelLiveToolCallStatus(run, toolResultsByRun.get(run.id));
       const persistedRun = conversation.eventState.runs[run.id];
       const entry: AgentRenderActivityEntry = {
         id: `${run.addressedByMessageId}:${run.executingAgentId}`,
@@ -4674,12 +4676,14 @@ export class AgentRuntime {
         runId: run.id,
         messageId: latestAssistantMessageIdForRun(conversation.eventState, run.id),
         addressedByMessageId: run.addressedByMessageId,
-        state: pendingToolCalls.size > 0 ? 'using_tools' : 'thinking',
+        state: toolCallStatus.pendingToolCallIds.length > 0 ? 'using_tools' : 'thinking',
         updatedAt: persistedRun?.updatedAt ?? run.startedAt,
         // The live composing blocks for the per-run detail view; retained on
         // the run (not the shared log) so concurrent runs never collide and the
         // transcript stays whole-utterance.
         streamingText: run.assistantText || undefined,
+        pendingToolCallIds: toolCallStatus.pendingToolCallIds,
+        failedToolCallIds: toolCallStatus.failedToolCallIds,
         ...(run.assistantContent.length > 0 ? { streamingContent: run.assistantContent } : {}),
       };
       entries.set(entry.id, entry);
@@ -6314,6 +6318,7 @@ export class AgentRuntime {
       assistantMessageId: null,
       assistantText: '',
       assistantContent: [],
+      assistantLiveSegmentStart: 0,
       lastMessageId: null,
       lastSubmittedUserPrompt: prompt,
       toolOutputPayloads: new Map(),
@@ -6912,9 +6917,7 @@ export class AgentRuntime {
           // mid-turn (and stay blank through a tool-only segment), defeating
           // the cross-segment retention.
           const liveContent = renderableAssistantContent(fromPiAssistantContent(event.message.content));
-          if (liveContent.length > 0) conversation.activeRun.assistantContent = liveContent;
-          const visible = assistantVisibleText(event.message);
-          if (visible) conversation.activeRun.assistantText = visible;
+          if (liveContent.length > 0) updateChannelLiveAssistantSegment(conversation.activeRun, liveContent);
           return;
         }
         await this.ensureAssistantStarted(conversationId, conversation, event.message);
@@ -7077,8 +7080,13 @@ export class AgentRuntime {
         errorMessage: inlineFailure,
       }] : []),
     ]);
+    if (activeRun.channelTurn) {
+      const finalLiveContent = renderableAssistantContent(fromPiAssistantContent(message.content));
+      if (finalLiveContent.length > 0) updateChannelLiveAssistantSegment(activeRun, finalLiveContent);
+      activeRun.assistantLiveSegmentStart = activeRun.assistantContent.length;
+    }
     activeRun.assistantMessageId = null;
-    // Keep a Channel turn's last live-detail text across segments (see ensureAssistantStarted).
+    // Keep a Channel turn's live-detail text across segments (see ensureAssistantStarted).
     if (!activeRun.channelTurn) activeRun.assistantText = '';
   }
 
@@ -8146,6 +8154,78 @@ function assistantText(message: AssistantMessage): string {
     .join('');
 }
 
+function updateChannelLiveAssistantSegment(run: AgentActiveRunState, content: AgentRenderLiveContent[]) {
+  run.assistantContent = [
+    ...run.assistantContent.slice(0, run.assistantLiveSegmentStart),
+    ...content,
+  ];
+  run.assistantText = liveAssistantText(run.assistantContent);
+}
+
+interface ChannelLiveToolCallStatus {
+  pendingToolCallIds: string[];
+  failedToolCallIds: string[];
+}
+
+interface ToolResultIndexEntry {
+  terminalToolCallIds: Set<string>;
+  failedToolCallIds: Set<string>;
+}
+
+function channelLiveToolCallStatus(
+  run: AgentActiveRunState,
+  resultIndex: ToolResultIndexEntry | undefined,
+): ChannelLiveToolCallStatus {
+  const terminalToolCallIds = resultIndex?.terminalToolCallIds ?? new Set<string>();
+  const pending = new Set<string>();
+
+  for (const toolCallId of run.agent.state.pendingToolCalls) {
+    if (!terminalToolCallIds.has(toolCallId)) pending.add(toolCallId);
+  }
+  for (const toolCallId of run.toolCallMessageIds.keys()) {
+    if (!terminalToolCallIds.has(toolCallId)) pending.add(toolCallId);
+  }
+  for (const toolCallId of liveToolCallIds(run.assistantContent.slice(run.assistantLiveSegmentStart))) {
+    if (!terminalToolCallIds.has(toolCallId)) pending.add(toolCallId);
+  }
+
+  return {
+    pendingToolCallIds: [...pending],
+    failedToolCallIds: [...(resultIndex?.failedToolCallIds ?? [])],
+  };
+}
+
+function toolResultIndexByRun(state: AgentEventReplayState): Map<string, ToolResultIndexEntry> {
+  const byRun = new Map<string, ToolResultIndexEntry>();
+  for (const message of Object.values(state.messages)) {
+    if (message.role !== 'toolResult' || !message.runId || !message.toolCallId) continue;
+    let entry = byRun.get(message.runId);
+    if (!entry) {
+      entry = { terminalToolCallIds: new Set(), failedToolCallIds: new Set() };
+      byRun.set(message.runId, entry);
+    }
+    entry.terminalToolCallIds.add(message.toolCallId);
+    if (message.isError) entry.failedToolCallIds.add(message.toolCallId);
+  }
+  return byRun;
+}
+
+function liveToolCallIds(content: readonly AgentRenderLiveContent[]): string[] {
+  const ids: string[] = [];
+  for (const part of content) {
+    if (part.type === 'toolCall') ids.push(part.id);
+  }
+  return ids;
+}
+
+function liveAssistantText(content: readonly AgentRenderLiveContent[]): string {
+  return content
+    .filter((part): part is Extract<AgentRenderLiveContent, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n')
+    .trim();
+}
+
 function persistedText(content: AgentPersistedContent[]): string {
   return content
     .filter((part): part is Extract<AgentPersistedContent, { type: 'text' }> => part.type === 'text')
@@ -8605,6 +8685,7 @@ function createConfiguredAgent(
     },
     beforeToolCall: async ({ toolCall, args }, signal) => {
       const globalPermissions = await readAgentToolPermissionConfig();
+      const activeSkillReadRoots = skillRuntime ? await skillRuntime.getActiveSkillReadRoots() : [];
       const shouldSyncLocalPermissionRoots = Boolean(
         options.localWorkspace
         && LOCAL_FILE_TOOL_NAMES.has(toolCall.name.trim().replace(/-/g, '_').toLowerCase()),
@@ -8612,6 +8693,7 @@ function createConfiguredAgent(
       const syncLocalPermissionRoots = (extraGrants: readonly AgentPermissionGrant[] = []) => {
         if (!options.localWorkspace || !shouldSyncLocalPermissionRoots) return;
         const roots = [
+          ...activeSkillReadRoots.map((root) => ({ access: 'read' as const, root })),
           ...globalPermissions.grants.flatMap((rule) => (
             rule.grant.kind === 'scope'
               ? [{ access: rule.grant.access, root: rule.grant.root }]
@@ -8636,6 +8718,7 @@ function createConfiguredAgent(
           mode: options.permissionMode,
           workspaceRoot: localFileRoot,
           scratchRoot: options.localWorkspace?.scratchRoot,
+          trustedReadRoots: activeSkillReadRoots,
           globalPermissions,
           preapprovedToolRules: [
             ...(skillRuntime?.getActivePermissionRules() ?? []),

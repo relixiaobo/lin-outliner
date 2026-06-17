@@ -65,14 +65,23 @@ realpath containment:
   require an explicit handed write scope.
 - **scratch**: app-owned materialized attachments, web-fetch binaries, overflow
   logs, and PDF page images. Reads may use scratch; writes do not.
+- **active skill resource roots**: when an inline skill has been invoked and has a
+  real resource directory, that skill directory is projected into the typed file
+  boundary as a read-only root so the agent can load referenced support files
+  such as `references/*.md` through `file_read`. In dev this may be a source-tree
+  `src/main/builtInSkills/<skill>` path; in packaged builds it is the copied
+  app-resource `built-in-skills/<skill>` directory. Restored history only counts
+  if that path still matches the currently registered skill, so transcript text
+  cannot grant arbitrary reads. It never grants write access and does not expose
+  sibling skills or arbitrary parent folders.
 - **handed folders**: users may hand Tenon a real folder from Settings ->
   Security. That records a legacy `Scope(write:/absolute/folder)` grant and the
   runtime projects that scope into the file-tool execution layer.
 
 The boundary is asymmetric:
 
-- Reads may touch workdir, project self-definition roots, scratch, and handed
-  `read` / `write` scope roots.
+- Reads may touch workdir, project self-definition roots, scratch, active skill
+  resource roots, and handed `read` / `write` scope roots.
 - Writes may touch workdir, project self-definition roots, and handed `write`
   scope roots.
 - Relative file-tool paths still resolve against workdir; handed folders are

@@ -715,6 +715,15 @@ async function fetchTextWithRedirects(
   const redirectedHostHint = crossHostRedirectHint(startedUrl, finalUrl);
   const contentType = response.headers.get('content-type') ?? '';
   if (response.status === 401) {
+    const body = await readSmallErrorBody(response, contentType);
+    const challenge = detectBrowserChallenge(body, finalUrl, response.statusText);
+    if (challenge) {
+      throw new WebToolFailure('http_error', `HTTP ${response.status} ${response.statusText || ''}`.trim(), {
+        finalUrl,
+        statusCode: response.status,
+        hint: { type: 'needs_browser', reason: challenge },
+      });
+    }
     throw new WebToolFailure('http_401', `authentication required for ${originOf(finalUrl)}`, {
       finalUrl,
       statusCode: response.status,

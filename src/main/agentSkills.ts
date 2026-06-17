@@ -224,6 +224,7 @@ const SKILL_TOOL_PARAMETERS = {
 export interface InvokedSkillRecord {
   skillName: string;
   skillPath: string;
+  skillRoot?: string;
   content: string;
   invokedAt: number;
 }
@@ -487,6 +488,23 @@ export class AgentSkillRuntime {
     return [...this.activePermissionRuleSet()];
   }
 
+  async getActiveSkillReadRoots(): Promise<string[]> {
+    if (this.invokedSkills.size === 0) return [];
+    const trustedRootsBySkill = new Map<string, string>();
+    for (const skill of await this.registry.listAllSkills()) {
+      const skillRoot = skillDirectoryForPrompt(skill);
+      const skillName = normalizeSkillName(skill.name);
+      if (skillRoot && skillName) trustedRootsBySkill.set(skillName, skillRoot);
+    }
+    const roots = new Set<string>();
+    for (const skill of this.invokedSkills.values()) {
+      const skillName = normalizeSkillName(skill.skillName);
+      const expectedRoot = skillName ? trustedRootsBySkill.get(skillName) : undefined;
+      if (expectedRoot && skill.skillRoot === expectedRoot) roots.add(expectedRoot);
+    }
+    return [...roots];
+  }
+
   restoreInvokedSkillsFromMessages(messages: readonly AgentMessage[]): void {
     for (const message of messages) {
       for (const text of messageTextParts(message)) {
@@ -747,9 +765,11 @@ export class AgentSkillRuntime {
   }
 
   private recordInvokedSkill(skill: SkillDefinition, renderedContent: string): void {
+    const skillRoot = skillDirectoryForPrompt(skill) ?? undefined;
     this.invokedSkills.set(skill.name, {
       skillName: skill.name,
       skillPath: skillPathForPrompt(skill),
+      ...(skillRoot ? { skillRoot } : {}),
       content: renderedContent,
       invokedAt: Date.now(),
     });
@@ -1819,9 +1839,11 @@ function parseInvokedSkillsFromText(text: string): InvokedSkillRecord[] {
     .flatMap((section): InvokedSkillRecord[] => {
       const match = /^### Skill: ([^\n]+)\nPath: ([^\n]+)\n\n([\s\S]*)$/.exec(section.trim());
       if (!match) return [];
+      const skillRoot = skillRootFromRenderedContent(match[3]!);
       return [{
         skillName: match[1]!.trim(),
         skillPath: match[2]!.trim(),
+        ...(skillRoot ? { skillRoot } : {}),
         content: match[3]!.trim(),
         invokedAt: Date.now(),
       }];
@@ -1882,9 +1904,14 @@ function parseLoadedSkillFromText(text: string): InvokedSkillRecord | null {
   return {
     skillName,
     skillPath: explicitPath || baseDir || `built-in:${skillName}`,
+    ...(baseDir ? { skillRoot: baseDir } : {}),
     content: body.trim(),
     invokedAt: Date.now(),
   };
+}
+
+function skillRootFromRenderedContent(content: string): string | null {
+  return /^Base directory for this skill:\s*(.+)$/m.exec(content)?.[1]?.trim() ?? null;
 }
 
 function unwrapSystemReminder(text: string): string {
