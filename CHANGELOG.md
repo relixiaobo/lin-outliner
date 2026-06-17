@@ -708,6 +708,36 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **`web_fetch` success rate — browser identity · cross-host redirects · transient retry · challenge
+  precision (PR #288, cc-2)** — local, user-initiated `web_fetch` retuned purely for success rate (a
+  deliberate local-only SSRF/privacy stance), **no new tool** and the result envelope unchanged. (1)
+  Requests present a real Chrome desktop identity — User-Agent + `sec-ch-ua` client hints +
+  `sec-fetch-*` — and across a redirect chain the headers track a real navigation: `Referer` follows
+  Chrome's strict-origin-when-cross-origin default (full URL same-origin, origin-only cross-origin,
+  dropped on an https→http downgrade) and `Sec-Fetch-Site` degrades monotonically once the chain
+  crosses origin; the embedded-browser fallback renders with the same UA. (2) Redirects are followed
+  transparently across hosts (shorteners/trackers/regional fronts), preserving the server's literal
+  scheme (no http→https upgrade once redirecting, which would break an http-only target); a cross-host
+  landing returns content plus a non-fatal `redirected_host` hint, and a redirect to a local/private
+  host is the one case refused — on both the HTTP path (every hop validated by `isPublicWebFetchUrl`)
+  and the browser fallback (`will-navigate`/`will-redirect` blocked + landing URL re-checked). (3) A
+  raw transient transport throw earns one short-backoff retry, gated by a **denylist** of the
+  deterministic faults (DNS/refused/TLS/unsafe-port/bad-scheme) that would fail identically — so the
+  retry works whether the platform surfaces a Chromium `net::ERR_*` code or a generic fetch rejection;
+  HTTP responses (403/429/5xx, Cloudflare) are never retried and route straight to the browser
+  fallback. (4) Cloudflare-challenge detection narrowed to the `*cf_chl*` tokens + visible
+  interstitial phrases, so a full article merely embedding a Cloudflare beacon / `challenge-platform`
+  script / Turnstile widget is returned as-is rather than discarded for a wasted browser round-trip.
+  Spec folded into `docs/spec/agent-tool-design.md`. **Gate (main):** `/code-review xhigh` over four
+  review rounds → round 1 (15 findings: embedded-browser-fallback SSRF from dropped nav guards,
+  Cloudflare beacon false-positives, 429/503 retry double-handling, dropped `application/json` Accept,
+  http→https redirect upgrade, spec drift) → round 2 (6: re-added browser nav guards, narrowed
+  markers, per-hop `Referer`/`Sec-Fetch-Site`, retry whitelist) → round 3 (3 SSRF host-classifier
+  bypasses — IPv4-mapped IPv6, the `fc00::/7` ULA regex, trailing-dot `localhost.` — plus full-path
+  cross-site `Referer` and chain-unaware `Sec-Fetch-Site`) → round 4 (IPv4-compatible `::a.b.c.d` and
+  NAT64 `64:ff9b::/96` IPv6 decode) — all resolved and unit-tested. Merged via an integration merge
+  resolving an `agentWebConstants.ts` conflict with #290 (both add a real Chrome UA; deduped onto a
+  shared `CHROME_MAJOR`). typecheck ✓ · `test:core` 1113 pass / 2 skip / 0 fail ✓ · `docs:check` ✓.
 - **`web_search` robustness — real UA · transient retry · DuckDuckGo fallback (PR #290, cc-2)** —
   three reliability improvements to the default `kind: "web"` path, **no new tool** and the result
   envelope unchanged. (1) The off-screen search window renders with a real Chrome desktop User-Agent

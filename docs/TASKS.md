@@ -415,6 +415,22 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **web-fetch-success-rate** (cc-2, PR #288) — local, user-initiated `web_fetch` retuned purely for
+  success rate, **no new tool**: a real Chrome browser identity (UA + `sec-ch-ua` + `sec-fetch-*`,
+  with redirect-chain `Referer`/`Sec-Fetch-Site` tracking a real navigation), transparent cross-host
+  redirect following (literal scheme preserved; only local/private hosts refused, enforced on both the
+  HTTP path and the embedded-browser fallback via `isPublicWebFetchUrl` + re-added
+  `will-navigate`/`will-redirect` guards + a landing-URL re-check), one denylist-gated transient-network
+  retry, a strengthened browser fallback (20s timeout), and Cloudflare-challenge detection narrowed to
+  `*cf_chl*`/interstitial markers (no beacon/`challenge-platform`/Turnstile false-positives). Fast-track
+  (no plan file). Design folded into `docs/spec/agent-tool-design.md`. **Gate (main):** `/code-review
+  xhigh` across four rounds — round 1 (15 findings incl. browser-fallback SSRF, beacon false-positives,
+  429/503 retry double-handling, dropped JSON Accept, http→https redirect upgrade) → round 2 (6) →
+  round 3 (IPv4-mapped IPv6 / `fc00::/7` ULA / trailing-dot SSRF classifier bypasses + `Referer`/
+  `Sec-Fetch-Site` authenticity) → round 4 (IPv4-compatible + NAT64 IPv6 decode) — all resolved and
+  unit-tested. Merged 2026-06-17 via an integration merge resolving an `agentWebConstants.ts` conflict
+  with #290 (shared Chrome UA → `CHROME_MAJOR`); typecheck ✓ · `test:core` 1113 pass / 2 skip / 0 fail
+  ✓ · `docs:check` ✓.
 - **coordinator-working-groups** (codex, PR #289) — the user-facing **coordinator** gains
   coordinator-only `channel_create` / `channel_update` chat tools to organize a working group:
   create a named Channel (optional invited agents + opening message) and rename or add/remove
