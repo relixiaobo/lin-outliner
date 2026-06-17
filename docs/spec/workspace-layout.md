@@ -287,9 +287,14 @@ the originating node view.
 ### File preview panel
 
 A file that **is** an outliner node (an `attachment` or `image` node) behaves
-like a normal outline row: the chevron expands its **children**, the bullet drills
-into the node, and the row content is a uniform file card (or the image itself for
-image nodes). There is no inline preview block in the outline. See "File node" in
+like a normal outline row, but its presentation depends on the kind. A non-image
+file is a lightweight name row: its **file-type icon is the bullet** (the `file`
+RowMarker variant), the row content is the **read-only filename** (single-click
+selects, never edits — like a reference row), a hover `⋯` menu offers the asset
+actions, and the **chevron expands an inline preview** below the row (the same
+preview widget the node page uses, started collapsed/peek). An image renders the
+image itself inline as the row content. The bullet drills into the node page; real
+child nodes still render below the inline preview. See "File node" in
 `ui-behavior.md`.
 
 Opening a file node shows the same `file-preview` workspace view used by loose
@@ -313,10 +318,17 @@ preview reuses the rightmost workspace pane and preserves that pane's view
 history so Back can return to the previous outliner or preview view.
 
 The unified view renders one frame in both lifecycle states: sticky breadcrumb,
-read-only filename title, `FilePreviewShell` hero, and optional children outline.
-Changing a loose preview into an ingested node mutates the same mounted view
-(`nodeId` is added); it does not navigate to a different panel kind or remount the
-preview body.
+read-only filename title, the `FilePreviewShell` preview, and optional children
+outline. The preview chrome is a single bottom-center floating pill (a primary
+button + a `⋯` menu), not a top toolbar: a previewable source's primary toggles
+the preview between a collapsed peek and an expanded full-scroll height, while a
+non-previewable source (the metadata fallback) makes Open-with-default-app the
+primary. The `⋯` menu carries Show-in-Finder / Open-with-default-app / Copy (an
+ingested asset) or Add-to-outline (a loose source). The same `FilePreviewShell`
+mounts both inline under an expanded file row (started collapsed) and on the node
+page (started expanded). Changing a loose preview into an ingested node mutates the
+same mounted view (`nodeId` is added); it does not navigate to a different panel
+kind or remount the preview body.
 
 The renderer normalizes every entry point to `PreviewTarget` and asks main to
 resolve it through the preload preview API:
@@ -344,11 +356,13 @@ Source authority stays source-specific:
 - `url` targets are modeled but only render metadata/unsupported until the URL
   reader PR ships.
 
-Renderers are directory listing, image, PDF canvas rendering with `pdf.js`,
-text/source-code with Shiki, Markdown with `react-markdown` + `remark-gfm`,
-CSV/TSV table, and fallback metadata. The PDF renderer reads bytes only through
-the preview source API, uses a bundled same-origin worker, and falls back to the
-metadata renderer if parsing or rendering fails. Markdown renderer output does
+Renderers are directory listing, image, PDF (`pdf.js`; every page is stacked
+vertically and scrolled to navigate — each page renders lazily as it nears the
+scroll viewport and is fitted to the available width, with no page-nav or zoom
+controls), text/source-code with Shiki, Markdown with `react-markdown` +
+`remark-gfm`, CSV/TSV table, and fallback metadata. The PDF renderer reads bytes
+only through the preview source API, uses a bundled same-origin worker, and falls
+back to the metadata renderer if parsing or rendering fails. Markdown renderer output does
 not enable raw HTML execution; arbitrary HTML files render as text or fallback.
 
 **Add to outline.** A non-node preview carries an "add to outline" action that

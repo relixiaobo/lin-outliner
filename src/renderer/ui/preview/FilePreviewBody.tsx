@@ -1,11 +1,11 @@
-import { useMemo } from 'react';
+import { useMemo, type ComponentType } from 'react';
 import type { PreviewTarget } from '../../../core/preview';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
-import { CopyIcon, FolderIcon, ICON_SIZE, OpenIcon } from '../icons';
-import { ButtonControl } from '../primitives/ButtonControl';
+import { CopyIcon, FolderIcon } from '../icons';
 import { fileNodeMeta, fileNodeTarget, type FileNode } from './fileNode';
 import { fileNodeAssetActions, type FileNodeAssetActionKey } from './fileNodeActions';
+import type { FilePreviewMenuAction } from './FilePreviewPill';
 import {
   FilePreviewShell,
   type PreviewSourceState,
@@ -13,8 +13,7 @@ import {
   usePreviewSource,
 } from './previewRenderers';
 
-const ASSET_ACTION_ICON: Record<FileNodeAssetActionKey, typeof OpenIcon> = {
-  open: OpenIcon,
+const ASSET_MENU_ICON: Record<Exclude<FileNodeAssetActionKey, 'open'>, ComponentType<{ size?: number }>> = {
   reveal: FolderIcon,
   copy: CopyIcon,
 };
@@ -22,15 +21,19 @@ const ASSET_ACTION_ICON: Record<FileNodeAssetActionKey, typeof OpenIcon> = {
 interface FilePreviewBodyProps {
   node: FileNode;
   onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
+  // The dedicated node page starts the preview expanded; an inline outliner-row host
+  // starts it collapsed (peek), since it should not dominate the outline.
+  initialExpanded?: boolean;
 }
 
 /**
- * The body of an ingested file preview: a meta + actions strip over the rendered
- * preview, shown above the node's children outline. The file's name lives in the
- * surface title, so this body never repeats it. Shares its layout
- * (FilePreviewShell) with loose previews, so the two read identically.
+ * The body of an ingested file preview: the rendered preview with its bottom-center
+ * floating pill, shown on the node page (expanded) above the node's children outline,
+ * and inline under an expanded file row (collapsed/peek). The file's name lives in the
+ * surface title / row, so this body never repeats it. Shares its layout (FilePreviewShell)
+ * with loose previews, so the two read identically.
  */
-export function FilePreviewBody({ node, onOpenTarget }: FilePreviewBodyProps) {
+export function FilePreviewBody({ node, onOpenTarget, initialExpanded = true }: FilePreviewBodyProps) {
   const target = useMemo(
     () => fileNodeTarget(node),
     // Intentionally excludes node.content.text: the filename feeds only the target's
@@ -41,32 +44,49 @@ export function FilePreviewBody({ node, onOpenTarget }: FilePreviewBodyProps) {
     [node.assetId, node.type, node.type === 'image' ? node.mediaUrl : undefined],
   );
   if (!target) {
-    return <FilePreviewShell meta={null} state={{ status: 'missing' }} onOpenTarget={onOpenTarget} />;
+    return (
+      <FilePreviewShell
+        state={{ status: 'missing' }}
+        onOpenTarget={onOpenTarget}
+        initialExpanded={initialExpanded}
+      />
+    );
   }
-  return <FilePreviewBodyResolved node={node} target={target} onOpenTarget={onOpenTarget} />;
+  return (
+    <FilePreviewBodyResolved
+      node={node}
+      target={target}
+      onOpenTarget={onOpenTarget}
+      initialExpanded={initialExpanded}
+    />
+  );
 }
 
 function FilePreviewBodyResolved({
   node,
   target,
   onOpenTarget,
+  initialExpanded,
 }: {
   node: FileNode;
   target: PreviewTarget;
   onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
+  initialExpanded: boolean;
 }) {
   const state = usePreviewSource(target);
   const attachmentLabels = useT().outliner.field.attachment;
   const previewLabels = useT().shell.filePreview;
   const meta = fileNodePreviewMeta(node, state, attachmentLabels, previewLabels);
-  const actions = <FileNodePreviewActions node={node} target={target} />;
+  const { primaryOpen, menuActions } = fileNodePreviewControls(node, target, attachmentLabels, previewLabels);
 
   return (
     <FilePreviewShell
-      meta={meta}
-      actions={actions}
       state={state}
       onOpenTarget={onOpenTarget}
+      primaryOpen={primaryOpen}
+      menuActions={menuActions}
+      meta={meta}
+      initialExpanded={initialExpanded}
     />
   );
 }
@@ -85,42 +105,40 @@ export function fileNodePreviewMeta(
     : state.status === 'ready' ? sourceMeta(state.source, previewLabels) : null;
 }
 
-export function FileNodePreviewActions({ node, target }: { node: FileNode; target: PreviewTarget }) {
-  const ta = useT().outliner.field.attachment;
-  const labels = useT().shell.filePreview;
+/**
+ * The pill controls for an ingested file node: Open-with-default-app as the primary,
+ * Reveal-in-Finder / Copy in the `⋯` menu (the shared `fileNodeAssetActions` descriptor,
+ * also used by the row menu, so they stay in sync). A remote (mediaUrl-only) image has
+ * no stored asset, so it offers only Open-in-browser.
+ */
+export function fileNodePreviewControls(
+  node: FileNode,
+  target: PreviewTarget,
+  attachmentLabels: Parameters<typeof fileNodeAssetActions>[1],
+  previewLabels: ReturnType<typeof useT>['shell']['filePreview'],
+): { primaryOpen: { label: string; run: () => void } | null; menuActions: FilePreviewMenuAction[] } {
   const assetId = node.assetId;
-  // A file node already lives in the outline, so its actions are open / reveal /
-  // copy on the stored asset (the non-node pane substitutes add-to-outline). The
-  // descriptor is shared with the row ⋯ menu so the two stay in sync.
   if (assetId) {
-    return (
-      <>
-        {fileNodeAssetActions(assetId, ta).map((action) => {
-          const Icon = ASSET_ACTION_ICON[action.key];
-          return (
-            <ButtonControl
-              key={action.key}
-              aria-label={action.label}
-              className="file-node-action"
-              onClick={action.run}
-            >
-              <Icon size={ICON_SIZE.toolbar} />
-            </ButtonControl>
-          );
-        })}
-      </>
-    );
+    const actions = fileNodeAssetActions(assetId, attachmentLabels);
+    const open = actions.find((action) => action.key === 'open') ?? null;
+    const menuActions: FilePreviewMenuAction[] = actions
+      .filter((action) => action.key !== 'open')
+      .map((action) => ({
+        key: action.key,
+        label: action.label,
+        icon: ASSET_MENU_ICON[action.key as Exclude<FileNodeAssetActionKey, 'open'>],
+        run: action.run,
+      }));
+    return {
+      primaryOpen: open ? { label: previewLabels.openWithDefault, run: open.run } : null,
+      menuActions,
+    };
   }
-  if (target.kind !== 'url') return null;
-  // A remote (mediaUrl-only) image has no stored asset to open/reveal/copy, but it
-  // can still be opened in the browser.
-  return (
-    <ButtonControl
-      aria-label={labels.openInBrowser}
-      className="file-node-action"
-      onClick={() => void api.openExternalUrl(target.url)}
-    >
-      <OpenIcon size={ICON_SIZE.toolbar} />
-    </ButtonControl>
-  );
+  if (target.kind === 'url') {
+    return {
+      primaryOpen: { label: previewLabels.openInBrowser, run: () => void api.openExternalUrl(target.url) },
+      menuActions: [],
+    };
+  }
+  return { primaryOpen: null, menuActions: [] };
 }

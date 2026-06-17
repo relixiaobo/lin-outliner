@@ -91,10 +91,20 @@ export function buildVisualRows(
       out.push({ kind: 'toolbar', key: `toolbar>${prefix}`, nodeId: parentId, depth, parentId });
     }
 
+    // Inline (in an outline), a non-image file node's expansion means "preview open"
+    // (the chevron toggles the inline preview), not "type a child here", so a descended
+    // attachment container never auto-spawns a trailing draft — real children still
+    // render, but an empty attachment shows no phantom draft row under its preview. An
+    // image expands like a normal node (no inline preview), so it keeps its draft, and
+    // when the file node is itself the root (its own node page) the caller's mode wins,
+    // so child notes can still be added there. Matches the recursive path's
+    // `nonImageFileRow` gate in OutlinerItem.
+    const isInlineAttachmentContainer = !isRoot && parent.type === 'attachment';
+    const effectiveTrailingMode = isInlineAttachmentContainer ? 'none' : trailingMode;
     const builtRows = buildOutlinerRows(parent, byId, { expandedHiddenFields });
-    const showDraft = trailingMode === 'always'
+    const showDraft = effectiveTrailingMode === 'always'
       || (
-        trailingMode === 'auto'
+        effectiveTrailingMode === 'auto'
         && (
           builtRows.length === 0
           || options.trailingFocusedParentId === parentId

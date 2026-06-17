@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
   INLINE_FILE_ICON_CLASS,
   inlineFileIconKind,
@@ -7,6 +7,28 @@ import type { InlineFilePreviewDescriptor } from './inlineFilePreviewData';
 import { useT } from '../../i18n/I18nProvider';
 import { wantsNewPaneFromClick } from '../shared';
 import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
+import {
+  AgentTranscriptFileMenu,
+  type AgentTranscriptFile,
+} from '../agent/AgentTranscriptFileMenu';
+
+// A transcript file chip points at a working file on disk: clicking it opens the OS
+// default app (not the in-app preview pane), and right-click offers the transcript
+// menu. The split is by LOCATION: a chip with a `[data-agent-transcript-chips]`
+// ancestor is in the live transcript. That marker is set ONCE, on the live assistant
+// message body (AgentAssistantContent), so everything it renders — answer prose,
+// interim narration, and file_write/file_edit result chips — opens externally, while
+// the same components on meta surfaces (compaction/child-run summaries, the child-run
+// details + PoV inspector panels) have no such ancestor and keep the in-app preview.
+// An outliner file reference is a node-model field, never under this marker, so it too
+// keeps its in-app preview behavior.
+const TRANSCRIPT_CHIP_CONTAINER_SELECTOR = '[data-agent-transcript-chips]';
+
+interface TranscriptFileMenuState {
+  file: AgentTranscriptFile;
+  x: number;
+  y: number;
+}
 
 interface InlineFilePreviewFile extends InlineFilePreviewDescriptor {
   entryKind: 'file' | 'directory';
@@ -30,6 +52,8 @@ const POPOVER_MIN_HEIGHT = 120;
 export function InlineFilePreviewLayer() {
   const t = useT();
   const [preview, setPreview] = useState<InlineFilePreviewState | null>(null);
+  const [transcriptMenu, setTranscriptMenu] = useState<TranscriptFileMenuState | null>(null);
+  const closeTranscriptMenu = useCallback(() => setTranscriptMenu(null), []);
   const activeElementRef = useRef<HTMLElement | null>(null);
   const pendingElementRef = useRef<HTMLElement | null>(null);
   const showTimerRef = useRef<number | null>(null);
@@ -157,6 +181,13 @@ export function InlineFilePreviewLayer() {
         hidePreview();
         return;
       }
+      // A transcript chip is a pointer to a working file on disk → open with the OS
+      // default app. An outliner file reference → in-app preview pane (unchanged).
+      if (isTranscriptChipElement(element)) {
+        void window.lin?.openLocalFile?.({ path: file.path });
+        hidePreview();
+        return;
+      }
       dispatchPreviewTargetOpen({
         newPane: wantsNewPaneFromClick(event),
         target: {
@@ -167,6 +198,23 @@ export function InlineFilePreviewLayer() {
         },
       });
       hidePreview();
+    }
+
+    function handleContextMenu(event: MouseEvent) {
+      const element = inlineFileElementFromTarget(event.target);
+      if (!element || !isTranscriptChipElement(element)) return;
+      const file = fileFromElement(element);
+      if (!file?.path) return;
+      // Only transcript chips get the bespoke menu; the outliner keeps the native
+      // app/context menu so an outliner file reference is unaffected.
+      event.preventDefault();
+      event.stopPropagation();
+      hidePreview();
+      setTranscriptMenu({
+        file: { path: file.path, name: file.name, entryKind: file.entryKind },
+        x: event.clientX,
+        y: event.clientY,
+      });
     }
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -197,6 +245,7 @@ export function InlineFilePreviewLayer() {
     document.addEventListener('keydown', handleKeyDown, true);
     document.addEventListener('input', handleInput, true);
     document.addEventListener('click', handleClick, true);
+    document.addEventListener('contextmenu', handleContextMenu, true);
     window.addEventListener('scroll', updateAnchorRect, true);
     window.addEventListener('resize', updateAnchorRect);
     return () => {
@@ -213,12 +262,34 @@ export function InlineFilePreviewLayer() {
       document.removeEventListener('keydown', handleKeyDown, true);
       document.removeEventListener('input', handleInput, true);
       document.removeEventListener('click', handleClick, true);
+      document.removeEventListener('contextmenu', handleContextMenu, true);
       window.removeEventListener('scroll', updateAnchorRect, true);
       window.removeEventListener('resize', updateAnchorRect);
     };
   }, []);
 
-  if (!preview) return null;
+  return (
+    <>
+      {preview ? <InlineFilePreviewPopover preview={preview} t={t} /> : null}
+      {transcriptMenu ? (
+        <AgentTranscriptFileMenu
+          file={transcriptMenu.file}
+          onClose={closeTranscriptMenu}
+          x={transcriptMenu.x}
+          y={transcriptMenu.y}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function InlineFilePreviewPopover({
+  preview,
+  t,
+}: {
+  preview: InlineFilePreviewState;
+  t: ReturnType<typeof useT>;
+}) {
   const file = preview.file;
   const style = previewStyle(preview.anchorRect);
   const imagePreview = Boolean(file.thumbnailDataUrl && isImageFile(file));
@@ -273,6 +344,13 @@ function FilePreviewIcon({ file }: { file: InlineFilePreviewFile }) {
 function inlineFileElementFromTarget(target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof Element)) return null;
   return target.closest<HTMLElement>('[data-inline-ref-kind="local-file"]');
+}
+
+/** True when the chip is rendered inside an agent-transcript render root (prose file
+ *  links, file_write/file_edit result chips). Such chips open externally + offer the
+ *  transcript menu; an outliner file reference (no marked ancestor) does not. */
+function isTranscriptChipElement(element: HTMLElement): boolean {
+  return Boolean(element.closest(TRANSCRIPT_CHIP_CONTAINER_SELECTOR));
 }
 
 function isEditableInlineFileElement(element: HTMLElement): boolean {
