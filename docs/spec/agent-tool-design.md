@@ -2124,15 +2124,25 @@ Result behavior:
 - `kind: "web"` (default) runs Google (`providerName: "google_serp"`) and, when
   Google is blocked, fails recoverably, or returns zero results, automatically
   falls back to the DuckDuckGo HTML endpoint (`providerName: "duckduckgo_html"`).
-  When the fallback engine is used, the envelope warns that results came from
-  DuckDuckGo. A bad query (`invalid_args`) or a caller abort does not trigger the
-  fallback.
+  A bad query (`invalid_args`) or a caller abort does not trigger the fallback.
+  A DuckDuckGo page that loads and parses is authoritative even when empty and is
+  returned (so an empty fallback reports "no results — broaden the query" rather
+  than a misleading "retry / use a browser"); the envelope warns — only then —
+  that results came from the DuckDuckGo fallback because the primary returned no
+  usable results (it does not assert Google was "unavailable", which may be
+  false). If DuckDuckGo also fails to produce a parsed page, the primary,
+  user-intended Google outcome is surfaced (its hint/error and its google.com
+  `finalUrl`), not DuckDuckGo's own failure.
 - The off-screen search window renders with a real Chrome desktop User-Agent
   (not Electron's default), so engines serve the standard desktop SERP the
   scrapers target.
-- A transient navigation fault (network drop / timeout) is retried once with a
-  short backoff per engine before giving up or falling back. Blocks, extraction
-  misses, bad queries, and aborts are not retried.
+- A transient navigation fault is retried once with a short backoff, on both the
+  primary and the fallback engine. Because the engines are fixed reputable hosts,
+  a `navigation_failed` (the dominant outcome of a mid-flight network/DNS blip),
+  `network_error`, or nav `timeout` all count as transient; blocks, extraction
+  misses, bad queries, and aborts do not. The rate-limit gate is acquired once
+  per `web_search` call, so the internal retry + fallback cascade never
+  self-throttles or spends the cross-call burst budget mid-call.
 - `site` is a convenience parameter for a single host. For multiple hosts, the
   agent should issue multiple searches or put explicit search syntax in
   `query`.

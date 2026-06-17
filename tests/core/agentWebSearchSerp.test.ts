@@ -108,6 +108,27 @@ describe('DuckDuckGo SERP extraction', () => {
     ) => { results: WebSearchResult[] };
     expect(run(document).results).toEqual(runDuckDuckGoExtractor(DDG_HTML).results);
   });
+
+  test('skips a sponsored row whose ad marker rides an outer wrapper, not the nearest .result', () => {
+    const html = [
+      '<!doctype html><html><body>',
+      // The ad class sits on a wrapper ABOVE the nearest `.result` — the previous
+      // nearest-.result-className check would have missed it and leaked the ad.
+      '<div class="result--ad results_links_deep"><div class="result web-result">',
+      '<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fads.example.com%2Fbuy">Sponsored</a>',
+      '<a class="result__snippet">Ad snippet that should be skipped.</a>',
+      '</div></div>',
+      '<div class="result web-result">',
+      '<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Forganic">Organic Result</a>',
+      '<a class="result__snippet">Organic snippet with enough detail to read.</a>',
+      '</div>',
+      '</body></html>',
+    ].join('');
+    const payload = runDuckDuckGoExtractor(html);
+
+    expect(payload.results.map((r) => r.url)).toEqual(['https://example.com/organic']);
+    expect(payload.results.some((r) => r.url.includes('ads.example.com'))).toBe(false);
+  });
 });
 
 describe('web search fallback decision helpers', () => {
@@ -121,11 +142,17 @@ describe('web search fallback decision helpers', () => {
     expect(shouldFallbackToSecondaryEngine({ kind: 'error', resultCount: 0, code: 'aborted' })).toBe(false);
   });
 
-  test('isTransientSearchError retries only nav network faults', () => {
+  test('isTransientSearchError retries nav faults, including the dominant navigation_failed', () => {
+    // navigation_failed is what a mid-flight network/DNS blip actually produces
+    // (did-fail-load); network_error is only the rarer loadURL race. Both, plus a
+    // nav timeout, are transient against the fixed reputable search hosts.
+    expect(isTransientSearchError('navigation_failed')).toBe(true);
     expect(isTransientSearchError('network_error')).toBe(true);
     expect(isTransientSearchError('timeout')).toBe(true);
+    // Deterministic / non-transient outcomes are not retried.
     expect(isTransientSearchError('extraction_failed')).toBe(false);
     expect(isTransientSearchError('rate_limited')).toBe(false);
     expect(isTransientSearchError('aborted')).toBe(false);
+    expect(isTransientSearchError('invalid_args')).toBe(false);
   });
 });

@@ -214,8 +214,11 @@ export function extractDuckDuckGoSerp(document: Document, maxResults: number): D
   // reference the exported constant.
   for (const anchor of Array.from(document.querySelectorAll('a.result__a'))) {
     if (results.length >= limit) break;
+    // Skip sponsored rows. The ad marker can ride the nearest `.result` OR an
+    // outer wrapper, so match any ad-classed ancestor rather than only the
+    // nearest `.result`'s own className (a drift hazard if the badge moves).
+    if (anchor.closest('.result--ad, .result--sponsored, .result--ad-deep')) continue;
     const block = anchor.closest('.result') || anchor.parentElement;
-    if (block && /result--ad|result--sponsored/i.test(block.className || '')) continue;
     const url = decodeTarget(anchor.getAttribute('href'));
     if (!url || seen.has(url)) continue;
     const title = textOf(anchor);
@@ -257,10 +260,15 @@ export function shouldFallbackToSecondaryEngine(summary: SearchAttemptSummary): 
   return summary.code !== 'invalid_args' && summary.code !== 'aborted';
 }
 
-// A transient nav fault is worth one immediate retry; a block, extraction miss,
-// bad query, or abort is not.
+// A transient nav fault is worth one immediate retry. web_search always targets
+// fixed, reputable hosts (google.com / bing.com / duckduckgo.com), so a
+// navigation failure there — which surfaces as `navigation_failed` from
+// did-fail-load, the dominant real outcome of a mid-flight Wi-Fi/DNS blip, far
+// more common than the rare `network_error` loadURL race — is almost always a
+// transient transport hiccup rather than a permanent fault, and is retried. A
+// block, extraction miss, bad query, or caller abort is not.
 export function isTransientSearchError(code: string): boolean {
-  return code === 'network_error' || code === 'timeout';
+  return code === 'network_error' || code === 'timeout' || code === 'navigation_failed';
 }
 
 function normalizeSerpLimit(value: number): number {
