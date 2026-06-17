@@ -93,7 +93,10 @@ Authority: `docs/spec/design-system.md`. The load-bearing rules:
 - **B3 — Functional state is neutral.** Selection, hover, active, and focus use
   the neutral `--fill-*` ladder + a neutral focus ring — never a brand or system
   accent.
-- **B4 — One rose accent, sparse; one rose link.** No `--primary` family. Status
+- **B4 — One rose accent, sparse; one native-blue link.** No `--primary` family.
+  The single link colour is a fixed native macOS link blue (`--link`, decoupled
+  from `--accent`), so clickable text reads as a link, not an error; rose stays the
+  sparse brand accent (caret, brand marks, status badges). Status
   colors carry status meaning ONLY — they never paint
   selection/hover/active/focus.
 - **B5 — Liquid-Glass two-layer model.** Opaque content base; translucent

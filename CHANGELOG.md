@@ -12,6 +12,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Native link blue for clickable text (PR #293, cc)** — links, file references, and node
+  references no longer use the brand rose (which sat a hue from `--status-danger` and read as an
+  error). `--link` is decoupled from `--accent` and set to the fixed native macOS link blue
+  (`#0a66d6` light / `#4c9bff` dark) — the app's one coloured clickable affordance, theme-adapted
+  by the dark override, with no JS theme bridge (B2). Rose stays the sparse brand accent (caret,
+  workspace avatar, status badges); selection/focus stay neutral per B3, and `--status-info`
+  (Sapphire) keeps its distinct status role. AA-compliant in both themes. `design-system.md`
+  rewritten in the same change (A6).
 - **Coordinator Channel organization — `channel_create` / `channel_update` (PR #289, codex)** — the
   user-facing coordinator can create and edit named local Channels from chat. `channel_create` opens
   a persistent multi-agent working group (required name, optional invited agents, optional opening
