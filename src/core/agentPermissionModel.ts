@@ -82,8 +82,6 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [
   'agent.delegate.status',
   'agent.delegate.send',
   'agent.delegate.stop',
-  'agent.channel.create',
-  'agent.channel.update',
   'agent.permission.modify',
   'payment.purchase',
 ] as const;
@@ -132,8 +130,6 @@ const READ_ONLY_ACTION_KIND_FLAGS = {
   'agent.delegate.status': true,
   'agent.delegate.send': false,
   'agent.delegate.stop': false,
-  'agent.channel.create': false,
-  'agent.channel.update': false,
   'agent.permission.modify': false,
   'payment.purchase': false,
 } satisfies Record<AgentToolActionKind, boolean>;
@@ -210,8 +206,6 @@ export const AGENT_TOOL_ACTION_KIND_PROFILES = {
   AgentStatus: ['agent.delegate.status'],
   AgentSend: ['agent.delegate.send'],
   AgentStop: ['agent.delegate.stop'],
-  channel_create: ['agent.channel.create'],
-  channel_update: ['agent.channel.update'],
   skill: ['agent.skill.invoke'],
 } satisfies Record<string, readonly AgentToolActionKind[]>;
 

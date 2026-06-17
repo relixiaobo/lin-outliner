@@ -2706,15 +2706,6 @@ export class AgentRuntime {
           selfMaintenance: defaultAgentId === this.agentIdentity.agentId
             ? this.createSelfMaintenanceRuntime(() => conversationId, () => conversationRef.current)
             : undefined,
-          channelOrg: defaultAgentId === this.agentIdentity.agentId
-            ? {
-                currentConversationId: () => conversationId,
-                createConversation: (options) => this.createConversation(options),
-                updateConversation: (targetConversationId, updates) => this.updateConversationChannel(targetConversationId, updates),
-                listConversations: () => this.listConversations(),
-                listAllAgentDefinitions: (targetConversationId) => this.listAllAgentDefinitions(targetConversationId),
-              }
-            : undefined,
           allowedTools: defaultAgentProfile?.definition.tools,
           disallowedTools: defaultAgentProfile?.definition.disallowedTools,
           streamFn: this.options.streamFn,
@@ -8620,7 +8611,6 @@ function createConfiguredAgent(
     recall?: AgentToolsOptions['recall'];
     askUserQuestion?: AgentToolsOptions['askUserQuestion'];
     selfMaintenance?: AgentToolsOptions['selfMaintenance'];
-    channelOrg?: AgentToolsOptions['channelOrg'];
     localWorkspace?: AgentLocalWorkspaceContext;
     allowedTools?: string[];
     disallowedTools?: string[];
@@ -8661,7 +8651,6 @@ function createConfiguredAgent(
         recall: options.recall,
         askUserQuestion: options.askUserQuestion,
         selfMaintenance: options.selfMaintenance,
-        channelOrg: options.channelOrg,
         allowedTools: options.allowedTools,
         disallowedTools: options.disallowedTools,
       }),
