@@ -1302,6 +1302,31 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Invoked skills can read their own reference files; web_fetch verification pages route to the
+  browser without flagging real articles (PR #292, codex)** — three corrections. (1) **Skill reference
+  reads:** a resource-backed inline skill exposes `${AGENT_SKILL_DIR}` and points `file_read` at support
+  files such as `references/*.md`, but the permission audit and the file-tool execution roots had
+  diverged, so those reads could still be rejected after permissions were loosened. The runtime now
+  projects the *exact* invoked-skill directory into the typed file boundary as a **read-only** root —
+  a source-tree `src/main/builtInSkills/<skill>` path in dev, the copied `built-in-skills/<skill>`
+  directory in packaged builds. `getActiveSkillReadRoots` re-validates every restored skill against the
+  live registry (`skill.skillRoot === expectedRoot`), so transcript text cannot grant arbitrary reads,
+  and it never grants write access or exposes sibling/parent skill dirs; the read still passes the
+  normal sensitive-path block (the `isSensitivePath` check precedes the inside-area check). (2)
+  **web_fetch verification detection:** Reddit/DataDome-style "please wait while we verify" interstitials
+  (including ones served with HTTP 200/401) now route to the browser fallback, but the markers are kept
+  narrow — explicit interstitial phrases, and DataDome markers only when a `verify`/`verification`/
+  `captcha` word co-occurs — so a full article that merely embeds a bot-protection asset (e.g. a
+  `js.datadome.co` tag) is **not** misrouted and discarded. (3) **Live Channel tool status:** a tool
+  that fails mid-turn in the live Channel working-detail now renders as an **error** instead of a green
+  "done" — a dedicated `failedToolCallIds` channel carries error state alongside `pendingToolCallIds`,
+  and the per-run tool-result index is built once per projection (one O(messages) pass, not one per run).
+  Specs: `docs/spec/agent-skills.md`, `docs/spec/agent-tool-permissions.md`. **Gate (main):**
+  `/code-review high` (8 finder angles, recall-biased) → blocking findings (over-broad fetch markers
+  re-introducing the documented false-positive class; errored live tool rendering green) fixed in
+  follow-up `05854c28`, plus the per-run scan collapsed to a single pass and a skills early-out;
+  re-verified typecheck ✓ · `agentWebFetchFallback` 17/17 · `agentChannelRuntime` 32/32 ·
+  `agentRenderProjection` 25/25.
 - **The agent dock reopens the conversation you last selected, not always the latest (PR #261, codex-4)** —
   opening the agent dock after a renderer remount/reload restored the *latest* conversation rather than the
   DM or Channel the user last had open: the selected conversation only lived in memory, and the initial

@@ -415,6 +415,24 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **skill-file-read-roots** (codex, PR #292) — three corrections bundled. (1) **Skill reference reads:**
+  an invoked resource-backed skill now has its *exact* directory projected into the typed file boundary
+  as a **read-only** root, so `file_read` of `${AGENT_SKILL_DIR}/references/*.md` works in both dev
+  source-tree runs (`src/main/builtInSkills/<skill>`) and packaged app-resource runs
+  (`built-in-skills/<skill>`). `getActiveSkillReadRoots` re-validates every restored skill against the
+  live registry (`skill.skillRoot === expectedRoot`) so transcript text cannot grant arbitrary reads;
+  no write access, no sibling/parent exposure, and the existing sensitive-path read block still fires
+  first. (2) **web_fetch verification:** Reddit/DataDome interstitials (incl. 200/401) route to browser
+  fallback, with markers kept narrow (explicit phrases; DataDome only with a `verify`/`captcha`
+  co-occurrence) so full articles embedding a bot-protection asset are not discarded. (3) **Live Channel
+  tool status:** a tool that fails mid-turn renders as an error (not green) via a dedicated
+  `failedToolCallIds` channel, and the per-run tool-result index is built once per projection.
+  Fast-track (no plan file). Design folded into `docs/spec/agent-skills.md`,
+  `docs/spec/agent-tool-permissions.md`. **Gate (main):** `/code-review high` (8 finder angles,
+  recall-biased) → blocking findings (over-broad fetch markers re-introducing the documented
+  false-positive class; errored live tool rendering green) fixed in follow-up `05854c28`, plus the
+  per-run scan collapsed to one O(messages) pass and a skills early-out; re-verified typecheck ✓ ·
+  `agentWebFetchFallback` 17/17 · `agentChannelRuntime` 32/32 · `agentRenderProjection` 25/25.
 - **channel-activity-run-details-polish** (codex, PR #291) — Channel conversations unified around the
   activity row + per-run detail flow, **including coordinator-only (one-agent) Channels** (previously
   fell back to the DM composer/streaming tail). One shared `usesChannelActivitySurface(conversationId,
