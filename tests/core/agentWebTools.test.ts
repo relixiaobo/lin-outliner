@@ -129,6 +129,12 @@ describe('agent web tools', () => {
     expect(isPublicWebFetchUrl('http://[fe80::1]/')).toBe(false);
     expect(isPublicWebFetchUrl('http://[fec0::1]/')).toBe(false);
     expect(isPublicWebFetchUrl('http://[::1]/')).toBe(false);
+    // Deprecated IPv4-compatible (`::x.x.x.x` → `::a9fe:a9fe`, no ffff) and NAT64
+    // well-known prefix (`64:ff9b::x.x.x.x`) both embed an IPv4 and must decode.
+    expect(isPublicWebFetchUrl('http://[::169.254.169.254]/')).toBe(false);
+    expect(isPublicWebFetchUrl('http://[::ffff:127.0.0.1]/')).toBe(false);
+    expect(isPublicWebFetchUrl('http://[64:ff9b::169.254.169.254]/')).toBe(false);
+    expect(isPublicWebFetchUrl('http://[64:ff9b::a9fe:a9fe]/')).toBe(false);
     // Trailing-dot FQDN-root forms of loopback / mDNS hosts.
     expect(isPublicWebFetchUrl('http://localhost./admin')).toBe(false);
     expect(isPublicWebFetchUrl('http://router.local./')).toBe(false);

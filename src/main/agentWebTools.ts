@@ -364,32 +364,63 @@ function validateIpv6Host(host: string): { ok: true } | { ok: false; message: st
     ok: false,
     message: `private or local IPv6 host is not supported for web_fetch: ${host}`,
   });
-  if (normalized === '::' || normalized === '::1') return blocked();
 
-  // IPv4-mapped / -compatible IPv6 — both the dotted form ('::ffff:127.0.0.1',
-  // '::169.254.169.254') and the hex form the URL parser normalizes them to
-  // ('[::ffff:169.254.169.254]' serializes to '::ffff:a9fe:a9fe') — must defer to
-  // the IPv4 classifier, or loopback/metadata/private v4 would tunnel through.
-  const dotted = normalized.match(/^::(?:ffff:)?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-  if (dotted) return validateIpv4Host(dotted[1]!);
-  const mappedHex = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (mappedHex) {
-    const high = parseInt(mappedHex[1]!, 16);
-    const low = parseInt(mappedHex[2]!, 16);
-    return validateIpv4Host(`${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`);
+  const h = expandIpv6(normalized);
+  if (!h) return { ok: true }; // URL() already accepted it; an un-expandable form won't route
+
+  // Any address that embeds an IPv4 in its low 32 bits must be classified by that
+  // embedded v4, or loopback / cloud-metadata / private would tunnel through the
+  // v6 form. Covers IPv4-mapped (::ffff:0:0/96), the deprecated IPv4-compatible
+  // (::/96, which also subsumes :: and ::1), and NAT64 (64:ff9b::/96 well-known +
+  // 64:ff9b:1::/48 local). The URL parser serializes the embedded v4 to hex
+  // (`[::169.254.169.254]` → `::a9fe:a9fe`), so the check is on the hextets.
+  const zero = (slice: number[]): boolean => slice.every((value) => value === 0);
+  const embedsIpv4 =
+    (zero([h[0], h[1], h[2], h[3], h[4]]) && h[5] === 0xffff)
+    || zero([h[0], h[1], h[2], h[3], h[4], h[5]])
+    || (h[0] === 0x64 && h[1] === 0xff9b && zero([h[2], h[3], h[4], h[5]]))
+    || (h[0] === 0x64 && h[1] === 0xff9b && h[2] === 0x0001);
+  if (embedsIpv4) {
+    return validateIpv4Host(`${h[6] >> 8}.${h[6] & 0xff}.${h[7] >> 8}.${h[7] & 0xff}`);
   }
 
-  // Range checks on the leading hextet. The old /^(fc|fd|fe80):/ only matched the
-  // degenerate 'fc:'/'fd:'/'fe80:' forms and missed every real address; cover the
-  // whole ranges: fc00::/7 unique-local (0xfc00–0xfdff), fe80::/10 link-local +
-  // fec0::/10 site-local (0xfe80–0xfeff), and ff00::/8 multicast/reserved.
-  const firstHextet = parseInt(normalized.split(':')[0] || '', 16);
-  if (Number.isFinite(firstHextet)) {
-    const highByte = firstHextet >> 8;
-    if (highByte === 0xfc || highByte === 0xfd || highByte === 0xff) return blocked();
-    if (firstHextet >= 0xfe80 && firstHextet <= 0xfeff) return blocked();
-  }
+  // Otherwise block by leading-hextet range: fc00::/7 unique-local (0xfc00–0xfdff),
+  // fe80::/10 link-local + fec0::/10 site-local (0xfe80–0xfeff), ff00::/8 multicast.
+  const highByte = h[0] >> 8;
+  if (highByte === 0xfc || highByte === 0xfd || highByte === 0xff) return blocked();
+  if (h[0] >= 0xfe80 && h[0] <= 0xfeff) return blocked();
   return { ok: true };
+}
+
+// Expand an IPv6 literal (no brackets, lowercased) to its 8 hextets, folding any
+// trailing dotted IPv4 into two hextets and expanding a single `::` run. Returns
+// null for anything that does not cleanly expand to 8 hextets.
+function expandIpv6(address: string): number[] | null {
+  let addr = address;
+  const dotted = addr.match(/^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (dotted) {
+    const octets = [dotted[2], dotted[3], dotted[4], dotted[5]].map(Number);
+    if (octets.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) return null;
+    const [a, b, c, d] = octets as [number, number, number, number];
+    addr = `${dotted[1]}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+
+  const halves = addr.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  let hextets: string[];
+  if (halves.length === 1) {
+    hextets = head;
+  } else {
+    const tail = halves[1] ? halves[1].split(':') : [];
+    const missing = 8 - head.length - tail.length;
+    if (missing < 1) return null;
+    hextets = [...head, ...new Array(missing).fill('0'), ...tail];
+  }
+  if (hextets.length !== 8) return null;
+
+  const nums = hextets.map((part) => (/^[0-9a-f]{1,4}$/.test(part) ? parseInt(part, 16) : NaN));
+  return nums.some((value) => !Number.isFinite(value)) ? null : nums;
 }
 
 export async function buildWebFetchSuccessEnvelope(
