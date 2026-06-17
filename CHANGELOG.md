@@ -708,6 +708,32 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Channel activity run details — one-agent Channels unified · live process stream · popover polish
+  (PR #291, codex)** — Channel conversations now route ALL run state through the activity row + per-run
+  detail flow, including a **coordinator-only (one-agent) Channel**, which previously fell back to the
+  DM composer/streaming tail. A new `usesChannelActivitySurface(conversationId, members)` (Channel id
+  prefix OR ≥2 agent members) replaces the old `isMultiAgentConversation`-only checks across the
+  runtime, the render projection, the renderer, and the e2e mock, so "is this a Channel?" is decided by
+  one shared helper. The per-run **detail view now renders the live process stream** — thinking, tool
+  calls, and interim prose — through the same transcript UI as DM responses: each run retains its
+  structured live blocks (`assistantContent`) and the projection surfaces them as
+  `streamingContent`, while the main Channel transcript stays whole-utterance only. A coordinator-only
+  Channel keeps its DM-equivalent single-reader turn context (memory briefing + skill/agent listings);
+  only a multi-agent Channel suppresses them for the reader-neutral shared log. Activity popover
+  geometry polish: centered in-flow working row, tokenized spacing (`--channel-activity-*`), neutral
+  avatar/line layout (the semantic-color status dot removed), a compact per-run stop reusing the
+  composer-action button, and a quiet underline-on-focus "Stop all". Specs: `docs/spec/
+  agent-architecture.md`, `agent-event-log-rendering.md`, `agent-progress.md`, `commands.md`,
+  `design-system.md`. **Gate (main):** `/code-review xhigh` (10 finder angles, recall-biased) → 10
+  findings — runtime never emitted `streamingContent` (headline feature dead in production, masked by
+  test fixtures); coordinator-only Channel silently dropped its memory/skill/agent reminders;
+  cross-run tool-call-id collision in the live view; dropped child-run "View transcript" affordance;
+  renderer/core Channel-detection divergence; `lin-agent-channel-` literal duplicated 4×; dead
+  constants; duplicated label dispatch; shallow-copy isolation gap; e2e-mock suppression fidelity —
+  ALL resolved in follow-up commit `27eab8ad` (incl. two new tests exercising the **real** runtime
+  producing `streamingContent` and retaining the coordinator-only memory briefing). Re-verified:
+  typecheck ✓ · `test:core` 1086 pass / 2 skip / 0 fail ✓ · `test:renderer` 526 pass / 0 fail ✓ ·
+  targeted channel-activity `test:e2e` 4 passed ✓ · `docs:check` ✓.
 - **`web_fetch` success rate — browser identity · cross-host redirects · transient retry · challenge
   precision (PR #288, cc-2)** — local, user-initiated `web_fetch` retuned purely for success rate (a
   deliberate local-only SSRF/privacy stance), **no new tool** and the result envelope unchanged. (1)

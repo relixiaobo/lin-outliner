@@ -415,6 +415,27 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **channel-activity-run-details-polish** (codex, PR #291) — Channel conversations unified around the
+  activity row + per-run detail flow, **including coordinator-only (one-agent) Channels** (previously
+  fell back to the DM composer/streaming tail). One shared `usesChannelActivitySurface(conversationId,
+  members)` (Channel id prefix OR ≥2 agents) replaces the scattered `isMultiAgentConversation`-only
+  checks across runtime, render projection, renderer, and e2e mock. The per-run detail view now renders
+  the **live process stream** (thinking / tool calls / interim prose) via the same transcript UI as DM
+  responses — each run retains structured `assistantContent` and the projection surfaces it as
+  `streamingContent`, the main transcript staying whole-utterance. Coordinator-only Channels keep their
+  DM-equivalent single-reader memory/skill/agent reminders (only multi-agent suppresses them for the
+  reader-neutral shared log). Activity popover geometry polished (centered in-flow row, tokenized
+  spacing, neutral layout, semantic status dot removed, compact per-run stop, quiet "Stop all").
+  Fast-track (no plan file). Design folded into `docs/spec/agent-architecture.md`,
+  `agent-event-log-rendering.md`, `agent-progress.md`, `commands.md`, `design-system.md`. **Gate
+  (main):** `/code-review xhigh` → 10 findings (headline: runtime never emitted `streamingContent` so
+  the live process view was dead in production, masked by test fixtures; coordinator-only Channel lost
+  its memory briefing; cross-run tool-call-id leak; dropped child-run transcript affordance;
+  renderer/core detection divergence; 4× id-literal dup; dead constants; label-dispatch dup;
+  shallow-copy gap; e2e-mock fidelity) — all resolved in follow-up `27eab8ad`, with two new tests
+  exercising the **real** runtime producing `streamingContent` + retaining the coordinator-only memory
+  briefing. typecheck ✓ · `test:core` 1086 pass / 2 skip / 0 fail ✓ · `test:renderer` 526 pass ✓ ·
+  targeted channel-activity `test:e2e` 4 passed ✓ · `docs:check` ✓.
 - **web-fetch-success-rate** (cc-2, PR #288) — local, user-initiated `web_fetch` retuned purely for
   success rate, **no new tool**: a real Chrome browser identity (UA + `sec-ch-ua` + `sec-fetch-*`,
   with redirect-chain `Referer`/`Sec-Fetch-Site` tracking a real navigation), transparent cross-host
