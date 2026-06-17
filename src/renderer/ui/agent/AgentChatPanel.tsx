@@ -217,19 +217,11 @@ function conversationAgentDisplayName(
   return agentDefinitionName(agentDefinitionById.get(agentId)) ?? fallback ?? `@${agentMentionToken(agentId)}`;
 }
 
-function isCanonicalDmConversation(
-  conversationId: string | null,
-  conversation: AgentConversationListMeta | null,
-): boolean {
-  return Boolean(conversation?.canonicalDmAgentId) || (conversationId?.startsWith('lin-agent-dm-') ?? false);
-}
-
 function isChannelConversation(
   conversationId: string | null,
   conversation: AgentConversationListMeta | null,
   members: readonly AgentRenderMemberView[],
 ): boolean {
-  if (isCanonicalDmConversation(conversationId, conversation)) return false;
   return usesChannelActivitySurface(
     conversationId,
     (conversation?.members ?? members.map((member) => member.principal)),

@@ -746,7 +746,6 @@ export interface AgentConversation {
 
 export interface AgentCreateConversationOptions {
   title: string;
-  agentIds?: string[];
   seedText?: string;
 }
 
@@ -755,7 +754,6 @@ export interface AgentConversationListMeta {
   title: string | null;
   members: AgentPrincipal[];
   goal?: string;
-  canonicalDmAgentId?: string;
   createdAt: number;
   updatedAt: number;
   messageCount: number;

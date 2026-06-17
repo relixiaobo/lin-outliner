@@ -307,10 +307,6 @@ export const api = {
   agentCreateConversation: (options: AgentCreateConversationOptions) =>
     command<AgentConversation>('agent_create_conversation', { ...options }),
   agentListConversations: () => command<AgentConversationListMeta[]>('agent_list_conversations'),
-  agentAddConversationMember: (conversationId: string, agentId: string) =>
-    command<AgentConversation>('agent_add_conversation_member', { conversationId, agentId }),
-  agentRemoveConversationMember: (conversationId: string, agentId: string) =>
-    command<AgentConversation>('agent_remove_conversation_member', { conversationId, agentId }),
   agentRenameConversation: (conversationId: string, title: string) =>
     command<AgentConversationListMeta | null>('agent_rename_conversation', { conversationId, title }),
   agentDeleteConversation: (conversationId: string) =>
