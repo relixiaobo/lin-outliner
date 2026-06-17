@@ -806,7 +806,9 @@ export class AgentRuntime {
   }
 
   async restoreLatestConversation() {
-    return this.restoreOrCreateAgentDm(this.agentIdentity.agentId);
+    // Single-agent collapse: the default landing is the General channel, not a
+    // per-agent DM (the DM primitive is gone — every conversation is a channel).
+    return this.restoreOrCreateGeneralChannel();
   }
 
   async restoreConversation(conversationId: string) {
@@ -815,8 +817,6 @@ export class AgentRuntime {
     }
     const eventState = await this.loadEventState(conversationId);
     if (!eventState.conversation) {
-      const dmAgentId = await this.agentIdForCanonicalDmConversationId(conversationId);
-      if (dmAgentId) return this.restoreOrCreateAgentDm(dmAgentId);
       throw new Error(`Agent conversation not found: ${conversationId}`);
     }
     const conversation = await this.createConversationWithEventState(eventState);
@@ -912,8 +912,7 @@ export class AgentRuntime {
   }
 
   private async ensureGeneralChannelEventStateOnce(): Promise<AgentEventReplayState> {
-    const roster = await this.listConversationRosterAgents();
-    const desiredMembers = this.generalChannelMembers(roster);
+    const desiredMembers = this.generalChannelMembers();
     const liveConversation = this.conversations.get(DEFAULT_GENERAL_CHANNEL_ID);
     const eventState = liveConversation?.eventState ?? await this.loadEventState(DEFAULT_GENERAL_CHANNEL_ID);
     const inputs = this.generalChannelInvariantInputs(eventState, desiredMembers, {
@@ -937,11 +936,11 @@ export class AgentRuntime {
     return eventState;
   }
 
-  private generalChannelMembers(roster: readonly AgentRosterEntry[]): AgentPrincipal[] {
-    return mergeUniquePrincipals(
-      this.defaultConversationMembers(),
-      roster.map((agent): AgentPrincipal => ({ type: 'agent', agentId: agent.agentId as AgentId })),
-    );
+  private generalChannelMembers(): AgentPrincipal[] {
+    // Single-agent collapse: every conversation — General included — has exactly
+    // one agent member (Neva). Agent definitions are delegation child-agent types,
+    // not conversation members, so the roster never joins a conversation.
+    return this.defaultConversationMembers();
   }
 
   private generalChannelInvariantInputs(
@@ -1005,7 +1004,6 @@ export class AgentRuntime {
   }
 
   async createConversation(options: {
-    agentIds?: string[];
     title?: string;
     goal?: string;
     seedText?: string;
@@ -1017,11 +1015,8 @@ export class AgentRuntime {
       throw new Error('A Channel requires a name.');
     }
     const title = normalizedTitle;
-    const extraMembers = await this.resolveAgentMemberPrincipals(options.agentIds ?? []);
-    const members = mergeUniquePrincipals(this.defaultConversationMembers(), extraMembers);
-    for (const member of channelAgentMembers(members)) {
-      this.assertNoMentionTokenCollision(members.filter((candidate) => candidate !== member), member.agentId);
-    }
+    // Single-agent collapse: a conversation always has exactly {user, Neva}.
+    const members = this.defaultConversationMembers();
     const inputs: AgentEventInput[] = [{
       type: 'conversation.created',
       actor: systemActor(),
@@ -1268,20 +1263,10 @@ export class AgentRuntime {
   async listConversations() {
     await this.ensureGeneralChannelEventState();
     const entries = await this.getEventStore().listConversationIndexEntries();
-    const entryById = new Map(entries.map((entry) => [entry.id, entry]));
-    const roster = await this.listConversationRosterAgents();
-    const dmRows = roster.map((agent) => (
-      this.conversationListMetaFromIndexEntry(
-        entryById.get(this.canonicalDmConversationId(agent.agentId)) ?? null,
-        {
-          id: this.canonicalDmConversationId(agent.agentId),
-          title: agent.displayName,
-          members: [this.userPrincipal(), { type: 'agent', agentId: agent.agentId as AgentId }],
-          canonicalDmAgentId: agent.agentId,
-        },
-      )
-    ));
-    const channelRows = entries
+    // Single-agent collapse: channels are the only conversation primitive. Every
+    // listed row is a goal-bearing channel (General sorts first); there are no
+    // per-agent DM rows.
+    const listed = entries
       .filter((entry) => !!entry.goal)
       .map((entry) => this.conversationListMetaFromIndexEntry(entry))
       .sort((left, right) => (
@@ -1290,13 +1275,10 @@ export class AgentRuntime {
         || (right.updatedAt - left.updatedAt)
         || left.id.localeCompare(right.id)
       ));
-    const listed = [...dmRows, ...channelRows];
     // Seed cross-conversation unread badges on launch: the live conversation_attention
     // event only fires for conversations touched this run, so a conversation that went
     // unread before the app closed would show no badge until it is reopened. Re-emit
-    // the persisted unread — but only for conversations that have a list row to carry
-    // the badge (goal-less conversations like the default DM are masked when active
-    // and have nowhere to render an orphaned count).
+    // the persisted unread for every listed channel.
     for (const entry of listed) {
       if ((entry.unreadCount ?? 0) > 0) {
         this.emit({

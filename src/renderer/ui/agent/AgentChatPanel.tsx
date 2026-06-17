@@ -1080,13 +1080,9 @@ export function AgentChatPanel({
     ? agentDefinitionName(dmAgentDefinition) ?? dmAgentMember?.displayName ?? `@${agentMentionToken(dmAgentId)}`
     : null;
   const dmAgentMention = dmAgentMember?.mention ?? (dmAgentId ? agentMentionToken(dmAgentId) : null);
-  const directMessageRows = useMemo(
-    () => conversations.filter((conversation) => conversation.canonicalDmAgentId),
-    [conversations],
-  );
+  // Single-agent collapse: one conversation primitive (channels), General first.
   const channelRows = useMemo(
-    () => conversations
-      .filter((conversation) => !conversation.canonicalDmAgentId)
+    () => [...conversations]
       .sort((left, right) => (
         (left.id === DEFAULT_GENERAL_CHANNEL_ID ? -1 : 0)
         || (right.id === DEFAULT_GENERAL_CHANNEL_ID ? 1 : 0)
@@ -1499,10 +1495,10 @@ export function AgentChatPanel({
   }
 
   async function handleSelectConversation(targetConversationId: string) {
-    // Switching away from an active Channel is allowed (Slack-like): only a busy
-    // DM (serial, steerable) blocks navigation. Channel runs continue in the
-    // background and surface unread via conversation_attention.
-    if (dmRunActive || targetConversationId === conversationId) return;
+    // Single-agent collapse: navigation is never locked. A run keeps streaming in
+    // its conversation and surfaces unread via conversation_attention; the user can
+    // switch away freely (Slack-like). The only no-op is re-selecting the current.
+    if (targetConversationId === conversationId) return;
     setHistoryOpen(false);
     setRowActionMenu(null);
     await selectConversation(targetConversationId);
@@ -1652,22 +1648,13 @@ export function AgentChatPanel({
           ref={historyButtonRef}
           aria-expanded={historyOpen}
           aria-label={t.agent.chat.showConversations}
-          className={isChannel ? 'agent-dock-title-button is-channel' : 'agent-dock-title-button'}
+          className="agent-dock-title-button"
           onClick={() => setHistoryOpen((open) => !open)}
           title={t.agent.chat.showConversations}
         >
-          {isChannel ? (
-            <>
-              <span className="agent-dock-title-leading">
-                <HashIcon
-                  aria-hidden="true"
-                  className="agent-dock-title-icon"
-                  size={ICON_SIZE.menu}
-                />
-              </span>
-              <span className="agent-dock-title">{`${displayTitle} (${channelMemberCount})`}</span>
-            </>
-          ) : dmAgentId && dmAgentLabel ? (
+          {/* Single-agent collapse: every conversation is Neva's — show her avatar
+              and the conversation (workstream) title. */}
+          {dmAgentId && dmAgentLabel ? (
             <>
               <span className="agent-dock-title-leading">
                 <AgentIdentityAvatar
@@ -1676,7 +1663,7 @@ export function AgentChatPanel({
                   size="xs"
                 />
               </span>
-              <span className="agent-dock-title">{dmAgentLabel}</span>
+              <span className="agent-dock-title">{displayTitle}</span>
             </>
           ) : (
             <span className="agent-dock-title">{displayTitle}</span>
@@ -1724,7 +1711,6 @@ export function AgentChatPanel({
               <span>{t.agent.chat.conversations}</span>
               <IconButton
                 className="agent-conversation-section-action"
-                disabled={dmRunActive}
                 icon={AddIcon}
                 label={t.agent.chat.newConversation}
                 onClick={() => void handleNewConversation()}
@@ -1777,7 +1763,6 @@ export function AgentChatPanel({
                   >
                     <ButtonControl
                       className="agent-conversation-select agent-conversation-compact-select"
-                      disabled={dmRunActive}
                       onClick={() => void handleSelectConversation(conversation.id)}
                     >
                       <HashIcon
@@ -1803,7 +1788,6 @@ export function AgentChatPanel({
                       <div className="agent-conversation-row-actions">
                         <ConversationRowMoreMenu
                           actions={channelActions}
-                          disabled={dmRunActive && povActions.length === 0}
                           label={t.agent.chat.channelOptions}
                           menuLabel={t.agent.chat.channelOptions}
                           onOpenChange={(open) => setRowActionMenu(open ? actionMenuKey : null)}
@@ -1811,78 +1795,6 @@ export function AgentChatPanel({
                         />
                       </div>
                     ) : null}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="agent-conversation-menu-header agent-conversation-section-header">
-              <span>{t.agent.chat.directMessages}</span>
-              <IconButton
-                className="agent-conversation-section-action"
-                icon={AddIcon}
-                label={t.settings.agents.newAgent}
-                onClick={handleNewAgent}
-                title={t.settings.agents.newAgent}
-                variant="message"
-              />
-            </div>
-            <div className="agent-conversation-list">
-              {conversationsLoading ? (
-                <EmptyState
-                  className="agent-conversation-empty"
-                  icon={LoaderIcon}
-                  loading
-                  role="status"
-                  size="inline"
-                  title={t.common.loading}
-                />
-              ) : directMessageRows.length === 0 ? (
-                <EmptyState className="agent-conversation-empty" size="inline" title={t.agent.chat.noDirectMessages} />
-              ) : directMessageRows.map((conversation) => {
-                const agentId = conversation.canonicalDmAgentId!;
-                const isCurrent = conversation.id === conversationId;
-                const label = conversationAgentDisplayName(
-                  agentId,
-                  agentDefinitionById,
-                  readableConversationTitle(conversation.title, `@${agentMentionToken(agentId)}`),
-                );
-                const mention = agentMentionToken(agentId);
-                const unread = isCurrent ? 0 : conversation.unreadCount ?? unreadByConversationId.get(conversation.id) ?? 0;
-                const actionMenuKey = `dm:${conversation.id}`;
-                return (
-                  <div
-                    className={isCurrent ? 'agent-conversation-row agent-conversation-compact-row is-current' : 'agent-conversation-row agent-conversation-compact-row'}
-                    key={conversation.id}
-                  >
-                    <ButtonControl
-                      className="agent-conversation-select agent-conversation-compact-select"
-                      disabled={dmRunActive}
-                      onClick={() => void handleSelectConversation(conversation.id)}
-                    >
-                      <AgentIdentityAvatar label={label} mention={mention} size="sm" />
-                      <span className="agent-conversation-name">{label}</span>
-                      {unread > 0 ? (
-                        <span
-                          className="agent-conversation-unread"
-                          aria-label={t.agent.chat.unreadMessages({ count: unread })}
-                          title={t.agent.chat.unreadMessages({ count: unread })}
-                        >
-                          {unread > 99 ? '99+' : unread}
-                        </span>
-                      ) : null}
-                    </ButtonControl>
-                    <div className="agent-conversation-row-actions">
-                      <ConversationRowMoreMenu
-                        actions={[{
-                          label: t.agent.chat.configureAgent,
-                          onSelect: () => handleConfigureAgent(agentId),
-                        }]}
-                        label={t.agent.chat.agentOptions}
-                        menuLabel={t.agent.chat.agentOptions}
-                        onOpenChange={(open) => setRowActionMenu(open ? actionMenuKey : null)}
-                        open={rowActionMenu === actionMenuKey}
-                      />
-                    </div>
                   </div>
                 );
               })}

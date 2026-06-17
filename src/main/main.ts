@@ -2380,7 +2380,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentRuntime.restoreConversation(conversationId());
     case 'agent_create_conversation':
       return agentRuntime.createConversation({
-        agentIds: Array.isArray(args.agentIds) ? args.agentIds.map(String) : undefined,
         title: typeof args.title === 'string'
           ? args.title
           : typeof args.goal === 'string'

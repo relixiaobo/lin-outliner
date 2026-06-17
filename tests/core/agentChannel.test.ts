@@ -53,17 +53,18 @@ describe('agent channel mentions', () => {
     expect(agentMentionToken('no-colons')).toBe('no-colons');
   });
 
-  test('multi-agent detection requires two agent members', () => {
+  test('single-agent collapse: a conversation is never multi-agent', () => {
     expect(isMultiAgentConversation([userMember, mainMember])).toBe(false);
-    expect(isMultiAgentConversation([userMember, mainMember, peerMember])).toBe(true);
+    expect(isMultiAgentConversation([userMember, mainMember, peerMember])).toBe(false);
   });
 
-  test('Channel activity surface follows Channel identity even with one agent member', () => {
+  test('single-agent collapse: no conversation uses the Channel activity surface', () => {
+    // The channel-id namespace is unchanged; the multi-agent activity surface it
+    // used to gate is gone — every conversation streams inline.
     expect(isChannelConversationId('lin-agent-channel-solo')).toBe(true);
     expect(isChannelConversationId('lin-agent-dm-assistant')).toBe(false);
-    expect(usesChannelActivitySurface('lin-agent-channel-solo', [userMember, mainMember])).toBe(true);
-    expect(usesChannelActivitySurface('lin-agent-dm-assistant', [userMember, mainMember])).toBe(false);
-    expect(usesChannelActivitySurface('legacy-fixture', [userMember, mainMember, peerMember])).toBe(true);
+    expect(usesChannelActivitySurface('lin-agent-channel-solo', [userMember, mainMember])).toBe(false);
+    expect(usesChannelActivitySurface('legacy-fixture', [userMember, mainMember, peerMember])).toBe(false);
   });
 
   test('parses mentions scoped to the roster, ordered by position, deduplicated', () => {
@@ -158,101 +159,6 @@ describe('member events replay', () => {
     ]);
     expect(projection.entities.messages['assistant-1']?.actor).toEqual({ type: 'agent', agentId: PEER_AGENT_ID });
     expect(projection.entities.messages['user-1']?.addressedTo).toEqual([peerMember]);
-  });
-
-  test('render projection exposes read-only inspector messages from the shared POV derivation', () => {
-    const state = replayAgentEvents([
-      { ...base(1, 'conversation.created'), title: 'Channel', members: [userMember, mainMember, peerMember], goal: 'Channel' },
-      {
-        ...base(2, 'user_message.created', userActor),
-        messageId: 'user-1',
-        parentMessageId: null,
-        content: [{ type: 'text', text: '@reviewer hello' }],
-        addressedTo: [peerMember],
-      },
-      { ...base(3, 'run.started'), runId: 'run-main', agentId: MAIN_AGENT_ID },
-      {
-        ...base(4, 'assistant_message.started', { type: 'agent', agentId: MAIN_AGENT_ID }),
-        runId: 'run-main',
-        messageId: 'assistant-main',
-        parentMessageId: 'user-1',
-        providerId: 'p',
-        modelId: 'm',
-      },
-      {
-        ...base(5, 'assistant_message.completed', { type: 'agent', agentId: MAIN_AGENT_ID }),
-        runId: 'run-main',
-        messageId: 'assistant-main',
-        stopReason: 'stop',
-        content: [{ type: 'text', text: '@reviewer please respond' }],
-        addressedTo: [peerMember],
-      },
-      { ...base(6, 'run.completed'), runId: 'run-main' },
-      { ...base(7, 'run.started'), runId: 'run-peer', agentId: PEER_AGENT_ID, addressedByMessageId: 'assistant-main' },
-      {
-        ...base(8, 'assistant_message.started', { type: 'agent', agentId: PEER_AGENT_ID }),
-        runId: 'run-peer',
-        messageId: 'assistant-peer',
-        parentMessageId: 'assistant-main',
-        providerId: 'p',
-        modelId: 'm',
-      },
-      {
-        ...base(9, 'assistant_message.completed', { type: 'agent', agentId: PEER_AGENT_ID }),
-        runId: 'run-peer',
-        messageId: 'assistant-peer',
-        stopReason: 'stop',
-        content: [
-          { type: 'text', text: 'Reviewer answer.' },
-          { type: 'toolCall', id: 'tool-review', name: 'node_read', arguments: { nodeId: 'node-1' } },
-        ],
-      },
-      { ...base(10, 'run.completed'), runId: 'run-peer' },
-    ] as AgentEvent[]);
-
-    const options = {
-      mainAgentId: MAIN_AGENT_ID,
-      displayNameByAgentId: { [MAIN_AGENT_ID]: 'Neva' },
-    };
-    const shared = deriveAgentPovProjection(state, PEER_AGENT_ID, options);
-    const projection = buildAgentRenderProjection(state, {
-      revision: 1,
-      coordinatorAgentId: MAIN_AGENT_ID,
-      memberDisplayNames: options.displayNameByAgentId,
-      povInspectorMemoryByAgentId: {
-        [PEER_AGENT_ID]: '<memory><self>Reviewer fact.</self><principal>Assistant fact.</principal></memory>',
-      },
-    });
-    const inspector = projection.povInspectors[PEER_AGENT_ID];
-    expect(inspector?.addressedByMessageId).toBe(shared.addressedByMessageId);
-    expect(inspector?.memoryBriefing).toContain('Reviewer fact.');
-    expect(inspector?.messages.map((message) => ({
-      role: message.role,
-      sourceMessageIds: message.sourceMessageIds,
-      parts: message.parts.map((part) => ({
-        preamble: part.preamble,
-        text: part.text,
-      })),
-    }))).toEqual(shared.steps.map((step) => {
-      if (step.kind === 'verbatim') {
-        return {
-          role: step.record.role,
-          sourceMessageIds: [step.record.id],
-          parts: [{
-            preamble: undefined,
-            text: 'Reviewer answer.\n[tool call: node_read]',
-          }],
-        };
-      }
-      return {
-        role: 'user',
-        sourceMessageIds: step.parts.map((part) => part.record.id),
-        parts: step.parts.map((part) => ({
-          preamble: part.preamble ?? undefined,
-          text: part.record.content.map((content) => (content.type === 'text' ? content.text : '')).join('\n').trim(),
-        })),
-      };
-    }));
   });
 });
 

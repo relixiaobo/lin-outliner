@@ -20,9 +20,15 @@ import { escapeXml } from './reminderXml';
 export const DEFAULT_GENERAL_CHANNEL_ID = 'lin-agent-channel-general';
 export const DEFAULT_GENERAL_CHANNEL_TITLE = 'General';
 
-/** A conversation routes between agents iff more than one agent is a member. */
-export function isMultiAgentConversation(members: readonly AgentPrincipal[]): boolean {
-  return channelAgentMembers(members).length >= 2;
+/**
+ * Single-agent collapse: a conversation never routes between agents — there is
+ * exactly one agent (Neva). Always `false` so the reader-neutral shared-log path
+ * and POV inspectors (the multi-agent reminder/independence machinery) are
+ * unreachable and get removed wholesale in the teardown slice. Kept as a function
+ * for call-site stability; the param is retained for the same reason.
+ */
+export function isMultiAgentConversation(_members: readonly AgentPrincipal[]): boolean {
+  return false;
 }
 
 /** Runtime Channel identity is carried by the stable conversation id namespace. */
@@ -31,15 +37,21 @@ export function isChannelConversationId(conversationId: string | null | undefine
 }
 
 /**
- * Whether this conversation uses the Channel async work surface. The id check is
- * authoritative for real data; the roster fallback keeps older tests/fixtures
- * that predate Channel ids rendering as Channels.
+ * Single-agent collapse: there is no multi-agent Channel work surface anymore.
+ * Every conversation has exactly one agent (Neva) and runs as a serial,
+ * steerable, inline turn — execution AND rendering. This is the single switch
+ * the whole teardown turns on: with it `false`, every `channelSurface` branch in
+ * the runtime/projection/renderer takes its single-agent (inline) side, so the
+ * now-dead Channel execution + activity-surface code is provably unreachable and
+ * gets removed wholesale in the follow-up teardown slice (rather than piecemeal
+ * here). Kept as a function — not inlined at call sites — so that removal is one
+ * coordinated edit. The params are retained for that call-site stability.
  */
 export function usesChannelActivitySurface(
-  conversationId: string | null | undefined,
-  members: readonly AgentPrincipal[],
+  _conversationId: string | null | undefined,
+  _members: readonly AgentPrincipal[],
 ): boolean {
-  return isChannelConversationId(conversationId) || isMultiAgentConversation(members);
+  return false;
 }
 
 export function channelAgentMembers(
