@@ -1128,7 +1128,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                           )}
                           sublabel={(
                             <span className="settings-memory-meta">
-                              <span className="settings-chip">{memoryPoolLabel(entry, t)}</span>
                               <span className="settings-chip">{memoryStatusLabel(entry, t)}</span>
                               <span>{t.settings.memory.createdAt({ date: formatSettingsDate(entry.createdAt) })}</span>
                             </span>
@@ -1498,12 +1497,6 @@ function providerStatusLabel(provider: ProviderChoice, t: Messages): string {
 
 function memoryStatusLabel(entry: AgentMemoryEntryView, t: Messages): string {
   return entry.status === 'active' ? t.settings.memory.activeStatus : t.settings.memory.invalidatedStatus;
-}
-
-// The list unions two pools (the assistant's self-model and the user's profile); label which pool
-// each fact belongs to so an edited fact's subject is unambiguous.
-function memoryPoolLabel(entry: AgentMemoryEntryView, t: Messages): string {
-  return entry.principal.type === 'user' ? t.settings.memory.poolUserLabel : t.settings.memory.poolAgentLabel;
 }
 
 function permissionRuleLabel(rule: string, t: Messages): string {

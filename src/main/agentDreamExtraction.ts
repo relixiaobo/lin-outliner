@@ -53,22 +53,10 @@ export interface DreamMemoryExtractionResponse {
   actions: DreamMemoryAction[];
 }
 
-/**
- * Which pool a Dream consolidates. One writer per pool ([[agent-data-model]] §4): the
- * agent-Dream models the agent's working self from its run log; the user-Dream models the
- * person from the conversation. The pool's principal is the elided subject of every fact
- * the Dream writes — ONE phrasing rule for all pools ([[agent-memory-realignment]] D-2):
- * third-person-singular, subject-elided predicates; the subject stays normalized in the
- * pool key. The kind drives the framing and the what-belongs-in-this-pool guidance only.
- */
-export type AgentDreamSubjectKind = 'agent' | 'user';
-
 export interface DreamMemoryExtractionRequestInput {
   span: DreamMemoryExtractionSpan;
   existingMemories: readonly AgentMemoryEntry[];
   originWorkspace?: string;
-  /** Defaults to 'agent' (the agent's own self-model). */
-  subject?: AgentDreamSubjectKind;
 }
 
 export interface DreamMemoryExtractionConversationInput {
@@ -194,7 +182,7 @@ export function buildDreamMemoryExtractionRequest(input: DreamMemoryExtractionRe
   const evidenceMode = input.span.consolidateOnly
     ? 'There is no new raw evidence. Consolidate existing memory only: update or forget stale/duplicate/conflicting entries, but do not add new memories.'
     : 'Replay the raw evidence recorded since the last Dream and propose durable changes to the semantic store.';
-  const framing = dreamSubjectFraming(input.subject ?? 'agent');
+  const framing = dreamFraming();
   // Randomized fence: the transcript embeds untrusted text (web tool output, pasted content)
   // verbatim, and an extracted fact lands in a durable pool that is injected into every future
   // briefing. A static fence could be closed by adversarial evidence to smuggle instructions
@@ -266,61 +254,40 @@ ${input.span.transcript}
   };
 }
 
-interface DreamSubjectFraming {
+interface DreamFraming {
   role: string;
   whatToSave: string;
   howToWrite: string;
-  /** A stated-authority example predicate, in the subject's render person. */
+  /** A stated-authority example fact, subject-named third person. */
   statedExample: string;
-  /** An inferred-authority example predicate, in the subject's render person. */
+  /** An inferred-authority example fact, subject-named third person. */
   inferenceExample: string;
 }
 
-function dreamSubjectFraming(subject: AgentDreamSubjectKind): DreamSubjectFraming {
-  if (subject === 'user') {
-    return {
-      role: "You are Tenon's private Dream consolidation pass for the user pool: the offline process that replays the episodic record (the conversations) and distills it into the user's semantic store — the assistant's durable model of the person it works with (the user).",
-      whatToSave: [
-        "- The user's stable preferences, working style, recurring goals, decisions, and relationship context that should help future turns serve this person.",
-        '- Do NOT save the assistant\'s own working habits or conventions — those belong to the agent\'s separate self-model, not the user profile.',
-      ].join('\n'),
-      howToWrite: [
-        '- Write a subject-elided predicate in THIRD-PERSON SINGULAR present — no leading subject.',
-        '  The implied subject is the user; facts render as bullets under a zone identifying the',
-        '  user, so the subject must never be written into the fact itself.',
-        '  Good: "prefers terse code reviews"',
-        '  Good: "wants everything in the repo written in English"',
-        '  Bad:  "The user prefers terse reviews"  (leading subject)',
-        '  Bad:  "prefer terse reviews"            (base form; the rule is third-person singular)',
-        '  Bad:  "verifies a worktree\'s HEAD…"     (that is the agent\'s habit, wrong pool)',
-        '- Name third parties other than the user explicitly; never bake in a pronoun for the subject.',
-      ].join('\n'),
-      statedExample: 'has said they want…',
-      inferenceExample: 'has noticed that…',
-    };
-  }
+/**
+ * The single believer-pool framing. Neva's one semantic store holds heterogeneous-subject
+ * facts — her model of the user AND her durable knowledge of the work/domain/conclusions.
+ * Every fact is a self-contained THIRD-PERSON sentence that NAMES its subject; the subject
+ * lives in the words, not in a pool tag, because there is only one pool.
+ */
+function dreamFraming(): DreamFraming {
   return {
-    role: "You are Tenon's private Dream consolidation pass: the offline process that replays the agent's episodic record (its run log) and distills it into the agent's semantic store — the agent's durable self-model.",
+    role: "You are Neva's private Dream consolidation pass: replay the conversations (the episodic record) and distill Neva's durable first-person knowledge of the user and the work into her semantic store.",
     whatToSave: [
-      '- Stable facts, durable decisions, project conventions, or working habits the agent should carry forward.',
-      "- Genuinely relational working facts (e.g. how the agent works WITH a named person). The user's",
-      "  own preferences belong to the user pool, which this agent already reads by membership — do",
-      '  not duplicate them here unless the evidence exists only in this run log — then keep it as',
-      '  a relational fact.',
+      "- Save the user's stable preferences/working-style/goals/decisions/relationship context AND durable facts/conclusions about the work, domain, and project.",
+      "- Do NOT save Neva's own persona, identity, or working habits — those are authored, never dreamed.",
     ].join('\n'),
     howToWrite: [
-      '- Write a subject-elided predicate in THIRD-PERSON SINGULAR present — no leading subject.',
-      '  The implied subject is the agent itself; facts render as bullets under a <self> zone, so',
-      '  the subject must never be written into the fact itself.',
-      '  Good: "verifies a worktree\'s HEAD before trusting a gate run"',
-      '  Good: "escalates directional decisions to the user before building"',
-      '  Bad:  "You verify a worktree\'s HEAD…"   (leading subject)',
-      '  Bad:  "verify a worktree\'s HEAD…"       (base form; the rule is third-person singular)',
-      '  Bad:  "The user prefers terse reviews"  (a user preference — user pool, not this one)',
-      '- Name third parties explicitly (e.g. the user by name); never bake in a pronoun for the subject.',
+      '- Write each fact as a self-contained THIRD-PERSON statement that NAMES its subject (the',
+      '  user, a named module/system/file, a named person).',
+      '  Good: "the user prefers terse code reviews"',
+      '  Good: "the auth module verifies JWTs before authorizing"',
+      '  Bad:  "prefers terse reviews"  (no subject)',
+      '  Bad:  "You verify…"            (second person)',
+      '  Bad:  "verify…"                (imperative/base form)',
     ].join('\n'),
-    statedExample: 'follows an explicit project rule to…',
-    inferenceExample: 'has noticed that…',
+    statedExample: 'the user has said they want terse code reviews',
+    inferenceExample: 'the auth module appears to verify JWTs before authorizing',
   };
 }
 

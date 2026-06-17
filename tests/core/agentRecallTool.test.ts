@@ -28,8 +28,6 @@ function visibleData(result: Awaited<ReturnType<ReturnType<typeof createRecallTo
   return JSON.parse(content.text) as unknown;
 }
 
-const READER = { type: 'agent', agentId: 'built-in:tenon:assistant' } as const;
-
 function overview(): AgentMemoryOverview {
   return {
     generatedAt: 100,
@@ -46,11 +44,10 @@ function overview(): AgentMemoryOverview {
 }
 
 describe('agent recall tool', () => {
-  test('returns slim active durable memory entries', async () => {
+  test('returns slim active durable memory entries with no per-entry pool label', async () => {
     const runtime: AgentRecallToolRuntime = {
-      reader: READER,
       recall: async () => ({
-        entries: [{ entry: entry('memory-1', 'prefers concise answers', 20) }],
+        entries: [{ entry: entry('memory-1', 'the user prefers concise answers', 20) }],
         totalEntries: 1,
       }),
     };
@@ -63,19 +60,19 @@ describe('agent recall tool', () => {
         entries: [{
           memoryId: 'memory-1',
           principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
-          fact: 'prefers concise answers',
+          fact: 'the user prefers concise answers',
         }],
       },
     });
-    expect(visibleData(result)).toEqual({
+    // One believer pool: the visible entry carries no `subject` label — the fact's subject
+    // lives in its own (third-person, subject-named) text.
+    const visible = visibleData(result);
+    expect(visible).toEqual({
       ok: true,
       data: {
         entries: [{
           memory_id: 'memory-1',
-          // The fact's pool named reader-relatively, so cross-pool results are
-          // distinguishable in the briefing's own vocabulary (D-3 + #183 gate round).
-          subject: 'self',
-          fact: 'prefers concise answers',
+          fact: 'the user prefers concise answers',
           status: 'active',
           created_at: 20,
           sources: [{
@@ -91,42 +88,11 @@ describe('agent recall tool', () => {
         total_entries: 1,
       },
     });
-  });
-
-  test('distinguishes cross-pool results by reader-relative subject, not by wording', async () => {
-    // The #173 membership read returns entries from more than one pool in one result list;
-    // without `subject` they are distinguishable only by accidental verb form (D-3). The
-    // subject speaks the briefing's zone vocabulary — never a raw internal principal key.
-    const runtime: AgentRecallToolRuntime = {
-      reader: READER,
-      recall: async () => ({
-        entries: [
-          { entry: entry('memory-1', 'prefers terse code reviews') },
-          { entry: { ...entry('memory-2', 'prefers terse code reviews'), principal: { type: 'user', userId: 'lixiaobo' } } },
-        ],
-        totalEntries: 2,
-      }),
-    };
-    const tool = createRecallTool(runtime);
-
-    const visible = visibleData(await tool.execute('tool-1', { query: 'reviews' }));
-    expect(visible).toMatchObject({
-      ok: true,
-      data: {
-        entries: [
-          { memory_id: 'memory-1', subject: 'self' },
-          { memory_id: 'memory-2', subject: 'The user' },
-        ],
-      },
-    });
-    // No internal principal keys reach the model.
-    expect(JSON.stringify(visible)).not.toContain('agent:built-in');
-    expect(JSON.stringify(visible)).not.toContain('user:lixiaobo');
+    expect(JSON.stringify(visible)).not.toContain('subject');
   });
 
   test('returns a schema overview when query is omitted', async () => {
     const runtime: AgentRecallToolRuntime = {
-      reader: READER,
       recall: async () => ({
         entries: [],
         totalEntries: 2,
@@ -181,10 +147,9 @@ describe('agent recall tool', () => {
       },
     };
     const runtime: AgentRecallToolRuntime = {
-      reader: READER,
       recall: async () => ({
         entries: [{
-          entry: { ...entry('memory-1', 'uses cobalt for focus rings'), sources: [source] },
+          entry: { ...entry('memory-1', 'the UI uses cobalt for focus rings'), sources: [source] },
           evidence: [{
             kind: 'raw_span',
             source,
@@ -234,15 +199,12 @@ describe('agent recall tool', () => {
     });
   });
 
-  test('renders typed evidence refusals under cross-principal entries', async () => {
+  test('renders typed evidence refusals returned by the runtime', async () => {
     const runtime: AgentRecallToolRuntime = {
-      reader: READER,
-      principalNameFor: (principal) => (principal.type === 'agent' ? 'Code Reviewer' : 'The user'),
       recall: async () => ({
         entries: [{
           entry: {
-            ...entry('memory-foreign', 'keeps private run notes'),
-            principal: { type: 'agent', agentId: 'agent-peer' },
+            ...entry('memory-1', 'the team keeps private run notes'),
             sources: [],
           },
           evidence: [{
@@ -260,8 +222,7 @@ describe('agent recall tool', () => {
       ok: true,
       data: {
         entries: [{
-          memory_id: 'memory-foreign',
-          subject: 'Code Reviewer',
+          memory_id: 'memory-1',
           evidence: [{
             kind: 'evidence_refusal',
             code: 'CROSS_PRINCIPAL_EVIDENCE',
@@ -273,7 +234,6 @@ describe('agent recall tool', () => {
 
   test('reports empty recall without implying history is absent', async () => {
     const runtime: AgentRecallToolRuntime = {
-      reader: READER,
       recall: async () => ({ entries: [], totalEntries: 0 }),
     };
     const tool = createRecallTool(runtime);

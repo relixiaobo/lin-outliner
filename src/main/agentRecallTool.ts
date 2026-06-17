@@ -1,8 +1,6 @@
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core';
 import type { AgentMemoryEntry, AgentMemorySource, AgentMemoryStreamSource, AgentPrincipal } from '../core/agentEventLog';
 import type { AgentMemoryOverview, AgentMemorySchemaNode } from '../core/agentMemoryActivation';
-import { samePrincipal } from '../core/agentEventLog';
-import { defaultPrincipalName } from './agentMemoryBriefing';
 import {
   agentToolResult,
   errorEnvelope,
@@ -15,13 +13,12 @@ const MAX_RECALL_LIMIT = 20;
 const DEFAULT_RECALL_MAX_CHARS = 4_000;
 const MAX_RECALL_MAX_CHARS = 12_000;
 
-const RECALL_TOOL_DESCRIPTION = `Cued retrieval over the Tenon agent's semantic store — the durable facts distilled from past episodes.
+const RECALL_TOOL_DESCRIPTION = `Cued retrieval over your semantic store — the durable facts you distilled from past episodes.
 
 This is the only model-visible long-term retrieval surface. It reads active semantic memory
 entries only. It does not search the raw record (conversation history) directly and it
-cannot write, update, or invalidate memory. Each entry carries "subject" — whose self-model the
-fact belongs to and therefore the fact's implied subject ("self" = your own pool; otherwise the
-same name the memory briefing's zone uses).
+cannot write, update, or invalidate memory. Each fact is a self-contained third-person
+statement that names its own subject (the user, a named module/system/file, a named person).
 
 Use include_evidence only when a fact's provenance matters: it is source access — descending the
 memory index from the matching entry to its recorded sources in the raw record — and the bounded
@@ -58,10 +55,6 @@ const RECALL_TOOL_PARAMETERS = {
 };
 
 export interface AgentRecallToolRuntime {
-  /** The principal whose context the tool runs in — its own pool surfaces as subject "self". */
-  reader: AgentPrincipal;
-  /** Human-facing name for a non-reader principal pool; defaults to a principal-derived label. */
-  principalNameFor?: (principal: AgentPrincipal) => string;
   recall(options: {
     query?: string;
     limit?: number;
@@ -158,7 +151,7 @@ export function createRecallTool(runtime: AgentRecallToolRuntime): AgentTool<any
           truncated: entries.length > 0 && result.totalEntries > entries.length,
           evidenceTruncated: entries.some((entry) => entry.evidenceTruncated),
           overview: result.overview,
-        }, elapsed(started), runtime);
+        }, elapsed(started));
       } catch (error) {
         return recallToolError('FAILED', error instanceof Error ? error.message : String(error), started);
       }
@@ -169,9 +162,8 @@ export function createRecallTool(runtime: AgentRecallToolRuntime): AgentTool<any
 function recallToolResult(
   data: AgentRecallToolData,
   durationMs: number,
-  runtime: Pick<AgentRecallToolRuntime, 'reader' | 'principalNameFor'>,
 ): AgentToolResult<ToolEnvelope<AgentRecallToolData>> {
-  const visible = visibleRecallToolData(data, runtime.reader, runtime.principalNameFor);
+  const visible = visibleRecallToolData(data);
   return agentToolResult(successEnvelope<AgentRecallToolData>('recall', data, {
     instructions: recallInstructions(data),
     metrics: {
@@ -192,19 +184,12 @@ function recallToolError(
   }));
 }
 
-function visibleRecallToolData(
-  data: AgentRecallToolData,
-  reader: AgentPrincipal,
-  principalNameFor: ((principal: AgentPrincipal) => string) | undefined,
-): unknown {
+function visibleRecallToolData(data: AgentRecallToolData): unknown {
   return {
     entries: data.entries.map((entry) => ({
       memory_id: entry.memoryId,
-      // The fact's pool, named reader-relatively (= its elided subject): without it, cross-pool
-      // results are distinguishable only by accidental wording ([[agent-memory-realignment]]
-      // D-3). Speaks the briefing's vocabulary — "self" / the same zone name — never a raw
-      // internal principal key the model might echo into prose (gate round, #183).
-      subject: recallSubject(entry.principal, reader, principalNameFor),
+      // One believer pool: every fact is yours, and the fact's subject lives in its own text
+      // (a third-person, subject-named statement), so there is no per-entry pool label.
       fact: entry.fact,
       status: entry.status,
       created_at: entry.createdAt,
@@ -284,17 +269,6 @@ function visibleEvidence(evidence: AgentRecallEvidence): unknown {
     ...(evidence.isError ? { is_error: true } : {}),
     ...(evidence.messageTruncated ? { message_truncated: true } : {}),
   };
-}
-
-// The reader-relative subject of a pool — the SAME vocabulary the briefing's zones use
-// (`self` ↔ `<self>`, a friendly name ↔ `<principal name="…">`), so recall results ground
-// against the briefing instead of leaking internal principal keys.
-function recallSubject(
-  principal: AgentPrincipal,
-  reader: AgentPrincipal,
-  principalNameFor: ((principal: AgentPrincipal) => string) | undefined,
-): string {
-  return samePrincipal(principal, reader) ? 'self' : (principalNameFor?.(principal) ?? defaultPrincipalName(principal));
 }
 
 function recallInstructions(data: AgentRecallToolData): string | undefined {

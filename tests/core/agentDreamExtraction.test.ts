@@ -151,60 +151,30 @@ describe('agent dream extraction', () => {
     expect(span?.transcript).toContain('I will answer concisely.');
   });
 
-  test('the agent-subject prompt writes the self-model under the ONE phrasing rule', () => {
+  test('the single believer-pool prompt writes subject-named third-person facts', () => {
     const request = buildDreamMemoryExtractionRequest({
       span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
       existingMemories: [],
-      subject: 'agent',
     });
     const text = promptText(request);
-    expect(text).toContain("the agent's durable self-model");
-    // ONE phrasing rule for all pools ([[agent-memory-realignment]] D-2): third-person
-    // singular, subject-elided; render is a bullet list under the zone tag, so the prompt
-    // must not promise a prepended subject.
-    expect(text).toContain('THIRD-PERSON SINGULAR');
-    expect(text).toContain('bullets under a <self> zone');
-    expect(text).not.toContain('BASE form');
-    expect(text).not.toContain('renders as "You <fact>"');
-    expect(text).toContain('an inference reads "has noticed that…"');
-    expect(text).not.toContain('have noticed that…');
-    // D-9: cross-pool duplication is prompt guidance — user preferences stay out of this pool,
-    // EXCEPT when the evidence is visible only to this writer (run-log-only), which would
-    // otherwise be dropped by both Dreams (gate round, #183 finding 3).
-    expect(text).toContain('do\n  not duplicate them here unless the evidence exists only in this run log');
-    expect(text).toContain('user pool, not this one');
-    // Authority examples are agent-workflow-shaped and carry no hardcoded person name; a
-    // stated-authority example must not model re-importing user directives (#183 finding 2).
-    expect(text).toContain('a stated preference reads\n  "follows an explicit project rule to…"');
-    expect(text).not.toContain('lixiaobo');
-  });
-
-  test('the user-subject prompt writes the user pool under the same phrasing rule', () => {
-    const request = buildDreamMemoryExtractionRequest({
-      span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
-      existingMemories: [],
-      subject: 'user',
-    });
-    const text = promptText(request);
-    expect(text).toContain('the person it works with (the user)');
-    expect(text).toContain('THIRD-PERSON SINGULAR');
-    // The prompt promises only what the runtime performs: the live call site passes no
-    // name resolver, so the zone identifies the user generically (gate round, #183 finding 2).
-    expect(text).toContain('zone identifying the\n  user');
-    expect(text).not.toContain('renders as "The user <fact>"');
-    // The user profile must not absorb the agent's own working habits.
-    expect(text).toContain("the agent's separate self-model");
-    expect(text).toContain('an inference reads "has noticed that…"');
-    expect(text).toContain('a stated preference reads\n  "has said they want…"');
-    expect(text).not.toContain('have noticed that…');
-  });
-
-  test('defaults to the agent subject when none is given', () => {
-    const request = buildDreamMemoryExtractionRequest({
-      span: buildConsolidateOnlyDreamMemoryExtractionSpan('run-1'),
-      existingMemories: [],
-    });
-    expect(promptText(request)).toContain("the agent's durable self-model");
+    // One believer pool: Neva's first-person knowledge of the user AND the work.
+    expect(text).toContain("Neva's private Dream consolidation pass");
+    expect(text).toContain("distill Neva's durable first-person knowledge of the user and the work");
+    // The single framing keeps the user model AND durable work/domain facts.
+    expect(text).toContain("Save the user's stable preferences");
+    expect(text).toContain('durable facts/conclusions about the work, domain, and project');
+    // Neva's own persona/identity/habits are authored, never dreamed.
+    expect(text).toContain("Do NOT save Neva's own persona, identity, or working habits");
+    // Subject-named THIRD-PERSON facts; no zone tags, no subject-elided base form.
+    expect(text).toContain('self-contained THIRD-PERSON statement that NAMES its subject');
+    expect(text).toContain('"the user prefers terse code reviews"');
+    expect(text).toContain('"the auth module verifies JWTs before authorizing"');
+    expect(text).not.toContain('THIRD-PERSON SINGULAR');
+    expect(text).not.toContain('<self> zone');
+    expect(text).not.toContain('user pool, not this one');
+    // Authority examples read in subject-named third person.
+    expect(text).toContain('a stated preference reads\n  "the user has said they want terse code reviews"');
+    expect(text).toContain('an inference reads "the auth module appears to verify JWTs before authorizing"');
   });
 
   // The former D2 encoding-signal acceptance ([[agent-memory-academic-alignment]]): the prompt

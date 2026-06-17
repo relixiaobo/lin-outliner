@@ -460,7 +460,7 @@ describe('agent child run UI', () => {
       kind: 'dream',
       status: 'completed',
       trigger: 'manual',
-      principal: { type: 'user', userId: 'local-user' },
+      principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
       startedAt: 100,
       updatedAt: 150,
       completedAt: 150,
@@ -485,8 +485,9 @@ describe('agent child run UI', () => {
     expect(rendered.container.textContent).toContain('3 messages');
     expect(rendered.container.textContent).toContain('1 memory change');
     const meta = rendered.container.querySelector('.agent-task-meta');
-    // The leading part labels whose pool this Dream maintains (the run anchor principal).
-    expect(meta?.textContent).toContain('About you · Manual · 3 messages · 1 memory change');
+    // Memory collapsed to one believer pool: a Dream task no longer shows a pool label.
+    expect(meta?.textContent).toContain('Manual · 3 messages · 1 memory change');
+    expect(meta?.textContent).not.toContain('About you');
     expect(meta?.childElementCount).toBe(0);
     expect(rendered.container.querySelector('[aria-label="Open task"]')).toBeNull();
     expect(openedChildRunId).toBeNull();
