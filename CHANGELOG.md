@@ -12,6 +12,27 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Coordinator Channel organization — `channel_create` / `channel_update` (PR #289, codex)** — the
+  user-facing coordinator can create and edit named local Channels from chat. `channel_create` opens
+  a persistent multi-agent working group (required name, optional invited agents, optional opening
+  message); `channel_update` renames a Channel and/or adds/removes invited members. Member references
+  resolve by exact agent id, name, display name, or `@mention` (explicit `@`-mentions match the
+  routing token only; bare names that collide with a token are reported as ambiguous), with
+  recoverable errors for missing/ambiguous refs. Both tools are wired **only** on the coordinator run
+  (`options.channelOrg`) — delegated/child runs never receive them — and reuse the existing runtime
+  `createConversation` + member add/remove/rename path, mutating only local conversation
+  metadata/membership (`#General` and canonical DMs stay immutable; the coordinator cannot be
+  removed; removals still wait for an active Channel run to settle). New permission action kinds
+  `agent.channel.create` / `agent.channel.update` are classified local, reversible, and free of
+  external effect. The native Channel config window also gains removal of non-coordinator members.
+  Single-step membership edits and the batch update now share one `applyConversationChannelUpdate`
+  runtime core. Specs: `docs/spec/agent-architecture.md`, `agent-pi-mono-implementation.md`,
+  `agent-progress.md`, `agent-tool-design.md`. **Gate (main):** `/code-review high` (8 finder angles,
+  recall-biased) → 8 findings (ref-resolver vs `@mention` routing divergence; active-run guard on
+  requested-not-actual removals; config-window coordinator inferred by name; duplicated membership
+  invariants; redundant roster/conversation reloads; duplicated helpers; cold-path agent-dir rescan)
+  all resolved in follow-up commit `12fba60a`; re-verified typecheck + channel/permission/catalog
+  `test:core` 37 pass / 0 fail.
 - **Conversational agent authoring — `/create-agent` (PR #286, codex; plan re-planned by cc-2)** —
   the `agentify` twin of `/skillify`, **with no new tool**. A built-in, user- and model-invocable
   `/create-agent` skill interviews for missing identity/routing/tool details, drafts a complete

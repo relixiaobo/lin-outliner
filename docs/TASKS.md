@@ -154,20 +154,6 @@ before any directional/security-sensitive build.
   Code-grounded (stress-tested against the real runtime). Owns the detailed design of the
   M0 seams it analyzed (identity, `actor`, session→conversation, `AgentSessionState`
   split). See `docs/plans/agent-conversation-model.md`.
-- **coordinator-working-groups** (P2, `draft`) — let the user-facing **coordinator** create a
-  multi-agent **working-group Channel** on the user's request ("set up a group for X with Research
-  and Writing"). A Channel has **no file form** (unlike an AGENT.md), so the only mechanism is a
-  thin **`create_channel` runtime tool** wrapping the existing `agentRuntime.createConversation()`
-  + member-add path the native `ChannelConfigWindow` already uses — wired behind an
-  `options.channelOrg` flag so **only the coordinator** gets it (a `restricted` child does not).
-  Create + add-members only (edit/remove/delete = follow-up); **no new channel/coordinator
-  semantics** (reuse membership + coordinator routing + the async bus); **no stored `kind`**.
-  Silent default-allow + announce-in-chat per `agent-permission-blacklist-default-allow` (#277) +
-  audit; a when-to-create guideline is the anti-channel-spam guardrail. Resolves the M3
-  **who-configures-whom** slice (`agent-conversation-model`) for *coordinator organizes a group*;
-  reuse the shared membership path `default-general-channel` shipped (#278). **Shape (a)** one PR.
-  New model-callable capability → `/security-review` + `/code-review ultra`. See
-  `docs/plans/coordinator-working-groups.md`.
 - **agent-capability-ceiling** — **RESOLVED 2026-06-16: verified unnecessary, dropped (not
   built).** Post-#252/#266 capability is one **global** model (`decide(effect)` + non-configurable
   floor + a global grants ledger); a delegated/authored agent's `permissionMode` is type-locked to
@@ -429,6 +415,29 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **coordinator-working-groups** (codex, PR #289) — the user-facing **coordinator** gains
+  coordinator-only `channel_create` / `channel_update` chat tools to organize a working group:
+  create a named Channel (optional invited agents + opening message) and rename or add/remove
+  invited members from chat, resolving references by exact agent id, name, display name, or
+  `@mention` with recoverable errors for missing/ambiguous refs. The tools reuse the existing
+  runtime `createConversation` + member add/remove/rename path the native `ChannelConfigWindow`
+  uses, are wired only on the coordinator run (`options.channelOrg`, never a delegated child), and
+  mutate only local conversation metadata/membership (classified `agent.channel.create/update` —
+  reversible, no external effect). Also adds member removal to the Channel config window. Scope went
+  **beyond** the plan's create+add-only floor to include the edit/remove follow-up, so it fully
+  resolves the item. Design folded into `docs/spec/agent-architecture.md`,
+  `agent-pi-mono-implementation.md`, `agent-progress.md`, `agent-tool-design.md`; plan archived.
+  **Gate (main):** `/code-review high` (8 finder angles, recall-biased) → 8 findings — an agent-ref
+  resolver that could pick a different agent than `@mention` routing, an active-run guard that fired
+  on *requested* rather than *actual* removals, a Channel-config coordinator inferred by the name
+  string `'assistant'`, membership invariants duplicated across add/remove/rename, redundant
+  roster/conversation reloads, duplicated string/param helpers, and a cold-path N× agent-dir rescan.
+  codex's follow-up commit `12fba60a` addressed all: explicit `@`-refs now resolve by routing token
+  only (bare name/token collisions flagged ambiguous), the guard filters to actual members, the
+  config window reads the coordinator from the render projection, the single-step add/remove and
+  batch update converge on one private `applyConversationChannelUpdate` core, and shared
+  `agentConversationTitle` / `agentToolParams` modules replace the duplicated helpers. Re-verified in
+  an isolated worktree: typecheck ✓ · channel/permission/catalog `test:core` 37 pass / 0 fail ✓.
 - **web-search-robustness** (cc-2, PR #290) — three reliability fixes to the default `web_search`
   `kind: "web"` path, **no new tool**: a real Chrome desktop User-Agent on the off-screen search
   window (not Electron's default); one short-backoff transient retry per engine (`navigation_failed` /
