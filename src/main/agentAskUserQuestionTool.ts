@@ -12,6 +12,10 @@ import {
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
+import {
+  optionalTruncatedStringValue,
+  truncatedStringValue,
+} from './agentToolParams';
 
 export const ASK_USER_QUESTION_TOOL_NAME = 'ask_user_question';
 
@@ -138,7 +142,7 @@ function normalizeAskUserQuestionRequest(raw: unknown):
     ok: true,
     request: {
       questions,
-      submitLabel: stringParam(raw.submit_label, 80),
+      submitLabel: optionalTruncatedStringValue(raw.submit_label, 80),
     },
   };
 }
@@ -147,9 +151,9 @@ function normalizeQuestion(raw: unknown):
   | { ok: true; question: AgentUserQuestionItemView }
   | { ok: false; code: string; message: string } {
   if (!isRecord(raw)) return { ok: false, code: 'INVALID_QUESTION', message: 'Each question must be an object.' };
-  const id = requiredString(raw.id, 80);
+  const id = truncatedStringValue(raw.id, 80);
   const type = raw.type;
-  const question = requiredString(raw.question, 500);
+  const question = truncatedStringValue(raw.question, 500);
   if (!id) return { ok: false, code: 'MISSING_QUESTION_ID', message: 'Each question needs an id.' };
   if (!isQuestionKind(type)) return { ok: false, code: 'INVALID_QUESTION_TYPE', message: `Invalid question type for "${id}".` };
   if (!question) return { ok: false, code: 'MISSING_QUESTION_TEXT', message: `Question "${id}" needs text.` };
@@ -170,7 +174,7 @@ function normalizeQuestion(raw: unknown):
     question: {
       id,
       type,
-      header: stringParam(raw.header, 80),
+      header: optionalTruncatedStringValue(raw.header, 80),
       question,
       required: booleanParam(raw.required) ?? true,
       allowOther: type === 'free_text' ? false : booleanParam(raw.allow_other) ?? false,
@@ -193,8 +197,8 @@ function normalizeOptions(raw: unknown):
   const seenLabels = new Set<string>();
   for (const rawOption of raw) {
     if (!isRecord(rawOption)) return { ok: false, code: 'INVALID_OPTION', message: 'Each option must be an object.' };
-    const id = requiredString(rawOption.id, 80);
-    const label = requiredString(rawOption.label, 120);
+    const id = truncatedStringValue(rawOption.id, 80);
+    const label = truncatedStringValue(rawOption.label, 120);
     if (!id || !label) return { ok: false, code: 'INVALID_OPTION', message: 'Each option needs id and label.' };
     const labelKey = label.toLowerCase();
     if (seenIds.has(id) || seenLabels.has(labelKey)) {
@@ -205,7 +209,7 @@ function normalizeOptions(raw: unknown):
     options.push({
       id,
       label,
-      description: stringParam(rawOption.description, 300),
+      description: optionalTruncatedStringValue(rawOption.description, 300),
       recommended: booleanParam(rawOption.recommended),
     });
   }
@@ -214,15 +218,6 @@ function normalizeOptions(raw: unknown):
 
 function isQuestionKind(value: unknown): value is AgentUserQuestionKind {
   return value === 'single_choice' || value === 'multi_choice' || value === 'free_text';
-}
-
-function requiredString(value: unknown, maxLength: number): string {
-  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, maxLength) : '';
-}
-
-function stringParam(value: unknown, maxLength: number): string | undefined {
-  const text = requiredString(value, maxLength);
-  return text || undefined;
 }
 
 function booleanParam(value: unknown): boolean | undefined {

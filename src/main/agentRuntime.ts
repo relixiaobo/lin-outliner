@@ -108,11 +108,11 @@ import {
   parseAgentMentionTargets,
 } from '../core/agentChannel';
 import {
-  nodeReferenceMarkersToText,
   rewriteFileReferenceMarkerPaths,
   richTextToReferenceMarkup,
   sanitizeFileReferenceRef,
 } from '../core/referenceMarkup';
+import { normalizeConversationTitle, sanitizeConversationTitle } from '../core/agentConversationTitle';
 import { serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
 import { materializeAgentLocalPath, materializePathBackedAttachment } from './agentAttachmentMaterialization';
@@ -1050,26 +1050,11 @@ export class AgentRuntime {
    * Canonical DMs are immutable; only named Channels support membership edits.
    */
   async addConversationMember(conversationId: string, agentId: string) {
-    if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) {
-      throw new Error('#General membership is automatic.');
-    }
-    const principal = await this.requireAgentMemberPrincipal(agentId);
+    await this.applyConversationChannelUpdate(conversationId, {
+      addAgentIds: [agentId],
+      emitReason: 'member.added',
+    });
     const conversation = await this.ensureConversationWithId(conversationId);
-    if (this.isCanonicalDmConversationId(conversationId)) {
-      throw new Error('Create a Channel from a DM first.');
-    }
-    const members = conversation.eventState.conversation?.members ?? [];
-    if (!members.some((member) => samePrincipal(member, principal))) {
-      this.assertNoMentionTokenCollision(members, agentId);
-      await this.appendConversationEvents(conversationId, conversation, [{
-        type: 'member.added',
-        actor: userActor(),
-        member: principal,
-      }]);
-      await this.refreshMemberDisplayNames(conversation);
-      this.queuePovInspectorMemoryRefresh(conversationId, conversation);
-      this.emitProjection(conversationId, 'member.added');
-    }
     return this.conversationResponse(conversationId, conversation);
   }
 
@@ -1089,28 +1074,11 @@ export class AgentRuntime {
   }
 
   async removeConversationMember(conversationId: string, agentId: string) {
-    if (this.isCanonicalDmConversationId(conversationId)) throw new Error('The canonical DM membership cannot change.');
-    if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) throw new Error('#General membership is automatic.');
-    if (agentId === this.coordinatorAgentId()) throw new Error('The Channel coordinator cannot be removed.');
+    await this.applyConversationChannelUpdate(conversationId, {
+      removeAgentIds: [agentId],
+      emitReason: 'member.removed',
+    });
     const conversation = await this.ensureConversationWithId(conversationId);
-    const principal: AgentPrincipal = { type: 'agent', agentId };
-    const members = conversation.eventState.conversation?.members ?? [];
-    const memberExists = members.some((member) => samePrincipal(member, principal));
-    // Mid-run removal would yank a member whose run is live (or queued) and
-    // can flip the conversation's POV selection under it — membership changes
-    // wait for the Channel to settle.
-    if (this.hasActiveRuns(conversation) || conversation.pendingChannelTurns.length > 0) {
-      throw new Error('Cannot remove a member while a Channel run is active.');
-    }
-    if (memberExists) {
-      await this.appendConversationEvents(conversationId, conversation, [{
-        type: 'member.removed',
-        actor: userActor(),
-        member: principal,
-      }]);
-      this.queuePovInspectorMemoryRefresh(conversationId, conversation);
-      this.emitProjection(conversationId, 'member.removed');
-    }
     return this.conversationResponse(conversationId, conversation);
   }
 
@@ -1122,6 +1090,16 @@ export class AgentRuntime {
   async updateConversationChannel(
     conversationId: string,
     options: AgentConversationChannelUpdateOptions,
+  ): Promise<AgentConversationChannelUpdateResult> {
+    return this.applyConversationChannelUpdate(conversationId, {
+      ...options,
+      emitReason: 'channel.updated',
+    });
+  }
+
+  private async applyConversationChannelUpdate(
+    conversationId: string,
+    options: AgentConversationChannelUpdateOptions & { emitReason: string },
   ): Promise<AgentConversationChannelUpdateResult> {
     if (this.isCanonicalDmConversationId(conversationId)) throw new Error('The canonical DM membership cannot change.');
     if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) throw new Error('#General membership is automatic.');
@@ -1135,17 +1113,19 @@ export class AgentRuntime {
     for (const principal of removePrincipals) {
       if (principal.agentId === this.coordinatorAgentId()) throw new Error('The Channel coordinator cannot be removed.');
     }
-    if (removePrincipals.length > 0 && (this.hasActiveRuns(conversation) || conversation.pendingChannelTurns.length > 0)) {
+    let workingMembers = (conversation.eventState.conversation?.members ?? []).slice();
+    const actualRemovePrincipals = removePrincipals.filter((principal) => (
+      workingMembers.some((member) => samePrincipal(member, principal))
+    ));
+    if (actualRemovePrincipals.length > 0 && (this.hasActiveRuns(conversation) || conversation.pendingChannelTurns.length > 0)) {
       throw new Error('Cannot remove a member while a Channel run is active.');
     }
 
-    let workingMembers = (conversation.eventState.conversation?.members ?? []).slice();
     const inputs: AgentEventInput[] = [];
     const removedAgentIds: string[] = [];
     const addedAgentIds: string[] = [];
 
-    for (const principal of removePrincipals) {
-      if (!workingMembers.some((member) => samePrincipal(member, principal))) continue;
+    for (const principal of actualRemovePrincipals) {
       inputs.push({
         type: 'member.removed',
         actor: userActor(),
@@ -1183,7 +1163,7 @@ export class AgentRuntime {
       await this.appendConversationEvents(conversationId, conversation, inputs);
       if (addedAgentIds.length > 0) await this.refreshMemberDisplayNames(conversation);
       if (addedAgentIds.length > 0 || removedAgentIds.length > 0) this.queuePovInspectorMemoryRefresh(conversationId, conversation);
-      this.emitProjection(conversationId, 'channel.updated');
+      this.emitProjection(conversationId, options.emitReason);
     }
 
     const meta = eventStateToMeta(conversation.eventState);
@@ -1198,21 +1178,19 @@ export class AgentRuntime {
 
   /** Resolve agent ids to member principals, validating each against the registry. */
   private async resolveAgentMemberPrincipals(agentIds: readonly string[]): Promise<AgentMemberPrincipal[]> {
-    const principals: AgentMemberPrincipal[] = [];
-    for (const agentId of agentIds) {
-      principals.push(await this.requireAgentMemberPrincipal(agentId));
-    }
-    return principals;
+    const lookupAgentIds = uniqueStrings(agentIds.filter((agentId) => agentId !== this.agentIdentity.agentId));
+    const definitions = lookupAgentIds.length > 0 ? await this.listRawAgentDefinitions('member-resolve') : [];
+    const availableAgentIds = new Set(definitions.map((definition) => agentDefinitionAgentId(definition)));
+    return agentIds.map((agentId) => {
+      if (agentId === this.agentIdentity.agentId || availableAgentIds.has(agentId)) {
+        return { type: 'agent', agentId };
+      }
+      throw new Error(`Agent not found for Channel membership: ${agentId}`);
+    });
   }
 
   private async requireAgentMemberPrincipal(agentId: string): Promise<AgentMemberPrincipal> {
-    if (agentId === this.agentIdentity.agentId) {
-      return { type: 'agent', agentId };
-    }
-    const definitions = await this.listRawAgentDefinitions('member-resolve');
-    const match = definitions.find((definition) => agentDefinitionAgentId(definition) === agentId);
-    if (!match) throw new Error(`Agent not found for Channel membership: ${agentId}`);
-    return { type: 'agent', agentId };
+    return (await this.resolveAgentMemberPrincipals([agentId]))[0]!;
   }
 
   private async displayNameForAgentId(agentId: string): Promise<string> {
@@ -8187,15 +8165,6 @@ function deriveTitleFromPersistedContent(content: AgentPersistedContent[]): stri
     ?.text ?? persistedText(content);
   const normalized = sanitizeConversationTitle(text);
   return normalized ? normalized.slice(0, 30) : null;
-}
-
-function sanitizeConversationTitle(title: string | null | undefined): string | null {
-  const normalized = nodeReferenceMarkersToText(title ?? '').replace(/\s+/g, ' ').trim();
-  return normalized || null;
-}
-
-function normalizeConversationTitle(title: string): string {
-  return sanitizeConversationTitle(title) ?? 'Untitled';
 }
 
 function summarizeToolResult(message: ToolResultMessage): string {

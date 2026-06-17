@@ -803,6 +803,42 @@ describe('agent channel runtime', () => {
     expect(texts).toContain('REVIEWER_REPLIED_LATER');
   });
 
+  test('batch Channel update permits no-op removal while an addressed run is active', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
+    roots.push(localRoot, dataRoot);
+    const reviewerDir = await createAgentDefinition(localRoot, 'reviewer', [
+      '---',
+      'description: Reviews drafts with a critical eye.',
+      '---',
+      'REVIEWER_AGENT_BODY: always review thoroughly.',
+    ].join('\n'));
+    const reviewerAgentId = projectAgentId(reviewerDir, 'reviewer');
+    const calls: RecordedCall[] = [];
+    const control = controlledStream(calls);
+    const { runtime } = await createRuntime(dataRoot, localRoot, control.streamFn);
+
+    const channel = await runtime.createConversation({ agentIds: [reviewerAgentId], title: 'Active no-op before' });
+    await runtime.sendMessage(channel.conversationId, '@reviewer keep running');
+    while (calls.length < 1) await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const result = await runtime.updateConversationChannel(channel.conversationId, {
+      title: 'Active no-op after',
+      removeAgentIds: ['project:nope:ghost'],
+    });
+    expect(result).toMatchObject({
+      addedAgentIds: [],
+      removedAgentIds: [],
+      renamed: true,
+    });
+    const state = await new AgentEventStore(dataRoot).replay(channel.conversationId);
+    expect(state.conversation?.title).toBe('Active no-op after');
+    expect(state.conversation?.members).toContainEqual(agentPrincipal(reviewerAgentId));
+
+    control.complete('reviewer', 'REVIEWER_DONE_AFTER_RENAME');
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+  });
+
   test('conversation stop cancels in-flight Channel runs and discards capped pending turns with a trace', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));

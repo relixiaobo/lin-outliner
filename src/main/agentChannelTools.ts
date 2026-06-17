@@ -2,12 +2,19 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import type { AgentConversation, AgentConversationListMeta, AgentCreateConversationOptions } from '../core/types';
 import type { AgentDefinitionView } from '../core/agentTypes';
 import { DEFAULT_GENERAL_CHANNEL_ID, agentMentionToken } from '../core/agentChannel';
+import { sanitizeConversationTitle } from '../core/agentConversationTitle';
 import {
   agentToolResult,
   errorEnvelope,
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
+import {
+  optionalString as optionalToolString,
+  recordParams,
+  requiredString as requiredToolString,
+  uniqueStrings,
+} from './agentToolParams';
 
 export interface AgentChannelToolRuntime {
   currentConversationId(): string;
@@ -149,9 +156,9 @@ export function createChannelOrgTools(runtime: AgentChannelToolRuntime): AgentTo
         const started = Date.now();
         try {
           const params = normalizeChannelCreateParams(rawParams);
-          const memberAgentIds = await resolveAgentRefs(
-            runtime,
-            runtime.currentConversationId(),
+          const definitions = await runtime.listAllAgentDefinitions(runtime.currentConversationId());
+          const memberAgentIds = resolveAgentRefs(
+            definitions,
             params.memberRefs,
             'member reference',
           );
@@ -162,7 +169,7 @@ export function createChannelOrgTools(runtime: AgentChannelToolRuntime): AgentTo
           });
           return channelToolResult(
             CHANNEL_CREATE_TOOL,
-            await summarizeChannel(runtime, created.conversationId),
+            summarizeCreatedChannel(created),
             started,
             'Announce the new Channel and its members. Do not claim any member has started work unless the user asks in that Channel.',
           );
@@ -185,12 +192,14 @@ export function createChannelOrgTools(runtime: AgentChannelToolRuntime): AgentTo
         const started = Date.now();
         try {
           const params = normalizeChannelUpdateParams(rawParams);
-          const conversationId = await resolveChannelTarget(runtime, params);
-          const addMemberAgentIds = await resolveAgentRefs(runtime, conversationId, params.addMemberRefs, 'add member reference');
-          const removeMemberAgentIds = await resolveAgentRefs(runtime, conversationId, params.removeMemberRefs, 'remove member reference');
+          const conversations = await runtime.listConversations();
+          const target = resolveChannelTarget(conversations, runtime.currentConversationId(), params);
+          const definitions = await runtime.listAllAgentDefinitions(target.id);
+          const addMemberAgentIds = resolveAgentRefs(definitions, params.addMemberRefs, 'add member reference');
+          const removeMemberAgentIds = resolveAgentRefs(definitions, params.removeMemberRefs, 'remove member reference');
           const overlap = addMemberAgentIds.find((agentId) => removeMemberAgentIds.includes(agentId));
           if (overlap) throw new Error(`Agent ${overlap} cannot be both added and removed in one update.`);
-          const updated = await runtime.updateConversation(conversationId, {
+          const updated = await runtime.updateConversation(target.id, {
             ...(params.name ? { title: params.name } : {}),
             ...(addMemberAgentIds.length > 0 ? { addAgentIds: addMemberAgentIds } : {}),
             ...(removeMemberAgentIds.length > 0 ? { removeAgentIds: removeMemberAgentIds } : {}),
@@ -198,7 +207,7 @@ export function createChannelOrgTools(runtime: AgentChannelToolRuntime): AgentTo
           return channelToolResult(
             CHANNEL_UPDATE_TOOL,
             {
-              ...(await summarizeChannel(runtime, conversationId)),
+              ...summarizeChannel(updated.conversation, definitions),
               ...(updated.renamed ? { renamed: true } : {}),
               ...(updated.addedAgentIds.length > 0 ? { added_member_agent_ids: updated.addedAgentIds } : {}),
               ...(updated.removedAgentIds.length > 0 ? { removed_member_agent_ids: updated.removedAgentIds } : {}),
@@ -214,20 +223,20 @@ export function createChannelOrgTools(runtime: AgentChannelToolRuntime): AgentTo
   ];
 }
 
-async function resolveChannelTarget(
-  runtime: AgentChannelToolRuntime,
+function resolveChannelTarget(
+  conversations: readonly AgentConversationListMeta[],
+  currentConversationId: string,
   params: ChannelUpdateParams,
-): Promise<string> {
+): AgentConversationListMeta {
   if (params.conversationId && params.channelName) {
     throw new Error('Pass either conversation_id or channel_name, not both.');
   }
 
-  const conversations = await runtime.listConversations();
   if (params.conversationId) {
     const match = conversations.find((conversation) => conversation.id === params.conversationId);
     if (!match) throw new Error(`No Channel with conversation_id "${params.conversationId}" was found.`);
     if (!isMutableChannelRow(match)) throw new Error('#General and DMs cannot be edited.');
-    return match.id;
+    return match;
   }
 
   if (params.channelName) {
@@ -236,30 +245,38 @@ async function resolveChannelTarget(
     if (matches.length === 0) throw new Error(`No Channel named "${params.channelName}" was found.`);
     if (matches.length > 1) throw new Error(`More than one Channel is named "${params.channelName}". Pass conversation_id.`);
     if (!isMutableChannelRow(matches[0]!)) throw new Error('#General and DMs cannot be edited.');
-    return matches[0]!.id;
+    return matches[0]!;
   }
 
-  const currentConversationId = runtime.currentConversationId();
   const current = conversations.find((conversation) => conversation.id === currentConversationId);
   if (!current || !isMutableChannelRow(current)) {
     throw new Error('The current conversation is not an editable Channel. Pass conversation_id or channel_name.');
   }
-  return current.id;
+  return current;
 }
 
-async function summarizeChannel(
-  runtime: AgentChannelToolRuntime,
-  conversationId: string,
-): Promise<ChannelToolData> {
-  const [conversations, definitions] = await Promise.all([
-    runtime.listConversations(),
-    runtime.listAllAgentDefinitions(conversationId),
-  ]);
-  const conversation = conversations.find((candidate) => candidate.id === conversationId);
-  if (!conversation) throw new Error(`Channel not found after update: ${conversationId}`);
+function summarizeCreatedChannel(conversation: AgentConversation): ChannelToolData {
+  return {
+    conversation_id: conversation.conversationId,
+    name: normalizeTitle(conversation.renderProjection.conversationTitle) || 'Untitled',
+    members: conversation.renderProjection.members.flatMap((member) => {
+      if (member.principal.type !== 'agent') return [];
+      return [{
+        agent_id: member.principal.agentId,
+        mention: member.mention || agentMentionToken(member.principal.agentId),
+        name: member.displayName || agentMentionToken(member.principal.agentId),
+      }];
+    }),
+  };
+}
+
+function summarizeChannel(
+  conversation: AgentConversationListMeta,
+  definitions: readonly AgentDefinitionView[],
+): ChannelToolData {
   const definitionsById = new Map(definitions.map((definition) => [definition.agentId, definition]));
   return {
-    conversation_id: conversationId,
+    conversation_id: conversation.id,
     name: normalizeTitle(conversation.title) || 'Untitled',
     members: conversation.members.flatMap((member) => {
       if (member.type !== 'agent') return [];
@@ -289,8 +306,8 @@ interface ChannelUpdateParams {
 
 function normalizeChannelCreateParams(rawParams: unknown): ChannelCreateParams {
   const params = recordParams(rawParams);
-  const name = requiredString(params, 'name', MAX_CHANNEL_NAME_LENGTH);
-  const openingMessage = optionalString(params.opening_message, MAX_CHANNEL_SEED_LENGTH);
+  const name = requiredToolString(params, 'name', MAX_CHANNEL_NAME_LENGTH, normalizeTitle);
+  const openingMessage = optionalToolString(params.opening_message, MAX_CHANNEL_SEED_LENGTH, normalizeTitle);
   return {
     name,
     memberRefs: uniqueStrings([
@@ -303,7 +320,7 @@ function normalizeChannelCreateParams(rawParams: unknown): ChannelCreateParams {
 
 function normalizeChannelUpdateParams(rawParams: unknown): ChannelUpdateParams {
   const params = recordParams(rawParams);
-  const name = optionalString(params.name, MAX_CHANNEL_NAME_LENGTH);
+  const name = optionalToolString(params.name, MAX_CHANNEL_NAME_LENGTH, normalizeTitle);
   const addMemberRefs = uniqueStrings([
     ...uniqueStringArray(params.add_member_agent_ids, 'add_member_agent_ids'),
     ...uniqueStringArray(params.add_member_names, 'add_member_names'),
@@ -315,8 +332,8 @@ function normalizeChannelUpdateParams(rawParams: unknown): ChannelUpdateParams {
   if (!name && addMemberRefs.length === 0 && removeMemberRefs.length === 0) {
     throw new Error('Pass name, add_member_agent_ids/add_member_names, or remove_member_agent_ids/remove_member_names.');
   }
-  const conversationId = optionalString(params.conversation_id, 240);
-  const channelName = optionalString(params.channel_name, MAX_CHANNEL_NAME_LENGTH);
+  const conversationId = optionalToolString(params.conversation_id, 240, normalizeTitle);
+  const channelName = optionalToolString(params.channel_name, MAX_CHANNEL_NAME_LENGTH, normalizeTitle);
   return {
     ...(conversationId ? { conversationId } : {}),
     ...(channelName ? { channelName } : {}),
@@ -326,14 +343,12 @@ function normalizeChannelUpdateParams(rawParams: unknown): ChannelUpdateParams {
   };
 }
 
-async function resolveAgentRefs(
-  runtime: AgentChannelToolRuntime,
-  conversationId: string,
+function resolveAgentRefs(
+  definitions: readonly AgentDefinitionView[],
   refs: readonly string[],
   field: string,
-): Promise<string[]> {
+): string[] {
   if (refs.length === 0) return [];
-  const definitions = await runtime.listAllAgentDefinitions(conversationId);
   const result: string[] = [];
   for (const ref of refs) {
     const exact = definitions.find((definition) => definition.agentId === ref);
@@ -349,19 +364,38 @@ function resolveAgentRefFromNames(
   field: string,
 ): string {
   const key = normalizeAgentRef(ref);
-  const matches = definitions.filter((definition) => agentRefKeys(definition).includes(key));
+  if (!key) throw new Error(`Agent not found for ${field}: ${ref}`);
+  const matches = ref.trim().startsWith('@')
+    ? definitions.filter((definition) => agentMentionKey(definition) === key)
+    : uniqueDefinitions([
+        ...definitions.filter((definition) => agentNameKeys(definition).includes(key)),
+        ...definitions.filter((definition) => agentMentionKey(definition) === key),
+      ]);
   if (matches.length === 0) throw new Error(`Agent not found for ${field}: ${ref}`);
-  if (matches.length > 1) throw new Error(`Agent reference "${ref}" is ambiguous. Pass an exact agent_id.`);
+  if (matches.length > 1) throw new Error(`Agent reference "${ref}" is ambiguous. Pass an exact agent_id or @mention.`);
   return matches[0]!.agentId;
 }
 
-function agentRefKeys(definition: AgentDefinitionView): string[] {
+function agentNameKeys(definition: AgentDefinitionView): string[] {
   return uniqueStrings([
     definition.name,
     definition.displayName ?? '',
-    agentMentionToken(definition.agentId),
-    `@${agentMentionToken(definition.agentId)}`,
   ].map(normalizeAgentRef).filter(Boolean));
+}
+
+function agentMentionKey(definition: AgentDefinitionView): string {
+  return normalizeAgentRef(agentMentionToken(definition.agentId));
+}
+
+function uniqueDefinitions(definitions: readonly AgentDefinitionView[]): AgentDefinitionView[] {
+  const seen = new Set<string>();
+  const result: AgentDefinitionView[] = [];
+  for (const definition of definitions) {
+    if (seen.has(definition.agentId)) continue;
+    seen.add(definition.agentId);
+    result.push(definition);
+  }
+  return result;
 }
 
 function channelRows(conversations: readonly AgentConversationListMeta[]): AgentConversationListMeta[] {
@@ -374,27 +408,6 @@ function isEditableChannelRow(conversation: AgentConversationListMeta): boolean 
 
 function isMutableChannelRow(conversation: AgentConversationListMeta): boolean {
   return conversation.id !== DEFAULT_GENERAL_CHANNEL_ID && isEditableChannelRow(conversation);
-}
-
-function recordParams(rawParams: unknown): Record<string, unknown> {
-  if (!rawParams || typeof rawParams !== 'object' || Array.isArray(rawParams)) {
-    throw new Error('Tool input must be an object.');
-  }
-  return rawParams as Record<string, unknown>;
-}
-
-function requiredString(params: Record<string, unknown>, field: string, maxLength: number): string {
-  const value = optionalString(params[field], maxLength);
-  if (!value) throw new Error(`Pass ${field}.`);
-  return value;
-}
-
-function optionalString(value: unknown, maxLength: number): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const normalized = normalizeTitle(value);
-  if (!normalized) return undefined;
-  if (normalized.length > maxLength) throw new Error(`Value is too long; max ${maxLength} characters.`);
-  return normalized;
 }
 
 function uniqueStringArray(value: unknown, field: string): string[] {
@@ -413,19 +426,8 @@ function uniqueStringArray(value: unknown, field: string): string[] {
   return result;
 }
 
-function uniqueStrings(values: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const value of values) {
-    if (seen.has(value)) continue;
-    seen.add(value);
-    result.push(value);
-  }
-  return result;
-}
-
 function normalizeTitle(title: string | null | undefined): string {
-  return (title ?? '').replace(/\s+/g, ' ').trim();
+  return sanitizeConversationTitle(title) ?? '';
 }
 
 function normalizeAgentRef(value: string): string {

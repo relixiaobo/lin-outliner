@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentConversation, AgentConversationListMeta } from '../../src/core/types';
 import type { AgentDefinitionView } from '../../src/core/agentTypes';
-import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
+import { DEFAULT_GENERAL_CHANNEL_ID, agentMentionToken } from '../../src/core/agentChannel';
 import {
   createChannelOrgTools,
   type AgentChannelToolRuntime,
@@ -107,6 +107,47 @@ describe('agent channel org tools', () => {
     expect(JSON.parse(result.content[0]!.text).data).not.toHaveProperty('renamed');
   });
 
+  test('resolves explicit @mentions by routing token and rejects bare name/token ambiguity', async () => {
+    const displayNameWriterId = 'project:workspace:alpha';
+    const runtime = fakeRuntime({
+      definitions: [
+        definition(COORDINATOR_ID, 'assistant', 'Neva'),
+        definition(displayNameWriterId, 'alpha', 'writer'),
+        definition(WRITER_ID, 'scribe', 'Scribe'),
+      ],
+    });
+    const createTool = createChannelOrgTools(runtime).find((candidate) => candidate.name === 'channel_create')!;
+    const updateTool = createChannelOrgTools(runtime).find((candidate) => candidate.name === 'channel_update')!;
+
+    const created = await createTool.execute('call-explicit-mention', {
+      name: 'Mention routing',
+      member_names: ['@writer'],
+    });
+    const ambiguous = await updateTool.execute('call-ambiguous-bare-ref', {
+      add_member_names: ['writer'],
+    });
+
+    expect(runtime.calls.createConversation).toEqual([{
+      title: 'Mention routing',
+      agentIds: [WRITER_ID],
+    }]);
+    expect(JSON.parse(created.content[0]!.text)).toMatchObject({
+      ok: true,
+      data: {
+        members: expect.arrayContaining([
+          { agent_id: WRITER_ID, mention: 'writer', name: 'Scribe' },
+        ]),
+      },
+    });
+    expect(JSON.parse(ambiguous.content[0]!.text)).toMatchObject({
+      ok: false,
+      error: {
+        code: 'CHANNEL_UPDATE_FAILED',
+        message: 'Agent reference "writer" is ambiguous. Pass an exact agent_id or @mention.',
+      },
+    });
+  });
+
   test('reports recoverable errors for ambiguous or invalid updates', async () => {
     const runtime = fakeRuntime({
       currentConversationId: () => 'dm-1',
@@ -171,6 +212,7 @@ describe('agent channel org tools', () => {
 function fakeRuntime(overrides: {
   conversations?: AgentConversationListMeta[];
   currentConversationId?: () => string;
+  definitions?: AgentDefinitionView[];
 } = {}): AgentChannelToolRuntime & {
   calls: {
     createConversation: unknown[];
@@ -184,7 +226,7 @@ function fakeRuntime(overrides: {
   let conversations = overrides.conversations ?? [
     conversation('channel-1', 'Planning', [COORDINATOR_ID, REVIEWER_ID]),
   ];
-  const definitions = [
+  const definitions = overrides.definitions ?? [
     definition(COORDINATOR_ID, 'assistant', 'Neva'),
     definition(REVIEWER_ID, 'reviewer', 'Reviewer'),
     definition(WRITER_ID, 'writer', 'Writer'),
@@ -197,7 +239,13 @@ function fakeRuntime(overrides: {
       const id = `channel-${conversations.length + 1}`;
       const members = [COORDINATOR_ID, ...(options.agentIds ?? [])];
       conversations = [...conversations, conversation(id, options.title, members)];
-      return { conversationId: id, renderProjection: {} } as AgentConversation;
+      return {
+        conversationId: id,
+        renderProjection: {
+          conversationTitle: options.title,
+          members: renderMembers(members, definitions),
+        } as AgentConversation['renderProjection'],
+      };
     },
     listConversations: async () => conversations,
     listAllAgentDefinitions: async () => definitions,
@@ -230,6 +278,18 @@ function fakeRuntime(overrides: {
     },
   };
   return runtime;
+}
+
+function renderMembers(agentIds: readonly string[], definitions: readonly AgentDefinitionView[]): AgentConversation['renderProjection']['members'] {
+  return agentIds.map((agentId) => {
+    const match = definitions.find((candidate) => candidate.agentId === agentId);
+    return {
+      principal: { type: 'agent' as const, agentId },
+      mention: agentMentionToken(agentId),
+      displayName: match?.displayName?.trim() || match?.name || agentMentionToken(agentId),
+      ...(agentId === COORDINATOR_ID ? { coordinator: true } : {}),
+    };
+  });
 }
 
 function conversation(id: string, title: string, agentIds: string[]): AgentConversationListMeta {
