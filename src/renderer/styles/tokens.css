@@ -103,10 +103,14 @@
   --text-selection-bg: rgb(var(--ink) / 0.14); /* neutral ::selection */
   --drop-line: var(--focus-ring);               /* neutral drag insertion line */
 
-  /* accent = brand rose, used SPARSELY (links, caret, brand marks, status) */
+  /* accent = brand rose, used SPARSELY (caret, brand marks, status badges) */
   --accent: #f43f5e;
   --accent-strong: #e11d48;
-  --link: var(--accent);
+  /* link = native macOS link blue, decoupled from the brand rose so clickable
+     text reads as "interactive", not "error" (rose sits too close to
+     --status-danger). This is the FIXED native linkColor, not the variable
+     system accent — it is a constant, theme-adapted via the dark override. */
+  --link: #0a66d6;
   /* The agent streaming caret / "still generating" mark carries the brand rose
      on purpose — it is the one lively, branded beat in the agent panel. */
   --caret: var(--accent);
@@ -408,7 +412,7 @@
   --muted: var(--text-secondary);
   --muted-2: var(--text-tertiary);
   --text: var(--text-primary);
-  /* the one link colour — rose (design-system.md: exactly one link colour) */
+  /* the one link colour — native link blue (design-system.md: exactly one) */
   --inline-ref-default: var(--link);
   --inline-ref-hover: color-mix(in srgb, var(--link) 78%, var(--text));
   /* danger affordances use the genuine status red, not brand rose */

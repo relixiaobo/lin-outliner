@@ -389,6 +389,14 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 - **dark-mode-contrast-pass** (P3, cross-cutting) — runs **last**, after L1/L2, as a
   real light+dark run to confirm static contrast risks + apply one-token
   `theme-dark.css` nudges.
+- **file-link-native-color** (P2, `in-progress`) — clickable text (external links, file
+  & node references) was painted the brand rose, which sits a hue from `--status-danger`
+  and made users read links as errors. Decouple `--link` from `--accent` and give it a
+  fixed **native macOS link blue** (`#0a66d6` light / `#4c9bff` dark); rose stays the
+  sparse brand accent (caret/avatar/badges). Functional state (selection/focus) stays
+  neutral per B3 — adopting the *variable* system accent there is deliberately deferred
+  ("B"). Spec B3/B4 rewritten in the same change (A6). **Shape (a)** one PR. UI change →
+  visual verification light+dark at the gate. See `docs/plans/file-link-native-color.md`.
 
 ### Performance
 

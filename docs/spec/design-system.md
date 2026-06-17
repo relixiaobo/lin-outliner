@@ -41,8 +41,10 @@ single sparing accent — never in re-skinned chrome. These principles are the
 2. **Content is the hero.** The outliner is the primary visual object; chrome
    recedes behind it (translucent) so the document stays the focus.
 3. **Restraint with color.** Functional state (selection, hover, active, primary
-   buttons) is neutral. Rose is a rare signal — links, caret, brand marks, small
-   status badges — never the everyday active state, and never the system accent.
+   buttons) is neutral. Rose is a rare signal — caret, brand marks, small status
+   badges — never the everyday active state, and never the system accent. Links
+   are the one coloured affordance: they use a fixed native link blue (macOS
+   `linkColor`), so clickable text reads as a link, never as an error.
 4. **Density without noise.** Compact, quiet, predictable. No decorative nested
    cards, no ornamental color, no motion for its own sake.
 5. **One semantic layer, two themes.** Every value is a token. Light and dark
@@ -182,13 +184,17 @@ Use these default desktop tokens before adding component-specific values:
   --text-selection-bg: rgb(var(--ink) / 0.14);
   --drop-line: var(--focus-ring); /* neutral drag insertion line */
 
-  /* ── Accent = brand rose, used SPARSELY: links, text caret, brand marks,
-        small status badges. Never selection, focus, active rows, or primary
-        buttons (those are neutral fills). ── */
+  /* ── Accent = brand rose, used SPARSELY: text caret, brand marks, small
+        status badges. Never selection, focus, active rows, primary buttons
+        (those are neutral fills), and no longer links. ── */
   --accent: #f43f5e;
   --accent-strong: #e11d48;
-  --link: var(--accent);
   --caret: var(--accent);
+  /* ── Link = native macOS link blue (the FIXED linkColor, not the variable
+        system accent). Decoupled from the brand rose so clickable text reads as
+        a link, not an error — rose sat too near --status-danger. Exactly one
+        link colour; theme-adapted by the dark override. ── */
+  --link: #0a66d6;
 
   /* ── Status ── */
   --status-success: #3f9e6a;
@@ -382,6 +388,7 @@ Use these default desktop tokens before adding component-specific values:
     /* brand + status nudged up for legibility on dark */
     --accent: #ff5d76;
     --accent-strong: #ff7088;
+    --link: #4c9bff; /* link blue lifted to match macOS dark linkColor */
     --status-info: #5aa0e0;
 
     /* inverse chips invert (dark-on-light in light mode → light-on-dark here) */
@@ -502,11 +509,17 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   the OS would normally paint its system accent, kept neutral for consistency
   with the rest of functional state. It is slightly stronger than a selected row
   so glyphs stay legible; the glyph colour itself does not change under selection.
-- **Brand accent is sparse.** `--accent` (rose) appears only in: links
-  (`--link`), the text caret (`--caret`), the workspace-root avatar (the single
-  in-rail brand mark — there is no separate static app brand header), and small
-  status badges. It never paints selection, focus, active rows, or primary
-  buttons.
+- **Brand accent is sparse.** `--accent` (rose) appears only in: the text caret
+  (`--caret`), the workspace-root avatar (the single in-rail brand mark — there
+  is no separate static app brand header), and small status badges. It never
+  paints selection, focus, active rows, primary buttons, or links.
+- **Links use a native link blue, not the rose.** `--link` is a fixed macOS link
+  blue (`linkColor`) — the app's one coloured clickable affordance. It is
+  decoupled from `--accent` so clickable text (external links, file and node
+  references) reads as interactive, not as an error: the rose sat too close to
+  `--status-danger`. It is the *fixed* link colour, NOT the user's variable
+  system accent — adopting the variable accent for selection/focus is deliberately
+  deferred, and those stay neutral per B3. Exactly one link colour app-wide.
 - **Surfaces.** `--bg-window` is the chrome base behind the material;
   `--bg-content` is the opaque content panel; `--bg-elevated` is menus / popovers
   / HUD — in dark mode it is *lighter* than content so floating surfaces read as
@@ -514,11 +527,14 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
 - **Status.** `--status-success` (Sage), `--status-warning` (Mustard),
   `--status-info` (Sapphire), `--status-danger`. Status colour is reserved for
   genuine semantic state, not decoration. **It must never leak into interactive
-  meaning** — status colours never paint selection, hover, active rows, focus,
-  links, or any clickable affordance. In particular `--status-info` (blue) is for
-  an *informational status* only; it is not a link, selection, or accent colour,
-  and using it as one would read as a smuggled-in system accent (which we
-  deliberately avoid). The app has one accent (rose) and one link colour (rose).
+  meaning** — status colours never paint selection, hover, active rows, focus, or
+  any non-link clickable affordance. In particular `--status-info` (Sapphire) is
+  for an *informational status* only; it is not a selection or accent colour, and
+  painting functional state with it would read as a smuggled-in system accent
+  (which we deliberately avoid — selection/focus stay neutral per B3). It is a
+  distinct blue from `--link`: status blue marks state, the native link blue marks
+  a clickable link, and the two never swap roles. The app has one accent (rose)
+  and one link colour (the native link blue).
 - **Dark-mode rules.** Avoid pure `#000`/`#fff`; lean on the alpha-on-ink levels
   and the `#1e1e1e` / `#2a2a2c` / `#2e2e30` surface seeds. Separators and outlines
   invert with `--ink` automatically; drop shadows deepen.
@@ -998,10 +1014,10 @@ category history; see "Settings window".)
 - Inline reference atoms stay in text flow and must not break cursor,
   split/merge, paste, or IME behavior.
 - Inline references render as text links: normal text weight, no chip surface,
-  first-supertag text color when available, otherwise the brand `--link` (rose).
-  They must NOT introduce a second link colour (e.g. `--status-info` blue) — the
-  app has exactly one link colour. Reference nodes remain block rows with the
-  neutral dashed reference marker.
+  first-supertag text color when available, otherwise the `--link` native link
+  blue. They must NOT introduce a *second* link colour (e.g. reusing
+  `--status-info` blue) — the app has exactly one link colour. Reference nodes
+  remain block rows with the neutral dashed reference marker.
 - **One inline-mention language across the app.** A reference is a `.inline-ref`
   text link everywhere it renders — the outliner row editor (`pmSchema`), the
   agent composer editor, and the agent message render. A **node** reference is
