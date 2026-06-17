@@ -33,6 +33,12 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   invariants; redundant roster/conversation reloads; duplicated helpers; cold-path agent-dir rescan)
   all resolved in follow-up commit `12fba60a`; re-verified typecheck + channel/permission/catalog
   `test:core` 37 pass / 0 fail.
+- **File presentation redesign — outliner file row · simplified preview · external-open chip (PR #285, cc)** —
+  file nodes render as a dedicated outliner file row; the preview surface is simplified into a single
+  preview widget; and agent transcript file chips (`file_write` / `file_edit`) open externally, support
+  right-click + "Add to Today", and reveal the local file in Finder by path. (Backfilled: the #285 merge
+  added the plan file but neither a board entry nor this changelog line; the board entry + plan archive
+  were reconciled during the #290 gate sweep, and this entry closes the remaining changelog gap.)
 - **Conversational agent authoring — `/create-agent` (PR #286, codex; plan re-planned by cc-2)** —
   the `agentify` twin of `/skillify`, **with no new tool**. A built-in, user- and model-invocable
   `/create-agent` skill interviews for missing identity/routing/tool details, drafts a complete
@@ -1560,7 +1566,7 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
-- **self-definition write dedup in `agentLocalTools` (main, fast-track)** — behavior-preserving
+- **self-definition write dedup in `agentLocalTools` (PR #287, main)** — behavior-preserving
   cleanup of the #286 self-definition gateway: `file_edit` and `file_write` shared a 4×-duplicated
   `selfDefinitionWrite?.kind === 'skill'/'agent'` ladder (data spread, registry-reload notify, success
   `instructions`). Extracted three helpers — `selfDefinitionWriteData`,
