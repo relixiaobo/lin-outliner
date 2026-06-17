@@ -83,7 +83,9 @@ import {
   fallbackHint,
   isTransientNetworkError,
   makeRedirectedHostHint,
+  nextSecFetchSite,
   shouldTryBrowserFallbackForHttpFailure,
+  webFetchRefererForHop,
 } from './agentWebFetchFallback';
 import {
   BING_IMAGES_RESULT_SELECTOR,
@@ -573,13 +575,21 @@ async function fetchTextOnce(url: string, scratchRoot: string, signal?: AbortSig
   }
 }
 
+// State carried across a redirect hop so request headers can mirror a real
+// browser navigation: the referrer (the URL we are coming from) and the
+// chain-monotonic Sec-Fetch-Site value for the hop being made.
+interface WebFetchRedirectContext {
+  referrerUrl: string;
+  secFetchSite: 'same-origin' | 'cross-site';
+}
+
 async function fetchTextWithRedirects(
   currentUrl: string,
   startedUrl: string,
   signal: AbortSignal,
   scratchRoot: string,
   depth = 0,
-  referrerUrl?: string,
+  redirect?: WebFetchRedirectContext,
 ): Promise<FetchTextResult> {
   if (depth > WEB_FETCH_MAX_REDIRECTS) {
     throw new WebToolFailure('too_many_redirects', `too many redirects; exceeded ${WEB_FETCH_MAX_REDIRECTS}`);
@@ -589,7 +599,7 @@ async function fetchTextWithRedirects(
     method: 'GET',
     redirect: 'manual',
     signal,
-    headers: buildFetchHeaders(currentUrl, referrerUrl),
+    headers: buildFetchHeaders(currentUrl, redirect),
   });
 
   if (HTTP_REDIRECT_STATUSES.has(response.status)) {
@@ -608,7 +618,11 @@ async function fetchTextWithRedirects(
     if (!isPublicWebFetchUrl(redirectUrl)) {
       throw redirectedHostFailure(startedUrl, redirectUrl, response.status);
     }
-    return await fetchTextWithRedirects(redirectUrl, startedUrl, signal, scratchRoot, depth + 1, currentUrl);
+    const secFetchSite = nextSecFetchSite(redirect?.secFetchSite, currentUrl, redirectUrl);
+    return await fetchTextWithRedirects(redirectUrl, startedUrl, signal, scratchRoot, depth + 1, {
+      referrerUrl: currentUrl,
+      secFetchSite,
+    });
   }
 
   const finalUrl = response.url || currentUrl;
@@ -673,7 +687,7 @@ async function fetchTextWithRedirects(
 // sec-fetch-site:none plus the user-gesture bit. On a redirect hop it carries a
 // Referer (the previous URL) and a redirect-consistent sec-fetch-site, so the
 // request never looks like an impossible brand-new top-level nav mid-chain.
-function buildFetchHeaders(currentUrl: string, referrerUrl?: string): Record<string, string> {
+function buildFetchHeaders(currentUrl: string, redirect?: WebFetchRedirectContext): Record<string, string> {
   const headers: Record<string, string> = {
     'user-agent': WEB_FETCH_USER_AGENT,
     accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,text/plain;q=0.8,image/avif,image/webp,*/*;q=0.8',
@@ -685,22 +699,18 @@ function buildFetchHeaders(currentUrl: string, referrerUrl?: string): Record<str
     'sec-fetch-mode': 'navigate',
     'upgrade-insecure-requests': '1',
   };
-  if (!referrerUrl) {
+  if (!redirect) {
     headers['sec-fetch-site'] = 'none';
     headers['sec-fetch-user'] = '?1';
     return headers;
   }
-  headers.referer = referrerUrl;
-  headers['sec-fetch-site'] = sameOrigin(referrerUrl, currentUrl) ? 'same-origin' : 'cross-site';
+  // Referer follows Chrome's strict-origin-when-cross-origin default (origin-only
+  // cross-origin, dropped on an https→http downgrade); sec-fetch-site is the
+  // chain-monotonic value computed at redirect time.
+  const referer = webFetchRefererForHop(redirect.referrerUrl, currentUrl);
+  if (referer) headers.referer = referer;
+  headers['sec-fetch-site'] = redirect.secFetchSite;
   return headers;
-}
-
-function sameOrigin(a: string, b: string): boolean {
-  try {
-    return new URL(a).origin === new URL(b).origin;
-  } catch {
-    return false;
-  }
 }
 
 function resolveRedirectUrl(baseUrl: string, location: string | null): string | null {

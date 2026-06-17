@@ -8,6 +8,8 @@ import {
   isTransientNetworkError,
   looksLikeDynamicHtmlShell,
   makeRedirectedHostHint,
+  nextSecFetchSite,
+  webFetchRefererForHop,
 } from '../../src/main/agentWebFetchFallback';
 import {
   extractFetchedPageContent,
@@ -169,21 +171,45 @@ describe('agent web fetch fallback heuristics', () => {
     });
   });
 
-  test('isTransientNetworkError retries only recognized transient transport faults', () => {
-    // Recognized transient drops — worth one retry.
-    expect(isTransientNetworkError(new Error('net::ERR_CONNECTION_RESET'))).toBe(true);
-    expect(isTransientNetworkError(new Error('net::ERR_CONNECTION_CLOSED'))).toBe(true);
-    expect(isTransientNetworkError(new Error('net::ERR_NETWORK_CHANGED'))).toBe(true);
-    expect(isTransientNetworkError(new Error('net::ERR_EMPTY_RESPONSE'))).toBe(true);
-    expect(isTransientNetworkError(new Error('read ECONNRESET'))).toBe(true);
-    // Deterministic transport faults fail identically on a retry — not retried.
+  test('isTransientNetworkError denylists deterministic faults and retries the rest', () => {
+    // Deterministic transport faults fail identically on a retry — never retried.
     expect(isTransientNetworkError(new Error('net::ERR_NAME_NOT_RESOLVED'))).toBe(false);
     expect(isTransientNetworkError(new Error('net::ERR_CONNECTION_REFUSED'))).toBe(false);
     expect(isTransientNetworkError(new Error('net::ERR_CERT_AUTHORITY_INVALID'))).toBe(false);
     expect(isTransientNetworkError(new Error('net::ERR_UNSAFE_PORT'))).toBe(false);
-    // An unrecognized message is not retried by default (whitelist, not denylist).
-    expect(isTransientNetworkError(new Error('fetch failed'))).toBe(false);
-    expect(isTransientNetworkError('not an error object')).toBe(false);
+    expect(isTransientNetworkError(new Error('getaddrinfo ENOTFOUND host'))).toBe(false);
+    // Transient drops are retried — under the Chromium net:: shape...
+    expect(isTransientNetworkError(new Error('net::ERR_CONNECTION_RESET'))).toBe(true);
+    expect(isTransientNetworkError(new Error('net::ERR_NETWORK_CHANGED'))).toBe(true);
+    expect(isTransientNetworkError(new Error('read ECONNRESET'))).toBe(true);
+    // ...AND under a generic WHATWG rejection shape, so the retry is not silently
+    // dead if session.fetch does not surface a net:: code.
+    expect(isTransientNetworkError(new Error('Failed to fetch'))).toBe(true);
+    expect(isTransientNetworkError(new TypeError('fetch failed'))).toBe(true);
+  });
+
+  test('webFetchRefererForHop matches Chrome strict-origin-when-cross-origin', () => {
+    // Same origin → full URL minus fragment.
+    expect(webFetchRefererForHop('https://a.com/p?q=1#frag', 'https://a.com/next'))
+      .toBe('https://a.com/p?q=1');
+    // Cross-origin → origin only (no path/query leak).
+    expect(webFetchRefererForHop('https://a.com/secret/path?token=x', 'https://b.com/'))
+      .toBe('https://a.com/');
+    // https→http downgrade → no Referer at all.
+    expect(webFetchRefererForHop('https://a.com/p', 'http://b.com/')).toBeUndefined();
+    // http→http cross-origin still sends origin only.
+    expect(webFetchRefererForHop('http://a.com/p', 'http://b.com/')).toBe('http://a.com/');
+  });
+
+  test('nextSecFetchSite degrades monotonically across a redirect chain', () => {
+    // First hop from the initiator: immediate relationship.
+    expect(nextSecFetchSite(undefined, 'https://a.com/', 'https://a.com/2')).toBe('same-origin');
+    expect(nextSecFetchSite(undefined, 'https://a.com/', 'https://b.com/')).toBe('cross-site');
+    // Once cross-site, a later same-origin hop stays cross-site (chain semantics).
+    expect(nextSecFetchSite('cross-site', 'https://b.com/', 'https://b.com/2')).toBe('cross-site');
+    // Same-origin stays same-origin until the chain actually crosses.
+    expect(nextSecFetchSite('same-origin', 'https://a.com/', 'https://a.com/2')).toBe('same-origin');
+    expect(nextSecFetchSite('same-origin', 'https://a.com/', 'https://b.com/')).toBe('cross-site');
   });
 
   test('makeRedirectedHostHint always labels finalHost from the landing URL', () => {

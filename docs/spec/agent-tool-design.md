@@ -2241,7 +2241,11 @@ Result behavior:
   request headers (`sec-ch-ua`, `sec-fetch-*`, `accept-language`,
   `upgrade-insecure-requests`) so origins that gate on a browser identity serve
   real content instead of a bot challenge. The embedded-browser fallback renders
-  with the same identity.
+  with the same identity. Across a redirect chain the headers track a real
+  navigation: `Referer` follows Chrome's default strict-origin-when-cross-origin
+  policy (full URL same-origin, origin-only cross-origin, omitted on an https→http
+  downgrade) and `Sec-Fetch-Site` degrades monotonically (it stays `cross-site`
+  once the chain has crossed origin).
 - Redirects are followed transparently across hosts (link shorteners, trackers,
   regional/mobile subdomains), preserving the server's literal scheme on each hop
   (no http→https upgrade once redirecting — that would break an http-only
@@ -2251,11 +2255,15 @@ Result behavior:
   to re-fetch. A redirect to a local/private host is the one case that is refused,
   on both the HTTP path (each hop is validated) and the embedded-browser fallback
   (`will-navigate`/`will-redirect` are blocked and the landing URL is re-checked).
-- A recognized transient transport fault (a dropped/reset connection or a network
-  change) is retried once with a short backoff before surfacing; an unrecognized
-  network error is not retried by default. HTTP responses — 403/429/5xx,
-  Cloudflare, JS shells — are not network faults and are never retried at the HTTP
-  layer: they route straight to the embedded-browser render fallback.
+- A raw network throw is retried once with a short backoff before surfacing,
+  UNLESS it is a deterministic transport fault that would fail identically on a
+  retry (DNS NXDOMAIN, refused connection, TLS/cert, unsafe/blocked port, bad
+  scheme), which is surfaced immediately. The decision is a denylist of those
+  deterministic faults rather than a whitelist of transient codes, so the retry
+  still fires whether the platform surfaces a Chromium `net::ERR_*` code or a
+  generic fetch rejection. HTTP responses — 403/429/5xx, Cloudflare, JS shells —
+  are not network faults and are never retried at the HTTP layer: they route
+  straight to the embedded-browser render fallback.
 - Authentication walls return `login_required`; JavaScript-only shells,
   Cloudflare, or HTTP errors that might work in a live browser return
   `needs_browser` and trigger the embedded-browser render fallback. A Cloudflare

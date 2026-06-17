@@ -323,7 +323,11 @@ export function isPublicWebFetchUrl(rawUrl: string): boolean {
 }
 
 function validatePublicWebHost(hostname: string): { ok: true } | { ok: false; message: string } {
-  const host = hostname.toLowerCase();
+  // Strip a single FQDN-root trailing dot ('localhost.', 'printer.local.') first:
+  // the parser keeps it for domain names, and it resolves identically, so without
+  // this it would slip past the loopback/mDNS checks below. (The parser already
+  // strips the dot from IPv4 literals, so this never affects them.)
+  const host = hostname.toLowerCase().replace(/\.$/, '');
   if (!host) return { ok: false, message: 'url host is required' };
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
     return { ok: false, message: `local host is not supported for web_fetch: ${hostname}` };
@@ -355,12 +359,35 @@ function validateIpv4Host(host: string): { ok: true } | { ok: false; message: st
 }
 
 function validateIpv6Host(host: string): { ok: true } | { ok: false; message: string } {
-  const normalized = host.replace(/^\[|\]$/g, '');
-  if (normalized === '::' || normalized === '::1') {
-    return { ok: false, message: `local IPv6 host is not supported for web_fetch: ${host}` };
+  const normalized = host.replace(/^\[|\]$/g, '').toLowerCase();
+  const blocked = (): { ok: false; message: string } => ({
+    ok: false,
+    message: `private or local IPv6 host is not supported for web_fetch: ${host}`,
+  });
+  if (normalized === '::' || normalized === '::1') return blocked();
+
+  // IPv4-mapped / -compatible IPv6 — both the dotted form ('::ffff:127.0.0.1',
+  // '::169.254.169.254') and the hex form the URL parser normalizes them to
+  // ('[::ffff:169.254.169.254]' serializes to '::ffff:a9fe:a9fe') — must defer to
+  // the IPv4 classifier, or loopback/metadata/private v4 would tunnel through.
+  const dotted = normalized.match(/^::(?:ffff:)?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (dotted) return validateIpv4Host(dotted[1]!);
+  const mappedHex = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (mappedHex) {
+    const high = parseInt(mappedHex[1]!, 16);
+    const low = parseInt(mappedHex[2]!, 16);
+    return validateIpv4Host(`${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`);
   }
-  if (/^(fc|fd|fe80):/i.test(normalized)) {
-    return { ok: false, message: `private or local IPv6 host is not supported for web_fetch: ${host}` };
+
+  // Range checks on the leading hextet. The old /^(fc|fd|fe80):/ only matched the
+  // degenerate 'fc:'/'fd:'/'fe80:' forms and missed every real address; cover the
+  // whole ranges: fc00::/7 unique-local (0xfc00–0xfdff), fe80::/10 link-local +
+  // fec0::/10 site-local (0xfe80–0xfeff), and ff00::/8 multicast/reserved.
+  const firstHextet = parseInt(normalized.split(':')[0] || '', 16);
+  if (Number.isFinite(firstHextet)) {
+    const highByte = firstHextet >> 8;
+    if (highByte === 0xfc || highByte === 0xfd || highByte === 0xff) return blocked();
+    if (firstHextet >= 0xfe80 && firstHextet <= 0xfeff) return blocked();
   }
   return { ok: true };
 }
