@@ -80,15 +80,12 @@ interface AgentFormState {
 export function AgentEditor({ agent, availableSkills, providerSettings, busy, onCreate, onUpdate, onDelete, onDuplicate, onCancel }: AgentEditorProps) {
   const messages = useT();
   const t = messages.settings.agents;
+  // The built-in assistant (Neva) is directly editable — its edits persist to the
+  // settings overlay, not a file — but it can't be deleted (no file to remove); we
+  // still suppress the Delete action for it below. Other non-writable definitions
+  // (external read-only agent dirs) render through the SAME editor, just read-only.
   const isBuiltIn = agent?.source === 'built-in';
-  // Non-writable definitions render through the SAME editor, just read-only —
-  // same abstraction as a writable agent, so the only difference a user sees is
-  // "can I change it".
   const readOnly = agent ? !isWritableAgentDefinition(agent) : false;
-  // A built-in's definition is fixed, but its model/effort are editable and persist
-  // to the settings overlay — so the model selector stays live even when the rest of
-  // the form is read-only (provider-connection-model-ownership #256).
-  const modelEffortReadOnly = readOnly && !isBuiltIn;
   const skillNames = useMemo(() => availableSkills.map((skill) => skill.name), [availableSkills]);
   const [form, setForm] = useState<AgentFormState>(() => seedForm(agent, skillNames, newAgentScaffold(t)));
   const [mode, setMode] = useState<EditorMode>('form');
@@ -148,8 +145,6 @@ export function AgentEditor({ agent, availableSkills, providerSettings, busy, on
         />
       </header>
 
-      {isBuiltIn ? <p className="agent-editor-hint">{t.builtInReadOnly}</p> : null}
-
       {mode === 'raw' ? (
         <Field as="label" className="agent-editor-persona" label={t.rawLabel} labelClassName="agent-profile-field-label">
           <textarea
@@ -171,7 +166,7 @@ export function AgentEditor({ agent, availableSkills, providerSettings, busy, on
               <Input className="settings-sheet-row-input" label={t.descriptionLabel} onChange={(e) => update('description', e.target.value)} placeholder={t.descriptionPlaceholder} readOnly={readOnly} value={form.description} variant="bare" />
             </Field>
             <AgentModelEffortSelector
-              disabled={modelEffortReadOnly}
+              disabled={readOnly}
               effort={form.effort}
               effortLabel={t.thinkingLevel}
               inheritLabel={t.effortDefault}
@@ -253,6 +248,8 @@ export function AgentEditor({ agent, availableSkills, providerSettings, busy, on
 
       <div className="agent-editor-actions">
         {readOnly && agent ? (
+          // External read-only definitions (e.g. an additional agent directory):
+          // viewable here, duplicated to edit. The built-in is no longer read-only.
           <>
             {onCancel ? (
               <Button disabled={busy} onClick={onCancel} variant="ghost">
@@ -260,23 +257,20 @@ export function AgentEditor({ agent, availableSkills, providerSettings, busy, on
               </Button>
             ) : <span />}
             <span className="agent-editor-actions-right">
-              <Button disabled={busy} onClick={() => onDuplicate(agent)} variant={isBuiltIn ? 'secondary' : 'primary'}>
+              <Button disabled={busy} onClick={() => onDuplicate(agent)} variant="primary">
                 {t.duplicateToMine}
               </Button>
-              {/* A built-in's model/effort are editable and persist to the settings
-                  overlay, so it gets a real Save even though the rest is read-only. */}
-              {isBuiltIn ? (
-                <Button disabled={busy} onClick={submit} variant="primary">
-                  {t.saveAgent}
-                </Button>
-              ) : null}
             </span>
           </>
         ) : agent ? (
           <>
-            <Button className="agent-editor-delete" disabled={busy} onClick={() => onDelete(agent)} variant="danger">
-              {t.deleteAgent}
-            </Button>
+            {/* The built-in assistant is editable but not deletable — it is the one
+                agent that always exists, and it has no file to remove. */}
+            {isBuiltIn ? <span /> : (
+              <Button className="agent-editor-delete" disabled={busy} onClick={() => onDelete(agent)} variant="danger">
+                {t.deleteAgent}
+              </Button>
+            )}
             <span className="agent-editor-actions-right">
               {onCancel ? (
                 <Button disabled={busy} onClick={onCancel} variant="ghost">

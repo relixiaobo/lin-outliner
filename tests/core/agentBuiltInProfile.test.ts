@@ -89,4 +89,64 @@ describe('built-in agent profile overlay', () => {
     expect(await getBuiltInAgentProfile('assistant')).toEqual({});
     expect(await readBuiltInProfiles()).toEqual({});
   });
+
+  test('round-trips the full editable profile (Neva is directly customizable)', async () => {
+    await setBuiltInAgentProfile('assistant', {
+      displayName: 'Lin',
+      description: 'My editing partner',
+      body: 'You are Lin. Be terse.',
+      model: 'openai/gpt-5.4',
+      effort: 'high',
+      permissionMode: 'restricted',
+      maxTurns: 12,
+      tools: ['file_read', 'file_glob'],
+      disallowedTools: ['shell'],
+      skills: ['research'],
+      background: true,
+    });
+
+    expect(await getBuiltInAgentProfile('assistant')).toEqual({
+      displayName: 'Lin',
+      description: 'My editing partner',
+      body: 'You are Lin. Be terse.',
+      model: 'openai/gpt-5.4',
+      effort: 'high',
+      permissionMode: 'restricted',
+      maxTurns: 12,
+      tools: ['file_read', 'file_glob'],
+      disallowedTools: ['shell'],
+      skills: ['research'],
+      background: true,
+    });
+  });
+
+  test('the stable `name` is never stored in the overlay — renaming edits displayName only', async () => {
+    await setBuiltInAgentProfile('assistant', { displayName: 'Lin' });
+    const stored = (await readBuiltInProfiles()).assistant as Record<string, unknown>;
+    expect(stored.displayName).toBe('Lin');
+    expect('name' in stored).toBe(false);
+  });
+
+  test('empty strings / empty lists / false flags clear their fields, and clearing all removes the entry', async () => {
+    await setBuiltInAgentProfile('assistant', {
+      displayName: 'Lin',
+      description: 'x',
+      body: 'y',
+      tools: ['file_read'],
+      maxTurns: 5,
+      background: true,
+    });
+    expect(await getBuiltInAgentProfile('assistant')).not.toEqual({});
+
+    await setBuiltInAgentProfile('assistant', {
+      displayName: '  ',
+      description: '',
+      body: '   ',
+      tools: [],
+      maxTurns: 0,
+      background: false,
+    });
+    expect(await getBuiltInAgentProfile('assistant')).toEqual({});
+    expect(await readBuiltInProfiles()).toEqual({});
+  });
 });

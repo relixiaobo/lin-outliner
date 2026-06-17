@@ -131,7 +131,7 @@ async function expectRejects(fn: () => Promise<unknown>, message: string) {
 }
 
 describe('agent runtime conversations', () => {
-  test('exposes the built-in Tenon assistant as a view-only agent definition', async () => {
+  test('exposes the built-in Tenon assistant as a directly editable agent definition', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
     roots.push(dataRoot);
     const { runtime } = await createRuntime(dataRoot);
@@ -147,8 +147,39 @@ describe('agent runtime conversations', () => {
       rootDir: 'built-in',
       agentFile: 'built-in/assistant',
       description: 'Default Tenon assistant profile.',
+      // Editable in place (its edits persist to the settings overlay, not a file).
+      writable: true,
     });
     expect(assistant?.body).toContain('You are Neva.');
+  });
+
+  test('editing the built-in assistant overlays display name + persona, keeping the stable id', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    try {
+      await runtime.updateAgentDefinition('workspace', ASSISTANT_AGENT_ID, {
+        name: 'Lin',
+        description: 'My editing partner',
+        body: 'You are Lin. Be terse.',
+      });
+
+      const assistant = (await runtime.listAllAgentDefinitions('workspace'))
+        .find((definition) => definition.agentId === ASSISTANT_AGENT_ID);
+
+      // The name field edits the DISPLAY name; the stable id / `name` is untouched, so
+      // memory anchored to the agentId never orphans on a rename.
+      expect(assistant?.agentId).toBe(ASSISTANT_AGENT_ID);
+      expect(assistant?.name).toBe('assistant');
+      expect(assistant?.displayName).toBe('Lin');
+      expect(assistant?.description).toBe('My editing partner');
+      expect(assistant?.body).toBe('You are Lin. Be terse.');
+      expect(assistant?.writable).toBe(true);
+    } finally {
+      // The overlay lives under the shared mocked userData — reset it so sibling tests
+      // still see the default Neva.
+      await rm(path.join(electronUserDataRoot, 'agent-providers.json'), { force: true });
+    }
   });
 
   test('previews run-scoped tool output payloads only with the owning run id', async () => {

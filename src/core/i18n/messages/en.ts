@@ -271,7 +271,6 @@ export const en = {
       deleteAgent: 'Delete',
       duplicateToMine: 'Duplicate to my agents',
       deleteConfirm: ({ name }: { name: string }) => `Delete agent “${name}”? This removes its AGENT.md.`,
-      builtInReadOnly: 'Built-in agents are read-only except for the model and effort. Duplicate to create a fully editable copy.',
       nameRequired: 'Enter an agent name.',
       createdNotice: 'Agent created.',
       savedAgentNotice: 'Agent saved.',

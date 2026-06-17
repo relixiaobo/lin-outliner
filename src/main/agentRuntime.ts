@@ -162,6 +162,7 @@ import {
   providerStreamOptionsFromRuntimeSettings,
   rankedModels,
   type AgentProviderRuntimeConfig,
+  type StoredBuiltInAgentProfile,
 } from './agentSettings';
 import { parseProviderQualifiedModel } from '../core/agentModelId';
 import {
@@ -630,7 +631,11 @@ export class AgentRuntime {
   private agentTaskCache: AgentRenderTaskEntity[] = [];
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
   private readonly contextManager: AgentRuntimeContextManager<AgentConversationState>;
-  private readonly agentIdentity: AgentIdentityRecord;
+  // Mutable: the primary agent (Neva) is user-customizable, so her display name and
+  // composed system prompt are refreshed from the editable built-in overlay at
+  // startup and after each edit ([[single-agent-collapse]]). `agentId` never changes
+  // — it stays the stable memory anchor.
+  private agentIdentity: AgentIdentityRecord;
   private readonly domainEvents: AgentDomainEventBus;
   /** The write seam for delegated runs' own ledgers ([[agent-run-unification]]). */
   /** Drill-in transcripts keyed on the run ledger's tail seq (see childRunTranscript). */
@@ -715,6 +720,10 @@ export class AgentRuntime {
 
   ready() {
     this.emit({ type: 'ready', conversationId: null, timestamp: Date.now() });
+    // Load the user's editable assistant overlay into the primary identity (display
+    // name + composed persona) before conversations are set up.
+    void this.refreshPrimaryAgentIdentity()
+      .catch((error) => this.reportWarn('agent-runtime', 'Failed to load assistant profile overlay.', error));
     void this.ensureGeneralChannelEventState()
       .catch((error) => this.reportWarn('agent-runtime', 'Failed to ensure #General.', error));
     this.queueScheduledDream(new Date());
@@ -1472,18 +1481,15 @@ export class AgentRuntime {
   async listAllAgentDefinitions(conversationId: string): Promise<AgentDefinitionView[]> {
     const definitions = await this.listRawAgentDefinitions(conversationId);
     const localRoot = this.authoringLocalRoot();
-    return Promise.all(this.withBuiltInAgentDefinitions(definitions).map(async (definition) => {
-      const agentId = agentDefinitionAgentId(definition);
-      // Surface the built-in's editable model/effort overlay on its view so the
-      // editor renders the user's saved selection (not the inert `inherit` default).
-      const overlaid = definition.source === 'built-in'
-        ? { ...definition, ...(await this.resolveDefinitionModelEffort(agentId, definition)) }
-        : definition;
-      return {
-        ...overlaid,
-        agentId,
-        writable: isAgentDefinitionWritable(definition, localRoot),
-      };
+    // `withBuiltInAgentDefinitions` already layers the built-in's editable overlay
+    // (display name, persona, model/effort, tools, …) onto the injected definition,
+    // so the editor renders the user's saved values. The built-in is directly
+    // editable (its edits persist to the settings overlay, not a file), so it is
+    // `writable` even though it has no AGENT.md.
+    return (await this.withBuiltInAgentDefinitions(definitions)).map((definition) => ({
+      ...definition,
+      agentId: agentDefinitionAgentId(definition),
+      writable: definition.source === 'built-in' ? true : isAgentDefinitionWritable(definition, localRoot),
     }));
   }
 
@@ -1506,13 +1512,42 @@ export class AgentRuntime {
     return tempRuntime.listAllAgentDefinitions();
   }
 
-  private withBuiltInAgentDefinitions(definitions: readonly AgentDefinition[]): AgentDefinition[] {
-    const builtIn = createTenonAssistantAgentDefinition();
+  private async withBuiltInAgentDefinitions(definitions: readonly AgentDefinition[]): Promise<AgentDefinition[]> {
+    const builtIn = await this.materializeBuiltInAgentDefinition();
     const builtInId = agentDefinitionAgentId(builtIn);
     return [
       builtIn,
       ...definitions.filter((definition) => agentDefinitionAgentId(definition) !== builtInId),
     ];
+  }
+
+  /**
+   * The built-in assistant (Neva) definition with the user's editable overlay applied
+   * — the single seam every list/execute path goes through, so an edit to the persona,
+   * display name, tools, etc. takes effect everywhere. The stable `name` (memory
+   * anchor) is never overlaid; only what the user can see and change.
+   */
+  private async materializeBuiltInAgentDefinition(): Promise<AgentDefinition> {
+    const base = createTenonAssistantAgentDefinition();
+    const overlay = await getBuiltInAgentProfile(agentDefinitionAgentId(base));
+    return applyBuiltInAgentProfile(base, overlay);
+  }
+
+  /**
+   * Rebuild the primary agent's identity (display name + composed system prompt +
+   * skills) from the editable built-in overlay. Called at startup to pick up a
+   * persisted overlay, and after each built-in edit. The system prompt is composed
+   * in `main` mode — the same recipe as the code default — so customizing the persona
+   * never silently drops the main-agent capabilities (recall/dream).
+   */
+  private async refreshPrimaryAgentIdentity(): Promise<void> {
+    const definition = await this.materializeBuiltInAgentDefinition();
+    this.agentIdentity = {
+      ...this.agentIdentity,
+      displayName: agentDefinitionDisplayName(definition),
+      systemPrompt: composeAgentPrompt(definition, { mode: 'main' }),
+      skills: definition.skills ?? [],
+    };
   }
 
   // Authoring (user-driven only — see [[agent-authoring]]). Each write goes
@@ -1535,16 +1570,34 @@ export class AgentRuntime {
     input: AgentAuthoringInput,
   ): Promise<AgentDefinitionView[]> {
     const existing = await this.resolveAgentDefinitionById(conversationId, agentId);
-    // A built-in definition is read-only code: only its model/effort are editable,
-    // and they persist to the settings overlay rather than a (non-existent) file.
+    // The built-in assistant (Neva) is directly editable, but it is code, not a
+    // file — so its edits persist to the settings overlay. The editor's name field
+    // edits the display name (the stable `name`/memory anchor never changes), then
+    // we rebuild the primary identity + refresh live conversations so a rename shows
+    // immediately, not only on the next conversation setup.
     if (existing.source === 'built-in') {
       await setBuiltInAgentProfile(agentId, {
+        displayName: input.name,
+        description: input.description,
+        body: input.body,
         model: input.model ?? null,
         effort: typeof input.effort === 'string' ? input.effort : null,
+        permissionMode: input.permissionMode ?? null,
+        maxTurns: input.maxTurns ?? null,
+        tools: input.tools ?? null,
+        disallowedTools: input.disallowedTools ?? null,
+        skills: input.skills ?? null,
+        background: input.background ?? null,
       });
-    } else {
-      await updateAgentDefinitionFile({ existing, input, localRoot: this.authoringLocalRoot() });
+      await this.refreshPrimaryAgentIdentity();
+      const views = await this.reloadAgentDefinitions(conversationId);
+      for (const [id, conversation] of this.conversations) {
+        await this.refreshMemberDisplayNames(conversation);
+        this.emitProjection(id, 'agent_definitions_reloaded');
+      }
+      return views;
     }
+    await updateAgentDefinitionFile({ existing, input, localRoot: this.authoringLocalRoot() });
     return this.reloadAgentDefinitions(conversationId);
   }
 
@@ -1586,7 +1639,7 @@ export class AgentRuntime {
 
   private async resolveAgentDefinitionById(conversationId: string, agentId: string): Promise<AgentDefinition> {
     const definitions = await this.listRawAgentDefinitions(conversationId);
-    const match = this.withBuiltInAgentDefinitions(definitions)
+    const match = (await this.withBuiltInAgentDefinitions(definitions))
       .find((definition) => agentDefinitionAgentId(definition) === agentId);
     if (!match) throw new Error('Agent definition not found.');
     return match;
@@ -2294,13 +2347,17 @@ export class AgentRuntime {
     const defaultAgentProfile = providerConfig && defaultAgentId !== this.agentIdentity.agentId
       ? await this.resolveAgentProfile(defaultAgentId, delegationRuntime, skillRuntime, { providerConfig }).catch(() => null)
       : null;
-    // The built-in assistant owns its model/effort through a settings overlay, not
-    // the provider connection — resolve it the same way a profile agent resolves
-    // its own, while keeping the built-in's base system prompt unchanged.
+    // The built-in assistant (Neva) is user-customizable: its display name + persona
+    // ride `this.agentIdentity` (refreshed from the editable overlay), its model/effort
+    // resolve through the same overlay over the provider connection, and its tool
+    // allow/deny list comes from the overlaid definition below.
     const builtInModelEffort = providerConfig && defaultAgentId === this.agentIdentity.agentId
       // null when the connection has no resolvable model yet (a fresh custom endpoint
       // with no assistant default chosen) — surfaced below as a configuration error.
       ? await this.resolveBuiltInAssistantModelEffort(providerConfig).catch(() => null)
+      : null;
+    const builtInToolOverlay = defaultAgentId === this.agentIdentity.agentId
+      ? await this.materializeBuiltInAgentDefinition().catch(() => null)
       : null;
     if (defaultAgentProfile) {
       await this.getEventStore().writeAgentIdentity(defaultAgentProfile.identity);
@@ -2330,8 +2387,8 @@ export class AgentRuntime {
           selfMaintenance: defaultAgentId === this.agentIdentity.agentId
             ? this.createSelfMaintenanceRuntime(() => conversationId, () => conversationRef.current)
             : undefined,
-          allowedTools: defaultAgentProfile?.definition.tools,
-          disallowedTools: defaultAgentProfile?.definition.disallowedTools,
+          allowedTools: defaultAgentProfile?.definition.tools ?? builtInToolOverlay?.tools,
+          disallowedTools: defaultAgentProfile?.definition.disallowedTools ?? builtInToolOverlay?.disallowedTools,
           streamFn: this.options.streamFn,
           completeSimpleFn: this.options.completeSimpleFn,
           providerApiKeyLoader: this.options.providerApiKeyLoader,
@@ -5795,7 +5852,7 @@ export class AgentRuntime {
     systemPrompt: string;
     definition: AgentDefinition;
   }> {
-    const definitions = this.withBuiltInAgentDefinitions(await delegationRuntime.listAllAgentDefinitions());
+    const definitions = await this.withBuiltInAgentDefinitions(await delegationRuntime.listAllAgentDefinitions());
     const definition = definitions.find((candidate) => agentDefinitionAgentId(candidate) === agentId);
     if (!definition) throw new Error(`Agent definition not found: ${agentId}`);
     const providerConfig = options.providerConfig ?? await this.getActiveProviderConfig();
@@ -7276,6 +7333,28 @@ function addUsage(left: Usage, right: Usage): Usage {
       total: left.cost.total + right.cost.total,
     },
   };
+}
+
+/**
+ * Layer the user's editable overlay onto the code-default built-in assistant. Only
+ * the fields the user can change are overlaid; `name`/`source`/`rootDir`/`agentFile`
+ * stay from the base so the agentId — the stable memory anchor — never moves, no
+ * matter how Neva is renamed ([[single-agent-collapse]]).
+ */
+function applyBuiltInAgentProfile(base: AgentDefinition, overlay: StoredBuiltInAgentProfile): AgentDefinition {
+  const next: AgentDefinition = { ...base };
+  if (overlay.displayName !== undefined) next.displayName = overlay.displayName;
+  if (overlay.description !== undefined) next.description = overlay.description;
+  if (overlay.body !== undefined) next.body = overlay.body;
+  if (overlay.model !== undefined) next.model = overlay.model;
+  if (overlay.effort !== undefined) next.effort = overlay.effort;
+  if (overlay.permissionMode !== undefined) next.permissionMode = overlay.permissionMode;
+  if (overlay.maxTurns !== undefined) next.maxTurns = overlay.maxTurns;
+  if (overlay.tools !== undefined) next.tools = overlay.tools;
+  if (overlay.disallowedTools !== undefined) next.disallowedTools = overlay.disallowedTools;
+  if (overlay.skills !== undefined) next.skills = overlay.skills;
+  if (overlay.background !== undefined) next.background = overlay.background;
+  return next;
 }
 
 function createDefaultAgentIdentity(): AgentIdentityRecord {

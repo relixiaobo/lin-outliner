@@ -242,7 +242,6 @@ export const zhHans: PartialMessages = {
       deleteAgent: '删除',
       duplicateToMine: '复制到我的智能体',
       deleteConfirm: ({ name }: { name: string }) => `删除智能体「${name}」？这会移除它的 AGENT.md。`,
-      builtInReadOnly: '内置智能体除模型与思考程度外均只读。复制后可创建完全可编辑的副本。',
       nameRequired: '请输入智能体名称。',
       createdNotice: '智能体已创建。',
       savedAgentNotice: '智能体已保存。',
