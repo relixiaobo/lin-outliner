@@ -12,7 +12,6 @@ const RUNTIME_SETTINGS: AgentRuntimeSettings = {
   automaticSkillsEnabled: true,
   slashSkillsEnabled: true,
   compactEnabled: true,
-  memoryIsolation: 'global',
   additionalSkillDirectories: ['/tmp/skills'],
   additionalAgentDirectories: [],
   providerTimeoutMs: null,
@@ -165,12 +164,9 @@ describe('agent self-maintenance tools', () => {
     expect(normalizeRuntimeSettingPatch('agent.runtime.providerTimeoutMs', null)).toEqual({
       providerTimeoutMs: null,
     });
-    expect(normalizeRuntimeSettingPatch('agent.runtime.memoryIsolation', 'read-only-global')).toEqual({
-      memoryIsolation: 'read-only-global',
-    });
-    // 'isolated' was removed: memory is one undivided pool per principal.
-    expect(() => normalizeRuntimeSettingPatch('agent.runtime.memoryIsolation', 'isolated')).toThrow(
-      'agent.runtime.memoryIsolation must be "global" or "read-only-global".',
+    // memoryIsolation was removed: memory is one undivided believer pool, always writable.
+    expect(() => normalizeRuntimeSettingPatch('agent.runtime.memoryIsolation', 'global')).toThrow(
+      'Unsupported config setting: agent.runtime.memoryIsolation',
     );
     expect(() => normalizeRuntimeSettingPatch('agent.runtime.providerCacheRetention', 'forever')).toThrow(
       'agent.runtime.providerCacheRetention must be "none", "short", or "long".',
@@ -185,7 +181,9 @@ describe('agent self-maintenance tools', () => {
 
   test('runtime setting reads use the same whitelist as writes', () => {
     expect(readRuntimeSetting(RUNTIME_SETTINGS, 'agent.runtime.compactEnabled')).toBe(true);
-    expect(readRuntimeSetting(RUNTIME_SETTINGS, 'agent.runtime.memoryIsolation')).toBe('global');
+    expect(() => readRuntimeSetting(RUNTIME_SETTINGS, 'agent.runtime.memoryIsolation')).toThrow(
+      'Unsupported config setting: agent.runtime.memoryIsolation',
+    );
     expect(readRuntimeSetting(RUNTIME_SETTINGS, 'agent.runtime.disabledAgents')).toEqual([]);
     expect(() => readRuntimeSetting(RUNTIME_SETTINGS, 'agent.runtime.additionalSkillDirectories')).toThrow(
       'Unsupported config setting: agent.runtime.additionalSkillDirectories',

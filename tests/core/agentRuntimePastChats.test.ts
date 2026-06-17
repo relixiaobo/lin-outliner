@@ -1646,65 +1646,6 @@ describe('agent runtime past chats integration', () => {
     expect(events.some((event) => event.type === 'memory.episode_recorded')).toBe(false);
   });
 
-  test('manual /dream is disabled for read-only-global memory isolation', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-readonly-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-readonly-data-'));
-    roots.push(localRoot, dataRoot);
-    let dreamCalls = 0;
-    const script = scriptedStream(
-      [fauxAssistantMessage(fauxText('Understood.'))],
-      () => undefined,
-    );
-
-    const { AgentRuntime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new AgentRuntime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        dreamMemoryExtractionEnabled: true,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        runtimeSettingsLoader: async () => ({
-          permissionMode: 'trusted',
-          automaticSkillsEnabled: false,
-          slashSkillsEnabled: false,
-          compactEnabled: true,
-          memoryIsolation: 'read-only-global',
-          additionalSkillDirectories: [],
-          additionalAgentDirectories: [],
-        }),
-        streamFn: script.streamFn,
-        completeSimpleFn: async (model) => {
-          dreamCalls += 1;
-          return normalizeAssistantMessage(
-            fauxAssistantMessage(JSON.stringify({
-              actions: [{ type: 'add', fact: 'This should not be saved.' }],
-            })),
-            model as Model<Api>,
-          );
-        },
-      },
-    );
-
-    const created = await runtime.restoreLatestConversation();
-    await runtime.sendMessage(created.conversationId, 'Do not write memories in this workspace.');
-    await runtime.sendMessage(created.conversationId, '/dream');
-    await runtime.drainDreamMemoryExtractionForTest();
-
-    const entries = await new AgentEventStore(dataRoot).listMemoryEntries(agentPrincipal('built-in:tenon:assistant'));
-
-    expect(script.pendingCount()).toBe(0);
-    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    expect(dreamCalls).toBe(0);
-    expect(entries).toEqual([]);
-  });
-
   test('the Settings management surface lists and forgets across the agent and user pools', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-manage-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-manage-data-'));

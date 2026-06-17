@@ -542,7 +542,6 @@ interface AgentDreamMemoryExtractionBatch {
 }
 
 interface AgentDreamMemoryScope {
-  readOnly: boolean;
   /** Provenance tag for new entries — where this runtime works; never a retrieval fence. */
   originWorkspace?: string;
 }
@@ -3392,7 +3391,6 @@ export class AgentRuntime {
   /** The pass-level Dream gates (also re-checked per task for the manual path). */
   private async dreamPassGatesOpen(): Promise<boolean> {
     if (!this.dreamMemoryExtractionEnabled()) return false;
-    if ((await this.dreamMemoryScope()).readOnly) return false;
     return Boolean(await this.getActiveProviderConfig());
   }
 
@@ -3506,7 +3504,6 @@ export class AgentRuntime {
   ): Promise<AgentDreamMemoryExtractionTask | null> {
     if (!this.dreamMemoryExtractionEnabled()) return null;
     const memoryScope = await this.dreamMemoryScope();
-    if (memoryScope.readOnly) return null;
     if (!await this.getActiveProviderConfig()) return null;
 
     const dreamState = await this.getEventStore().readDreamState(principal);
@@ -5081,14 +5078,9 @@ export class AgentRuntime {
   }
 
   private async dreamMemoryScope(): Promise<AgentDreamMemoryScope> {
-    const runtimeSettings = await this.getRuntimeSettings();
-    // 'read-only-global' pauses Dream writes (stop learning); otherwise memory is one undivided
-    // pool per principal — `originWorkspace` only tags new entries with provenance.
-    if ((runtimeSettings.memoryIsolation ?? 'global') === 'read-only-global') return { readOnly: true };
-    return {
-      readOnly: false,
-      originWorkspace: this.memoryOriginWorkspace() ?? undefined,
-    };
+    // Memory is one undivided believer pool; `originWorkspace` only tags new entries
+    // with provenance, never fences retrieval.
+    return { originWorkspace: this.memoryOriginWorkspace() ?? undefined };
   }
 
   private async buildMemoryReminder(
