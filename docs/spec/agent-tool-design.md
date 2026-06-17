@@ -2277,12 +2277,40 @@ Result behavior:
   snippets with offsets, similar to `file_grep` over one fetched URL.
 - `offset`/`max_chars` page full content in read mode.
   `match_offset`/`head_limit` page matches in find mode.
-- Same-host redirects may be followed transparently. Cross-host redirects should
-  return `data.hint.type: "redirected_host"` unless the final host is already
-  permitted; the agent can then call `web_fetch` on `finalUrl`.
+- Requests present a real Chrome desktop User-Agent and the matching browser
+  request headers (`sec-ch-ua`, `sec-fetch-*`, `accept-language`,
+  `upgrade-insecure-requests`) so origins that gate on a browser identity serve
+  real content instead of a bot challenge. The embedded-browser fallback renders
+  with the same identity. Across a redirect chain the headers track a real
+  navigation: `Referer` follows Chrome's default strict-origin-when-cross-origin
+  policy (full URL same-origin, origin-only cross-origin, omitted on an https→http
+  downgrade) and `Sec-Fetch-Site` degrades monotonically (it stays `cross-site`
+  once the chain has crossed origin).
+- Redirects are followed transparently across hosts (link shorteners, trackers,
+  regional/mobile subdomains), preserving the server's literal scheme on each hop
+  (no http→https upgrade once redirecting — that would break an http-only
+  target). When the landing host differs from the requested host the result still
+  returns content plus a non-fatal `data.hint.type: "redirected_host"` and a
+  warning, with `finalUrl` reflecting the landing page — the agent does not need
+  to re-fetch. A redirect to a local/private host is the one case that is refused,
+  on both the HTTP path (each hop is validated) and the embedded-browser fallback
+  (`will-navigate`/`will-redirect` are blocked and the landing URL is re-checked).
+- A raw network throw is retried once with a short backoff before surfacing,
+  UNLESS it is a deterministic transport fault that would fail identically on a
+  retry (DNS NXDOMAIN, refused connection, TLS/cert, unsafe/blocked port, bad
+  scheme), which is surfaced immediately. The decision is a denylist of those
+  deterministic faults rather than a whitelist of transient codes, so the retry
+  still fires whether the platform surfaces a Chromium `net::ERR_*` code or a
+  generic fetch rejection. HTTP responses — 403/429/5xx, Cloudflare, JS shells —
+  are not network faults and are never retried at the HTTP layer: they route
+  straight to the embedded-browser render fallback.
 - Authentication walls return `login_required`; JavaScript-only shells,
   Cloudflare, or HTTP errors that might work in a live browser return
-  `needs_browser`.
+  `needs_browser` and trigger the embedded-browser render fallback. A Cloudflare
+  challenge is detected by narrow markers (the `*cf_chl*` tokens and the visible
+  interstitial phrases) that appear only on the actual block page — a full article
+  that merely embeds a Cloudflare analytics/turnstile beacon or the
+  challenge-platform script bundle is returned as-is, not flagged as a challenge.
 - Binary content returns `binary_unsupported` unless Lin implements a binary
   persistence path. If binary persistence is added, return a file path in
   `data.metadata` and keep model-visible text short.

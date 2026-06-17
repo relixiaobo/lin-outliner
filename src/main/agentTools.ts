@@ -33,8 +33,11 @@ import {
   MAX_FETCH_CHARS,
   MAX_SEARCH_LIMIT,
   WEB_FETCH_BROWSER_TIMEOUT_MS,
+  WEB_FETCH_CLIENT_HINT_PLATFORM,
+  WEB_FETCH_CLIENT_HINT_UA,
   WEB_FETCH_MAX_REDIRECTS,
   WEB_FETCH_RENDER_SETTLE_MS,
+  WEB_FETCH_RETRY_DELAY_MS,
   WEB_FETCH_USER_AGENT,
   WEB_SEARCH_RETRY_DELAY_MS,
   WEB_SEARCH_USER_AGENT,
@@ -43,6 +46,7 @@ import {
   buildGoogleSearchUrl,
   buildWebFetchSuccessEnvelopeFromPage,
   extractFetchedPageContent,
+  isPublicWebFetchUrl,
   normalizeWebFetchParams,
   normalizeWebSearchParams,
   webFetchModelData,
@@ -78,10 +82,14 @@ import {
 import {
   assessWebFetchFallback,
   browserFallbackLooksUseful,
+  crossHostRedirectHint,
   detectBrowserChallenge,
   fallbackHint,
-  isPermittedWebFetchRedirect,
+  isTransientNetworkError,
+  makeRedirectedHostHint,
+  nextSecFetchSite,
   shouldTryBrowserFallbackForHttpFailure,
+  webFetchRefererForHop,
 } from './agentWebFetchFallback';
 import {
   BING_IMAGES_RESULT_SELECTOR,
@@ -608,6 +616,28 @@ function searchInstructions(kind: WebSearchKind, hasResults: boolean): string | 
 }
 
 async function fetchText(url: string, scratchRoot: string, signal?: AbortSignal): Promise<FetchTextResult> {
+  try {
+    return await fetchTextOnce(url, scratchRoot, signal);
+  } catch (error) {
+    if (signal?.aborted || !isRetriableFetchFailure(error)) throw error;
+    await delay(WEB_FETCH_RETRY_DELAY_MS, signal);
+    return await fetchTextOnce(url, scratchRoot, signal);
+  }
+}
+
+function isRetriableFetchFailure(error: unknown): boolean {
+  // An HTTP response (403/429/5xx, login wall, Cloudflare) surfaces as a
+  // WebToolFailure, not a network throw: it is handled by the browser fallback,
+  // never by a same-headers retry. A timeout/abort is also a WebToolFailure and
+  // is not worth a second identical attempt.
+  if (error instanceof WebToolFailure) return false;
+  // An AbortError is the parent aborting, not a fault we own.
+  if (error instanceof Error && error.name === 'AbortError') return false;
+  // Only a recognized transient transport fault earns the one retry.
+  return isTransientNetworkError(error);
+}
+
+async function fetchTextOnce(url: string, scratchRoot: string, signal?: AbortSignal): Promise<FetchTextResult> {
   const startedUrl = url;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort('timeout'), FETCH_TIMEOUT_MS);
@@ -615,7 +645,7 @@ async function fetchText(url: string, scratchRoot: string, signal?: AbortSignal)
   signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
-    return await fetchTextWithPermittedRedirects(startedUrl, startedUrl, controller.signal, scratchRoot);
+    return await fetchTextWithRedirects(startedUrl, startedUrl, controller.signal, scratchRoot);
   } catch (error) {
     if (error instanceof WebToolFailure) throw error;
     if (controller.signal.aborted) {
@@ -631,12 +661,21 @@ async function fetchText(url: string, scratchRoot: string, signal?: AbortSignal)
   }
 }
 
-async function fetchTextWithPermittedRedirects(
+// State carried across a redirect hop so request headers can mirror a real
+// browser navigation: the referrer (the URL we are coming from) and the
+// chain-monotonic Sec-Fetch-Site value for the hop being made.
+interface WebFetchRedirectContext {
+  referrerUrl: string;
+  secFetchSite: 'same-origin' | 'cross-site';
+}
+
+async function fetchTextWithRedirects(
   currentUrl: string,
   startedUrl: string,
   signal: AbortSignal,
   scratchRoot: string,
   depth = 0,
+  redirect?: WebFetchRedirectContext,
 ): Promise<FetchTextResult> {
   if (depth > WEB_FETCH_MAX_REDIRECTS) {
     throw new WebToolFailure('too_many_redirects', `too many redirects; exceeded ${WEB_FETCH_MAX_REDIRECTS}`);
@@ -646,11 +685,7 @@ async function fetchTextWithPermittedRedirects(
     method: 'GET',
     redirect: 'manual',
     signal,
-    headers: {
-      'user-agent': WEB_FETCH_USER_AGENT,
-      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,application/json;q=0.8,*/*;q=0.4',
-      'accept-language': 'en-US,en;q=0.9',
-    },
+    headers: buildFetchHeaders(currentUrl, redirect),
   });
 
   if (HTTP_REDIRECT_STATUSES.has(response.status)) {
@@ -661,13 +696,23 @@ async function fetchTextWithPermittedRedirects(
         statusCode: response.status,
       });
     }
-    if (isPermittedWebFetchRedirect(currentUrl, redirectUrl)) {
-      return await fetchTextWithPermittedRedirects(redirectUrl, startedUrl, signal, scratchRoot, depth + 1);
+    // Follow redirects across hosts (shorteners, trackers, regional/mobile
+    // subdomains), preserving the server's literal scheme — an http→https upgrade
+    // here would break an http-only target. A redirect to a local/private host is
+    // the one case we refuse (isPublicWebFetchUrl); a cross-host landing is
+    // surfaced later as a non-fatal redirected_host hint, not a failure.
+    if (!isPublicWebFetchUrl(redirectUrl)) {
+      throw redirectedHostFailure(startedUrl, redirectUrl, response.status);
     }
-    throw redirectedHostFailure(startedUrl, redirectUrl, response.status);
+    const secFetchSite = nextSecFetchSite(redirect?.secFetchSite, currentUrl, redirectUrl);
+    return await fetchTextWithRedirects(redirectUrl, startedUrl, signal, scratchRoot, depth + 1, {
+      referrerUrl: currentUrl,
+      secFetchSite,
+    });
   }
 
   const finalUrl = response.url || currentUrl;
+  const redirectedHostHint = crossHostRedirectHint(startedUrl, finalUrl);
   const contentType = response.headers.get('content-type') ?? '';
   if (response.status === 401) {
     throw new WebToolFailure('http_401', `authentication required for ${originOf(finalUrl)}`, {
@@ -707,6 +752,7 @@ async function fetchTextWithPermittedRedirects(
       byteLength: bytesResult.byteLength,
       body: '',
       binaryFile,
+      ...(redirectedHostHint ? { redirectedHostHint } : {}),
     };
   }
   const body = new TextDecoder('utf-8', { fatal: false }).decode(bytesResult.bytes);
@@ -718,7 +764,39 @@ async function fetchTextWithPermittedRedirects(
     contentType,
     byteLength: bytesResult.byteLength,
     body,
+    ...(redirectedHostHint ? { redirectedHostHint } : {}),
   };
+}
+
+// Mirror the request headers a real Chrome navigation sends, computed per hop.
+// On the first request (no referrer) it is a fresh top-level navigation:
+// sec-fetch-site:none plus the user-gesture bit. On a redirect hop it carries a
+// Referer (the previous URL) and a redirect-consistent sec-fetch-site, so the
+// request never looks like an impossible brand-new top-level nav mid-chain.
+function buildFetchHeaders(currentUrl: string, redirect?: WebFetchRedirectContext): Record<string, string> {
+  const headers: Record<string, string> = {
+    'user-agent': WEB_FETCH_USER_AGENT,
+    accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,text/plain;q=0.8,image/avif,image/webp,*/*;q=0.8',
+    'accept-language': 'en-US,en;q=0.9',
+    'sec-ch-ua': WEB_FETCH_CLIENT_HINT_UA,
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': WEB_FETCH_CLIENT_HINT_PLATFORM,
+    'sec-fetch-dest': 'document',
+    'sec-fetch-mode': 'navigate',
+    'upgrade-insecure-requests': '1',
+  };
+  if (!redirect) {
+    headers['sec-fetch-site'] = 'none';
+    headers['sec-fetch-user'] = '?1';
+    return headers;
+  }
+  // Referer follows Chrome's strict-origin-when-cross-origin default (origin-only
+  // cross-origin, dropped on an https→http downgrade); sec-fetch-site is the
+  // chain-monotonic value computed at redirect time.
+  const referer = webFetchRefererForHop(redirect.referrerUrl, currentUrl);
+  if (referer) headers.referer = referer;
+  headers['sec-fetch-site'] = redirect.secFetchSite;
+  return headers;
 }
 
 function resolveRedirectUrl(baseUrl: string, location: string | null): string | null {
@@ -734,12 +812,7 @@ function redirectedHostFailure(startedUrl: string, redirectUrl: string, statusCo
   return new WebToolFailure('redirected_host', `redirected to a different host: ${redirectUrl}`, {
     finalUrl: redirectUrl,
     statusCode,
-    hint: {
-      type: 'redirected_host',
-      originalUrl: startedUrl,
-      finalUrl: redirectUrl,
-      finalHost: hostOf(redirectUrl) ?? redirectUrl,
-    },
+    hint: makeRedirectedHostHint(startedUrl, redirectUrl),
   });
 }
 
@@ -861,11 +934,19 @@ async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<
   const window = createWebFetchWindow();
   let blockedNavigation: WebToolFailure | null = null;
   let rejectBlockedNavigation: ((failure: WebToolFailure) => void) | undefined;
+  // A blocked navigation must reject promptly: once we preventDefault it, no
+  // did-finish-load fires, so navigateAndWait would otherwise hang to its
+  // timeout. Racing this promise surfaces the refusal immediately.
   const blockedNavigationPromise = new Promise<never>((_resolve, reject) => {
     rejectBlockedNavigation = reject;
   });
-  const blockCrossHostNavigation = (targetUrl: string, event: { preventDefault(): void }) => {
-    if (isPermittedWebFetchRedirect(url, targetUrl)) return;
+  // Follow public cross-host navigation (shorteners, regional fronts) just like
+  // the HTTP path, but refuse a hop to a local/private host — the one SSRF guard
+  // kept even under the local-only, success-rate-first focus. A renderer can
+  // navigate via 3xx, meta-refresh, or JS, none of which the HTTP-path redirect
+  // check sees, so the guard lives here too.
+  const blockNonPublicNavigation = (targetUrl: string, event: { preventDefault(): void }) => {
+    if (isPublicWebFetchUrl(targetUrl)) return;
     blockedNavigation = redirectedHostFailure(url, targetUrl, 0);
     event.preventDefault();
     try {
@@ -882,7 +963,7 @@ async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<
     isMainFrame: boolean,
   ) => {
     if (!isMainFrame) return;
-    blockCrossHostNavigation(event.url || redirectUrl, event);
+    blockNonPublicNavigation(event.url || redirectUrl, event);
   };
   const onWillNavigate = (
     event: ElectronEvent<WebContentsWillNavigateEventParams>,
@@ -891,7 +972,7 @@ async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<
     isMainFrame: boolean,
   ) => {
     if (!isMainFrame) return;
-    blockCrossHostNavigation(event.url || navigateUrl, event);
+    blockNonPublicNavigation(event.url || navigateUrl, event);
   };
   const onAbort = () => {
     try {
@@ -907,6 +988,10 @@ async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<
   signal?.addEventListener('abort', onAbort, { once: true });
   window.webContents.on('will-redirect', onWillRedirect);
   window.webContents.on('will-navigate', onWillNavigate);
+  // Render with the same real-browser identity as the HTTP path so challenge
+  // pages clear; a public cross-host landing is surfaced as a non-fatal
+  // redirected_host hint below.
+  window.webContents.setUserAgent(WEB_FETCH_USER_AGENT);
 
   try {
     await Promise.race([
@@ -930,11 +1015,12 @@ async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<
       throw new WebToolFailure('extraction_failed', 'browser-rendered page did not expose HTML');
     }
     const finalUrl = window.webContents.getURL() || url;
-    const finalHost = hostOf(finalUrl);
-    const startedHost = hostOf(url);
-    if (startedHost && finalHost && !isPermittedWebFetchRedirect(url, finalUrl)) {
+    // Re-validate the landing URL: a navigation the guard never saw (e.g. a
+    // same-tick replace) could still have parked us on a non-public host.
+    if (!isPublicWebFetchUrl(finalUrl)) {
       throw redirectedHostFailure(url, finalUrl, 0);
     }
+    const redirectedHostHint = crossHostRedirectHint(url, finalUrl);
     return {
       requestedUrl: url,
       finalUrl,
@@ -943,6 +1029,7 @@ async function fetchTextWithBrowser(url: string, signal?: AbortSignal): Promise<
       contentType: 'text/html; charset=utf-8',
       byteLength: Buffer.byteLength(payload.html, 'utf8'),
       body: payload.html,
+      ...(redirectedHostHint ? { redirectedHostHint } : {}),
     };
   } catch (error) {
     if (blockedNavigation) throw blockedNavigation;
@@ -1462,14 +1549,6 @@ function originOf(url: string): string {
     return new URL(url).origin;
   } catch {
     return url;
-  }
-}
-
-function hostOf(url: string): string | null {
-  try {
-    return new URL(url).host;
-  } catch {
-    return null;
   }
 }
 
