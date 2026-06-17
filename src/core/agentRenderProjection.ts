@@ -174,6 +174,8 @@ export interface AgentRenderActivityEntry {
    * already-completed historical tool calls from continuing to render as active.
    */
   pendingToolCallIds?: string[];
+  /** Tool calls within {@link streamingContent} that already returned an error. */
+  failedToolCallIds?: string[];
 }
 
 export type AgentPovInspectorMessageRole = 'user' | 'assistant' | 'toolResult';
@@ -507,6 +509,7 @@ export function buildAgentRenderProjection(
       ? options.channelActivityEntries.map((entry) => ({
           ...entry,
           ...(entry.pendingToolCallIds ? { pendingToolCallIds: [...entry.pendingToolCallIds] } : {}),
+          ...(entry.failedToolCallIds ? { failedToolCallIds: [...entry.failedToolCallIds] } : {}),
           ...(entry.streamingContent ? { streamingContent: entry.streamingContent.map(cloneAgentRenderLiveContent) } : {}),
         }))
       : buildDerivedActivityEntries(state, options, pendingToolCallIds),

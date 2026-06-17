@@ -489,6 +489,7 @@ export class AgentSkillRuntime {
   }
 
   async getActiveSkillReadRoots(): Promise<string[]> {
+    if (this.invokedSkills.size === 0) return [];
     const trustedRootsBySkill = new Map<string, string>();
     for (const skill of await this.registry.listAllSkills()) {
       const skillRoot = skillDirectoryForPrompt(skill);

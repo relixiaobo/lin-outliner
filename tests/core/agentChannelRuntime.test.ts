@@ -721,6 +721,82 @@ describe('agent channel runtime', () => {
     await runtime.drainChannelTurnsForTest(channel.conversationId);
   });
 
+  test('runtime Channel activity carries failed live tool calls across continuations', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-channel-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const calls: RecordedCall[] = [];
+    let streamIndex = 0;
+    let secondStream: ReturnType<typeof createAssistantMessageEventStream> | null = null;
+    let secondModel: Model<Api> | null = null;
+    const missingPath = path.join(localRoot, 'missing-note.md');
+    const streamFn = ((model: Model<Api>, context: Context, _options?: SimpleStreamOptions) => {
+      calls.push({
+        systemPrompt: context.systemPrompt ?? '',
+        serialized: JSON.stringify({ systemPrompt: context.systemPrompt, messages: context.messages }),
+      });
+      streamIndex += 1;
+      const stream = createAssistantMessageEventStream();
+      if (streamIndex === 1) {
+        queueMicrotask(() => {
+          const first = normalizeAssistantMessage(fauxAssistantMessage([
+            { type: 'thinking', thinking: 'Try reading the note before drafting.' },
+            fauxToolCall('file_read', { file_path: missingPath }, { id: 'tool-channel-missing' }),
+          ], { stopReason: 'toolUse' }), model);
+          stream.push({ type: 'start', partial: first });
+          stream.push({ type: 'done', reason: 'toolUse', message: first });
+          stream.end(first);
+        });
+        return stream;
+      }
+      secondStream = stream;
+      secondModel = model;
+      queueMicrotask(() => {
+        const secondPartial = normalizeAssistantMessage(fauxAssistantMessage(
+          fauxText('The note read failed, so I am continuing without it.'),
+        ), model);
+        stream.push({ type: 'start', partial: secondPartial });
+      });
+      return stream;
+    }) as StreamFn;
+    const { runtime, sink } = await createRuntime(dataRoot, localRoot, streamFn);
+
+    const channel = await runtime.createConversation({ title: 'Solo failed live process room' });
+    await runtime.sendMessage(channel.conversationId, 'read a missing note in the Channel');
+
+    let projection: AgentRenderProjection | null = null;
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      projection = latestRenderProjection(sink.events);
+      const entry = projection.channelActivityEntries.find((candidate) => candidate.runId);
+      if (
+        entry?.failedToolCallIds?.includes('tool-channel-missing')
+        && entry.streamingContent?.some((block) => block.type === 'text' && block.text.includes('continuing'))
+      ) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    const entry = projection?.channelActivityEntries.find((candidate) => candidate.runId);
+    expect(entry).toMatchObject({
+      agentId: MAIN_AGENT_ID,
+      state: 'thinking',
+      pendingToolCallIds: [],
+      failedToolCallIds: ['tool-channel-missing'],
+      streamingContent: [
+        { type: 'thinking', thinking: 'Try reading the note before drafting.' },
+        { type: 'toolCall', id: 'tool-channel-missing', name: 'file_read', arguments: { file_path: missingPath } },
+        { type: 'text', text: 'The note read failed, so I am continuing without it.' },
+      ],
+    });
+
+    if (!secondStream || !secondModel) throw new Error('Second stream did not start.');
+    const final = normalizeAssistantMessage(fauxAssistantMessage(fauxText('The note read failed, so I am continuing without it.')), secondModel);
+    secondStream.push({ type: 'done', reason: 'stop', message: final });
+    secondStream.end(final);
+    await runtime.drainChannelTurnsForTest(channel.conversationId);
+  });
+
   test('no-@ routes to the coordinator; a hand-off chain is unbounded and ends when a reply stops mentioning', async () => {
     // Four runs — past the old relay budget of 3; the chain ends only because the
     // last reply mentions nobody (stop is the sole circuit breaker otherwise).

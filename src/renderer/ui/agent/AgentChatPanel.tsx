@@ -554,21 +554,32 @@ function scopedPendingToolCallIds(
   return entry.state !== 'received' ? visibleIds : new Set();
 }
 
+function scopedFailedToolCallIds(
+  entry: AgentRenderActivityEntry,
+  content: AssistantMessage['content'],
+): Set<string> {
+  if (entry.failedToolCallIds === undefined) return new Set();
+  const visibleIds = liveToolCallIds(content);
+  return new Set(entry.failedToolCallIds.filter((id) => visibleIds.has(id)));
+}
+
 function syntheticLiveToolResults(
   content: AssistantMessage['content'],
   pendingToolCallIds: ReadonlySet<string>,
+  failedToolCallIds: ReadonlySet<string>,
   timestamp: number,
 ): Map<string, AgentToolResultWithPayloads> {
   const results = new Map<string, AgentToolResultWithPayloads>();
   for (const block of content) {
     if (block.type !== 'toolCall' || pendingToolCallIds.has(block.id)) continue;
+    const isError = failedToolCallIds.has(block.id);
     results.set(block.id, {
       role: 'toolResult',
       toolCallId: block.id,
       toolName: block.name,
       content: [],
       payloadRefs: [],
-      isError: false,
+      isError,
       timestamp,
     });
   }
@@ -2005,9 +2016,11 @@ export function AgentChatPanel({
         const { stateLabel } = activityCopy(selectedActivityEntry, label, t);
         const liveContent = activityLiveContent(selectedActivityEntry);
         const livePendingToolCallIds = scopedPendingToolCallIds(selectedActivityEntry, liveContent);
+        const liveFailedToolCallIds = scopedFailedToolCallIds(selectedActivityEntry, liveContent);
         const liveToolResults = syntheticLiveToolResults(
           liveContent,
           livePendingToolCallIds,
+          liveFailedToolCallIds,
           selectedActivityEntry.updatedAt,
         );
         const liveChildRunsByParentToolCallId = scopedChildRunsByParentToolCallId(

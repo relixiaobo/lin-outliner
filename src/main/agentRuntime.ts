@@ -4665,9 +4665,10 @@ export class AgentRuntime {
     runList: AgentActiveRunState[] = this.activeRunList(conversation),
   ): AgentRenderActivityEntry[] {
     const entries = new Map<string, AgentRenderActivityEntry>();
+    const toolResultsByRun = toolResultIndexByRun(conversation.eventState);
     for (const run of runList) {
       if (!run.addressedByMessageId) continue;
-      const pendingToolCallIds = channelLivePendingToolCallIds(run, conversation.eventState);
+      const toolCallStatus = channelLiveToolCallStatus(run, toolResultsByRun.get(run.id));
       const persistedRun = conversation.eventState.runs[run.id];
       const entry: AgentRenderActivityEntry = {
         id: `${run.addressedByMessageId}:${run.executingAgentId}`,
@@ -4675,13 +4676,14 @@ export class AgentRuntime {
         runId: run.id,
         messageId: latestAssistantMessageIdForRun(conversation.eventState, run.id),
         addressedByMessageId: run.addressedByMessageId,
-        state: pendingToolCallIds.length > 0 ? 'using_tools' : 'thinking',
+        state: toolCallStatus.pendingToolCallIds.length > 0 ? 'using_tools' : 'thinking',
         updatedAt: persistedRun?.updatedAt ?? run.startedAt,
         // The live composing blocks for the per-run detail view; retained on
         // the run (not the shared log) so concurrent runs never collide and the
         // transcript stays whole-utterance.
         streamingText: run.assistantText || undefined,
-        pendingToolCallIds,
+        pendingToolCallIds: toolCallStatus.pendingToolCallIds,
+        failedToolCallIds: toolCallStatus.failedToolCallIds,
         ...(run.assistantContent.length > 0 ? { streamingContent: run.assistantContent } : {}),
       };
       entries.set(entry.id, entry);
@@ -8160,31 +8162,52 @@ function updateChannelLiveAssistantSegment(run: AgentActiveRunState, content: Ag
   run.assistantText = liveAssistantText(run.assistantContent);
 }
 
-function channelLivePendingToolCallIds(run: AgentActiveRunState, state: AgentEventReplayState): string[] {
-  const completedToolCallIds = toolResultIdsForRun(state, run.id);
+interface ChannelLiveToolCallStatus {
+  pendingToolCallIds: string[];
+  failedToolCallIds: string[];
+}
+
+interface ToolResultIndexEntry {
+  terminalToolCallIds: Set<string>;
+  failedToolCallIds: Set<string>;
+}
+
+function channelLiveToolCallStatus(
+  run: AgentActiveRunState,
+  resultIndex: ToolResultIndexEntry | undefined,
+): ChannelLiveToolCallStatus {
+  const terminalToolCallIds = resultIndex?.terminalToolCallIds ?? new Set<string>();
   const pending = new Set<string>();
 
   for (const toolCallId of run.agent.state.pendingToolCalls) {
-    if (!completedToolCallIds.has(toolCallId)) pending.add(toolCallId);
+    if (!terminalToolCallIds.has(toolCallId)) pending.add(toolCallId);
   }
   for (const toolCallId of run.toolCallMessageIds.keys()) {
-    if (!completedToolCallIds.has(toolCallId)) pending.add(toolCallId);
+    if (!terminalToolCallIds.has(toolCallId)) pending.add(toolCallId);
   }
   for (const toolCallId of liveToolCallIds(run.assistantContent.slice(run.assistantLiveSegmentStart))) {
-    if (!completedToolCallIds.has(toolCallId)) pending.add(toolCallId);
+    if (!terminalToolCallIds.has(toolCallId)) pending.add(toolCallId);
   }
 
-  return [...pending];
+  return {
+    pendingToolCallIds: [...pending],
+    failedToolCallIds: [...(resultIndex?.failedToolCallIds ?? [])],
+  };
 }
 
-function toolResultIdsForRun(state: AgentEventReplayState, runId: string): Set<string> {
-  const ids = new Set<string>();
+function toolResultIndexByRun(state: AgentEventReplayState): Map<string, ToolResultIndexEntry> {
+  const byRun = new Map<string, ToolResultIndexEntry>();
   for (const message of Object.values(state.messages)) {
-    if (message.role === 'toolResult' && message.runId === runId && message.toolCallId) {
-      ids.add(message.toolCallId);
+    if (message.role !== 'toolResult' || !message.runId || !message.toolCallId) continue;
+    let entry = byRun.get(message.runId);
+    if (!entry) {
+      entry = { terminalToolCallIds: new Set(), failedToolCallIds: new Set() };
+      byRun.set(message.runId, entry);
     }
+    entry.terminalToolCallIds.add(message.toolCallId);
+    if (message.isError) entry.failedToolCallIds.add(message.toolCallId);
   }
-  return ids;
+  return byRun;
 }
 
 function liveToolCallIds(content: readonly AgentRenderLiveContent[]): string[] {

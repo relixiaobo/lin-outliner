@@ -124,6 +124,25 @@ describe('agent web fetch fallback heuristics', () => {
     expect(detectBrowserChallenge(html, 'https://www.reuters.com/article', 'Unauthorized')).toBe('verification');
   });
 
+  test('does not flag a full article that merely references DataDome assets', async () => {
+    const paragraph = 'This is a complete article paragraph with enough visible text for the extractor to keep the story body. ';
+    const html = [
+      '<!doctype html><html><head><title>Real DataDome-fronted Article</title>',
+      '<script defer src="https://js.datadome.co/tags.js"></script>',
+      '<meta name="x-datadome" content="tracking-cookie">',
+      '</head><body><main><article><h1>Real DataDome-fronted Article</h1>',
+      `<p>${paragraph.repeat(40)}</p>`,
+      '<p>The article asks, in ordinary prose, are you a human reader or a bot?</p>',
+      '</article></main></body></html>',
+    ].join('');
+    const params = expectParams(normalizeWebFetchParams({ url: 'https://www.reuters.com/article' }));
+    const fetched = fetchedHtml(html);
+    const page = await extractFetchedPageContent(fetched, params);
+
+    expect(detectBrowserChallenge(html, fetched.finalUrl, 'Real DataDome-fronted Article')).toBeNull();
+    expect(assessWebFetchFallback(fetched, params, page).shouldFallback).toBe(false);
+  });
+
   test('does not flag a full article that merely embeds a Cloudflare beacon', async () => {
     const paragraph = 'This is a complete article paragraph with substantial readable body text that Defuddle keeps. ';
     const html = [
