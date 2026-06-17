@@ -107,12 +107,9 @@ function projection(
     revision: options.revision ?? 1,
     conversationTitle: 'Saved conversation',
     activeRunId: options.isStreaming ? 'run-1' : null,
-    channelActivityEntries: [],
-    povInspectors: {},
     activeCompaction: options.activeCompaction ?? null,
     activeDream: options.activeDream ?? null,
-    dmRunActive: !!options.isStreaming,
-    channelRunsActive: false,
+    runActive: !!options.isStreaming,
     model: { id: 'test-model', provider: 'test' },
     thinkingLevel: 'off',
     pendingToolCallIds: [],
@@ -142,7 +139,7 @@ function projection(
       dreams: options.dreams ?? {},
       tasks,
     },
-    dmStreaming: options.streamingMessageId ? {
+    streaming: options.streamingMessageId ? {
       messageId: options.streamingMessageId,
       rowId: `assistant:${options.streamingMessageId}`,
       text: entries
@@ -996,7 +993,7 @@ describe('agent runtime store', () => {
         baseRevision: 1,
         revision: 2,
         entities: { messages: { 'assistant-stream': nextAssistant } },
-        dmStreaming: {
+        streaming: {
           messageId: 'assistant-stream',
           rowId: 'assistant:assistant-stream',
           text: 'hi',

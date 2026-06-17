@@ -4061,11 +4061,9 @@ export class AgentRuntime {
         startedAt: run.startedAt,
       })),
       activeRunAddressedByMessageId: conversation.activeRun?.addressedByMessageId ?? null,
-      channelActivityEntries: [],
       activeCompaction: conversation.activeCompaction,
       activeDream: conversation.activeDream,
-      dmRunActive: hasActiveRuns,
-      channelRunsActive: false,
+      runActive: hasActiveRuns,
       model: clone(conversation.agent.state.model) as unknown as Record<string, unknown>,
       thinkingLevel: conversation.agent.state.thinkingLevel,
       pendingToolCallIds: uniqueStrings([
@@ -4078,7 +4076,6 @@ export class AgentRuntime {
       errorMessage: null,
       agentTasks: this.agentTaskCache,
       memberDisplayNames: conversation.memberDisplayNames,
-      povInspectorMemoryByAgentId: {},
       coordinatorAgentId: this.agentIdentity.agentId,
     });
     return {
@@ -4123,13 +4120,12 @@ export class AgentRuntime {
         addressedByMessageId: run.addressedByMessageId,
         startedAt: run.startedAt,
       })),
-      dmRunActive: true,
-      channelRunsActive: false,
+      runActive: true,
       pendingToolCallIds,
       entities: { messages: { [messageId]: message } },
-      dmStreaming: {
+      streaming: {
         messageId,
-        rowId: previous.dmStreaming?.rowId ?? `assistant:${messageId}`,
+        rowId: previous.streaming?.rowId ?? `assistant:${messageId}`,
         text: activeRun.assistantText,
         updatedAt: eventMessage.updatedAt,
       },

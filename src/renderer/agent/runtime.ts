@@ -26,8 +26,6 @@ import type { AgentConversation, AgentCreateConversationOptions } from '../../co
 import type {
   AgentRenderActiveCompaction,
   AgentRenderActiveDream,
-  AgentRenderActivityEntry,
-  AgentPovInspectorView,
   AgentRenderCompactionEntity,
   AgentRenderDreamEntity,
   AgentRenderMemberView,
@@ -124,12 +122,9 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   members: [],
   activeRuns: [],
   activeRunId: null,
-  channelActivityEntries: [],
-  povInspectors: {},
   activeCompaction: null,
   activeDream: null,
-  dmRunActive: false,
-  channelRunsActive: false,
+  runActive: false,
   model: {},
   thinkingLevel: 'off',
   pendingToolCallIds: [],
@@ -139,12 +134,10 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   taskIds: [],
   childRunIds: [],
   entities: { messages: {}, childRuns: {}, compactions: {}, dreams: {}, tasks: {} },
-  dmStreaming: null,
+  streaming: null,
 };
 
 const EMPTY_MEMBERS: AgentRenderMemberView[] = [];
-const EMPTY_ACTIVITY_ENTRIES: AgentRenderActivityEntry[] = [];
-const EMPTY_POV_INSPECTORS: Record<string, AgentPovInspectorView> = {};
 const CONVERSATION_MESSAGE_CACHE = new WeakMap<AgentRenderMessageEntity, AgentConversationMessage>();
 const TOOL_RESULT_CACHE = new WeakMap<AgentRenderMessageEntity, AgentToolResultWithPayloads>();
 
@@ -263,7 +256,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
     const entity = projection.entities.messages[row.messageId];
     if (!entity || (entity.role !== 'user' && entity.role !== 'assistant')) continue;
     if (entity.role === 'user' && isHiddenOnlySystemReminder(entity)) continue;
-    const streaming = projection.dmStreaming?.messageId === entity.id;
+    const streaming = projection.streaming?.messageId === entity.id;
     const message = conversationMessageFromEntity(entity);
     entries.push({
       id: streaming && entity.role === 'assistant' ? activeAssistantEntryId(entries, projection) : row.id,
@@ -302,7 +295,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   const streamingEntry = entries.find((entry): entry is AgentMessageEntry => (
     entry.kind === 'message' && entry.streaming && entry.message.role === 'assistant'
   ));
-  if (projection.dmRunActive) {
+  if (projection.runActive) {
     if (streamingEntry?.message.role === 'assistant') {
       turnPhase = assistantHasText(streamingEntry.message) ? 'streaming_text' : 'resuming_after_tool';
     } else {
@@ -319,7 +312,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   const lastEntry = entries[entries.length - 1];
   const shouldAppendAssistantPlaceholder = !projection.activeCompaction
     && !projection.activeDream
-    && projection.dmRunActive
+    && projection.runActive
     && (
       !lastEntry
       || lastEntry.kind !== 'message'
@@ -571,10 +564,8 @@ export interface AgentRuntimeClient {
 export interface LinAgentRuntimeView {
   entries: AgentConversationEntry[];
   error: string | null;
-  /** DM composer run state: drives the composer's stop/steer affordance. Always false in a Channel. */
-  dmRunActive: boolean;
-  /** True while any addressed Channel run is active or pending (the async work surface). */
-  channelRunsActive: boolean;
+  /** Composer run state: drives the composer's stop/steer affordance. */
+  runActive: boolean;
   modelApi: string | null;
   modelId: string | null;
   providerId: string | null;
@@ -584,12 +575,8 @@ export interface LinAgentRuntimeView {
   conversationId: string | null;
   conversationTitle: string | null;
   conversationCost: number;
-  /** Conversation members (user + agents); Channel rows are named rooms, DMs are canonical one-agent rows. */
+  /** Conversation members (user + agent). */
   members: AgentRenderMemberView[];
-  /** Per-run Channel activity: one entry per active or pending addressed run (the async work surface). */
-  channelActivityEntries: AgentRenderActivityEntry[];
-  /** Read-only per-agent Channel POV projections keyed by agentId. */
-  povInspectors: Record<string, AgentPovInspectorView>;
   /** Folded per-conversation unread count for conversation-list badges. */
   unreadByConversationId: ReadonlyMap<string, number>;
   tasks: AgentTaskEntry[];
@@ -1308,8 +1295,7 @@ export class AgentRuntimeStore {
     return {
       entries,
       error: this.error,
-      dmRunActive: this.projection.dmRunActive,
-      channelRunsActive: this.projection.channelRunsActive,
+      runActive: this.projection.runActive,
       modelApi: projectionModelValue(this.projection, 'api'),
       modelId: projectionModelValue(this.projection, 'id'),
       providerId: projectionModelValue(this.projection, 'provider'),
@@ -1319,13 +1305,11 @@ export class AgentRuntimeStore {
       conversationId: this.conversationId,
       conversationTitle: this.projection.conversationTitle,
       conversationCost: conversationCost(this.projection),
-      // Defensive fallbacks: projections from a mock/older main process without
-      // these fields must degrade to a DM view, never crash the panel at mount.
-      // The shared empty constants keep the reference stable across rebuilds so
-      // member-derived memos don't recompute on every projection tick.
+      // Defensive fallback: a projection from a mock/older main process without
+      // `members` must not crash the panel at mount. The shared empty constant
+      // keeps the reference stable across rebuilds so member-derived memos don't
+      // recompute on every projection tick.
       members: this.projection.members ?? EMPTY_MEMBERS,
-      channelActivityEntries: this.projection.channelActivityEntries ?? EMPTY_ACTIVITY_ENTRIES,
-      povInspectors: this.projection.povInspectors ?? EMPTY_POV_INSPECTORS,
       unreadByConversationId: new Map(this.unreadByConversationId),
       tasks: buildAgentTaskEntries(this.projection),
       childRunIds: this.projection.childRunIds,

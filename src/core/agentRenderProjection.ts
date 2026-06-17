@@ -16,11 +16,6 @@ import {
 } from './agentEventLog';
 import {
   agentMentionToken,
-  channelAgentMembers,
-  deriveAgentPovProjection,
-  isMultiAgentConversation,
-  usesChannelActivitySurface,
-  type PovFlattenStep,
 } from './agentChannel';
 
 export type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction' | 'dream' | 'child-run';
@@ -146,63 +141,6 @@ export interface AgentRenderChildRunEntity {
 export type AgentRenderActivityState = 'received' | 'thinking' | 'using_tools';
 export type AgentRenderLiveContent = Extract<AgentPersistedContent, { type: 'text' | 'thinking' | 'toolCall' }>;
 
-export interface AgentRenderActivityEntry {
-  id: string;
-  agentId: string;
-  runId: string | null;
-  messageId: string | null;
-  addressedByMessageId: string;
-  state: AgentRenderActivityState;
-  updatedAt: number;
-  /**
-   * The running agent's live composing text for this run — retained for the
-   * per-run detail view (the "watch a Channel agent compose" live stream,
-   * PM-ratified 2026-06-13). It is filtered from the message stream: the
-   * transcript shows only the final utterance on completion. Undefined for
-   * pending turns and while a run is between tool segments.
-   */
-  streamingText?: string;
-  /**
-   * The same live assistant content as renderable blocks. Channel detail views use
-   * this to show the DM-style process stream (thinking/tool calls/interim prose),
-   * while the main Channel transcript still stays whole-utterance only.
-   */
-  streamingContent?: AgentRenderLiveContent[];
-  /**
-   * Tool calls within {@link streamingContent} that are still in flight. Channel
-   * live details keep cross-segment history, so this run-scoped list prevents
-   * already-completed historical tool calls from continuing to render as active.
-   */
-  pendingToolCallIds?: string[];
-  /** Tool calls within {@link streamingContent} that already returned an error. */
-  failedToolCallIds?: string[];
-}
-
-export type AgentPovInspectorMessageRole = 'user' | 'assistant' | 'toolResult';
-
-export interface AgentPovInspectorMessagePart {
-  preamble?: string;
-  text: string;
-  sourceMessageId: string;
-  sourceRole: AgentEventMessageRecord['role'];
-  sourceActor: AgentActor;
-}
-
-export interface AgentPovInspectorMessage {
-  id: string;
-  role: AgentPovInspectorMessageRole;
-  sourceMessageIds: string[];
-  createdAt: number;
-  parts: AgentPovInspectorMessagePart[];
-}
-
-export interface AgentPovInspectorView {
-  agentId: string;
-  addressedByMessageId: string | null;
-  messages: AgentPovInspectorMessage[];
-  memoryBriefing: string | null;
-}
-
 export interface AgentRenderCompactionEntity {
   id: string;
   messageId: string;
@@ -300,24 +238,14 @@ export interface AgentRenderProjection {
   members: AgentRenderMemberView[];
   activeRuns: AgentRenderActiveRun[];
   activeRunId: string | null;
-  /**
-   * Per-run Channel activity: one entry per active or pending addressed run.
-   * This is the async Channel work surface (the floating overlay + per-run
-   * detail view) — never the DM composer's run state.
-   */
-  channelActivityEntries: AgentRenderActivityEntry[];
-  povInspectors: Record<string, AgentPovInspectorView>;
   activeCompaction: AgentRenderActiveCompaction | null;
   activeDream: AgentRenderActiveDream | null;
   /**
-   * DM composer run state: a serial run is in flight, so the composer may show
-   * stop/steer. Always false for every Channel — its work lives in
-   * {@link channelActivityEntries}, not the composer. Replaces the old overloaded
-   * `isStreaming` so DM composer state is never derived from Channel runs.
+   * Composer run state: a serial run is in flight, so the composer may show
+   * stop/steer. Drives the composer's stop/steer affordance and the streaming
+   * turn placeholder.
    */
-  dmRunActive: boolean;
-  /** True while any addressed Channel run is active or pending (Slack-like async work). */
-  channelRunsActive: boolean;
+  runActive: boolean;
   model: Record<string, unknown>;
   thinkingLevel: string;
   pendingToolCallIds: string[];
@@ -327,8 +255,8 @@ export interface AgentRenderProjection {
   taskIds: string[];
   childRunIds: string[];
   entities: AgentRenderEntities;
-  /** The DM streaming tail (the token stream rendered in the transcript). Null for Channels. */
-  dmStreaming: AgentStreamingRenderState | null;
+  /** The streaming tail (the token stream rendered in the transcript). */
+  streaming: AgentStreamingRenderState | null;
 }
 
 export interface AgentRenderProjectionPatch {
@@ -336,9 +264,7 @@ export interface AgentRenderProjectionPatch {
   revision: number;
   activeRuns?: AgentRenderActiveRun[];
   activeRunId?: string | null;
-  channelActivityEntries?: AgentRenderActivityEntry[];
-  dmRunActive?: boolean;
-  channelRunsActive?: boolean;
+  runActive?: boolean;
   pendingToolCallIds?: string[];
   entities?: Partial<{
     messages: Record<string, AgentRenderMessageEntity>;
@@ -347,7 +273,7 @@ export interface AgentRenderProjectionPatch {
     dreams: Record<string, AgentRenderDreamEntity>;
     tasks: Record<string, AgentRenderTaskEntity>;
   }>;
-  dmStreaming?: AgentStreamingRenderState | null;
+  streaming?: AgentStreamingRenderState | null;
 }
 
 export function applyAgentRenderProjectionPatch(
@@ -380,11 +306,9 @@ export function applyAgentRenderProjectionPatch(
     revision: patch.revision,
     ...(patch.activeRuns !== undefined ? { activeRuns: patch.activeRuns } : {}),
     ...(patch.activeRunId !== undefined ? { activeRunId: patch.activeRunId } : {}),
-    ...(patch.channelActivityEntries !== undefined ? { channelActivityEntries: patch.channelActivityEntries } : {}),
-    ...(patch.dmRunActive !== undefined ? { dmRunActive: patch.dmRunActive } : {}),
-    ...(patch.channelRunsActive !== undefined ? { channelRunsActive: patch.channelRunsActive } : {}),
+    ...(patch.runActive !== undefined ? { runActive: patch.runActive } : {}),
     ...(patch.pendingToolCallIds !== undefined ? { pendingToolCallIds: patch.pendingToolCallIds } : {}),
-    ...(patch.dmStreaming !== undefined ? { dmStreaming: patch.dmStreaming } : {}),
+    ...(patch.streaming !== undefined ? { streaming: patch.streaming } : {}),
     entities,
   };
 }
@@ -405,13 +329,10 @@ export interface BuildAgentRenderProjectionOptions {
   activeRuns?: AgentRenderActiveRun[];
   activeRunId?: string | null;
   activeRunAddressedByMessageId?: string | null;
-  channelActivityEntries?: readonly AgentRenderActivityEntry[];
-  povInspectorMemoryByAgentId?: Record<string, string | null>;
   messageAddressedByMessageIds?: Record<string, string | null | undefined>;
   activeCompaction?: AgentRenderActiveCompaction | null;
   activeDream?: AgentRenderActiveDream | null;
-  dmRunActive?: boolean;
-  channelRunsActive?: boolean;
+  runActive?: boolean;
   model?: Record<string, unknown>;
   thinkingLevel?: string;
   pendingToolCallIds?: string[];
@@ -433,14 +354,13 @@ export function buildAgentRenderProjection(
 
   const activePath = getAgentEventActivePath(state);
   const entities: AgentRenderEntities = { messages: {}, childRuns: {}, compactions: {}, dreams: {}, tasks: {} };
-  const channelSurface = usesChannelActivitySurface(state.conversation.id, state.conversation.members);
   // The runs that are LIVE right now (in-memory active runs the runtime passes in),
   // NOT every run whose persisted status is `running`. A run left `running` by a
   // crash/quit is absent here, so its interrupted turn is never mistaken for an
-  // in-flight one — see the Channel suppression in buildTranscriptRows.
+  // in-flight one.
   const activeRunIds = new Set((options.activeRuns ?? []).map((run) => run.runId));
   const rows = buildActiveRows(state, activePath, entities);
-  const transcriptRows = buildTranscriptRows(state, entities, channelSurface, activeRunIds);
+  const transcriptRows = buildTranscriptRows(state, entities);
 
   // Stamp the authoritative interrupted verdict on every assistant message from
   // the producing run's real status. This is the single fix for the recurring
@@ -462,21 +382,18 @@ export function buildAgentRenderProjection(
     if (interrupted) message.turnInterrupted = true;
   }
 
-  // The streaming tail drives only the DM composer/transcript; Channels surface
-  // live content through channelActivityEntries, so skip the active-path scan
-  // there entirely.
+  // The streaming tail drives the composer/transcript: the in-flight assistant
+  // turn streams its token text live in the transcript.
   let streaming: AgentStreamingRenderState | null = null;
-  if (!channelSurface) {
-    for (const message of activePath) {
-      const rowId = `${message.role}:${message.id}`;
-      if (message.role === 'assistant' && message.status === 'streaming') {
-        streaming = {
-          messageId: message.id,
-          rowId,
-          text: textFromContent(message.content),
-          updatedAt: message.updatedAt,
-        };
-      }
+  for (const message of activePath) {
+    const rowId = `${message.role}:${message.id}`;
+    if (message.role === 'assistant' && message.status === 'streaming') {
+      streaming = {
+        messageId: message.id,
+        rowId,
+        text: textFromContent(message.content),
+        updatedAt: message.updatedAt,
+      };
     }
   }
 
@@ -505,22 +422,9 @@ export function buildAgentRenderProjection(
     members: state.conversation.members.map((principal) => toRenderMemberView(principal, options)),
     activeRuns: options.activeRuns ?? [],
     activeRunId,
-    channelActivityEntries: options.channelActivityEntries
-      ? options.channelActivityEntries.map((entry) => ({
-          ...entry,
-          ...(entry.pendingToolCallIds ? { pendingToolCallIds: [...entry.pendingToolCallIds] } : {}),
-          ...(entry.failedToolCallIds ? { failedToolCallIds: [...entry.failedToolCallIds] } : {}),
-          ...(entry.streamingContent ? { streamingContent: entry.streamingContent.map(cloneAgentRenderLiveContent) } : {}),
-        }))
-      : buildDerivedActivityEntries(state, options, pendingToolCallIds),
-    povInspectors: buildPovInspectors(state, options),
     activeCompaction: options.activeCompaction ?? null,
     activeDream: options.activeDream ?? null,
-    // DM composer state never derives from Channel runs: a Channel's
-    // work is surfaced through channelActivityEntries, so dmRunActive stays false
-    // there and the streaming tail is suppressed in the transcript.
-    dmRunActive: options.dmRunActive ?? (!channelSurface && !!streaming),
-    channelRunsActive: options.channelRunsActive ?? false,
+    runActive: options.runActive ?? !!streaming,
     model: options.model ?? {},
     thinkingLevel: options.thinkingLevel ?? 'off',
     pendingToolCallIds,
@@ -530,8 +434,7 @@ export function buildAgentRenderProjection(
     taskIds,
     childRunIds,
     entities,
-    // Already null for Channels (the scan above is skipped there).
-    dmStreaming: streaming,
+    streaming,
   };
 }
 
@@ -558,164 +461,6 @@ function isRunRunning(run: { status: AgentRunStatus } | undefined): boolean {
   return run?.status === 'running';
 }
 
-function buildDerivedActivityEntries(
-  state: AgentEventReplayState,
-  options: BuildAgentRenderProjectionOptions,
-  pendingToolCallIds: readonly string[],
-): AgentRenderActivityEntry[] {
-  const activeRunId = options.activeRunId ?? null;
-  if (!activeRunId || !options.activeRunAddressedByMessageId) return [];
-  const activeRun = state.runs[activeRunId];
-  const activeAgentId = activeRun?.agentId;
-  if (!activeAgentId || !isRunRunning(activeRun)) return [];
-
-  const addressedByMessageId = options.activeRunAddressedByMessageId;
-  const addressingMessage = state.messages[addressedByMessageId];
-  const addressedAgents = channelAgentMembers(addressingMessage?.addressedTo ?? []);
-  const agentIds = addressedAgents.length > 0
-    ? addressedAgents.map((principal) => principal.agentId)
-    : [activeAgentId];
-  const pendingAgentIds = new Set(agentIds);
-  const activeRunMessageId = latestAssistantMessageIdForRun(state, activeRunId);
-  const activeRunStreamingContent = activeRunMessageId
-    ? renderableAssistantContent(state.messages[activeRunMessageId]?.content ?? [])
-    : [];
-  const activeRunStreamingText = activeRunStreamingContent.length > 0
-    ? textFromContent(activeRunStreamingContent)
-    : '';
-
-  if (addressingMessage) {
-    for (const message of Object.values(state.messages)) {
-      if (message.role !== 'assistant' || !message.runId) continue;
-      const run = state.runs[message.runId];
-      if (!run?.agentId || !pendingAgentIds.has(run.agentId)) continue;
-      if (isRunRunning(run)) continue;
-      if (message.createdAt < addressingMessage.createdAt) continue;
-      pendingAgentIds.delete(run.agentId);
-    }
-    for (const run of Object.values(state.runs)) {
-      if (!run.agentId || !pendingAgentIds.has(run.agentId)) continue;
-      if (run.addressedByMessageId !== addressedByMessageId) continue;
-      if (isRunRunning(run)) continue;
-      pendingAgentIds.delete(run.agentId);
-    }
-  }
-
-  if (!pendingAgentIds.has(activeAgentId)) pendingAgentIds.add(activeAgentId);
-
-  return agentIds
-    .filter((agentId) => pendingAgentIds.has(agentId))
-    .map((agentId) => {
-      const activeAgent = agentId === activeAgentId;
-      return {
-        id: `${addressedByMessageId}:${agentId}`,
-        agentId,
-        runId: activeAgent ? activeRunId : null,
-        messageId: activeAgent ? activeRunMessageId : null,
-        addressedByMessageId,
-        state: activeAgent
-          ? (pendingToolCallIds.length > 0 ? 'using_tools' : 'thinking')
-          : 'received',
-        updatedAt: activeAgent ? activeRun.updatedAt : addressingMessage?.updatedAt ?? activeRun.startedAt,
-        ...(activeAgent ? { pendingToolCallIds: [...pendingToolCallIds] } : {}),
-        ...(activeAgent && activeRunStreamingContent.length > 0 ? { streamingContent: activeRunStreamingContent } : {}),
-        ...(activeAgent && activeRunStreamingText ? { streamingText: activeRunStreamingText } : {}),
-      };
-    });
-}
-
-export function cloneAgentRenderLiveContent(part: AgentRenderLiveContent): AgentRenderLiveContent {
-  if (part.type === 'text') return { type: 'text', text: part.text };
-  if (part.type === 'thinking') {
-    return {
-      type: 'thinking',
-      thinking: part.thinking,
-      ...(part.redacted === undefined ? {} : { redacted: part.redacted }),
-    };
-  }
-  return {
-    type: 'toolCall',
-    id: part.id,
-    name: part.name,
-    arguments: JSON.parse(JSON.stringify(part.arguments)) as Record<string, unknown>,
-  };
-}
-
-export function renderableAssistantContent(content: readonly AgentPersistedContent[]): AgentRenderLiveContent[] {
-  return content
-    .filter((part): part is AgentRenderLiveContent => (
-      part.type === 'text' || part.type === 'thinking' || part.type === 'toolCall'
-    ))
-    .map(cloneAgentRenderLiveContent);
-}
-
-function buildPovInspectors(
-  state: AgentEventReplayState,
-  options: BuildAgentRenderProjectionOptions,
-): Record<string, AgentPovInspectorView> {
-  const result: Record<string, AgentPovInspectorView> = {};
-  const coordinatorAgentId = options.coordinatorAgentId;
-  if (!coordinatorAgentId) return result;
-  const members = state.conversation?.members ?? [];
-  if (!isMultiAgentConversation(members)) return result;
-  for (const member of channelAgentMembers(members)) {
-    const projection = deriveAgentPovProjection(state, member.agentId, {
-      mainAgentId: coordinatorAgentId,
-      displayNameByAgentId: options.memberDisplayNames,
-    });
-    result[member.agentId] = {
-      agentId: member.agentId,
-      addressedByMessageId: projection.addressedByMessageId,
-      messages: inspectorMessagesFromPovSteps(projection.steps),
-      memoryBriefing: options.povInspectorMemoryByAgentId?.[member.agentId] ?? null,
-    };
-  }
-  return result;
-}
-
-function inspectorMessagesFromPovSteps(steps: readonly PovFlattenStep[]): AgentPovInspectorMessage[] {
-  return steps.map((step, index): AgentPovInspectorMessage => {
-    if (step.kind === 'verbatim') {
-      const text = inspectorTextFromContent(step.record.content);
-      return {
-        id: `verbatim:${step.record.id}`,
-        role: step.record.role,
-        sourceMessageIds: [step.record.id],
-        createdAt: step.record.createdAt,
-        parts: [{
-          text,
-          sourceMessageId: step.record.id,
-          sourceRole: step.record.role,
-          sourceActor: step.record.actor,
-        }],
-      };
-    }
-    const parts = step.parts.map((part): AgentPovInspectorMessagePart => ({
-      preamble: part.preamble ?? undefined,
-      text: inspectorTextFromContent(part.record.content),
-      sourceMessageId: part.record.id,
-      sourceRole: part.record.role,
-      sourceActor: part.record.actor,
-    }));
-    return {
-      id: `flattened:${index}:${step.parts.map((part) => part.record.id).join(':')}`,
-      role: 'user',
-      sourceMessageIds: step.parts.map((part) => part.record.id),
-      createdAt: step.parts.at(-1)?.record.createdAt ?? 0,
-      parts,
-    };
-  });
-}
-
-function latestAssistantMessageIdForRun(state: AgentEventReplayState, runId: string): string | null {
-  let latest: AgentEventMessageRecord | null = null;
-  for (const message of Object.values(state.messages)) {
-    if (message.role !== 'assistant' || message.runId !== runId) continue;
-    if (!latest || message.createdAt > latest.createdAt) latest = message;
-  }
-  return latest?.id ?? null;
-}
-
 function buildActiveRows(
   state: AgentEventReplayState,
   activePath: readonly AgentEventMessageRecord[],
@@ -731,27 +476,9 @@ function buildActiveRows(
 function buildTranscriptRows(
   state: AgentEventReplayState,
   entities: AgentRenderEntities,
-  channelSurface: boolean,
-  activeRunIds: ReadonlySet<string>,
 ): AgentRenderRow[] {
   const rows: AgentRenderRow[] = [];
   for (const entry of getAgentEventVisibleTranscript(state)) {
-    // Atomic Channel delivery (spec: a running Channel turn is "never a transcript
-    // row"): in a Channel, a turn whose producing run is LIVE right now is
-    // suppressed from the transcript — its progress shows only in
-    // channelActivityEntries. The whole turn appears once its run seals (leaves the
-    // live set), rendered result-first. Keyed off the live active-run set, NOT
-    // persisted `status === running`: a run orphaned `running` by a crash is not
-    // live, so its interrupted turn still renders instead of vanishing. A DM streams
-    // its active turn live, so this is gated on `channelSurface`.
-    // NOTE: this lives in the shared consumer (DM + Channel) rather than the
-    // visibility producer (getAgentEventVisibleTranscriptPath); the live active-run
-    // set is a render-time input not available there. Unifying this with the DM
-    // `dmStreaming` tail-suppression into one "in-flight turn" model is a deferred
-    // pass, not a drive-by — see PR #242 review finding 3.
-    if (channelSurface && entry.message.runId && activeRunIds.has(entry.message.runId)) {
-      continue;
-    }
     const compaction = compactionForMessage(state, entry.message);
     if (compaction) {
       appendCompactionRow(rows, entities, state, entry.message, compaction, entry.archived);
@@ -764,7 +491,7 @@ function buildTranscriptRows(
     }
     appendMessageRow(rows, entities, state, entry.message, entry.archived);
   }
-  return insertChildRunRows(rows, entities, state, channelSurface, activeRunIds);
+  return insertChildRunRows(rows, entities, state);
 }
 
 function messageHasToolCall(entity: AgentRenderMessageEntity | undefined, toolCallId: string): boolean {
@@ -808,30 +535,20 @@ function insertChildRunRows(
   rows: AgentRenderRow[],
   entities: AgentRenderEntities,
   state: AgentEventReplayState,
-  channelSurface: boolean,
-  activeRunIds: ReadonlySet<string>,
 ): AgentRenderRow[] {
   const runs = Object.values(state.childRuns ?? {})
     .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id));
   if (runs.length === 0) return rows;
   const result = [...rows];
   for (const run of runs) {
-    // A DM child run spawned by a tool call folds into its
-    // spawning turn's process: the tool-call row renders the child-run summary +
-    // result inline (AgentMessageRow keeps the block; AgentProcessTimeline attaches
-    // the child run), so it gets NO conversation-level boundary row. The boundary
-    // would both DOUBLE it and orphan it on an edit — the boundary is
-    // conversation-anchored, while the turn's tool call is branch-pruned with its
-    // message. The boundary stays for a Channel turn (a visible participant turn,
-    // below) and for a parentless command fire (no tool call to fold into). The
-    // renderer's tool-call drop in AgentMessageRow gates on the same Channel flag,
-    // in lockstep.
-    if (!channelSurface && run.parentToolCallId) continue;
-    // Mirror the parent turn's suppression: a child run spawned by a Channel turn
-    // whose run is still LIVE is held back too, so its boundary row never orphans
-    // to the transcript end (its anchor message is suppressed) while the parent is
-    // hidden. It reappears, anchored, once the parent turn lands.
-    if (channelSurface && run.parentRunId && activeRunIds.has(run.parentRunId)) continue;
+    // A child run spawned by a tool call folds into its spawning turn's process:
+    // the tool-call row renders the child-run summary + result inline
+    // (AgentMessageRow keeps the block; AgentProcessTimeline attaches the child
+    // run), so it gets NO conversation-level boundary row. The boundary would both
+    // DOUBLE it and orphan it on an edit — the boundary is conversation-anchored,
+    // while the turn's tool call is branch-pruned with its message. The boundary
+    // stays for a parentless command fire (no tool call to fold into).
+    if (run.parentToolCallId) continue;
     const row: AgentRenderRow = { id: `child-run:${run.id}`, kind: 'child-run', childRunId: run.id };
     const insertAt = childRunInsertIndex(result, entities, run);
     if (insertAt < 0) result.push(row);
@@ -1058,22 +775,6 @@ function textFromContent(content: AgentPersistedContent[]): string {
     .filter((part): part is Extract<AgentPersistedContent, { type: 'text' }> => part.type === 'text')
     .map((part) => part.text)
     .join('');
-}
-
-/**
- * Inspector-only rendering of assembled content: unlike {@link textFromContent}
- * (which feeds the streaming text preview and stays text-only), the read-only POV
- * inspector surfaces every part so "what X sees" is faithful — thinking, tool
- * calls, images, and payloads become labeled placeholders.
- */
-function inspectorTextFromContent(content: AgentPersistedContent[]): string {
-  return content.map((part) => {
-    if (part.type === 'text') return part.text;
-    if (part.type === 'thinking') return part.redacted ? '[redacted thinking]' : `[thinking] ${part.thinking}`;
-    if (part.type === 'toolCall') return `[tool call: ${part.name}]`;
-    if (part.type === 'image') return part.alt || part.imageRef.summary || `[image: ${part.imageRef.id}]`;
-    return part.label || part.payload.summary || `[payload: ${part.payload.id}]`;
-  }).join('\n');
 }
 
 function cloneContent(content: AgentPersistedContent[]): AgentPersistedContent[] {

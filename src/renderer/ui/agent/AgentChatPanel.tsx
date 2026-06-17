@@ -7,22 +7,16 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
-  type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
 import type {
   AgentMessageAttachmentInput,
   AgentToolResultWithPayloads,
-  AssistantMessage,
   AgentUserViewContext,
 } from '../../../core/agentTypes';
 import { nodeReferenceMarkersToText } from '../../../core/referenceMarkup';
-import { DEFAULT_GENERAL_CHANNEL_ID, agentMentionToken, usesChannelActivitySurface } from '../../../core/agentChannel';
-import { cloneAgentRenderLiveContent } from '../../../core/agentRenderProjection';
+import { DEFAULT_GENERAL_CHANNEL_ID, agentMentionToken } from '../../../core/agentChannel';
 import type {
-  AgentPovInspectorView,
-  AgentRenderActivityEntry,
-  AgentRenderChildRunEntity,
   AgentRenderMemberView,
 } from '../../../core/agentRenderProjection';
 import type {
@@ -35,7 +29,7 @@ import type {
 } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
-import { createAssistantPlaceholderFromModel, linAgentRuntimeStore, useLinAgentRuntime } from '../../agent/runtime';
+import { linAgentRuntimeStore, useLinAgentRuntime } from '../../agent/runtime';
 import { onAgentRevealRequest } from '../../agent/agentReveal';
 import type {
   AgentConversationEntry,
@@ -44,13 +38,11 @@ import type {
 import {
   AddIcon,
   ChevronDownIcon,
-  CloseIcon,
   DebugIcon,
   HashIcon,
   ICON_SIZE,
   LoaderIcon,
   MoreIcon,
-  StopIcon,
   UsedToolsIcon,
   WarningIcon,
 } from '../icons';
@@ -70,8 +62,6 @@ import {
   isTurnBoundaryEntry,
 } from './agentConversationRows';
 import type { AgentConversationRenderRow } from './agentConversationRows';
-import { AgentMarkdown } from './AgentMarkdown';
-import { AgentTranscriptMessageList } from './AgentTranscriptMessageList';
 import { AgentChildRunDetailsPanel } from './AgentChildRunDetailsPanel';
 import { AgentTaskPanel } from './AgentTaskPanel';
 import { composerCurrentNodeId } from './userViewContext';
@@ -81,7 +71,6 @@ import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { EmptyState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
-import { MenuSurface } from '../primitives/MenuSurface';
 import { AnchoredActionMenu } from '../primitives/AnchoredActionMenu';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
@@ -215,17 +204,6 @@ function conversationAgentDisplayName(
   fallback?: string | null,
 ): string {
   return agentDefinitionName(agentDefinitionById.get(agentId)) ?? fallback ?? `@${agentMentionToken(agentId)}`;
-}
-
-function isChannelConversation(
-  conversationId: string | null,
-  conversation: AgentConversationListMeta | null,
-  members: readonly AgentRenderMemberView[],
-): boolean {
-  return usesChannelActivitySurface(
-    conversationId,
-    (conversation?.members ?? members.map((member) => member.principal)),
-  );
 }
 
 function systemLineText(entry: AgentMessageEntry): string | null {
@@ -494,415 +472,6 @@ function AgentTranscriptRowShell({
   );
 }
 
-function activityCopy(
-  entry: AgentRenderActivityEntry,
-  name: string,
-  t: ReturnType<typeof useT>,
-): { lineLabel: string; stateLabel: string } {
-  if (entry.state === 'using_tools') {
-    return {
-      lineLabel: t.agent.chat.activityLines.usingTools({ name }),
-      stateLabel: t.agent.chat.activityStates.usingTools,
-    };
-  }
-  if (entry.state === 'received') {
-    return {
-      lineLabel: t.agent.chat.activityLines.received({ name }),
-      stateLabel: t.agent.chat.activityStates.received,
-    };
-  }
-  return {
-    lineLabel: t.agent.chat.activityLines.thinking({ name }),
-    stateLabel: t.agent.chat.activityStates.thinking,
-  };
-}
-
-function activityLiveContent(entry: AgentRenderActivityEntry): AssistantMessage['content'] {
-  if (entry.streamingContent?.length) return entry.streamingContent.map(cloneAgentRenderLiveContent);
-  if (entry.streamingText) return [{ type: 'text', text: entry.streamingText }];
-  return [];
-}
-
-function liveToolCallIds(content: AssistantMessage['content']): Set<string> {
-  const ids = new Set<string>();
-  for (const block of content) {
-    if (block.type === 'toolCall') ids.add(block.id);
-  }
-  return ids;
-}
-
-function scopedPendingToolCallIds(
-  entry: AgentRenderActivityEntry,
-  content: AssistantMessage['content'],
-): Set<string> {
-  const visibleIds = liveToolCallIds(content);
-  if (entry.pendingToolCallIds !== undefined) {
-    return new Set(entry.pendingToolCallIds.filter((id) => visibleIds.has(id)));
-  }
-  // Channel live detail has no durable tool result map until the turn seals. While
-  // the entry is active, any visible tool call is still part of live work; rendering
-  // it as pending avoids a transient/error-looking red state between provider
-  // message_end, tool_execution_start, and later continuation segments.
-  return entry.state !== 'received' ? visibleIds : new Set();
-}
-
-function scopedFailedToolCallIds(
-  entry: AgentRenderActivityEntry,
-  content: AssistantMessage['content'],
-): Set<string> {
-  if (entry.failedToolCallIds === undefined) return new Set();
-  const visibleIds = liveToolCallIds(content);
-  return new Set(entry.failedToolCallIds.filter((id) => visibleIds.has(id)));
-}
-
-function syntheticLiveToolResults(
-  content: AssistantMessage['content'],
-  pendingToolCallIds: ReadonlySet<string>,
-  failedToolCallIds: ReadonlySet<string>,
-  timestamp: number,
-): Map<string, AgentToolResultWithPayloads> {
-  const results = new Map<string, AgentToolResultWithPayloads>();
-  for (const block of content) {
-    if (block.type !== 'toolCall' || pendingToolCallIds.has(block.id)) continue;
-    const isError = failedToolCallIds.has(block.id);
-    results.set(block.id, {
-      role: 'toolResult',
-      toolCallId: block.id,
-      toolName: block.name,
-      content: [],
-      payloadRefs: [],
-      isError,
-      timestamp,
-    });
-  }
-  return results;
-}
-
-function scopedChildRunsByParentToolCallId(
-  content: AssistantMessage['content'],
-  runId: string | null,
-  childRunsByParentToolCallId: Map<string, AgentRenderChildRunEntity>,
-): Map<string, AgentRenderChildRunEntity> | undefined {
-  if (!runId) return undefined;
-  const ids = liveToolCallIds(content);
-  if (ids.size === 0) return undefined;
-  const scoped = new Map<string, AgentRenderChildRunEntity>();
-  for (const [toolCallId, childRun] of childRunsByParentToolCallId) {
-    if (ids.has(toolCallId) && childRun.parentRunId === runId) scoped.set(toolCallId, childRun);
-  }
-  return scoped.size > 0 ? scoped : undefined;
-}
-
-function activityAgentLabel(
-  entry: AgentRenderActivityEntry,
-  memberByAgentId: Map<string, AgentRenderMemberView>,
-  agentDefinitionById: Map<string, AgentDefinitionView>,
-): { label: string; mention: string } {
-  const member = memberByAgentId.get(entry.agentId);
-  const definition = agentDefinitionById.get(entry.agentId);
-  const mention = member?.mention ?? agentMentionToken(entry.agentId);
-  const label = agentDefinitionName(definition) ?? member?.displayName ?? `@${mention}`;
-  return { label, mention };
-}
-
-const CHANNEL_WORKING_DETAIL_ID = 'agent-channel-working-detail';
-
-type ChannelWorkingItem = {
-  canStop: boolean;
-  entry: AgentRenderActivityEntry;
-  label: string;
-  lineLabel: string;
-  mention: string;
-};
-
-// The per-agent detail menu. Built on the shared overlay primitives (portaled
-// MenuSurface + useAnchoredOverlay for viewport flip/clamp + useMenuKeyboard for
-// Escape / roving / focus-restore) so it can never get stuck open over the
-// transcript or render off-screen — it is opened by click (not hover), which is
-// the only model that composes cleanly with focus management.
-function ChannelWorkingDetail({
-  anchorRef,
-  items,
-  onClose,
-  onOpenEntry,
-  onStopEntry,
-  selectedEntryId,
-}: {
-  anchorRef: RefObject<HTMLButtonElement | null>;
-  items: readonly ChannelWorkingItem[];
-  onClose: () => void;
-  onOpenEntry: (entryId: string) => void;
-  onStopEntry: (entry: AgentRenderActivityEntry) => void;
-  selectedEntryId: string | null;
-}) {
-  const t = useT();
-  const surfaceRef = useRef<HTMLDivElement>(null);
-  const style = useAnchoredOverlay(surfaceRef, {
-    anchorRef,
-    layoutKey: items.map((item) => `${item.entry.id}:${item.entry.state}`).join('|'),
-    maxHeight: 360,
-    placement: 'top-end',
-    width: 320,
-  });
-  const { onKeyDown } = useMenuKeyboard({
-    surfaceRef,
-    onClose,
-    kind: 'menu',
-    getRestoreTarget: () => (anchorRef.current instanceof HTMLElement ? anchorRef.current : null),
-  });
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  // Outside-pointer dismissal that ignores the trigger (so clicking it toggles
-  // rather than close-then-reopen) — mirrors AnchoredActionMenu.
-  useEffect(() => {
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Node;
-      if (surfaceRef.current?.contains(target) || anchorRef.current?.contains(target)) return;
-      onCloseRef.current();
-    }
-    document.addEventListener('pointerdown', handlePointerDown, true);
-    return () => document.removeEventListener('pointerdown', handlePointerDown, true);
-  }, [anchorRef]);
-
-  const stoppable = items.filter((item) => item.canStop);
-  return createPortal(
-    <MenuSurface
-      aria-label={t.agent.chat.channelActivity}
-      className="agent-channel-working-detail"
-      id={CHANNEL_WORKING_DETAIL_ID}
-      onKeyDown={onKeyDown}
-      ref={surfaceRef}
-      role="menu"
-      style={style}
-    >
-      <div className="agent-channel-working-detail-header">
-        <span>{t.agent.chat.channelActivity}</span>
-        {stoppable.length > 0 ? (
-          <button
-            className="agent-channel-working-stop-all"
-            onClick={() => stoppable.forEach((item) => onStopEntry(item.entry))}
-            role="menuitem"
-            type="button"
-          >
-            {t.agent.chat.stopAll}
-          </button>
-        ) : null}
-      </div>
-      <div className="agent-channel-working-detail-list">
-        {items.map((item) => (
-          <div
-            className={`agent-channel-working-item is-${item.entry.state}${item.canStop ? ' has-stop' : ''}${selectedEntryId === item.entry.id ? ' is-selected' : ''}`}
-            key={item.entry.id}
-          >
-            <ButtonControl
-              aria-current={selectedEntryId === item.entry.id ? 'true' : undefined}
-              className="agent-channel-working-item-main"
-              onClick={() => {
-                onClose();
-                onOpenEntry(item.entry.id);
-              }}
-              role="menuitem"
-              title={item.lineLabel}
-            >
-              <AgentIdentityAvatar label={item.label} mention={item.mention} size="xs" />
-              <span className="agent-channel-working-item-line">{item.lineLabel}</span>
-            </ButtonControl>
-            {item.canStop ? (
-              <IconButton
-                className="agent-channel-working-item-stop agent-composer-action-button is-stop"
-                icon={StopIcon}
-                iconSize={12}
-                label={t.agent.chat.stopActivityEntry({ name: item.label })}
-                onClick={() => onStopEntry(item.entry)}
-                role="menuitem"
-                strokeWidth={0}
-                variant="composerAction"
-              />
-            ) : null}
-          </div>
-        ))}
-      </div>
-    </MenuSurface>,
-    document.body,
-  );
-}
-
-function ChannelWorkingRow({
-  agentDefinitionById,
-  entries,
-  memberByAgentId,
-  onOpenEntry,
-  onStopEntry,
-  selectedEntryId,
-}: {
-  agentDefinitionById: Map<string, AgentDefinitionView>;
-  entries: readonly AgentRenderActivityEntry[];
-  memberByAgentId: Map<string, AgentRenderMemberView>;
-  onOpenEntry: (entryId: string) => void;
-  onStopEntry: (entry: AgentRenderActivityEntry) => void;
-  selectedEntryId: string | null;
-}) {
-  const t = useT();
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const [open, setOpen] = useState(false);
-  const items = useMemo<ChannelWorkingItem[]>(() => entries.map((entry) => {
-    const { label, mention } = activityAgentLabel(entry, memberByAgentId, agentDefinitionById);
-    const { lineLabel } = activityCopy(entry, label, t);
-    return {
-      canStop: entry.runId !== null,
-      entry,
-      label,
-      lineLabel,
-      mention,
-    };
-  }), [agentDefinitionById, entries, memberByAgentId, t]);
-  // Nothing in flight → the row unmounts entirely (which also closes the menu and
-  // drops any stale "working" rows; there is no frozen snapshot to go stale).
-  if (items.length === 0) return null;
-
-  // Collapsed summary is the generic "working" line only (≤2 → names, ≥3 → count);
-  // per-agent state lives in the detail menu.
-  const summary = items.length === 1
-    ? t.agent.chat.working({ name: items[0]!.label })
-    : items.length === 2
-      ? t.agent.chat.workingPair({ first: items[0]!.label, second: items[1]!.label })
-      : t.agent.chat.workingMany({ count: items.length });
-  const avatarItems = items.slice(0, 3);
-  const overflowCount = items.length - avatarItems.length;
-
-  return (
-    <div className="agent-channel-working" data-open={open ? 'true' : undefined}>
-      <button
-        aria-controls={open ? CHANNEL_WORKING_DETAIL_ID : undefined}
-        aria-expanded={open}
-        aria-haspopup="menu"
-        aria-label={t.agent.chat.channelActivity}
-        className="agent-channel-working-trigger"
-        onClick={() => setOpen((value) => !value)}
-        ref={triggerRef}
-        type="button"
-      >
-        <span className="agent-channel-working-avatars" aria-hidden="true">
-          {avatarItems.map((item) => (
-            <AgentIdentityAvatar key={item.entry.id} label={item.label} mention={item.mention} size="xs" />
-          ))}
-          {overflowCount > 0 ? (
-            <span className="agent-channel-working-overflow">
-              {t.agent.chat.activityOverflow({ count: overflowCount })}
-            </span>
-          ) : null}
-        </span>
-        <span className="agent-channel-working-label">{summary}</span>
-        <span className="agent-channel-working-dots" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-        </span>
-      </button>
-      {open ? (
-        <ChannelWorkingDetail
-          anchorRef={triggerRef}
-          items={items}
-          onClose={() => setOpen(false)}
-          onOpenEntry={(entryId) => {
-            setOpen(false);
-            onOpenEntry(entryId);
-          }}
-          onStopEntry={onStopEntry}
-          selectedEntryId={selectedEntryId}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function povRoleLabel(role: AgentPovInspectorView['messages'][number]['role']): string {
-  if (role === 'toolResult') return 'tool result';
-  return role;
-}
-
-function AgentPovInspectorPanel({
-  member,
-  onClose,
-  view,
-}: {
-  member: AgentRenderMemberView;
-  onClose: () => void;
-  view: AgentPovInspectorView;
-}) {
-  const t = useT();
-  const label = member.displayName;
-  return (
-    <aside className="agent-child-run-details-panel agent-pov-inspector-panel" aria-label={t.agent.chat.povInspectorAriaLabel({ name: label })}>
-      <header className="agent-child-run-details-header">
-        <div className="agent-child-run-title-block">
-          <div className="agent-child-run-title-line">
-            <AgentIdentityAvatar label={label} mention={member.mention} />
-            <span>{`@${member.mention}`}</span>
-          </div>
-          <h3>{t.agent.chat.povInspectorTitle({ name: label })}</h3>
-          <p>
-            {view.addressedByMessageId
-              ? t.agent.chat.povInspectorBoundary({ messageId: view.addressedByMessageId })
-              : t.agent.chat.povInspectorNoBoundary}
-          </p>
-        </div>
-        <IconButton
-          className="agent-child-run-close"
-          icon={CloseIcon}
-          label={t.agent.chat.closePovInspector}
-          onClick={onClose}
-          variant="panel"
-        />
-      </header>
-      <div className="agent-child-run-details-body agent-pov-inspector-body">
-        <section className="agent-pov-inspector-section" aria-label={t.agent.chat.povInspectorMemory}>
-          <div className="agent-pov-inspector-section-title">{t.agent.chat.povInspectorMemory}</div>
-          {view.memoryBriefing?.trim() ? (
-            <div className="agent-pov-inspector-memory">
-              <AgentMarkdown keyPrefix={`pov-memory-${view.agentId}`} text={view.memoryBriefing} />
-            </div>
-          ) : (
-            <EmptyState className="agent-child-run-empty agent-pov-inspector-empty" title={t.agent.chat.povInspectorNoMemory} />
-          )}
-        </section>
-        <section className="agent-pov-inspector-section" aria-label={t.agent.chat.povInspectorMessages}>
-          <div className="agent-pov-inspector-section-title">{t.agent.chat.povInspectorMessages}</div>
-          {view.messages.length === 0 ? (
-            <EmptyState className="agent-child-run-empty agent-pov-inspector-empty" title={t.agent.chat.povInspectorNoMessages} />
-          ) : (
-            <div className="agent-pov-inspector-message-list">
-              {view.messages.map((message, index) => (
-                <article className={`agent-pov-inspector-message is-${message.role}`} key={message.id}>
-                  <div className="agent-child-run-transcript-head">
-                    <span>{povRoleLabel(message.role)}</span>
-                    <code>{message.sourceMessageIds.join(', ')}</code>
-                  </div>
-                  <div className="agent-pov-inspector-part-list">
-                    {message.parts.map((part, partIndex) => (
-                      <div className="agent-pov-inspector-part" key={`${part.sourceMessageId}:${partIndex}`}>
-                        {part.preamble ? <pre>{part.preamble}</pre> : null}
-                        {part.text.trim() ? (
-                          <AgentMarkdown
-                            keyPrefix={`pov-${view.agentId}-${index}-${partIndex}`}
-                            text={part.text}
-                          />
-                        ) : (
-                          <span className="agent-pov-inspector-muted">{t.agent.chat.povInspectorEmptyPart}</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
-    </aside>
-  );
-}
-
 export function AgentChatPanel({
   index,
   dockOpen,
@@ -915,8 +484,7 @@ export function AgentChatPanel({
   const {
     entries,
     error,
-    dmRunActive,
-    channelRunsActive,
+    runActive,
     modelApi,
     modelId,
     providerId,
@@ -935,22 +503,19 @@ export function AgentChatPanel({
     conversationId,
     conversationTitle,
     members,
-    channelActivityEntries,
-    povInspectors,
     steer: steerRuntime,
     childRuns,
     childRunsByParentToolCallId,
     switchBranch,
     stop,
-    stopRun,
     tasks,
     toolResults,
     turnPhase,
     unreadByConversationId,
   } = useLinAgentRuntime();
-  // Any run in flight (DM streaming or Channel work): gates transcript rewrites
-  // (edit/regenerate/retry/branch), which stay blocked while the shared log moves.
-  const anyRunActive = dmRunActive || channelRunsActive;
+  // A run in flight gates transcript rewrites (edit/regenerate/retry/branch),
+  // which stay blocked while the log moves.
+  const anyRunActive = runActive;
   const [providerSettings, setProviderSettings] = useState<AgentProviderSettingsView | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [steeringNote, setSteeringNote] = useState<string | null>(null);
@@ -961,8 +526,6 @@ export function AgentChatPanel({
   const [rowActionMenu, setRowActionMenu] = useState<string | null>(null);
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
   const [selectedChildRunId, setSelectedChildRunId] = useState<string | null>(null);
-  const [selectedActivityEntryId, setSelectedActivityEntryId] = useState<string | null>(null);
-  const [selectedPovAgentId, setSelectedPovAgentId] = useState<string | null>(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
@@ -998,17 +561,6 @@ export function AgentChatPanel({
     () => members.filter((member) => member.principal.type === 'agent' && member.mention),
     [members],
   );
-  const activeConversationMeta = useMemo(
-    () => conversations.find((conversation) => conversation.id === conversationId) ?? null,
-    [conversations, conversationId],
-  );
-  const isChannel = isChannelConversation(conversationId, activeConversationMeta, members);
-  const channelMemberCount = isChannel
-    ? Math.max(
-        members.length + (members.some((member) => member.principal.type === 'user') ? 0 : 1),
-        agentMembers.length + 1,
-      )
-    : 0;
   const memberByAgentId = useMemo(() => {
     const map = new Map<string, AgentRenderMemberView>();
     for (const member of agentMembers) {
@@ -1025,28 +577,9 @@ export function AgentChatPanel({
     }
     return null;
   }, [members]);
-  const composerMembers = useMemo(
-    () => (isChannel
-      ? agentMembers.map((member) => ({
-          mention: member.mention,
-          displayName: member.displayName,
-          ...(member.coordinator ? { coordinator: true } : {}),
-        }))
-      : []),
-    [agentMembers, isChannel],
-  );
-  // Channel thread = utterances only: in-flight assistant entries live in the
-  // activity area, and each message appears whole on completion. DMs keep the
-  // streaming tail directly in the transcript.
-  const threadEntries = useMemo(
-    () => (isChannel
-      ? entries.filter((entry) => !(entry.kind === 'message' && entry.message.role === 'assistant' && entry.streaming))
-      : entries),
-    [entries, isChannel],
-  );
   const conversationRows = useMemo(
-    () => buildConversationRenderRows(threadEntries, isChannel ? 'idle' : turnPhase),
-    [threadEntries, isChannel, turnPhase],
+    () => buildConversationRenderRows(entries, turnPhase),
+    [entries, turnPhase],
   );
   const replyAnchorByMessageId = useMemo(
     () => buildReplyAnchorMap(conversationRows),
@@ -1054,18 +587,13 @@ export function AgentChatPanel({
   );
   const runningTaskCount = useMemo(() => tasks.filter((task) => task.status === 'running').length, [tasks]);
   const selectedChildRun = selectedChildRunId ? childRuns[selectedChildRunId] ?? null : null;
-  const selectedActivityEntry = selectedActivityEntryId
-    ? channelActivityEntries.find((entry) => entry.id === selectedActivityEntryId) ?? null
-    : null;
-  const selectedPovInspector = selectedPovAgentId ? povInspectors[selectedPovAgentId] ?? null : null;
-  const selectedPovMember = selectedPovAgentId ? memberByAgentId.get(selectedPovAgentId) ?? null : null;
   const [agentDefinitions, setAgentDefinitions] = useState<AgentDefinitionView[]>([]);
   const agentDefinitionById = useMemo(() => {
     const map = new Map<string, AgentDefinitionView>();
     for (const definition of agentDefinitions) map.set(definition.agentId, definition);
     return map;
   }, [agentDefinitions]);
-  const dmAgentMember = !isChannel && agentMembers.length === 1 ? agentMembers[0]! : null;
+  const dmAgentMember = agentMembers.length === 1 ? agentMembers[0]! : null;
   const dmAgentId = dmAgentMember?.principal.type === 'agent' ? dmAgentMember.principal.agentId : null;
   const dmAgentDefinition = dmAgentId ? agentDefinitionById.get(dmAgentId) : undefined;
   const dmAgentLabel = dmAgentId
@@ -1277,10 +805,7 @@ export function AgentChatPanel({
     const element = scrollRef.current;
     if (!element || !stickToBottomRef.current) return;
     scheduleScrollToBottom();
-    // channelActivityEntries.length is a dep so that mounting/unmounting the
-    // in-flow ChannelWorkingRow (which changes the composer-region height) re-pins
-    // a bottom-stuck reader instead of leaving the latest message clipped.
-  }, [channelActivityEntries.length, conversationRows.length, dmRunActive, scheduleScrollToBottom, virtualLayout.totalHeight]);
+  }, [conversationRows.length, runActive, scheduleScrollToBottom, virtualLayout.totalHeight]);
 
   useEffect(() => {
     rowHeightsRef.current.clear();
@@ -1321,27 +846,15 @@ export function AgentChatPanel({
   }, [loadSlashCommands]);
 
   useEffect(() => {
-    // Steering is a DM-only affordance; clear the note when the DM run settles.
-    if (!dmRunActive) {
+    // Clear the steering note when the run settles.
+    if (!runActive) {
       setSteeringNote(null);
     }
-  }, [dmRunActive]);
+  }, [runActive]);
 
   useEffect(() => {
     if (selectedChildRunId && !childRuns[selectedChildRunId]) setSelectedChildRunId(null);
   }, [selectedChildRunId, childRuns]);
-
-  useEffect(() => {
-    if (selectedActivityEntryId && !channelActivityEntries.some((entry) => entry.id === selectedActivityEntryId)) {
-      setSelectedActivityEntryId(null);
-    }
-  }, [channelActivityEntries, selectedActivityEntryId]);
-
-  useEffect(() => {
-    if (selectedPovAgentId && !povInspectors[selectedPovAgentId]) {
-      setSelectedPovAgentId(null);
-    }
-  }, [povInspectors, selectedPovAgentId]);
 
   // A command Run reveals its delivery conversation and asks for the task panel —
   // the run is a parentless child run, so it surfaces there (the open task panel
@@ -1477,15 +990,6 @@ export function AgentChatPanel({
     void window.lin?.openChannelConfig?.({ conversationId: targetConversationId, mode: 'configure' });
   }
 
-  function handleInspectMemberPov(agentId: string) {
-    setSelectedPovAgentId(agentId);
-    setSelectedActivityEntryId(null);
-    setSelectedChildRunId(null);
-    setTaskPanelOpen(false);
-    setHistoryOpen(false);
-    setRowActionMenu(null);
-  }
-
   async function handleSelectConversation(targetConversationId: string) {
     // Single-agent collapse: navigation is never locked. A run keeps streaming in
     // its conversation and surfaces unread via conversation_attention; the user can
@@ -1516,23 +1020,11 @@ export function AgentChatPanel({
       );
     }
 
-    // Channel attribution: name the speaking agent on assistant rows. Derived
-    // from the message's recorded actor — NOT from the live roster — so removing
-    // a member never erases who spoke; departed members fall back to their `@`
-    // token or saved definition name when still available.
+    // Single-agent collapse: no per-row channel attribution badge — the one agent
+    // owns every assistant turn, so the row carries no actor label/mention.
     const actor = row.entry.actor;
-    const speakerAgentId = isChannel && actor?.type === 'agent'
-      ? actor.agentId
-      : null;
-    const actorMember = speakerAgentId ? memberByAgentId.get(speakerAgentId) : undefined;
-    const actorDefinition = speakerAgentId ? agentDefinitionById.get(speakerAgentId) : undefined;
-    const actorMention = actorMember?.mention ?? (speakerAgentId ? agentMentionToken(speakerAgentId) : undefined);
-    const actorDisplayName = speakerAgentId
-      ? agentDefinitionName(actorDefinition) ?? actorMember?.displayName ?? `@${agentMentionToken(speakerAgentId)}`
-      : null;
-    const actorLabel = speakerAgentId && row.entry.message.role === 'assistant'
-      ? actorDisplayName
-      : null;
+    const actorLabel: string | null = null;
+    const actorMention: string | undefined = undefined;
     const detailSpeakerAgentId = row.entry.message.role === 'assistant'
       ? (actor?.type === 'agent' ? actor.agentId : dmAgentId ?? coordinatorAgentId)
       : null;
@@ -1545,10 +1037,9 @@ export function AgentChatPanel({
         ?? (detailSpeakerAgentId ? `@${agentMentionToken(detailSpeakerAgentId)}` : dmAgentLabel)
         ?? t.agent.message.roleAssistant
       : t.agent.message.you;
-    // Result-first turn (DM and Channel alike): the turn renders its final answer
-    // as prose with the working process — thinking, tools, interim narration —
-    // folded behind the collapsed "Worked for …" disclosure (renderAssistantBlocks).
-    // Channel no longer strips the process to text-only; it shares the DM path.
+    // Result-first turn: the turn renders its final answer as prose with the
+    // working process — thinking, tools, interim narration — folded behind the
+    // collapsed "Worked for …" disclosure (renderAssistantBlocks).
     const rowMessageId = row.entry.nodeId;
     const replyAnchor = rowMessageId ? replyAnchorByMessageId.get(rowMessageId) ?? null : null;
 
@@ -1578,7 +1069,7 @@ export function AgentChatPanel({
         streaming={row.streaming}
         childRunsByParentToolCallId={childRunsByParentToolCallId}
         toolResults={toolResults}
-        isChannel={isChannel}
+        isChannel={false}
         turnPhase={row.turnPhase}
         speakerLabel={detailSpeakerLabel}
         speakerMention={detailSpeakerMention}
@@ -1728,17 +1219,6 @@ export function AgentChatPanel({
                 const title = readableConversationTitle(conversation.title, t.common.untitled);
                 const unread = isCurrent ? 0 : conversation.unreadCount ?? unreadByConversationId.get(conversation.id) ?? 0;
                 const actionMenuKey = `channel:${conversation.id}`;
-                const povActions: ConversationRowMenuAction[] = isCurrent ? agentMembers.flatMap((member) => {
-                  const principal = member.principal;
-                  if (principal.type !== 'agent') return [];
-                  const { agentId } = principal;
-                  if (!povInspectors[agentId]) return [];
-                  return [{
-                    id: `inspect-pov:${agentId}`,
-                    label: t.agent.chat.inspectMemberPov({ name: member.displayName }),
-                    onSelect: () => handleInspectMemberPov(agentId),
-                  }];
-                }) : [];
                 const channelActions: ConversationRowMenuAction[] = [
                   ...(isDefaultGeneral ? [] : [{
                     disabled: anyRunActive,
@@ -1746,7 +1226,6 @@ export function AgentChatPanel({
                     label: t.agent.chat.configureChannel,
                     onSelect: () => handleConfigureChannel(conversation.id),
                   } satisfies ConversationRowMenuAction]),
-                  ...povActions,
                 ];
                 return (
                   <div
@@ -1865,26 +1344,12 @@ export function AgentChatPanel({
       </div>
 
       <div className="agent-composer-region">
-        {isChannel ? (
-          <ChannelWorkingRow
-            agentDefinitionById={agentDefinitionById}
-            entries={channelActivityEntries}
-            memberByAgentId={memberByAgentId}
-            onOpenEntry={setSelectedActivityEntryId}
-            onStopEntry={(entry) => {
-              if (entry.runId) stopRun(entry.runId);
-            }}
-            selectedEntryId={selectedActivityEntryId}
-          />
-        ) : null}
-
         <AgentComposer
           currentNodeId={composerCurrentNodeId(userViewContext, index)}
           focusToken={composerFocusToken}
           index={index}
-          isStreaming={dmRunActive}
-          members={composerMembers}
-          queueSends={isChannel}
+          isStreaming={runActive}
+          members={[]}
           onNodeReferenceOpen={onOpenNodeReference}
           onCancelSteer={handleCancelSteer}
           onSend={sendMessage}
@@ -1908,89 +1373,6 @@ export function AgentChatPanel({
         onNodeReferenceOpen={onOpenNodeReference}
         onOpenChildRunTranscript={setSelectedChildRunId}
       />
-      {selectedPovInspector && selectedPovMember ? (
-        <AgentPovInspectorPanel
-          member={selectedPovMember}
-          onClose={() => setSelectedPovAgentId(null)}
-          view={selectedPovInspector}
-        />
-      ) : null}
-      {selectedActivityEntry ? (() => {
-        const { label, mention } = activityAgentLabel(selectedActivityEntry, memberByAgentId, agentDefinitionById);
-        const { stateLabel } = activityCopy(selectedActivityEntry, label, t);
-        const liveContent = activityLiveContent(selectedActivityEntry);
-        const livePendingToolCallIds = scopedPendingToolCallIds(selectedActivityEntry, liveContent);
-        const liveFailedToolCallIds = scopedFailedToolCallIds(selectedActivityEntry, liveContent);
-        const liveToolResults = syntheticLiveToolResults(
-          liveContent,
-          livePendingToolCallIds,
-          liveFailedToolCallIds,
-          selectedActivityEntry.updatedAt,
-        );
-        const liveChildRunsByParentToolCallId = scopedChildRunsByParentToolCallId(
-          liveContent,
-          selectedActivityEntry.runId,
-          childRunsByParentToolCallId,
-        );
-        const liveMessage: AssistantMessage | null = liveContent.length > 0
-          ? createAssistantPlaceholderFromModel(
-              {
-                api: modelApi ?? '',
-                provider: providerId ?? '',
-                id: modelId ?? '',
-              },
-              selectedActivityEntry.updatedAt,
-              liveContent,
-            )
-          : null;
-        return (
-          <aside className="agent-child-run-details-panel agent-channel-run-panel" aria-label={t.agent.chat.openTypingDetails}>
-            <header className="agent-child-run-details-header">
-              <div className="agent-child-run-title-block">
-                <div className="agent-child-run-title-line">
-                  <AgentIdentityAvatar label={label} mention={mention} />
-                  <span>{`${label} · ${stateLabel}`}</span>
-                </div>
-              </div>
-              <IconButton
-                className="agent-child-run-close"
-                icon={CloseIcon}
-                label={t.agent.chat.closeTypingDetails}
-                onClick={() => setSelectedActivityEntryId(null)}
-                variant="panel"
-              />
-            </header>
-            <div className="agent-child-run-details-body">
-              {liveMessage ? (
-                // The live token stream of the running Channel agent (PM-ratified
-                // 2026-06-13): retained per-run from message_update and surfaced
-                // ONLY here — never in the whole-utterance message flow. Render it
-                // through the same live assistant-turn UI as DM so "Working..." /
-                // process behavior stays single-sourced.
-                <AgentTranscriptMessageList
-                  active
-                  className="agent-channel-run-live"
-                  conversationId={conversationId}
-                  childRunsByParentToolCallId={liveChildRunsByParentToolCallId}
-                  index={index}
-                  // This side panel is the DM-style live process view for one
-                  // running Channel agent, not the main Channel transcript. Keep
-                  // child-run tool calls visible here so their transcript action
-                  // remains reachable while the run is still live.
-                  isChannel={false}
-                  messages={[liveMessage]}
-                  onNodeReferenceOpen={onOpenNodeReference}
-                  onOpenChildRunTranscript={setSelectedChildRunId}
-                  pendingToolCallIds={livePendingToolCallIds}
-                  toolResults={liveToolResults}
-                />
-              ) : (
-                <EmptyState className="agent-child-run-empty" title={t.agent.chat.typingNoDetailYet} />
-              )}
-            </div>
-          </aside>
-        );
-      })() : null}
       {taskPanelOpen && !selectedChildRun ? (
         <AgentTaskPanel
           conversationId={conversationId}
