@@ -73,15 +73,26 @@ Everything that creates / duplicates / deletes an agent *definition*. Keep the
 | Settings UI | `AgentSettingsView.tsx` `openAgentCreate` (:396) + the "New agent" `InsetRow` (:1340-1345); `AgentConfigWindow.tsx` `createAgent` / `deleteAgent` / `duplicateAgent` + the `mode:'create'` / `agent={null}` path; `AgentEditor.tsx` `onCreate`, create-mode (`agent === null`), `newAgentScaffold` | `AgentEditor.tsx` `onUpdate` + edit-mode; `AgentConfigWindow.tsx` `updateAgent` |
 | i18n | `en.ts` / `zh-Hans.ts` keys: `newAgent`, `createTitle`, `createAgent` (+ delete/duplicate copy) | `editTitle`, `saveAgent` |
 
-**Note on `file_write` self-authoring (audit, do NOT blanket-remove):** the
-Explore pass flagged `agentLocalTools.ts` `createFileWriteTool` /
-`validateSelfDefinitionContentWriteOrThrow` / `selfDefinitionSurfaceForPath`.
-`file_write` is a **general** tool that also writes skills and ordinary files —
-it must stay. Only the branch that *validates/permits writing a new `AGENT.md`
-agent-definition* is in scope. Confirm whether that validation solely serves
-agent creation; if it is shared with skill self-authoring (which we keep — see
-`agent-skill-write-gate-removed`), leave it. This is the one place to read
-carefully rather than delete by name.
+**Note on `file_write` self-authoring (resolved — surgical, not blanket):** the
+self-definition write gate is **one shared mechanism for both skills and agents**.
+`SelfDefinitionSurface = 'skill' | 'agent'` (`agentAuthoring.ts:33`) and
+`selfDefinitionRootEntries` (`:75`) returns four roots: user/project ×
+`.agents/skills` (`'skill'`) / `.agents/agents` (`'agent'`).
+`createFileWriteTool`, `validateSelfDefinitionContentWriteOrThrow`, and
+`selfDefinitionSurfaceForPath` are **load-bearing for the kept skill path — do
+not remove them.** Remove only the `'agent'` surface:
+- Narrow `SelfDefinitionSurface` to `'skill'`; drop the two `'agent'` entries
+  from `selfDefinitionRootEntries`.
+- Delete `validateAgentDefinitionContentWrite`, `resolveAgentDefinitionContentTarget`,
+  `AgentDefinitionContentTarget`, `agentsDirForStorage`, and the `'agent'` branch
+  of `validateSelfDefinitionContentWriteOrThrow`.
+- `defaultAgentDefinitionDirs` (`agentAuthoring.ts:85`, `filter(surface === 'agent')`)
+  becomes empty → dead; it feeds agent-file discovery, which Area 2 removes anyway.
+  Delete it.
+- **Ripple to call out in the PR:** `agentPermissions.ts:347/2000` iterate
+  `selfDefinitionRootEntries` to protect self-definition roots; after the narrow
+  they protect skill roots only. That is correct (agent roots are no longer
+  special), but flag it so a guard test does not read as a regression.
 
 ### Area 2 — Remove file-backed agent loading + cross-agent ("fresh") delegation
 
@@ -111,9 +122,14 @@ Make the registry hold **only Neva**, and make the `agent` tool **fork-only**.
 - **Keep the fork machinery and the child-run control tools** `AgentStatus` /
   `AgentSend` / `AgentStop` — they operate on Neva's own forks.
 
-**Decision needed (see Open questions):** keep the user-facing fork-only `agent`
-tool, or remove it entirely and let only skills (`/research`, dream, Task) spawn
-forks?
+**Decided (PM-ratified 2026-06-18, see Decisions):** **keep the `agent` tool,
+fork-only.** The invariant is enforced by removing `agent_type`, not by removing
+the tool. The fork is the base primitive that `/research` / dream / Task
+specialize; the child-run control tools (`AgentStatus` / `AgentSend` /
+`AgentStop`) already manage forks, so keeping the spawn tool is symmetric.
+Harden it: the schema carries **no name/type field at all** (only the task +
+optional fork/background options), so "delegate to a different agent" is
+structurally unrepresentable — not merely defaulted away.
 
 ### Area 3 — Remove the now-dead multi-agent residue
 
@@ -142,11 +158,16 @@ the only way to get a reader ≠ Neva, the **cross-principal** branch of
 `memoryEntryVisibleToReader` (secret redaction + source-stripping) and
 `crossPrincipalEvidenceRefusal` become dead code.
 
-**Recommendation:** keep `memoryReadPrincipals()` / same-principal behavior as
-is, and **keep** the cross-principal redaction branch as cheap defense-in-depth
-(it is a pure guard with no live caller, so it cannot misfire) — or delete it as
-dead code if the reviewer prefers a smaller surface. Either is low-risk; call it
-in the PR. Do **not** re-introduce `memoryIsolation` or per-reader pools.
+**Decided (PM-ratified 2026-06-18):** **delete** the cross-principal redaction
+branch of `memoryEntryVisibleToReader` and `crossPrincipalEvidenceRefusal` as
+dead code. Once Area 2 makes a reader ≠ Neva unrepresentable, the branch has zero
+possible callers; keeping it would imply a multi-principal threat model the
+invariant has abolished (A6 — code reflects current intended behavior). Replace
+the "defense" intent with an **invariant assertion/test** that
+`memoryReadPrincipals()` only ever returns `[Neva]` — a guard at the right layer,
+not a live runtime redaction path. Keep `memoryReadPrincipals()` /
+same-principal behavior as is. Do **not** re-introduce `memoryIsolation` or
+per-reader pools.
 
 ## Verification
 
@@ -168,13 +189,20 @@ in the PR. Do **not** re-introduce `memoryIsolation` or per-reader pools.
   model (`agent-communication-colleague-model`) is **superseded** by the
   single-Neva invariant — update or retire it in the same change.
 
-## Open questions
+## Decisions (PM-ratified 2026-06-18)
 
-1. **Keep the fork-only `agent` tool, or remove it?** (Area 2.) Recommendation:
-   **keep it, fork-only** — a fork is Neva delegating to herself for parallel /
-   isolated work (not a second agent), and it is genuinely useful. Removing
-   `agent_type` is enough to enforce the invariant. *Directional → PM ratifies.*
-2. **Delete the now-dead cross-principal memory redaction, or keep as a guard?**
-   Recommendation: keep (zero live callers, cannot misfire). Reviewer's call.
-3. **Audit boundary for `file_write` self-definition validation** (Area 1 note):
-   confirm it does not also guard skill self-authoring before removing any of it.
+1. **Keep the `agent` tool, fork-only.** (Area 2.) A fork is Neva delegating to
+   herself for parallel / isolated work (not a second agent), and it is the base
+   primitive `/research` / dream / Task specialize. The invariant is enforced by
+   removing `agent_type`, not the tool. **Harden the schema** so it carries no
+   name/type field — "delegate to a different agent" must be structurally
+   unrepresentable, and a test asserts the tool produces `memoryOwnerAgentId === Neva`.
+2. **Delete the now-dead cross-principal memory redaction** (the cross-principal
+   branch of `memoryEntryVisibleToReader` + `crossPrincipalEvidenceRefusal`) as
+   dead code; replace its intent with an invariant assertion that
+   `memoryReadPrincipals()` returns only `[Neva]`. Pre-release, no defense-in-depth
+   for a threat model the invariant abolishes. *(See "Memory privacy" above.)*
+3. **`file_write` self-definition validation — resolved, surgical.** The gate is
+   shared by skills and agents (`SelfDefinitionSurface = 'skill' | 'agent'`). Keep
+   the `'skill'` machinery; remove only the `'agent'` surface. *(See the Area 1
+   note for the exact symbol list and the `agentPermissions` ripple.)*
