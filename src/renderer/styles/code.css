@@ -20,6 +20,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-soft);
+  --code-block-scrollbar-edge-inset: var(--space-1);
   --code-block-content-inset: var(--space-5);
   --code-block-scrollbar-gutter: var(--space-4);
 }
@@ -260,7 +261,7 @@
 
 .code-block-textarea {
   position: absolute;
-  inset: var(--code-block-content-inset);
+  inset: var(--code-block-content-inset) var(--code-block-content-inset) var(--code-block-scrollbar-edge-inset);
   display: block;
   width: auto;
   height: auto;

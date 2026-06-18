@@ -141,6 +141,7 @@ test.describe('code block editor', () => {
       const textareaRect = ta.getBoundingClientRect();
       const blockRect = block?.getBoundingClientRect();
       return {
+        bottomInset: blockRect ? blockRect.bottom - textareaRect.bottom : Number.POSITIVE_INFINITY,
         insetLeft: blockRect ? textareaRect.left - blockRect.left : 0,
         lines: ta.value.split('\n').length,
         scrollbarGutter: sizer ? Number.parseFloat(getComputedStyle(sizer).paddingBottom) : 0,
@@ -149,6 +150,7 @@ test.describe('code block editor', () => {
         whiteSpace: getComputedStyle(ta).whiteSpace,
       };
     });
+    expect(metrics.bottomInset).toBeLessThanOrEqual(4);
     expect(metrics.insetLeft).toBeGreaterThanOrEqual(8);
     expect(metrics.lines).toBe(1);
     expect(metrics.scrollbarGutter).toBeGreaterThanOrEqual(7);
