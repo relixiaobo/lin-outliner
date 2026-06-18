@@ -137,11 +137,13 @@ test.describe('code block editor', () => {
     const metrics = await textarea.evaluate((element) => {
       const ta = element as HTMLTextAreaElement;
       const block = ta.closest('.code-block');
+      const sizer = block?.querySelector<HTMLElement>('.code-block-sizer');
       const textareaRect = ta.getBoundingClientRect();
       const blockRect = block?.getBoundingClientRect();
       return {
         insetLeft: blockRect ? textareaRect.left - blockRect.left : 0,
         lines: ta.value.split('\n').length,
+        scrollbarGutter: sizer ? Number.parseFloat(getComputedStyle(sizer).paddingBottom) : 0,
         scrollWidth: ta.scrollWidth,
         clientWidth: ta.clientWidth,
         whiteSpace: getComputedStyle(ta).whiteSpace,
@@ -149,6 +151,7 @@ test.describe('code block editor', () => {
     });
     expect(metrics.insetLeft).toBeGreaterThanOrEqual(8);
     expect(metrics.lines).toBe(1);
+    expect(metrics.scrollbarGutter).toBeGreaterThanOrEqual(7);
     expect(metrics.whiteSpace).toBe('pre');
     expect(metrics.scrollWidth).toBeGreaterThan(metrics.clientWidth);
   });

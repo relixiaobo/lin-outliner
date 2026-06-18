@@ -143,7 +143,8 @@
 .file-preview-markdown h4,
 .file-preview-markdown ul,
 .file-preview-markdown ol,
-.file-preview-markdown blockquote {
+.file-preview-markdown blockquote,
+.file-preview-markdown pre {
   margin-bottom: 0;
 }
 
@@ -179,24 +180,38 @@
 .file-preview-markdown pre code {
   display: block;
   overflow: auto;
-  padding: var(--space-4);
+  background: transparent;
+  border-radius: 0;
+  font-size: var(--font-code-block);
+  line-height: var(--line-code-block);
+  padding: 0 0 var(--file-preview-scrollbar-gutter, var(--space-4));
+}
+
+.file-preview-markdown pre {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--fill-1);
+  padding: var(--file-preview-content-inset, var(--space-4));
 }
 
 .file-preview-code {
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--fill-0);
+  background: var(--fill-1);
+  padding: var(--file-preview-content-inset, var(--space-4));
 }
 
 .file-preview-code pre.shiki {
   margin: 0;
+  overflow: auto;
   background: transparent !important;
   color: var(--text-strong);
   font-family: var(--font-family-mono);
   font-size: var(--font-code-block);
   line-height: var(--line-code-block);
-  padding: var(--space-4) var(--space-5);
+  padding: 0 0 var(--file-preview-scrollbar-gutter, var(--space-4));
   tab-size: 2;
 }
 
@@ -267,9 +282,16 @@
 }
 
 .file-preview-table-wrap {
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
+  background: var(--fill-1);
+  padding: var(--file-preview-content-inset, var(--space-4));
+}
+
+.file-preview-table-scroll {
+  overflow: auto;
+  padding-bottom: var(--file-preview-scrollbar-gutter, var(--space-4));
 }
 
 .file-preview-table {
@@ -328,6 +350,7 @@
   position: relative;
   min-width: 0;
   margin-bottom: var(--space-6);
+  --file-preview-content-inset: var(--space-4);
   --file-preview-frame-padding-block: var(--space-4);
   --file-preview-frame-padding-inline: var(--file-preview-frame-padding-block);
   --file-preview-frame-radius: var(--radius-lg);

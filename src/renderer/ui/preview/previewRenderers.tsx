@@ -463,17 +463,19 @@ function DelimitedPreview({ source }: PreviewRendererProps) {
   if (rows.length === 0) return <PreviewMessage>{labels.unsupported}</PreviewMessage>;
   return (
     <div className="file-preview-table-wrap">
-      <table className="file-preview-table">
-        <tbody>
-          {rows.map((row, rowIndex) => (
-            <tr key={rowIndex}>
-              {row.map((cell, cellIndex) => (
-                <td key={cellIndex}>{cell}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="file-preview-table-scroll">
+        <table className="file-preview-table">
+          <tbody>
+            {rows.map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {row.map((cell, cellIndex) => (
+                  <td key={cellIndex}>{cell}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -75,6 +75,24 @@ async function pasteClipboardFile(page: Parameters<typeof trailingEditor>[0], fi
   }, file);
 }
 
+async function pasteClipboardFileAndOpenPreview(
+  page: Parameters<typeof trailingEditor>[0],
+  file: { name: string; mimeType: string; text: string },
+) {
+  const beforeChildren = await todayChildren(page);
+  await trailingEditor(page).click();
+  await pasteClipboardFile(page, file);
+  await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+  const pastedId = (await todayChildren(page)).at(-1);
+  if (!pastedId) throw new Error(`No pasted file node for ${file.name}`);
+  const pastedRow = row(page, pastedId);
+  await pastedRow.locator('> .row').first().hover();
+  await pastedRow.locator('.row-chevron-button').first().click();
+  const previewFrame = pastedRow.locator('.file-node-row-preview .file-node-preview.collapsed');
+  await expect(previewFrame).toBeVisible();
+  return previewFrame;
+}
+
 async function dispatchExternalFileDrag(
   page: Parameters<typeof trailingEditor>[0],
   targetId: string,
@@ -754,6 +772,96 @@ test.describe('file attachments', () => {
       cmd: 'create_attachment_node',
       args: expect.objectContaining({ originalFilename: 'clipboard-report.pdf' }),
     }));
+  });
+
+  test('text-like file previews keep content and horizontal scrollbars inside the preview inset', async ({ page }) => {
+    const markdownPreview = await pasteClipboardFileAndOpenPreview(page, {
+      name: 'edge-notes.md',
+      mimeType: 'text/markdown',
+      text: '# Edge notes',
+    });
+    await expect(markdownPreview.locator('.file-preview-markdown pre code')).toBeVisible();
+    await expect.poll(async () => markdownPreview.evaluate((frame) => {
+      const markdown = frame.querySelector<HTMLElement>('.file-preview-markdown');
+      const codeFrame = frame.querySelector<HTMLElement>('.file-preview-markdown pre');
+      const codeScroll = frame.querySelector<HTMLElement>('.file-preview-markdown pre code');
+      if (!markdown || !codeFrame || !codeScroll) return null;
+      codeScroll.scrollLeft = Math.min(48, codeScroll.scrollWidth - codeScroll.clientWidth);
+      const frameRect = frame.getBoundingClientRect();
+      const markdownRect = markdown.getBoundingClientRect();
+      const codeFrameRect = codeFrame.getBoundingClientRect();
+      const codeScrollRect = codeScroll.getBoundingClientRect();
+      const codeStyle = getComputedStyle(codeScroll);
+      return {
+        codeFrameInset: codeFrameRect.left - frameRect.left >= 7,
+        codeScrollbarGutter: Number.parseFloat(codeStyle.paddingBottom) >= 7,
+        codeScrollInset: codeScrollRect.left - codeFrameRect.left >= 7,
+        codeScrollsHorizontally: codeScroll.scrollWidth > codeScroll.clientWidth,
+        markdownInset: markdownRect.left - frameRect.left >= 7,
+      };
+    })).toEqual({
+      codeFrameInset: true,
+      codeScrollbarGutter: true,
+      codeScrollInset: true,
+      codeScrollsHorizontally: true,
+      markdownInset: true,
+    });
+
+    const textPreview = await pasteClipboardFileAndOpenPreview(page, {
+      name: 'edge-log.txt',
+      mimeType: 'text/plain',
+      text: 'edge log',
+    });
+    await expect(textPreview.locator('.file-preview-code pre.shiki')).toBeVisible();
+    await expect.poll(async () => textPreview.evaluate((frame) => {
+      const codeFrame = frame.querySelector<HTMLElement>('.file-preview-code');
+      const codeScroll = frame.querySelector<HTMLElement>('.file-preview-code pre.shiki');
+      if (!codeFrame || !codeScroll) return null;
+      codeScroll.scrollLeft = Math.min(48, codeScroll.scrollWidth - codeScroll.clientWidth);
+      const frameRect = frame.getBoundingClientRect();
+      const codeFrameRect = codeFrame.getBoundingClientRect();
+      const codeScrollRect = codeScroll.getBoundingClientRect();
+      const codeStyle = getComputedStyle(codeScroll);
+      return {
+        codeFrameInset: codeFrameRect.left - frameRect.left >= 7,
+        codeScrollbarGutter: Number.parseFloat(codeStyle.paddingBottom) >= 7,
+        codeScrollInset: codeScrollRect.left - codeFrameRect.left >= 7,
+        codeScrollsHorizontally: codeScroll.scrollWidth > codeScroll.clientWidth,
+      };
+    })).toEqual({
+      codeFrameInset: true,
+      codeScrollbarGutter: true,
+      codeScrollInset: true,
+      codeScrollsHorizontally: true,
+    });
+
+    const tablePreview = await pasteClipboardFileAndOpenPreview(page, {
+      name: 'edge-table.csv',
+      mimeType: 'text/csv',
+      text: 'name,value',
+    });
+    await expect(tablePreview.locator('.file-preview-table-wrap .file-preview-table')).toBeVisible();
+    await expect.poll(async () => tablePreview.evaluate((frame) => {
+      const tableFrame = frame.querySelector<HTMLElement>('.file-preview-table-wrap');
+      const tableScroll = frame.querySelector<HTMLElement>('.file-preview-table-scroll');
+      if (!tableFrame || !tableScroll) return null;
+      tableScroll.scrollLeft = Math.min(48, tableScroll.scrollWidth - tableScroll.clientWidth);
+      const frameRect = frame.getBoundingClientRect();
+      const tableFrameRect = tableFrame.getBoundingClientRect();
+      const tableScrollRect = tableScroll.getBoundingClientRect();
+      const tableStyle = getComputedStyle(tableScroll);
+      return {
+        tableFrameInset: tableFrameRect.left - frameRect.left >= 7,
+        tableScrollbarGutter: Number.parseFloat(tableStyle.paddingBottom) >= 7,
+        tableScrollInset: tableScrollRect.left - tableFrameRect.left >= 7,
+        tableScrollsHorizontally: tableScroll.scrollWidth > tableScroll.clientWidth,
+      };
+    })).toEqual({
+      tableFrameInset: true,
+      tableScrollbarGutter: true,
+      tableScrollInset: true,
+      tableScrollsHorizontally: true,
+    });
   });
 
   test('unsupported file previews keep the same bottom action location as previewable files', async ({ page }) => {
