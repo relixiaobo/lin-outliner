@@ -15,8 +15,8 @@ Memory becomes legible and correctable in two senses:
   document, not code; you (or Neva) tune it by editing markdown.
 
 The end state has **no special memory subsystem**: memory is nodes + `node_*` +
-search + skills/persona. The only memory-specific runtime is a thin trigger — and
-even that is a special case of the already-shipped scheduled-routines (§ Writing).
+search + skills/persona. The only memory-specific runtime is a thin trigger built on
+the already-shipped scheduled-routines (§3).
 
 ## Scope — this is a reversal, not a "supersede"
 
@@ -28,13 +28,21 @@ PM-ratified subsystem and the data-model's founding axiom**.
   touches Loro"* and the *"one log engine, three instances, memory = single writer
   per stream"* model. Moving the memory line into Loro **deliberately abandons
   memory's single-writer invariant** (Loro has two writers: user + agent) — which is
-  exactly what makes memory user-editable, and is a conscious PM-owned reversal.
+  exactly what makes memory user-editable. It is a conscious PM-owned reversal, and it
+  has concurrency/undo consequences this plan now analyzes (§5).
 - It **retires most of `agent-memory-foundations.md`'s working-memory / activation /
   retrieval-mode content** (the passive-briefing/chronic-activation machinery).
 - It **keeps the spine**: auditability (a source dereferences to original bytes or
   fails loud) and the episodic→semantic consolidation ladder.
 
 The A6 step is therefore a **rewrite** of those spec sections, not a patch — budget it.
+
+**New nouns/protocol introduced here (kept visible per the repo "shipped-concepts"
+rule):** the `d-memory`/`d-episode`/`d-belief` tag family, a per-node **source-pointer
+field** on `NodeBase`, and a **watermark field on a container node**. These are
+*invented by this plan*, not reuse — today's dream watermark lives in the memory
+event-log projection, not on a node; the shipped concepts it builds beside are
+`tag:day` / `reference` / `capture` / `command` / `origin:'agent'`.
 
 ## Shape
 
@@ -56,48 +64,53 @@ genuinely-atomic change (memory cannot be half-migrated pre-release — read and
 must flip together; the obvious "land node structure first, fill later" split is the
 forbidden scaffold-then-fill).
 
-**Ordering dependency:** PR2 presupposes `single-agent-finish-collapse` has landed —
-that plan makes `principal` constant (one pool) and removes the cross-principal
-redaction surface, both of which PR2 builds on, and the two touch the same files.
-**Sequence: `single-agent-finish-collapse` merges first, then PR2.**
+**Ordering dependency — satisfied.** PR2 presupposes `single-agent-finish-collapse`,
+which **shipped as #300** (merge `4374928a`, gate `c56f1a46`). PR2 now *inherits*
+rather than performs that work: `principal` is a runtime-constant one-Neva pool, and
+the cross-principal redaction (`memoryEntryVisibleToReader` cross branch +
+`crossPrincipalEvidenceRefusal`) is **already removed**. No remaining ordering gate;
+PR2 builds on post-#300 `main`.
 
-## Background — what exists today (verified against `main`)
+## Background — what exists today (post-#300 `main`, `c56f1a46`)
 
 - **Memory store.** A separate append-only event log per principal
-  (`principals/<principal>/memory/events.jsonl`), **not** in the Loro document.
-  `principal` is **still a variable parameter** on the memory APIs
-  (`addMemoryEntry(principal, …)`); it becomes a constant only once
-  `single-agent-finish-collapse` lands (currently P0 draft, not shipped). Shapes:
-  `AgentMemoryEntry` (semantic) + `AgentMemoryEpisode` (episodic), each with
-  `sources[]` of `AgentMemorySource {stream, streamId, range}` pointing at
-  conversation/run spans (`src/core/agentEventLog.ts`).
-- **Dream.** Runtime code (`src/main/agentDreamExtraction.ts` + `agentRuntime.ts`)
-  reads conversation/run logs past a per-pool `AgentDreamWatermark {conversations,
-  runs}`, builds an extraction prompt, and applies add/update/forget actions. Fired
-  by the `dream` self-maintenance tool (`agentSelfMaintenanceTools.ts`) + an
-  autonomous daily-cadence scheduler + backoff (`dreamBackoff.ts`, #189). There is no
-  `/dream` slash command.
+  (`principals/<principal>/memory/events.jsonl`) in `src/main/agentEventStore.ts`
+  (`memoryPaths` ~`:407`, `addMemoryEntry(principal,…)` ~`:783`), **not** in the Loro
+  document. Post-#300 the principal is a **runtime-constant one-Neva pool**. Shapes
+  (`src/core/agentEventLog.ts`): `AgentMemoryEntry` (semantic) + `AgentMemoryEpisode`
+  (episodic), each with `sources[]` of `AgentMemorySource {stream, streamId, range}`.
+- **Dream.** Runtime code (`src/main/agentDreamExtraction.ts` + `agentRuntime.ts`
+  ~`:670/765/3064`) reads conversation/run logs past a per-pool
+  `AgentDreamWatermark {conversations, runs}` (`agentEventLog.ts:499`), builds an
+  extraction prompt, applies add/update/forget. Fired by the `dream` self-maintenance
+  tool (`agentSelfMaintenanceTools.ts:126`) + an autonomous daily-cadence scheduler +
+  backoff (`dreamBackoff.ts`). No `/dream` slash command.
 - **Recall + briefing.** `recall` is a tool doing BM25 + a three-component
-  activation/decay model + source-association ranking (`agentMemoryRetrieval.ts`,
-  `agentMemoryActivation.ts`). **Briefing is LIVE**, not dead code: per-turn injection
-  via `buildMemoryReminder` → `withMemoryReminder` (`agentDelegation.ts:1063-1069`).
-  Deleting it removes a running capability (see Reading).
-- **`AgentPastChatsService`** (`src/main/agentPastChats.ts`) already has
-  `search` / `recent` / `read` / `readMemorySourceEvidence`, but only the last is
-  wired (into `recall`'s evidence expansion). A `past_chats` *tool* existed
-  historically (`11a5b680`), removed in `1a04f6ce`; the engine survives.
-- **Node search exposes ranked text (feasibility premise — verified).** `node_search`
-  passes `host.getTextSearchIndex()` into `runSearch` (`agentNodeTools.ts:968`) and
-  accepts a `STRING_MATCH` text rule backed by the BM25 index (`textSearchIndex.ts`,
-  `this.bm25(...)`). So "recall = content search" is **not** a downgrade — the old
-  recall's BM25 capability exists on the node side. (PR2 detail: confirm results come
-  back BM25-*ranked*, not just as a membership set.)
-- **Document node model.** Date nodes are plain `ContentNode`s tagged `tag:day` under
-  `daily-notes`; `todayId` is dynamic. Nodes carry `tags`, a `capture` sidecar for
-  provenance, `locked`, and are mutated by the agent via `origin:'agent'` commands.
-  The renderer only draws **real Loro nodes** (the projection is built from
-  `state.nodes`) — there is no virtual node channel. A `reference` node targets a
-  `NodeId` (in-document only).
+  activation/decay model + source-association ranking
+  (`src/core/agentMemoryRetrieval.ts`, `src/core/agentMemoryActivation.ts`). The
+  activation engine ranks **both** the briefing **and** recall
+  (`compareHybridRankedEntries`). **Briefing is LIVE**: per-turn injection via
+  `buildMemoryReminder` → `withMemoryReminder` (`agentDelegation.ts`, anchors shifted
+  post-#300, ~`:945/982/986/989/1500`).
+- **`AgentPastChatsService`** (`src/main/agentPastChats.ts:188`): `search` / `recent` /
+  `read` / `readMemorySourceEvidence`; only the last is wired (into `recall`'s evidence
+  expansion). A `past_chats` *tool* existed (`11a5b680`), removed in `1a04f6ce`; engine
+  intact.
+- **Node search is BM25-ranked (verified).** `node_search` (`agentNodeTools.ts:969`) →
+  `agentNodeToolSearch.ts:253` → `searchEngine.ts:271` `sortSearchHits`, scores from
+  `textSearchIndex.ts:256`. Default sort is by score; an explicit `sys:createdAt/
+  updatedAt` rule overrides. So "recall = content search" holds — but it returns
+  *relevance* order only, with **no recency/access decay** (that lived in the
+  activation engine being removed — see §4).
+- **Document node model.** Date nodes are plain `ContentNode`s tagged `tag:day`;
+  `todayId` is dynamic. `capture` is a **specific typed field** `capture?:
+  CaptureNodeMetadata` on `NodeBase` (`types.ts:384`), *not* an open sidecar channel.
+  Agent mutations go through `origin:'agent'` commands and a **serial mutation queue**
+  (`documentService.ts`). Undo is **origin-scoped**: `userUndoManager` excludes
+  `'agent:'`, `aiUndoManager` excludes `'user:'` (`loroDocument.ts:31-33,154-156`); the
+  `undo` command derives its scope from `meta.origin` (`documentService.ts:651`). The
+  renderer only draws **real Loro nodes**; a `reference` node targets a `NodeId`
+  (in-document only).
 
 ## Design
 
@@ -106,7 +119,7 @@ redaction surface, both of which PR2 builds on, and the two touch the same files
 ```
 2026-06-18  (day node, tag:day)
   ├ [the user's own notes for the day …]
-  └ d-memory  (per-day memory container; holds the dream watermark)
+  └ d-memory  (per-day memory container; holds a NEW watermark field)
       ├ d-episode: "时间线做记忆的设计讨论"   (gist + source pointer)
       │   └ d-belief: "memory is pull-only; no passive briefing"
       ├ d-episode: "composer chip review 修复"
@@ -115,14 +128,14 @@ redaction surface, both of which PR2 builds on, and the two touch the same files
 ```
 
 **Naming.** Tags are named for *what a node is*, not who made it or how, and are
-honest about epistemics. The `d-` prefix namespaces the family (collision-avoidance
-+ a visible group marker):
+honest about epistemics. The `d-` prefix namespaces the family (collision-avoidance +
+a visible group marker). **These are net-new product nouns**:
 
 | tag | what it is |
 |---|---|
-| **`d-memory`** | the per-day memory container: the day's memory home, the recognition marker, and the carrier of the dream **watermark** field. |
+| **`d-memory`** | the per-day memory container: the day's memory home, the recognition marker, and the carrier of a **new watermark field** (today the dream watermark lives in the event-log projection, not on a node). |
 | **`d-episode`** | an episodic unit — a *topical segment* of a conversation (one session that covers many topics yields many episodes); holds a gist + a source pointer. |
-| **`d-belief`** | a semantic unit — durable knowledge. Named `belief` (not `fact`) on purpose: it is what Neva holds true and **may be wrong**; calling it a "fact" would overclaim truth and fight the auditable-but-fallible ethos. |
+| **`d-belief`** | a semantic unit — durable knowledge. Named `belief` (not `fact`) on purpose: it is what Neva holds true and **may be wrong**; "fact" would overclaim truth. |
 
 (`dream` names the *process / skill*, never a node. "Who made it" is provenance —
 `origin:'agent'` — not the tag.)
@@ -132,176 +145,195 @@ honest about epistemics. The `d-` prefix namespaces the family (collision-avoida
 - **Beliefs** are born under the episode that produced them (provenance is partly
   structural: the parent episode is the evidence). A belief has a **single mutable
   identity**: it is **updated in place**, never tombstoned; other days/episodes that
-  touch it again **reference** the same node. Beliefs are **timeless** — no
-  valid-from/valid-until. A reference always resolves to the belief's current state.
-- **Belief change-history.** Each meaningful change to a belief **appends a
-  change-history entry** (a body annotation or child node) recording *what changed and
-  why* — and, for dream-driven changes, the new source pointer (§2). This both keeps
-  the node a single evolving identity *and* preserves fact-level history on the node
-  (you can see "Neva learned X from conversation A, then the user corrected it to Y"
-  without replaying the conversation). Lightweight: an unchanged belief has no history.
-- **Why single-day anchoring is no longer an anti-pattern.** The classic objection (a
-  belief stuck on one day is hard to re-find) assumed *timeline-walk* retrieval.
-  Retrieval here is content search (§4), which ignores physical location.
-- **Recognition + status.** Memory nodes are recognized by the `d-` family (as date
-  nodes are by `tag:day`). Active-vs-superseded is a **node state** (strikethrough /
-  archive), not a kind tag. Nodes are real, user-editable, `locked` + `origin:'agent'`.
+  touch it again **reference** the same node. Beliefs are **timeless**. A reference
+  always resolves to the belief's current state.
+- **Belief change-history.** Each meaningful change **appends a change-history entry**
+  (a body annotation or child node) recording *what changed and why* — and, for
+  dream-driven changes, the new source pointer (§2). This keeps the node a single
+  evolving identity *and* preserves fact-level history on the node (you can see "Neva
+  learned X from conversation A, then the user corrected it to Y"). Lightweight: an
+  unchanged belief has no history.
+- **Why single-day anchoring is no longer an anti-pattern.** Retrieval is content
+  search (§4), which ignores physical location.
+- **Recognition + status.** Memory nodes are recognized by the `d-` family. Active-vs-
+  superseded is a **node state** (strikethrough / archive), not a kind tag. Nodes are
+  real, user-editable, `locked` + `origin:'agent'`.
 
-### 2. Provenance — an accumulating cross-boundary source pointer
+### 2. Provenance — an accumulating cross-boundary source pointer (NEW node protocol)
 
 The one invariant carried over: **memory is for an unreliable rememberer, so it must
 be auditable — a source dereferences to the original bytes or fails loud.**
 
 - Conversations stay in the event-log (they are **not** nodes), so a normal
-  `reference` (which targets a `NodeId`) cannot point at them. Carry the existing
-  `AgentMemorySource {stream, streamId, range}` as a **structured field on the node**
-  (sidecar style, like `capture`) — not as a `reference` child.
+  `reference` (which targets a `NodeId`) cannot point at them. The pointer is the
+  existing `AgentMemorySource {stream, streamId, range}` value — but **carrying it on a
+  node is net-new protocol**, *not* reuse: `capture` is a specific typed field, not an
+  open channel, so a source pointer needs **its own typed field on `NodeBase`** (or a
+  new node variant) + Loro persistence + projection + a command to write it — all on
+  the infra-ownership `types.ts` / `loroDocument.ts` surface (lands interface-first in
+  M0; this is the same field §8 counts — stated once, here).
 - **Accumulate, never clear.** When a belief is reinforced or changed, the new source
-  is **appended** (a belief may cite several sources across the times it was asserted);
-  old pointers are kept, bound to their change-history entry (§1). A pointer therefore
-  always describes *what it supported at that time*, never claims to support the
-  current text — which dissolves the "resolves-but-no-longer-matches" hazard. A **user
-  hand-edit** appends a change entry too (reason: `user-edited`, no machine source), so
-  the trail stays honest and append-only.
-- **Agent follow-path (the important one):** the agent sees a memory node and confirms
-  it against the source → `past_chats.read(source)` returns the original text (the same
-  dereference as today's `readMemorySourceEvidence`). The pointer + the `past_chats`
-  tool (§5) close the verify loop.
-- **User follow-path:** the renderer draws the pointer as a clickable "↗ source"
-  affordance → opens that conversation's transcript at the seq (PR3).
-- **Fail-loud:** compacted / self-cleaned sources resolve to "evidence unavailable,"
-  never a crash. A user can also delete a pointer (it is their document); fail-loud
-  covers that too.
-- The episode is the natural pointer carrier; a belief **inherits its parent episode's
-  pointer** at birth, and accumulates its own as it changes. Finer per-message spans
-  are a later refinement.
+  is **appended** (a belief may cite several sources); old pointers are kept, bound to
+  their change-history entry (§1), so a pointer always describes *what it supported at
+  that time* and never claims to support the current text — which dissolves the
+  "resolves-but-no-longer-matches" hazard. A **user hand-edit** appends a change entry
+  too (reason: `user-edited`, no machine source), keeping the trail append-only.
+- **Agent follow-path (the important one):** `past_chats.read(source)` returns the
+  original text (the same dereference as today's `readMemorySourceEvidence`).
+- **User follow-path:** the renderer draws the pointer as a "↗ source" affordance →
+  the conversation transcript at the seq (PR3).
+- **Fail-loud:** compacted / self-cleaned / user-deleted sources resolve to "evidence
+  unavailable," never a crash.
+- A belief **inherits its parent episode's pointer** at birth and accumulates its own.
 
-### 3. Writing — dream as a skill, fired by the shipped scheduled-routines
+### 3. Writing — dream as a skill on the scheduled-routines trigger
 
 A "runtime fires a smart thing on a trigger" decomposes into three layers; only the
-bottom one is skill-able:
+bottom is skill-able:
 
 | layer | what | home |
 |---|---|---|
-| **Trigger (when)** | schedule + durable cursor (watermark), at-most-once, backoff, the bright line (an agent can't forge a fire) | **runtime** |
-| **Mechanism (how it moves)** | windowing, the persistent format contract, transaction, abort/retry | **runtime** |
-| **Policy (the judgment)** | what to extract / keep / how to phrase | **skill** |
+| **Trigger (when)** | schedule + durable cursor, at-most-once, backoff, the bright line | runtime |
+| **Mechanism (how it moves)** | windowing, the persistent format contract, transaction | runtime |
+| **Policy (the judgment)** | what to extract / keep / how to phrase | skill |
 
-- **Trigger + mechanism = the already-shipped scheduled-routines** (`docs/plans/
-  archive/agent-scheduled-routines.md`: timeline command nodes + `{type:'schedule'}`
-  triggers + anacron scheduler + at-most-once crash recovery + backoff + forward-only,
-  agent-barred watermark + unattended permission + "runs are subagents"). **Dream is a
-  command node that fires the dream skill + advances one watermark** — *not* a second
-  memory-specific scheduler. This makes "no special memory subsystem" more true and
-  inherits the shipped isolation/crash-recovery model for free.
-- **Dream skill (markdown playbook).** Owns *how*: read the runtime-supplied
-  `since:{seq}` range via `past_chats` → segment each conversation into topical
-  episodes → write `d-episode` nodes (gist + source) → extract beliefs; **search
-  existing `d-belief` nodes first** and update in place, else create under the episode.
-  The model never manages the cursor — the routine supplies the range and advances the
-  watermark after a successful pass.
+- **Reuse the scheduled-routines *shell*; build the memory handoff (net-new).** Dream
+  becomes a scheduled-routine command node (`docs/plans/archive/agent-scheduled-routines.md`:
+  anacron + at-most-once + backoff + agent-barred fire). Post-#300, `runCommandChildAgent`
+  always forks Neva — exactly the one-Neva fork wanted. **But the memory-specific handoff
+  does NOT exist yet:** the shipped fire passes only
+  `buildTriggeredCommandPrompt(brief, lastSuccessAt)` — a natural-language time hint —
+  and tracks `sysLastRunAt`, a **timestamp** fire-watermark (`types.ts:497`), *not* the
+  per-stream **seq** cursors dream needs. PR2 must add (M2): (a) a `since:{seq}` range
+  computed from a memory watermark and passed into the dream skill, and (b) advancing
+  that seq watermark (a field on the `d-memory` container) after a successful pass.
+  Specified as new plumbing on the scheduled-routines layer, not asserted as existing.
+- **Dream skill (markdown playbook).** Owns *how*: read the `since:{seq}` range via
+  `past_chats` → segment each conversation into topical episodes → write `d-episode`
+  nodes (gist + source) → extract beliefs; **search existing `d-belief` nodes first**
+  and update in place, else create under the episode. The runtime advances the
+  watermark after success; the model never manages the cursor.
 
 ### 4. Reading — pull-only (a PM-owned experience trade), taught by persona
 
-- **No passive briefing.** Memory enters context only when the agent fetches it. This
-  is what lets the entire activation/decay/briefing machinery be deleted — but it is a
-  **deliberate, PM-owned experience regression, not a free simplification**: a fresh
-  conversation opens **cold** (knowing nothing about the user until the agent searches),
-  trading a deterministic system injection for a behavioral bet + a tool round-trip at
-  task start. Accepted; no recent-episodes backstop in this version.
-- **Recall = search.** `node_*` / search over the `d-` family (BM25-ranked text;
-  feasibility verified above), plus `past_chats` for raw chats. Taught by **standing
-  persona instructions** (always loaded) — not an invokable skill, because using memory
-  must be habitual ("recall relevant memory at task start"), and gating it behind a
-  skill the agent must first decide to load is circular.
-- **Compensation:** memory is now visible on the timeline, so the user can see and
-  point at it even when the agent does not auto-recall.
+- **No passive briefing.** Memory enters context only when the agent fetches it.
+- **The full loss is larger than the injection.** The activation/decay engine ranks
+  *both* briefing *and* recall (`compareHybridRankedEntries`). Deleting it means
+  pull-only recall via `node_search` returns **relevance order only — no recency or
+  access-frequency decay**. So we lose not just the passive push but "what I used most
+  recently / most often surfaces first." Accepted.
+- **A deliberate, PM-owned experience regression, not a free simplification:** a fresh
+  conversation opens **cold** (knowing nothing until the agent searches), trading a
+  deterministic injection for a behavioral bet + a tool round-trip at task start. No
+  recent-episodes backstop in this version.
+- **Recall = search.** `node_*` over the `d-` family (BM25-ranked text; verified),
+  plus `past_chats` for raw chats. Taught by **standing persona instructions** — not an
+  invokable skill (using memory must be habitual; gating it behind a skill to load is
+  circular).
+- **Compensation:** memory is visible on the timeline, so the user can see/point at it.
 
-### 5. The `past_chats` tool (re-provided)
+### 5. Concurrency, undo & attribution (the cost of abandoning single-writer)
 
-- Re-expose `AgentPastChatsService` as an agent tool: `recent` (list), `search`,
-  `read` (full text), with a `since:{seq}` parameter, reusing
-  `readMemorySourceEvidence` for the pointer dereference.
-- Serves three consumers: the **dream skill** (raw material), **interactive recall**
-  (Neva answering "what did we discuss last week" from raw chats, not just distilled
-  beliefs), and **provenance verification** (§2). Independently valuable → ships first.
+Moving memory into Loro makes the user and the agent two writers on the same nodes.
+What that does and does not break:
 
-### 6. Dedup — tag enumeration + agent judgment, not a fixed key
+- **Physical writes are serialized** by the `documentService` mutation queue, so there
+  is no torn write. The **residual risk is a logical race**: dream's update-in-place of
+  a `d-belief` interleaving with a user hand-edit of the *same* node's text — Loro's
+  text CRDT merges at character granularity and can produce a garbled belief mid-rewrite.
+  De-risk (M2): dream re-reads a belief immediately before writing and writes it as a
+  **whole-node replacement** (not a character patch); the change-history (§1) makes any
+  bad merge inspectable/recoverable.
+- **Undo is already isolated by origin scope.** `userUndoManager` excludes `'agent:'`
+  and `aiUndoManager` excludes `'user:'`; the `undo` command derives scope from
+  `meta.origin`. So a user Cmd-Z routes to the user scope and **does not revert an agent
+  consolidation** (nor vice-versa) — this mode is handled by existing machinery, not
+  unanalyzed. PR2 only confirms the renderer's Cmd-Z carries `origin:'user'` (it does)
+  and that agent memory writes carry `origin:'agent'`.
+- **Attribution** stays clean via `origin:'agent'` + `locked`; a user unlock-and-edit
+  becomes a `user-edited` change entry (§2).
 
-No fixed identity key. A content-hash key cannot dedup rewordings ("prefers terse
-reviews" vs "likes concise reviews" → different hash, same belief), and semantic dedup
-is inherently model judgment — so a "key" does not escape it. Instead: the `d-belief`
-tag **enumerates** all beliefs (node id is the identity), and the dream skill **decides
-update-vs-create** by judgment. The backstop against proliferation is **not** a key but
-(a) good retrieval (the BM25 `node_search` lets the skill reliably *find* the matching
-belief to update) + (b) a "search-before-create" discipline in the skill. Residual drift
-(occasional duplicate / missed update) is an accepted, watched cost.
+### 6. The `past_chats` tool (re-provided)
 
-### 7. Protocol surface touched (honest framing)
+- Re-expose `AgentPastChatsService` as an agent tool: `recent`, `search`, `read`, with
+  a `since:{seq}` parameter, reusing `readMemorySourceEvidence` for the dereference.
+- Serves the **dream skill** (raw material), **interactive recall** (raw chats, not
+  just distilled beliefs), and **provenance verification** (§2). Ships first.
 
-"Mostly reuses `node_*`" is true, but **a few memory-specific fields land in
-`src/core/types.ts`** (protocol / infrastructure-ownership surface): the
-`AgentMemorySource` sidecar field on the node and the watermark field on the
-`d-memory` container, plus the `d-` recognition tag scheme. These are **interface-first
-coordination** (land the field definitions ahead of consumers), not a zero-protocol
-change.
+### 7. Dedup — tag enumeration + agent judgment, not a fixed key
+
+No fixed identity key. A content-hash key cannot dedup rewordings, and semantic dedup
+is inherently model judgment. The `d-belief` tag **enumerates** all beliefs (node id is
+the identity); the dream skill **decides update-vs-create** by judgment. The backstop
+against proliferation is not a key but (a) good retrieval (BM25 `node_search` lets the
+skill *find* the belief to update) + (b) a "search-before-create" discipline. Residual
+drift is an accepted, watched cost.
+
+### 8. Protocol surface touched (stated once)
+
+Memory mostly reuses `node_*`, **plus net-new protocol on `src/core/types.ts` /
+`loroDocument.ts`**: the source-pointer field on `NodeBase` (§2), the watermark field
+on the `d-memory` container (§3), and the `d-` recognition tag scheme. These land
+**interface-first** (M0), per A4.
 
 ## The seam test (so we don't over-generalize "make X a skill")
 
-The criterion for "can this become a skill" is **not** "does it have a trigger"
-(everything does) — it is: *is this handler a judgment the user would want to read and
-edit, AND can it tolerate being one forked agent run (offline, recoverable on failure,
-not bootstrapping the substrate it runs on)?*
+The criterion is not "does it have a trigger" (everything does) — it is: *is this a
+judgment the user would want to read and edit, AND can it tolerate being one forked
+agent run (offline, recoverable, not bootstrapping its own substrate)?*
 
-- **Skill-able:** dream, periodic review, triage, import, research → they produce an
-  artifact and run offline.
+- **Skill-able:** dream, periodic review, triage, import, research.
 - **Kernel (never a skill):** compaction, tool-result trimming, context budgeting, the
-  scheduler itself, single-writer, the permission floor. Compaction in particular is
-  *substrate the agent runs on* (a skill is itself an agent run — you cannot implement
-  the floor with something that runs on the floor), is hot-path, and carries a strict
-  persistent format contract.
+  scheduler itself, single-writer, the permission floor. Compaction is *substrate the
+  agent runs on* (a skill is itself an agent run — you cannot implement the floor with
+  something that runs on the floor), is hot-path, and carries a strict persistent
+  format contract.
 - **Hybrid:** compaction's *retention policy* is already a prompt (`/compact` takes
-  custom instructions) — making the policy editable is fine; making the *operation* a
-  skill is not.
+  custom instructions) — editable policy is fine; making the *operation* a skill is not.
 
 ## Non-goals
 
 - **No bi-temporal validity.** Beliefs are timeless and update in place.
-- **No passive briefing / activation-decay ranking.** Memory is pull-only.
-- **No migration / back-compat.** Pre-release: wipe `~/.lin-outliner-*` dev memory;
-  delete the old readers.
+- **No passive briefing / activation-decay ranking.** Memory is pull-only (§4).
+- **No migration / back-compat.** Pre-release: wipe `~/.lin-outliner-*` dev memory.
 - **Conversations are not moved into the document.** They stay in the event-log; the
-  memory→conversation link is the cross-boundary pointer of §2.
-- **No agent-private vs user pool split.** Collapsed to one pool; not reintroduced.
-- **No new node `type` discriminant.** Memory uses the `d-` tags + location.
+  link is the cross-boundary pointer of §2.
+- **No agent-private vs user pool split.** Collapsed to one pool by #300; not revived.
+- **No new node `type` discriminant.** Memory uses the `d-` tags + location (but it
+  *does* add typed fields — §8).
 
 ## PM-owned postures (ratified)
 
-- **Pull-only is an intentional experience regression** (cold-start), accepted (§4).
-- **Memory now lives in the exportable user document** — it is no longer an isolated
-  substrate; it rides along on any export / backup / future sync. Accepted as the
-  posture for a local single-user app; stated plainly rather than buried.
+- **Pull-only is an intentional experience regression** (cold-start + loss of
+  recency/access ranking), accepted (§4).
+- **Memory now lives in the exportable user document** — no longer an isolated
+  substrate; it rides along on any export / backup / future sync. Accepted for a local
+  single-user app; stated plainly.
+- **Single-writer is deliberately abandoned** for memory; the concurrency/undo
+  consequences are analyzed and de-risked in §5.
 
-## Deferred to PR2 (implementation details, design is settled)
+## Deferred to PR2 (implementation details; design is settled)
 
 - Recognition query: a `d-` prefix/namespace query vs a shared base tag.
 - The exact shape of belief change-history entries (body annotation vs child nodes).
-- Confirming `node_search` returns BM25-*ranked* order to the agent.
-- `AgentMemorySource` field representation on the node.
+- `AgentMemorySource` field representation on `NodeBase` + its write command.
 
 ## Build order (within PR2) — independently-verifiable milestones, each green first
 
 Foundation before consumers (A7); each milestone ships with tests and is green before
-the next; the `src/core/types.ts` field definitions land **interface-first**.
+the next; the protocol-surface fields land **interface-first**.
 
-- [ ] **M0 (interface-first):** define the protocol-surface fields in
-      `src/core/types.ts` — the `d-memory` watermark field and the `AgentMemorySource`
-      sidecar field — coordinated ahead of consumers.
-- [ ] **M1:** the node structure — `d-memory` container, `d-episode` / `d-belief`
-      recognition, the source field, change-history entries. (Tests: shape + recognition.)
-- [ ] **M2:** dream writes nodes (segment → `d-episode` → `d-belief`, update-in-place
-      with search-before-create) via the scheduled-routines trigger + skill split (§3).
-      (Tests: a dream pass produces the expected tree + advances the watermark.)
+- [ ] **M0 (interface-first protocol):** define on `src/core/types.ts` /
+      `loroDocument.ts` — the `d-memory` **seq watermark** field and the
+      **source-pointer** field on `NodeBase` — plus the write command + projection,
+      coordinated ahead of consumers.
+- [ ] **M1:** the node structure — `d-memory` / `d-episode` / `d-belief` recognition,
+      source field, change-history entries. (Tests: shape + recognition.)
+- [ ] **M2:** the scheduled-routines → dream handoff (compute `since:{seq}` from the
+      watermark, pass into the dream skill, advance the watermark after success) +
+      the dream skill writing nodes (segment → `d-episode` → `d-belief`, search-before-
+      create, whole-node replacement per §5). (Tests: a pass produces the expected tree
+      + advances the watermark; a concurrent user-edit does not corrupt a belief.)
 - [ ] **M3:** recall is pull-only over the nodes (persona guidance; remove briefing).
       (Tests: recall returns BM25-ranked beliefs; no passive injection occurs.)
 - [ ] **M4:** remove the event-log memory pool, activation/decay engine, and
