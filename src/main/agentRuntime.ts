@@ -3706,22 +3706,30 @@ export class AgentRuntime {
   }
 
   private async refreshAgentTaskCache(): Promise<void> {
+    this.agentTaskCache = await this.collectDreamTasks();
+  }
+
+  private async collectDreamTasks(limit = 50): Promise<AgentRenderDreamTaskEntity[]> {
     const store = this.getEventStore();
     // The believer pool's reflective-run history and its dream state are keyed by the same
     // principal, so its tasks join locally.
     const principals = this.listDreamPrincipals();
-    const taskGroups = await Promise.all(principals.map(async (principal): Promise<AgentRenderTaskEntity[]> => {
+    const taskGroups = await Promise.all(principals.map(async (principal): Promise<AgentRenderDreamTaskEntity[]> => {
       const [runs, dreamState] = await Promise.all([
-        store.listPrincipalRunMetaProjections(principal, { limit: 50 }),
+        store.listPrincipalRunMetaProjections(principal, { limit }),
         store.readDreamState(principal),
       ]);
-      return runs.flatMap((run): AgentRenderTaskEntity[] => {
+      return runs.flatMap((run): AgentRenderDreamTaskEntity[] => {
         const completed = dreamState.lastCompleted?.runId === run.id ? dreamState.lastCompleted : null;
         const task = dreamTaskFromRunMeta(run, completed);
         return task ? [task] : [];
       });
     }));
-    this.agentTaskCache = taskGroups.flat().sort(compareRenderTasks);
+    return taskGroups.flat().sort(compareRenderTasks);
+  }
+
+  async listDreamHistory(options: { limit?: number } = {}): Promise<AgentRenderDreamTaskEntity[]> {
+    return this.collectDreamTasks(options.limit ?? 50);
   }
 
   private emitAgentTaskProjection(lastEventType: string) {

@@ -110,8 +110,7 @@ export type AgentConversationEntry =
 export type AgentTurnPhase = 'idle' | 'streaming_text' | 'waiting_for_tool' | 'resuming_after_tool';
 
 export type AgentTaskEntry =
-  | (Extract<AgentRenderTaskEntity, { kind: 'child-run' }> & { childRun: AgentRenderChildRunEntity })
-  | Extract<AgentRenderTaskEntity, { kind: 'dream' }>;
+  Extract<AgentRenderTaskEntity, { kind: 'child-run' }> & { childRun: AgentRenderChildRunEntity };
 
 const EMPTY_PROJECTION: AgentRenderProjection = {
   conversationId: '',
@@ -345,12 +344,12 @@ export function buildAgentTaskEntries(projection: AgentRenderProjection): AgentT
   const tasks = projection.taskIds.flatMap((id): AgentTaskEntry[] => {
     const task = projection.entities.tasks[id];
     if (!task) return [];
-    if (task.kind === 'child-run') {
-      const childRun = projection.entities.childRuns[task.childRunId];
-      if (!childRun) return [];
-      return [{ ...task, childRun }];
-    }
-    return [{ ...task }];
+    // Dream tasks ride in the projection but are surfaced in Settings → Agent, not the
+    // in-conversation task panel; only child-run tasks belong here.
+    if (task.kind !== 'child-run') return [];
+    const childRun = projection.entities.childRuns[task.childRunId];
+    if (!childRun) return [];
+    return [{ ...task, childRun }];
   });
 
   return tasks.sort((left, right) => (

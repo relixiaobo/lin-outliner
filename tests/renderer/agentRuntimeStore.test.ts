@@ -490,12 +490,15 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('derives Dream task entries from agent-level task projection', async () => {
+  test('Dream tasks ride in the projection but are not surfaced in the task panel', async () => {
+    // Dreams moved to Settings → Agent's Dream-history group; the in-conversation
+    // task panel keeps only child-run entries, so the store filters dreams out.
     const dreamTask: AgentRenderTaskEntity = {
       id: 'dream:dream-run-1',
       kind: 'dream',
       status: 'completed',
       trigger: 'schedule',
+      principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
       startedAt: 100,
       updatedAt: 150,
       completedAt: 150,
@@ -513,7 +516,7 @@ describe('agent runtime store', () => {
 
     await flushMicrotasks();
 
-    expect(store.getSnapshot().tasks).toEqual([dreamTask]);
+    expect(store.getSnapshot().tasks).toEqual([]);
     unsubscribe();
   });
 

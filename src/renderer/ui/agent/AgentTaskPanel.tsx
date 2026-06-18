@@ -5,7 +5,6 @@ import { api } from '../../api/client';
 import { useI18n } from '../../i18n/I18nProvider';
 import {
   AgentIcon,
-  BrainIcon,
   CloseIcon,
   ICON_SIZE,
   OpenIcon,
@@ -31,25 +30,15 @@ function taskStatusLabel(task: AgentTaskEntry, labels: Messages['agent']['task']
   return labels.status[task.status];
 }
 
-function taskKindLabel(task: AgentTaskEntry, labels: Messages['agent']['task']): string {
-  if (task.kind === 'dream') return labels.kindDream;
+function taskKindLabel(_task: AgentTaskEntry, labels: Messages['agent']['task']): string {
   return labels.kindChildRun;
 }
 
-function taskTitle(task: AgentTaskEntry, labels: Messages['agent']['task']): string {
-  if (task.kind === 'dream') return labels.dreamTitle;
+function taskTitle(task: AgentTaskEntry, _labels: Messages['agent']['task']): string {
   return task.title;
 }
 
-function taskMetaParts(task: AgentTaskEntry, labels: Messages['agent']['task'], locale: string): string[] {
-  if (task.kind === 'dream') {
-    return [
-      task.trigger === 'schedule' ? labels.triggerSchedule : labels.triggerManual,
-      task.processed ? labels.messages({ count: task.processed.totalMessageCount }) : null,
-      task.changes ? labels.memoryChanges({ count: task.changes.added + task.changes.updated + task.changes.forgotten }) : null,
-      formatTaskTime(task.updatedAt, locale),
-    ].filter((part): part is string => Boolean(part));
-  }
+function taskMetaParts(task: AgentTaskEntry, _labels: Messages['agent']['task'], locale: string): string[] {
   return [
     task.subtitle,
     formatTaskTime(task.updatedAt, locale),
@@ -68,7 +57,7 @@ export function AgentTaskPanel({
   const runningCount = useMemo(() => tasks.filter((task) => task.status === 'running').length, [tasks]);
 
   async function stopTask(task: AgentTaskEntry) {
-    if (!conversationId || task.kind !== 'child-run' || task.status !== 'running' || stoppingTaskId) return;
+    if (!conversationId || task.status !== 'running' || stoppingTaskId) return;
     setStoppingTaskId(task.id);
     setActionError(null);
     try {
@@ -110,15 +99,13 @@ export function AgentTaskPanel({
       ) : (
         <div className="agent-task-list">
           {tasks.map((task) => {
-            const canStop = task.kind === 'child-run' && task.status === 'running';
+            const canStop = task.status === 'running';
             const stopping = stoppingTaskId === task.id;
-            const kindIcon = task.kind === 'dream' ? BrainIcon : AgentIcon;
-            const KindIcon = kindIcon;
             const meta = taskMetaParts(task, t.agent.task, locale).join(' · ');
             const mainContent = (
               <>
                 <span className="agent-task-kind">
-                  <KindIcon size={ICON_SIZE.menu} />
+                  <AgentIcon size={ICON_SIZE.menu} />
                   <span>{taskKindLabel(task, t.agent.task)}</span>
                   <span className={`agent-task-status is-${task.status}`}>{taskStatusLabel(task, t.agent.task)}</span>
                 </span>
@@ -127,30 +114,22 @@ export function AgentTaskPanel({
               </>
             );
             return (
-              <article className={`agent-task-row is-${task.status}${task.kind === 'dream' ? ' is-readonly' : ''}`} key={task.id}>
-                {task.kind === 'child-run' ? (
-                  <ButtonControl
-                    className="agent-task-main"
-                    onClick={() => onOpenChildRun(task.childRunId)}
-                  >
-                    {mainContent}
-                  </ButtonControl>
-                ) : (
-                  <div className="agent-task-main">
-                    {mainContent}
-                  </div>
-                )}
+              <article className={`agent-task-row is-${task.status}`} key={task.id}>
+                <ButtonControl
+                  className="agent-task-main"
+                  onClick={() => onOpenChildRun(task.childRunId)}
+                >
+                  {mainContent}
+                </ButtonControl>
                 <div className="agent-task-row-actions">
-                  {task.kind === 'child-run' ? (
-                    <IconButton
-                      className="agent-task-icon-button"
-                      icon={OpenIcon}
-                      label={t.agent.task.openTask}
-                      onClick={() => onOpenChildRun(task.childRunId)}
-                      title={t.agent.task.openTask}
-                      variant="message"
-                    />
-                  ) : null}
+                  <IconButton
+                    className="agent-task-icon-button"
+                    icon={OpenIcon}
+                    label={t.agent.task.openTask}
+                    onClick={() => onOpenChildRun(task.childRunId)}
+                    title={t.agent.task.openTask}
+                    variant="message"
+                  />
                   {canStop ? (
                     <IconButton
                       className="agent-task-icon-button is-danger"

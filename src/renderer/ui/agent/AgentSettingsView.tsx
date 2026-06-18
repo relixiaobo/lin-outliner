@@ -6,6 +6,7 @@ import type {
   AgentProviderSettingsView,
   AgentDefinitionView,
   AgentMemoryEntryView,
+  AgentRenderDreamTaskEntity,
   AgentToolPermissionSettingsView,
   SkillDefinition,
 } from '../../api/types';
@@ -43,6 +44,7 @@ import { SelectControl } from '../primitives/SelectControl';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
+import { DreamHistoryGroup } from './DreamHistoryGroup';
 import {
   ProviderAvatar,
   formatProviderName,
@@ -230,6 +232,8 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   const [loadingAgents, setLoadingAgents] = useState(false);
   const [memoryEntries, setMemoryEntries] = useState<AgentMemoryEntryView[]>([]);
   const [loadingMemory, setLoadingMemory] = useState(false);
+  const [dreamHistory, setDreamHistory] = useState<AgentRenderDreamTaskEntity[]>([]);
+  const [loadingDreams, setLoadingDreams] = useState(false);
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [memoryDraftFact, setMemoryDraftFact] = useState('');
   const [memorySavingId, setMemorySavingId] = useState<string | null>(null);
@@ -486,6 +490,17 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
         })
         .finally(() => {
           if (isCurrentRequest('section', id)) setLoadingMemory(false);
+        });
+      setLoadingDreams(true);
+      api.agentListDreamHistory({ limit: 50 })
+        .then((entries) => {
+          if (isCurrentRequest('section', id)) setDreamHistory(entries);
+        })
+        .catch((caught) => {
+          if (isCurrentRequest('section', id)) setError(caught instanceof Error ? caught.message : String(caught));
+        })
+        .finally(() => {
+          if (isCurrentRequest('section', id)) setLoadingDreams(false);
         });
     } else if (category === 'agents') {
       const id = beginRequest('section');
@@ -1177,6 +1192,12 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                     })}
                   </InsetGroup>
                 )}
+                <DreamHistoryGroup
+                  entries={dreamHistory}
+                  formatDate={formatSettingsDate}
+                  loading={loadingDreams}
+                  t={t}
+                />
               </section>
             ) : category === 'skills' ? (
               <section className="agent-settings-section settings-skills-section" aria-label={t.settings.skills.sectionAriaLabel}>

@@ -9,6 +9,7 @@ import type {
   AgentCreateConversationOptions,
   AgentConversationListMeta,
   AgentMemoryEntryView,
+  AgentRenderDreamTaskEntity,
   AgentPickScopeFolderResult,
   AgentSlashCommandView,
   AgentApprovalResolutionScope,
@@ -313,6 +314,8 @@ export const api = {
     command<void>('agent_delete_conversation', { conversationId }),
   agentListMemory: (options: { includeInvalidated?: boolean; limit?: number } = {}) =>
     command<AgentMemoryEntryView[]>('agent_list_memory', options),
+  agentListDreamHistory: (options: { limit?: number } = {}) =>
+    command<AgentRenderDreamTaskEntity[]>('agent_list_dream_history', options),
   agentUpdateMemory: (memoryId: string, fact: string) =>
     command<AgentMemoryEntryView | null>('agent_update_memory', { memoryId, fact }),
   agentForgetMemory: (memoryId: string) =>
