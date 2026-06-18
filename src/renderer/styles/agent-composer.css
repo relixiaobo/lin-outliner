@@ -632,24 +632,119 @@
   line-height: var(--line-meta-tight);
 }
 
-/* Quick model/effort picker, anchored above the chip (the .agent-composer-model
-   wrapper is position: relative). Menu glass per design-system B5/D2; the
-   --material-backdrop carries the reduced-transparency / high-contrast fallback. */
+/* Quick model/effort picker. Portaled to <body> and positioned by
+   useAnchoredOverlay (position: fixed + left/top/width/max-height inline), so it
+   never clips against the composer's overflow and flips above/below as room
+   allows. This rule carries only the visual surface. Menu glass per design-system
+   B5/D2; --material-backdrop carries the reduced-transparency / high-contrast
+   fallback. */
 .agent-composer-model-popover {
-  position: absolute;
   z-index: var(--z-popover);
-  right: 0;
-  bottom: calc(100% + var(--space-2));
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  width: min(320px, calc(100vw - 32px));
-  padding: var(--space-3);
+  overflow: auto;
+  padding: var(--space-2);
   border-radius: var(--radius-overlay-sm);
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
   box-shadow: var(--shadow);
+}
+
+/* Model menu: the active provider's models listed directly, other providers under
+   a collapsible "More models" group, reasoning levels below a divider. Rows reuse
+   the shared MenuItem look (neutral hover/selected fill per design-system B3). */
+.agent-composer-model-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-composer-model-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm-tight);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+.agent-composer-model-item:hover,
+.agent-composer-model-item.is-selected {
+  background: var(--control-hover);
+  color: var(--surface-inverse);
+}
+
+.agent-composer-model-item-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-composer-model-check {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+}
+
+.agent-composer-model-more-caret {
+  flex: 0 0 16px;
+  color: var(--text-faint);
+  transition: transform var(--motion-fast);
+}
+
+.agent-composer-model-more-caret.is-open {
+  transform: rotate(180deg);
+}
+
+.agent-composer-model-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-composer-model-group-label {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.agent-composer-model-divider {
+  height: 1px;
+  margin: var(--space-1) var(--space-2);
+  background: var(--border-subtle);
+}
+
+.agent-composer-model-reasoning {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2) var(--space-2);
+}
+
+.agent-composer-model-reasoning-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
+}
+
+.agent-composer-model-reasoning-control {
+  width: 100%;
 }
 
 .agent-composer-tool-button,

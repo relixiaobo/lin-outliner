@@ -929,6 +929,10 @@ commandPalette: {
       // Composer quick model/reasoning chip (edits Neva's standing profile).
       modelControlLabel: 'Model and reasoning',
       modelDefault: 'Default model',
+      // Picker that lists other providers' models below the active provider's.
+      moreModels: 'More models',
+      // Heading above the reasoning-level segmented control in the picker.
+      reasoningHeading: 'Reasoning',
       // Reasoning effort levels shown on the agent profile model/effort selector.
       reasoningLevels: {
         off: 'Off',

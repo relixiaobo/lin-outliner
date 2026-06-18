@@ -297,7 +297,10 @@ Model and effort are owned by the agent identity that actually runs:
   `agentId` (`builtInAgentProfiles` above), reachable via `getBuiltInAgentProfile`
   / `setBuiltInAgentProfile`. Two entry points write the same overlay: the
   Settings → Agent profile editor and the composer's quick model/effort chip
-  (`AgentComposerModelControl`, model/effort only). Both round-trip the current
+  (`AgentComposerModelControl`, model/effort only — a nodex-style menu: the active
+  provider's models listed directly, other providers under a "More models" group,
+  and the model's supported reasoning levels as a segmented control below). Both
+  round-trip the current
   definition and persist only the fields that differ from the code base (so an
   unchanged persona is never frozen), and `updateAgentDefinition` reconfigures the
   live conversations — `state.systemPrompt` plus a re-resolved `state.model` /
@@ -305,8 +308,11 @@ Model and effort are owned by the agent identity that actually runs:
   turn**, not only on reopen. The stable `name` (Neva's memory anchor) is never
   overlaid.
 
-The profile selector is **capability-driven**: pick a provider, then a model; the
-effort options are derived from that model's `supportedThinkingLevels`. Saved
+The Settings → Agent profile selector (`AgentModelEffortSelector`) is
+**capability-driven**: pick a provider, then a model; the
+effort options are derived from that model's `supportedThinkingLevels`. The
+composer chip presents the same catalog as a flat model menu instead, but writes
+the identical values. Saved
 values are the canonical model id (provider-qualified `providerId/modelId`) and the
 adapter's canonical effort, never a display label. The provider→model string is
 parsed by one shared `core/agentModelId` helper (renderer + runtime), so a model id
