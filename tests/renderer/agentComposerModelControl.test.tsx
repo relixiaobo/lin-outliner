@@ -69,9 +69,16 @@ async function click(rendered: Rendered, el: Element) {
 }
 
 function modelItem(rendered: Rendered, name: string): HTMLButtonElement {
-  const found = Array.from(rendered.document.querySelectorAll<HTMLButtonElement>('.agent-composer-model-item'))
-    .find((el) => el.textContent?.trim() === name);
+  const found = Array.from(rendered.document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'))
+    .find((el) => el.querySelector('.agent-composer-model-item-label')?.textContent?.trim() === name);
   if (!found) throw new Error(`Missing model item: ${name}`);
+  return found;
+}
+
+function triggerRow(rendered: Rendered, label: string): HTMLButtonElement {
+  const found = Array.from(rendered.document.querySelectorAll<HTMLButtonElement>('.agent-composer-model-row'))
+    .find((el) => el.querySelector('.agent-composer-model-item-label')?.textContent?.trim() === label);
+  if (!found) throw new Error(`Missing trigger row: ${label}`);
   return found;
 }
 
@@ -89,6 +96,40 @@ function settings(): AgentProviderSettingsView {
         envKeyNames: [],
         models: [
           { id: 'gpt-5.4', name: 'GPT-5.4', reasoning: true, supportedThinkingLevels: ['off', 'low', 'medium', 'high'], contextWindow: 0, maxTokens: 0 },
+        ],
+      },
+    ],
+    agent: {} as AgentProviderSettingsView['agent'],
+  };
+}
+
+function multiProviderSettings(): AgentProviderSettingsView {
+  const credential = { authKind: 'api-key', credentialed: true, hasStoredKey: true } as const;
+  const levels: ReadonlyArray<'off' | 'low' | 'medium' | 'high'> = ['off', 'low', 'medium', 'high'];
+  return {
+    activeProviderId: 'openai',
+    providers: [
+      { providerId: 'openai', enabled: true, hasApiKey: true, auth: credential },
+      { providerId: 'anthropic', enabled: true, hasApiKey: true, auth: credential },
+    ],
+    availableProviders: [
+      {
+        providerId: 'openai',
+        authKind: 'api-key',
+        hasEnvApiKey: false,
+        envKeyNames: [],
+        models: [
+          { id: 'gpt-5.4', name: 'GPT-5.4', reasoning: true, supportedThinkingLevels: [...levels], contextWindow: 0, maxTokens: 0 },
+          { id: 'gpt-5.3', name: 'GPT-5.3', reasoning: true, supportedThinkingLevels: [...levels], contextWindow: 0, maxTokens: 0 },
+        ],
+      },
+      {
+        providerId: 'anthropic',
+        authKind: 'api-key',
+        hasEnvApiKey: false,
+        envKeyNames: [],
+        models: [
+          { id: 'claude-sonnet', name: 'Claude Sonnet', reasoning: true, supportedThinkingLevels: [...levels], contextWindow: 0, maxTokens: 0 },
         ],
       },
     ],
@@ -153,7 +194,7 @@ describe('AgentComposerModelControl', () => {
     expect(saved).toBe('openai/gpt-5.4');
   });
 
-  test('the reasoning control emits the chosen level', async () => {
+  test('the Reasoning row opens a submenu; picking a level emits it', async () => {
     let savedEffort = '';
     const rendered = renderComponent(
       <AgentComposerModelControl
@@ -162,10 +203,35 @@ describe('AgentComposerModelControl', () => {
       />,
     );
     await click(rendered, chip(rendered));
-    const high = rendered.document.querySelector<HTMLButtonElement>('.agent-composer-model-reasoning-control [role="radio"][aria-checked="false"]:last-child');
-    expect(high).not.toBeNull();
-    await click(rendered, high!);
+    // Effort is a submenu row (not inline) — opening it reveals the supported levels.
+    expect(rendered.document.querySelector('.agent-composer-model-submenu')).toBeNull();
+    await click(rendered, triggerRow(rendered, 'Reasoning'));
+    expect(rendered.document.querySelector('.agent-composer-model-submenu')).not.toBeNull();
+    await click(rendered, modelItem(rendered, 'High'));
     expect(savedEffort).toBe('high');
+  });
+
+  test('only the recommended model shows directly; older models hide under More models, grouped by provider', async () => {
+    let saved = '';
+    const rendered = renderComponent(
+      <AgentComposerModelControl
+        settings={multiProviderSettings()} model="" effort="" disabled={false}
+        onModelChange={(value) => { saved = value; }} onEffortChange={NOOP}
+      />,
+    );
+    await click(rendered, chip(rendered));
+    // Top level shows the active provider's recommended (first-ranked) model directly.
+    expect(modelItem(rendered, 'GPT-5.4')).toBeTruthy();
+    // The older sibling + the other provider are hidden until "More models" opens.
+    expect(() => modelItem(rendered, 'GPT-5.3')).toThrow();
+    await click(rendered, triggerRow(rendered, 'More models'));
+    const submenu = rendered.document.querySelector('.agent-composer-model-submenu');
+    expect(submenu).not.toBeNull();
+    // Multiple providers → grouped by provider header.
+    const headers = Array.from(submenu!.querySelectorAll('.agent-composer-model-group-label')).map((el) => el.textContent);
+    expect(headers).toEqual(['openai', 'anthropic']);
+    await click(rendered, modelItem(rendered, 'Claude Sonnet'));
+    expect(saved).toBe('anthropic/claude-sonnet');
   });
 
   test('the chip is disabled when there is no provider settings', () => {

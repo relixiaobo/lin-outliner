@@ -860,6 +860,7 @@ commandPalette: {
       modelDefault: '默认模型',
       moreModels: '更多模型',
       reasoningHeading: '推理',
+      effortDefault: '默认',
       reasoningLevels: {
         off: '关闭',
         minimal: '最低',
