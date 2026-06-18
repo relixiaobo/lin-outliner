@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -107,6 +108,7 @@ export interface PreviewRendererProps {
   onSummaryPageSelect?: (pageNumber: number) => void;
   source: PreviewFileSource;
   scrollToPageNumber?: number | null;
+  onScrollToPageNumberConsumed?: () => void;
   // The internally-scrolling preview container. The PDF renderer uses it as the
   // IntersectionObserver root so pages render lazily as they scroll into view;
   // other renderers ignore it.
@@ -147,6 +149,7 @@ export function PreviewRenderer({
   onSummaryPageSelect,
   onOpenTarget,
   scrollToPageNumber,
+  onScrollToPageNumberConsumed,
   source,
   scrollRootRef,
 }: {
@@ -154,6 +157,7 @@ export function PreviewRenderer({
   onSummaryPageSelect?: (pageNumber: number) => void;
   onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
   scrollToPageNumber?: number | null;
+  onScrollToPageNumberConsumed?: () => void;
   source: PreviewSourceDescriptor;
   scrollRootRef?: RefObject<HTMLElement | null>;
 }) {
@@ -168,6 +172,7 @@ export function PreviewRenderer({
       onSummaryPageSelect={onSummaryPageSelect}
       onOpenTarget={onOpenTarget}
       scrollToPageNumber={scrollToPageNumber}
+      onScrollToPageNumberConsumed={onScrollToPageNumberConsumed}
       source={source}
       scrollRootRef={scrollRootRef}
     />
@@ -226,6 +231,9 @@ export function FilePreviewShell({
     setScrollToPageNumber(pageNumber);
     setExpanded(true);
   };
+  const consumeScrollToPageNumber = useCallback(() => {
+    setScrollToPageNumber(null);
+  }, []);
   const setResizedHeight = (height: number) => {
     const nextHeight = clampPreviewHeight(height);
     setPreviewHeights((prev) => ({ ...prev, [displayMode]: nextHeight }));
@@ -298,6 +306,7 @@ export function FilePreviewShell({
             source={state.source}
             onOpenTarget={onOpenTarget}
             scrollToPageNumber={expanded ? scrollToPageNumber : null}
+            onScrollToPageNumberConsumed={consumeScrollToPageNumber}
             scrollRootRef={previewRef}
           />
         )}
@@ -500,6 +509,7 @@ function TextPreview({ source }: PreviewRendererProps) {
 function PdfPreview({
   displayMode,
   onSummaryPageSelect,
+  onScrollToPageNumberConsumed,
   scrollToPageNumber,
   source,
   scrollRootRef,
@@ -562,6 +572,7 @@ function PdfPreview({
       onSummaryPageSelect={onSummaryPageSelect}
       pageCount={state.pageCount}
       scrollToPageNumber={scrollToPageNumber}
+      onScrollToPageNumberConsumed={onScrollToPageNumberConsumed}
       scrollRootRef={scrollRootRef}
     />
   );
@@ -580,6 +591,7 @@ function PdfPages({
   displayMode,
   document: pdfDocument,
   onSummaryPageSelect,
+  onScrollToPageNumberConsumed,
   pageCount,
   scrollToPageNumber,
   scrollRootRef,
@@ -587,6 +599,7 @@ function PdfPages({
   displayMode: FilePreviewDisplayMode;
   document: PDFDocumentProxy;
   onSummaryPageSelect?: (pageNumber: number) => void;
+  onScrollToPageNumberConsumed?: () => void;
   pageCount: number;
   scrollToPageNumber?: number | null;
   scrollRootRef?: RefObject<HTMLElement | null>;
@@ -643,20 +656,22 @@ function PdfPages({
   const pageScrollRootRef = containerRef;
 
   useEffect(() => {
-    if (displayMode !== 'full' || !scrollToPageNumber) return undefined;
+    if (displayMode !== 'full' || !scrollToPageNumber || pageWidth <= 0) return undefined;
     const animationFrame = window.requestAnimationFrame(() => {
       const scrollRoot = pageScrollRootRef.current;
       const pageElement = containerRef.current?.querySelector<HTMLElement>(`[data-pdf-page-number="${scrollToPageNumber}"]`);
-      if (!scrollRoot || !pageElement) return;
-      const rootRect = scrollRoot.getBoundingClientRect();
-      const pageRect = pageElement.getBoundingClientRect();
-      scrollRoot.scrollTo({
-        top: scrollRoot.scrollTop + pageRect.top - rootRect.top,
-        behavior: 'auto',
-      });
+      if (scrollRoot && pageElement) {
+        const rootRect = scrollRoot.getBoundingClientRect();
+        const pageRect = pageElement.getBoundingClientRect();
+        scrollRoot.scrollTo({
+          top: scrollRoot.scrollTop + pageRect.top - rootRect.top,
+          behavior: 'auto',
+        });
+      }
+      onScrollToPageNumberConsumed?.();
     });
     return () => window.cancelAnimationFrame(animationFrame);
-  }, [displayMode, pageScrollRootRef, pageWidth, scrollToPageNumber]);
+  }, [displayMode, onScrollToPageNumberConsumed, pageScrollRootRef, pageWidth, scrollToPageNumber]);
 
   return (
     <div className={`file-preview-pdf file-preview-pdf--${displayMode}`} ref={containerRef}>

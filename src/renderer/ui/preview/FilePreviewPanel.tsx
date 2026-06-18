@@ -102,9 +102,14 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const [breadcrumbExpanded, setBreadcrumbExpanded] = useState(false);
   const targetKey = useMemo(() => previewTargetFallbackKey(props.target), [props.target]);
   const resetStateRef = useRef<{ nodeId: NodeId | null; targetKey: string } | null>(null);
+  const [previewShellKey, setPreviewShellKey] = useState(() =>
+    filePreviewShellKey(props.nodeId ?? null, targetKey),
+  );
   const initialScrollTopRef = useRef(props.initialScrollTop ?? 0);
   initialScrollTopRef.current = props.initialScrollTop ?? 0;
   const scrollReportFrameRef = useRef<number | null>(null);
+  const scrollRestoreFrameRef = useRef<number | null>(null);
+  const restoringScrollRef = useRef(false);
   const uiRef = useRef(props.ui);
   uiRef.current = props.ui;
   const referenceSummary = useMemo(() => referenceSummaryForIndex(props.index), [props.index]);
@@ -124,6 +129,24 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     void revealPreviewSource(state.source);
   }, [state]);
 
+  const restorePanelScroll = useCallback(() => {
+    const panel = mainPanelRef.current;
+    if (!panel) {
+      requestTitleDockMeasure();
+      return;
+    }
+    if (scrollRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollRestoreFrameRef.current);
+    }
+    restoringScrollRef.current = true;
+    panel.scrollTop = initialScrollTopRef.current;
+    scrollRestoreFrameRef.current = window.requestAnimationFrame(() => {
+      scrollRestoreFrameRef.current = null;
+      restoringScrollRef.current = false;
+      requestTitleDockMeasure();
+    });
+  }, [mainPanelRef, requestTitleDockMeasure]);
+
   useEffect(() => {
     const previous = resetStateRef.current;
     const next = { nodeId: fileRoot?.id ?? props.nodeId ?? null, targetKey };
@@ -136,13 +159,12 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
       && next.nodeId !== null;
     if (!looseToIngested) {
       setBreadcrumbExpanded(false);
-      const panel = mainPanelRef.current;
-      if (panel) panel.scrollTop = initialScrollTopRef.current;
-      requestTitleDockMeasure();
+      setPreviewShellKey(filePreviewShellKey(next.nodeId, next.targetKey));
+      restorePanelScroll();
       return;
     }
     requestTitleDockMeasure();
-  }, [fileRoot?.id, mainPanelRef, props.nodeId, requestTitleDockMeasure, targetKey]);
+  }, [fileRoot?.id, props.nodeId, requestTitleDockMeasure, restorePanelScroll, targetKey]);
 
   useEffect(() => {
     requestTitleDockMeasure();
@@ -152,10 +174,14 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     if (scrollReportFrameRef.current !== null) {
       window.cancelAnimationFrame(scrollReportFrameRef.current);
     }
+    if (scrollRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollRestoreFrameRef.current);
+    }
   }, []);
 
   const handlePanelScroll = () => {
     updateTitleDockedState();
+    if (restoringScrollRef.current) return;
     if (!props.onScrollPositionChange || scrollReportFrameRef.current !== null) return;
     scrollReportFrameRef.current = window.requestAnimationFrame(() => {
       scrollReportFrameRef.current = null;
@@ -307,6 +333,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
           </div>
         </header>
         <FilePreviewShell
+          key={previewShellKey}
           state={state}
           onOpenTarget={props.onOpenTarget}
           primaryOpen={primaryOpen}
@@ -379,4 +406,8 @@ function previewTargetFallbackKey(target: PreviewTarget): string {
   if (target.kind === 'agent-payload') return target.payloadId;
   if (target.kind === 'local-file') return target.path;
   return target.url;
+}
+
+function filePreviewShellKey(nodeId: NodeId | null, targetKey: string): string {
+  return `${nodeId ?? 'loose'}:${targetKey}`;
 }

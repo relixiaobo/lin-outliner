@@ -2212,6 +2212,15 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                   }}
                 />
               )}
+              {hasTags && imageFileRow && (
+                <TagBar
+                  nodeId={targetEditId}
+                  tagIds={displayed.tags}
+                  index={props.index}
+                  run={props.run}
+                  onRoot={props.onRoot}
+                />
+              )}
             </>
           ) : (
             rowEditorElement

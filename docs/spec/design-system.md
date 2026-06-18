@@ -638,7 +638,8 @@ elevated tier (`--bg-elevated` + level-1 shadow) — not a second sheet of glass
 **Reduced transparency fallback.** Honor `prefers-reduced-transparency` (the user
 turned on macOS "Reduce transparency"): all materials collapse to their opaque
 seeds — rails become `--bg-window`, overlays become `--bg-elevated`, blur is
-dropped. Legibility never depends on the blur being present.
+dropped. HUD material tokens such as `--preview-action-*` also receive opaque
+fallbacks; legibility never depends on the blur being present.
 
 **Increased contrast.** Honor `prefers-contrast: more` (macOS "Increase
 contrast"): strengthen the alpha-on-ink separators and outlines (step the
@@ -1034,7 +1035,8 @@ category history; see "Settings window".)
   segmented control and must not use a divider. Because it floats over arbitrary
   file pixels (white PDF pages, images, failed backdrop blur), it uses the
   dedicated `--preview-action-*` HUD tokens rather than the app-surface `--fill-*`
-  hover ladder; hover must preserve readable contrast over white preview content.
+  hover ladder; hover must preserve readable contrast over white preview content,
+  including when reduced transparency removes backdrop blur.
   Previewable files start in
   summary mode; PDFs show a compact horizontal all-pages strip whose page canvases
   fit the summary viewport height with tight token spacing from each other and

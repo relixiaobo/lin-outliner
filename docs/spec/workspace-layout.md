@@ -285,7 +285,10 @@ Opening a file preview in the current pane does the same, so Back can return to
 the originating node view. Each view may carry its last panel `scrollTop`.
 Back/Forward restores that scroll position; when a restored outliner view has a
 saved scroll position, navigation does not auto-focus the first body row because
-that focus would pull the scroll container back to the top.
+that focus would pull the scroll container back to the top. Programmatic scroll
+restore is not echoed back into history while layout is still settling, so a
+browser-clamped intermediate `scrollTop` cannot overwrite the saved position for
+the next Back/Forward visit.
 
 ### File preview panel
 

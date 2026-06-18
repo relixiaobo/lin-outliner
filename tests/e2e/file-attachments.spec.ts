@@ -471,6 +471,19 @@ test.describe('file attachments', () => {
       readerScrolls: true,
       topInsetClear: true,
     });
+    await previewStage.evaluate((element) => {
+      const fullReader = element.querySelector<HTMLElement>('.file-preview-pdf--full');
+      if (fullReader) fullReader.scrollTop = fullReader.scrollHeight;
+    });
+    await page.setViewportSize({ width: 1360, height: 820 });
+    await expect.poll(async () => previewStage.evaluate((element) => {
+      const fullReader = element.querySelector<HTMLElement>('.file-preview-pdf--full');
+      const page = element.querySelector<HTMLElement>('[data-pdf-page-number="2"]');
+      if (!fullReader || !page) return null;
+      const readerRect = fullReader.getBoundingClientRect();
+      const pageRect = page.getBoundingClientRect();
+      return Math.round(Math.abs(pageRect.top - readerRect.top));
+    })).toBeGreaterThan(40);
 
     await pill.locator('.file-preview-pill-primary').click();
     await expect(previewStage).toHaveClass(/collapsed/);
@@ -616,6 +629,22 @@ test.describe('file attachments', () => {
     const imageRow = row(page, imageId!);
     await expect(imageRow.locator('.file-node-image-button img')).toBeVisible();
     await expect(imageRow.locator('.file-node-card')).toHaveCount(0);
+    await page.evaluate(({ nodeId, tagId }) => {
+      const win = window as typeof window & {
+        __LIN_E2E__?: {
+          emitDocumentEvent: (event: unknown) => void;
+          projection: () => {
+            nodes: Array<{ id: string; tags?: string[] }>;
+          };
+        };
+      };
+      const projection = win.__LIN_E2E__!.projection();
+      const node = projection.nodes.find((entry) => entry.id === nodeId);
+      if (!node) throw new Error('missing image node');
+      node.tags = [tagId];
+      win.__LIN_E2E__!.emitDocumentEvent({ type: 'projection_changed', projection });
+    }, { nodeId: imageId, tagId: ids.projectTag });
+    await expect(imageRow.locator('> .row .row-content-line > .tag-bar .tag-badge-label')).toHaveText('project');
     // The ⋯ menu lives at the image's top-right (image rows keep their own inline
     // maximize/reveal menu, unlike non-image file name rows).
     await expect(imageRow.locator('.file-node-image-actions .file-node-card-menu-trigger')).toBeAttached();
@@ -819,7 +848,7 @@ test.describe('file attachments', () => {
     });
     expect(focused).toBe(true);
     await expect.poll(async () => attachmentRow.locator('.file-node-row-main').evaluate((element) =>
-      getComputedStyle(element).boxShadow)).toBe('none');
+      getComputedStyle(element).boxShadow)).not.toBe('none');
 
     // The name is display-only: ordinary typing on the focused file title never
     // renames it or fires slash commands.

@@ -533,8 +533,13 @@
   width: min(560px, 100%);
   min-width: 0;
   align-items: start;
+  border-radius: var(--radius-sm);
   font-size: var(--font-content);
   line-height: var(--line-content);
+}
+
+.row.file-node-row:focus-within .file-node-row-main {
+  box-shadow: var(--focus-ring-shadow);
 }
 
 .file-node-row-labels {
