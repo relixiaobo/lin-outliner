@@ -113,9 +113,6 @@ export const api = {
     command<CommandResult>('set_command_node', { nodeId }),
   setCommandSchedule: (nodeId: string, schedule: string | null) =>
     command<CommandResult>('set_command_schedule', { nodeId, schedule: schedule ?? null }),
-  // Which agent runs the command (an `AgentDefinition.name`; null = main agent).
-  setCommandAgent: (nodeId: string, agent: string | null) =>
-    command<CommandResult>('set_command_agent', { nodeId, agent: agent ?? null }),
   runCommandNow: (nodeId: string) =>
     command<{ conversationId: string }>('agent_run_command_now', { nodeId }),
   ensureCommandConversation: (nodeId: string) =>

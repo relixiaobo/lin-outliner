@@ -100,7 +100,6 @@ describe('command runtime — failed fires', () => {
       schedule: '2026-06-09T09:00 RRULE:FREQ=DAILY',
       dueAt: new Date(2026, 5, 9, 9, 0).getTime(),
       lastSuccessAt: null,
-      commandAgent: undefined,
     };
     // The provider-less env can't truly run a child run, so stub the execution to a
     // clean completion — this exercises fireCommand's SUCCESS branch (the run is
@@ -173,7 +172,6 @@ describe('command runtime — at-most-once', () => {
     schedule: '2026-06-09T09:00 RRULE:FREQ=DAILY',
     dueAt: new Date(2026, 5, 9, 9, 0).getTime(),
     lastSuccessAt: null,
-    commandAgent: undefined,
   };
 
   test('a successful fire records the attempt BEFORE advancing the watermark', async () => {

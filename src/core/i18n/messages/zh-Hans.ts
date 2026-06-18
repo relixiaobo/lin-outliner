@@ -665,15 +665,12 @@ commandPalette: {
         create: ({ label }: { label: string }) => `创建“${label}”`,
         optionsListLabel: ({ name }: { name: string }) => `${name}选项`,
       },
-      // 命令节点（定时例程）控件：Schedule 复用标准日期编辑器；Agent 是标准
-      // registry 选择器；Run 位于命令标题开头。设定调度是「只有用户能做」的安全红线。
+      // 命令节点（定时例程）控件：Schedule 复用标准日期编辑器；Run 位于命令标题
+      // 开头。设定调度是「只有用户能做」的安全红线。
       command: {
         enableSchedule: '启用调度…',
         runNow: '运行',
         edit: '编辑调度',
-        mainAgent: '主 agent',
-        selectAgent: '选择 agent',
-        agentPlaceholder: '按空格选择 agent…',
       },
     },
   },

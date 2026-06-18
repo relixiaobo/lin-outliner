@@ -177,7 +177,8 @@ export interface AgentChildRunActionResult {
   description: string;
   prompt: string;
   agent_type: string;
-  context_mode: 'fresh' | 'fork';
+  /** Always 'fork': a child run is the current agent in an isolated context, never a different agent. */
+  context_mode: 'fork';
   executing_agent_id?: string;
   parent_agent_id?: string;
   memory_owner_agent_id?: string;

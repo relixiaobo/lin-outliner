@@ -724,16 +724,12 @@ commandPalette: {
         optionsListLabel: ({ name }: { name: string }) => `${name} options`,
       },
       // Command node (scheduled routine) controls: the Schedule value reuses the
-      // standard date editor; the Agent value is a standard registry picker; Run
-      // lives at the start of the command title. Arming the schedule is the
-      // user-only "bright line".
+      // standard date editor; Run lives at the start of the command title. Arming
+      // the schedule is the user-only "bright line".
       command: {
         enableSchedule: 'Enable schedule…',
         runNow: 'Run',
         edit: 'Edit schedule',
-        mainAgent: 'Main agent',
-        selectAgent: 'Select agent',
-        agentPlaceholder: 'Press Space to pick an agent…',
       },
     },
   },

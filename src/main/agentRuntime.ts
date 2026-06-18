@@ -3274,7 +3274,6 @@ export class AgentRuntime {
     await this.runCommandChildAgent(
       this.commandConversationId(command.nodeId),
       brief,
-      command.commandAgent,
       command.lastSuccessAt,
     );
   }
@@ -3335,7 +3334,7 @@ export class AgentRuntime {
     this.firingCommandNodeIds.add(nodeId);
     this.knownCommandConversationNodeIds.add(nodeId);
     try {
-      await this.runCommandChildAgent(conversationId, brief, node.commandAgent, node.sysLastRunAt ?? null);
+      await this.runCommandChildAgent(conversationId, brief, node.sysLastRunAt ?? null);
       return { conversationId: conversationId };
     } finally {
       this.firingCommandNodeIds.delete(nodeId);
@@ -3346,22 +3345,18 @@ export class AgentRuntime {
   // brief — the command title plus its non-field child outline (see
   // `commandBriefText`) — is run as a DELEGATED child run anchored to the command's own
   // delivery conversation, so every fire shows up as a task in that conversation's
-  // task panel. `agent` picks the executing agent definition (an
-  // `AgentDefinition.name`); empty forks the otherwise-empty delivery conversation
-  // so the run executes under the main agent's identity and capabilities. Resolves
-  // only when the child run reaches a terminal state; throws on failure/stop so the
-  // caller leaves the watermark unadvanced and arms the failure backoff.
+  // task panel. Under the one-Neva invariant a fire always forks the otherwise-empty
+  // delivery conversation, so the run executes under Neva's identity and capabilities.
+  // Resolves only when the child run reaches a terminal state; throws on failure/stop
+  // so the caller leaves the watermark unadvanced and arms the failure backoff.
   private async runCommandChildAgent(
     conversationId: string,
     brief: string,
-    agent: string | undefined,
     lastSuccessAt: number | null,
   ): Promise<void> {
     const conversation = await this.ensureConversationWithId(conversationId, commandConversationTitle(brief));
     await this.refreshRuntimeSettings(conversation);
-    const agentType = agent?.trim() ? agent.trim() : undefined;
     let data = await conversation.delegationRuntime.invokeAgent({
-      agent_type: agentType,
       description: commandConversationTitle(brief),
       prompt: buildTriggeredCommandPrompt(brief, lastSuccessAt),
       run_in_background: false,

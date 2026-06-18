@@ -18,7 +18,6 @@ export const DOCUMENT_COMMANDS = [
   'set_code_language',
   'set_command_node',
   'set_command_schedule',
-  'set_command_agent',
   'mark_command_fired',
   'mark_command_attempted',
   'create_image_node',

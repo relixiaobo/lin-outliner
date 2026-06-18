@@ -292,6 +292,10 @@ function isCatalogToolName(value: string): value is (typeof TOOL_CATALOG)[number
   return (TOOL_CATALOG as readonly string[]).includes(value);
 }
 
+// `permissionMode` / `maxTurns` / `background` have no dedicated Form control (only
+// name / description / model / effort / tools / skills / persona do). They are still
+// seeded and re-serialized here so a Form-mode save never clobbers values authored in
+// Raw mode — the same lossless-preservation rule as non-catalog tools. Edit them in Raw.
 function buildInput(form: AgentFormState): AgentAuthoringInput {
   const selected = TOOL_CATALOG.filter((name) => form.tools.includes(name));
   const unrestricted = selected.length === TOOL_CATALOG.length && form.extraTools.length === 0;

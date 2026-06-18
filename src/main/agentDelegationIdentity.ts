@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import type { AgentChildRunRecord } from '../core/agentEventLog';
 import type { AgentDefinition } from '../core/types';
 
 export function agentDefinitionAgentId(agent: AgentDefinition): string {
@@ -8,15 +7,6 @@ export function agentDefinitionAgentId(agent: AgentDefinition): string {
     ? 'tenon'
     : stableAgentNamespace(agent.agentFile);
   return `${agent.source}:${namespace}:${normalizeAgentName(agent.name) || 'agent'}`;
-}
-
-export function resolveChildRunMemoryOwner(
-  run: Pick<AgentChildRunRecord, 'memoryOwnerAgentId'>,
-  fallbackMemoryOwnerAgentId: string,
-): string {
-  // A child run is always a fork — the current agent in an isolated context — so memory
-  // ownership falls back to the host agent unless an explicit owner was recorded.
-  return run.memoryOwnerAgentId || fallbackMemoryOwnerAgentId;
 }
 
 export function memoryWorkspaceIdForRoot(localRoot: string | undefined): string | undefined {

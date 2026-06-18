@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { Core } from '../../src/core/core';
 import { parseDateSchedule } from '../../src/core/dateSchedule';
 import { COMMAND_SCHEDULE_FIELD } from '../../src/core/types';
-import { COMMAND_AGENT_FIELD_ID, COMMAND_SCHEDULE_FIELD_ID } from '../../src/core/systemFields';
+import { COMMAND_SCHEDULE_FIELD_ID } from '../../src/core/systemFields';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   expect(outcome.focus).toBeDefined();
@@ -43,8 +43,8 @@ describe('Core.setCommandNode', () => {
     expect(node.protectedFields?.filter((field) => field === COMMAND_SCHEDULE_FIELD)).toHaveLength(1);
   });
 
-  // The two config rows (Schedule / Agent) are node-native: real `fieldEntry`
-  // children pointing at the built-in system fields, seeded on conversion.
+  // The Schedule config row is node-native: a real `fieldEntry` child pointing at
+  // the built-in system field, seeded on conversion.
   function commandFieldDefIds(core: Core, nodeId: string): string[] {
     const node = commandNode(core, nodeId);
     const byId = new Map(core.projection().nodes.map((entry) => [entry.id, entry]));
@@ -54,17 +54,17 @@ describe('Core.setCommandNode', () => {
       .map((child) => (child!.type === 'fieldEntry' ? child!.fieldDefId : ''));
   }
 
-  test('seeds the Schedule + Agent config field rows (Schedule first)', () => {
+  test('seeds the Schedule config field row', () => {
     const core = Core.new();
     const libraryId = core.projection().libraryId;
     const id = mustFocus(core.createNode(libraryId, null, 'cmd'));
 
     core.setCommandNode(id);
 
-    expect(commandFieldDefIds(core, id)).toEqual([COMMAND_SCHEDULE_FIELD_ID, COMMAND_AGENT_FIELD_ID]);
+    expect(commandFieldDefIds(core, id)).toEqual([COMMAND_SCHEDULE_FIELD_ID]);
   });
 
-  test('seeding the config rows is idempotent across re-conversion', () => {
+  test('seeding the config row is idempotent across re-conversion', () => {
     const core = Core.new();
     const libraryId = core.projection().libraryId;
     const id = mustFocus(core.createNode(libraryId, null, 'cmd'));
@@ -72,8 +72,8 @@ describe('Core.setCommandNode', () => {
     core.setCommandNode(id);
     core.setCommandNode(id);
 
-    // No duplicate Schedule / Agent rows on a second conversion.
-    expect(commandFieldDefIds(core, id)).toEqual([COMMAND_SCHEDULE_FIELD_ID, COMMAND_AGENT_FIELD_ID]);
+    // No duplicate Schedule row on a second conversion.
+    expect(commandFieldDefIds(core, id)).toEqual([COMMAND_SCHEDULE_FIELD_ID]);
   });
 
   test('refuses to convert a non-plain node (e.g. a code block)', () => {
@@ -142,31 +142,6 @@ describe('Core.setCommandSchedule (the bright line)', () => {
     const libraryId = core.projection().libraryId;
     const id = mustFocus(core.createNode(libraryId, null, 'plain'));
     expect(() => core.setCommandSchedule(id, '2026-06-09T09:00', 'user')).toThrow();
-  });
-});
-
-describe('Core.setCommandAgent', () => {
-  test('the executing agent round-trips and clears (agent-editable, not the bright line)', () => {
-    const core = Core.new();
-    const libraryId = core.projection().libraryId;
-    const id = mustFocus(core.createNode(libraryId, null, 'cmd'));
-    core.setCommandNode(id);
-
-    // Picking the executing agent is NOT user-gated — an agent-origin write is
-    // accepted (only arming the schedule is the bright line).
-    core.setCommandAgent(id, 'research');
-    expect(commandNode(core, id).commandAgent).toBe('research');
-
-    // Empty / whitespace clears back to undefined (the main agent).
-    core.setCommandAgent(id, '   ');
-    expect(commandNode(core, id).commandAgent).toBeUndefined();
-  });
-
-  test('refuse to set the agent on a node that is not a command node', () => {
-    const core = Core.new();
-    const libraryId = core.projection().libraryId;
-    const id = mustFocus(core.createNode(libraryId, null, 'plain'));
-    expect(() => core.setCommandAgent(id, 'research')).toThrow();
   });
 });
 
