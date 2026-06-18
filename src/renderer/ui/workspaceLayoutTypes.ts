@@ -11,11 +11,13 @@ export interface WorkspacePanelBase {
 export interface OutlinerPanelView {
   kind: 'outliner';
   rootId: NodeId;
+  scrollTop?: number;
 }
 
 export interface FilePreviewPanelView {
   kind: 'file-preview';
   nodeId?: NodeId;
+  scrollTop?: number;
   target: PreviewTarget;
 }
 

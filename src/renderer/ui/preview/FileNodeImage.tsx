@@ -14,7 +14,8 @@ type ImageNode = Extract<FileNode, { type: 'image' }>;
  * displayed read-only on the file preview surface, not in the row. A ⋯ menu sits at
  * the image's top-right, revealed on hover or keyboard focus, offering Maximize
  * (open the preview) plus the asset actions (Open / Reveal / Copy). Clicking the
- * image also maximizes it; the leading bullet/chevron still drill / expand children.
+ * image itself stays a row interaction: select it, or let the outline place focus
+ * after it. The leading bullet/chevron still drill / expand children.
  *
  * Loads through the streaming `asset://` protocol (the same path the full image
  * preview uses): Chromium-cached, lazy, range-served and uncapped, so large images
@@ -64,18 +65,7 @@ export function FileNodeImage({ node, onMaximize }: { node: ImageNode; onMaximiz
   const hasIntrinsicSize = typeof node.imageWidth === 'number' && typeof node.imageHeight === 'number';
   return (
     <div className="file-node-image">
-      <button
-        aria-label={labels.open}
-        className="file-node-image-button"
-        // A click maximizes the image; stop the mousedown from
-        // reaching the row so it does not also run row pointer-selection.
-        onMouseDown={(event) => event.stopPropagation()}
-        onClick={(event) => {
-          event.stopPropagation();
-          onMaximize();
-        }}
-        type="button"
-      >
+      <div className="file-node-image-button">
         <img
           alt={node.mediaAlt || node.description || ''}
           draggable={false}
@@ -84,7 +74,7 @@ export function FileNodeImage({ node, onMaximize }: { node: ImageNode; onMaximiz
           src={src}
           {...(hasIntrinsicSize ? { width: node.imageWidth, height: node.imageHeight } : {})}
         />
-      </button>
+      </div>
       {menu}
     </div>
   );

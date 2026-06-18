@@ -203,8 +203,28 @@
 .file-preview-pdf {
   display: flex;
   min-width: 0;
-  flex-direction: column;
   gap: var(--space-4);
+}
+
+.file-preview-pdf--summary {
+  box-sizing: border-box;
+  width: 100%;
+  height: calc(100% + var(--file-preview-scrollbar-gutter));
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-bottom: calc(-1 * var(--file-preview-scrollbar-gutter));
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: var(--file-preview-scrollbar-gutter);
+}
+
+.file-preview-pdf--full {
+  height: 100%;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 /* One stacked page; its height is reserved up front (inline min-height from the page
@@ -214,9 +234,19 @@
   place-items: start center;
 }
 
+.file-preview-pdf--summary .file-preview-pdf-page {
+  flex: 0 0 auto;
+  border-radius: var(--file-preview-page-radius);
+  outline: none;
+}
+
 .file-preview-pdf-stage {
   display: grid;
   place-items: start center;
+}
+
+.file-preview-pdf--summary .file-preview-pdf-stage {
+  place-items: center;
 }
 
 .file-preview-pdf-stage > .file-preview-message {
@@ -227,8 +257,13 @@
   grid-area: 1 / 1;
   max-width: 100%;
   border: 1px solid var(--border-subtle);
+  border-radius: var(--file-preview-page-radius);
   background: var(--surface);
   box-shadow: var(--shadow-thumb);
+}
+
+.file-preview-pdf-page[role='button']:focus-visible .file-preview-pdf-canvas {
+  box-shadow: var(--focus-ring-shadow), var(--shadow-thumb);
 }
 
 .file-preview-table-wrap {
@@ -254,40 +289,36 @@
 }
 
 .file-preview-metadata {
-  display: grid;
-  max-width: 640px;
-  grid-template-columns: 24px minmax(0, 1fr);
-  gap: var(--space-4);
+  display: block;
+  min-width: 0;
   color: var(--text-primary);
 }
 
+.file-preview-metadata-kind-row {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-4);
+}
+
 .file-preview-metadata h2 {
-  margin: 0 0 var(--space-4);
+  margin: 0;
   color: var(--text-strong);
   font-size: var(--font-ui-md);
   line-height: var(--line-ui-md);
 }
 
-.file-preview-metadata dl {
-  display: grid;
-  gap: var(--space-3);
-  margin: 0;
-}
-
-.file-preview-metadata dl > div {
-  display: grid;
-  grid-template-columns: 80px minmax(0, 1fr);
-  gap: var(--space-3);
-}
-
-.file-preview-metadata dt {
-  color: var(--text-muted);
-}
-
-.file-preview-metadata dd {
-  min-width: 0;
-  margin: 0;
+.file-preview-metadata-kind-row span,
+.file-preview-metadata p {
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
   overflow-wrap: anywhere;
+}
+
+.file-preview-metadata-kind-row span {
+  margin-top: 0;
 }
 
 /* File-node body — the preview content with a single bottom-center floating pill,
@@ -297,107 +328,185 @@
   position: relative;
   min-width: 0;
   margin-bottom: var(--space-6);
+  --file-preview-frame-padding-block: var(--space-4);
+  --file-preview-frame-padding-inline: var(--file-preview-frame-padding-block);
+  --file-preview-frame-radius: var(--radius-lg);
+  --file-preview-page-radius: var(--radius-md);
+  --file-preview-scrollbar-gutter: var(--space-4);
 }
 
-/* The preview stage scrolls internally; a previewable source toggles a collapsed peek
-   vs an expanded full-scroll height, a non-previewable (metadata) source stays at its
-   natural height. */
+.file-node-body--metadata {
+  display: inline-block;
+  max-width: 100%;
+}
+
+/* The preview stage is one rounded viewport. Previewable sources toggle between a
+   summary strip and the full-scroll renderer; non-previewable metadata keeps its
+   natural height inside the same frame. */
 .file-node-preview {
+  box-sizing: border-box;
   min-width: 0;
-  /* Keep content clear of the bottom-center floating pill in every state — the pill
-     shows over the peek (collapsed), the full scroll (expanded), and the
-     metadata/loading card alike, so the clearance lives on the base, not just
-     `.expanded`. */
-  padding-bottom: calc(var(--control-size-md) + var(--space-5));
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--file-preview-frame-radius);
+  background: var(--surface-soft);
+  box-shadow: var(--outline-subtle);
+  padding: var(--file-preview-frame-padding-block) var(--file-preview-frame-padding-inline);
 }
 
 .file-node-preview.collapsed {
-  max-height: var(--file-preview-peek-height, 260px);
+  height: var(--file-preview-summary-height, 260px);
   overflow: hidden;
-  /* The peek is a teaser the user expands to read in full. With long content its
-     bottom edge runs under the bottom-center pill (which floats over the peek by
-     design), so without this it would sit on sharp text. Fading that strip reads as a
-     "more below" cue instead. The fade height matches the base `padding-bottom` pill
-     clearance: short content (already clear of the pill) keeps its full last line —
-     the fade falls on the empty padding — while long, clipped content fades under the
-     pill. The pill is a SIBLING of this element (not a child), so the mask never
-     touches it. Mirrors the collapsed user-message peek in agent-message.css. */
-  mask-image: linear-gradient(
-    to bottom,
-    black calc(100% - var(--control-size-md) - var(--space-5)),
-    transparent 100%
-  );
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    black calc(100% - var(--control-size-md) - var(--space-5)),
-    transparent 100%
-  );
+}
+
+.file-node-preview.resized {
+  height: var(--file-preview-resized-height);
+  max-height: none;
+}
+
+.file-node-preview:not(.collapsed) {
+  /* The pill overlays the preview, but full-scroll / metadata states still need
+     trailing clearance so their last content can scroll above the control. Summary
+     mode intentionally has no clearance: its pages fit the viewport and the pill
+     floats over them. */
+  padding-bottom: calc(var(--control-size-md) + var(--space-5));
 }
 
 .file-node-preview.expanded {
   max-height: var(--file-preview-expanded-height, min(70vh, 720px));
-  overflow-y: auto;
+  overflow: auto;
 }
 
-/* The single bottom-center floating control over the preview (B5 material on chrome;
-   the reduced-transparency opaque fallback comes from the material token). */
+.file-node-preview.expanded:has(> .file-preview-pdf--full) {
+  height: var(--file-preview-expanded-height, min(70vh, 720px));
+  overflow: hidden;
+  padding-bottom: var(--file-preview-frame-padding-block);
+}
+
+.file-node-preview.expanded.resized {
+  height: var(--file-preview-resized-height);
+  max-height: none;
+}
+
+.file-node-preview--metadata {
+  display: block;
+  width: auto;
+  min-width: min(360px, 100%);
+  max-width: 100%;
+  max-height: none;
+  overflow: visible;
+  padding: var(--space-8) var(--space-lg) var(--space-6);
+}
+
+.file-node-preview.file-node-preview--metadata {
+  padding-bottom: var(--space-6);
+}
+
+.file-node-preview--metadata .file-preview-metadata {
+  max-width: min(360px, 100%);
+}
+
+/* The shared bottom-center action bar for every non-image file preview. It is chrome
+   over content, but deliberately quieter than a popover: one learned location, light
+   material, and no per-file-type control placement. */
 .file-preview-pill {
   position: absolute;
   bottom: var(--space-4);
   left: 50%;
   z-index: var(--z-raised);
   display: inline-flex;
-  align-items: stretch;
+  align-items: center;
+  gap: var(--space-2);
   transform: translateX(-50%);
-  border-radius: var(--radius-pill);
-  background: var(--material-popover);
-  -webkit-backdrop-filter: var(--material-backdrop);
-  backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
-  color: var(--text-main);
+  color: var(--preview-action-fg);
   user-select: none;
+  --file-preview-primary-width: 88px;
+  --file-preview-action-size: 34px;
+}
+
+.file-preview-pill--footer {
+  position: static;
+  bottom: auto;
+  left: auto;
+  display: flex;
+  width: fit-content;
+  margin: var(--space-5) auto 0;
+  transform: none;
+}
+
+.file-preview-resize-handle {
+  position: absolute;
+  right: var(--file-preview-frame-radius, var(--radius-lg));
+  bottom: 0;
+  left: var(--file-preview-frame-radius, var(--radius-lg));
+  z-index: var(--z-raised);
+  height: var(--space-4);
+  cursor: ns-resize;
+  outline: none;
+  touch-action: none;
+}
+
+.file-preview-resize-handle::before {
+  position: absolute;
+  right: 0;
+  bottom: var(--space-1);
+  left: 0;
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  content: "";
+  transition: background var(--motion-fast);
+}
+
+.file-preview-resize-handle:hover::before,
+.file-preview-resize-handle:focus-visible::before {
+  background: var(--drop-line);
 }
 
 .file-preview-pill-primary {
+  display: inline-flex;
+  height: var(--file-preview-action-size);
   border: 0;
+  min-width: var(--file-preview-primary-width);
+  align-items: center;
+  justify-content: center;
   border-radius: var(--radius-pill);
-  background: transparent;
+  background: var(--preview-action-bg);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--shadow-thumb-strong), inset 0 0 0 1px var(--preview-action-outline);
   color: inherit;
   font: inherit;
   font-size: var(--font-ui-sm);
   font-weight: 500;
   line-height: var(--line-ui-sm);
-  padding: var(--space-2) var(--space-4);
-  transition: background var(--motion-fast);
+  padding: 0 var(--space-5);
+  text-align: center;
+  transition: background var(--motion-fast), color var(--motion-fast);
 }
 
 .file-preview-pill-primary:hover {
-  background: var(--fill-1);
-}
-
-.file-preview-pill-divider {
-  width: 1px;
-  align-self: stretch;
-  margin: var(--space-2) 0;
-  background: var(--border-subtle);
+  background: var(--preview-action-hover-bg);
 }
 
 .file-preview-pill-more {
   display: inline-flex;
-  width: var(--control-size-md);
+  width: var(--file-preview-action-size);
+  height: var(--file-preview-action-size);
   align-items: center;
   justify-content: center;
   border: 0;
   border-radius: var(--radius-pill);
-  background: transparent;
+  background: var(--preview-action-bg);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--shadow-thumb-strong), inset 0 0 0 1px var(--preview-action-outline);
   color: inherit;
   transition: color var(--motion-fast), background var(--motion-fast);
 }
 
 .file-preview-pill-more:hover,
 .file-preview-pill-more[aria-expanded='true'] {
-  background: var(--fill-1);
-  color: var(--text-strong);
+  background: var(--preview-action-hover-bg);
 }
 
 .file-preview-pill-primary:focus-visible,
@@ -415,7 +524,7 @@
   line-height: var(--line-ui-xs);
 }
 
-/* A non-image file node's row content: a read-only filename + a hover ⋯ menu, sitting
+/* A non-image file node's row content: a read-only filename, sitting
    in the row's content column. The file-type icon is the bullet (RowMarker `file`
    variant), and the chevron expands an inline preview below the row, so a file reads as
    a lightweight node — not a heavy card. */
@@ -423,59 +532,55 @@
   display: flex;
   width: min(560px, 100%);
   min-width: 0;
-  align-items: center;
-  gap: var(--space-2);
-  margin: var(--space-hairline) 0;
+  align-items: start;
+  font-size: var(--font-content);
+  line-height: var(--line-content);
 }
 
-/* The filename is display-only: a single line that truncates with an ellipsis, so a
-   file row stays one line tall. */
-.file-node-row-name {
-  flex: 1 1 auto;
+.file-node-row-labels {
   min-width: 0;
-  overflow: hidden;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+
+/* The filename is a read-only caret surface: it wraps like a locked/reference row
+   and participates in node keyboard commands, but text input never renames it. */
+.file-node-row-name {
   color: var(--text-main);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: var(--line-content);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
-/* Keyboard nav lands on the row's hidden filename anchor; ring the name row so the
-   focused (but not yet selected) file row has a visible focus indicator (B8) — the
-   mirror of the image row's `:focus-within` ring above. */
-.row.file-node-row:focus-within .file-node-row-main {
-  border-radius: var(--radius-sm);
-  box-shadow: var(--focus-ring-shadow);
+.file-node-row-name-editor,
+.file-node-row-name-editor .ProseMirror,
+.file-node-row-name-editor .ProseMirror p {
+  display: inline;
 }
 
-/* The ⋯ menu reveals on row hover / focus, and stays put while open (the menu is
-   portaled, so `:has(... [aria-expanded])` — not `:focus-within` — keeps it shown). */
-.file-node-row-actions {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  opacity: 0;
-  transition: opacity var(--motion-fast);
+.file-node-row-name-editor {
+  width: auto;
+  max-width: 100%;
+  vertical-align: baseline;
 }
 
-.row.file-node-row:hover .file-node-row-actions,
-.file-node-row-actions:focus-within,
-.file-node-row-actions:has(.file-node-card-menu-trigger[aria-expanded='true']) {
-  opacity: 1;
+.file-node-row-name-editor .ProseMirror {
+  min-height: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
-/* The file row's chevron stays visible — its primary affordance is expand-to-preview,
-   unlike the hover-only chevron on ordinary rows. */
-.row.file-node-row > .row-leading > .row-chevron-button {
-  opacity: 1;
-  pointer-events: auto;
+.file-node-row-name-editor .ProseMirror p {
+  min-width: 0;
 }
 
 /* The inline preview sits below the file row (inside row-wrap, outside .row, so the row
    selection highlight never paints it), indented under the row content. A shorter peek
    and expanded bound than the dedicated node page keep it from dominating the outline. */
 .file-node-row-preview {
+  margin-top: var(--space-5);
   margin-left: var(--row-leading-width);
-  --file-preview-peek-height: 200px;
+  --file-preview-summary-height: 248px;
   --file-preview-expanded-height: min(60vh, 560px);
 }
 
@@ -525,8 +630,8 @@
   border-radius: var(--radius-md);
   background: transparent;
   padding: 0;
-  /* Clicking opens the ingested file preview (maximize), not an in-place zoom, and a
-     native app does not hand-cursor clickable content (B10) — keep the arrow. */
+  /* A single click selects the image row; Maximize lives in the row menu. Native
+     content keeps the default arrow cursor (B10). */
   cursor: default;
   -webkit-app-region: no-drag;
 }
@@ -570,7 +675,7 @@
   outline: none;
 }
 
-/* The row's focus (keyboard nav lands on the hidden filename anchor) rings the image,
+/* The row's focus (keyboard nav lands on the hidden image-row anchor) rings the image,
    since the image is what the row shows. */
 .file-node-image-button:focus-visible img,
 .row:focus-within .file-node-image-button img {
@@ -604,8 +709,8 @@
   color: var(--text-main);
 }
 
-/* A file row has no inline filename editor; this focusable, visually-hidden anchor
-   carries the row's keyboard parity (arrow nav, Enter, etc.). Hide it (sr-only) while
+/* Image file rows have no filename editor; this focusable, visually-hidden anchor
+   carries their keyboard parity (arrow nav, Enter, etc.). Hide it (sr-only) while
    keeping it focusable. position: absolute takes the anchor out of flow, so the
    canonical sr-only `margin: -1px` is redundant — width/height 1px + clip + overflow
    hide it. */

@@ -1,4 +1,5 @@
 import { clipboardImageFiles, imageUrlFromText } from './imagePaste';
+import { dataTransferFiles } from './attachmentIngest';
 import { detectSingleLineUrl } from './pasteParser';
 
 /**
@@ -9,6 +10,7 @@ import { detectSingleLineUrl } from './pasteParser';
  * of an intent (edit in place vs. create a node) differs between them.
  */
 export type MediaPasteIntent =
+  | { kind: 'files'; files: File[] }
   | { kind: 'images'; files: File[] }
   | { kind: 'mediaUrl'; url: string }
   | { kind: 'linkUrl'; url: string };
@@ -21,8 +23,8 @@ export type MediaPasteIntent =
  * Order matches the inline editor and must not change without updating both
  * call sites:
  *
- * 1. Image files (e.g. a screenshot) — take priority over text so a clipboard
- *    carrying both an image and its filename does not fall through to text.
+ * 1. Files — image-only clips keep the dedicated image intent; any mixed or
+ *    non-image file clip becomes a file-node paste.
  * 2. A lone remote image URL — only with no active selection. With a selection
  *    the URL should link the selected text instead, so it falls to `linkUrl`.
  * 3. Any single-line URL — becomes a link.
@@ -34,6 +36,14 @@ export function classifyMediaPaste(
   data: DataTransfer | null | undefined,
   options: { hasSelection: boolean } = { hasSelection: false },
 ): MediaPasteIntent | null {
+  const allFiles = dataTransferFiles(data);
+  if (allFiles.length > 0) {
+    const imageFiles = allFiles.filter((file) => file.type.startsWith('image/'));
+    return imageFiles.length === allFiles.length
+      ? { kind: 'images', files: imageFiles }
+      : { kind: 'files', files: allFiles };
+  }
+
   const files = clipboardImageFiles(data);
   if (files.length > 0) return { kind: 'images', files };
 

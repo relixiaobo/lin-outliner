@@ -68,6 +68,8 @@ interface RichTextEditorProps {
   /** Extra class appended to the editor element (e.g. a field-value or block class). */
   className?: string;
   readOnly?: boolean;
+  /** Keeps a read-only editor focusable/selectable while rejecting content mutations. */
+  readOnlyCaret?: boolean;
   completed?: boolean;
   onFocus: () => void;
   onChange: (content: RichText) => void;
@@ -105,6 +107,7 @@ interface RichTextEditorProps {
     firstMeta?: PasteRowMeta;
   }) => void;
   onPasteImage?: (images: PastedImage[]) => void;
+  onPasteFiles?: (files: File[]) => void;
   /** A lone remote image URL pasted with no active selection. */
   onPasteMediaUrl?: (url: string) => void;
   /**
@@ -161,6 +164,10 @@ function lastTextblockInlineEnd(doc: PMNode): number | null {
 
 function focusEditorDom(view: EditorView) {
   view.dom.focus({ preventScroll: true });
+}
+
+function isEditableSurface(props: RichTextEditorProps) {
+  return !props.readOnly || Boolean(props.readOnlyCaret);
 }
 
 function selectedInlineReferencePosition(view: EditorView): number | null {
@@ -221,6 +228,11 @@ function isEmptyRichText(content: RichText) {
 
 function isModifierOnlyKey(event: KeyboardEvent) {
   return event.key === 'Meta' || event.key === 'Control' || event.key === 'Alt' || event.key === 'Shift';
+}
+
+function isReadOnlyMutationKey(event: KeyboardEvent) {
+  if (event.metaKey || event.ctrlKey || event.altKey) return false;
+  return event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete';
 }
 
 function domSelectionCoversEditorText(element: HTMLElement) {
@@ -416,7 +428,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
 
     const view = new EditorView(mount, {
       state: initialState,
-      editable: () => !propsRef.current.readOnly,
+      editable: () => isEditableSurface(propsRef.current),
       // Inline trailing slot (the row's tag chips). A view-level prop, not a state
       // plugin, so it survives the bare `updateState(EditorState.create(...))` calls
       // on the paste path. Recomputed every update, so its position tracks edits.
@@ -478,7 +490,8 @@ export function RichTextEditor(props: RichTextEditorProps) {
         }
       },
       handleTextInput(viewInstance, from, to, text) {
-        if (propsRef.current.readOnly || composingRef.current || viewInstance.composing) return false;
+        if (propsRef.current.readOnly) return true;
+        if (composingRef.current || viewInstance.composing) return false;
         const tr = createInlineMarkShortcutTransaction(viewInstance.state, from, to, text);
         if (!tr) return false;
 
@@ -503,6 +516,10 @@ export function RichTextEditor(props: RichTextEditorProps) {
         },
         beforeinput(viewInstance, event) {
           clearMatchingPendingInput();
+          if (propsRef.current.readOnly) {
+            event.preventDefault();
+            return true;
+          }
           const inputEvent = event as InputEvent;
           if (inputEvent.inputType === 'insertCompositionText') {
             ensureImeCompositionAnchor(viewInstance);
@@ -524,7 +541,10 @@ export function RichTextEditor(props: RichTextEditorProps) {
           return true;
         },
         paste(viewInstance, event) {
-          if (propsRef.current.readOnly) return false;
+          if (propsRef.current.readOnly) {
+            event.preventDefault();
+            return true;
+          }
 
           const clipboardEvent = event as ClipboardEvent;
 
@@ -545,6 +565,13 @@ export function RichTextEditor(props: RichTextEditorProps) {
           if (mediaPaste?.kind === 'images' && onPasteImage) {
             clipboardEvent.preventDefault();
             void readPastedImages(mediaPaste.files).then((images) => onPasteImage(images));
+            return true;
+          }
+
+          const onPasteFiles = propsRef.current.onPasteFiles;
+          if (mediaPaste?.kind === 'files' && onPasteFiles) {
+            clipboardEvent.preventDefault();
+            onPasteFiles(mediaPaste.files);
             return true;
           }
 
@@ -760,6 +787,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
           && !mod
           && !event.altKey
           && !event.shiftKey
+          && !propsRef.current.readOnly
           && propsRef.current.onSpace?.()
         ) {
           event.preventDefault();
@@ -815,22 +843,27 @@ export function RichTextEditor(props: RichTextEditorProps) {
 
         if (mod && event.key.toLowerCase() === 'b') {
           event.preventDefault();
+          if (propsRef.current.readOnly) return true;
           return toggleMark(pmSchema.marks.bold)(viewInstance.state, viewInstance.dispatch);
         }
         if (mod && event.key.toLowerCase() === 'i') {
           event.preventDefault();
+          if (propsRef.current.readOnly) return true;
           return toggleMark(pmSchema.marks.italic)(viewInstance.state, viewInstance.dispatch);
         }
         if (mod && event.key.toLowerCase() === 'e') {
           event.preventDefault();
+          if (propsRef.current.readOnly) return true;
           return toggleMark(pmSchema.marks.code)(viewInstance.state, viewInstance.dispatch);
         }
         if (mod && event.shiftKey && event.key.toLowerCase() === 's') {
           event.preventDefault();
+          if (propsRef.current.readOnly) return true;
           return toggleMark(pmSchema.marks.strike)(viewInstance.state, viewInstance.dispatch);
         }
         if (mod && event.shiftKey && event.key.toLowerCase() === 'h') {
           event.preventDefault();
+          if (propsRef.current.readOnly) return true;
           return toggleMark(pmSchema.marks.highlight)(viewInstance.state, viewInstance.dispatch);
         }
         if (!mod && !event.shiftKey && !event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
@@ -860,7 +893,13 @@ export function RichTextEditor(props: RichTextEditorProps) {
           textLength: docToRichText(viewInstance.state.doc).text.length,
           hasShiftArrow: Boolean(propsRef.current.onShiftArrow),
         });
-        if (!structural) return false;
+        if (!structural) {
+          if (propsRef.current.readOnly && isReadOnlyMutationKey(event)) {
+            event.preventDefault();
+            return true;
+          }
+          return false;
+        }
         if (structural.type === 'backspaceAtStart') {
           // A "backspace at start" is decided by *text* offset, but inline-ref
           // atoms carry no text offset — so a caret sitting just after a leading
@@ -989,8 +1028,8 @@ export function RichTextEditor(props: RichTextEditorProps) {
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.setProps({ editable: () => !props.readOnly });
-  }, [props.readOnly]);
+    view.setProps({ editable: () => isEditableSurface(props) });
+  }, [props.readOnly, props.readOnlyCaret]);
 
   // The inline tag slot appears/disappears (node <-> null) when tags are added or
   // removed — events that don't dispatch a transaction to THIS editor. Force a

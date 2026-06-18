@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -16,9 +15,11 @@ import {
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { freshNodeId } from '../../../core/nodeId';
-import type { DocumentIndex, UiState } from '../../state/document';
+import { outlinerChildParentId, type DocumentIndex, type UiState } from '../../state/document';
 import { buildVisualRows, type VisualRow } from '../../state/visualRows';
+import { MAX_OUTLINE_INDENT_DEPTH } from '../workspaceResponsiveLayout';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
+import { outlinerChildren } from '../shared';
 import { hiddenFieldKey, readViewConfig } from './row-model';
 import { RENDER_PROBE_ENABLED } from './renderProbe';
 import { OutlinerFieldRow } from './OutlinerFieldRow';
@@ -26,6 +27,7 @@ import { OutlinerItem } from './OutlinerItem';
 import { ViewToolbar } from './ViewToolbar';
 import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 import { OutlinerEmptyState } from './OutlinerEmptyState';
+import { IndentGuide } from './IndentGuide';
 
 // The flat renderer is the default outliner path. The old recursive renderer is
 // retained as a reload-scoped diagnostic fallback while parity work settles.
@@ -70,6 +72,28 @@ function buildRowLayout(rows: readonly VisualRow[], measured: Map<string, number
     top += height;
   }
   return { items, totalHeight: top };
+}
+
+function flatGuideExtentFor(
+  rows: readonly VisualRow[],
+  layout: RowLayout,
+  rowIndex: number,
+): number | undefined {
+  const row = rows[rowIndex];
+  const rowItem = layout.items[rowIndex];
+  if (!row || row.kind !== 'content' || !rowItem) return undefined;
+  let endIndex = rowIndex + 1;
+  while (endIndex < rows.length && rows[endIndex]!.depth > row.depth) {
+    endIndex += 1;
+  }
+  if (endIndex <= rowIndex + 1) return undefined;
+  const lastChildItem = layout.items[endIndex - 1];
+  if (!lastChildItem) return undefined;
+  // The guide follows marker centers, not the descendant row's full content
+  // height. Tall previews or wrapped text under the last child should not stretch
+  // the line past that child's marker center.
+  const extent = lastChildItem.top - rowItem.top;
+  return extent > 0 ? extent : undefined;
 }
 
 // First index whose row ends at or after `y` (rows are sorted by top, contiguous).
@@ -185,6 +209,38 @@ function FlatRowShell({
       data-flat-row-key={rowKey}
       ref={rowRef}
       style={{ transform: `translateY(${top}px)` }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function FlowRowShell({
+  children,
+  onMeasure,
+  rowKey,
+}: {
+  children: ReactNode;
+  onMeasure: (rowKey: string, height: number) => void;
+  rowKey: string;
+}) {
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const element = rowRef.current;
+    if (!element) return undefined;
+    const measure = () => onMeasure(rowKey, element.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [onMeasure, rowKey]);
+  return (
+    <div
+      className="outliner-flat-flow-row"
+      role="presentation"
+      data-flat-row-key={rowKey}
+      ref={rowRef}
     >
       {children}
     </div>
@@ -397,6 +453,46 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     return [...set].sort((a, b) => a - b);
   }, [virtualize, layout, scrollMetrics.top, scrollMetrics.height, forcedIndices]);
 
+  const toggleDirectChildrenExpansion = useCallback((rowId: NodeId) => {
+    const childParentId = outlinerChildParentId(rowId, byId);
+    const childParentNode = childParentId ? byId.get(childParentId) : undefined;
+    const childIds = outlinerChildren(childParentNode, byId);
+    if (childIds.length === 0) return;
+    props.setUi((prev) => {
+      const expandedSet = new Set(prev.expanded);
+      const anyChildExpanded = childIds.some((childId) => expandedSet.has(childId));
+      for (const childId of childIds) {
+        if (anyChildExpanded) expandedSet.delete(childId);
+        else expandedSet.add(childId);
+      }
+      return { ...prev, expanded: expandedSet };
+    });
+  }, [byId, props.setUi]);
+
+  const renderFlatGuides = () => (
+    <div className="outliner-flat-guides" role="presentation">
+      {rows.map((row, i) => {
+        if (row.kind !== 'content' || row.draft) return null;
+        const extent = flatGuideExtentFor(rows, layout, i);
+        if (extent === undefined) return null;
+        const guideTop = (layout.items[i]?.top ?? 0);
+        const marginLeft = Math.min(row.depth, MAX_OUTLINE_INDENT_DEPTH) * 28;
+        return (
+          <IndentGuide
+            key={`guide>${row.key}`}
+            guideFor={row.nodeId}
+            flatMetrics={{
+              top: guideTop,
+              height: extent,
+              marginLeft,
+            }}
+            onToggleChildren={() => toggleDirectChildrenExpansion(row.nodeId)}
+          />
+        );
+      })}
+    </div>
+  );
+
   // ── Live-search refresh ────────────────────────────────────────────────────
   // A search node recomputes its results whenever they are visible — when it is
   // the panel root, or an expanded content row. Mirrors OutlinerView's per-node
@@ -433,7 +529,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     };
   }, [searchKey, index.projection, props.parentId]);
 
-  const renderRow = (row: VisualRow): ReactNode => {
+  const renderRow = (row: VisualRow, rowIndex: number): ReactNode => {
     switch (row.kind) {
       case 'toolbar': {
         const node = byId.get(row.nodeId);
@@ -539,7 +635,14 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
           rootLevel={props.parentId === props.rootId}
           searchLoading={rootSearchRefreshing}
         />
-        {rows.map((row) => <Fragment key={row.key}>{renderRow(row)}</Fragment>)}
+        <div className="outliner-flat-flow" role="presentation">
+          {renderFlatGuides()}
+          {rows.map((row, i) => (
+            <FlowRowShell key={row.key} onMeasure={measureRow} rowKey={row.key}>
+              {renderRow(row, i)}
+            </FlowRowShell>
+          ))}
+        </div>
       </>
     );
   }
@@ -556,12 +659,13 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
         searchLoading={rootSearchRefreshing}
       />
       <div className="outliner-flat" role="presentation" ref={listRef} style={containerStyle}>
+        {renderFlatGuides()}
         {renderIndices.map((i) => {
           const row = rows[i]!;
           const item = layout.items[i]!;
           return (
             <FlatRowShell key={row.key} onMeasure={measureRow} rowKey={row.key} top={item.top}>
-              {renderRow(row)}
+              {renderRow(row, i)}
             </FlatRowShell>
           );
         })}

@@ -10,7 +10,13 @@ export interface IngestedFiles {
 
 export function dataTransferFiles(data: DataTransfer | null | undefined): File[] {
   if (!data) return [];
-  return Array.from(data.files);
+  const files: File[] = [];
+  for (const item of Array.from(data.items ?? [])) {
+    if (item.kind !== 'file') continue;
+    const file = item.getAsFile();
+    if (file) files.push(file);
+  }
+  return files.length > 0 ? files : Array.from(data.files ?? []);
 }
 
 export function hasFileTransfer(data: DataTransfer | null | undefined): boolean {

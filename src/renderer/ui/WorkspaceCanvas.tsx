@@ -23,6 +23,7 @@ interface WorkspaceCanvasProps {
   onNavigatePanelBack: (panelId: string) => void;
   onNavigatePanelPreview: (panelId: string, target: PreviewTarget, options?: { newPane?: boolean; nodeId?: NodeId }) => void;
   onNavigatePanelRoot: (panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => void;
+  onPanelScrollPositionChange: (panelId: string, scrollTop: number) => void;
   onPanelResizeReset: (leftPanelId: string, rightPanelId: string) => void;
   onPanelResizeStart: (
     leftPanelId: string,
@@ -68,9 +69,11 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 panelId={panel.id}
                 rootId={panel.view.rootId}
                 canGoBack={Boolean(panel.backStack.length)}
+                initialScrollTop={panel.view.scrollTop}
                 onBack={() => props.onNavigatePanelBack(panel.id)}
                 showClose={activePanels.length > 1}
                 onClose={() => props.onClosePanel(panel.id)}
+                onScrollPositionChange={(scrollTop) => props.onPanelScrollPositionChange(panel.id, scrollTop)}
                 onRoot={(nodeId, options) => props.onNavigatePanelRoot(panel.id, nodeId, options)}
                 index={props.index}
                 isNodePinned={props.isNodePinned}
@@ -91,10 +94,12 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 index={props.index}
                 isNodePinned={props.isNodePinned}
                 nodeId={panel.view.nodeId}
+                initialScrollTop={panel.view.scrollTop}
                 onBack={() => props.onNavigatePanelBack(panel.id)}
                 onClose={() => props.onClosePanel(panel.id)}
                 onOpenTarget={(target, options) => props.onNavigatePanelPreview(panel.id, target, options)}
                 onRoot={(nodeId, options) => props.onNavigatePanelRoot(panel.id, nodeId, options)}
+                onScrollPositionChange={(scrollTop) => props.onPanelScrollPositionChange(panel.id, scrollTop)}
                 onTogglePin={props.onTogglePin}
                 run={props.run}
                 setDragId={props.setDragId}

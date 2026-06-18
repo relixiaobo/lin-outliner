@@ -21,19 +21,19 @@ const ASSET_MENU_ICON: Record<Exclude<FileNodeAssetActionKey, 'open'>, Component
 interface FilePreviewBodyProps {
   node: FileNode;
   onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
-  // The dedicated node page starts the preview expanded; an inline outliner-row host
-  // starts it collapsed (peek), since it should not dominate the outline.
+  // Previewable sources start in summary mode (a bounded thumbnail strip for PDFs)
+  // and Expand switches into the full scrollable renderer.
   initialExpanded?: boolean;
 }
 
 /**
  * The body of an ingested file preview: the rendered preview with its bottom-center
- * floating pill, shown on the node page (expanded) above the node's children outline,
- * and inline under an expanded file row (collapsed/peek). The file's name lives in the
- * surface title / row, so this body never repeats it. Shares its layout (FilePreviewShell)
- * with loose previews, so the two read identically.
+ * floating pill, shown on the node page above the node's children outline and inline
+ * under an expanded file row. The file's name lives in the surface title / row, so
+ * this body never repeats it. Shares its layout (FilePreviewShell) with loose
+ * previews, so the two read identically.
  */
-export function FilePreviewBody({ node, onOpenTarget, initialExpanded = true }: FilePreviewBodyProps) {
+export function FilePreviewBody({ node, onOpenTarget, initialExpanded = false }: FilePreviewBodyProps) {
   const target = useMemo(
     () => fileNodeTarget(node),
     // Intentionally excludes node.content.text: the filename feeds only the target's

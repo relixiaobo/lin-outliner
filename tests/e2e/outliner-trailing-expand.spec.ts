@@ -63,10 +63,14 @@ async function dispatchCompositionEvent(
 }
 
 async function clickIndentGuideLine(page: Parameters<typeof trailingEditor>[0], rowId: string) {
-  const guide = row(page, rowId).locator('> .indent-guide');
+  const guide = indentGuide(page, rowId);
   const box = await guide.boundingBox();
   if (!box) throw new Error(`Missing indent guide for ${rowId}`);
   await page.mouse.click(box.x + box.width - 1, box.y + Math.min(10, box.height / 2));
+}
+
+function indentGuide(page: Parameters<typeof trailingEditor>[0], rowId: string) {
+  return page.locator(`.outliner-flat-guides .indent-guide[data-guide-node-id="${rowId}"], [data-node-id="${rowId}"] > .indent-guide`).first();
 }
 
 test.describe('outliner trailing input and expansion parity', () => {
@@ -92,12 +96,103 @@ test.describe('outliner trailing input and expansion parity', () => {
     await row(page, ids.alpha).locator('.row-chevron-button').click({ force: true });
     await expect(row(page, ids.beta)).toBeVisible();
     await expect(row(page, ids.gamma)).toHaveCount(0);
+    await expect.poll(async () => indentGuide(page, ids.alpha).locator('.indent-guide-line').evaluate((element) => {
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      const transparent = /rgba?\(0,\s*0,\s*0,\s*0\)|transparent/.test(style.backgroundColor);
+      return rect.height > 8 && Math.round(rect.width) === 1 && !transparent;
+    })).toBe(true);
 
     await clickIndentGuideLine(page, ids.alpha);
     await expect(row(page, ids.gamma)).toBeVisible();
 
     await clickIndentGuideLine(page, ids.alpha);
     await expect(row(page, ids.gamma)).toHaveCount(0);
+  });
+
+  test('expanded row guide follows child markers instead of tall child content', async ({ page }) => {
+    const longText = Array.from({ length: 48 }, (_, index) => `wrapped child segment ${index + 1}`).join(' ');
+
+    await page.evaluate(async ({ alphaId, betaId, text }) => {
+      const win = window as Window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      await win.lin?.invoke('move_node', { nodeId: betaId, parentId: alphaId, index: null });
+      await win.lin?.invoke('apply_node_text_patch', {
+        nodeId: betaId,
+        patch: {
+          ops: [{
+            type: 'replace_all',
+            content: { text, marks: [], inlineRefs: [] },
+          }],
+        },
+      });
+    }, { alphaId: ids.alpha, betaId: ids.beta, text: longText });
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+
+    await row(page, ids.alpha).locator('.row-chevron-button').click({ force: true });
+    await expect(row(page, ids.beta)).toBeVisible();
+
+    await expect.poll(async () => rowBody(page, ids.beta).evaluate((element) =>
+      element.getBoundingClientRect().height,
+    )).toBeGreaterThan(70);
+
+    const metrics = await page.evaluate(({ alphaId, betaId }) => {
+      const rect = (element: Element | null) => {
+        const box = element?.getBoundingClientRect();
+        return box
+          ? { bottom: box.bottom, height: box.height, left: box.left, right: box.right, top: box.top, width: box.width }
+          : null;
+      };
+      const guide = document.querySelector(
+        `.outliner-flat-guides .indent-guide[data-guide-node-id="${alphaId}"], `
+          + `[data-node-id="${alphaId}"] > .indent-guide`,
+      );
+      const guideLine = document.querySelector(
+        `.outliner-flat-guides .indent-guide[data-guide-node-id="${alphaId}"] .indent-guide-line, `
+          + `[data-node-id="${alphaId}"] > .indent-guide .indent-guide-line`,
+      );
+      const alphaMarker = document.querySelector(`[data-node-id="${alphaId}"] > .row .row-bullet-button`);
+      const alphaMarkerSlot = document.querySelector(`[data-node-id="${alphaId}"] > .row .row-bullet-shape`);
+      const betaRow = document.querySelector(`[data-node-id="${betaId}"] > .row`);
+      const betaMarker = document.querySelector(`[data-node-id="${betaId}"] > .row .row-bullet-button`);
+      const alphaDot = document.querySelector(`[data-node-id="${alphaId}"] > .row .row-bullet-dot`);
+      return {
+        alphaDot: rect(alphaDot),
+        alphaMarker: rect(alphaMarker),
+        alphaMarkerSlot: rect(alphaMarkerSlot),
+        guide: rect(guide),
+        guideLine: rect(guideLine),
+        betaRow: rect(betaRow),
+        betaMarker: rect(betaMarker),
+      };
+    }, { alphaId: ids.alpha, betaId: ids.beta });
+
+    expect(metrics.alphaDot).not.toBeNull();
+    expect(metrics.alphaMarker).not.toBeNull();
+    expect(metrics.alphaMarkerSlot).not.toBeNull();
+    expect(metrics.guide).not.toBeNull();
+    expect(metrics.guideLine).not.toBeNull();
+    expect(metrics.betaRow).not.toBeNull();
+    expect(metrics.betaMarker).not.toBeNull();
+    expect(metrics.betaRow!.height).toBeGreaterThan(metrics.betaMarker!.height + 30);
+    const alphaMarkerCenter = metrics.alphaMarker!.top + metrics.alphaMarker!.height / 2;
+    const betaMarkerCenter = metrics.betaMarker!.top + metrics.betaMarker!.height / 2;
+    const guideLineCenterX = metrics.guideLine!.left + metrics.guideLine!.width / 2;
+    expect(Math.abs(guideLineCenterX - metrics.alphaMarker!.left)).toBeLessThanOrEqual(1);
+    expect(metrics.guide!.right).toBeLessThanOrEqual(metrics.alphaMarker!.left + 0.5);
+    expect(metrics.guide!.left).toBeLessThan(metrics.alphaMarker!.left);
+    expect(metrics.guideLine!.top - alphaMarkerCenter).toBeGreaterThanOrEqual(16);
+    expect(metrics.guideLine!.top - alphaMarkerCenter).toBeLessThanOrEqual(19);
+    expect(Math.abs(metrics.guideLine!.bottom - betaMarkerCenter)).toBeLessThanOrEqual(2);
+    expect(metrics.guideLine!.bottom).toBeLessThan(metrics.betaRow!.bottom - 20);
+    expect(metrics.guide!.top - metrics.alphaMarker!.bottom).toBeGreaterThanOrEqual(3);
+    expect(metrics.guide!.top - metrics.alphaMarker!.bottom).toBeLessThanOrEqual(5);
   });
 
   test('typing in the panel trailing input eagerly commits a real node', async ({ page }) => {

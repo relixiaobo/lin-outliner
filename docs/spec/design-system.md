@@ -979,6 +979,21 @@ category history; see "Settings window".)
 - Row padding: `1px 6px`.
 - Leading cluster width: `42px`.
 - Leading cluster columns: `15px 4px 15px 8px`.
+- The second `15px` column is the marker interaction cell. Every marker variant
+  (content dot, reference marker, file-kind icon, field icon, command glyph)
+  shares this cell's hit target and center; variant glyph size may differ, but it
+  must be centered inside the cell and must not move the structural marker axis.
+  Expanded-scope guides use that transparent marker slot as the single geometry
+  source; they never calculate from a visible glyph's size. The visible guide line
+  sits on the marker slot's leading edge, and its hover/click band stays outside
+  the slot. The band starts below the parent marker slot, so marker clicks remain
+  owned by the marker itself. The visible glyph (5px dot, file icon,
+  reference/field glyph, command glyph) is centered inside the same slot. This
+  keeps file icons, small dots, and other marker glyphs using one structural
+  marker slot without introducing file-specific layout. The visible line starts
+  just below the parent marker slot and ends on the last visible descendant marker
+  centerline; tall previews, wrapped content, and glyph size never stretch the
+  structural line.
 - Selection fill starts at `21px`.
 - Parent chevron is a hover/focus affordance for the current row only.
 - Empty trailing hints follow the nodex idle-hint rule: only the focused
@@ -990,12 +1005,50 @@ category history; see "Settings window".)
   keep the same text-start grid.
 - Attachment rows are block-node bodies, not nested cards. They use the content
   base's neutral surface tokens, `--radius-md`, a restrained border, and compact
-  `--font-ui-sm` / `--font-ui-xs` text. The filename is primary, metadata is
-  secondary, and long names truncate within the content column rather than
-  resizing the row. A PDF thumbnail may replace the file-kind glyph; otherwise
-  file type uses the shared monochrome `inlineFileIcon` mask mechanism painted
-  with `currentColor`. System action buttons are icon-only, remain hidden until
-  hover/focus, and deepen icon color without drawing a hover box.
+  `--font-ui-sm` / `--font-ui-xs` text. The filename is primary, read-only, and
+  wraps like a locked/reference row; a caret can land in the filename for
+  selection and node commands, but ordinary input never renames it. Long unbroken
+  names may break anywhere inside the content column rather than truncating
+  behind an ellipsis or resizing the row. Tag chips are part of the same inline
+  filename flow, following the filename instead of dropping into a separate row.
+  A PDF thumbnail may replace the
+  file-kind glyph; otherwise file type uses the shared monochrome
+  `inlineFileIcon` mask mechanism painted with `currentColor`. Non-image rows do
+  not carry a trailing action button; file actions are centralized in the preview
+  surface, while image rows keep their top-right hover action.
+- File previews use one rounded viewport: `--radius-lg`, a neutral token border,
+  and the content base's soft surface. The frame uses one equal token inset on
+  every side so preview pages never touch the viewport edge; the PDF summary strip
+  scrolls inside that content box, so pages never render into the inset while
+  horizontally scrolled. The summary strip places the horizontal scrollbar in the
+  existing bottom inset, so the scrollbar sits below the pages without reducing
+  their display height or adding extra bottom space. Inner PDF page corners use the
+  smaller surface radius so the frame reads as a restrained container rather than a card.
+  The shared bottom-center preview action bar sits over the preview frame in one
+  consistent location for every non-image file type. It is two separate controls:
+  a fixed-width primary capsule (`Expand` / `Collapse`, or short `Open` for
+  non-previewable files) plus an independent circular `⋯` button; it is not a
+  segmented control and must not use a divider. Because it floats over arbitrary
+  file pixels (white PDF pages, images, failed backdrop blur), it uses the
+  dedicated `--preview-action-*` HUD tokens rather than the app-surface `--fill-*`
+  hover ladder; hover must preserve readable contrast over white preview content.
+  Previewable files start in
+  summary mode; PDFs show a compact horizontal all-pages strip whose page canvases
+  fit the summary viewport height with tight token spacing from each other and
+  token spacing from the filename row, then Expand switches to the full vertical
+  scroll reader. The full reader also scrolls inside the viewport content box, not
+  on the frame itself, so PDF pages never enter the top or bottom inset while
+  vertically scrolled. The action bar is an overlay on top of the pages; summary
+  content does not reserve a blank bottom band for it. Do not crop the top of the first
+  page as the collapsed state. The viewport exposes a neutral bottom-edge resize
+  handle; dragging or keyboard arrows adjusts only the local preview height.
+  Non-previewable files use the same rounded frame as a compact metadata card:
+  show a concise file-kind title such as `zip` with the quiet size on the same
+  row, then the modified date on its own quiet row (no icon and no `Type` /
+  `Size` labels), with enough inset that it reads
+  like a lightweight Quick Look information surface. Keep the short `Open`
+  primary plus `⋯` system actions in the same bottom action bar position, so file
+  operations do not move between previewable and non-previewable formats.
 - `>` in an empty row converts that row into a field row in place. Trailing
   field creation appends a field row at the trailing position.
 - Field name `Enter` creates a sibling node. It does not jump into the field
@@ -1461,8 +1514,8 @@ move row text, change row height, or reflow neighboring tags.
 
 ### Drag And Drop
 
-Dragging (outliner row reorder/indent, multi-select drag) stays neutral and
-quiet, like the rest of functional state:
+Dragging (outliner row reorder/indent, multi-select drag, and external file
+insertion) stays neutral and quiet, like the rest of functional state:
 
 - **Insertion line:** a thin neutral line (`--drop-line`, the neutral focus
   weight) at the exact drop position, with a small indent marker showing the

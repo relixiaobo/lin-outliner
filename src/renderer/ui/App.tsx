@@ -109,6 +109,16 @@ export function App() {
       );
     });
   }, [setUi]);
+  const clearFocusAndSelection = useCallback(() => {
+    setUi((prev) => ({
+      ...clearFocusState(prev),
+      selectedId: null,
+      selectedIds: new Set<NodeId>(),
+      selectionAnchorId: null,
+      selectionRootId: null,
+      selectionSource: null,
+    }));
+  }, [setUi]);
   const panelCountFitsRef = useRef<(nextPanelCount: number) => boolean>(() => true);
   const reflowPanelCountRef = useRef<(nextPanelCount: number) => boolean>(() => true);
   const canFitPanelCount = useCallback((nextPanelCount: number) => (
@@ -141,8 +151,10 @@ export function App() {
     repairMissingOutlinerRoots,
     resizePanelPair,
     rootId,
+    updatePanelScroll,
   } = useWorkspaceLayout({
     canFitPanelCount,
+    clearFocusAndSelection,
     focusNode,
     onPanelOpenRejected: notifyPanelOpenRejected,
     preparePanelCount,
@@ -601,6 +613,7 @@ export function App() {
           onNavigatePanelBack={navigatePanelBack}
           onNavigatePanelPreview={navigatePanelPreview}
           onNavigatePanelRoot={navigatePanelRoot}
+          onPanelScrollPositionChange={updatePanelScroll}
           onPanelResizeKeyDown={resizePanelPairWithKeyboard}
           onPanelResizeReset={resetPanelPair}
           onPanelResizeStart={beginPanelResize}

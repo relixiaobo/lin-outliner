@@ -45,6 +45,7 @@ const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 13;
 interface FilePreviewPanelProps {
   canGoBack: boolean;
   dragId: NodeId | null;
+  initialScrollTop?: number;
   index: DocumentIndex;
   isNodePinned: (nodeId: NodeId) => boolean;
   nodeId?: NodeId;
@@ -52,6 +53,7 @@ interface FilePreviewPanelProps {
   onClose: () => void;
   onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
+  onScrollPositionChange?: (scrollTop: number) => void;
   onTogglePin: (nodeId: NodeId) => void;
   panelId: string;
   run: CommandRunner;
@@ -92,7 +94,6 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const {
     mainPanelRef,
     requestTitleDockMeasure,
-    resetPanelViewport,
     stickyBreadcrumbRef,
     titleDocked,
     titleRowRef,
@@ -101,6 +102,9 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const [breadcrumbExpanded, setBreadcrumbExpanded] = useState(false);
   const targetKey = useMemo(() => previewTargetFallbackKey(props.target), [props.target]);
   const resetStateRef = useRef<{ nodeId: NodeId | null; targetKey: string } | null>(null);
+  const initialScrollTopRef = useRef(props.initialScrollTop ?? 0);
+  initialScrollTopRef.current = props.initialScrollTop ?? 0;
+  const scrollReportFrameRef = useRef<number | null>(null);
   const uiRef = useRef(props.ui);
   uiRef.current = props.ui;
   const referenceSummary = useMemo(() => referenceSummaryForIndex(props.index), [props.index]);
@@ -132,15 +136,33 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
       && next.nodeId !== null;
     if (!looseToIngested) {
       setBreadcrumbExpanded(false);
-      resetPanelViewport();
+      const panel = mainPanelRef.current;
+      if (panel) panel.scrollTop = initialScrollTopRef.current;
+      requestTitleDockMeasure();
       return;
     }
     requestTitleDockMeasure();
-  }, [fileRoot?.id, props.nodeId, requestTitleDockMeasure, resetPanelViewport, targetKey]);
+  }, [fileRoot?.id, mainPanelRef, props.nodeId, requestTitleDockMeasure, targetKey]);
 
   useEffect(() => {
     requestTitleDockMeasure();
   }, [fileRoot?.id, requestTitleDockMeasure]);
+
+  useEffect(() => () => {
+    if (scrollReportFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollReportFrameRef.current);
+    }
+  }, []);
+
+  const handlePanelScroll = () => {
+    updateTitleDockedState();
+    if (!props.onScrollPositionChange || scrollReportFrameRef.current !== null) return;
+    scrollReportFrameRef.current = window.requestAnimationFrame(() => {
+      scrollReportFrameRef.current = null;
+      const panel = mainPanelRef.current;
+      if (panel) props.onScrollPositionChange?.(panel.scrollTop);
+    });
+  };
 
   const handleOutlinerDragOver = (event: DragEvent<HTMLDivElement>) => {
     if (!props.dragId || !fileRoot) return;
@@ -207,7 +229,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
       className="main-panel file-preview-panel"
       ref={mainPanelRef}
       aria-label={title}
-      onScroll={updateTitleDockedState}
+      onScroll={handlePanelScroll}
     >
       <PanelStickyBreadcrumb
         breadcrumbAriaLabel={t.nodePanel.breadcrumbAriaLabel}
@@ -290,7 +312,6 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
           primaryOpen={primaryOpen}
           menuActions={menuActions}
           meta={meta}
-          initialExpanded
         />
         {fileRoot && (
           <>

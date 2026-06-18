@@ -185,8 +185,8 @@ type PreviewTarget =
   | { kind: 'url'; url: string; label?: string };
 
 type PanelView =
-  | { kind: 'outliner'; rootId: NodeId }
-  | { kind: 'file-preview'; target: PreviewTarget; nodeId?: NodeId };
+  | { kind: 'outliner'; rootId: NodeId; scrollTop?: number }
+  | { kind: 'file-preview'; target: PreviewTarget; nodeId?: NodeId; scrollTop?: number };
 
 interface WorkspaceContentPanelState extends WorkspacePanelBase {
   type: 'workspace';
@@ -282,19 +282,24 @@ Per-pane history is a **view-state stack** (`backStack: PanelView[]`,
 `forwardStack: PanelView[]`). Opening a node in the current pane pushes the
 previous view, whether that previous view was an outliner or a file preview.
 Opening a file preview in the current pane does the same, so Back can return to
-the originating node view.
+the originating node view. Each view may carry its last panel `scrollTop`.
+Back/Forward restores that scroll position; when a restored outliner view has a
+saved scroll position, navigation does not auto-focus the first body row because
+that focus would pull the scroll container back to the top.
 
 ### File preview panel
 
 A file that **is** an outliner node (an `attachment` or `image` node) behaves
 like a normal outline row, but its presentation depends on the kind. A non-image
 file is a lightweight name row: its **file-type icon is the bullet** (the `file`
-RowMarker variant), the row content is the **read-only filename** (single-click
-selects, never edits — like a reference row), a hover `⋯` menu offers the asset
-actions, and the **chevron expands an inline preview** below the row (the same
-preview widget the node page uses, started collapsed/peek). An image renders the
-image itself inline as the row content. The bullet drills into the node page; real
-child nodes still render below the inline preview. See "File node" in
+RowMarker variant), the row content is the **read-only filename** (a caret can
+land in it, but ordinary input never renames it), and the **chevron expands an
+inline preview** below the row (the same preview widget the node page uses,
+started collapsed/peek). Non-image row actions live in the preview surface, not
+on a row-level `⋯`. An image renders the image itself inline as the row content;
+a plain click selects the row rather than opening a different page, while its
+top-right menu owns Maximize. The bullet drills into the node page; real child
+nodes still render below the inline preview. See "File node" in
 `ui-behavior.md`.
 
 Opening a file node shows the same `file-preview` workspace view used by loose
@@ -319,15 +324,21 @@ history so Back can return to the previous outliner or preview view.
 
 The unified view renders one frame in both lifecycle states: sticky breadcrumb,
 read-only filename title, the `FilePreviewShell` preview, and optional children
-outline. The preview chrome is a single bottom-center floating pill (a primary
-button + a `⋯` menu), not a top toolbar: a previewable source's primary toggles
-the preview between a collapsed peek and an expanded full-scroll height, while a
-non-previewable source (the metadata fallback) makes Open-with-default-app the
-primary. The `⋯` menu carries Show-in-Finder / Open-with-default-app / Copy (an
-ingested asset) or Add-to-outline (a loose source). The same `FilePreviewShell`
-mounts both inline under an expanded file row (started collapsed) and on the node
-page (started expanded). Changing a loose preview into an ingested node mutates the
-same mounted view (`nodeId` is added); it does not navigate to a different panel
+outline. Non-image file sources use one bottom-center preview action bar (a
+fixed-width primary button plus a separate circular `⋯` menu button), not a top
+toolbar, and that action location is the same for every format. Previewable
+sources use the primary to toggle between a collapsed peek and an expanded
+full-scroll height, and the `⋯` menu carries
+Show-in-Finder / Open-with-default-app / Copy (an ingested asset) or
+Add-to-outline (a loose source). Non-previewable sources render a compact
+metadata fallback card with the file kind and size on one line, modified date on
+its own line, and no icon; the same action bar shows short `Open` as its primary and `⋯` for
+secondary system actions, so unsupported formats do not teach a different control
+location.
+The same `FilePreviewShell` mounts both inline under an expanded file row
+(started collapsed) and on the node page (started expanded). Changing a loose
+preview into an ingested node mutates the same mounted view (`nodeId` is added);
+it does not navigate to a different panel
 kind or remount the preview body.
 
 The renderer normalizes every entry point to `PreviewTarget` and asks main to
