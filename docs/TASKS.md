@@ -415,6 +415,28 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **single-agent-collapse** (cc-2, PR #294) — the multi-agent surface collapses to one
+  directly-editable assistant (Neva): conversations become inline channels (DM primitive,
+  member roster, runtime POV assembly, and the `channel_create` / `channel_update` org tools
+  removed), and memory collapses to one believer-keyed first-person pool (`memoryIsolation`
+  dropped — the single pool is always writable). Neva's display name, persona, tools, skills,
+  model, and effort are user-editable via a settings overlay keyed by `agentId` (the stable
+  `name` stays the memory anchor); Dream surfacing moved into Settings → Memory & activity.
+  −9929/+2012 across 66 files. Design folded into the agent specs (A6); plan →
+  [`archive/single-agent-collapse.md`](docs/plans/archive/single-agent-collapse.md). Gate: a prior
+  review cycle (4 editable-Neva findings closed in `9940e1d8`). **Shape (a)** one PR.
+- **agent-dock-ui** (cc-2, PR #296) — post-collapse dock UI for the single agent: a `#` channel
+  header glyph + conversation title (no per-conversation avatar — every conversation is one of
+  Neva's channels), and a composer quick model/effort chip (`AgentComposerModelControl`) that edits
+  Neva's *standing* profile through `agent_update_agent_definition` (mirroring the current
+  definition so persona/tools/skills are preserved); the runtime hot-swaps the resolved model/effort
+  on the next turn, gated on a real model/effort diff so a persona-only edit never re-resolves.
+  Codex/Claude-desktop-style portaled flyout menu; default-level math extracted to shared
+  `core/agentReasoning`. Spec updated (A6). Gate (main): `/code-review max` (10 finder angles +
+  sweep) → 4 correctness findings (concurrent profile-write race; persona-only edit silently
+  switching the live model; out-of-catalog model hidden + offering unsupported levels; tool-list
+  wipe) + a11y/dedup/memo fixes, all resolved in `6176886a`; typecheck + renderer 12/12 + core 21/21
+  green. Fast-track (no plan file). **Shape (a)** one PR.
 - **file-link-native-color** (cc, PR #293) — clickable text (external links, file & node
   references) was the brand rose, a hue from `--status-danger`, so users read links as errors.
   `--link` is decoupled from `--accent` and set to a fixed **native macOS link blue**

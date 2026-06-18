@@ -12,6 +12,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent dock: channel header glyph + composer model/effort chip (PR #296, cc-2)** — post-collapse
+  UI for the single agent. The dock header shows a `#` channel glyph + conversation name (no
+  per-conversation avatar — every conversation is one of Neva's channels). The composer regains a
+  quick model/effort chip (`AgentComposerModelControl`) that edits Neva's **standing** profile (model
+  lives on the profile, not a per-conversation identity) through the normal
+  `agent_update_agent_definition` path, mirroring the current definition so persona/tools/skills are
+  preserved; the runtime hot-swaps the resolved model/effort on the next turn, gated on a real
+  model/effort diff (`builtInModelEffortChanged`) so a persona-only edit never silently re-resolves a
+  live conversation's model. A Codex/Claude-desktop-style portaled menu shows two result rows opening
+  side-anchored flyouts — reasoning levels (`off` is a level; the inherited level is badged
+  **Default**) and the model list grouped by provider with a per-provider **Show all**; an
+  out-of-catalog saved model is surfaced as a synthetic entry so it stays visible and checked. The
+  default-level math is extracted to a shared `core/agentReasoning`. `design-system.md` /
+  `agent-pi-mono-implementation.md` / `workspace-layout.md` updated (A6). **Gate (main):**
+  `/code-review max` (10 finder angles + sweep) → 4 correctness findings (a concurrent profile-write
+  race dropping the effort reconciliation; a persona-only edit silently switching the live model; an
+  out-of-catalog model hidden while offering unsupported reasoning levels; a `[real, '*']` tool list
+  wiped to unrestricted) plus a11y / label-dedup / memoization fixes, all resolved in `6176886a`;
+  re-verified typecheck + renderer 12/12 + core 21/21 green.
 - **Native link blue for clickable text (PR #293, cc)** — links, file references, and node
   references no longer use the brand rose (which sat a hue from `--status-danger` and read as an
   error). `--link` is decoupled from `--accent` and set to the fixed native macOS link blue
@@ -722,6 +741,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Single-agent collapse — one customizable agent, channels only, one memory (PR #294, cc-2)** —
+  the multi-agent surface collapses to a single directly-editable assistant (Neva). Conversations
+  become inline channels: the DM primitive, member-roster surface, runtime POV assembly, dead
+  channel-turn execution machinery, the message-addressing protocol, and the multi-agent channel-org
+  tools (`channel_create` / `channel_update`, added in #289) are all removed. Memory collapses to one
+  believer-keyed first-person pool and `memoryIsolation` is dropped — the single pool is always
+  writable. Neva is directly editable (display name, persona, tools, skills, model, effort) via a
+  settings overlay keyed by `agentId`, persisting only fields that differ from the code base so an
+  unchanged persona never freezes; the stable `name` remains the memory anchor. Dream surfacing
+  relocated into Settings → Memory & activity. Net −9929/+2012 across 66 files; design folded into the
+  agent specs (A6). A prior review cycle closed 4 editable-Neva findings (`9940e1d8`).
 - **Channel activity run details — one-agent Channels unified · live process stream · popover polish
   (PR #291, codex)** — Channel conversations now route ALL run state through the activity row + per-run
   detail flow, including a **coordinator-only (one-agent) Channel**, which previously fell back to the
