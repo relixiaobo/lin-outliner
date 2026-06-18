@@ -3,7 +3,6 @@ import {
   agentMentionToken,
   channelMessageOwner,
   isChannelConversationId,
-  isMultiAgentConversation,
   usesChannelActivitySurface,
 } from '../../src/core/agentChannel';
 import {
@@ -46,11 +45,6 @@ describe('agent channel mentions', () => {
     expect(agentMentionToken(PEER_AGENT_ID)).toBe('reviewer');
     expect(agentMentionToken(MAIN_AGENT_ID)).toBe('assistant');
     expect(agentMentionToken('no-colons')).toBe('no-colons');
-  });
-
-  test('single-agent collapse: a conversation is never multi-agent', () => {
-    expect(isMultiAgentConversation([userMember, mainMember])).toBe(false);
-    expect(isMultiAgentConversation([userMember, mainMember, peerMember])).toBe(false);
   });
 
   test('single-agent collapse: no conversation uses the Channel activity surface', () => {

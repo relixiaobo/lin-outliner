@@ -196,7 +196,6 @@ import type { AgentSkillWriteAudit } from './agentSkillAuthoring';
 import { executeAgentSkillShellCommand } from './agentSkillShell';
 import type { AgentRecallEvidence, AgentRecallRuntimeEntry, AgentRecallToolRuntime } from './agentRecallTool';
 import { renderAgentMemoryBriefing, MEMORY_BRIEFING_MAX_ENTRIES } from './agentMemoryBriefing';
-import { redactSecretLikeContent } from './agentSecretRedaction';
 import {
   evaluateAgentToolPermission,
   type AgentPermissionAskDecision,
@@ -4402,7 +4401,6 @@ export class AgentRuntime {
           this.getEventStore().queryMemoryEntries(principal, { query, limit })
         )));
         const mergedEntries = interleaveMemoryEntryGroups(queryResults.map((result) => result.entries), limit);
-        const visibleEntries = mergedEntries.map((entry) => this.memoryEntryVisibleToReader(entry, reader));
         // Total durable matches — reachable by raising `limit`, so it is an honest paging signal
         // rather than an over-report of this single capped page.
         const totalEntries = queryResults.reduce((sum, result) => sum + result.totalEntries, 0);
@@ -4410,23 +4408,17 @@ export class AgentRuntime {
         if (!options.includeEvidence) {
           await this.recordMemoryAccessForEntries(mergedEntries, 'recall');
           return {
-            entries: visibleEntries.map((entry) => ({ entry })),
+            entries: mergedEntries.map((entry) => ({ entry })),
             totalEntries,
           };
         }
 
         let remainingChars = Math.max(0, options.maxChars ?? 0);
         const entries: AgentRecallRuntimeEntry[] = [];
-        for (const [index, entry] of mergedEntries.entries()) {
-          const visibleEntry = visibleEntries[index] ?? this.memoryEntryVisibleToReader(entry, reader);
-          if (!samePrincipal(entry.principal, reader)) {
-            const refusal = await this.crossPrincipalEvidenceRefusal(entry, reader);
-            entries.push({
-              entry: visibleEntry,
-              evidence: refusal ? [refusal] : undefined,
-            });
-            continue;
-          }
+        // The one-Neva invariant: every memory read hits Neva's single pool and the
+        // reader is Neva, so `entry.principal === reader` always holds — there is no
+        // cross-principal entry to redact or refuse evidence for.
+        for (const entry of mergedEntries) {
           const evidence: AgentRecallEvidence[] = [];
           let evidenceTruncated = false;
           for (const source of entry.sources) {
@@ -4481,7 +4473,7 @@ export class AgentRuntime {
             }
           }
           entries.push({
-            entry: visibleEntry,
+            entry,
             evidence: evidence.length > 0 ? evidence : undefined,
             evidenceTruncated,
           });
@@ -4496,40 +4488,14 @@ export class AgentRuntime {
     };
   }
 
-  /** The single believer pool every memory read hits. */
+  /**
+   * The single believer pool every memory read hits. Under the one-Neva invariant
+   * this only ever returns `[Neva]` — there is no second principal whose pool a
+   * reader could reach, so cross-principal redaction/evidence-refusal is removed as
+   * dead code (a test asserts this returns only Neva).
+   */
   private memoryReadPrincipals(): AgentPrincipal[] {
     return [this.agentPrincipal()];
-  }
-
-  private memoryEntryVisibleToReader(entry: AgentMemoryEntry, reader: AgentPrincipal): AgentMemoryEntry {
-    if (samePrincipal(entry.principal, reader)) return entry;
-    return {
-      ...entry,
-      fact: redactSecretLikeContent(entry.fact),
-      sources: [],
-    };
-  }
-
-  private async crossPrincipalEvidenceRefusal(
-    entry: AgentMemoryEntry,
-    reader: AgentPrincipal,
-  ): Promise<AgentRecallEvidence | null> {
-    const source = entry.sources[0];
-    if (!source) return null;
-    const sourceEvidence = await this.getPastChatsService().readMemorySourceEvidence({
-      principal: entry.principal,
-      reader,
-      source,
-      maxChars: 1,
-    });
-    if (sourceEvidence.mode === 'error' && sourceEvidence.code === 'CROSS_PRINCIPAL_EVIDENCE') {
-      return {
-        kind: 'evidence_refusal',
-        code: sourceEvidence.code,
-        message: sourceEvidence.message,
-      };
-    }
-    return null;
   }
 
   private createAskUserQuestionRuntime(

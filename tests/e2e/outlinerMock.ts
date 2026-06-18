@@ -1600,55 +1600,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       if (agentId === USER_AGENT_ID) return 'self';
       return 'reviewer';
     };
-    const povInspectorsForConversation = (conversationId: string) => {
-      if (conversationId !== PLANNING_CHANNEL_ID) return {};
-      return {
-        [USER_AGENT_ID]: {
-          agentId: USER_AGENT_ID,
-          addressedByMessageId: 'assistant-planning-e2e',
-          memoryBriefing: [
-            '<memory>',
-            '<self>',
-            '- Prefers terse launch-risk notes.',
-            '</self>',
-            '<principal name="Neva">',
-            '- Tracks architecture seams for handoffs.',
-            '</principal>',
-            '</memory>',
-          ].join('\n'),
-          messages: [{
-            id: 'flattened:planning:1',
-            role: 'user',
-            sourceMessageIds: ['user-planning-e2e', 'assistant-planning-e2e'],
-            createdAt: now - 55_000,
-            parts: [{
-              preamble: '@user (the human user) said:',
-              text: 'Coordinate the launch plan.',
-              sourceMessageId: 'user-planning-e2e',
-              sourceRole: 'user',
-              sourceActor: { type: 'user', userId: 'local-user' },
-            }, {
-              preamble: '@assistant (agent "Neva") said:',
-              text: '@self please review launch risk.',
-              sourceMessageId: 'assistant-planning-e2e',
-              sourceRole: 'assistant',
-              sourceActor: { type: 'agent', agentId: MAIN_AGENT_ID },
-            }],
-          }, {
-            id: 'verbatim:self-planning-e2e',
-            role: 'assistant',
-            sourceMessageIds: ['self-planning-e2e'],
-            createdAt: now - 50_000,
-            parts: [{
-              text: 'Self sees the launch-risk request and answers as itself.',
-              sourceMessageId: 'self-planning-e2e',
-              sourceRole: 'assistant',
-              sourceActor: { type: 'agent', agentId: USER_AGENT_ID },
-            }],
-          }],
-        },
-      };
-    };
     const renderMembers = (agentIds: string[]) => [
       { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
       ...agentIds.map((agentId) => ({
@@ -1706,7 +1657,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         activeRunId: null,
         activeRuns: [],
         channelActivityEntries: [],
-        povInspectors: povInspectorsForConversation(conversationId),
         activeCompaction: null,
         activeDream: null,
         dmRunActive: false,
@@ -3355,7 +3305,6 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
         startedAt: now,
       }] : []),
       channelActivityEntries: projectionChannelActivity,
-      povInspectors: state.povInspectors ?? {},
       activeCompaction: state.activeCompaction ?? null,
       activeDream: state.activeDream ?? null,
       // Mode-specific run state (mirrors the real projection split): DM
