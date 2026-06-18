@@ -2559,4 +2559,66 @@ describe('agent runtime skill integration', () => {
     expect(retryContext).toContain('reactive restore body from original full read');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });
+
+  test('editing the built-in tool filter hot-swaps the live conversation tool set (no reopen)', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-tool-hotswap-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-tool-hotswap-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const script = scriptedStream([fauxAssistantMessage(fauxText('Ack.'))], () => undefined);
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: false,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+          additionalAgentDirectories: [],
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const ASSISTANT_AGENT_ID = 'built-in:tenon:assistant';
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(created.conversationId, 'Hello.');
+
+    // Reach into the live conversation's pi-agent to read its actual tool set — the
+    // surface a turn calls, not a projection.
+    const conversation = (
+      runtime as unknown as {
+        conversations: Map<string, { agent: { state: { tools: Array<{ name: string }> } } }>;
+      }
+    ).conversations.get(created.conversationId);
+    if (!conversation) throw new Error('expected a live conversation in the runtime map');
+    const toolNames = () => conversation.agent.state.tools.map((tool) => tool.name.toLowerCase());
+
+    // web_search is on by default; file_read is the control that must survive the edit.
+    expect(toolNames()).toContain('web_search');
+    expect(toolNames()).toContain('file_read');
+
+    // Disallow web_search through the same authoring surface the settings editor uses.
+    // This MUST take effect on the live conversation's next turn, not only on reopen —
+    // the hot-swap loop re-resolves agentToolFilter from the saved overlay.
+    const before = (await runtime.listAllAgentDefinitions(created.conversationId))
+      .find((definition) => definition.agentId === ASSISTANT_AGENT_ID);
+    await runtime.updateAgentDefinition(created.conversationId, ASSISTANT_AGENT_ID, {
+      name: before?.displayName ?? 'Neva',
+      description: before?.description ?? '',
+      body: before?.body ?? '',
+      disallowedTools: ['web_search'],
+    });
+
+    expect(toolNames()).not.toContain('web_search');
+    expect(toolNames()).toContain('file_read');
+  });
 });
