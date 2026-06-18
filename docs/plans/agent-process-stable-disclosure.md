@@ -21,6 +21,9 @@ transcripts.
   needed here.
 - Do not add a new agent UI surface. This is a refinement of
   `AgentMessageRow` / process disclosure behavior.
+- Do not implement outliner node expand/collapse anchoring in this PR. The
+  outliner case below is recorded only as a related stability finding and a
+  shared interaction invariant.
 - Do not animate for decoration. Any motion must be functional, short, and
   disabled by `prefers-reduced-motion`.
 
@@ -74,6 +77,31 @@ branch before editing agent UI files. Re-run this collision check at claim time.
   restated there after #294
 
 ## Design
+
+### Shared disclosure anchor invariant
+
+The same class of perceived instability can appear outside the agent transcript.
+For example, in the outliner, collapsing a node whose expanded body extends below
+the viewport can move the visible node/header because descendant rows are removed
+from the flat list and later rows are re-positioned. The current outliner flat
+view compensates height-only measurement corrections, but not expansion
+add/remove projections.
+
+This agent plan should not implement the outliner fix, but it should follow the
+same invariant so the solution is not agent-specific:
+
+- When a disclosure change is caused directly by a user click, capture the
+  clicked disclosure row or trigger's viewport position before the expansion
+  state changes.
+- After layout commits, if that row/trigger still exists, adjust the scroll
+  container so the row/trigger remains at the same viewport position.
+- If the trigger row is unavailable, fall back to preserving the first visible
+  row for scrolled-away readers, or the bottom/composer boundary for at-bottom
+  readers.
+- Automatic lifecycle transitions, such as agent working -> worked, do not have
+  a clicked trigger. They should use the transcript/bottom anchor policy below.
+- Scroll compensation is an instantaneous layout correction, not a smooth scroll
+  animation.
 
 ### 1. Process disclosure defaults collapsed while live
 
@@ -242,6 +270,8 @@ Visual verification before marking ready:
   should there be an explicit "collapse on completion" preference later?
 - Is a reserved Channel working-row slot acceptable in the final visual design,
   or should it be an overlay to avoid idle spacing?
+- Should outliner node expand/collapse anchoring be planned as a separate PR
+  using the same clicked-trigger anchor rule?
 
 ## Build Checklist
 
