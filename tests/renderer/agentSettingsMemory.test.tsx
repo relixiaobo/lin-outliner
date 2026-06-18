@@ -15,7 +15,7 @@ interface Rendered {
 }
 
 const mounted: Rendered[] = [];
-const GLOBAL_KEYS = ['document', 'window', 'navigator', 'Event', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'MouseEvent', 'Node'] as const;
+const GLOBAL_KEYS = ['document', 'window', 'navigator', 'getComputedStyle', 'Event', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'MouseEvent', 'Node'] as const;
 let savedGlobals: Array<[string, PropertyDescriptor | undefined]> = [];
 
 afterEach(() => {

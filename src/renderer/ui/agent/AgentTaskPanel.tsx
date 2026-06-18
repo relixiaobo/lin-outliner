@@ -30,15 +30,7 @@ function taskStatusLabel(task: AgentTaskEntry, labels: Messages['agent']['task']
   return labels.status[task.status];
 }
 
-function taskKindLabel(_task: AgentTaskEntry, labels: Messages['agent']['task']): string {
-  return labels.kindChildRun;
-}
-
-function taskTitle(task: AgentTaskEntry, _labels: Messages['agent']['task']): string {
-  return task.title;
-}
-
-function taskMetaParts(task: AgentTaskEntry, _labels: Messages['agent']['task'], locale: string): string[] {
+function taskMetaParts(task: AgentTaskEntry, locale: string): string[] {
   return [
     task.subtitle,
     formatTaskTime(task.updatedAt, locale),
@@ -101,15 +93,15 @@ export function AgentTaskPanel({
           {tasks.map((task) => {
             const canStop = task.status === 'running';
             const stopping = stoppingTaskId === task.id;
-            const meta = taskMetaParts(task, t.agent.task, locale).join(' · ');
+            const meta = taskMetaParts(task, locale).join(' · ');
             const mainContent = (
               <>
                 <span className="agent-task-kind">
                   <AgentIcon size={ICON_SIZE.menu} />
-                  <span>{taskKindLabel(task, t.agent.task)}</span>
+                  <span>{t.agent.task.kindChildRun}</span>
                   <span className={`agent-task-status is-${task.status}`}>{taskStatusLabel(task, t.agent.task)}</span>
                 </span>
-                <span className="agent-task-title">{taskTitle(task, t.agent.task)}</span>
+                <span className="agent-task-title">{task.title}</span>
                 <span className="agent-task-meta">{meta}</span>
               </>
             );

@@ -1193,7 +1193,6 @@ commandPalette: {
       runningSummary: ({ count }: { count: number }) => count === 1 ? '1 task running' : `${count} tasks running`,
       empty: 'No tasks yet.',
       kindChildRun: 'Agent task',
-      kindDream: 'Dream',
       dreamTitle: 'Memory Dream',
       triggerManual: 'Manual',
       triggerSchedule: 'Scheduled',

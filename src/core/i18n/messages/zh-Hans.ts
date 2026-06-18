@@ -1105,7 +1105,6 @@ commandPalette: {
       runningSummary: ({ count }) => `${count} 个任务正在运行`,
       empty: '暂无任务。',
       kindChildRun: '子智能体',
-      kindDream: 'Dream',
       dreamTitle: '记忆 Dream',
       triggerManual: '手动',
       triggerSchedule: '计划',
