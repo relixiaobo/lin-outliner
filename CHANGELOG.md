@@ -1346,6 +1346,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Editing Neva's tool allow/deny list hot-swaps the live conversation (PR #299, main)** — a tools
+  edit through the settings editor persisted to the built-in overlay but never re-resolved the open
+  conversation's `agentToolFilter`, so a just-removed tool stayed callable until the conversation was
+  reopened. The `updateAgentDefinition` hot-swap loop (which already re-applied persona/model/effort)
+  now also recomputes `agentToolFilter` from the freshly-materialized built-in overlay and rebuilds
+  the live tool set via `applyRuntimeToolSettings`. Adds an integration regression test (verified red
+  without the fix). This was finding #2 of the #294 post-merge `/code-review max`; finding #3
+  (`tools:[]` → all-on) was a verified false positive — the editor maps "uncheck all" to
+  `tools: undefined` (inherit all) by design and never stores an empty allow-list for the built-in.
 - **Invoked skills can read their own reference files; web_fetch verification pages route to the
   browser without flagging real articles (PR #292, codex)** — three corrections. (1) **Skill reference
   reads:** a resource-backed inline skill exposes `${AGENT_SKILL_DIR}` and points `file_read` at support

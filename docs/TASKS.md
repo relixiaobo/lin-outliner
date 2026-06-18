@@ -415,6 +415,14 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **builtin-tool-edit-hot-swap** (main, PR #299) — editing Neva's tool allow/deny list through the
+  settings editor persisted to the overlay but never re-resolved the open conversation's
+  `agentToolFilter`, so a just-removed tool stayed callable until reopen. The `updateAgentDefinition`
+  hot-swap loop now recomputes `agentToolFilter` from the freshly-materialized built-in overlay and
+  rebuilds the live tool set via `applyRuntimeToolSettings` (+ integration regression test, verified
+  red without the fix). Finding #2 of the #294 post-merge `/code-review max`; finding #3 (`tools:[]` →
+  all-on) was a verified false positive (editor maps "uncheck all" → `tools: undefined`, never stores
+  an empty allow-list). Fast-track (no plan file). **Shape (a)** one PR.
 - **single-agent-collapse** (cc-2, PR #294) — the multi-agent surface collapses to one
   directly-editable assistant (Neva): conversations become inline channels (DM primitive,
   member roster, runtime POV assembly, and the `channel_create` / `channel_update` org tools
