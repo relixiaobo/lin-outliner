@@ -7,6 +7,9 @@
   --field-name-control-height: var(--content-control-height);
   --field-value-control-height: var(--content-control-height);
   --field-value-row-min-height: var(--content-control-height);
+  --indent-guide-hit-width: 16px;
+  --indent-guide-line-offset: calc(100% - 0.5px);
+  --indent-guide-parent-clearance: calc(var(--row-marker-center-y) + var(--space-2));
   --field-row-separator-color: color-mix(in srgb, var(--text) 9%, transparent);
   --field-value-field-row-separator-color: color-mix(in srgb, var(--text) 6%, transparent);
   --field-value-field-row-padding-block: calc(var(--space-1) + var(--space-hairline));
@@ -26,6 +29,11 @@
   width: 100%;
 }
 
+.outliner-flat-flow {
+  position: relative;
+  width: 100%;
+}
+
 .outliner-flat > .outliner-flat-row {
   position: absolute;
   right: 0;
@@ -37,6 +45,18 @@
 .outliner-flat-row > .row-wrap {
   width: calc(100% + var(--outliner-leading-bleed) - var(--row-inline-indent, 0px));
   transform: translateX(calc(-1 * var(--outliner-leading-bleed)));
+}
+
+.outliner-flat-flow-row > .row-wrap {
+  width: calc(100% + var(--outliner-leading-bleed) - var(--row-inline-indent, 0px));
+  transform: translateX(calc(-1 * var(--outliner-leading-bleed)));
+}
+
+.outliner-flat-guides {
+  position: absolute;
+  z-index: var(--z-raised);
+  inset: 0;
+  pointer-events: none;
 }
 
 .definition-config-panel {
@@ -730,14 +750,22 @@
 
 .indent-guide {
   position: absolute;
-  top: var(--row-leading-height);
+  top: calc(var(--row-marker-center-y) + var(--indent-guide-parent-clearance));
   bottom: 0;
-  left: calc(var(--row-bullet-center) - 15.5px);
+  left: calc(var(--row-bullet-center) - var(--indent-guide-hit-width) + 0.5px);
   z-index: var(--z-raised);
-  width: 16px;
+  width: var(--indent-guide-hit-width);
   border: 0;
   background: transparent;
   padding: 0;
+}
+
+.indent-guide--flat {
+  top: calc(var(--flat-indent-guide-top) + var(--indent-guide-parent-clearance));
+  bottom: auto;
+  left: calc(var(--flat-indent-guide-left) - var(--indent-guide-hit-width) + 0.5px);
+  height: max(0px, calc(var(--flat-indent-guide-height) - var(--indent-guide-parent-clearance)));
+  pointer-events: auto;
 }
 
 .indent-guide:focus,
@@ -749,19 +777,23 @@
 
 .indent-guide-line {
   position: absolute;
-  top: -1px;
-  bottom: 1px;
-  left: calc(100% - 0.5px);
+  top: 0;
+  bottom: var(--row-marker-center-y);
+  left: var(--indent-guide-line-offset);
   width: 1px;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--text) 9%, transparent);
+  background: var(--border-subtle);
   transform: translateX(-50%);
   transition: background var(--motion-fast), width var(--motion-fast);
 }
 
 .indent-guide:hover > .indent-guide-line {
   width: 2px;
-  background: color-mix(in srgb, var(--text) 14%, transparent);
+  background: var(--border-emphasis);
+}
+
+.indent-guide--flat > .indent-guide-line {
+  bottom: 0;
 }
 
 .row.reference-row + .indent-guide > .indent-guide-line {
@@ -1888,10 +1920,19 @@
   font-size: var(--font-ui-md);
 }
 
+.row-bullet-shape.file > .inline-ref-file-icon {
+  display: block;
+  width: var(--row-bullet-width);
+  height: var(--row-bullet-width);
+  flex: 0 0 var(--row-bullet-width);
+  margin-right: 0;
+  vertical-align: 0;
+}
+
 .row-bullet-dot {
   display: block;
-  width: 5px;
-  height: 5px;
+  width: var(--row-bullet-dot-size);
+  height: var(--row-bullet-dot-size);
   border-radius: var(--radius-pill);
   background: currentColor;
   transition: background var(--motion-fast);

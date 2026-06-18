@@ -23,6 +23,7 @@ function dataTransfer(parts: {
 }
 
 const png = () => new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', { type: 'image/png' });
+const pdf = () => new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], 'doc.pdf', { type: 'application/pdf' });
 
 describe('classifyMediaPaste', () => {
   test('image files win over accompanying filename text', () => {
@@ -32,6 +33,25 @@ describe('classifyMediaPaste', () => {
       { hasSelection: false },
     );
     expect(intent).toEqual({ kind: 'images', files: [file] });
+  });
+
+  test('non-image files become a file-node paste intent', () => {
+    const file = pdf();
+    const intent = classifyMediaPaste(
+      dataTransfer({ items: [stringItem('text/plain'), fileItem(file)], text: 'doc.pdf' }),
+      { hasSelection: false },
+    );
+    expect(intent).toEqual({ kind: 'files', files: [file] });
+  });
+
+  test('mixed image and non-image files stay together as a file-node paste intent', () => {
+    const image = png();
+    const attachment = pdf();
+    const intent = classifyMediaPaste(
+      dataTransfer({ items: [fileItem(image), fileItem(attachment)] }),
+      { hasSelection: false },
+    );
+    expect(intent).toEqual({ kind: 'files', files: [image, attachment] });
   });
 
   test('a lone remote image URL becomes a media-URL intent when there is no selection', () => {

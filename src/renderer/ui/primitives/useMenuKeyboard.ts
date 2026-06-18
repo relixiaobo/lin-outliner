@@ -21,6 +21,7 @@ import { focusableElements } from './focusable';
 // IME-guarded so CJK composition keystrokes are never hijacked.
 
 export type MenuKeyboardKind = 'menu' | 'dialog';
+export type MenuInitialFocus = 'auto' | 'surface';
 
 interface UseMenuKeyboardOptions {
   // The overlay surface (the portaled menu/dialog div).
@@ -41,6 +42,10 @@ interface UseMenuKeyboardOptions {
   // up outside the surface after the swap; bumping this re-runs focus-in so Escape
   // and roving keep working. Restore (close) is unaffected — it keys on `active`.
   focusKey?: string | number;
+  // `auto` keeps the native/menu default (menus focus their first item; dialog
+  // popovers focus the surface). `surface` keeps keyboard handling scoped to the
+  // overlay without showing an item focus ring on pointer-opened menus.
+  initialFocus?: MenuInitialFocus;
 }
 
 // Pure roving-navigation resolver: given the pressed key, the focused item index
@@ -74,13 +79,16 @@ export function useMenuKeyboard({
   active = true,
   getRestoreTarget,
   focusKey,
+  initialFocus = 'auto',
 }: UseMenuKeyboardOptions): { onKeyDown: (event: KeyboardEvent<HTMLElement>) => void } {
   const onCloseRef = useRef(onClose);
   const kindRef = useRef(kind);
   const getRestoreTargetRef = useRef(getRestoreTarget);
+  const initialFocusRef = useRef(initialFocus);
   onCloseRef.current = onClose;
   kindRef.current = kind;
   getRestoreTargetRef.current = getRestoreTarget;
+  initialFocusRef.current = initialFocus;
 
   // Restore lifecycle: capture the pre-open focus on open, return focus to the
   // trigger (or that fallback) on close. Keyed on `active` only, so an in-place
@@ -111,7 +119,9 @@ export function useMenuKeyboard({
     // Respect a child that already grabbed focus (e.g. an `autoFocus` input in a
     // dialog-kind popover); only move focus in when it sits outside the surface.
     if (!surface.contains(document.activeElement)) {
-      const target = kindRef.current === 'menu'
+      const target = initialFocusRef.current === 'surface'
+        ? surface
+        : kindRef.current === 'menu'
         ? (focusableElements(surface)[0] ?? surface)
         : surface;
       target.focus({ preventScroll: true });

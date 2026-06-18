@@ -63,10 +63,14 @@ async function dispatchCompositionEvent(
 }
 
 async function clickIndentGuideLine(page: Parameters<typeof trailingEditor>[0], rowId: string) {
-  const guide = row(page, rowId).locator('> .indent-guide');
+  const guide = indentGuide(page, rowId);
   const box = await guide.boundingBox();
   if (!box) throw new Error(`Missing indent guide for ${rowId}`);
   await page.mouse.click(box.x + box.width - 1, box.y + Math.min(10, box.height / 2));
+}
+
+function indentGuide(page: Parameters<typeof trailingEditor>[0], rowId: string) {
+  return page.locator(`.outliner-flat-guides .indent-guide[data-guide-node-id="${rowId}"], [data-node-id="${rowId}"] > .indent-guide`).first();
 }
 
 test.describe('outliner trailing input and expansion parity', () => {
@@ -92,12 +96,188 @@ test.describe('outliner trailing input and expansion parity', () => {
     await row(page, ids.alpha).locator('.row-chevron-button').click({ force: true });
     await expect(row(page, ids.beta)).toBeVisible();
     await expect(row(page, ids.gamma)).toHaveCount(0);
+    await expect.poll(async () => indentGuide(page, ids.alpha).locator('.indent-guide-line').evaluate((element) => {
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      const transparent = /rgba?\(0,\s*0,\s*0,\s*0\)|transparent/.test(style.backgroundColor);
+      return rect.height > 8 && Math.round(rect.width) === 1 && !transparent;
+    })).toBe(true);
 
     await clickIndentGuideLine(page, ids.alpha);
     await expect(row(page, ids.gamma)).toBeVisible();
 
     await clickIndentGuideLine(page, ids.alpha);
     await expect(row(page, ids.gamma)).toHaveCount(0);
+  });
+
+  test('expanded row guide follows child markers instead of tall child content', async ({ page }) => {
+    const longText = Array.from({ length: 48 }, (_, index) => `wrapped child segment ${index + 1}`).join(' ');
+
+    await page.evaluate(async ({ alphaId, betaId, text }) => {
+      const win = window as Window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      await win.lin?.invoke('move_node', { nodeId: betaId, parentId: alphaId, index: null });
+      await win.lin?.invoke('apply_node_text_patch', {
+        nodeId: betaId,
+        patch: {
+          ops: [{
+            type: 'replace_all',
+            content: { text, marks: [], inlineRefs: [] },
+          }],
+        },
+      });
+    }, { alphaId: ids.alpha, betaId: ids.beta, text: longText });
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+
+    await row(page, ids.alpha).locator('.row-chevron-button').click({ force: true });
+    await expect(row(page, ids.beta)).toBeVisible();
+
+    await expect.poll(async () => rowBody(page, ids.beta).evaluate((element) =>
+      element.getBoundingClientRect().height,
+    )).toBeGreaterThan(70);
+
+    const metrics = await page.evaluate(({ alphaId, betaId }) => {
+      const rect = (element: Element | null) => {
+        const box = element?.getBoundingClientRect();
+        return box
+          ? { bottom: box.bottom, height: box.height, left: box.left, right: box.right, top: box.top, width: box.width }
+          : null;
+      };
+      const guide = document.querySelector(
+        `.outliner-flat-guides .indent-guide[data-guide-node-id="${alphaId}"], `
+          + `[data-node-id="${alphaId}"] > .indent-guide`,
+      );
+      const guideLine = document.querySelector(
+        `.outliner-flat-guides .indent-guide[data-guide-node-id="${alphaId}"] .indent-guide-line, `
+          + `[data-node-id="${alphaId}"] > .indent-guide .indent-guide-line`,
+      );
+      const alphaMarker = document.querySelector(`[data-node-id="${alphaId}"] > .row .row-bullet-button`);
+      const alphaMarkerSlot = document.querySelector(`[data-node-id="${alphaId}"] > .row .row-bullet-shape`);
+      const betaRow = document.querySelector(`[data-node-id="${betaId}"] > .row`);
+      const betaMarker = document.querySelector(`[data-node-id="${betaId}"] > .row .row-bullet-button`);
+      const alphaDot = document.querySelector(`[data-node-id="${alphaId}"] > .row .row-bullet-dot`);
+      return {
+        alphaDot: rect(alphaDot),
+        alphaMarker: rect(alphaMarker),
+        alphaMarkerSlot: rect(alphaMarkerSlot),
+        guide: rect(guide),
+        guideLine: rect(guideLine),
+        betaRow: rect(betaRow),
+        betaMarker: rect(betaMarker),
+      };
+    }, { alphaId: ids.alpha, betaId: ids.beta });
+
+    expect(metrics.alphaDot).not.toBeNull();
+    expect(metrics.alphaMarker).not.toBeNull();
+    expect(metrics.alphaMarkerSlot).not.toBeNull();
+    expect(metrics.guide).not.toBeNull();
+    expect(metrics.guideLine).not.toBeNull();
+    expect(metrics.betaRow).not.toBeNull();
+    expect(metrics.betaMarker).not.toBeNull();
+    expect(metrics.betaRow!.height).toBeGreaterThan(metrics.betaMarker!.height + 30);
+    const alphaMarkerCenter = metrics.alphaMarker!.top + metrics.alphaMarker!.height / 2;
+    const alphaMarkerCenterX = metrics.alphaMarker!.left + metrics.alphaMarker!.width / 2;
+    const betaMarkerCenter = metrics.betaMarker!.top + metrics.betaMarker!.height / 2;
+    const guideLineCenterX = metrics.guideLine!.left + metrics.guideLine!.width / 2;
+    expect(Math.abs(guideLineCenterX - alphaMarkerCenterX)).toBeLessThanOrEqual(1);
+    expect(metrics.guideLine!.top - alphaMarkerCenter).toBeGreaterThanOrEqual(16);
+    expect(metrics.guideLine!.top - alphaMarkerCenter).toBeLessThanOrEqual(19);
+    expect(Math.abs(metrics.guideLine!.bottom - betaMarkerCenter)).toBeLessThanOrEqual(2);
+    expect(metrics.guideLine!.bottom).toBeLessThan(metrics.betaRow!.bottom - 20);
+    expect(metrics.guide!.top - metrics.alphaMarker!.bottom).toBeGreaterThanOrEqual(3);
+    expect(metrics.guide!.top - metrics.alphaMarker!.bottom).toBeLessThanOrEqual(5);
+  });
+
+  test('virtualized flat guides are measured from mounted marker DOM only', async ({ page }) => {
+    await page.evaluate(async ({ alphaId }) => {
+      const win = window as Window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      for (let i = 0; i < 75; i += 1) {
+        await win.lin?.invoke('create_node', {
+          id: `bulk-child-${i}`,
+          parentId: alphaId,
+          index: null,
+          text: `Bulk child ${i}`,
+        });
+      }
+    }, { alphaId: ids.alpha });
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+
+    await row(page, ids.alpha).locator('.row-chevron-button').click({ force: true });
+    await expect(page.locator('.outliner-flat')).toBeVisible();
+    await expect(row(page, 'bulk-child-0')).toBeVisible();
+
+    await expect.poll(async () => page.evaluate((alphaId) => {
+      const guide = document.querySelector(
+        `.outliner-flat-guides .indent-guide[data-guide-node-id="${alphaId}"]`,
+      );
+      const guideLine = guide?.querySelector('.indent-guide-line');
+      const parentMarker = document.querySelector(`[data-node-id="${alphaId}"] > .row .row-bullet-button`);
+      const mountedChildMarkers = Array.from(document.querySelectorAll<HTMLElement>('[data-node-id^="bulk-child-"] > .row .row-bullet-button'));
+      const lastChildMarker = mountedChildMarkers.at(-1);
+      if (!guide || !guideLine || !parentMarker || !lastChildMarker) return null;
+      const centerX = (rect: DOMRect) => rect.left + rect.width / 2;
+      const guideLineRect = guideLine.getBoundingClientRect();
+      const parentRect = parentMarker.getBoundingClientRect();
+      const lastChildRect = lastChildMarker.getBoundingClientRect();
+      return {
+        childMarkersMounted: mountedChildMarkers.length,
+        guideCenterX: Math.round(centerX(guideLineRect)),
+        parentCenterX: Math.round(centerX(parentRect)),
+        guideBottom: Math.round(guideLineRect.bottom),
+        lastChildCenterY: Math.round(lastChildRect.top + lastChildRect.height / 2),
+      };
+    }, ids.alpha)).toMatchObject({
+      guideBottom: expect.any(Number),
+      guideCenterX: expect.any(Number),
+      lastChildCenterY: expect.any(Number),
+      parentCenterX: expect.any(Number),
+    });
+
+    const topMetrics = await page.evaluate((alphaId) => {
+      const guideLine = document.querySelector(
+        `.outliner-flat-guides .indent-guide[data-guide-node-id="${alphaId}"] .indent-guide-line`,
+      );
+      const parentMarker = document.querySelector(`[data-node-id="${alphaId}"] > .row .row-bullet-button`);
+      const mountedChildMarkers = Array.from(document.querySelectorAll<HTMLElement>('[data-node-id^="bulk-child-"] > .row .row-bullet-button'));
+      const lastChildMarker = mountedChildMarkers.at(-1);
+      if (!guideLine || !parentMarker || !lastChildMarker) return null;
+      const centerX = (rect: DOMRect) => rect.left + rect.width / 2;
+      const guideLineRect = guideLine.getBoundingClientRect();
+      const parentRect = parentMarker.getBoundingClientRect();
+      const lastChildRect = lastChildMarker.getBoundingClientRect();
+      return {
+        childMarkersMounted: mountedChildMarkers.length,
+        guideCenterX: centerX(guideLineRect),
+        parentCenterX: centerX(parentRect),
+        guideBottom: guideLineRect.bottom,
+        lastChildCenterY: lastChildRect.top + lastChildRect.height / 2,
+      };
+    }, ids.alpha);
+
+    expect(topMetrics).not.toBeNull();
+    expect(topMetrics!.childMarkersMounted).toBeLessThan(75);
+    expect(Math.abs(topMetrics!.guideCenterX - topMetrics!.parentCenterX)).toBeLessThanOrEqual(1);
+    expect(Math.abs(topMetrics!.guideBottom - topMetrics!.lastChildCenterY)).toBeLessThanOrEqual(1);
+
+    await page.locator('.outline-panel-surface.active-panel .main-panel').evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      element.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+
+    await expect.poll(async () => indentGuide(page, ids.alpha).count()).toBe(0);
   });
 
   test('typing in the panel trailing input eagerly commits a real node', async ({ page }) => {

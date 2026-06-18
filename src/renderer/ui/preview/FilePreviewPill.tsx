@@ -6,7 +6,7 @@ import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
-import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
+import { useMenuKeyboard, type MenuInitialFocus } from '../primitives/useMenuKeyboard';
 
 export interface FilePreviewMenuAction {
   key: string;
@@ -26,14 +26,17 @@ interface FilePreviewPillProps {
   menuActions?: FilePreviewMenuAction[];
   /** A quiet caption (type · size · pages) shown as the `⋯` menu header. */
   meta?: string | null;
+  /** Overlay preview content by default; footer keeps metadata cards in normal flow. */
+  placement?: 'overlay' | 'footer';
 }
 
 /**
  * The single bottom-center floating control over a file preview: a primary button
- * plus a `⋯` menu, replacing the old top meta+actions toolbar. A previewable source's
+ * plus a separate `⋯` menu button, replacing the old top meta+actions toolbar. A previewable source's
  * primary toggles Expand/Collapse (the preview's peek vs full-scroll height) and
- * Open-with-default-app moves into the menu; a non-previewable source makes
- * Open-with-default-app the primary. Reuses the shared anchored-overlay menu stack.
+ * Open-with-default-app moves into the menu. A non-previewable metadata card uses
+ * the same position and menu stack; only its primary action changes to Open with
+ * default app, so every non-image file keeps one learned action location.
  */
 export function FilePreviewPill({
   previewable,
@@ -42,9 +45,11 @@ export function FilePreviewPill({
   primaryOpen = null,
   menuActions = [],
   meta = null,
+  placement = 'overlay',
 }: FilePreviewPillProps) {
   const labels = useT().shell.filePreview;
   const [open, setOpen] = useState(false);
+  const [menuInitialFocus, setMenuInitialFocus] = useState<MenuInitialFocus>('surface');
   const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   const allMenuActions: FilePreviewMenuAction[] = previewable && primaryOpen
@@ -54,7 +59,8 @@ export function FilePreviewPill({
   const hasPrimary = previewable || Boolean(primaryOpen);
   if (!hasPrimary && allMenuActions.length === 0) return null;
 
-  const primaryLabel = previewable ? (expanded ? labels.collapse : labels.expand) : primaryOpen?.label ?? '';
+  const primaryLabel = previewable ? (expanded ? labels.collapse : labels.expand) : labels.open;
+  const primaryTitle = previewable ? primaryLabel : primaryOpen?.label ?? labels.open;
   const onPrimary = previewable ? onToggleExpand : primaryOpen?.run ?? (() => undefined);
 
   // Float over content inside an outliner row, so swallow the pointer: it must not
@@ -66,11 +72,17 @@ export function FilePreviewPill({
   };
 
   return (
-    <div className="file-preview-pill" data-preserve-selection onMouseDown={(event) => event.stopPropagation()}>
+    <div
+      className={`file-preview-pill ${placement === 'footer' ? 'file-preview-pill--footer' : ''}`}
+      data-preserve-selection
+      onMouseDown={(event) => event.stopPropagation()}
+    >
       {hasPrimary ? (
         <button
           type="button"
           className="file-preview-pill-primary"
+          title={primaryTitle}
+          aria-label={primaryTitle}
           onMouseDown={swallowPointer}
           onClick={(event) => {
             event.stopPropagation();
@@ -82,7 +94,6 @@ export function FilePreviewPill({
       ) : null}
       {allMenuActions.length > 0 ? (
         <>
-          {hasPrimary ? <span className="file-preview-pill-divider" aria-hidden="true" /> : null}
           <button
             ref={triggerRef}
             type="button"
@@ -91,9 +102,20 @@ export function FilePreviewPill({
             aria-expanded={open}
             aria-label={labels.actions}
             onMouseDown={swallowPointer}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+              event.preventDefault();
+              event.stopPropagation();
+              setMenuInitialFocus('auto');
+              setOpen(true);
+            }}
             onClick={(event) => {
               event.stopPropagation();
-              setOpen((value) => !value);
+              const nextOpen = !open;
+              if (nextOpen) {
+                setMenuInitialFocus(event.nativeEvent.detail === 0 ? 'auto' : 'surface');
+              }
+              setOpen(nextOpen);
             }}
           >
             <MoreIcon size={ICON_SIZE.menu} />
@@ -103,6 +125,7 @@ export function FilePreviewPill({
               actions={allMenuActions}
               anchorRef={triggerRef}
               ariaLabel={labels.actions}
+              initialFocus={menuInitialFocus}
               meta={meta}
               onClose={() => setOpen(false)}
             />
@@ -117,12 +140,14 @@ function PillMenu({
   actions,
   anchorRef,
   ariaLabel,
+  initialFocus,
   meta,
   onClose,
 }: {
   actions: FilePreviewMenuAction[];
   anchorRef: RefObject<HTMLElement | null>;
   ariaLabel: string;
+  initialFocus: MenuInitialFocus;
   meta: string | null;
   onClose: () => void;
 }) {
@@ -141,6 +166,7 @@ function PillMenu({
     onClose,
     kind: 'menu',
     getRestoreTarget: () => (anchorRef.current instanceof HTMLElement ? anchorRef.current : null),
+    initialFocus,
   });
 
   return createPortal(

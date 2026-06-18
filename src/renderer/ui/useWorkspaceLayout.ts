@@ -40,12 +40,26 @@ function defaultLayout(initial: DocumentProjection): WorkspaceLayout {
   };
 }
 
-function outlinerView(rootId: NodeId): OutlinerPanelView {
-  return { kind: 'outliner', rootId };
+function normalizeScrollTop(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : undefined;
 }
 
-function filePreviewView(target: PreviewTarget, nodeId?: NodeId): PanelView {
-  return { kind: 'file-preview', target, ...(nodeId ? { nodeId } : {}) };
+function withScrollTop<T extends PanelView>(view: T, scrollTop: number | undefined): T {
+  if (scrollTop === undefined) {
+    const { scrollTop: _unused, ...rest } = view;
+    return rest as T;
+  }
+  return { ...view, scrollTop };
+}
+
+function outlinerView(rootId: NodeId, scrollTop?: number): OutlinerPanelView {
+  return withScrollTop({ kind: 'outliner', rootId }, scrollTop);
+}
+
+function filePreviewView(target: PreviewTarget, nodeId?: NodeId, scrollTop?: number): PanelView {
+  return withScrollTop({ kind: 'file-preview', target, ...(nodeId ? { nodeId } : {}) }, scrollTop);
 }
 
 function isWorkspacePanel(
@@ -115,9 +129,10 @@ function sanitizeSize(value: unknown): number {
 
 function sanitizePanelView(value: unknown, nodeIds: Set<NodeId>): PanelView | null {
   if (!isRecord(value) || typeof value.kind !== 'string') return null;
+  const scrollTop = normalizeScrollTop(value.scrollTop);
   if (value.kind === 'outliner') {
     return typeof value.rootId === 'string' && nodeIds.has(value.rootId)
-      ? outlinerView(value.rootId)
+      ? outlinerView(value.rootId, scrollTop)
       : null;
   }
   if (value.kind === 'file-preview') {
@@ -125,7 +140,7 @@ function sanitizePanelView(value: unknown, nodeIds: Set<NodeId>): PanelView | nu
     const nodeId = typeof value.nodeId === 'string' && nodeIds.has(value.nodeId) ? value.nodeId : undefined;
     // A document asset is only valid here when the file-preview view is bound to
     // its outliner node. Drop legacy asset-targeted previews that have no node id.
-    return target && (target.kind !== 'asset' || nodeId) ? filePreviewView(target, nodeId) : null;
+    return target && (target.kind !== 'asset' || nodeId) ? filePreviewView(target, nodeId, scrollTop) : null;
   }
   return null;
 }
@@ -247,6 +262,7 @@ function hasMissingOutlinerRoot(panels: readonly WorkspacePanelState[], nodeIds:
 
 interface UseWorkspaceLayoutOptions {
   canFitPanelCount?: (nextPanelCount: number) => boolean;
+  clearFocusAndSelection?: () => void;
   focusNode: (nodeId: NodeId | null) => void;
   onPanelOpenRejected?: () => void;
   preparePanelCount?: (nextPanelCount: number) => void;
@@ -263,6 +279,7 @@ function allowPanelAdd() {
 
 export function useWorkspaceLayout({
   canFitPanelCount = allowPanelAdd,
+  clearFocusAndSelection,
   focusNode,
   onPanelOpenRejected,
   preparePanelCount = () => undefined,
@@ -273,6 +290,13 @@ export function useWorkspaceLayout({
   const initializedRef = useRef(false);
 
   panelsRef.current = panels;
+  const clearPreviewNavigationState = useCallback(() => {
+    if (clearFocusAndSelection) {
+      clearFocusAndSelection();
+      return;
+    }
+    focusNode(null);
+  }, [clearFocusAndSelection, focusNode]);
 
   const activePanelIndex = Math.max(0, panels.findIndex((panel) => panel.id === activePanelId));
   const activePanel = panels[activePanelIndex] ?? null;
@@ -383,8 +407,8 @@ export function useWorkspaceLayout({
       keepActive(panelId);
       setPanels((prev) => [...prev, filePreviewPanel(panelId, target, 1, nodeId)]);
     }
-    focusNode(null);
-  }, [canFitPanelCount, focusNode, panels, preparePanelCount]);
+    clearPreviewNavigationState();
+  }, [canFitPanelCount, clearPreviewNavigationState, panels, preparePanelCount]);
 
   const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: { newPane?: boolean; nodeId?: NodeId }) => {
     if (options?.newPane) {
@@ -397,8 +421,8 @@ export function useWorkspaceLayout({
         ? navigateWorkspacePanel(panel, filePreviewView(target, options?.nodeId))
         : panel
     )));
-    focusNode(null);
-  }, [focusNode, openPreviewPanel]);
+    clearPreviewNavigationState();
+  }, [clearPreviewNavigationState, openPreviewPanel]);
 
   const openPreview = useCallback((target: PreviewTarget, options?: { newPane?: boolean; nodeId?: NodeId }) => {
     if (options?.newPane) {
@@ -431,9 +455,9 @@ export function useWorkspaceLayout({
         ? { ...panel, view: { ...panel.view, ...(target ? { target } : {}), nodeId } }
         : panel
     )));
-    focusNode(null);
+    clearPreviewNavigationState();
     return true;
-  }, [focusNode]);
+  }, [clearPreviewNavigationState]);
 
   const navigatePanelBack = useCallback((panelId: string): PanelView | null => {
     const panel = panels.find((candidate) => candidate.id === panelId);
@@ -452,9 +476,13 @@ export function useWorkspaceLayout({
         }
         : candidate
     )));
-    focusNode(isOutlinerView(previousView) ? previousView.rootId : null);
+    if (isOutlinerView(previousView)) {
+      focusNode(previousView.scrollTop === undefined ? previousView.rootId : null);
+    } else {
+      clearPreviewNavigationState();
+    }
     return previousView;
-  }, [focusNode, panels]);
+  }, [clearPreviewNavigationState, focusNode, panels]);
 
   const navigatePanelForward = useCallback((panelId: string): PanelView | null => {
     const panel = panels.find((candidate) => candidate.id === panelId);
@@ -473,9 +501,13 @@ export function useWorkspaceLayout({
         }
         : candidate
     )));
-    focusNode(isOutlinerView(nextView) ? nextView.rootId : null);
+    if (isOutlinerView(nextView)) {
+      focusNode(nextView.scrollTop === undefined ? nextView.rootId : null);
+    } else {
+      clearPreviewNavigationState();
+    }
     return nextView;
-  }, [focusNode, panels]);
+  }, [clearPreviewNavigationState, focusNode, panels]);
 
   const closePanel = useCallback((panelId: string) => {
     if (panels.length <= 1) return;
@@ -607,6 +639,15 @@ export function useWorkspaceLayout({
     }));
   }, []);
 
+  const updatePanelScroll = useCallback((panelId: string, scrollTop: number) => {
+    const nextScrollTop = normalizeScrollTop(scrollTop);
+    setPanels((prev) => prev.map((panel) => {
+      if (panel.id !== panelId || !isWorkspacePanel(panel)) return panel;
+      if (panel.view.scrollTop === nextScrollTop) return panel;
+      return { ...panel, view: withScrollTop(panel.view, nextScrollTop) };
+    }));
+  }, []);
+
   return {
     activePanel,
     activeOutlinerPanel,
@@ -628,5 +669,6 @@ export function useWorkspaceLayout({
     repairMissingOutlinerRoots,
     resizePanelPair,
     rootId,
+    updatePanelScroll,
   };
 }

@@ -26,6 +26,8 @@
     --material-sidebar: var(--bg-window);
     --material-popover: var(--bg-elevated);
     --material-backdrop: none;
+    --preview-action-bg: rgb(46 46 50);
+    --preview-action-hover-bg: rgb(31 31 35);
   }
 }
 

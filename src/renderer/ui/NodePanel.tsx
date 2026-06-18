@@ -78,9 +78,11 @@ interface NodePanelProps {
   panelId: string;
   rootId: NodeId;
   canGoBack: boolean;
+  initialScrollTop?: number;
   onBack: () => void;
   showClose: boolean;
   onClose: () => void;
+  onScrollPositionChange?: (scrollTop: number) => void;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
   isNodePinned: (nodeId: NodeId) => boolean;
@@ -172,7 +174,7 @@ export function NodePanel(props: NodePanelProps) {
   const [searchQueryOpen, setSearchQueryOpen] = useState(false);
   const {
     mainPanelRef,
-    resetPanelViewport,
+    requestTitleDockMeasure,
     stickyBreadcrumbRef,
     titleDocked,
     titleRowRef,
@@ -182,6 +184,11 @@ export function NodePanel(props: NodePanelProps) {
   // so this ref stays live even for rows whose per-row memo skips re-render.
   const uiRef = useRef(props.ui);
   uiRef.current = props.ui;
+  const initialScrollTopRef = useRef(props.initialScrollTop ?? 0);
+  initialScrollTopRef.current = props.initialScrollTop ?? 0;
+  const scrollReportFrameRef = useRef<number | null>(null);
+  const scrollRestoreFrameRef = useRef<number | null>(null);
+  const restoringScrollRef = useRef(false);
   const pendingTitlePatchRef = useRef<Promise<unknown>>(Promise.resolve());
   const localTitleSyncRef = useRef<{ nodeId: NodeId; content: RichText } | null>(null);
   const descriptionReturnPlacementRef = useRef(cursorEnd());
@@ -330,10 +337,48 @@ export function NodePanel(props: NodePanelProps) {
     return counts;
   }, [props.index.byId]);
 
+  const restorePanelScroll = useCallback(() => {
+    const panel = mainPanelRef.current;
+    if (!panel) {
+      requestTitleDockMeasure();
+      return;
+    }
+    if (scrollRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollRestoreFrameRef.current);
+    }
+    restoringScrollRef.current = true;
+    panel.scrollTop = initialScrollTopRef.current;
+    scrollRestoreFrameRef.current = window.requestAnimationFrame(() => {
+      scrollRestoreFrameRef.current = null;
+      restoringScrollRef.current = false;
+      requestTitleDockMeasure();
+    });
+  }, [mainPanelRef, requestTitleDockMeasure]);
+
   useEffect(() => {
     setBreadcrumbExpanded(false);
-    resetPanelViewport();
-  }, [resolvedRootId, resetPanelViewport]);
+    restorePanelScroll();
+  }, [resolvedRootId, restorePanelScroll]);
+
+  useEffect(() => () => {
+    if (scrollReportFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollReportFrameRef.current);
+    }
+    if (scrollRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollRestoreFrameRef.current);
+    }
+  }, []);
+
+  const handlePanelScroll = () => {
+    updateTitleDockedState();
+    if (restoringScrollRef.current) return;
+    if (!props.onScrollPositionChange || scrollReportFrameRef.current !== null) return;
+    scrollReportFrameRef.current = window.requestAnimationFrame(() => {
+      scrollReportFrameRef.current = null;
+      const panel = mainPanelRef.current;
+      if (panel) props.onScrollPositionChange?.(panel.scrollTop);
+    });
+  };
 
   const selectHeader = () => {
     props.setUi((prev) => selectFocusState(prev, titleFocusTarget));
@@ -530,7 +575,7 @@ export function NodePanel(props: NodePanelProps) {
     : breadcrumb.nodes;
 
   return (
-    <main className="main-panel" ref={mainPanelRef} onScroll={updateTitleDockedState}>
+    <main className="main-panel" ref={mainPanelRef} onScroll={handlePanelScroll}>
       {rootNode && (
         <PanelStickyBreadcrumb
           breadcrumbAriaLabel={t.nodePanel.breadcrumbAriaLabel}

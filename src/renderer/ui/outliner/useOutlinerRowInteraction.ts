@@ -63,9 +63,9 @@ interface UseOutlinerRowInteractionOptions {
   draftAfterId?: NodeId | null;
 }
 
-const DROP_TARGET_CHANGE_EVENT = 'lin:outliner-drop-target-change';
+export const DROP_TARGET_CHANGE_EVENT = 'lin:outliner-drop-target-change';
 
-function announceDropTarget(key: string | null) {
+export function announceDropTarget(key: string | null) {
   window.dispatchEvent(new CustomEvent<{ key: string | null }>(DROP_TARGET_CHANGE_EVENT, {
     detail: { key },
   }));

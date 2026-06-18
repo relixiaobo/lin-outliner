@@ -1,6 +1,18 @@
 /// <reference types="vite/client" />
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type RefObject } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactElement,
+  type RefObject,
+} from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
@@ -74,15 +86,29 @@ const PDF_FALLBACK_ASPECT = 1.414;
 // rasterize an enormous canvas per page.
 const PDF_MAX_RENDER_SCALE = 3;
 // Render a page when it is within this many pixels of the scroll viewport.
-const PDF_LAZY_ROOT_MARGIN = '800px 0px';
+const PDF_LAZY_ROOT_MARGIN = '800px';
+const PDF_SUMMARY_PAGE_MIN_WIDTH = 104;
+const PREVIEW_RESIZE_MIN_HEIGHT = 180;
+const PREVIEW_RESIZE_MAX_HEIGHT = 720;
+const PREVIEW_RESIZE_KEY_STEP = 24;
+
+type FilePreviewDisplayMode = 'summary' | 'full';
 
 type PdfJsModule = typeof import('pdfjs-dist');
 
 let pdfJsModulePromise: Promise<PdfJsModule> | null = null;
 
+function clampPreviewHeight(height: number) {
+  return Math.max(PREVIEW_RESIZE_MIN_HEIGHT, Math.min(PREVIEW_RESIZE_MAX_HEIGHT, Math.round(height)));
+}
+
 export interface PreviewRendererProps {
+  displayMode: FilePreviewDisplayMode;
   onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
+  onSummaryPageSelect?: (pageNumber: number) => void;
   source: PreviewFileSource;
+  scrollToPageNumber?: number | null;
+  onScrollToPageNumberConsumed?: () => void;
   // The internally-scrolling preview container. The PDF renderer uses it as the
   // IntersectionObserver root so pages render lazily as they scroll into view;
   // other renderers ignore it.
@@ -119,11 +145,19 @@ export function isPreviewableSource(source: PreviewSourceDescriptor): boolean {
 }
 
 export function PreviewRenderer({
+  displayMode,
+  onSummaryPageSelect,
   onOpenTarget,
+  scrollToPageNumber,
+  onScrollToPageNumberConsumed,
   source,
   scrollRootRef,
 }: {
+  displayMode: FilePreviewDisplayMode;
+  onSummaryPageSelect?: (pageNumber: number) => void;
   onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
+  scrollToPageNumber?: number | null;
+  onScrollToPageNumberConsumed?: () => void;
   source: PreviewSourceDescriptor;
   scrollRootRef?: RefObject<HTMLElement | null>;
 }) {
@@ -132,7 +166,17 @@ export function PreviewRenderer({
     return <PreviewMessage>{labels.unsupported}</PreviewMessage>;
   }
   const Renderer = FILE_PREVIEW_RENDERERS.find((entry) => entry.match(source))?.component ?? MetadataPreview;
-  return <Renderer onOpenTarget={onOpenTarget} source={source} scrollRootRef={scrollRootRef} />;
+  return (
+    <Renderer
+      displayMode={displayMode}
+      onSummaryPageSelect={onSummaryPageSelect}
+      onOpenTarget={onOpenTarget}
+      scrollToPageNumber={scrollToPageNumber}
+      onScrollToPageNumberConsumed={onScrollToPageNumberConsumed}
+      source={source}
+      scrollRootRef={scrollRootRef}
+    />
+  );
 }
 
 export interface FilePreviewShellProps {
@@ -144,7 +188,7 @@ export interface FilePreviewShellProps {
   menuActions?: FilePreviewMenuAction[];
   /** A quiet caption (type · size · pages) shown in the `⋯` menu header. */
   meta?: string | null;
-  /** Start expanded (a dedicated node page) vs collapsed/peek (an inline outliner row). */
+  /** Start in the full reader instead of the summary strip. */
   initialExpanded?: boolean;
 }
 
@@ -153,10 +197,11 @@ export interface FilePreviewShellProps {
  * stage with a single bottom-center floating pill (primary + `⋯`), replacing the old
  * top meta+actions toolbar. Both lifecycle states reuse it so a loose preview reads
  * identically to an ingested file-node preview (same `.file-node-*` CSS). A previewable
- * source toggles a collapsed/peek vs expanded/full-scroll height; a non-previewable one
- * (the metadata card) renders at natural height with Open-with-default-app as the pill
- * primary. Callers supply the open action + the `⋯` menu actions; the resolved-source
- * rendering and the pill are common.
+ * source toggles between a rounded summary strip and an expanded full-scroll reader;
+ * a non-previewable one (the metadata card) renders at natural height with
+ * Open-with-default-app as the same pill's primary. Callers supply the open action +
+ * the `⋯` menu actions; the resolved-source rendering and the action location are
+ * common across non-image file types.
  */
 export function FilePreviewShell({
   state,
@@ -169,36 +214,114 @@ export function FilePreviewShell({
   const labels = useT().shell.filePreview;
   const previewRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(initialExpanded);
+  const [previewHeights, setPreviewHeights] = useState<{ summary?: number; full?: number }>({});
+  const [scrollToPageNumber, setScrollToPageNumber] = useState<number | null>(null);
   const previewable = state.status === 'ready' && isPreviewableSource(state.source);
+  const metadataFallback = state.status === 'ready' && !previewable;
+  const displayMode: FilePreviewDisplayMode = previewable && !expanded ? 'summary' : 'full';
+  const resizedHeight = displayMode === 'summary' ? previewHeights.summary : previewHeights.full;
+  const toggleExpanded = () => {
+    setExpanded((value) => {
+      const next = !value;
+      if (!next) setScrollToPageNumber(null);
+      return next;
+    });
+  };
+  const openSummaryPage = (pageNumber: number) => {
+    setScrollToPageNumber(pageNumber);
+    setExpanded(true);
+  };
+  const consumeScrollToPageNumber = useCallback(() => {
+    setScrollToPageNumber(null);
+  }, []);
+  const setResizedHeight = (height: number) => {
+    const nextHeight = clampPreviewHeight(height);
+    setPreviewHeights((prev) => ({ ...prev, [displayMode]: nextHeight }));
+  };
+  const beginResize = (event: PointerEvent<HTMLDivElement>) => {
+    const preview = previewRef.current;
+    if (!preview) return;
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = resizedHeight ?? preview.getBoundingClientRect().height;
+    const handlePointerMove = (moveEvent: globalThis.PointerEvent) => {
+      setResizedHeight(startHeight + moveEvent.clientY - startY);
+    };
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp, { once: true });
+  };
+  const handleResizeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    const preview = previewRef.current;
+    if (!preview) return;
+    event.preventDefault();
+    const direction = event.key === 'ArrowDown' ? 1 : -1;
+    setResizedHeight((resizedHeight ?? preview.getBoundingClientRect().height) + direction * PREVIEW_RESIZE_KEY_STEP);
+  };
   // A non-previewable source (metadata card) needs no collapse/expand stage, so it
   // carries only the base class — `.collapsed` / `.expanded` are the only stage rules.
   const stageClass = [
     'file-node-preview',
+    `file-node-preview--${displayMode}`,
+    metadataFallback ? 'file-node-preview--metadata' : '',
+    resizedHeight !== undefined ? 'resized' : '',
     previewable ? (expanded ? 'expanded' : 'collapsed') : '',
   ].filter(Boolean).join(' ');
+  const previewStyle = resizedHeight !== undefined
+    ? ({ '--file-preview-resized-height': `${resizedHeight}px` } as CSSProperties)
+    : undefined;
+  const bodyClass = ['file-node-body', metadataFallback ? 'file-node-body--metadata' : '']
+    .filter(Boolean)
+    .join(' ');
+  const pill = state.status !== 'loading' ? (
+    // Hold the pill until the source resolves: while loading, `previewable` is
+    // false, so the primary would briefly be "Open with default app" and a click
+    // in that window would open the file externally instead of toggling the
+    // preview it is about to become.
+    <FilePreviewPill
+      previewable={previewable}
+      expanded={expanded}
+      onToggleExpand={toggleExpanded}
+      primaryOpen={primaryOpen}
+      menuActions={menuActions}
+      meta={meta}
+      placement={metadataFallback ? 'footer' : 'overlay'}
+    />
+  ) : null;
   return (
-    <div className="file-node-body">
-      <div className={stageClass} ref={previewRef}>
+    <div className={bodyClass}>
+      <div className={stageClass} ref={previewRef} style={previewStyle}>
         {state.status === 'loading' ? (
           <PreviewMessage>{labels.loading}</PreviewMessage>
         ) : state.status === 'missing' ? (
           <PreviewMessage>{state.error === 'too-large' ? labels.tooLarge : labels.unavailable}</PreviewMessage>
         ) : (
-          <PreviewRenderer source={state.source} onOpenTarget={onOpenTarget} scrollRootRef={previewRef} />
+          <PreviewRenderer
+            displayMode={displayMode}
+            onSummaryPageSelect={openSummaryPage}
+            source={state.source}
+            onOpenTarget={onOpenTarget}
+            scrollToPageNumber={expanded ? scrollToPageNumber : null}
+            onScrollToPageNumberConsumed={consumeScrollToPageNumber}
+            scrollRootRef={previewRef}
+          />
         )}
+        {metadataFallback ? pill : null}
       </div>
-      {state.status !== 'loading' ? (
-        // Hold the pill until the source resolves: while loading, `previewable` is
-        // false, so the primary would briefly be "Open with default app" and a click
-        // in that window would open the file externally instead of toggling the
-        // preview it is about to become.
-        <FilePreviewPill
-          previewable={previewable}
-          expanded={expanded}
-          onToggleExpand={() => setExpanded((value) => !value)}
-          primaryOpen={primaryOpen}
-          menuActions={menuActions}
-          meta={meta}
+      {metadataFallback ? null : pill}
+      {previewable ? (
+        <div
+          aria-label="Resize preview"
+          aria-orientation="horizontal"
+          className="file-preview-resize-handle"
+          onKeyDown={handleResizeKeyDown}
+          onPointerDown={beginResize}
+          role="separator"
+          tabIndex={0}
         />
       ) : null}
     </div>
@@ -383,7 +506,14 @@ function TextPreview({ source }: PreviewRendererProps) {
   return <div className="file-preview-code" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-function PdfPreview({ source, scrollRootRef }: PreviewRendererProps) {
+function PdfPreview({
+  displayMode,
+  onSummaryPageSelect,
+  onScrollToPageNumberConsumed,
+  scrollToPageNumber,
+  source,
+  scrollRootRef,
+}: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const [state, setState] = useState<
     | { status: 'loading' }
@@ -438,7 +568,11 @@ function PdfPreview({ source, scrollRootRef }: PreviewRendererProps) {
     <PdfPages
       key={state.document.fingerprints?.[0] ?? undefined}
       document={state.document}
+      displayMode={displayMode}
+      onSummaryPageSelect={onSummaryPageSelect}
       pageCount={state.pageCount}
+      scrollToPageNumber={scrollToPageNumber}
+      onScrollToPageNumberConsumed={onScrollToPageNumberConsumed}
       scrollRootRef={scrollRootRef}
     />
   );
@@ -454,16 +588,24 @@ function PdfPreview({ source, scrollRootRef }: PreviewRendererProps) {
  * estimate, never in a visible jump.
  */
 function PdfPages({
+  displayMode,
   document: pdfDocument,
+  onSummaryPageSelect,
+  onScrollToPageNumberConsumed,
   pageCount,
+  scrollToPageNumber,
   scrollRootRef,
 }: {
+  displayMode: FilePreviewDisplayMode;
   document: PDFDocumentProxy;
+  onSummaryPageSelect?: (pageNumber: number) => void;
+  onScrollToPageNumberConsumed?: () => void;
   pageCount: number;
+  scrollToPageNumber?: number | null;
   scrollRootRef?: RefObject<HTMLElement | null>;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [width, setWidth] = useState(0);
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [aspect, setAspect] = useState(PDF_FALLBACK_ASPECT);
 
   useEffect(() => {
@@ -486,45 +628,92 @@ function PdfPages({
   // live drag) doesn't re-rasterize every visible page each fractional frame.
   useLayoutEffect(() => {
     const element = containerRef.current;
-    if (element) setWidth(Math.round(element.clientWidth));
+    if (element) {
+      setContainerSize(measurePdfContainerSize(element));
+    }
   }, []);
 
   useEffect(() => {
     const element = containerRef.current;
     if (!element) return;
     const observer = new ResizeObserver((entries) => {
-      const next = Math.round(entries[0]?.contentRect.width ?? 0);
-      if (next > 0) setWidth(next);
+      if (!entries[0]) return;
+      const nextSize = measurePdfContainerSize(element);
+      if (nextSize.width > 0) setContainerSize(nextSize);
     });
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
 
+  const pageWidth = displayMode === 'summary'
+    ? Math.max(
+      PDF_SUMMARY_PAGE_MIN_WIDTH,
+      containerSize.height > 0
+        ? Math.floor(containerSize.height / aspect)
+        : Math.round(containerSize.width * 0.24),
+    )
+    : containerSize.width;
+  const pageScrollRootRef = containerRef;
+
+  useEffect(() => {
+    if (displayMode !== 'full' || !scrollToPageNumber || pageWidth <= 0) return undefined;
+    const animationFrame = window.requestAnimationFrame(() => {
+      const scrollRoot = pageScrollRootRef.current;
+      const pageElement = containerRef.current?.querySelector<HTMLElement>(`[data-pdf-page-number="${scrollToPageNumber}"]`);
+      if (scrollRoot && pageElement) {
+        const rootRect = scrollRoot.getBoundingClientRect();
+        const pageRect = pageElement.getBoundingClientRect();
+        scrollRoot.scrollTo({
+          top: scrollRoot.scrollTop + pageRect.top - rootRect.top,
+          behavior: 'auto',
+        });
+      }
+      onScrollToPageNumberConsumed?.();
+    });
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [displayMode, onScrollToPageNumberConsumed, pageScrollRootRef, pageWidth, scrollToPageNumber]);
+
   return (
-    <div className="file-preview-pdf" ref={containerRef}>
+    <div className={`file-preview-pdf file-preview-pdf--${displayMode}`} ref={containerRef}>
       {Array.from({ length: pageCount }, (_, index) => (
         <LazyPdfPage
           key={index}
           aspect={aspect}
           document={pdfDocument}
+          displayMode={displayMode}
+          onSummaryPageSelect={onSummaryPageSelect}
           pageNumber={index + 1}
-          scrollRootRef={scrollRootRef}
-          width={width}
+          scrollRootRef={pageScrollRootRef}
+          width={pageWidth}
         />
       ))}
     </div>
   );
 }
 
+function measurePdfContainerSize(element: HTMLElement) {
+  const style = getComputedStyle(element);
+  const horizontalInset = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
+  const verticalInset = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+  return {
+    width: Math.max(0, Math.round(element.clientWidth - horizontalInset)),
+    height: Math.max(0, Math.round(element.clientHeight - verticalInset)),
+  };
+}
+
 function LazyPdfPage({
   aspect,
   document: pdfDocument,
+  displayMode,
+  onSummaryPageSelect,
   pageNumber,
   scrollRootRef,
   width,
 }: {
   aspect: number;
   document: PDFDocumentProxy;
+  displayMode: FilePreviewDisplayMode;
+  onSummaryPageSelect?: (pageNumber: number) => void;
   pageNumber: number;
   scrollRootRef?: RefObject<HTMLElement | null>;
   width: number;
@@ -551,10 +740,35 @@ function LazyPdfPage({
 
   // Reserve the page height (width × aspect) up front so lazy mounting never jumps.
   const reservedHeight = width > 0 ? Math.round(width * aspect) : undefined;
+  const summary = displayMode === 'summary';
+  const activatePage = () => {
+    if (summary) onSummaryPageSelect?.(pageNumber);
+  };
   return (
-    <div className="file-preview-pdf-page" ref={wrapperRef} style={{ minHeight: reservedHeight }}>
+    <div
+      aria-label={summary ? `Open page ${pageNumber}` : undefined}
+      className="file-preview-pdf-page"
+      data-pdf-page-number={pageNumber}
+      onClick={summary ? activatePage : undefined}
+      onKeyDown={summary
+        ? (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          activatePage();
+        }
+        : undefined}
+      ref={wrapperRef}
+      role={summary ? 'button' : undefined}
+      style={{ minHeight: reservedHeight }}
+      tabIndex={summary ? 0 : undefined}
+    >
       {visible && width > 0 ? (
-        <PdfPageCanvas document={pdfDocument} pageNumber={pageNumber} width={width} />
+        <PdfPageCanvas
+          key={`${displayMode}:${width}`}
+          document={pdfDocument}
+          pageNumber={pageNumber}
+          width={width}
+        />
       ) : null}
     </div>
   );
@@ -585,6 +799,10 @@ function PdfPageCanvas({
     void (async () => {
       const canvas = canvasRef.current;
       if (!canvas) throw new Error('canvas-unavailable');
+      canvas.width = 0;
+      canvas.height = 0;
+      canvas.style.width = '0px';
+      canvas.style.height = '0px';
       const page = await pdfDocument.getPage(pageNumber);
       try {
         if (cancelled) return;
@@ -637,30 +855,29 @@ function PdfPageCanvas({
 
 function MetadataPreview({ source }: { source: PreviewFileSource }) {
   const labels = useT().shell.filePreview;
+  const kind = metadataKindLabel(source);
+  const size = formatBytes(source.sizeBytes);
+  const modified = source.lastModified
+    ? labels.modified({ date: formatModifiedDate(source.lastModified) })
+    : null;
   return (
     <div className="file-preview-metadata">
-      <FilePreviewGlyph source={source} target={source.target} />
-      <div>
-        <h2>{labels.unsupported}</h2>
-        <dl>
-          <div>
-            <dt>{labels.metadataType}</dt>
-            <dd>{source.mimeType}</dd>
-          </div>
-          <div>
-            <dt>{labels.metadataSize}</dt>
-            <dd>{formatBytes(source.sizeBytes)}</dd>
-          </div>
-          {source.displayPath ? (
-            <div>
-              <dt>{labels.metadataPath}</dt>
-              <dd>{source.displayPath}</dd>
-            </div>
-          ) : null}
-        </dl>
+      <div className="file-preview-metadata-kind-row">
+        <h2>{kind}</h2>
+        <span>{size}</span>
       </div>
+      {modified ? <p>{modified}</p> : null}
     </div>
   );
+}
+
+function metadataKindLabel(source: PreviewFileSource): string {
+  const ext = source.ext.trim().toLowerCase();
+  if (ext) return ext;
+  const mimeType = source.mimeType.trim().toLowerCase();
+  if (!mimeType || mimeType === 'application/octet-stream') return 'file';
+  const subtype = mimeType.split('/')[1]?.split(/[+;]/)[0]?.trim();
+  return subtype || mimeType;
 }
 
 export function usePreviewText(target: PreviewTarget): TextState {
