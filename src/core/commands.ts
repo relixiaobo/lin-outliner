@@ -18,7 +18,6 @@ export const DOCUMENT_COMMANDS = [
   'set_code_language',
   'set_command_node',
   'set_command_schedule',
-  'set_command_agent',
   'mark_command_fired',
   'mark_command_attempted',
   'create_image_node',
@@ -151,10 +150,7 @@ export const AGENT_COMMANDS = [
   'agent_accept_skill',
   'agent_revoke_skill_acceptance',
   'agent_undo_skill_agent_edit',
-  'agent_create_agent_definition',
   'agent_update_agent_definition',
-  'agent_delete_agent_definition',
-  'agent_duplicate_agent_definition',
   'agent_reload_agent_definitions',
 ] as const;
 

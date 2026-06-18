@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { ids, openMockedApp, row } from './outlinerMock';
 
 test.describe('command node fields', () => {
-  test('renders node-native config rows + a title Run action; values use the standard outliner style', async ({ page }) => {
+  test('renders the node-native Schedule config row + a title Run action; the value uses the standard outliner style', async ({ page }) => {
     await openMockedApp(page, { commandNode: true });
 
     const commandRow = row(page, ids.commandNode);
@@ -24,14 +24,6 @@ test.describe('command node fields', () => {
     await expect(scheduleRow.locator('.command-field-value-bullet')).toBeVisible();
     await expect(scheduleRow.locator('.command-run-now')).toHaveCount(0);
     await expect(page.getByRole('dialog', { name: 'Date picker' })).toHaveCount(0);
-
-    // The Agent field row: a plain value (the stored choice as text) with its own
-    // leading bullet, no pill <select>, listbox closed.
-    const agentRow = row(page, ids.commandAgentEntry);
-    await expect(agentRow.locator('.command-field-value-label')).toHaveText('self');
-    await expect(agentRow.locator('.command-field-value-bullet')).toBeVisible();
-    await expect(agentRow.locator('.command-agent-select-control')).toHaveCount(0);
-    await expect(page.locator('.command-agent-popover')).toHaveCount(0);
   });
 
   test('clicking the schedule value opens the shared date editor (single-only)', async ({ page }) => {
@@ -50,21 +42,5 @@ test.describe('command node fields', () => {
     // Escape collapses it back to the value.
     await page.keyboard.press('Escape');
     await expect(picker).toHaveCount(0);
-  });
-
-  test('the agent value opens a standard listbox reflecting the stored choice', async ({ page }) => {
-    await openMockedApp(page, { commandNode: true });
-    const agentRow = row(page, ids.commandAgentEntry);
-
-    await agentRow.locator('.command-agent-value').click();
-    const listbox = page.locator('.command-agent-popover');
-    await expect(listbox).toBeVisible();
-    // Main agent (the implicit empty choice) + every registry definition.
-    await expect(listbox.getByRole('option')).toHaveText(['Main agent', 'Neva', 'self', 'reviewer']);
-    // The stored agent is marked selected.
-    await expect(listbox.getByRole('option', { name: 'self', exact: true })).toHaveAttribute('aria-selected', 'true');
-
-    await page.keyboard.press('Escape');
-    await expect(listbox).toHaveCount(0);
   });
 });

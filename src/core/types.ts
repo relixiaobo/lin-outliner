@@ -524,15 +524,6 @@ export interface CommandNode extends NodeBase {
    * check. Never written by the agent. Forward-only.
    */
   sysLastAttemptAt?: number;
-  /**
-   * Which agent definition runs this command. Matches an `AgentDefinition.name`
-   * from the child run registry (see `listAllAgentDefinitions`); a fire spawns the
-   * brief as a child run of this type so the run shows in the delivery
-   * conversation's task panel. Empty/absent = the main agent (a context fork from
-   * the otherwise-empty delivery conversation). Agent-editable; not part of the
-   * user-only bright line (only arming the *schedule* is user-gated).
-   */
-  commandAgent?: string;
 }
 
 /**
@@ -801,7 +792,6 @@ export interface AgentRuntimeSettings {
   slashSkillsEnabled: boolean;
   compactEnabled: boolean;
   additionalSkillDirectories: string[];
-  additionalAgentDirectories: string[];
   providerTimeoutMs: number | null;
   providerMaxRetries: number | null;
   providerMaxRetryDelayMs: number | null;
@@ -817,7 +807,6 @@ export interface AgentRuntimeSettingsInput {
   slashSkillsEnabled?: boolean;
   compactEnabled?: boolean;
   additionalSkillDirectories?: string[];
-  additionalAgentDirectories?: string[];
   providerTimeoutMs?: number | null;
   providerMaxRetries?: number | null;
   providerMaxRetryDelayMs?: number | null;
@@ -879,7 +868,6 @@ export interface SkillDefinition {
   effort?: string;
   shell?: string;
   execution: 'inline' | 'isolated';
-  agent?: string;
   paths?: string[];
   contentLength: number;
   body: string;

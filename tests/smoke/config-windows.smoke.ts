@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { closeSmokeApp, launchSmokeApp, type SmokeApp } from './electronApp';
 
-type AgentConfigParams = { agentId?: string; mode: 'create' | 'configure' };
+type AgentConfigParams = { agentId: string };
 type ChannelConfigParams = { conversationId?: string; mode: 'create' | 'configure' };
 
 function surfaceFor(page: Page): string | null {
@@ -81,13 +81,12 @@ test.describe('agent and Channel config child windows', () => {
   });
 
   test('opens agent config as a secure singleton child window', async () => {
-    await openAgentConfig(smoke.window, { agentId: 'user:mock:self', mode: 'configure' });
+    await openAgentConfig(smoke.window, { agentId: 'user:mock:self' });
     const first = await waitForSurface(smoke, 'agent-config');
 
     await expect.poll(async () => windowQuery(first)).toMatchObject({
       surface: 'agent-config',
       agent: 'user:mock:self',
-      mode: 'configure',
     });
     await expect.poll(async () => rendererSecurity(first)).toEqual({
       lin: 'object',
@@ -96,14 +95,13 @@ test.describe('agent and Channel config child windows', () => {
     });
 
     const firstClosed = first.waitForEvent('close');
-    await openAgentConfig(smoke.window, { mode: 'create' });
+    await openAgentConfig(smoke.window, { agentId: 'built-in:tenon:assistant' });
     await firstClosed;
     const second = await waitForSurface(smoke, 'agent-config');
     await expect.poll(async () => countSurfaceWindows(smoke, 'agent-config')).toBe(1);
     await expect.poll(async () => windowQuery(second)).toMatchObject({
       surface: 'agent-config',
-      agent: '',
-      mode: 'create',
+      agent: 'built-in:tenon:assistant',
     });
 
     const secondClosed = second.isClosed() ? Promise.resolve() : second.waitForEvent('close');

@@ -19,7 +19,7 @@ import {
 import { assembleProjection, buildDocumentProjection, projectNode } from './projection';
 import { runSearchExpr, runSearchNode, searchNodeHasRules } from './searchEngine';
 import { formatDateSchedule, parseDateSchedule } from './dateSchedule';
-import { COMMAND_AGENT_FIELD_ID, COMMAND_SCHEDULE_FIELD_ID } from './systemFields';
+import { COMMAND_SCHEDULE_FIELD_ID } from './systemFields';
 import type { TextSearchIndex } from './textSearchIndex';
 import {
   CONFIG_SCHEMA,
@@ -828,11 +828,11 @@ export class Core {
     });
   }
 
-  // Seed the Schedule + Agent config rows for a command node as real `fieldEntry`
-  // children pointing at the built-in system fields (`sys:commandSchedule` /
-  // `sys:commandAgent`), whose value editors write the gated scalars. Find-or-create
-  // so a re-conversion never duplicates a row; the rows sit ahead of the prompt
-  // (the remaining non-field children), in Schedule-then-Agent order.
+  // Seed the Schedule config row for a command node as a real `fieldEntry` child
+  // pointing at the built-in system field (`sys:commandSchedule`), whose value
+  // editor writes the gated scalar. Find-or-create so a re-conversion never
+  // duplicates the row; it sits ahead of the prompt (the remaining non-field
+  // children).
   private ensureCommandFieldEntriesDirect(nodeId: string): void {
     const hasEntry = (defId: string): boolean =>
       (this.snapshot().nodes[nodeId]?.children ?? []).some((childId) => {
@@ -841,14 +841,6 @@ export class Core {
       });
     if (!hasEntry(COMMAND_SCHEDULE_FIELD_ID)) {
       this.insertFieldEntryNodeDirect(nodeId, 0, COMMAND_SCHEDULE_FIELD_ID);
-    }
-    if (!hasEntry(COMMAND_AGENT_FIELD_ID)) {
-      const children = this.snapshot().nodes[nodeId]?.children ?? [];
-      const scheduleIndex = children.findIndex((childId) => {
-        const child = this.snapshot().nodes[childId];
-        return child?.type === 'fieldEntry' && child.fieldDefId === COMMAND_SCHEDULE_FIELD_ID;
-      });
-      this.insertFieldEntryNodeDirect(nodeId, scheduleIndex >= 0 ? scheduleIndex + 1 : 0, COMMAND_AGENT_FIELD_ID);
     }
   }
 
@@ -905,19 +897,6 @@ export class Core {
       if (origin === 'agent') throw CoreError.invalidOperation('the agent cannot advance a command attempt marker');
       const command = node as CommandNode;
       command.sysLastAttemptAt = Math.max(command.sysLastAttemptAt ?? 0, attemptedAt);
-    });
-  }
-
-  // Choose which agent definition runs this command (matches an
-  // `AgentDefinition.name`; empty clears back to the main agent). Agent-editable
-  // — picking the executor is not part of the user-only bright line (only arming
-  // the *schedule* is user-gated, see `setCommandSchedule`).
-  setCommandAgent(nodeId: string, agent: string | undefined): CommandOutcome {
-    return this.patchNode(nodeId, (node) => {
-      if (node.type !== 'command') throw CoreError.invalidOperation('node is not a command node');
-      const command = node as CommandNode;
-      const normalized = agent?.trim() ? agent.trim() : undefined;
-      setOptional(command, 'commandAgent', normalized);
     });
   }
 

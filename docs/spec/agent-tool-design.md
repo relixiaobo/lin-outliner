@@ -1911,12 +1911,11 @@ Result behavior:
 - Do not use `file_write` to append small changes; use `file_edit`.
 - Writes under self-definition directories are validated by the file-tool gateway
   after the ordinary permission decision. Skill writes validate `SKILL.md` /
-  support-file shape and hot-reload the skill registry. Agent-definition writes
-  may create or edit exactly one restricted `AGENT.md` under
-  `.agents/agents/<agent-name>/AGENT.md`; support files, deletes, trusted
-  permission mode, reserved built-in names, unsafe metadata, secret-looking
-  content, and malformed frontmatter are rejected before bytes are written.
-  `file_convert` cannot target self-definition outputs.
+  support-file shape and hot-reload the skill registry. The self-definition gate
+  guards **skills only** (`.agents/skills`) — agent-definition (`AGENT.md`) writes
+  are no longer a self-definition surface (`single-agent-finish-collapse`): the one
+  agent (Neva) is a built-in, not a file, so a dropped `.agents/agents/*` file is
+  an inert workspace file. `file_convert` cannot target self-definition outputs.
 
 ## Shell Tools
 
@@ -2392,13 +2391,14 @@ memory by where it works. `originWorkspace` on an entry is provenance metadata
 (where the fact was learned), never a retrieval fence: the briefing, `recall`,
 and Dream consolidation always read the whole pool.
 
-The resident briefing and `recall` both read this one pool. A fresh delegated
-child agent runs as the called agent definition and reads/writes that agent's
-memory; the parent agent's pool is not automatically inherited into a child
-sidechain (see *Child-run memory ownership* below). `recall(include_evidence:true)`
-dereferences `sources` to the raw conversation/run transcript through the
-internal evidence service, clamped by the character budget; the evidence path is
-the same single pool, so there is no cross-pool refusal.
+The resident briefing and `recall` both read this one pool. Every delegated child
+run is a fork that runs AS Neva, so it reads/writes Neva's single pool — there is
+no second agent with its own memory line (see *Child-run memory ownership* below).
+`recall(include_evidence:true)` dereferences `sources` to the raw conversation/run
+transcript through the internal evidence service, clamped by the character budget;
+the evidence path is the same single pool, so there is no cross-pool refusal — the
+cross-principal redaction/evidence-refusal path was removed as dead code
+(`single-agent-finish-collapse`).
 
 Explicit fact management is not a foreground model tool. The Settings/Profile UI
 can list, edit, and forget memory through IPC-backed runtime methods (forgetting
@@ -2445,20 +2445,15 @@ is no positional coordinate to rebind. The foreground model must not claim speci
 updated, or forgotten durable facts through a tool call unless `recall` returns
 those facts after Dream completes.
 
-Child-run memory ownership is explicit. A fresh typed child agent runs as the called
-agent definition: its `<memory>` briefing and `recall` tool read that
-agent's memory, and its sidechain transcript is Dream evidence for that same
-agent. The parent agent's Dream sees only the parent conversation surface, such
-as the `Agent` tool call and compact result projection, not the full fresh
-child transcript. A fork keeps the parent agent as both execution
-identity and memory owner; its sidechain transcript can become Dream evidence for
-the parent, but the fork evidence boundary is structural — everything at or
-before the ledger's first `run.started` is inherited parent context and never
-this run's evidence (a `tool_result.replaced` whose target message was created
-at-or-before that boundary stays excluded too). A ledger with no `run.started`
-has no boundary and is skipped rather than replayed from 0. Agent-definition `tools` remain an
-allow-list: `recall` is not injected into a fresh child agent that explicitly omits
-it.
+Child-run memory ownership is explicit and, under the one-Neva invariant, uniform:
+every child run is a fork that keeps Neva as both execution identity and memory
+owner. Its sidechain transcript can become Dream evidence for Neva, but the fork
+evidence boundary is structural — everything at or before the ledger's first
+`run.started` is inherited parent context and never this run's evidence (a
+`tool_result.replaced` whose target message was created at-or-before that boundary
+stays excluded too). A ledger with no `run.started` has no boundary and is skipped
+rather than replayed from 0. The fork's `tools` remain an allow-list: `recall` is
+not injected into a read-only fork (e.g. `/research`) that omits it.
 
 Each normal user turn receives a bounded `<memory>` briefing — the
 **working-memory slice** of the semantic store — built from the active
@@ -2548,9 +2543,12 @@ Runtime control tools are not file tools:
 - The agent must not use `file_edit`, `file_write`, or `bash` to mutate provider
   settings, permission config, hook config, skill registry metadata, or
   last-known-good recovery state.
-- Skill and agent-definition maintenance do not add separate model-facing CRUD
-  tool families in v1. They follow cc-2.1's smaller surface: `/skillify` and
-  `/create-agent` produce/review content, then use existing file tools.
+- Skill maintenance does not add a separate model-facing CRUD tool family in v1.
+  It follows cc-2.1's smaller surface: `/skillify` produces/reviews content, then
+  uses existing file tools. There is **no** agent-definition authoring surface —
+  the one agent (Neva) is a built-in edited only via Settings → Agent; the
+  `/create-agent` skill and file-backed `.agents/agents/*` definitions are removed
+  (`single-agent-finish-collapse`).
 - Skill files use the ordinary `file_write` / `file_edit` permission decision.
   After that decision, the file-tool gateway recognizes writes under registered
   skill directories, validates frontmatter/support files, carries rollback

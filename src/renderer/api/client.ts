@@ -113,9 +113,6 @@ export const api = {
     command<CommandResult>('set_command_node', { nodeId }),
   setCommandSchedule: (nodeId: string, schedule: string | null) =>
     command<CommandResult>('set_command_schedule', { nodeId, schedule: schedule ?? null }),
-  // Which agent runs the command (an `AgentDefinition.name`; null = main agent).
-  setCommandAgent: (nodeId: string, agent: string | null) =>
-    command<CommandResult>('set_command_agent', { nodeId, agent: agent ?? null }),
   runCommandNow: (nodeId: string) =>
     command<{ conversationId: string }>('agent_run_command_now', { nodeId }),
   ensureCommandConversation: (nodeId: string) =>
@@ -424,19 +421,8 @@ export const api = {
     command<SkillDefinition[]>('agent_revoke_skill_acceptance', { conversationId, skillName }),
   agentUndoSkillAgentEdit: (conversationId: string, skillName: string) =>
     command<SkillDefinition[]>('agent_undo_skill_agent_edit', { conversationId, skillName }),
-  agentCreateAgentDefinition: (conversationId: string, input: AgentAuthoringInput, storage: AgentStorageLocation) =>
-    command<AgentDefinitionView[]>('agent_create_agent_definition', { conversationId, input, storage }),
   agentUpdateAgentDefinition: (conversationId: string, agentId: string, input: AgentAuthoringInput) =>
     command<AgentDefinitionView[]>('agent_update_agent_definition', { conversationId, agentId, input }),
-  agentDeleteAgentDefinition: (conversationId: string, agentId: string) =>
-    command<AgentDefinitionView[]>('agent_delete_agent_definition', { conversationId, agentId }),
-  agentDuplicateAgentDefinition: (
-    conversationId: string,
-    agentId: string,
-    newName: string,
-    storage: AgentStorageLocation,
-  ) =>
-    command<AgentDefinitionView[]>('agent_duplicate_agent_definition', { conversationId, agentId, newName, storage }),
   agentReloadAgentDefinitions: (conversationId: string) =>
     command<AgentDefinitionView[]>('agent_reload_agent_definitions', { conversationId }),
 };

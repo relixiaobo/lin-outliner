@@ -645,34 +645,6 @@ describe('agent skills', () => {
     expect(body).toContain('Do not write executable or binary support files');
   });
 
-  test('ships create-agent as a built-in restricted authoring workflow', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-create-agent-'));
-    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-    const automaticListing = await runtime.buildSkillListingReminderText(200_000);
-    const skill = await runtime.getSkill('create-agent');
-    const prompt = await createSlashSkillPrompt(runtime, '/create-agent make a reviewer agent', null);
-
-    expect(automaticListing).toContain('- create-agent:');
-    expect(skill).toMatchObject({
-      name: 'create-agent',
-      source: 'built-in',
-      modelInvocable: true,
-      userInvocable: true,
-      ratified: true,
-    });
-    const text = prompt?.content[0]?.type === 'text' ? prompt.content[0].text : '';
-    expect(text).toContain('Create-agent workflow');
-    expect(text).toContain('~/.agents/agents/<agent-name>/AGENT.md');
-    expect(text).toContain('<workspace>/.agents/agents/<agent-name>/AGENT.md');
-    expect(text).toContain('permission-mode: restricted');
-    expect(text).toContain('For an existing agent, resolve and read the current `AGENT.md` first');
-    expect(text).toContain('Prefer a focused `file_edit` patch');
-    expect(text).toContain('Do not delete, move, rename, or create support files');
-    expect(text).toContain('Use `file_write` or `file_edit` only after confirmation');
-    expect(text).toContain('rejects support files/deletes/trusted permission mode');
-    expect(text).not.toContain('.claude');
-  });
-
   test('records built-in skill invocations without surfacing pseudo file paths', async () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
     const invocation = await runtime.invokeSkill({ skill: 'skillify', trigger: 'agent' });
@@ -949,7 +921,7 @@ describe('agent skills', () => {
     expect(results[0]).toMatchObject({ status: 'fulfilled', value: { name: 'skillify', source: 'built-in' } });
     expect(results[1]).toMatchObject({ status: 'fulfilled', value: { name: 'research', source: 'built-in' } });
     const allSkills = results[2].status === 'fulfilled' ? results[2].value : [];
-    expect(allSkills.map((skill) => skill.name).sort()).toEqual(['create-agent', 'data-analysis', 'document', 'presentation', 'research', 'skillify']);
+    expect(allSkills.map((skill) => skill.name).sort()).toEqual(['data-analysis', 'document', 'presentation', 'research', 'skillify']);
   });
 
   test('resolves bundled built-in resource roots for dev and packaged modes', () => {
@@ -966,9 +938,10 @@ describe('agent skills', () => {
   test('ships research as a built-in read-only isolated skill', async () => {
     const runtime = new AgentSkillRuntime({
       includeUserSkills: false,
-      executeIsolatedSkill: async ({ skill, renderedContent, readOnlyIsolated }) => ({
+      executeIsolatedSkill: async ({ renderedContent, readOnlyIsolated }) => ({
         agentId: 'research-child',
-        agentType: skill.agent ?? 'fork',
+        // Isolated skills always fork the current agent (Neva) — there is no per-skill agent type.
+        agentType: 'fork',
         status: readOnlyIsolated ? 'completed' : 'failed',
         result: renderedContent,
       }),

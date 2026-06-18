@@ -41,7 +41,7 @@ import { TextInputControl } from '../primitives/TextInputControl';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { collapseExpandedParentIds, outlinerChildren, parentIdsEmptiedByOutdent } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
-import { AgentIcon, CalendarIcon } from '../icons';
+import { CalendarIcon } from '../icons';
 import { fieldTypeLabel } from './fieldTypePresentation';
 import { FieldEntryGrid } from './FieldEntryGrid';
 import { FieldNameReusePopover } from './FieldNameReusePopover';
@@ -49,14 +49,13 @@ import { animateOutlinerRowMovementAfterNextCommit } from './rowMoveAnimation';
 import type { FieldReuseCandidate } from '../interactions/fieldReuseCandidates';
 import { fieldChoiceLabel } from '../../state/outlinerRows';
 import {
-  COMMAND_AGENT_FIELD_ID,
   COMMAND_SCHEDULE_FIELD_ID,
   isSystemFieldId,
   systemFieldDisplay,
   type SystemFieldDisplay,
 } from '../../../core/systemFields';
 import { SystemFieldValue } from './SystemFieldValue';
-import { CommandScheduleFieldValue, CommandAgentFieldValue } from './CommandFieldValue';
+import { CommandScheduleFieldValue } from './CommandFieldValue';
 import { SystemReferenceValues, isNodeReferenceSystemField } from './SystemReferenceValues';
 import { useFieldNameReuse } from './useFieldNameReuse';
 import { FieldValueOutliner } from './FieldValueOutliner';
@@ -145,13 +144,12 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const nameSelectAllRowsReadyRef = useRef(false);
-  // A command config field (Schedule / Agent) has a read-only name; its value cell
-  // is the interactive surface. Focus the value button (not the inert name input)
-  // when the row is navigated to, so Space summons the picker — matching the
-  // standard date field value's "navigate, Space, pick" flow.
+  // A command config field (Schedule) has a read-only name; its value cell is the
+  // interactive surface. Focus the value button (not the inert name input) when the
+  // row is navigated to, so Space summons the picker — matching the standard date
+  // field value's "navigate, Space, pick" flow.
   const commandValueRef = useRef<HTMLButtonElement>(null);
-  const isCommandSystemField = entryFieldDefId === COMMAND_SCHEDULE_FIELD_ID
-    || entryFieldDefId === COMMAND_AGENT_FIELD_ID;
+  const isCommandSystemField = entryFieldDefId === COMMAND_SCHEDULE_FIELD_ID;
   const descriptionReturnPlacementRef = useRef(cursorEnd());
   const fieldNameFocusTarget = focusTarget(props.entryId, props.parentId, props.panelId, 'field-name');
   const rowFocusTargetForEntry = rowFocusTarget(props.entryId, props.parentId, props.panelId);
@@ -251,13 +249,11 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const fieldConfig = field ? projectFieldConfig(props.index.byId, field) : undefined;
   const fieldType = fieldConfig?.fieldType ?? 'plain';
   // System fields have no backing FieldDef, so the field-type glyph would default
-  // to plain text. Give the command config rows a meaningful marker icon instead:
-  // a calendar for the date-native Schedule, an agent glyph for the Agent picker.
+  // to plain text. Give the command config row a meaningful marker icon instead:
+  // a calendar for the date-native Schedule.
   const systemMarkerIcon = systemDisplay?.kind === 'commandSchedule'
     ? CalendarIcon
-    : systemDisplay?.kind === 'commandAgent'
-      ? AgentIcon
-      : undefined;
+    : undefined;
   const drillDownId = field?.id ?? props.entryId;
   const fieldOwnerColor = resolveFieldOwnerColor(entry, field, props.index.byId);
 
@@ -624,22 +620,12 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   // daily-note date page) rejects `toggle_done` — render it read-only there.
   const ownerEditable = !(props.index.byId.get(props.parentId)?.locked ?? false);
   const valueControl = systemDisplay ? (
-    // A command node's two config fields are node-native system fields whose value
-    // editors write the gated scalars (`commandSchedule` / `commandAgent`) — the
-    // Schedule chip + builder + Run, and the executing-agent picker.
+    // A command node's config field is a node-native system field whose value editor
+    // writes the gated scalar (`commandSchedule`) — the Schedule chip + builder + Run.
     systemDisplay.kind === 'commandSchedule' ? (
       <CommandScheduleFieldValue
         nodeId={props.parentId}
         schedule={systemDisplay.schedule}
-        readOnly={!ownerEditable}
-        labels={tf.command}
-        run={props.run}
-        buttonRef={commandValueRef}
-      />
-    ) : systemDisplay.kind === 'commandAgent' ? (
-      <CommandAgentFieldValue
-        nodeId={props.parentId}
-        agent={systemDisplay.agent}
         readOnly={!ownerEditable}
         labels={tf.command}
         run={props.run}

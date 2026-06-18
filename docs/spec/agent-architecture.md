@@ -84,9 +84,14 @@ The only agent-to-agent relationship is **delegation** (a child run). Peer agent
 and every conversation's members are `{user, Neva}`.
 
 - **Delegation (a child run — NOT a separate kind of agent / NOT a member)** — Neva
-  spawns helper runs for a TASK (fork = the same agent continuing in a child run;
-  fresh = a sub-agent with its own identity + memory line, #164). Child runs carry
-  `parentRunId`; they are **not** conversation members and **not** peers. ✅ — and
+  spawns helper runs for a TASK. Delegation is **fork-only**: a fork *is* Neva
+  continuing in an isolated child context (it runs AS Neva — same
+  `executingAgentId`/`memoryOwnerAgentId`), never a second agent. The cross-agent
+  "fresh" path (a sub-agent with its own identity + memory line) is **removed**
+  (`single-agent-finish-collapse`): the `Agent` tool carries no `agent_type`, the
+  registry loads only Neva, and no file-backed `.agents/agents/*` definition is
+  loaded. `/research`, dream, and background self-work are all forks of Neva. Child
+  runs carry `parentRunId`; they are **not** conversation members and **not** peers. ✅ — and
   the code honors the model (`agent-run-unification`, shipped): a delegated run is
   an ordinary Run with its OWN `runs/<runId>/` ledger (its own seq space, replayed
   alone), kind `delegation`, joined to the parent by

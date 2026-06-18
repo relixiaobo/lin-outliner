@@ -107,7 +107,6 @@ const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   slashSkillsEnabled: true,
   compactEnabled: true,
   additionalSkillDirectories: [],
-  additionalAgentDirectories: [],
   providerTimeoutMs: null,
   providerMaxRetries: null,
   providerMaxRetryDelayMs: 60_000,
@@ -464,7 +463,6 @@ function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null
     slashSkillsEnabled: booleanOrDefault(input?.slashSkillsEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.slashSkillsEnabled),
     compactEnabled: booleanOrDefault(input?.compactEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.compactEnabled),
     additionalSkillDirectories: normalizeStringList(input?.additionalSkillDirectories),
-    additionalAgentDirectories: normalizeStringList(input?.additionalAgentDirectories),
     providerTimeoutMs: normalizeNullablePositiveInteger(input?.providerTimeoutMs, DEFAULT_AGENT_RUNTIME_SETTINGS.providerTimeoutMs),
     providerMaxRetries: normalizeNullableNonNegativeInteger(input?.providerMaxRetries, DEFAULT_AGENT_RUNTIME_SETTINGS.providerMaxRetries),
     providerMaxRetryDelayMs: normalizeNullableNonNegativeInteger(

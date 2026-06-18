@@ -5,7 +5,6 @@ import type {
   AgentDelegationPermissionMode,
   AgentProviderSettingsView,
   AgentReasoningLevel,
-  AgentStorageLocation,
   SkillDefinition,
 } from '../../api/types';
 import { parseAgentAuthoringInput, serializeAgentMarkdown } from '../../../core/agentMarkdown';
@@ -21,36 +20,26 @@ import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 
-// The create / edit / view surface for an agent definition. ONE abstraction for
-// every agent: two modes that convert on toggle (the form decision in
-// [[agent-authoring]]) — a structured **Form** and a raw **AGENT.md** editor.
-// Switching Form→Raw serializes the current fields, Raw→Form re-parses, so the
-// two views are always the same data. Non-writable definitions render through
-// the SAME editor, just **read-only** (every control disabled, the only action is
-// "Duplicate to my agents") — so bundled, external-directory, and user definitions
-// share the same viewing surface; the difference is only whether you can change it.
-// A new agent seeds a useful **scaffold** (sensible defaults + a starter persona)
-// so neither mode starts blank. The component owns its form state and is reset by
-// the parent via `key`.
+// The edit surface for the one agent, the built-in Neva (the one-Neva invariant:
+// no second agent can be created or loaded). ONE abstraction with two modes that
+// convert on toggle (the form decision in [[agent-authoring]]) — a structured
+// **Form** and a raw **AGENT.md** editor. Switching Form→Raw serializes the current
+// fields, Raw→Form re-parses, so the two views are always the same data. Neva is
+// edited in place (her edits persist to the settings overlay, not a file). The
+// component owns its form state and is reset by the parent via `key`.
 
 const REASONING_OPTIONS: readonly AgentReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
-type CatalogToolName = (typeof TOOL_CATALOG)[number];
 
 type EditorMode = 'form' | 'raw';
 
 interface AgentEditorProps {
-  // null → create mode (scaffold form). Otherwise edit (user/project) or
-  // read-only view (built-in / external non-writable).
-  agent: AgentDefinitionView | null;
+  agent: AgentDefinitionView;
   availableSkills: SkillDefinition[];
   // Provider connections, for the capability-driven model/effort selector. Null
   // while still loading.
   providerSettings: AgentProviderSettingsView | null;
   busy: boolean;
-  onCreate: (input: AgentAuthoringInput, storage: AgentStorageLocation) => void;
   onUpdate: (agentId: string, input: AgentAuthoringInput) => void;
-  onDelete: (agent: AgentDefinitionView) => void;
-  onDuplicate: (agent: AgentDefinitionView) => void;
   onCancel?: () => void;
 }
 
@@ -77,20 +66,13 @@ interface AgentFormState {
   disallowedTools: string[];
 }
 
-export function AgentEditor({ agent, availableSkills, providerSettings, busy, onCreate, onUpdate, onDelete, onDuplicate, onCancel }: AgentEditorProps) {
+export function AgentEditor({ agent, availableSkills, providerSettings, busy, onUpdate, onCancel }: AgentEditorProps) {
   const messages = useT();
   const t = messages.settings.agents;
-  // The built-in assistant (Neva) is directly editable — its edits persist to the
-  // settings overlay, not a file — but it can't be deleted (no file to remove); we
-  // still suppress the Delete action for it below. Other non-writable definitions
-  // (external read-only agent dirs) render through the SAME editor, just read-only.
-  const isBuiltIn = agent?.source === 'built-in';
-  const readOnly = agent ? !isWritableAgentDefinition(agent) : false;
   const skillNames = useMemo(() => availableSkills.map((skill) => skill.name), [availableSkills]);
-  const [form, setForm] = useState<AgentFormState>(() => seedForm(agent, skillNames, newAgentScaffold(t)));
+  const [form, setForm] = useState<AgentFormState>(() => seedForm(agent, skillNames));
   const [mode, setMode] = useState<EditorMode>('form');
   const [rawText, setRawText] = useState('');
-  const [storage, setStorage] = useState<AgentStorageLocation>('user');
   const [localError, setLocalError] = useState<string | null>(null);
 
   function update<K extends keyof AgentFormState>(key: K, value: AgentFormState[K]) {
@@ -119,21 +101,15 @@ export function AgentEditor({ agent, availableSkills, providerSettings, busy, on
       setLocalError(t.nameRequired);
       return;
     }
-    if (agent) onUpdate(agent.agentId, input);
-    else onCreate(input, storage);
+    onUpdate(agent.agentId, input);
   }
 
   const toolsAll = TOOL_CATALOG.every((name) => form.tools.includes(name)) && form.extraTools.length === 0;
-  const headerTitle = agent
-    ? (readOnly ? (agent.displayName || agent.name) : t.editTitle({ name: agent.displayName || agent.name }))
-    : t.createTitle;
 
   return (
     <div className="agent-editor">
       <header className="agent-editor-header">
-        <h4 className="agent-profile-title">{headerTitle}</h4>
-        {/* The mode toggle stays interactive even for a read-only built-in, so a
-            user can flip to Raw to read its AGENT.md before duplicating. */}
+        <h4 className="agent-profile-title">{t.editTitle({ name: agent.displayName || agent.name })}</h4>
         <SegmentedControl<EditorMode>
           label={t.modeLabel}
           onChange={switchMode}
@@ -151,7 +127,6 @@ export function AgentEditor({ agent, availableSkills, providerSettings, busy, on
             aria-label={t.rawLabel}
             className="agent-profile-prompt-editor agent-editor-raw"
             onChange={(event) => { setRawText(event.target.value); setLocalError(null); }}
-            readOnly={readOnly}
             spellCheck={false}
             value={rawText}
           />
@@ -160,13 +135,12 @@ export function AgentEditor({ agent, availableSkills, providerSettings, busy, on
         <>
           <div className="inset-card agent-editor-fields" role="group">
             <Field as="label" className="settings-sheet-row" label={t.nameLabel} labelClassName="settings-sheet-row-label">
-              <Input className="settings-sheet-row-input" label={t.nameLabel} onChange={(e) => update('name', e.target.value)} placeholder={t.namePlaceholder} readOnly={readOnly} value={form.name} variant="bare" />
+              <Input className="settings-sheet-row-input" label={t.nameLabel} onChange={(e) => update('name', e.target.value)} placeholder={t.namePlaceholder} value={form.name} variant="bare" />
             </Field>
             <Field as="label" className="settings-sheet-row" label={t.descriptionLabel} labelClassName="settings-sheet-row-label">
-              <Input className="settings-sheet-row-input" label={t.descriptionLabel} onChange={(e) => update('description', e.target.value)} placeholder={t.descriptionPlaceholder} readOnly={readOnly} value={form.description} variant="bare" />
+              <Input className="settings-sheet-row-input" label={t.descriptionLabel} onChange={(e) => update('description', e.target.value)} placeholder={t.descriptionPlaceholder} value={form.description} variant="bare" />
             </Field>
             <AgentModelEffortSelector
-              disabled={readOnly}
               effort={form.effort}
               effortLabel={t.thinkingLevel}
               inheritLabel={t.effortDefault}
@@ -177,43 +151,10 @@ export function AgentEditor({ agent, availableSkills, providerSettings, busy, on
               onModelChange={(value) => update('model', value)}
               settings={providerSettings}
             />
-            {/* permissionMode / maxTurns / background only steer delegation child
-                runs — they have no effect on the foreground assistant loop. Hide
-                them for the built-in Neva so the editor never offers a control that
-                does nothing; they stay for file-backed delegation agents. */}
-            {!isBuiltIn && (
-              <>
-                <Field as="div" className="settings-sheet-row settings-sheet-row-control" label={t.permissionMode} labelClassName="settings-sheet-row-label">
-                  <SegmentedControl<'' | AgentDelegationPermissionMode>
-                    disabled={readOnly}
-                    label={t.permissionMode}
-                    onChange={(value) => update('permissionMode', value)}
-                    options={[
-                      { value: '', label: t.permissionInherit },
-                      { value: 'restricted', label: t.restricted },
-                    ]}
-                    value={form.permissionMode}
-                  />
-                </Field>
-                <Field as="label" className="settings-sheet-row" label={t.maxTurns} labelClassName="settings-sheet-row-label">
-                  <Input className="settings-sheet-row-input" label={t.maxTurns} min={1} onChange={(e) => update('maxTurns', e.target.value)} placeholder={t.maxTurnsPlaceholder} readOnly={readOnly} type="number" value={form.maxTurns} variant="bare" />
-                </Field>
-                <div className="settings-sheet-row settings-sheet-row-switch">
-                  <div className="settings-sheet-row-text">
-                    <span className="settings-sheet-row-label">{t.backgroundLabel}</span>
-                    <span className="agent-editor-field-hint">{t.backgroundSublabel}</span>
-                  </div>
-                  <SwitchControl checked={form.background} disabled={readOnly} label={t.backgroundLabel} onCheckedChange={(v) => update('background', v)}>
-                    <SwitchMark checked={form.background} />
-                  </SwitchControl>
-                </div>
-              </>
-            )}
           </div>
 
           <ToggleList
             ariaLabel={t.toolsLabel}
-            disabled={readOnly}
             footnote={toolsAll ? t.toolsAllEnabled : t.toolsSublabel}
             items={TOOL_CATALOG.map((name) => ({ key: name, label: name, on: form.tools.includes(name) }))}
             label={t.toolsLabel}
@@ -223,7 +164,6 @@ export function AgentEditor({ agent, availableSkills, providerSettings, busy, on
 
           <ToggleList
             ariaLabel={t.skillsLabel}
-            disabled={readOnly}
             emptyText={t.skillsEmpty}
             footnote={t.skillsSublabel}
             items={availableSkills.map((skill) => ({ key: skill.name, label: skill.displayName || skill.name, on: form.skills.includes(skill.name) }))}
@@ -233,77 +173,25 @@ export function AgentEditor({ agent, availableSkills, providerSettings, busy, on
           />
 
           <Field as="label" className="agent-editor-persona" label={t.personaPromptLabel} labelClassName="agent-profile-field-label">
-            <textarea aria-label={t.personaPromptLabel} className="agent-profile-prompt-editor" onChange={(e) => update('body', e.target.value)} placeholder={t.personaPlaceholder} readOnly={readOnly} value={form.body} />
+            <textarea aria-label={t.personaPromptLabel} className="agent-profile-prompt-editor" onChange={(e) => update('body', e.target.value)} placeholder={t.personaPlaceholder} value={form.body} />
           </Field>
         </>
       )}
 
-      {!agent ? (
-        <Field as="div" className="settings-sheet-row settings-sheet-row-control" label={t.storageLabel} labelClassName="settings-sheet-row-label">
-          <SegmentedControl<AgentStorageLocation>
-            label={t.storageLabel}
-            onChange={setStorage}
-            options={[
-              { value: 'user', label: t.storageUser },
-              { value: 'project', label: t.storageProject },
-            ]}
-            value={storage}
-          />
-        </Field>
-      ) : null}
-
       {localError ? <div className="agent-settings-alert" role="alert"><span>{localError}</span></div> : null}
 
       <div className="agent-editor-actions">
-        {readOnly && agent ? (
-          // External read-only definitions (e.g. an additional agent directory):
-          // viewable here, duplicated to edit. The built-in is no longer read-only.
-          <>
-            {onCancel ? (
-              <Button disabled={busy} onClick={onCancel} variant="ghost">
-                {messages.dialog.cancel}
-              </Button>
-            ) : <span />}
-            <span className="agent-editor-actions-right">
-              <Button disabled={busy} onClick={() => onDuplicate(agent)} variant="primary">
-                {t.duplicateToMine}
-              </Button>
-            </span>
-          </>
-        ) : agent ? (
-          <>
-            {/* The built-in assistant is editable but not deletable — it is the one
-                agent that always exists, and it has no file to remove. */}
-            {isBuiltIn ? <span /> : (
-              <Button className="agent-editor-delete" disabled={busy} onClick={() => onDelete(agent)} variant="danger">
-                {t.deleteAgent}
-              </Button>
-            )}
-            <span className="agent-editor-actions-right">
-              {onCancel ? (
-                <Button disabled={busy} onClick={onCancel} variant="ghost">
-                  {messages.dialog.cancel}
-                </Button>
-              ) : null}
-              <Button disabled={busy} onClick={submit} variant="primary">
-                {t.saveAgent}
-              </Button>
-            </span>
-          </>
-        ) : (
-          <>
-            {onCancel ? (
-              <Button disabled={busy} onClick={onCancel} variant="ghost">
-                {messages.dialog.cancel}
-              </Button>
-            ) : <span />}
-            <span className="agent-editor-actions-right">
-              <Button disabled={busy} onClick={submit} variant="primary">
-                {t.createAgent}
-              </Button>
-            </span>
-          </>
-        )}
+        <span />
+        <span className="agent-editor-actions-right">
+          {onCancel ? (
+            <Button disabled={busy} onClick={onCancel} variant="ghost">
+              {messages.dialog.cancel}
+            </Button>
+          ) : null}
+          <Button disabled={busy} onClick={submit} variant="primary">
+            {t.saveAgent}
+          </Button>
+        </span>
       </div>
     </div>
   );
@@ -315,12 +203,11 @@ interface ToggleListProps {
   items: Array<{ key: string; label: string; on: boolean }>;
   footnote?: string;
   emptyText?: string;
-  disabled?: boolean;
   onToggle: (key: string) => void;
   toggleLabel: (key: string) => string;
 }
 
-function ToggleList({ ariaLabel, label, items, footnote, emptyText, disabled, onToggle, toggleLabel }: ToggleListProps) {
+function ToggleList({ ariaLabel, label, items, footnote, emptyText, onToggle, toggleLabel }: ToggleListProps) {
   if (items.length === 0 && emptyText) {
     return (
       <InsetGroup ariaLabel={ariaLabel} label={label} footnote={footnote}>
@@ -335,7 +222,7 @@ function ToggleList({ ariaLabel, label, items, footnote, emptyText, disabled, on
           key={item.key}
           label={item.label}
           trailing={(
-            <SwitchControl checked={item.on} disabled={disabled} label={toggleLabel(item.key)} onCheckedChange={() => onToggle(item.key)}>
+            <SwitchControl checked={item.on} label={toggleLabel(item.key)} onCheckedChange={() => onToggle(item.key)}>
               <SwitchMark checked={item.on} />
             </SwitchControl>
           )}
@@ -349,24 +236,7 @@ function toggleMember(list: string[], member: string): string[] {
   return list.includes(member) ? list.filter((item) => item !== member) : [...list, member];
 }
 
-// A fresh agent is pre-filled with a useful scaffold (real default values, not
-// empty placeholders), so the Form starts populated and the Raw AGENT.md is a
-// fill-in template rather than a bare `name: ""`. Tools default to all-on
-// (unrestricted) and `model` to inherit, so neither shows in Raw — the secure,
-// minimal defaults. Text comes from i18n so it follows the display language.
-function newAgentScaffold(t: { namePlaceholder: string; descriptionPlaceholder: string; scaffoldBody: string }): AgentAuthoringInput {
-  return {
-    name: t.namePlaceholder,
-    description: t.descriptionPlaceholder,
-    body: t.scaffoldBody,
-    effort: 'medium',
-    permissionMode: 'restricted',
-    maxTurns: 20,
-  };
-}
-
-function seedForm(agent: AgentDefinitionView | null, skillNames: string[], scaffold: AgentAuthoringInput): AgentFormState {
-  if (!agent) return inputToForm(scaffold, skillNames);
+function seedForm(agent: AgentDefinitionView, skillNames: string[]): AgentFormState {
   return inputToForm(
     {
       name: agent.displayName || agent.name,
@@ -418,28 +288,14 @@ function isReasoningOption(value: string): value is AgentReasoningLevel {
   return (REASONING_OPTIONS as readonly string[]).includes(value);
 }
 
-function isCatalogToolName(value: string): value is CatalogToolName {
+function isCatalogToolName(value: string): value is (typeof TOOL_CATALOG)[number] {
   return (TOOL_CATALOG as readonly string[]).includes(value);
 }
 
-function isWritableAgentDefinition(agent: AgentDefinitionView): boolean {
-  if (typeof agent.writable === 'boolean') return agent.writable;
-  if (agent.source === 'built-in' || agent.rootDir === 'built-in') return false;
-  const rootDir = normalizeAgentPath(agent.rootDir);
-  const agentFile = normalizeAgentPath(agent.agentFile);
-  const agentFileName = '/AGENT.md';
-  if (!rootDir || agentFile !== `${rootDir}${agentFileName}`) return false;
-  const marker = '/.agents/agents/';
-  const markerIndex = rootDir.indexOf(marker);
-  if (markerIndex < 0) return false;
-  const slug = rootDir.slice(markerIndex + marker.length);
-  return slug.length > 0 && !slug.includes('/');
-}
-
-function normalizeAgentPath(value: string): string {
-  return value.replace(/\\/g, '/').replace(/\/+$/g, '');
-}
-
+// `permissionMode` / `maxTurns` / `background` have no dedicated Form control (only
+// name / description / model / effort / tools / skills / persona do). They are still
+// seeded and re-serialized here so a Form-mode save never clobbers values authored in
+// Raw mode — the same lossless-preservation rule as non-catalog tools. Edit them in Raw.
 function buildInput(form: AgentFormState): AgentAuthoringInput {
   const selected = TOOL_CATALOG.filter((name) => form.tools.includes(name));
   const unrestricted = selected.length === TOOL_CATALOG.length && form.extraTools.length === 0;

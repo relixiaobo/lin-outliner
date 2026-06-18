@@ -237,7 +237,7 @@ test.describe('agent settings window', () => {
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
-    }).toMatchObject({ agentId: 'built-in:tenon:assistant', mode: 'configure' });
+    }).toMatchObject({ agentId: 'built-in:tenon:assistant' });
 
     await settings.getByRole('button', { name: 'self', exact: true }).click();
     await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
@@ -246,23 +246,22 @@ test.describe('agent settings window', () => {
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
-    }).toMatchObject({ agentId: 'user:mock:self', mode: 'configure' });
+    }).toMatchObject({ agentId: 'user:mock:self' });
   });
 
-  test('opens the built-in Tenon agent config: read-only except an editable model/effort', async ({ page }) => {
+  test('opens the built-in Tenon agent config: editable Neva profile with Save and no Delete', async ({ page }) => {
     const config = await openAgentConfig(page, 'built-in%3Atenon%3Aassistant');
-    await expect(config.getByRole('heading', { name: 'Neva' })).toBeVisible();
+    // Both the window title and the editor header read "Edit Neva".
+    await expect(config.getByRole('heading', { name: 'Edit Neva' }).first()).toBeVisible();
     await expect(config.getByText('Default Tenon assistant profile.')).toBeVisible();
-    await expect(config.getByText('read-only except for the model')).toBeVisible();
     await expect(config.getByLabel('Name')).toHaveValue('Neva');
-    await expect(config.getByLabel('Name')).not.toBeEditable();
-    // The built-in owns its model/effort through the settings overlay: the selector
-    // stays editable and the profile gets a real Save (no Delete), alongside Duplicate.
-    // Provider is the always-present entry point (Model appears once a provider is set).
+    // The one-Neva invariant removed the create surface, so Neva stays fully editable
+    // (Provider/model included) and the profile gets a real Save — never a Delete or a
+    // Duplicate, both of which would imply a second agent.
     await expect(config.getByLabel('Provider')).toBeEnabled();
     await expect(config.getByRole('button', { name: 'Save', exact: true })).toBeVisible();
     await expect(config.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
-    await expect(config.getByRole('button', { name: 'Duplicate to my agents' })).toBeVisible();
+    await expect(config.getByRole('button', { name: 'Duplicate to my agents' })).toHaveCount(0);
   });
 
   test('agent profile settings deep links resolve to the Agent Profiles list', async ({ page }) => {
@@ -273,50 +272,17 @@ test.describe('agent settings window', () => {
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
-    }).toMatchObject({ agentId: 'user:mock:self', mode: 'configure' });
+    }).toMatchObject({ agentId: 'user:mock:self' });
   });
 
-  test('new-agent settings deep links resolve to the Agent Profiles list', async ({ page }) => {
-    const settings = await openSettings(page, '&category=agents&agentMode=create');
-    await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
-    await expect(settings.locator('.agent-editor')).toHaveCount(0);
-    await expect(settings.getByRole('list', { name: 'Agent profiles' })).toBeVisible();
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
-    }).toMatchObject({ mode: 'create' });
-  });
-
-  test('settings deep links treat create as an agent id unless agentMode requests creation', async ({ page }) => {
+  test('settings deep links treat agent=create as an ordinary agent id', async ({ page }) => {
     const settings = await openSettings(page, '&category=agents&agent=create');
     await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
     await expect(settings.locator('.agent-editor')).toHaveCount(0);
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
-    }).toMatchObject({ agentId: 'create', mode: 'configure' });
-  });
-
-  test('renders additional-directory agent profiles as read-only', async ({ page }) => {
-    const settings = await openSettings(page, '', { additionalAgentDirectoryAgent: true });
-    await settings.getByRole('button', { name: 'Agent Profiles', exact: true }).click();
-    await settings.getByRole('button', { name: 'external-reviewer', exact: true }).click();
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
-    }).toMatchObject({ agentId: 'user:external123:external-reviewer', mode: 'configure' });
-    await expect(settings.locator('.settings-toolbar-title')).toHaveText('Agent Profiles');
-    await expect(settings.locator('.agent-editor')).toHaveCount(0);
-
-    const config = await openAgentConfig(page, 'user%3Aexternal123%3Aexternal-reviewer', 'configure', { additionalAgentDirectoryAgent: true });
-    const editor = config.locator('.agent-editor');
-    await expect(config.getByRole('heading', { name: 'Edit external-reviewer' })).toBeVisible();
-    await expect(editor.getByLabel('Name')).not.toBeEditable();
-    await expect(editor.getByLabel('Thinking Level')).toBeDisabled();
-    await expect(editor.getByRole('switch', { name: 'Toggle file_read' })).toBeDisabled();
-    await expect(editor.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
-    await expect(editor.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
-    await expect(editor.getByRole('button', { name: 'Duplicate to my agents' })).toBeVisible();
+    }).toMatchObject({ agentId: 'create' });
   });
 
   test('lets users view, edit, and forget agent memory entries', async ({ page }) => {
@@ -420,7 +386,8 @@ test.describe('agent settings window', () => {
 test.describe('agent and Channel config windows', () => {
   test('renders the agent config as a titled child window with fixed actions', async ({ page }) => {
     const config = await openAgentConfig(page, 'user%3Amock%3Aself');
-    await expect(config.getByRole('heading', { name: 'Edit self' })).toBeVisible();
+    // Both the window title and the editor header read "Edit self".
+    await expect(config.getByRole('heading', { name: 'Edit self' }).first()).toBeVisible();
     await expect(config.getByRole('button', { name: 'Cancel' })).toBeVisible();
     await expect(config.getByRole('button', { name: 'Save', exact: true })).toBeVisible();
 
@@ -464,7 +431,8 @@ test.describe('agent and Channel config windows', () => {
   test('uses design-system controls inside the Channel config window', async ({ page }) => {
     const config = await openChannelConfig(page, '', 'create');
     await expect(config.locator('.channel-config-seed.settings-sheet-row-input')).toBeVisible();
-    await expect.poll(async () => config.locator('.channel-config-member-checkbox .checkbox-mark').count()).toBeGreaterThan(0);
+    // The one-Neva collapse removed the member roster, so the window is name + seed
+    // only — no raw checkboxes, just design-system controls.
     await expect(config.locator('input[type="checkbox"]:not(.agent-settings-checkbox input)')).toHaveCount(0);
 
     const shadows = await config.locator('.settings-sheet-actions').evaluate((element) => {
@@ -482,22 +450,6 @@ test.describe('agent and Channel config windows', () => {
     expect(shadows.footer).toBe(shadows.token);
   });
 
-  test('removes an invited member from the Channel config window', async ({ page }) => {
-    const config = await openChannelConfig(page, 'mock-agent-channel-planning');
-    const members = config.getByRole('list', { name: 'Channel members' });
-    await expect(members.getByText('@self')).toBeVisible();
-
-    await config.getByRole('button', { name: 'Remove from channel' }).click();
-
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'agent_remove_conversation_member')?.args;
-    }).toMatchObject({
-      conversationId: 'mock-agent-channel-planning',
-      agentId: 'user:mock:self',
-    });
-    await expect(members.getByText('@self')).toHaveCount(0);
-  });
 });
 
 // The per-provider config window (?surface=provider-config) — a standalone surface
@@ -636,11 +588,10 @@ async function openProviderConfig(page: Page, provider: string, mode = 'configur
 async function openAgentConfig(
   page: Page,
   agent: string,
-  mode = 'configure',
   options: Parameters<typeof installElectronMock>[1] = {},
 ): Promise<Locator> {
   await installElectronMock(page, options);
-  await page.goto(`/?surface=agent-config&agent=${agent}&mode=${mode}`);
+  await page.goto(`/?surface=agent-config&agent=${agent}`);
   const config = page.locator('.agent-config-window');
   await expect(config).toBeVisible();
   await expect(config.locator('.agent-editor-actions')).toBeVisible();

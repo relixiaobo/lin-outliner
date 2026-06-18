@@ -97,21 +97,19 @@ toggles the owner node's done state.
 `refresh_search_node_results`.
 
 ### Document — command nodes (scheduled routines)
-`set_command_node`, `set_command_schedule`, `set_command_agent`,
-`mark_command_fired`.
+`set_command_node`, `set_command_schedule`, `mark_command_fired`.
 
 A `command` node is **node-native**: its text content is a natural-language brief,
 its body (the non-field child outline) is the prompt detail, and its config lives
-in two real child field rows — `Schedule` and `Agent`. Arming its schedule makes
-it run unattended on a timer. (Design history: `docs/plans/archive/agent-scheduled-routines.md`.)
+in one real child field row — `Schedule`. Arming its schedule makes it run
+unattended on a timer. (Design history: `docs/plans/archive/agent-scheduled-routines.md`.)
 
 - `set_command_node(nodeId)` converts a plain content row into a `command` node
   (brief stays in the node's content), seeds the user-only `commandSchedule`
-  protected field, and seeds two `fieldEntry` children pointing at the built-in
-  system fields `sys:commandSchedule` / `sys:commandAgent` (Schedule first), whose
-  value editors write the gated scalars. Idempotent (find-or-create — a
-  re-conversion never duplicates a row). Drafting a command is allowed from any
-  origin.
+  protected field, and seeds a `fieldEntry` child pointing at the built-in system
+  field `sys:commandSchedule`, whose value editor writes the gated scalar.
+  Idempotent (find-or-create — a re-conversion never duplicates the row). Drafting
+  a command is allowed from any origin.
 - `set_command_schedule(nodeId, schedule?)` arms / changes / clears the schedule
   — a canonical `<endpoint> RRULE:...` string parsed by `dateSchedule.ts`. **The
   bright line: a command node's schedule is rejected unless `origin === 'user'`**
@@ -120,10 +118,6 @@ it run unattended on a timer. (Design history: `docs/plans/archive/agent-schedul
   schedule as text, but only the user can arm an unattended run. A non-empty
   value re-arms the watermark (`sysLastRunAt = now`); clearing it makes the node
   manual-only and leaves the watermark untouched.
-- `set_command_agent(nodeId, agent?)` picks which agent runs the command —
-  matches an `AgentDefinition.name` from the agent registry
-  (`agent_list_all_definitions`); empty/absent = the main agent. Agent-editable
-  (not part of the bright line — only arming the *schedule* is user-gated).
 - `mark_command_fired(nodeId, firedAt)` advances the system fire watermark
   (`sysLastRunAt`) after a successful run. **Forward-only** — a fire that captured
   an older sweep-start time never moves the watermark backward (so a long run that
@@ -144,13 +138,13 @@ never blocks the others or subsequent sweeps. A fire runs the brief as a
 inline in that conversation as a **child-run boundary row** (its final result
 lands in the channel as an expandable summary with a "View full run" link; see
 `agent-event-log-rendering.md`) and also surfaces as a task in its task panel.
-`commandAgent` selects the executing
-agent definition (`agent_type`); empty forks the otherwise-empty delivery
-conversation so the run executes under the main agent's identity and
-capabilities. The run prompt is the brief — the command's title plus its non-field
-child outline serialized as a nested bullet list (`commandBriefText`, with inline
-references reconstructed via reference markup so they survive); field-entry
-children (the Schedule / Agent rows) are config, not prompt, and are excluded. An
+Under the one-Neva invariant there is exactly one agent, so a scheduled command
+always forks the current agent (Neva), running under its identity and
+capabilities — a command never selects an executing agent. The run prompt is the
+brief — the command's title plus its non-field child outline serialized as a
+nested bullet list (`commandBriefText`, with inline references reconstructed via
+reference markup so they survive); field-entry children (the Schedule row) are
+config, not prompt, and are excluded. An
 empty brief is skipped (never fires, never advances the watermark). **Only a run
 that actually
 completes advances the watermark** — a failed run (no provider, bad key, rate
@@ -231,19 +225,12 @@ open their picker on **Space** (or click), mirroring the standard date field's
   is unchanged: only the generic field-value write path is bypassed, never the
   gate). The summary is built from the shared recurrence labels
   (`scheduleChipSummary`).
-- The **Agent** field row (`sys:commandAgent`) carries an **agent** marker icon;
-  when empty it shows the "Press Space to pick an agent…" placeholder, and when set
-  the chosen agent as plain text with a trailing chevron. Space or a click opens a
-  **standard outliner listbox** (`PopoverListbox`, the same surface as the
-  field-name / options pickers) populated from `agent_list_all_definitions`
-  ("Main agent" = empty = `set_command_agent(null)`). Picking the executor is not
-  user-gated.
 
-Navigating to either config row focuses its value cell (`OutlinerFieldRow`
-consumes both the field-name and row focus targets onto the value button), so the
-keyboard Space-to-pick affordance works after arrow navigation, not just on click.
+Navigating to the config row focuses its value cell (`OutlinerFieldRow` consumes
+both the field-name and row focus targets onto the value button), so the keyboard
+Space-to-pick affordance works after arrow navigation, not just on click.
 
-Both field editors honor the owner's edit lock. The prompt is everything else
+The field editor honors the owner's edit lock. The prompt is everything else
 under the command node (ordinary child rows) — edited as normal outline content,
 serialized to the run brief by `commandBriefText`.
 
@@ -347,13 +334,12 @@ run's rounds + per-run snapshot), `agent_payload_text`.
   `system:`) so the scoped `UndoManager` can separate user undo from agent
   undo. See `src/core/loroDocument.ts`.
 - `NodeType` reserves `command` plus `CommandNode.commandSchedule`,
-  `CommandNode.sysLastRunAt`, `CommandNode.sysLastAttemptAt`,
-  `CommandNode.commandAgent`, and `NodeBase.protectedFields`
+  `CommandNode.sysLastRunAt`, `CommandNode.sysLastAttemptAt`, and
+  `NodeBase.protectedFields`
   (descriptive metadata only — the bright line is enforced inline on the
   `command` node-type invariant, not on this array) for scheduled-routines work.
-  The two config field
-  rows surface those scalars through the built-in system fields
-  `sys:commandSchedule` / `sys:commandAgent` (see `src/core/systemFields.ts`).
+  The Schedule config field row surfaces that scalar through the built-in system
+  field `sys:commandSchedule` (see `src/core/systemFields.ts`).
 - When adding or renaming a command, update `DOCUMENT_COMMANDS` or
   `AGENT_COMMANDS` and the matching dispatcher in `src/main/documentService.ts`
   (and `src/main/agentRuntime.ts` for agent commands). Update this category
