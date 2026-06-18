@@ -171,7 +171,7 @@ Conceptual shape:
 interface AgentRuntimeClient {
   restoreLatestConversation(): Promise<AgentConversation>;
   restoreConversation(conversationId: string): Promise<AgentConversation>;
-  createConversation(options: { title: string; agentIds?: string[]; seedText?: string }): Promise<AgentConversation>;
+  createConversation(options: { title: string; seedText?: string }): Promise<AgentConversation>;
   closeConversation(conversationId: string): Promise<void>;
   sendMessage(conversationId: string, message: string, attachments?: AgentMessageAttachmentInput[]): Promise<void>;
   editMessage(conversationId: string, nodeId: string, message: string): Promise<void>;
@@ -471,7 +471,7 @@ for each:
   tool, present exactly when it is in hand, and are never duplicated in the prompt
   (the node conventions live in `agentNodeToolGuidance.ts`).
 - **Per-turn `<system-reminder>` blocks** carry dynamic state: current outliner
-  context, the user's view, DM/Channel environment, attachment metadata.
+  context, the user's view, the conversation environment, attachment metadata.
 
 The stable prompt is implemented in `src/main/agentSystemPrompt.ts` through the
 single `composeAgentPrompt(definition, context)` pipeline. Every stable block is
@@ -508,49 +508,34 @@ may still be defined in code, but they enter this composer as the same
 `AgentDefinition` shape as user/project agents; moving them to bundled read-only
 AGENT.md files would be packaging cleanup, not a separate prompt path.
 
-For Anthropic requests that can benefit from cross-agent prompt-cache reuse,
-Tenon splits the provider payload's system prompt at the L0 boundary in
-`applyAgentPromptCacheBreakpoints`. The L0 firmware block and the remaining
-stable prompt each keep a `cache_control` breakpoint; the provider's existing
-last-tool and last-user breakpoints remain, so the request stays within
+For Anthropic requests that can benefit from prompt-cache reuse across runs and
+fresh child runs, Tenon splits the provider payload's system prompt at the L0
+boundary in `applyAgentPromptCacheBreakpoints`. The L0 firmware block and the
+remaining stable prompt each keep a `cache_control` breakpoint; the provider's
+existing last-tool and last-user breakpoints remain, so the request stays within
 Anthropic's four-breakpoint budget. If Anthropic OAuth injected its own identity
 system block with a breakpoint, Tenon removes that extra breakpoint before the
-request leaves the runtime. The split is enabled only for multi-agent Channel
-member runs and fresh child runs; single-agent DMs, forked child runs,
-non-Anthropic providers, and prompts not produced by the unified composer keep
-the provider payload unchanged.
+request leaves the runtime. The split is enabled only for fresh child runs;
+forked child runs, non-Anthropic providers, and prompts not produced by the
+unified composer keep the provider payload unchanged.
 
-A Channel/DM member's system prompt also uses `composeAgentPrompt`: it receives
-the same L0 firmware as Neva, any applicable L1 modules, then its stable identity
-metadata — display name + mention, description, authored instructions, profile
-skills. Whether the member is in a DM or a Channel, who the other members are,
-and how it should communicate in a Channel are **environment**, so they ride the
-per-turn
-`environment` reminder (`buildConversationEnvironmentReminder`,
-`agentConversationEnvironmentReminder.ts`), never the prompt — keeping the same
-agent's prompt identical (and cacheable) across its DM and any Channel. The
-environment reminder is POV-specific (written for the in-flight run's executing
-member) and is appended in `deriveRuntimePiMessages` on every real reply run
-(keyed off conversation **identity** — the DM id prefix — not the live
-headcount, so a coordinator-only Channel is still a Channel), so it covers the
-main agent (whose prompt is built separately) and peers uniformly. (On the
-channel-POV branch it sits alongside the memory reminder; on the DM/linear path
-the memory reminder instead rides the persisted user prompt at user-turn time.)
-The Channel block carries the member roster and the rules
-(speak as yourself; others' turns are quoted context, never imitate them; hand
-off via `@<name>` only when better-suited; **only the member's final message is
-shared with other members — its thinking and tool steps stay private, so it
-leads with the result and keeps the final reply self-contained**). The DM block
-is 1:1 with the user (speak as yourself; no hand-off; stay within scope).
+Whatever varies per conversation or per run is **environment**, not identity, so
+it rides the per-turn `environment` reminder
+(`buildConversationEnvironmentReminder`,
+`agentConversationEnvironmentReminder.ts`), never the prompt — keeping Neva's
+prompt identical (and cacheable) across every conversation. The environment
+reminder is single-agent: the conversation has exactly the user and Neva, with no
+member roster, no peers, and no `@`-routing or hand-off. It is appended in
+`deriveRuntimePiMessages` on every real reply run, alongside the memory reminder.
 
 The prompt deliberately omits the **environment** — what Tenon is (an outliner
 and second brain) and what good structure looks like here (atomic nodes, clean
 nesting, one idea per line). Environment is not identity: keeping it out leaves
-the same agent's prompt identical and cacheable across every conversation, DM,
-and Channel. (Stable product framing and structure taste are intended to ride a
-once-at-conversation-start reminder — like the user-view snapshot, sent once and
-not repeated; until then they surface implicitly through the tools and the
-outliner-context/user-view reminders.)
+Neva's prompt identical and cacheable across every conversation. (Stable product
+framing and structure taste are intended to ride a once-at-conversation-start
+reminder — like the user-view snapshot, sent once and not repeated; until then
+they surface implicitly through the tools and the outliner-context/user-view
+reminders.)
 
 Avoid putting implementation details such as React component names or internal
 TypeScript function names into the system prompt unless a tool needs them.
@@ -719,14 +704,10 @@ These agent-level tools are active on top of the P0 local/document surface.
 | `runtime_status` | self-observation | Yes | No | Read redacted local runtime/provider/settings status. |
 | `config` | cc-2.1-style config tool | Yes | Reads no, writes yes | Read or update whitelisted runtime settings through runtime-owned paths. |
 | `doctor` | self-diagnostics | Yes | No | Run read-only local agent diagnostics. |
-| `dream` | Tenon agent memory Dream | Yes | Yes | Request runtime-owned memory consolidation for the current agent; cannot specify facts to save. |
-| `channel_create` | local Channel organization | Yes | No | User-facing coordinator creates a named local Channel for an explicitly requested persistent working group; selected agents are invited through the same runtime path as the Channel config window. |
-| `channel_update` | local Channel organization | Yes | No | User-facing coordinator renames a local Channel and/or adds/removes invited agent members; DMs and `#General` are immutable through this tool. |
+| `dream` | Tenon agent memory Dream | Yes | Yes | Request runtime-owned memory consolidation for Neva; cannot specify facts to save. |
 | `skill` | local skill invocation | Yes | Usually no | Invoke installed or built-in skills; `/skillify` and `/create-agent` are built-in user- and model-invocable authoring workflows. |
 
 `task_stop` is active because Tenon's `bash` tool supports background commands.
-`channel_create` and `channel_update` are active only on the main coordinator's
-tool registry; child/delegated runs do not receive them.
 
 ### P2 Tools
 
@@ -760,17 +741,13 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
   path uses the shared `date` schedule primitive plus a minimum-evidence gate;
   `/dream` forces the same no-tools path and consolidates existing memory when
   there is no new evidence. The foreground `dream` tool is trigger-only: it lets
-  the model request the same runtime-owned path for the current agent, but it
-  cannot pass facts to save, choose a different agent, or write memory directly.
-  Dream reads raw conversation/run events since its per-conversation watermark,
-  appends scoped `memory.entry_*` events with provenance, records
-  `dream.completed` in the pool's memory log, and writes a principal-anchored
-  reflective run meta entry (anchored to the pool the Dream maintains; the
-  executing agent is recorded separately). Manual `/dream` and foreground
-  `dream` tool triggers also write a conversation-side `dream.finished` marker
-  so the chat stream shows running/completed feedback.
-- `channel_create` / `channel_update` for local Channel organization by the
-  user-facing coordinator.
+  the model request the same runtime-owned path for Neva, but it cannot pass
+  facts to save or write memory directly. Dream reads raw conversation/run events
+  since its per-conversation watermark, appends scoped `memory.entry_*` events
+  with provenance to Neva's single believer-keyed pool, records `dream.completed`
+  in the pool's memory log, and writes a reflective run meta entry. Manual
+  `/dream` and foreground `dream` tool triggers also write a conversation-side
+  `dream.finished` marker so the chat stream shows running/completed feedback.
 - `web_search` / `web_fetch` for web access.
 
 Do not use:

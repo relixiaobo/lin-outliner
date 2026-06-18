@@ -105,21 +105,23 @@ The old mutable chat snapshot store is no longer part of the runtime.
 `AgentRenderProjection` is also the authority for the current conversation UI:
 
 - `entities.messages[*].actor` identifies who produced each message. The
-  renderer resolves it through `members[]` and the agent-definition registry for
-  display names, `@` mentions, and the deterministic circular identity chip.
-  Channel rows show this attribution for every assistant message, including the
-  coordinator; a departed member falls back to the recorded id/mention rather
-  than erasing historical identity.
+  conversation is single-agent — members are always `{user, Neva}` — so the
+  renderer resolves the actor through `members[]` and the agent-definition
+  registry for the display name and the deterministic circular identity chip.
+  There is no `@`-mention routing; the handle (`assistant`) is the stable internal
+  id, not a user-facing addressing affordance. A message whose recorded actor no
+  longer resolves falls back to the recorded id rather than erasing historical
+  identity.
 - Message `createdAt`/`updatedAt`, `providerId`, `modelId`, and `usage` are quiet
   metadata. The transcript renders gap-based time separators, and the native
   message context menu's Details action opens an anchored popover with speaker,
   timestamp, model/provider, and token usage. These details are derived from the
   event log; no separate metadata store is introduced.
-- The composer footer shows **no model identity control**. A DM talks to an agent
-  identity and a channel to a roster — not to a single model — so the footer never
-  presents model/provider as a primary conversation affordance (it would imply one
-  global model and mislead in channels where members may answer with different
-  profiles). Model/provider/effort stay visible only where they are diagnostic or
+- The composer footer shows **no model identity control**. A conversation talks to
+  an agent identity (Neva), not to a single model, so the footer never presents
+  model/provider as a primary conversation affordance (it would imply the model is
+  the conversation's identity rather than a property of the agent profile).
+  Model/provider/effort stay visible only where they are diagnostic or
   configuration-relevant: the Details popover, the run/debug panel, ledger
   metadata, and the agent profile (where the model is actually chosen). See
   `agent-delegation-runtime.md` for how a profile owns model + effort.
@@ -255,6 +257,8 @@ Current filesystem layout:
   agents/
     <agentId>/
       identity.json
+  principals/
+    <agent-<agentId> | user-<userId>>/
       memory/
         events.jsonl
   conversations/
@@ -330,7 +334,11 @@ seq-log primitive for JSONL serialization, per-key write queues, latest-seq
 caches, chunked physical-tail reads, offset-bounded replay, and file-size
 checkpoint guards. Conversation replay still joins the conversation segment with
 its indexed JOINED run logs (delegation ledgers excluded) and sorts by `seq`;
-memory uses the same primitive with its own per-principal key, and delegated-run
+memory uses the same primitive keyed by principal directory. The on-disk store
+stays principal-keyed (`principals/<agent-…|user-…>/memory/events.jsonl`), but
+every memory read/write is now pinned to the single believer
+(`agent:built-in:tenon:assistant`) — one writable first-person pool, not a pool
+per principal. Delegated-run
 ledgers use it with the memory log's torn-tail policy (drop a torn FINAL line on
 read, truncate it on the next append's repair; mid-file corruption still fails
 loudly).
@@ -490,14 +498,17 @@ restores). The same dock-open + window-focus signal (reported to main as the *vi
 conversation*) governs OS-banner suppression: a banner is suppressed only when the
 user is actually looking at that task's conversation.
 
-Agent-owned memory events live in the separate per-agent memory log.
-`memory.entry_*` events project to editable durable memory entries;
-`dream.completed` projects the latest Dream watermark and audit summary.
-Agent-anchored Dream run meta is indexed per agent and added to the render task
-projection as a read-only Dream task. A conversation-triggered Dream also writes
-a conversation-side `dream.finished` marker keyed to a hidden user-message
-anchor. That marker is for chat-stream placement only; the memory audit remains
-in the per-agent memory log.
+Memory events live in the believer-keyed memory log (the single pool, on disk
+under the believer principal directory). `memory.entry_*` events project to
+editable durable memory entries; `dream.completed` projects the latest Dream
+watermark and audit summary. There is **one** Dream — a conversation-evidence
+Dream that consolidates the user's member conversations into the believer pool in
+a single first-person framing; the former agent-self / run-log Dream is cut (no
+run-evidence harvesting, no per-agent self-model dream). The believer-anchored
+Dream run meta is indexed and added to the render task projection as a read-only
+Dream task. A conversation-triggered Dream also writes a conversation-side
+`dream.finished` marker keyed to a hidden user-message anchor. That marker is for
+chat-stream placement only; the memory audit remains in the believer memory log.
 
 ## Message Model
 
@@ -656,8 +667,8 @@ node data: a chip is a transcript chip when it has a `[data-agent-transcript-chi
 ancestor. That marker is set in exactly **one** place — the live assistant message
 body (`AgentAssistantContent`) — so every chip a live turn renders (answer prose,
 interim narration, and `file_write` / `file_edit` result chips) opens externally,
-while the **same** components on meta surfaces (compaction / child-run summaries, the
-child-run-details and PoV-inspector panels) have no such ancestor and keep the in-app
+while the **same** components on meta surfaces (compaction / child-run summaries and
+the child-run-details panel) have no such ancestor and keep the in-app
 preview. An outliner file reference is a node-model field, never under this marker, so
 it too keeps its in-app preview-pane click-to-open and native context menu unchanged.
 (The working file is path-addressed; durability is what Save-to-outliner / Export
@@ -827,12 +838,10 @@ interface AgentRenderProjection {
   revision: number;
   conversationTitle: string | null;
   activeRunId: string | null;
-  // Mode-specific run state (replaces the old overloaded `isStreaming`): DM
-  // composer state vs. Channel work surface never share a flag.
-  dmRunActive: boolean;                              // DM run in flight (composer stop/steer)
-  dmStreaming: AgentStreamingRenderState | null;     // DM streaming tail (null for Channels)
-  channelRunsActive: boolean;                        // any addressed Channel run active or pending
-  channelActivityEntries: AgentRenderActivityEntry[]; // per-run Channel activity (in-flow working row + per-run detail view)
+  // One run-active flag. Conversations are single-agent and inline-streaming, so
+  // there is no DM-vs-Channel split: a serial run is either in flight or not.
+  runActive: boolean;                                // serial run in flight (composer stop/steer)
+  streaming: AgentStreamingRenderState | null;       // the inline streaming tail
   model: Record<string, unknown>;
   thinkingLevel: string;
   pendingToolCallIds: string[];
@@ -846,31 +855,21 @@ Rules:
 
 - Completed rows are immutable by identity.
 - Only the active streaming row changes during token streaming.
-- `dmRunActive`/`dmStreaming` and `channelRunsActive`/`channelActivityEntries` are
-  mode-specific: every Channel keeps `dmRunActive` false so its work never drives
-  the composer's stop/steer, and a DM keeps the Channel fields empty. The split is
-  derived from Channel identity (`lin-agent-channel-*`) with a multi-agent roster
-  fallback for older fixtures; conversation `kind` is never stored.
-- A running Channel agent's live assistant content rides on
-  `channelActivityEntries[].streamingContent` for the per-run detail view, with
-  `streamingText` kept as the text-only fallback/summary. It never becomes a
-  transcript row — the Channel message stream is whole-utterance only (**delivery**
-  is atomic: the whole turn appears on completion). This is enforced in the
-  projection: `buildTranscriptRows` **suppresses any message whose producing run is
-  in the live active-run set** in a Channel, so an in-flight turn (its
-  thinking, interim narration, AND tool-call/segment events — not just streamed
-  text) is kept out of the transcript until the run leaves that set, at which point
-  its whole turn appears at once. The suppression is keyed off the **live**
-  in-memory active runs the runtime passes in (`options.activeRuns`), NOT the
-  persisted `status === 'running'`: a run orphaned `running` by a crash/quit is
-  absent from the live set, so its interrupted turn still renders rather than
-  silently vanishing. A child run anchored to a live parent turn is held back the
-  same way, so its boundary row never orphans to the transcript end while the
-  parent is hidden. (A DM streams its active turn live, so the suppression is gated
-  on the Channel activity surface.) On completion the turn renders through the same
-  **result-first fold** as a DM (final answer as prose, process collapsed behind
-  "Worked for …"); only the live-drill-in vs. inline-stream split differs between
-  the two modes.
+- `runActive`/`streaming` carry the single composer/stream state. There is no
+  separate channel work surface and no per-mode flag pair: every conversation
+  streams its active turn inline and drives the composer's stop/steer the same
+  way. Conversation `kind` is never stored, and there is no Channel-identity or
+  multi-agent-roster branch left to derive a mode from.
+- The active turn streams inline. Its in-flight thinking, interim narration, and
+  tool-call/segment events render live in the transcript through the streaming
+  tail (`streaming`); there is no whole-utterance-only delivery path and no
+  per-run channel activity surface. A run orphaned `running` by a crash/quit (absent
+  from the live in-memory active-run set the runtime passes in via
+  `options.activeRuns`, NOT merely persisted `status === 'running'`) still renders
+  its interrupted turn rather than silently vanishing. A child run anchored to a
+  live parent turn is folded into that turn (see the child-run rules below). On
+  completion the turn renders through the **result-first fold** (final answer as
+  prose, process collapsed behind "Worked for …").
 - Render flushes are coalesced to at most one per animation frame.
 - `compaction.completed` events become dedicated compaction rows keyed by the
   compact root message, with summary and trigger metadata in
@@ -880,12 +879,17 @@ Rules:
 - `dream.finished` events become dedicated Dream boundary rows keyed by their
   hidden anchor message, with status, processed counts, and memory-change counts
   in `entities.dreams`. Active manual `/dream` runs append a transient
-  `activeDream` row until the marker is written.
+  `activeDream` row until the marker is written. (The Dream's durable history is
+  surfaced in Settings → Agent "Memory & activity" via the
+  `agent_list_dream_history` IPC; `buildAgentTaskEntries` filters Dream TASK
+  entities out of the in-conversation task panel, which keeps only child-run
+  tasks. `AgentRenderDreamTaskEntity.principal` remains a constant = the believer
+  and no longer labels separate pools.)
 - `child_run.*` events back `entities.childRuns` — the conversation's permanent
   record of a run, whose final result is an expandable summary with a "View full
-  run" link into the full transcript. **Where** that record renders depends on who
-  spawned the run:
-  - **DM fold (`parentToolCallId` set).** In a DM a
+  run" link into the full transcript. **Where** that record renders depends on
+  whether the run was spawned inside a turn:
+  - **Turn fold (`parentToolCallId` set).** A
     child run is the agent's own implicit behavior — it quietly delegated a slice
     of the current turn — so it gets **no conversation-level boundary row**.
     Instead it folds into the spawning turn's process: the `agent` tool-call block
@@ -895,22 +899,15 @@ Rules:
     own message, it is turn-anchored and branch-pruned with that message — editing
     the user message that started the turn removes it, with no orphan left at the
     transcript end.
-  - **Boundary row (Channel, or a parentless run).** A run in a Channel, or a
-    parentless run (a scheduled command fire), becomes a
-    dedicated **child-run boundary row** in `transcriptRows` (kind `'child-run'`,
-    keyed by run id). A parented channel run anchors right after its tool-result
-    row, else after the assistant message that issued the call, and **suppresses
-    that tool-call block** so the run reads as one boundary, not a tool interaction
-    (an assistant turn left with no other blocks is dropped); a parentless run is
-    ordered by start time among the messages.
-  - The projection skip (no boundary row) and the renderer keep (tool-call block
-    stays) are gated on the **same** Channel-surface flag, so a Channel never loses
-    its child run to a dropped-but-not-folded gap. A running row shows a
-    live status line and is not yet expandable; once it seals it expands to the
-    result (or error) and the full-run link. Boundary rows live only in
-    `transcriptRows`, never in the active `rows` path.
+  - **Boundary row (a parentless run).** A parentless run (a scheduled command
+    fire) becomes a dedicated **child-run boundary row** in `transcriptRows`
+    (kind `'child-run'`, keyed by run id), ordered by start time among the
+    messages.
+  - A running boundary row shows a live status line and is not yet expandable;
+    once it seals it expands to the result (or error) and the full-run link.
+    Boundary rows live only in `transcriptRows`, never in the active `rows` path.
 - Long output rows are collapsed by default.
-- **Result-first turn fold (DM and Channel alike).** Every assistant turn renders
+- **Result-first turn fold.** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last
   thinking/tool block and shows as prose. A turn-level **"Worked for …"** fold sits
   above that final answer and collapses/expands every earlier block. When expanded,
@@ -918,10 +915,8 @@ Rules:
   first") renders as normal prose, while adjacent thinking/tool blocks collapse
   into compact process groups with their own detail disclosure. A turn with no
   thinking/tools is a direct answer and renders without a fold. This is one
-  mechanism, not two: there is no channel-specific text-only path (a Channel turn
-  renders the same fold once its utterance lands) and no single-tool inline special
-  case.
-- **Codex-style live disclosure.** A DM turn's process block **auto-expands while
+  mechanism with no per-mode forks and no single-tool inline special case.
+- **Codex-style live disclosure.** A turn's process block **auto-expands while
   it is working** (thinking/tools/final prose streaming live, `liveSegment`) so the
   process is visible while the final answer streams below it. While live, the
   outer `Working...` row is locked open and non-interactive; a user can only
@@ -930,37 +925,32 @@ Rules:
   tool events do not insert a new header above already-streamed text. A tool-free
   live answer keeps its prose in the normal answer position (not inside process
   narration), so the same markdown subtree survives the live→sealed transition.
-  The process **auto-collapses when the turn settles**. A Channel turn is
-  delivered atomically (its rows are `idle`, never `liveSegment`), so it lands
-  already collapsed.
+  The process **auto-collapses when the turn settles**.
   - A **resultless** turn (last visible block is a thought/tool — no trailing
-    answer prose) drives two SEPARATE decisions, decoupled so a Channel never
-    mislabels:
+    answer prose) drives two SEPARATE decisions, decoupled so a cleanly-completed
+    turn never mislabels:
     - **The red "Interrupted" label + error styling** fire ONLY when the run was
       **genuinely interrupted** — its producing run `failed`, was `cancelled`, or
       was left `running` by a crash. This is the authoritative **`turnInterrupted`**,
       stamped on the message entity by the core projection from the run's *real*
       status, NEVER inferred from block structure. A cleanly `completed` resultless
-      turn is **never** red, in either mode.
+      turn is **never** red.
     - **Surfacing the process** (auto-expand so its interim work / error context
       isn't buried — `surfaceResultlessProcess`) fires for a genuine interruption
-      in **either** mode, AND — per the result-first design — for a sealed
-      resultless **DM** turn, where the user watched it 1:1. A cleanly-completed
-      resultless **Channel** turn does NOT surface: it folds to the neutral
-      "Worked for …" header like any other sealed turn (atomic delivery — its
-      process lives in the activity detail view, not inline). A surfaced resultless
+      AND — per the result-first design — for a sealed resultless turn the user
+      watched stream 1:1. A surfaced resultless
       turn also suppresses the "Worked for …" resting header (which would read as a
       clean unit of work and hide that there is no answer), falling back to the
       descriptive group summary.
   - (Tying the *label* to the run's real status — not to the mere absence of
-    trailing prose — is what fixed the recurring Channel mislabel: a Channel turn
-    is always `idle`, so the old `turnEnded && !finalIsProse` rule painted every
-    result-less turn red regardless of outcome. Keying the result-first *split* off
-    the *trailing* answer, not *any* text in the turn, still stops a surfaced
-    resultless turn from burying interim narration behind a collapsed header.)
+    trailing prose — is what fixed the recurring resultless-turn mislabel: the old
+    `turnEnded && !finalIsProse` rule painted every result-less turn red regardless
+    of outcome. Keying the result-first *split* off the *trailing* answer, not *any*
+    text in the turn, still stops a surfaced resultless turn from burying interim
+    narration behind a collapsed header.)
   - Every other steady state defaults collapsed. The **sticky override wins**: once
   a user toggles the block it keeps that choice and never auto-collapses on seal.
-- The live header carries the single activity spinner. In a live DM turn, the
+- The live header carries the single activity spinner. In a live turn, the
   outer process fold stays expanded while final answer prose streams below it and
   its top header stays the neutral **"Working..."** label; concrete thought/tool
   summaries belong to the adjacent inner process groups. This row is a status row
@@ -982,11 +972,10 @@ Rules:
   **genuinely interrupted** turn (run `failed`/`cancelled`/crash-orphaned —
   `turnInterrupted` — with no trailing answer) keeps the "Interrupted…" label,
   never a duration. A cleanly `completed` resultless turn never shows "Interrupted":
-  in a Channel it folds to "Worked for {duration}"; in a DM it surfaces its process
-  (per the result-first design) under the descriptive group summary rather than the
-  "Worked for …" resting header.
-- **One assistant-turn renderer.** The DM transcript, child-run task detail
-  timeline, and Channel live-run detail all render assistant content through the
+  it surfaces its process (per the result-first design) under the descriptive group
+  summary rather than the "Worked for …" resting header.
+- **One assistant-turn renderer.** The conversation transcript and the child-run
+  task detail timeline both render assistant content through the
   same assistant turn/process fold components. The task detail panel reads a raw
   child-run transcript, but only adapts it into normal transcript rows; it does
   not own separate thinking/tool/result UI. A running task only marks the
@@ -995,12 +984,8 @@ Rules:
   panel header/actions. The child-run adapter also threads the run terminal
   status and wall-clock into the last assistant row, skips hidden-only context
   user rows, and renders orphan tool results as capped plain text rather than
-  markdown. The Channel live-run detail adapts the current `streamingContent`
-  (falling back to `streamingText` for older projections) into a temporary live
-  assistant turn so it uses the same `Working...` surface while the run is active;
-  the canonical Channel transcript still receives only whole sealed utterances.
-  This keeps the differences at the data-adapter boundary instead of forking
-  presentation behavior.
+  markdown. This keeps the differences at the data-adapter boundary instead of
+  forking presentation behavior.
 - Large details are refs, not row payloads.
 - A run/provider failure rides on the terminal assistant message: the run marks
   it `assistant_message.failed` (error stop reason + `errorMessage`), so it
@@ -1077,15 +1062,16 @@ absent, and a run shows its latest snapshot.)
   totals. The tree builds each node from a LIGHT summary pass (`summarizeRunStream`:
   one scan of the run stream for round count + last provider/model + usage) — it
   never materializes the per-round detail / request windows / redaction it would
-  immediately discard. **Shape (DM vs Channel) comes from the conversation's
-  authoritative member roster** (`readConversationMetaProjection`), not from distinct
-  run executors — a DM that delegates to a sub-agent stays a DM, with the transient
-  sub-agent never shown as a member. The agents that actually executed runs are
-  surfaced separately by the renderer (derived from the runs) so a delegated
-  sub-agent is still filterable. Run usage is `meta.usage` when the run terminated,
-  else **rolled up from the rounds** so an in-flight run's totals stay live instead
-  of reading zero. Reads the store directly, so it works on closed conversations.
-  Reflective / principal-anchored runs are excluded (they span conversations).
+  immediately discard. **The conversation shape comes from the conversation's
+  authoritative member roster** (`readConversationMetaProjection`) — always
+  `{user, Neva}` — not from distinct run executors, so a conversation that
+  delegates to a sub-agent never shows the transient sub-agent as a member. The
+  agents that actually executed runs are surfaced separately by the renderer
+  (derived from the runs) so a delegated sub-agent is still filterable. Run usage
+  is `meta.usage` when the run terminated, else **rolled up from the rounds** so an
+  in-flight run's totals stay live instead of reading zero. Reads the store
+  directly, so it works on closed conversations. Believer-anchored Dream runs are
+  excluded (they span conversations).
 - `agentDebugRun(conversationId, runId)` → one run's full detail (rounds + per-run
   snapshot), derived from `readRunStreamEvents(runId)` spliced with the conversation
   context (above) and cached by the run's `latestSeq` + the conversation context seq
@@ -1099,9 +1085,9 @@ absent, and a run shows its latest snapshot.)
   alike — the seq convention is irrelevant to a single-stream walk.
 
 The pure derivation lives in `src/main/agentDebugView.ts`; the renderer
-`DebugTimeline` (`AgentDebugPanel.tsx`) renders DM and Channel with one view (DM is
-the single-member case), attributes each run to its agent, nests delegated runs
-under their parent, and lazily loads each run's detail on expand.
+`DebugTimeline` (`AgentDebugPanel.tsx`) renders every conversation with one view
+(single-agent, members `{user, Neva}`), attributes each run to its agent, nests
+delegated runs under their parent, and lazily loads each run's detail on expand.
 
 It must not:
 
@@ -1236,32 +1222,27 @@ The hot path must never do these things:
 
 Open-conversation policy:
 
-- The conversation list combines the configured agent roster with
-  `conversation-index.json`: every configured agent has an immutable canonical DM
-  row, even before its log exists, and Channels are listed when they have a
-  Channel name. The reserved `lin-agent-channel-general` row is always ensured
-  and sorted first in the Channels section as `#General`. The current event/index
-  storage still carries Channel names in the legacy `goal` field.
-- The conversation menu presents the Channels section before Direct Messages.
-  This keeps the default collaboration path (`#General` and named Channels) as
-  the primary choice while preserving DMs as explicit per-agent side chats.
+- The conversation list is read from `conversation-index.json`: conversations are
+  the only primitive (no per-agent DM rows, no two-list / two-"+" split), and a
+  row is listed when it carries a name (the conversation name lives in the legacy
+  `goal` field). The reserved `lin-agent-channel-general` row is always ensured
+  and sorts first as `#General`; every other row sorts by recency.
 - `#General` is a normal event-sourced Conversation with `title/goal = General`.
-  It stores no `kind`; its reserved id plus runtime invariant make it special.
+  It stores no `kind`; its reserved id plus the runtime invariant make it special.
   Runtime ready, restore, list, and agent-registry reload all ensure it exists
-  with the user, coordinator, and every current durable peer agent. The ensure is
-  idempotent: repeated startup/list/reload calls do not append duplicate
-  `member.added` events, and deleted/unavailable durable peers are removed from
-  the active member set when no Channel run is in flight.
-- Restoring a canonical DM id is find-or-create keyed by `{ user, agentId }`.
-  DMs have no goal, exactly one agent member, and cannot be renamed, deleted, or
-  membership-edited. A Channel is a named room with the user, the coordinator
-  agent as an implicit runtime participant, and optional invited agents that can
-  be added later. The Agent Dock startup path restores a remembered valid
-  DM/Channel id first, then `#General`, and uses the legacy latest/coordinator DM
-  restore only as a defensive fallback.
+  with members `{user, Neva}` (the single agent). The ensure is idempotent:
+  repeated startup/list/reload calls do not append duplicate `member.added`
+  events. Agent definitions are delegation child-agent types, not conversation
+  members, so no roster ever joins a conversation.
+- Every conversation — `#General` and user-created topic conversations alike — is
+  a single-agent, inline-streaming, steerable thread whose members are implicitly
+  `{user, Neva}` and not membership-editable. `#General` cannot be renamed or
+  deleted; named topic conversations can. The Agent Dock startup path restores a
+  remembered valid conversation id first, then falls back to `#General`.
 - `conversation-index.json` carries list projection fields, including member
-  roster, unread count, message count, and the latest visible message snippet /
-  timestamp. Opening the conversation menu does not replay each conversation log.
+  roster (always `{user, Neva}`), unread count, message count, and the latest
+  visible message snippet / timestamp. Opening the conversation menu does not
+  replay each conversation log.
 - Opening a conversation loads the latest checkpoint, reads the conversation segment
   and indexed run logs from the checkpoint target offsets, then replays only
   events after the checkpoint `seq`.
