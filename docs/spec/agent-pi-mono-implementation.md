@@ -310,10 +310,14 @@ Model and effort are owned by the agent identity that actually runs:
   current
   definition and persist only the fields that differ from the code base (so an
   unchanged persona is never frozen), and `updateAgentDefinition` reconfigures the
-  live conversations — `state.systemPrompt` plus a re-resolved `state.model` /
-  `thinkingLevel` — so a model / effort / persona edit takes effect on the **next
-  turn**, not only on reopen. The stable `name` (Neva's memory anchor) is never
-  overlaid.
+  live conversations so an edit takes effect on the **next turn**, not only on
+  reopen. `state.systemPrompt` is always refreshed; `state.model` / `thinkingLevel`
+  are re-resolved and swapped **only when the edit actually changed model or
+  effort** (`builtInModelEffortChanged`). The built-in defaults to `model:'inherit'`,
+  so re-resolving on every save would silently switch a running conversation's model
+  to whatever provider is active *now* whenever the user merely edited the persona —
+  a change they never made; gating on the real model/effort diff prevents that. The
+  stable `name` (Neva's memory anchor) is never overlaid.
 
 The Settings → Agent profile selector (`AgentModelEffortSelector`) is
 **capability-driven**: pick a provider, then a model; the

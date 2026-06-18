@@ -523,6 +523,31 @@ export function resolveAgentToolFilter(input: {
   return { allowedTools: undefined, disallowedTools: merged };
 }
 
+/**
+ * Did a built-in agent edit actually change the model or effort?
+ *
+ * The composer chip and the editor both round-trip the *full* definition, so a
+ * persona/display-name/tools edit re-sends the existing `model`/`effort`
+ * unchanged. We only re-resolve and live-swap the conversation's model when one
+ * of these two fields really moved — otherwise editing Neva's persona while a
+ * different provider happens to be active would silently switch the running
+ * conversation's model (model is `inherit` → it resolves to the *current*
+ * provider, not the one the conversation started under).
+ *
+ * `inherit`/blank model and blank effort are the "unset" sentinels, so they
+ * normalize together: `undefined`, `''`, `'  '`, and `'inherit'` are all "no
+ * model override" and compare equal.
+ */
+export function builtInModelEffortChanged(
+  prev: { model?: string | null; effort?: string | null },
+  next: { model?: string | null; effort?: string | null },
+): boolean {
+  const normModel = (value?: string | null) =>
+    value && value.trim() && value.trim() !== 'inherit' ? value.trim() : 'inherit';
+  const normEffort = (value?: string | null) => (value && value.trim() ? value.trim() : '');
+  return normModel(prev.model) !== normModel(next.model) || normEffort(prev.effort) !== normEffort(next.effort);
+}
+
 interface AgentConversationState {
   agent: Agent;
   defaultAgentId: string;
@@ -1629,12 +1654,16 @@ export class AgentRuntime {
       });
       await this.refreshPrimaryAgentIdentity();
       const views = await this.reloadAgentDefinitions(conversationId);
-      // Re-resolve the (possibly changed) model/effort once so a model/effort edit —
-      // from Settings or the composer's quick chip — applies on the NEXT turn, not
-      // only when the conversation is reopened. The agent loop re-reads
-      // state.model/thinkingLevel at each agent_start. Best-effort: if no provider
-      // resolves, keep the live model rather than failing the edit.
-      const providerConfig = await this.getActiveProviderConfig().catch(() => null);
+      // Re-resolve the model/effort and hot-swap it into live conversations ONLY when
+      // this edit actually changed model or effort — so a model/effort edit (Settings or
+      // the composer chip) applies on the NEXT turn without reopening, while a
+      // persona/display-name-only edit never re-resolves. The built-in defaults to
+      // model:'inherit'; re-resolving unconditionally would silently switch a live
+      // conversation's model if the active provider had changed since setup, a model
+      // change the user never made. The agent loop re-reads state.model/thinkingLevel at
+      // each agent_start. Best-effort: if no provider resolves, keep the live model.
+      const modelEffortChanged = builtInModelEffortChanged(existing, input);
+      const providerConfig = modelEffortChanged ? await this.getActiveProviderConfig().catch(() => null) : null;
       const resolvedModelEffort = providerConfig
         ? await this.resolveBuiltInAssistantModelEffort(providerConfig).catch(() => null)
         : null;

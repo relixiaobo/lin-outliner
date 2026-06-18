@@ -41,3 +41,10 @@ export function defaultThinkingLevelFor(supported: readonly AgentReasoningLevel[
   if (!supported.length) return 'off';
   return nearestSupportedLevel(DEFAULT_AGENT_THINKING_LEVEL, supported);
 }
+
+/** The i18n label key for a level (`xhigh` is shown as "Max"). Shared by every UI
+ *  surface that labels reasoning levels, so the alias is mapped in one place. */
+export type ReasoningLabelKey = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'max';
+export function reasoningLevelLabelKey(level: AgentReasoningLevel): ReasoningLabelKey {
+  return level === 'xhigh' ? 'max' : level;
+}

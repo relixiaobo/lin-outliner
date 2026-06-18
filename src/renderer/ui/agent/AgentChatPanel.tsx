@@ -562,19 +562,30 @@ export function AgentChatPanel({
   );
   const builtInDefinitionRef = useRef<AgentDefinitionView | null>(null);
   builtInDefinitionRef.current = builtInDefinition;
+  // Serialize writes: a model switch fires an effort reconciliation + a model change
+  // back-to-back, so each `build` must run against the result of the previous write,
+  // not the same stale ref (two concurrent IPCs would race, last-writer-wins dropping
+  // one of the edits). Chaining off a ref-held promise makes each build read the
+  // freshly-persisted definition.
+  const persistQueueRef = useRef<Promise<void>>(Promise.resolve());
   const persistBuiltInModelEffort = useCallback(
-    async (build: (input: AgentAuthoringInput) => AgentAuthoringInput) => {
-      const definition = builtInDefinitionRef.current;
-      if (!definition || !conversationId) return;
-      const input = build(builtInDefinitionToAuthoringInput(definition));
-      try {
-        const views = await api.agentUpdateAgentDefinition(conversationId, definition.agentId, input);
-        if (!mountedRef.current) return;
-        setAgentDefinitions(views);
-        builtInDefinitionRef.current = views.find((view) => view.source === 'built-in') ?? null;
-      } catch {
-        // The chip is a convenience; a failed write leaves the prior selection in place.
-      }
+    (build: (input: AgentAuthoringInput) => AgentAuthoringInput): Promise<void> => {
+      const run = async () => {
+        const definition = builtInDefinitionRef.current;
+        if (!definition || !conversationId) return;
+        const input = build(builtInDefinitionToAuthoringInput(definition));
+        try {
+          const views = await api.agentUpdateAgentDefinition(conversationId, definition.agentId, input);
+          if (!mountedRef.current) return;
+          setAgentDefinitions(views);
+          builtInDefinitionRef.current = views.find((view) => view.source === 'built-in') ?? null;
+        } catch {
+          // The chip is a convenience; a failed write leaves the prior selection in place.
+        }
+      };
+      const next = persistQueueRef.current.then(run, run);
+      persistQueueRef.current = next;
+      return next;
     },
     [conversationId],
   );

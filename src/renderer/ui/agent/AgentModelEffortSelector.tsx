@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { composeProviderQualifiedModel, parseProviderQualifiedModel } from '../../../core/agentModelId';
+import { reasoningLevelLabelKey } from '../../../core/agentReasoning';
 import { AGENT_REASONING_LADDER } from '../../../core/types';
 import type { AgentProviderSettingsView, AgentReasoningLevel } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
@@ -65,7 +66,7 @@ export function AgentModelEffortSelector({
 }: AgentModelEffortSelectorProps) {
   const t = useT();
   const reasoningCopy = t.agent.composer.reasoningLevels;
-  const reasoningLabel = (level: AgentReasoningLevel) => reasoningCopy[level === 'xhigh' ? 'max' : level];
+  const reasoningLabel = (level: AgentReasoningLevel) => reasoningCopy[reasoningLevelLabelKey(level)];
 
   const activeProviderId = settings?.activeProviderId ?? '';
   // A provider id is "known" (eligible for the `:` qualifier split) when it is a

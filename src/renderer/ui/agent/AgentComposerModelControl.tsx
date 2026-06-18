@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { composeProviderQualifiedModel } from '../../../core/agentModelId';
-import { defaultThinkingLevelFor } from '../../../core/agentReasoning';
+import { defaultThinkingLevelFor, reasoningLevelLabelKey } from '../../../core/agentReasoning';
 import { AGENT_REASONING_LADDER } from '../../../core/types';
 import type { AgentModelOption, AgentProviderSettingsView, AgentReasoningLevel } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
@@ -36,8 +36,10 @@ const RECENT_MODEL_COUNT = 6;
 // *results* — the current reasoning level and the current model — as two rows that
 // each open a side-anchored flyout submenu (the reasoning levels; the full model list,
 // grouped by provider with each provider's older models behind a "Show all"). Portaled
-// so it never clips against the composer's overflow.
-export function AgentComposerModelControl({
+// so it never clips against the composer's overflow. Memoized because the composer
+// re-renders on every keystroke (draft state); with stable props this control — and
+// its catalog derivation — is skipped entirely.
+function AgentComposerModelControlImpl({
   settings,
   model,
   effort,
@@ -47,7 +49,7 @@ export function AgentComposerModelControl({
 }: AgentComposerModelControlProps) {
   const composer = useT().agent.composer;
   const reasoningCopy = composer.reasoningLevels;
-  const reasoningLabel = (level: AgentReasoningLevel) => reasoningCopy[level === 'xhigh' ? 'max' : level];
+  const reasoningLabel = (level: AgentReasoningLevel) => reasoningCopy[reasoningLevelLabelKey(level)];
 
   const [open, setOpen] = useState(false);
   const [submenu, setSubmenu] = useState<OpenSubmenu>('none');
@@ -58,7 +60,7 @@ export function AgentComposerModelControl({
   const effortRowRef = useRef<HTMLButtonElement>(null);
   const modelRowRef = useRef<HTMLButtonElement>(null);
 
-  const menu = deriveModelMenu(settings, model);
+  const menu = useMemo(() => deriveModelMenu(settings, model), [settings, model]);
   const { effectiveProviderId, effectiveModelId, effectiveModelOption, groups, modelCount } = menu;
 
   const overlayStyle = useAnchoredOverlay(menuRef, {
@@ -72,6 +74,10 @@ export function AgentComposerModelControl({
   const submenuAnchor = submenu === 'effort' ? effortRowRef : modelRowRef;
   const expandedKey = [...expandedProviders].join(',');
   const submenuStyle = useFlyoutStyle(submenuRef, submenuAnchor, open && submenu !== 'none', 260, `${submenu}:${model}:${effort}:${expandedKey}`);
+  // The Escape handler (bound once per open) reads the live submenu through a ref so it
+  // stays a pure state setter rather than a side-effecting updater.
+  const submenuStateRef = useRef<OpenSubmenu>('none');
+  submenuStateRef.current = submenu;
 
   // Portaled surfaces: dismiss on outside pointer (ignoring the anchor so a click on
   // the chip toggles rather than close-then-reopens) and on Escape. Reset transient
@@ -92,11 +98,8 @@ export function AgentComposerModelControl({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       // Escape steps out of the submenu first, then closes the whole menu.
-      setSubmenu((current) => {
-        if (current !== 'none') return 'none';
-        setOpen(false);
-        return 'none';
-      });
+      if (submenuStateRef.current !== 'none') setSubmenu('none');
+      else setOpen(false);
     };
     document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('keydown', onKeyDown);
@@ -111,18 +114,19 @@ export function AgentComposerModelControl({
   const modelName = effectiveModelOption?.name
     ?? lastModelSegment(effectiveModelId)
     ?? composer.modelDefault;
-  const reasoningKey = effort.trim() === 'xhigh' ? 'max' : effort.trim();
-  const chipReasoning = reasoningKey && reasoningKey !== 'off' && reasoningKey !== 'inherit'
-    ? (reasoningCopy as Record<string, string>)[reasoningKey] ?? null
+  const trimmedEffort = effort.trim();
+  const chipReasoning = trimmedEffort && trimmedEffort !== 'off' && trimmedEffort !== 'inherit'
+    ? reasoningLabel(trimmedEffort as AgentReasoningLevel)
     : null;
 
   // Reasoning options come from the effective model's supported levels, ranked by the
   // shared ladder; `defaultLevel` is the level inherit resolves to (badged "Default").
-  const supportedLevels = effectiveModelOption?.supportedThinkingLevels.length
-    ? effectiveModelOption.supportedThinkingLevels
-    : AGENT_REASONING_LADDER;
+  // Only an in-catalog model contributes levels — an unknown/out-of-catalog selection
+  // has no declared levels, so the Reasoning row is hidden rather than offering (and
+  // persisting) levels the model may reject (the runtime would coerce them anyway).
+  const supportedLevels = effectiveModelOption?.supportedThinkingLevels ?? [];
   const reasoningLevels = AGENT_REASONING_LADDER.filter((level) => supportedLevels.includes(level));
-  const supportsReasoning = Boolean(effectiveModelOption?.reasoning) || reasoningLevels.some((level) => level !== 'off');
+  const supportsReasoning = reasoningLevels.some((level) => level !== 'off');
   const defaultLevel = defaultThinkingLevelFor(reasoningLevels);
   // The reasoning row's value: the chosen level, or "Default" for inherit.
   const effortRowLabel = supportedLevels.includes(effort as AgentReasoningLevel)
@@ -253,7 +257,7 @@ export function AgentComposerModelControl({
             aria-label={composer.reasoningHeading}
             style={submenuStyle}
           >
-            <div className="agent-composer-model-section-hint">{composer.reasoningHint}</div>
+            <div className="agent-composer-model-section-hint" role="presentation">{composer.reasoningHint}</div>
             {reasoningLevels.map((level) => {
               const selected = effort === level;
               return (
@@ -287,14 +291,14 @@ export function AgentComposerModelControl({
             aria-label={composer.modelHeading}
             style={submenuStyle}
           >
-            <div className="agent-composer-model-section-label">{composer.modelHeading}</div>
+            <div className="agent-composer-model-section-label" role="presentation">{composer.modelHeading}</div>
             {groups.map((group) => {
               const expanded = expandedProviders.has(group.providerId);
               const visible = visibleModels(group, expanded, effectiveProviderId, effectiveModelId);
               return (
-                <div key={group.providerId} className="agent-composer-model-group">
+                <div key={group.providerId} className="agent-composer-model-group" role="presentation">
                   {groups.length > 1 ? (
-                    <div className="agent-composer-model-group-label">{group.providerId}</div>
+                    <div className="agent-composer-model-group-label" role="presentation">{group.providerId}</div>
                   ) : null}
                   {visible.map((option) => renderModelItem(group.providerId, option))}
                   {group.models.length > visible.length ? (
@@ -327,6 +331,8 @@ export function AgentComposerModelControl({
     </div>
   );
 }
+
+export const AgentComposerModelControl = memo(AgentComposerModelControlImpl);
 
 interface ModelGroup {
   providerId: string;
@@ -391,9 +397,27 @@ function deriveModelMenu(settings: AgentProviderSettingsView | null, model: stri
     .filter((provider) => isProviderUsable(settings, provider))
     .map((provider) => provider.providerId);
   const orderedProviderIds = dedupe([primaryProviderId, activeProviderId, ...usableProviderIds].filter(Boolean));
-  const groups = orderedProviderIds
+  const groups: ModelGroup[] = orderedProviderIds
     .map((providerId) => ({ providerId, models: modelsFor(providerId) }))
     .filter((group) => group.models.length > 0);
+
+  // A saved model the catalog no longer lists (catalog changed, or a custom connection)
+  // would otherwise be invisible and unchecked. Surface it in its provider's group so it
+  // shows and stays selected — its empty `supportedThinkingLevels` keeps the Reasoning
+  // row hidden, so no unsupported effort is offered for it.
+  if (effectiveModelId && !effectiveModelOption) {
+    const synthetic: AgentModelOption = {
+      id: effectiveModelId,
+      name: lastModelSegment(effectiveModelId) ?? effectiveModelId,
+      reasoning: false,
+      supportedThinkingLevels: [],
+      contextWindow: 0,
+      maxTokens: 0,
+    };
+    const group = groups.find((candidate) => candidate.providerId === primaryProviderId);
+    if (group) group.models = [synthetic, ...group.models];
+    else groups.unshift({ providerId: primaryProviderId, models: [synthetic] });
+  }
   const modelCount = groups.reduce((total, group) => total + group.models.length, 0);
 
   return { effectiveProviderId: primaryProviderId, effectiveModelId, effectiveModelOption, groups, modelCount };

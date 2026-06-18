@@ -13,9 +13,13 @@ import type { AgentAuthoringInput, AgentDefinitionView } from '../../api/types';
  * `AgentRuntime.updateAgentDefinition`).
  */
 export function builtInDefinitionToAuthoringInput(view: AgentDefinitionView): AgentAuthoringInput {
-  // '*' is the unrestricted sentinel; mirror it as "no restriction" (undefined),
-  // matching the editor, so it never lands as a stored tool list.
-  const tools = view.tools && !view.tools.includes('*') ? [...view.tools] : undefined;
+  // `['*']` is the unrestricted sentinel; mirror it as "no restriction" (undefined),
+  // matching the editor, so it never lands as a stored tool list. A list that merely
+  // *contains* `*` alongside real tools is still a restriction — keep those entries
+  // (dropping the meaningless `*`) so the user's restriction is never wiped.
+  const tools = !view.tools || (view.tools.length === 1 && view.tools[0] === '*')
+    ? undefined
+    : view.tools.filter((tool) => tool !== '*');
   return {
     // The editor's `name` field edits the DISPLAY name; the stable `name` is Neva's
     // memory anchor and never changes.

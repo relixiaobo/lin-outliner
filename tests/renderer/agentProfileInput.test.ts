@@ -63,4 +63,12 @@ describe('builtInDefinitionToAuthoringInput', () => {
     const input = builtInDefinitionToAuthoringInput(builtInView({ displayName: undefined }));
     expect(input.name).toBe('assistant');
   });
+
+  test('a restriction that merely contains `*` is kept (only exactly `[*]` is unrestricted)', () => {
+    // A mixed list is still a restriction — collapsing it to undefined would wipe the
+    // user's tool limits on a model-only chip edit.
+    expect(builtInDefinitionToAuthoringInput(builtInView({ tools: ['file_read', '*'] })).tools).toEqual(['file_read']);
+    expect(builtInDefinitionToAuthoringInput(builtInView({ tools: ['file_read', 'bash'] })).tools).toEqual(['file_read', 'bash']);
+    expect(builtInDefinitionToAuthoringInput(builtInView({ tools: ['*'] })).tools).toBeUndefined();
+  });
 });

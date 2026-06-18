@@ -271,6 +271,23 @@ describe('AgentComposerModelControl', () => {
     expect(modelItem(rendered, 'M8')).toBeTruthy();
   });
 
+  test('a saved model absent from the catalog is still shown/checked, and hides the Reasoning row', async () => {
+    const rendered = renderComponent(
+      <AgentComposerModelControl
+        settings={settings()} model="openai/legacy-model" effort="" disabled={false}
+        onModelChange={NOOP} onEffortChange={NOOP}
+      />,
+    );
+    await click(rendered, chip(rendered));
+    // No declared levels for an unknown model → no Reasoning row (so no unsupported
+    // effort can be offered/persisted); only the model row remains.
+    expect(() => triggerRow(rendered, 'Reasoning')).toThrow();
+    await click(rendered, triggerRow(rendered, 'legacy-model'));
+    // The out-of-catalog model is surfaced in its provider group and checked.
+    const item = modelItem(rendered, 'legacy-model');
+    expect(item.getAttribute('aria-checked')).toBe('true');
+  });
+
   test('the chip is disabled when there is no provider settings', () => {
     const rendered = renderComponent(
       <AgentComposerModelControl
