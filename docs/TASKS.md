@@ -144,6 +144,17 @@ is the small set below: a few feature-completion tails inside the program, the s
 items at the end, and one explicitly-deferred memory faculty. Escalate the capability boundary
 before any directional/security-sensitive build.
 
+- **single-agent-finish-collapse** (P0, **draft** — ready to dispatch) — enforce the **one-Neva
+  invariant** as code. PM ruling 2026-06-18: the product has exactly one agent (Neva); no surface may
+  create, load, or delegate-to a second agent. #294 collapsed the data model but the
+  *second-agent surfaces* are still live: `/create-agent` authoring (#286), file-backed agent loading
+  (`~/.agents/agents/`, `<root>/.agents/agents/`), and `agent_type`/"fresh" cross-agent delegation.
+  Remove all three; keep Neva editable + same-agent **fork** sub-runs (research, dream, Task). Closes
+  **finding #1** of the #294 post-merge `/code-review max` (memory privacy) by removing the only way a
+  reader ≠ Neva can exist. **Shape (a)** one PR; **touches `commands.ts`** (removes 3 command kinds —
+  coordinate). **Supersedes** `cross-agent consultation`, `agent-communication-colleague-model`, and
+  the `/create-agent` part of `agent-capability-ceiling` below. See
+  [`docs/plans/single-agent-finish-collapse.md`](docs/plans/single-agent-finish-collapse.md).
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
