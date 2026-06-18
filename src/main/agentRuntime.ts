@@ -106,6 +106,7 @@ import {
   sanitizeFileReferenceRef,
 } from '../core/referenceMarkup';
 import { normalizeConversationTitle, sanitizeConversationTitle } from '../core/agentConversationTitle';
+import { TOOL_CATALOG } from '../core/agentToolCatalog';
 import { serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
 import { materializeAgentLocalPath, materializePathBackedAttachment } from './agentAttachmentMaterialization';
@@ -487,9 +488,45 @@ type PublicConversationRuntimeEventInput =
   | Omit<Extract<AgentRuntimeEvent, { type: 'closed' }>, 'conversationId' | 'timestamp'>
   | Omit<Extract<AgentRuntimeEvent, { type: 'error' }>, 'conversationId' | 'timestamp'>;
 
+/** Allow/deny filter passed to {@link createAgentTools} for a conversation's default agent. */
+interface AgentToolFilter {
+  allowedTools: readonly string[] | undefined;
+  disallowedTools: readonly string[] | undefined;
+}
+
+/**
+ * Resolve the tool allow/deny filter for a conversation's default agent.
+ *
+ * External file agents keep a strict allow-list: their `tools` field is the
+ * complete capability set and is applied verbatim by `filterAgentTools`.
+ *
+ * The built-in assistant (Neva) is different: its core tools — `recall`,
+ * `dream`, `node_*`, `skill`, and self-maintenance — are never part of the
+ * editable catalog (`TOOL_CATALOG`), so a strict allow-list would silently
+ * strip them. A catalog restriction is therefore expressed as a *disallow-list
+ * over the unchecked catalog tools*, never as an allow-list; the core tools
+ * (and any user-typed extra tools) stay enabled.
+ */
+export function resolveAgentToolFilter(input: {
+  isBuiltIn: boolean;
+  tools: readonly string[] | undefined;
+  disallowedTools: readonly string[] | undefined;
+}): AgentToolFilter {
+  const { isBuiltIn, tools, disallowedTools } = input;
+  if (!isBuiltIn) return { allowedTools: tools, disallowedTools };
+  if (!tools || tools.includes('*')) return { allowedTools: undefined, disallowedTools };
+  const merged = [...(disallowedTools ?? [])];
+  for (const name of TOOL_CATALOG) {
+    if (!tools.includes(name) && !merged.includes(name)) merged.push(name);
+  }
+  return { allowedTools: undefined, disallowedTools: merged };
+}
+
 interface AgentConversationState {
   agent: Agent;
   defaultAgentId: string;
+  /** Tool allow/deny filter for the default agent, reapplied on runtime-settings changes. */
+  agentToolFilter: AgentToolFilter;
   activeRuns: Map<string, AgentActiveRunState>;
   activeRun: AgentActiveRunState | null;
   lastRun: AgentActiveRunState | null;
@@ -1568,10 +1605,18 @@ export class AgentRuntime {
     // we rebuild the primary identity + refresh live conversations so a rename shows
     // immediately, not only on the next conversation setup.
     if (existing.source === 'built-in') {
+      // Persist ONLY the free-text fields the user actually changed from the code
+      // defaults. The editor round-trips the current persona/description/display
+      // name through the form, so storing them unconditionally would freeze them at
+      // edit time — a later change to the code persona (NEVA_AGENT_PERSONA) would
+      // then be ignored. Diffing against the code base leaves unchanged fields on
+      // the code default (null → not stored). The remaining fields already
+      // default-guard inside setBuiltInAgentProfile (model 'inherit', tools '*', …).
+      const base = createTenonAssistantAgentDefinition();
       await setBuiltInAgentProfile(agentId, {
-        displayName: input.name,
-        description: input.description,
-        body: input.body,
+        displayName: input.name !== (base.displayName ?? base.name) ? input.name : null,
+        description: input.description !== base.description ? input.description : null,
+        body: input.body !== base.body ? input.body : null,
         model: input.model ?? null,
         effort: typeof input.effort === 'string' ? input.effort : null,
         permissionMode: input.permissionMode ?? null,
@@ -1585,6 +1630,12 @@ export class AgentRuntime {
       const views = await this.reloadAgentDefinitions(conversationId);
       for (const [id, conversation] of this.conversations) {
         await this.refreshMemberDisplayNames(conversation);
+        // Reconfigure the live pi-agent so a persona/display-name edit takes effect
+        // on the NEXT turn, not only when the conversation is reopened. (The model
+        // is not hot-swapped here — it still resolves on conversation setup.)
+        if (conversation.defaultAgentId === this.agentIdentity.agentId) {
+          conversation.agent.state.systemPrompt = this.agentIdentity.systemPrompt;
+        }
         this.emitProjection(id, 'agent_definitions_reloaded');
       }
       return views;
@@ -2351,6 +2402,11 @@ export class AgentRuntime {
     const builtInToolOverlay = defaultAgentId === this.agentIdentity.agentId
       ? await this.materializeBuiltInAgentDefinition().catch(() => null)
       : null;
+    const agentToolFilter = resolveAgentToolFilter({
+      isBuiltIn: defaultAgentId === this.agentIdentity.agentId,
+      tools: defaultAgentProfile?.definition.tools ?? builtInToolOverlay?.tools,
+      disallowedTools: defaultAgentProfile?.definition.disallowedTools ?? builtInToolOverlay?.disallowedTools,
+    });
     if (defaultAgentProfile) {
       await this.getEventStore().writeAgentIdentity(defaultAgentProfile.identity);
     } else {
@@ -2379,8 +2435,8 @@ export class AgentRuntime {
           selfMaintenance: defaultAgentId === this.agentIdentity.agentId
             ? this.createSelfMaintenanceRuntime(() => conversationId, () => conversationRef.current)
             : undefined,
-          allowedTools: defaultAgentProfile?.definition.tools ?? builtInToolOverlay?.tools,
-          disallowedTools: defaultAgentProfile?.definition.disallowedTools ?? builtInToolOverlay?.disallowedTools,
+          allowedTools: agentToolFilter.allowedTools,
+          disallowedTools: agentToolFilter.disallowedTools,
           streamFn: this.options.streamFn,
           completeSimpleFn: this.options.completeSimpleFn,
           providerApiKeyLoader: this.options.providerApiKeyLoader,
@@ -2418,6 +2474,7 @@ export class AgentRuntime {
     const conversation: AgentConversationState = {
       agent,
       defaultAgentId,
+      agentToolFilter,
       activeRuns: new Map(),
       activeRun: null,
       lastRun: null,
@@ -2552,6 +2609,8 @@ export class AgentRuntime {
       recall: this.createRecallToolRuntime(this.agentIdentity.agentId, () => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
       askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
       selfMaintenance: this.createSelfMaintenanceRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
+      allowedTools: conversation.agentToolFilter.allowedTools,
+      disallowedTools: conversation.agentToolFilter.disallowedTools,
     });
   }
 
@@ -7298,8 +7357,8 @@ function createConfiguredAgent(
     askUserQuestion?: AgentToolsOptions['askUserQuestion'];
     selfMaintenance?: AgentToolsOptions['selfMaintenance'];
     localWorkspace?: AgentLocalWorkspaceContext;
-    allowedTools?: string[];
-    disallowedTools?: string[];
+    allowedTools?: readonly string[];
+    disallowedTools?: readonly string[];
     preapprovedToolRules?: string[];
     l0CacheBreakpointEnabled?: boolean;
     approvalHandler?: (input: AgentToolApprovalInput, signal?: AbortSignal) => Promise<AgentToolApprovalResolution>;

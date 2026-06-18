@@ -96,6 +96,11 @@ describe('AgentEditor', () => {
     expect(nameInput?.value).toBe('Neva');
     expect(nameInput?.hasAttribute('readOnly')).toBe(false);
     expect(rendered.document.querySelector('button[aria-label="Toggle file_read"]')?.hasAttribute('disabled')).toBe(false);
+    // permissionMode / maxTurns / background steer only delegation child runs, so they
+    // are hidden for the built-in Neva — offering them would be a control that does nothing.
+    expect(rendered.container.textContent).not.toContain('Delegation Sandbox');
+    expect(rendered.document.querySelector('input[aria-label="Max Turns"]')).toBeNull();
+    expect(rendered.container.textContent).not.toContain('Run in background');
     // No "duplicate to edit" friction and no read-only hint — it is editable in place.
     expect(rendered.container.textContent).not.toContain('read-only');
     expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Duplicate'))).toBe(false);
@@ -142,6 +147,9 @@ describe('AgentEditor', () => {
       <AgentEditor agent={userAgent()} availableSkills={[]} busy={false} {...NOOP} onUpdate={(agentId, input) => { updated = { agentId, input }; }} onDelete={(agent) => { deleted = agent; }} />,
     );
     expect((rendered.document.querySelector('input[aria-label="Name"]') as HTMLInputElement | null)?.value).toBe('My-Helper');
+    // The delegation-only controls DO show for file-backed agents — they run as child runs.
+    expect(rendered.container.textContent).toContain('Delegation Sandbox');
+    expect(rendered.document.querySelector('input[aria-label="Max Turns"]')).not.toBeNull();
     await click(rendered, textButton(rendered, 'Save'));
     expect((updated as unknown as { agentId: string } | null)?.agentId).toBe('user:abc123:my-helper');
     await click(rendered, textButton(rendered, 'Delete'));

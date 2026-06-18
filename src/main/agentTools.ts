@@ -215,8 +215,8 @@ export interface AgentToolsOptions {
   recall?: AgentRecallToolRuntime;
   askUserQuestion?: AgentAskUserQuestionRuntime;
   selfMaintenance?: AgentSelfMaintenanceRuntime;
-  allowedTools?: string[];
-  disallowedTools?: string[];
+  allowedTools?: readonly string[];
+  disallowedTools?: readonly string[];
 }
 
 export function createAgentTools(outliner?: OutlinerToolHost, options: AgentToolsOptions = {}): AgentTool<any>[] {

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
+import { TOOL_CATALOG } from '../../src/core/agentToolCatalog';
 import { DEFAULT_GENERAL_CHANNEL_ID, DEFAULT_GENERAL_CHANNEL_TITLE } from '../../src/core/agentChannel';
 import { AGENT_EVENT_VERSION, getAgentEventActivePath, type AgentEvent } from '../../src/core/agentEventLog';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
@@ -178,6 +179,35 @@ describe('agent runtime conversations', () => {
     } finally {
       // The overlay lives under the shared mocked userData — reset it so sibling tests
       // still see the default Neva.
+      await rm(path.join(electronUserDataRoot, 'agent-providers.json'), { force: true });
+    }
+  });
+
+  test('re-saving the built-in with an unchanged persona/description does not freeze them into the overlay', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+    try {
+      const before = (await runtime.listAllAgentDefinitions('workspace'))
+        .find((definition) => definition.agentId === ASSISTANT_AGENT_ID);
+      // The user only renames; the persona + description round-trip unchanged through the
+      // form (the editor loads them from the materialized definition).
+      await runtime.updateAgentDefinition('workspace', ASSISTANT_AGENT_ID, {
+        name: 'Lin',
+        description: before?.description,
+        body: before?.body,
+      });
+
+      // Only the field the user actually changed (displayName) is stored. Persisting the
+      // unchanged persona/description would freeze them at edit time, so a later change to
+      // the code default (NEVA_AGENT_PERSONA) would be silently ignored.
+      const overlay = JSON.parse(
+        await readFile(path.join(electronUserDataRoot, 'agent-providers.json'), 'utf8'),
+      ) as { builtInAgentProfiles?: Record<string, Record<string, unknown>> };
+      const entries = Object.values(overlay.builtInAgentProfiles ?? {});
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toEqual({ displayName: 'Lin' });
+    } finally {
       await rm(path.join(electronUserDataRoot, 'agent-providers.json'), { force: true });
     }
   });
@@ -764,5 +794,47 @@ describe('agent runtime conversations', () => {
       },
     });
     expect(visible.instructions).toContain('discuss before answering');
+  });
+});
+
+describe('resolveAgentToolFilter', () => {
+  const CORE_TOOLS = ['recall', 'dream', 'node_create', 'node_edit', 'node_read', 'skill'] as const;
+
+  test('external (file) agents keep a strict allow-list passthrough', async () => {
+    const { resolveAgentToolFilter } = await loadRuntimeModule();
+    expect(
+      resolveAgentToolFilter({ isBuiltIn: false, tools: ['file_read', 'bash'], disallowedTools: ['web_fetch'] }),
+    ).toEqual({ allowedTools: ['file_read', 'bash'], disallowedTools: ['web_fetch'] });
+  });
+
+  test('built-in with no restriction or an explicit `*` never sets an allow-list', async () => {
+    const { resolveAgentToolFilter } = await loadRuntimeModule();
+    expect(resolveAgentToolFilter({ isBuiltIn: true, tools: undefined, disallowedTools: undefined }))
+      .toEqual({ allowedTools: undefined, disallowedTools: undefined });
+    expect(resolveAgentToolFilter({ isBuiltIn: true, tools: ['*'], disallowedTools: ['web_fetch'] }))
+      .toEqual({ allowedTools: undefined, disallowedTools: ['web_fetch'] });
+  });
+
+  test('a built-in catalog restriction becomes a disallow-list over the unchecked catalog — never an allow-list, so core tools stay on', async () => {
+    const { resolveAgentToolFilter } = await loadRuntimeModule();
+    const result = resolveAgentToolFilter({ isBuiltIn: true, tools: ['file_read', 'bash'], disallowedTools: undefined });
+    // No allow-list — a strict allow-list would also strip Neva's core tools.
+    expect(result.allowedTools).toBeUndefined();
+    // Exactly the catalog tools the user left unchecked are disallowed.
+    expect(result.disallowedTools).toEqual(TOOL_CATALOG.filter((name) => name !== 'file_read' && name !== 'bash'));
+    // No core tool ever leaks into the disallow-list.
+    for (const core of CORE_TOOLS) expect(result.disallowedTools).not.toContain(core);
+  });
+
+  test('a built-in restriction merges with an explicit disallow-list without duplicates', async () => {
+    const { resolveAgentToolFilter } = await loadRuntimeModule();
+    const result = resolveAgentToolFilter({ isBuiltIn: true, tools: ['file_read'], disallowedTools: ['bash', 'web_fetch'] });
+    expect(result.allowedTools).toBeUndefined();
+    expect(result.disallowedTools).toEqual([
+      'bash',
+      'web_fetch',
+      ...TOOL_CATALOG.filter((name) => name !== 'file_read' && name !== 'bash' && name !== 'web_fetch'),
+    ]);
+    expect(new Set(result.disallowedTools).size).toBe(result.disallowedTools!.length);
   });
 });

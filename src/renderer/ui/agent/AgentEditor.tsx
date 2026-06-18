@@ -177,30 +177,38 @@ export function AgentEditor({ agent, availableSkills, providerSettings, busy, on
               onModelChange={(value) => update('model', value)}
               settings={providerSettings}
             />
-            <Field as="div" className="settings-sheet-row settings-sheet-row-control" label={t.permissionMode} labelClassName="settings-sheet-row-label">
-              <SegmentedControl<'' | AgentDelegationPermissionMode>
-                disabled={readOnly}
-                label={t.permissionMode}
-                onChange={(value) => update('permissionMode', value)}
-                options={[
-                  { value: '', label: t.permissionInherit },
-                  { value: 'restricted', label: t.restricted },
-                ]}
-                value={form.permissionMode}
-              />
-            </Field>
-            <Field as="label" className="settings-sheet-row" label={t.maxTurns} labelClassName="settings-sheet-row-label">
-              <Input className="settings-sheet-row-input" label={t.maxTurns} min={1} onChange={(e) => update('maxTurns', e.target.value)} placeholder={t.maxTurnsPlaceholder} readOnly={readOnly} type="number" value={form.maxTurns} variant="bare" />
-            </Field>
-            <div className="settings-sheet-row settings-sheet-row-switch">
-              <div className="settings-sheet-row-text">
-                <span className="settings-sheet-row-label">{t.backgroundLabel}</span>
-                <span className="agent-editor-field-hint">{t.backgroundSublabel}</span>
-              </div>
-              <SwitchControl checked={form.background} disabled={readOnly} label={t.backgroundLabel} onCheckedChange={(v) => update('background', v)}>
-                <SwitchMark checked={form.background} />
-              </SwitchControl>
-            </div>
+            {/* permissionMode / maxTurns / background only steer delegation child
+                runs — they have no effect on the foreground assistant loop. Hide
+                them for the built-in Neva so the editor never offers a control that
+                does nothing; they stay for file-backed delegation agents. */}
+            {!isBuiltIn && (
+              <>
+                <Field as="div" className="settings-sheet-row settings-sheet-row-control" label={t.permissionMode} labelClassName="settings-sheet-row-label">
+                  <SegmentedControl<'' | AgentDelegationPermissionMode>
+                    disabled={readOnly}
+                    label={t.permissionMode}
+                    onChange={(value) => update('permissionMode', value)}
+                    options={[
+                      { value: '', label: t.permissionInherit },
+                      { value: 'restricted', label: t.restricted },
+                    ]}
+                    value={form.permissionMode}
+                  />
+                </Field>
+                <Field as="label" className="settings-sheet-row" label={t.maxTurns} labelClassName="settings-sheet-row-label">
+                  <Input className="settings-sheet-row-input" label={t.maxTurns} min={1} onChange={(e) => update('maxTurns', e.target.value)} placeholder={t.maxTurnsPlaceholder} readOnly={readOnly} type="number" value={form.maxTurns} variant="bare" />
+                </Field>
+                <div className="settings-sheet-row settings-sheet-row-switch">
+                  <div className="settings-sheet-row-text">
+                    <span className="settings-sheet-row-label">{t.backgroundLabel}</span>
+                    <span className="agent-editor-field-hint">{t.backgroundSublabel}</span>
+                  </div>
+                  <SwitchControl checked={form.background} disabled={readOnly} label={t.backgroundLabel} onCheckedChange={(v) => update('background', v)}>
+                    <SwitchMark checked={form.background} />
+                  </SwitchControl>
+                </div>
+              </>
+            )}
           </div>
 
           <ToggleList
