@@ -297,14 +297,16 @@ Model and effort are owned by the agent identity that actually runs:
   `agentId` (`builtInAgentProfiles` above), reachable via `getBuiltInAgentProfile`
   / `setBuiltInAgentProfile`. Two entry points write the same overlay: the
   Settings → Agent profile editor and the composer's quick model/effort chip
-  (`AgentComposerModelControl`, model/effort only — a Codex-style menu: the main menu
-  lists the effective model's supported reasoning levels directly (`off` is a level,
-  not a toggle; the level inherit resolves to is badged "Default") plus a single row
-  for the *current* model; that row opens a side-anchored flyout submenu listing all
-  models, grouped by provider when more than one is usable). The default-level math
-  (`medium` coerced to the model's nearest supported level) lives in
-  `core/agentReasoning` (`defaultThinkingLevelFor` / `nearestSupportedLevel`), shared
-  by the runtime and this picker so they never disagree. Both round-trip the
+  (`AgentComposerModelControl`, model/effort only). Its main menu shows only the
+  *results* — the current reasoning level and the current model — as two rows that
+  each open a side-anchored flyout submenu: the reasoning levels (`off` is a level,
+  not a toggle; the level inherit resolves to is badged "Default"; a help line on
+  top), and the model list grouped by provider with each provider's recent models
+  (catalog is ranked newest-first) shown and the older tail behind a per-provider
+  "Show all" — so a long catalog and a second provider stay reachable. The
+  default-level math (`medium` coerced to the model's nearest supported level) lives
+  in `core/agentReasoning` (`defaultThinkingLevelFor` / `nearestSupportedLevel`),
+  shared by the runtime and this picker so they never disagree. Both round-trip the
   current
   definition and persist only the fields that differ from the code base (so an
   unchanged persona is never frozen), and `updateAgentDefinition` reconfigures the

@@ -929,11 +929,15 @@ commandPalette: {
       // Composer quick model/reasoning chip (edits Neva's standing profile).
       modelControlLabel: 'Model and reasoning',
       modelDefault: 'Default model',
-      // Quick picker: the reasoning section's help line + the default-level badge,
-      // and the model submenu's header.
+      // Quick picker: the two main-menu rows open submenus. The reasoning submenu has
+      // a help line + a default-level badge; the model submenu lists recent models per
+      // provider with a per-provider expander.
+      reasoningHeading: 'Reasoning',
       reasoningHint: 'Higher effort means more thorough responses, but takes longer.',
       effortDefault: 'Default',
       modelHeading: 'Model',
+      showAllModels: ({ count }: { count: number }) => `Show all (${count})`,
+      showFewerModels: 'Show less',
       // Reasoning effort levels shown on the agent profile model/effort selector.
       reasoningLevels: {
         off: 'Off',

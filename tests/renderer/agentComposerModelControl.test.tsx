@@ -137,6 +137,33 @@ function multiProviderSettings(): AgentProviderSettingsView {
   };
 }
 
+function manyModelSettings(count: number): AgentProviderSettingsView {
+  const levels: ReadonlyArray<'off' | 'low' | 'medium' | 'high'> = ['off', 'low', 'medium', 'high'];
+  return {
+    activeProviderId: 'openai',
+    providers: [
+      { providerId: 'openai', enabled: true, hasApiKey: true, auth: { authKind: 'api-key', credentialed: true, hasStoredKey: true } },
+    ],
+    availableProviders: [
+      {
+        providerId: 'openai',
+        authKind: 'api-key',
+        hasEnvApiKey: false,
+        envKeyNames: [],
+        models: Array.from({ length: count }, (_unused, index) => ({
+          id: `m${index + 1}`,
+          name: `M${index + 1}`,
+          reasoning: true,
+          supportedThinkingLevels: [...levels],
+          contextWindow: 0,
+          maxTokens: 0,
+        })),
+      },
+    ],
+    agent: {} as AgentProviderSettingsView['agent'],
+  };
+}
+
 function NOOP() { /* no-op */ }
 
 describe('AgentComposerModelControl', () => {
@@ -177,7 +204,7 @@ describe('AgentComposerModelControl', () => {
     expect(rendered.container.querySelector('.agent-composer-model-name')?.textContent).toBe('Default model');
   });
 
-  test('the reasoning levels are inline; picking one emits the level', async () => {
+  test('the Reasoning row opens a submenu (hint + Off level + Default badge); picking a level emits it', async () => {
     let savedEffort = '';
     const rendered = renderComponent(
       <AgentComposerModelControl
@@ -186,26 +213,17 @@ describe('AgentComposerModelControl', () => {
       />,
     );
     await click(rendered, chip(rendered));
-    // The main menu lists the reasoning levels directly (no submenu needed).
+    // The main menu only shows the result; the levels live in a submenu.
     expect(rendered.document.querySelector('.agent-composer-model-submenu')).toBeNull();
-    await click(rendered, modelItem(rendered, 'High'));
-    expect(savedEffort).toBe('high');
-  });
-
-  test('the reasoning section shows the hint, lists Off as a level, and badges the default', async () => {
-    const rendered = renderComponent(
-      <AgentComposerModelControl
-        settings={settings()} model="openai/gpt-5.4" effort="" disabled={false}
-        onModelChange={NOOP} onEffortChange={NOOP}
-      />,
-    );
-    await click(rendered, chip(rendered));
+    await click(rendered, triggerRow(rendered, 'Reasoning'));
     expect(rendered.document.querySelector('.agent-composer-model-section-hint')?.textContent).toContain('Higher effort');
     // "Off" is a regular level (no separate Thinking toggle).
     expect(modelItem(rendered, 'Off')).toBeTruthy();
     // The level inherit resolves to (medium, for off/low/medium/high) carries the badge.
     expect(modelItem(rendered, 'Medium').querySelector('.agent-composer-model-badge')?.textContent).toBe('Default');
     expect(modelItem(rendered, 'High').querySelector('.agent-composer-model-badge')).toBeNull();
+    await click(rendered, modelItem(rendered, 'High'));
+    expect(savedEffort).toBe('high');
   });
 
   test('the main menu shows the current model as a single row; the submenu lists all models', async () => {
@@ -230,6 +248,27 @@ describe('AgentComposerModelControl', () => {
     expect(modelItem(rendered, 'GPT-5.3')).toBeTruthy();
     await click(rendered, modelItem(rendered, 'Claude Sonnet'));
     expect(saved).toBe('anthropic/claude-sonnet');
+  });
+
+  test('a provider with many models shows the recent ones and a Show all expander', async () => {
+    const rendered = renderComponent(
+      <AgentComposerModelControl
+        settings={manyModelSettings(8)} model="" effort="" disabled={false}
+        onModelChange={NOOP} onEffortChange={NOOP}
+      />,
+    );
+    await click(rendered, chip(rendered));
+    await click(rendered, triggerRow(rendered, 'M1'));
+    // Recent (first 6) shown; the older tail is hidden behind the expander.
+    expect(modelItem(rendered, 'M6')).toBeTruthy();
+    expect(() => modelItem(rendered, 'M7')).toThrow();
+    const expander = Array.from(rendered.document.querySelectorAll<HTMLButtonElement>('.agent-composer-model-expander'))
+      .find((el) => el.textContent?.includes('Show all'));
+    expect(expander?.textContent).toContain('Show all (8)');
+    await click(rendered, expander!);
+    // Expanded → the whole catalog is reachable.
+    expect(modelItem(rendered, 'M7')).toBeTruthy();
+    expect(modelItem(rendered, 'M8')).toBeTruthy();
   });
 
   test('the chip is disabled when there is no provider settings', () => {

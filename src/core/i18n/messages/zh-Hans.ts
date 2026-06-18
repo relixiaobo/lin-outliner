@@ -858,9 +858,12 @@ commandPalette: {
       addAttachment: '添加附件',
       modelControlLabel: '模型与推理',
       modelDefault: '默认模型',
+      reasoningHeading: '推理',
       reasoningHint: '更高的强度意味着更周全的回答，但耗时更长。',
       effortDefault: '默认',
       modelHeading: '模型',
+      showAllModels: ({ count }: { count: number }) => `显示全部 (${count})`,
+      showFewerModels: '收起',
       reasoningLevels: {
         off: '关闭',
         minimal: '最低',

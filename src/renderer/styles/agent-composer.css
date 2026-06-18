@@ -692,23 +692,38 @@
   white-space: nowrap;
 }
 
-/* The trailing check / caret floats right (margin-left:auto), so a row can carry a
-   badge right after its label without the indicator being pushed off the edge. */
+/* A growing spacer separates the left cluster (label, optional badge) from the right
+   cluster (optional value + check/caret), so a row can carry a badge next to its
+   label while the indicator stays pinned to the right edge. */
+.agent-composer-model-spacer {
+  flex: 1 1 auto;
+}
+
+.agent-composer-model-item-meta {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
 .agent-composer-model-check,
 .agent-composer-model-item-caret {
   display: inline-flex;
   width: 16px;
   height: 16px;
   flex: 0 0 16px;
-  margin-left: auto;
   align-items: center;
   justify-content: center;
+  color: var(--text-faint);
+}
+
+/* The "Show all (N)" / "Show less" per-provider expander reads as a faint action. */
+.agent-composer-model-expander {
   color: var(--text-faint);
 }
 
 /* "Default" pill next to the reasoning level inherit resolves to. */
 .agent-composer-model-badge {
   flex: 0 0 auto;
+  margin-left: var(--space-2);
   padding: 0 var(--space-2);
   border-radius: var(--radius-pill);
   background: var(--fill-1);

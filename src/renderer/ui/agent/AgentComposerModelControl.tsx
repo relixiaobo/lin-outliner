@@ -22,13 +22,21 @@ interface AgentComposerModelControlProps {
   onEffortChange: (next: string) => void;
 }
 
+type OpenSubmenu = 'none' | 'effort' | 'model';
+
+// Models shown per provider before the "Show all" expander. The catalog is ranked
+// newest-first, so the first few are the current/recommended models; the long tail of
+// older models stays one click away.
+const RECENT_MODEL_COUNT = 6;
+
 // The composer's quick model + reasoning chip. Selecting here edits the single
 // assistant's (Neva's) standing profile through the same path as Settings → Agent
 // (provider-connection-model-ownership #267 keeps model/effort a profile property);
-// the runtime applies the change on the next turn. The interaction mirrors the Codex
-// chat composer: the main menu lists the reasoning levels directly and a single row
-// for the *current* model; the full model list is a side-anchored flyout submenu off
-// that row. Portaled so it never clips against the composer's overflow.
+// the runtime applies the change on the next turn. The main menu shows only the
+// *results* — the current reasoning level and the current model — as two rows that
+// each open a side-anchored flyout submenu (the reasoning levels; the full model list,
+// grouped by provider with each provider's older models behind a "Show all"). Portaled
+// so it never clips against the composer's overflow.
 export function AgentComposerModelControl({
   settings,
   model,
@@ -42,10 +50,12 @@ export function AgentComposerModelControl({
   const reasoningLabel = (level: AgentReasoningLevel) => reasoningCopy[level === 'xhigh' ? 'max' : level];
 
   const [open, setOpen] = useState(false);
-  const [modelSubmenuOpen, setModelSubmenuOpen] = useState(false);
+  const [submenu, setSubmenu] = useState<OpenSubmenu>('none');
+  const [expandedProviders, setExpandedProviders] = useState<ReadonlySet<string>>(new Set());
   const anchorRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
+  const effortRowRef = useRef<HTMLButtonElement>(null);
   const modelRowRef = useRef<HTMLButtonElement>(null);
 
   const menu = deriveModelMenu(settings, model);
@@ -59,14 +69,17 @@ export function AgentComposerModelControl({
     maxHeight: 360,
     layoutKey: `${model}:${effort}`,
   });
-  const submenuStyle = useFlyoutStyle(submenuRef, modelRowRef, open && modelSubmenuOpen, 240, `${model}`);
+  const submenuAnchor = submenu === 'effort' ? effortRowRef : modelRowRef;
+  const expandedKey = [...expandedProviders].join(',');
+  const submenuStyle = useFlyoutStyle(submenuRef, submenuAnchor, open && submenu !== 'none', 260, `${submenu}:${model}:${effort}:${expandedKey}`);
 
   // Portaled surfaces: dismiss on outside pointer (ignoring the anchor so a click on
-  // the chip toggles rather than close-then-reopens) and on Escape. Collapse the model
-  // submenu when the menu closes so it reopens in its default state.
+  // the chip toggles rather than close-then-reopens) and on Escape. Reset transient
+  // state when the menu closes so it reopens fresh.
   useEffect(() => {
     if (!open) {
-      setModelSubmenuOpen(false);
+      setSubmenu('none');
+      setExpandedProviders(new Set());
       return undefined;
     }
     const onPointerDown = (event: PointerEvent) => {
@@ -79,10 +92,10 @@ export function AgentComposerModelControl({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       // Escape steps out of the submenu first, then closes the whole menu.
-      setModelSubmenuOpen((submenuOpen) => {
-        if (submenuOpen) return false;
+      setSubmenu((current) => {
+        if (current !== 'none') return 'none';
         setOpen(false);
-        return false;
+        return 'none';
       });
     };
     document.addEventListener('pointerdown', onPointerDown, true);
@@ -104,18 +117,21 @@ export function AgentComposerModelControl({
     : null;
 
   // Reasoning options come from the effective model's supported levels, ranked by the
-  // shared ladder. A `''` effort (inherit) simply leaves no level checked.
+  // shared ladder; `defaultLevel` is the level inherit resolves to (badged "Default").
   const supportedLevels = effectiveModelOption?.supportedThinkingLevels.length
     ? effectiveModelOption.supportedThinkingLevels
     : AGENT_REASONING_LADDER;
   const reasoningLevels = AGENT_REASONING_LADDER.filter((level) => supportedLevels.includes(level));
   const supportsReasoning = Boolean(effectiveModelOption?.reasoning) || reasoningLevels.some((level) => level !== 'off');
-  // The level inherit resolves to (shared with the runtime), badged as the default.
   const defaultLevel = defaultThinkingLevelFor(reasoningLevels);
+  // The reasoning row's value: the chosen level, or "Default" for inherit.
+  const effortRowLabel = supportedLevels.includes(effort as AgentReasoningLevel)
+    ? reasoningLabel(effort as AgentReasoningLevel)
+    : composer.effortDefault;
 
   function close() {
     setOpen(false);
-    setModelSubmenuOpen(false);
+    setSubmenu('none');
   }
 
   function selectModel(providerId: string, option: AgentModelOption) {
@@ -132,6 +148,22 @@ export function AgentComposerModelControl({
     close();
   }
 
+  function toggleSubmenu(next: Exclude<OpenSubmenu, 'none'>) {
+    setSubmenu((current) => (current === next ? 'none' : next));
+  }
+
+  function expandProvider(providerId: string) {
+    setExpandedProviders((current) => new Set(current).add(providerId));
+  }
+
+  function collapseProvider(providerId: string) {
+    setExpandedProviders((current) => {
+      const next = new Set(current);
+      next.delete(providerId);
+      return next;
+    });
+  }
+
   function renderModelItem(providerId: string, option: AgentModelOption) {
     const selected = providerId === effectiveProviderId && option.id === effectiveModelId;
     return (
@@ -144,6 +176,7 @@ export function AgentComposerModelControl({
         type="button"
       >
         <span className="agent-composer-model-item-label">{option.name || option.id}</span>
+        <span className="agent-composer-model-spacer" />
         <span className="agent-composer-model-check">{selected ? <CheckIcon size={ICON_SIZE.menu} /> : null}</span>
       </button>
     );
@@ -175,52 +208,77 @@ export function AgentComposerModelControl({
             style={overlayStyle}
           >
             {supportsReasoning ? (
-              <>
-                <div className="agent-composer-model-section-hint">{composer.reasoningHint}</div>
-                {reasoningLevels.map((level) => {
-                  const selected = effort === level;
-                  return (
-                    <button
-                      key={level}
-                      aria-checked={selected}
-                      className={`agent-composer-model-item${selected ? ' is-selected' : ''}`}
-                      onClick={() => selectEffort(level)}
-                      role="menuitemradio"
-                      type="button"
-                    >
-                      <span className="agent-composer-model-item-label">{reasoningLabel(level)}</span>
-                      {level === defaultLevel ? (
-                        <span className="agent-composer-model-badge">{composer.effortDefault}</span>
-                      ) : null}
-                      <span className="agent-composer-model-check">{selected ? <CheckIcon size={ICON_SIZE.menu} /> : null}</span>
-                    </button>
-                  );
-                })}
-              </>
+              <button
+                ref={effortRowRef}
+                aria-expanded={submenu === 'effort'}
+                aria-haspopup="menu"
+                className={`agent-composer-model-item agent-composer-model-row${submenu === 'effort' ? ' is-open' : ''}`}
+                onClick={() => toggleSubmenu('effort')}
+                onMouseEnter={() => setSubmenu('effort')}
+                role="menuitem"
+                type="button"
+              >
+                <span className="agent-composer-model-item-label">{composer.reasoningHeading}</span>
+                <span className="agent-composer-model-spacer" />
+                <span className="agent-composer-model-item-meta">{effortRowLabel}</span>
+                <ChevronRightIcon className="agent-composer-model-item-caret" size={ICON_SIZE.menu} />
+              </button>
             ) : null}
             {modelCount > 0 ? (
-              <>
-                {supportsReasoning ? <div className="agent-composer-model-divider" /> : null}
-                <button
-                  ref={modelRowRef}
-                  aria-expanded={modelSubmenuOpen}
-                  aria-haspopup="menu"
-                  className={`agent-composer-model-item agent-composer-model-row${modelSubmenuOpen ? ' is-open' : ''}`}
-                  onClick={() => setModelSubmenuOpen((value) => !value)}
-                  onMouseEnter={() => setModelSubmenuOpen(true)}
-                  role="menuitem"
-                  type="button"
-                >
-                  <span className="agent-composer-model-item-label">{modelName}</span>
-                  <ChevronRightIcon className="agent-composer-model-item-caret" size={ICON_SIZE.menu} />
-                </button>
-              </>
+              <button
+                ref={modelRowRef}
+                aria-expanded={submenu === 'model'}
+                aria-haspopup="menu"
+                className={`agent-composer-model-item agent-composer-model-row${submenu === 'model' ? ' is-open' : ''}`}
+                onClick={() => toggleSubmenu('model')}
+                onMouseEnter={() => setSubmenu('model')}
+                role="menuitem"
+                type="button"
+              >
+                <span className="agent-composer-model-item-label">{modelName}</span>
+                <span className="agent-composer-model-spacer" />
+                <ChevronRightIcon className="agent-composer-model-item-caret" size={ICON_SIZE.menu} />
+              </button>
             ) : null}
           </div>,
           document.body,
         )
         : null}
-      {open && modelSubmenuOpen && modelCount > 0
+      {open && submenu === 'effort'
+        ? createPortal(
+          <div
+            ref={submenuRef}
+            className="agent-composer-model-popover agent-composer-model-submenu"
+            role="menu"
+            aria-label={composer.reasoningHeading}
+            style={submenuStyle}
+          >
+            <div className="agent-composer-model-section-hint">{composer.reasoningHint}</div>
+            {reasoningLevels.map((level) => {
+              const selected = effort === level;
+              return (
+                <button
+                  key={level}
+                  aria-checked={selected}
+                  className={`agent-composer-model-item${selected ? ' is-selected' : ''}`}
+                  onClick={() => selectEffort(level)}
+                  role="menuitemradio"
+                  type="button"
+                >
+                  <span className="agent-composer-model-item-label">{reasoningLabel(level)}</span>
+                  {level === defaultLevel ? (
+                    <span className="agent-composer-model-badge">{composer.effortDefault}</span>
+                  ) : null}
+                  <span className="agent-composer-model-spacer" />
+                  <span className="agent-composer-model-check">{selected ? <CheckIcon size={ICON_SIZE.menu} /> : null}</span>
+                </button>
+              );
+            })}
+          </div>,
+          document.body,
+        )
+        : null}
+      {open && submenu === 'model' && modelCount > 0
         ? createPortal(
           <div
             ref={submenuRef}
@@ -230,14 +288,38 @@ export function AgentComposerModelControl({
             style={submenuStyle}
           >
             <div className="agent-composer-model-section-label">{composer.modelHeading}</div>
-            {groups.map((group) => (
-              <div key={group.providerId} className="agent-composer-model-group">
-                {groups.length > 1 ? (
-                  <div className="agent-composer-model-group-label">{group.providerId}</div>
-                ) : null}
-                {group.models.map((option) => renderModelItem(group.providerId, option))}
-              </div>
-            ))}
+            {groups.map((group) => {
+              const expanded = expandedProviders.has(group.providerId);
+              const visible = visibleModels(group, expanded, effectiveProviderId, effectiveModelId);
+              return (
+                <div key={group.providerId} className="agent-composer-model-group">
+                  {groups.length > 1 ? (
+                    <div className="agent-composer-model-group-label">{group.providerId}</div>
+                  ) : null}
+                  {visible.map((option) => renderModelItem(group.providerId, option))}
+                  {group.models.length > visible.length ? (
+                    <button
+                      className="agent-composer-model-item agent-composer-model-expander"
+                      onClick={() => expandProvider(group.providerId)}
+                      type="button"
+                    >
+                      <span className="agent-composer-model-item-label">{composer.showAllModels({ count: group.models.length })}</span>
+                      <span className="agent-composer-model-spacer" />
+                      <ChevronDownIcon className="agent-composer-model-item-caret" size={ICON_SIZE.menu} />
+                    </button>
+                  ) : null}
+                  {expanded && group.models.length > RECENT_MODEL_COUNT ? (
+                    <button
+                      className="agent-composer-model-item agent-composer-model-expander"
+                      onClick={() => collapseProvider(group.providerId)}
+                      type="button"
+                    >
+                      <span className="agent-composer-model-item-label">{composer.showFewerModels}</span>
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>,
           document.body,
         )
@@ -246,14 +328,39 @@ export function AgentComposerModelControl({
   );
 }
 
+interface ModelGroup {
+  providerId: string;
+  models: AgentModelOption[];
+}
+
 interface ModelMenu {
   effectiveProviderId: string;
   effectiveModelId: string;
   effectiveModelOption: AgentModelOption | undefined;
   /** Every usable provider's models, grouped (active provider first, header shown
    *  only when more than one group). The full list lives in the model submenu. */
-  groups: Array<{ providerId: string; models: AgentModelOption[] }>;
+  groups: ModelGroup[];
   modelCount: number;
+}
+
+/**
+ * The models shown for a provider before "Show all": the first `RECENT_MODEL_COUNT`
+ * (the catalog is ranked newest-first), plus the current selection when it falls in
+ * the older tail so the active model is never hidden.
+ */
+function visibleModels(
+  group: ModelGroup,
+  expanded: boolean,
+  effectiveProviderId: string,
+  effectiveModelId: string,
+): AgentModelOption[] {
+  if (expanded) return group.models;
+  const recent = group.models.slice(0, RECENT_MODEL_COUNT);
+  if (group.providerId === effectiveProviderId && !recent.some((option) => option.id === effectiveModelId)) {
+    const selected = group.models.find((option) => option.id === effectiveModelId);
+    if (selected) return [...recent, selected];
+  }
+  return recent;
 }
 
 /**
