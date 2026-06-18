@@ -2,13 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   agentMentionToken,
   channelMessageOwner,
-  cutChannelPathForRun,
-  deriveAgentPovProjection,
-  flattenAgentPathForPov,
-  handOffTargets,
   isChannelConversationId,
   isMultiAgentConversation,
-  parseAgentMentionTargets,
   usesChannelActivitySurface,
 } from '../../src/core/agentChannel';
 import {
@@ -53,39 +48,18 @@ describe('agent channel mentions', () => {
     expect(agentMentionToken('no-colons')).toBe('no-colons');
   });
 
-  test('multi-agent detection requires two agent members', () => {
+  test('single-agent collapse: a conversation is never multi-agent', () => {
     expect(isMultiAgentConversation([userMember, mainMember])).toBe(false);
-    expect(isMultiAgentConversation([userMember, mainMember, peerMember])).toBe(true);
+    expect(isMultiAgentConversation([userMember, mainMember, peerMember])).toBe(false);
   });
 
-  test('Channel activity surface follows Channel identity even with one agent member', () => {
+  test('single-agent collapse: no conversation uses the Channel activity surface', () => {
+    // The channel-id namespace is unchanged; the multi-agent activity surface it
+    // used to gate is gone — every conversation streams inline.
     expect(isChannelConversationId('lin-agent-channel-solo')).toBe(true);
     expect(isChannelConversationId('lin-agent-dm-assistant')).toBe(false);
-    expect(usesChannelActivitySurface('lin-agent-channel-solo', [userMember, mainMember])).toBe(true);
-    expect(usesChannelActivitySurface('lin-agent-dm-assistant', [userMember, mainMember])).toBe(false);
-    expect(usesChannelActivitySurface('legacy-fixture', [userMember, mainMember, peerMember])).toBe(true);
-  });
-
-  test('parses mentions scoped to the roster, ordered by position, deduplicated', () => {
-    const targets = parseAgentMentionTargets('@writer first, then @reviewer and @writer again', channelMembers);
-    expect(targets.map((target) => target.agentId)).toEqual([OTHER_AGENT_ID, PEER_AGENT_ID]);
-  });
-
-  test('ignores non-member mentions, mid-word @, and token prefixes', () => {
-    expect(parseAgentMentionTargets('@stranger hello', channelMembers)).toEqual([]);
-    expect(parseAgentMentionTargets('email@reviewer is not a mention', channelMembers)).toEqual([]);
-    expect(parseAgentMentionTargets('@reviewers is not @reviewer-bot either', channelMembers)).toEqual([]);
-    expect(parseAgentMentionTargets('(@reviewer) parenthesized works', channelMembers).map((target) => target.agentId))
-      .toEqual([PEER_AGENT_ID]);
-  });
-
-  test('hand-off targets are every mention that is not the speaker, in order', () => {
-    expect(handOffTargets('@reviewer please handle this', channelMembers, PEER_AGENT_ID)).toEqual([]);
-    expect(handOffTargets('@reviewer then @writer', channelMembers, PEER_AGENT_ID).map((target) => target.agentId))
-      .toEqual([OTHER_AGENT_ID]);
-    expect(handOffTargets('@writer and @reviewer, both of you', channelMembers, MAIN_AGENT_ID).map((target) => target.agentId))
-      .toEqual([OTHER_AGENT_ID, PEER_AGENT_ID]);
-    expect(handOffTargets('no mentions here', channelMembers, MAIN_AGENT_ID)).toEqual([]);
+    expect(usesChannelActivitySurface('lin-agent-channel-solo', [userMember, mainMember])).toBe(false);
+    expect(usesChannelActivitySurface('legacy-fixture', [userMember, mainMember, peerMember])).toBe(false);
   });
 });
 
@@ -106,20 +80,6 @@ describe('member events replay', () => {
     expect(removed.conversation?.members).toEqual([userMember, mainMember]);
   });
 
-  test('addressedTo is written on user_message.created and read back from the record', () => {
-    const state = replayAgentEvents([
-      { ...base(1, 'conversation.created'), title: 'Channel', members: channelMembers, goal: 'Channel' },
-      {
-        ...base(2, 'user_message.created', userActor),
-        messageId: 'user-1',
-        parentMessageId: null,
-        content: [{ type: 'text', text: '@reviewer hello' }],
-        addressedTo: [peerMember],
-      },
-    ] as AgentEvent[]);
-    expect(state.messages['user-1']?.addressedTo).toEqual([peerMember]);
-  });
-
   test('render projection exposes member views, coordinator flag, and message actors', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Channel', members: [userMember, mainMember, peerMember], goal: 'Channel' },
@@ -128,7 +88,6 @@ describe('member events replay', () => {
         messageId: 'user-1',
         parentMessageId: null,
         content: [{ type: 'text', text: '@reviewer hello' }],
-        addressedTo: [peerMember],
       },
       {
         ...base(3, 'assistant_message.started', { type: 'agent', agentId: PEER_AGENT_ID }),
@@ -157,106 +116,10 @@ describe('member events replay', () => {
       { principal: peerMember, mention: 'reviewer', displayName: 'Code Reviewer', coordinator: undefined },
     ]);
     expect(projection.entities.messages['assistant-1']?.actor).toEqual({ type: 'agent', agentId: PEER_AGENT_ID });
-    expect(projection.entities.messages['user-1']?.addressedTo).toEqual([peerMember]);
-  });
-
-  test('render projection exposes read-only inspector messages from the shared POV derivation', () => {
-    const state = replayAgentEvents([
-      { ...base(1, 'conversation.created'), title: 'Channel', members: [userMember, mainMember, peerMember], goal: 'Channel' },
-      {
-        ...base(2, 'user_message.created', userActor),
-        messageId: 'user-1',
-        parentMessageId: null,
-        content: [{ type: 'text', text: '@reviewer hello' }],
-        addressedTo: [peerMember],
-      },
-      { ...base(3, 'run.started'), runId: 'run-main', agentId: MAIN_AGENT_ID },
-      {
-        ...base(4, 'assistant_message.started', { type: 'agent', agentId: MAIN_AGENT_ID }),
-        runId: 'run-main',
-        messageId: 'assistant-main',
-        parentMessageId: 'user-1',
-        providerId: 'p',
-        modelId: 'm',
-      },
-      {
-        ...base(5, 'assistant_message.completed', { type: 'agent', agentId: MAIN_AGENT_ID }),
-        runId: 'run-main',
-        messageId: 'assistant-main',
-        stopReason: 'stop',
-        content: [{ type: 'text', text: '@reviewer please respond' }],
-        addressedTo: [peerMember],
-      },
-      { ...base(6, 'run.completed'), runId: 'run-main' },
-      { ...base(7, 'run.started'), runId: 'run-peer', agentId: PEER_AGENT_ID, addressedByMessageId: 'assistant-main' },
-      {
-        ...base(8, 'assistant_message.started', { type: 'agent', agentId: PEER_AGENT_ID }),
-        runId: 'run-peer',
-        messageId: 'assistant-peer',
-        parentMessageId: 'assistant-main',
-        providerId: 'p',
-        modelId: 'm',
-      },
-      {
-        ...base(9, 'assistant_message.completed', { type: 'agent', agentId: PEER_AGENT_ID }),
-        runId: 'run-peer',
-        messageId: 'assistant-peer',
-        stopReason: 'stop',
-        content: [
-          { type: 'text', text: 'Reviewer answer.' },
-          { type: 'toolCall', id: 'tool-review', name: 'node_read', arguments: { nodeId: 'node-1' } },
-        ],
-      },
-      { ...base(10, 'run.completed'), runId: 'run-peer' },
-    ] as AgentEvent[]);
-
-    const options = {
-      mainAgentId: MAIN_AGENT_ID,
-      displayNameByAgentId: { [MAIN_AGENT_ID]: 'Neva' },
-    };
-    const shared = deriveAgentPovProjection(state, PEER_AGENT_ID, options);
-    const projection = buildAgentRenderProjection(state, {
-      revision: 1,
-      coordinatorAgentId: MAIN_AGENT_ID,
-      memberDisplayNames: options.displayNameByAgentId,
-      povInspectorMemoryByAgentId: {
-        [PEER_AGENT_ID]: '<memory><self>Reviewer fact.</self><principal>Assistant fact.</principal></memory>',
-      },
-    });
-    const inspector = projection.povInspectors[PEER_AGENT_ID];
-    expect(inspector?.addressedByMessageId).toBe(shared.addressedByMessageId);
-    expect(inspector?.memoryBriefing).toContain('Reviewer fact.');
-    expect(inspector?.messages.map((message) => ({
-      role: message.role,
-      sourceMessageIds: message.sourceMessageIds,
-      parts: message.parts.map((part) => ({
-        preamble: part.preamble,
-        text: part.text,
-      })),
-    }))).toEqual(shared.steps.map((step) => {
-      if (step.kind === 'verbatim') {
-        return {
-          role: step.record.role,
-          sourceMessageIds: [step.record.id],
-          parts: [{
-            preamble: undefined,
-            text: 'Reviewer answer.\n[tool call: node_read]',
-          }],
-        };
-      }
-      return {
-        role: 'user',
-        sourceMessageIds: step.parts.map((part) => part.record.id),
-        parts: step.parts.map((part) => ({
-          preamble: part.preamble ?? undefined,
-          text: part.record.content.map((content) => (content.type === 'text' ? content.text : '')).join('\n').trim(),
-        })),
-      };
-    }));
   });
 });
 
-describe('§8 POV flatten', () => {
+describe('message ownership', () => {
   function channelTranscriptState() {
     return replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Channel', members: channelMembers, goal: 'Channel' },
@@ -344,179 +207,5 @@ describe('§8 POV flatten', () => {
       { type: 'agent', agentId: PEER_AGENT_ID },
     ]);
   });
-
-  test("peer POV: own turn verbatim; user and other agents coalesce into one user block with identity preambles; others' execution detail is dropped", () => {
-    const state = channelTranscriptState();
-    const projection = deriveAgentPovProjection(state, PEER_AGENT_ID, {
-      mainAgentId: MAIN_AGENT_ID,
-      displayNameByAgentId: { [MAIN_AGENT_ID]: 'Neva' },
-    });
-    const steps = projection.steps;
-
-    expect(steps).toHaveLength(2);
-    expect(projection.addressedByMessageId).toBeNull();
-    const [foreign, own] = steps;
-    if (foreign!.kind !== 'flattened' || own!.kind !== 'verbatim') {
-      throw new Error(`Unexpected step shapes: ${steps.map((step) => step.kind).join(', ')}`);
-    }
-    // One coalesced user block: the human's turn + main's visible reply. The
-    // toolUse assistant message and the tool result never cross the POV boundary.
-    expect(foreign.parts.map((part) => part.record.id)).toEqual(['user-1', 'assistant-main-final']);
-    expect(foreign.parts[0]!.preamble).toBe('@user (the human user) said:');
-    expect(foreign.parts[1]!.preamble).toBe('@assistant (agent "Neva") said:');
-    expect(own.record.id).toBe('assistant-peer');
-  });
-
-  test('shared POV projection is the same derivation the direct flatten uses', () => {
-    const state = channelTranscriptState();
-    const options = { mainAgentId: MAIN_AGENT_ID, displayNameByAgentId: { [MAIN_AGENT_ID]: 'Neva' } };
-    expect(deriveAgentPovProjection(state, PEER_AGENT_ID, options).steps).toEqual(
-      flattenAgentPathForPov(
-        getAgentEventRuntimeTranscriptPath(state),
-        state.runs,
-        PEER_AGENT_ID,
-        options,
-      ),
-    );
-  });
-
-  test('main POV: own execution verbatim including tool pairing; the peer reply flattens', () => {
-    const state = channelTranscriptState();
-    const steps = flattenAgentPathForPov(
-      getAgentEventRuntimeTranscriptPath(state),
-      state.runs,
-      MAIN_AGENT_ID,
-      { mainAgentId: MAIN_AGENT_ID },
-    );
-
-    expect(steps.map((step) => step.kind)).toEqual(['flattened', 'verbatim', 'verbatim', 'verbatim', 'flattened']);
-    const tail = steps.at(-1)!;
-    if (tail.kind !== 'flattened') throw new Error('Expected a flattened tail.');
-    expect(tail.parts[0]!.preamble).toBe('@reviewer (agent) said:');
-    expect(tail.parts[0]!.record.id).toBe('assistant-peer');
-  });
-
-  test('system substrate user records flatten without an identity preamble', () => {
-    const state = replayAgentEvents([
-      { ...base(1, 'conversation.created'), title: 'Channel', members: channelMembers, goal: 'Channel' },
-      {
-        ...base(2, 'user_message.created'),
-        messageId: 'seed-1',
-        parentMessageId: null,
-        content: [{ type: 'text', text: '<system-reminder>Channel seed.</system-reminder>' }],
-      },
-    ] as AgentEvent[]);
-    const steps = flattenAgentPathForPov(
-      getAgentEventRuntimeTranscriptPath(state),
-      state.runs,
-      PEER_AGENT_ID,
-      { mainAgentId: MAIN_AGENT_ID },
-    );
-    expect(steps).toHaveLength(1);
-    if (steps[0]!.kind !== 'flattened') throw new Error('Expected a flattened step.');
-    expect(steps[0]!.parts[0]!.preamble).toBeNull();
-  });
 });
 
-describe('independence cut', () => {
-  // One round: the user @s reviewer and writer; reviewer answers first, then
-  // writer's run starts — addressed BY the same user message, so reviewer's
-  // reply must not leak into writer's context.
-  function roundState() {
-    return replayAgentEvents([
-      { ...base(1, 'conversation.created'), title: 'Channel', members: channelMembers, goal: 'Channel' },
-      {
-        ...base(2, 'user_message.created', userActor),
-        messageId: 'user-1',
-        parentMessageId: null,
-        content: [{ type: 'text', text: '@reviewer @writer independent takes please' }],
-        addressedTo: [peerMember, otherMember],
-      },
-      { ...base(3, 'run.started'), runId: 'run-peer', agentId: PEER_AGENT_ID, addressedByMessageId: 'user-1' },
-      {
-        ...base(4, 'assistant_message.started', { type: 'agent', agentId: PEER_AGENT_ID }),
-        runId: 'run-peer',
-        messageId: 'assistant-peer',
-        parentMessageId: 'user-1',
-        providerId: 'p',
-        modelId: 'm',
-      },
-      {
-        ...base(5, 'assistant_message.completed', { type: 'agent', agentId: PEER_AGENT_ID }),
-        runId: 'run-peer',
-        messageId: 'assistant-peer',
-        stopReason: 'stop',
-        content: [{ type: 'text', text: 'Reviewer take.' }],
-      },
-      { ...base(6, 'run.completed'), runId: 'run-peer' },
-      { ...base(7, 'run.started'), runId: 'run-writer', agentId: OTHER_AGENT_ID, addressedByMessageId: 'user-1' },
-      {
-        ...base(8, 'assistant_message.started', { type: 'agent', agentId: OTHER_AGENT_ID }),
-        runId: 'run-writer',
-        messageId: 'assistant-writer',
-        parentMessageId: 'assistant-peer',
-        providerId: 'p',
-        modelId: 'm',
-      },
-      {
-        ...base(9, 'assistant_message.completed', { type: 'agent', agentId: OTHER_AGENT_ID }),
-        runId: 'run-writer',
-        messageId: 'assistant-writer',
-        stopReason: 'stop',
-        content: [{ type: 'text', text: 'Writer take.' }],
-      },
-      { ...base(10, 'run.completed'), runId: 'run-writer' },
-    ] as AgentEvent[]);
-  }
-
-  test('a co-addressee cuts at the addressing message and keeps only its own later records', () => {
-    const state = roundState();
-    const path = getAgentEventRuntimeTranscriptPath(state);
-    const cut = cutChannelPathForRun(path, state.runs, OTHER_AGENT_ID, 'user-1', MAIN_AGENT_ID);
-    // The sibling's reply (assistant-peer) is invisible; writer's own turn survives.
-    expect(cut.map((record) => record.id)).toEqual(['user-1', 'assistant-writer']);
-    const projection = deriveAgentPovProjection(state, OTHER_AGENT_ID, { mainAgentId: MAIN_AGENT_ID });
-    expect(projection.addressedByMessageId).toBe('user-1');
-    expect(projection.steps.flatMap((step) => (
-      step.kind === 'verbatim'
-        ? [step.record.id]
-        : step.parts.map((part) => part.record.id)
-    ))).toEqual(['user-1', 'assistant-writer']);
-  });
-
-  test('explicit null boundary means full path instead of inspector latest-run fallback', () => {
-    const state = roundState();
-    const explicitFullPath = deriveAgentPovProjection(state, OTHER_AGENT_ID, {
-      addressedByMessageId: null,
-      mainAgentId: MAIN_AGENT_ID,
-    });
-    const inspectorFallback = deriveAgentPovProjection(state, OTHER_AGENT_ID, {
-      mainAgentId: MAIN_AGENT_ID,
-    });
-
-    expect(explicitFullPath.addressedByMessageId).toBeNull();
-    expect(explicitFullPath.steps.flatMap((step) => (
-      step.kind === 'verbatim'
-        ? [step.record.id]
-        : step.parts.map((part) => part.record.id)
-    ))).toEqual(['user-1', 'assistant-peer', 'assistant-writer']);
-    expect(inspectorFallback.addressedByMessageId).toBe('user-1');
-  });
-
-  test('a hand-off target addressed by a reply sees that reply and everything before it', () => {
-    const state = roundState();
-    const path = getAgentEventRuntimeTranscriptPath(state);
-    const cut = cutChannelPathForRun(path, state.runs, OTHER_AGENT_ID, 'assistant-peer', MAIN_AGENT_ID);
-    expect(cut.map((record) => record.id)).toEqual(['user-1', 'assistant-peer', 'assistant-writer']);
-  });
-
-  test('no boundary or a vanished boundary fails open to the full path', () => {
-    const state = roundState();
-    const path = getAgentEventRuntimeTranscriptPath(state);
-    expect(cutChannelPathForRun(path, state.runs, PEER_AGENT_ID, null, MAIN_AGENT_ID).map((record) => record.id))
-      .toEqual(path.map((record) => record.id));
-    // Compaction rewrote history mid-round: the boundary id is gone — never truncate.
-    expect(cutChannelPathForRun(path, state.runs, PEER_AGENT_ID, 'compacted-away', MAIN_AGENT_ID).map((record) => record.id))
-      .toEqual(path.map((record) => record.id));
-  });
-});

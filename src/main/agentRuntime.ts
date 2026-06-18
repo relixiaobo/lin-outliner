@@ -6,7 +6,6 @@ import {
   type AgentLoopTurnUpdate,
   type StreamFn,
 } from '@earendil-works/pi-agent-core';
-import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   // pi-ai's own vocabulary: per-"session" provider resources, keyed by our conversation id.
   cleanupSessionResources as cleanupPiConversationResources,
@@ -90,7 +89,6 @@ import {
   type AgentRunFingerprint,
   type AgentRunTrigger,
   type AgentRunMeta,
-  type AgentChildRunRecord,
   type AgentUserQuestionAnswer,
   type AgentUserQuestionAttachment,
   type AgentUserQuestionFileReference,
@@ -101,12 +99,6 @@ import {
   DEFAULT_GENERAL_CHANNEL_TITLE,
   agentMentionToken,
   channelAgentMembers,
-  channelMessageOwner,
-  deriveAgentPovProjection,
-  handOffTargets,
-  isMultiAgentConversation,
-  parseAgentMentionTargets,
-  usesChannelActivitySurface,
 } from '../core/agentChannel';
 import {
   rewriteFileReferenceMarkerPaths,
@@ -114,6 +106,7 @@ import {
   sanitizeFileReferenceRef,
 } from '../core/referenceMarkup';
 import { normalizeConversationTitle, sanitizeConversationTitle } from '../core/agentConversationTitle';
+import { TOOL_CATALOG } from '../core/agentToolCatalog';
 import { serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
 import { materializeAgentLocalPath, materializePathBackedAttachment } from './agentAttachmentMaterialization';
@@ -145,13 +138,12 @@ import {
 import {
   buildConsolidateOnlyDreamMemoryExtractionSpan,
   buildDreamMemoryExtractionRequest,
-  buildDreamMemoryExtractionSpanFromEvidence,
+  buildDreamMemoryExtractionSpanFromEvents,
   buildDreamSessionId,
   memoryFactKey,
   mergeMemorySources,
   parseDreamMemoryExtractionResponse,
   type DreamMemoryAction,
-  type DreamMemoryExtractionRunInput,
   type DreamMemoryExtractionSpan,
   type DreamMemoryExtractionSourceRange,
 } from './agentDreamExtraction';
@@ -169,6 +161,7 @@ import {
   providerStreamOptionsFromRuntimeSettings,
   rankedModels,
   type AgentProviderRuntimeConfig,
+  type StoredBuiltInAgentProfile,
 } from './agentSettings';
 import { parseProviderQualifiedModel } from '../core/agentModelId';
 import {
@@ -198,7 +191,6 @@ import { mergeMemoryOverviews, orderMemoryEntriesForBriefing } from '../core/age
 import {
   agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
-  resolveChildRunMemoryOwner,
 } from './agentDelegationIdentity';
 import {
   createAgentDefinitionFile,
@@ -289,10 +281,8 @@ import {
 import {
   applyAgentRenderProjectionPatch,
   buildAgentRenderProjection,
-  renderableAssistantContent,
   renderTaskStatusFromRunStatus,
   type AgentRenderMessageEntity,
-  type AgentRenderActivityEntry,
   type AgentRenderActiveCompaction,
   type AgentRenderActiveDream,
   type AgentRenderLiveContent,
@@ -386,7 +376,6 @@ const COMMAND_FAILURE_BACKOFF_MS = [30_000, 60_000, 300_000, 900_000, 3_600_000]
 // How long each `status({wait})` poll blocks while waiting for a background-flagged
 // command child run to finish (it re-polls if the run is still going).
 const COMMAND_CHILD_RUN_WAIT_MS = 600_000;
-const CHANNEL_MAX_CONCURRENT_RUNS = 4;
 const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -462,9 +451,7 @@ interface AgentPendingUserQuestion {
 interface AgentActiveRunState extends AgentRuntimeActiveRunState {
   startedAt: number;
   agent: Agent;
-  channelTurn: boolean;
   unsubscribe?: () => void;
-  channelDefinition?: AgentDefinition;
   settled: Promise<void>;
   resolveSettled: () => void;
   assistantMessageId: string | null;
@@ -483,18 +470,6 @@ interface AgentActiveRunState extends AgentRuntimeActiveRunState {
   toolCallMessageIds: Map<string, string>;
   /** The agent this run executes as (a Channel peer or the main agent). */
   executingAgentId: string;
-  /**
-   * The message that addressed this run (independence cut boundary,
-   * PM-ratified 2026-06-10). Null outside Channel routing (DMs, retries
-   * without a recorded addressing message) — the cut fails open.
-   */
-  addressedByMessageId: string | null;
-}
-
-/** One scheduled Channel turn: the agent to run and the message that addressed it. */
-interface ChannelTurnRequest {
-  agentId: string;
-  addressedByMessageId: string;
 }
 
 interface AgentRosterEntry {
@@ -505,8 +480,6 @@ interface AgentRosterEntry {
 
 type RendererProjectionDomainEvent = Extract<AgentDomainEvent, { lane: 'renderer-projection' }>;
 
-/** One Dream pass's single sweep over every conversation's childRuns records. */
-type DreamChildRunHarvest = { conversationId: string; runs: AgentChildRunRecord[] }[];
 type PublicConversationRuntimeEventInput =
   | Omit<Extract<AgentRuntimeEvent, { type: 'approval_request' }>, 'conversationId' | 'timestamp'>
   | Omit<Extract<AgentRuntimeEvent, { type: 'approval_resolved' }>, 'conversationId' | 'timestamp'>
@@ -515,9 +488,45 @@ type PublicConversationRuntimeEventInput =
   | Omit<Extract<AgentRuntimeEvent, { type: 'closed' }>, 'conversationId' | 'timestamp'>
   | Omit<Extract<AgentRuntimeEvent, { type: 'error' }>, 'conversationId' | 'timestamp'>;
 
+/** Allow/deny filter passed to {@link createAgentTools} for a conversation's default agent. */
+interface AgentToolFilter {
+  allowedTools: readonly string[] | undefined;
+  disallowedTools: readonly string[] | undefined;
+}
+
+/**
+ * Resolve the tool allow/deny filter for a conversation's default agent.
+ *
+ * External file agents keep a strict allow-list: their `tools` field is the
+ * complete capability set and is applied verbatim by `filterAgentTools`.
+ *
+ * The built-in assistant (Neva) is different: its core tools — `recall`,
+ * `dream`, `node_*`, `skill`, and self-maintenance — are never part of the
+ * editable catalog (`TOOL_CATALOG`), so a strict allow-list would silently
+ * strip them. A catalog restriction is therefore expressed as a *disallow-list
+ * over the unchecked catalog tools*, never as an allow-list; the core tools
+ * (and any user-typed extra tools) stay enabled.
+ */
+export function resolveAgentToolFilter(input: {
+  isBuiltIn: boolean;
+  tools: readonly string[] | undefined;
+  disallowedTools: readonly string[] | undefined;
+}): AgentToolFilter {
+  const { isBuiltIn, tools, disallowedTools } = input;
+  if (!isBuiltIn) return { allowedTools: tools, disallowedTools };
+  if (!tools || tools.includes('*')) return { allowedTools: undefined, disallowedTools };
+  const merged = [...(disallowedTools ?? [])];
+  for (const name of TOOL_CATALOG) {
+    if (!tools.includes(name) && !merged.includes(name)) merged.push(name);
+  }
+  return { allowedTools: undefined, disallowedTools: merged };
+}
+
 interface AgentConversationState {
   agent: Agent;
   defaultAgentId: string;
+  /** Tool allow/deny filter for the default agent, reapplied on runtime-settings changes. */
+  agentToolFilter: AgentToolFilter;
   activeRuns: Map<string, AgentActiveRunState>;
   activeRun: AgentActiveRunState | null;
   lastRun: AgentActiveRunState | null;
@@ -543,27 +552,6 @@ interface AgentConversationState {
   toolResultBudgetState: ToolResultBudgetState;
   /** Display names for member agents (agentId → name), for projections + preambles. */
   memberDisplayNames: Record<string, string>;
-  /** Read-only briefing text for Channel POV inspectors (agentId → rendered zones). */
-  povInspectorMemoryByAgentId: Record<string, string | null>;
-  povInspectorMemoryRefreshInProgress: boolean;
-  povInspectorMemoryRefreshQueued: boolean;
-  pendingChannelTurns: ChannelTurnRequest[];
-  channelTurnStartsInProgress: number;
-  channelStopRequested: boolean;
-  channelDrainWaiters: Set<() => void>;
-  /**
-   * Guards a single background watcher that emits the final idle projection once
-   * the Channel drains. A Channel send returns on acceptance (it does not await
-   * the addressed runs), so the idle emit is detached from the send call — but at
-   * most one watcher runs per conversation so the drain emits exactly once.
-   */
-  channelIdleEmitInFlight: boolean;
-  /**
-   * Ownership token for the detached idle watcher. `teardownChannelDraining`
-   * bumps it (reset/close/delete) so an orphaned watcher bows out instead of
-   * emitting on a dead conversation or leaving `channelIdleEmitInFlight` stuck.
-   */
-  channelIdleEmitToken: number;
   unsubscribe: (() => void) | null;
 }
 
@@ -586,7 +574,6 @@ interface AgentDreamMemoryExtractionBatch {
 }
 
 interface AgentDreamMemoryScope {
-  readOnly: boolean;
   /** Provenance tag for new entries — where this runtime works; never a retrieval fence. */
   originWorkspace?: string;
 }
@@ -624,15 +611,9 @@ type AgentUserViewPanel = AgentUserViewContext['nodePanels'][number];
 type AgentUserViewNode = NonNullable<AgentUserViewContext['focusedNode']>;
 type AgentUserViewOutlineNode = AgentUserViewPanel['visibleOutline'][number];
 
-interface AgentRuntimeRunScope {
-  conversation: AgentConversationState;
-  agent: Agent;
-}
-
 export class AgentRuntime {
   private conversations = new Map<string, AgentConversationState>();
   private generalChannelEnsureInFlight: Promise<AgentEventReplayState> | null = null;
-  private readonly runScope = new AsyncLocalStorage<AgentRuntimeRunScope>();
   private osNotifier?: OsNotifier;
   // The conversation the user is actually VIEWING, reported by the renderer:
   // the displayed conversation when the agent dock is open, else null (the dock
@@ -681,7 +662,11 @@ export class AgentRuntime {
   private agentTaskCache: AgentRenderTaskEntity[] = [];
   private readonly userViewContextReminderTracker = new AgentUserViewContextReminderTracker();
   private readonly contextManager: AgentRuntimeContextManager<AgentConversationState>;
-  private readonly agentIdentity: AgentIdentityRecord;
+  // Mutable: the primary agent (Neva) is user-customizable, so her display name and
+  // composed system prompt are refreshed from the editable built-in overlay at
+  // startup and after each edit ([[single-agent-collapse]]). `agentId` never changes
+  // — it stays the stable memory anchor.
+  private agentIdentity: AgentIdentityRecord;
   private readonly domainEvents: AgentDomainEventBus;
   /** The write seam for delegated runs' own ledgers ([[agent-run-unification]]). */
   /** Drill-in transcripts keyed on the run ledger's tail seq (see childRunTranscript). */
@@ -752,11 +737,10 @@ export class AgentRuntime {
         this.finishCompaction(conversationId, conversation, compactionId, lastEventType);
       },
       startReactiveRetryRun: async (conversationId, conversation) => {
-        // The retry continues the SAME turn: same executing member, same
-        // addressing boundary — never the coordinator's identity by default.
+        // The retry continues the SAME turn: same executing member — never the
+        // coordinator's identity by default.
         await this.startRun(conversationId, conversation, conversation.lastRun?.lastSubmittedUserPrompt ?? null, null, {
           executingAgentId: conversation.lastRun?.executingAgentId,
-          addressedByMessageId: conversation.lastRun?.addressedByMessageId ?? null,
         });
       },
       completeSimpleFn: this.options.completeSimpleFn,
@@ -767,6 +751,10 @@ export class AgentRuntime {
 
   ready() {
     this.emit({ type: 'ready', conversationId: null, timestamp: Date.now() });
+    // Load the user's editable assistant overlay into the primary identity (display
+    // name + composed persona) before conversations are set up.
+    void this.refreshPrimaryAgentIdentity()
+      .catch((error) => this.reportWarn('agent-runtime', 'Failed to load assistant profile overlay.', error));
     void this.ensureGeneralChannelEventState()
       .catch((error) => this.reportWarn('agent-runtime', 'Failed to ensure #General.', error));
     this.queueScheduledDream(new Date());
@@ -806,7 +794,9 @@ export class AgentRuntime {
   }
 
   async restoreLatestConversation() {
-    return this.restoreOrCreateAgentDm(this.agentIdentity.agentId);
+    // Single-agent collapse: the default landing is the General channel, not a
+    // per-agent DM (the DM primitive is gone — every conversation is a channel).
+    return this.restoreOrCreateGeneralChannel();
   }
 
   async restoreConversation(conversationId: string) {
@@ -815,8 +805,6 @@ export class AgentRuntime {
     }
     const eventState = await this.loadEventState(conversationId);
     if (!eventState.conversation) {
-      const dmAgentId = await this.agentIdForCanonicalDmConversationId(conversationId);
-      if (dmAgentId) return this.restoreOrCreateAgentDm(dmAgentId);
       throw new Error(`Agent conversation not found: ${conversationId}`);
     }
     const conversation = await this.createConversationWithEventState(eventState);
@@ -872,28 +860,6 @@ export class AgentRuntime {
     this.emitConversationAttention(conversationId, conversation);
   }
 
-  private async restoreOrCreateAgentDm(agentId: string) {
-    const principal = await this.requireAgentMemberPrincipal(agentId);
-    const conversationId = this.canonicalDmConversationId(agentId);
-    let eventState = await this.loadEventState(conversationId);
-    if (!eventState.conversation) {
-      const title = await this.displayNameForAgentId(agentId);
-      eventState = createEmptyAgentEventReplayState();
-      const events = this.buildEvents(eventState, conversationId, [{
-        type: 'conversation.created',
-        actor: systemActor(),
-        title,
-        members: [this.userPrincipal(), principal],
-      }]);
-      await this.getEventStore().appendEvents(conversationId, events);
-      for (const event of events) appendAgentEventToReplayState(eventState, event);
-      this.publishPersistedEvents(conversationId, events);
-    }
-    const conversation = await this.createConversationWithEventState(eventState);
-    await this.refreshAgentTaskCache();
-    return this.conversationResponse(conversationId, conversation);
-  }
-
   private async restoreOrCreateGeneralChannel() {
     const eventState = await this.ensureGeneralChannelEventState();
     const conversation = await this.createConversationWithEventState(eventState);
@@ -912,20 +878,17 @@ export class AgentRuntime {
   }
 
   private async ensureGeneralChannelEventStateOnce(): Promise<AgentEventReplayState> {
-    const roster = await this.listConversationRosterAgents();
-    const desiredMembers = this.generalChannelMembers(roster);
+    const desiredMembers = this.generalChannelMembers();
     const liveConversation = this.conversations.get(DEFAULT_GENERAL_CHANNEL_ID);
     const eventState = liveConversation?.eventState ?? await this.loadEventState(DEFAULT_GENERAL_CHANNEL_ID);
     const inputs = this.generalChannelInvariantInputs(eventState, desiredMembers, {
-      removeUnavailablePeers: !liveConversation
-        || (!this.hasActiveRuns(liveConversation) && liveConversation.pendingChannelTurns.length === 0),
+      removeUnavailablePeers: !liveConversation || !this.hasActiveRuns(liveConversation),
     });
     if (inputs.length === 0) return eventState;
 
     if (liveConversation) {
       await this.appendConversationEvents(DEFAULT_GENERAL_CHANNEL_ID, liveConversation, inputs);
       await this.refreshMemberDisplayNames(liveConversation);
-      this.queuePovInspectorMemoryRefresh(DEFAULT_GENERAL_CHANNEL_ID, liveConversation);
       this.emitProjection(DEFAULT_GENERAL_CHANNEL_ID, 'general_channel_updated');
       return liveConversation.eventState;
     }
@@ -937,11 +900,11 @@ export class AgentRuntime {
     return eventState;
   }
 
-  private generalChannelMembers(roster: readonly AgentRosterEntry[]): AgentPrincipal[] {
-    return mergeUniquePrincipals(
-      this.defaultConversationMembers(),
-      roster.map((agent): AgentPrincipal => ({ type: 'agent', agentId: agent.agentId as AgentId })),
-    );
+  private generalChannelMembers(): AgentPrincipal[] {
+    // Single-agent collapse: every conversation — General included — has exactly
+    // one agent member (Neva). Agent definitions are delegation child-agent types,
+    // not conversation members, so the roster never joins a conversation.
+    return this.defaultConversationMembers();
   }
 
   private generalChannelInvariantInputs(
@@ -950,9 +913,6 @@ export class AgentRuntime {
     options: { removeUnavailablePeers: boolean },
   ): AgentEventInput[] {
     if (!eventState.conversation) {
-      for (const member of channelAgentMembers(desiredMembers)) {
-        this.assertNoMentionTokenCollision(desiredMembers.filter((candidate) => candidate !== member), member.agentId);
-      }
       return [{
         type: 'conversation.created',
         actor: systemActor(),
@@ -978,7 +938,6 @@ export class AgentRuntime {
     let workingMembers = eventState.conversation.members.slice();
     for (const member of desiredMembers) {
       if (workingMembers.some((candidate) => samePrincipal(candidate, member))) continue;
-      if (member.type === 'agent') this.assertNoMentionTokenCollision(workingMembers, member.agentId);
       inputs.push({
         type: 'member.added',
         actor: systemActor(),
@@ -1005,7 +964,6 @@ export class AgentRuntime {
   }
 
   async createConversation(options: {
-    agentIds?: string[];
     title?: string;
     goal?: string;
     seedText?: string;
@@ -1017,11 +975,8 @@ export class AgentRuntime {
       throw new Error('A Channel requires a name.');
     }
     const title = normalizedTitle;
-    const extraMembers = await this.resolveAgentMemberPrincipals(options.agentIds ?? []);
-    const members = mergeUniquePrincipals(this.defaultConversationMembers(), extraMembers);
-    for (const member of channelAgentMembers(members)) {
-      this.assertNoMentionTokenCollision(members.filter((candidate) => candidate !== member), member.agentId);
-    }
+    // Single-agent collapse: a conversation always has exactly {user, Neva}.
+    const members = this.defaultConversationMembers();
     const inputs: AgentEventInput[] = [{
       type: 'conversation.created',
       actor: systemActor(),
@@ -1050,137 +1005,6 @@ export class AgentRuntime {
     return this.conversationResponse(conversationId, conversation);
   }
 
-  /**
-   * Add an agent member. On a Channel this is a real `member.added` event.
-   * Canonical DMs are immutable; only named Channels support membership edits.
-   */
-  async addConversationMember(conversationId: string, agentId: string) {
-    await this.applyConversationChannelUpdate(conversationId, {
-      addAgentIds: [agentId],
-      emitReason: 'member.added',
-    });
-    const conversation = await this.ensureConversationWithId(conversationId);
-    return this.conversationResponse(conversationId, conversation);
-  }
-
-  /**
-   * `@` tokens are the routing namespace: two members whose agentIds share a
-   * trailing name segment would both match one mention (one `@` → two runs) and
-   * be indistinguishable in the UI. Impossible by construction — reject the add.
-   */
-  private assertNoMentionTokenCollision(members: readonly AgentPrincipal[], agentId: string) {
-    const token = agentMentionToken(agentId).toLowerCase();
-    const collision = channelAgentMembers(members).find(
-      (member) => member.agentId !== agentId && agentMentionToken(member.agentId).toLowerCase() === token,
-    );
-    if (collision) {
-      throw new Error(`Cannot add member: "@${token}" already addresses ${collision.agentId}.`);
-    }
-  }
-
-  async removeConversationMember(conversationId: string, agentId: string) {
-    await this.applyConversationChannelUpdate(conversationId, {
-      removeAgentIds: [agentId],
-      emitReason: 'member.removed',
-    });
-    const conversation = await this.ensureConversationWithId(conversationId);
-    return this.conversationResponse(conversationId, conversation);
-  }
-
-  /**
-   * Atomically apply Channel organization changes for the coordinator's chat tool.
-   * Single-step UI commands keep their narrower methods above; this path reports
-   * the actual delta that was committed, so the model does not over-claim no-ops.
-   */
-  async updateConversationChannel(
-    conversationId: string,
-    options: AgentConversationChannelUpdateOptions,
-  ): Promise<AgentConversationChannelUpdateResult> {
-    return this.applyConversationChannelUpdate(conversationId, {
-      ...options,
-      emitReason: 'channel.updated',
-    });
-  }
-
-  private async applyConversationChannelUpdate(
-    conversationId: string,
-    options: AgentConversationChannelUpdateOptions & { emitReason: string },
-  ): Promise<AgentConversationChannelUpdateResult> {
-    if (this.isCanonicalDmConversationId(conversationId)) throw new Error('The canonical DM membership cannot change.');
-    if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) throw new Error('#General membership is automatic.');
-    const conversation = await this.ensureConversationWithId(conversationId);
-    const addAgentIds = uniqueStrings(options.addAgentIds ?? []);
-    const removeAgentIds = uniqueStrings(options.removeAgentIds ?? []);
-    const overlap = addAgentIds.find((agentId) => removeAgentIds.includes(agentId));
-    if (overlap) throw new Error(`Agent ${overlap} cannot be both added and removed in one update.`);
-    const addPrincipals = await this.resolveAgentMemberPrincipals(addAgentIds);
-    const removePrincipals = removeAgentIds.map((agentId): AgentMemberPrincipal => ({ type: 'agent', agentId }));
-    for (const principal of removePrincipals) {
-      if (principal.agentId === this.coordinatorAgentId()) throw new Error('The Channel coordinator cannot be removed.');
-    }
-    let workingMembers = (conversation.eventState.conversation?.members ?? []).slice();
-    const actualRemovePrincipals = removePrincipals.filter((principal) => (
-      workingMembers.some((member) => samePrincipal(member, principal))
-    ));
-    if (actualRemovePrincipals.length > 0 && (this.hasActiveRuns(conversation) || conversation.pendingChannelTurns.length > 0)) {
-      throw new Error('Cannot remove a member while a Channel run is active.');
-    }
-
-    const inputs: AgentEventInput[] = [];
-    const removedAgentIds: string[] = [];
-    const addedAgentIds: string[] = [];
-
-    for (const principal of actualRemovePrincipals) {
-      inputs.push({
-        type: 'member.removed',
-        actor: userActor(),
-        member: principal,
-      });
-      removedAgentIds.push(principal.agentId);
-      workingMembers = workingMembers.filter((member) => !samePrincipal(member, principal));
-    }
-
-    for (const principal of addPrincipals) {
-      if (workingMembers.some((member) => samePrincipal(member, principal))) continue;
-      this.assertNoMentionTokenCollision(workingMembers, principal.agentId);
-      inputs.push({
-        type: 'member.added',
-        actor: userActor(),
-        member: principal,
-      });
-      addedAgentIds.push(principal.agentId);
-      workingMembers = [...workingMembers, principal];
-    }
-
-    const normalizedTitle = options.title === undefined ? undefined : normalizeConversationTitle(options.title);
-    const currentTitle = sanitizeConversationTitle(conversation.eventState.conversation?.title);
-    const renamed = normalizedTitle !== undefined && normalizedTitle !== currentTitle;
-    if (renamed) {
-      inputs.push({
-        type: 'conversation.renamed',
-        actor: systemActor(),
-        title: normalizedTitle,
-        goal: normalizedTitle,
-      });
-    }
-
-    if (inputs.length > 0) {
-      await this.appendConversationEvents(conversationId, conversation, inputs);
-      if (addedAgentIds.length > 0) await this.refreshMemberDisplayNames(conversation);
-      if (addedAgentIds.length > 0 || removedAgentIds.length > 0) this.queuePovInspectorMemoryRefresh(conversationId, conversation);
-      this.emitProjection(conversationId, options.emitReason);
-    }
-
-    const meta = eventStateToMeta(conversation.eventState);
-    if (!meta) throw new Error(`Channel not found after update: ${conversationId}`);
-    return {
-      conversation: meta,
-      addedAgentIds,
-      removedAgentIds,
-      renamed,
-    };
-  }
-
   /** Resolve agent ids to member principals, validating each against the registry. */
   private async resolveAgentMemberPrincipals(agentIds: readonly string[]): Promise<AgentMemberPrincipal[]> {
     const lookupAgentIds = uniqueStrings(agentIds.filter((agentId) => agentId !== this.agentIdentity.agentId));
@@ -1203,12 +1027,6 @@ export class AgentRuntime {
     const definitions = await this.listRawAgentDefinitions('agent-display-name');
     const match = definitions.find((definition) => agentDefinitionAgentId(definition) === agentId);
     return match ? agentDefinitionDisplayName(match) : `@${agentMentionToken(agentId)}`;
-  }
-
-  private async agentIdForCanonicalDmConversationId(conversationId: string): Promise<string | null> {
-    if (!this.isCanonicalDmConversationId(conversationId)) return null;
-    const roster = await this.listConversationRosterAgents();
-    return roster.find((agent) => this.canonicalDmConversationId(agent.agentId) === conversationId)?.agentId ?? null;
   }
 
   private async listConversationRosterAgents(): Promise<AgentRosterEntry[]> {
@@ -1241,47 +1059,29 @@ export class AgentRuntime {
   }
 
   private conversationListMetaFromIndexEntry(
-    entry: AgentConversationIndexEntry | null,
-    fallback?: {
-      id: string;
-      title: string | null;
-      members: AgentPrincipal[];
-      canonicalDmAgentId?: string;
-    },
+    entry: AgentConversationIndexEntry,
   ): AgentConversationListMeta {
-    const id = entry?.id ?? fallback!.id;
     return {
-      id,
-      title: sanitizeConversationTitle(entry?.title ?? fallback?.title),
-      members: (entry?.members ?? fallback?.members ?? []).slice(),
-      goal: entry?.goal,
-      canonicalDmAgentId: fallback?.canonicalDmAgentId,
-      createdAt: entry?.createdAt ?? 0,
-      updatedAt: entry?.updatedAt ?? 0,
-      messageCount: entry?.messageCount ?? 0,
-      lastMessageSnippet: entry?.lastMessageSnippet ?? null,
-      lastMessageAt: entry?.lastMessageAt ?? null,
-      unreadCount: entry?.unreadCount ?? 0,
+      id: entry.id,
+      title: sanitizeConversationTitle(entry.title),
+      members: entry.members.slice(),
+      goal: entry.goal,
+      createdAt: entry.createdAt ?? 0,
+      updatedAt: entry.updatedAt ?? 0,
+      messageCount: entry.messageCount ?? 0,
+      lastMessageSnippet: entry.lastMessageSnippet ?? null,
+      lastMessageAt: entry.lastMessageAt ?? null,
+      unreadCount: entry.unreadCount ?? 0,
     };
   }
 
   async listConversations() {
     await this.ensureGeneralChannelEventState();
     const entries = await this.getEventStore().listConversationIndexEntries();
-    const entryById = new Map(entries.map((entry) => [entry.id, entry]));
-    const roster = await this.listConversationRosterAgents();
-    const dmRows = roster.map((agent) => (
-      this.conversationListMetaFromIndexEntry(
-        entryById.get(this.canonicalDmConversationId(agent.agentId)) ?? null,
-        {
-          id: this.canonicalDmConversationId(agent.agentId),
-          title: agent.displayName,
-          members: [this.userPrincipal(), { type: 'agent', agentId: agent.agentId as AgentId }],
-          canonicalDmAgentId: agent.agentId,
-        },
-      )
-    ));
-    const channelRows = entries
+    // Single-agent collapse: channels are the only conversation primitive. Every
+    // listed row is a goal-bearing channel (General sorts first); there are no
+    // per-agent DM rows.
+    const listed = entries
       .filter((entry) => !!entry.goal)
       .map((entry) => this.conversationListMetaFromIndexEntry(entry))
       .sort((left, right) => (
@@ -1290,13 +1090,10 @@ export class AgentRuntime {
         || (right.updatedAt - left.updatedAt)
         || left.id.localeCompare(right.id)
       ));
-    const listed = [...dmRows, ...channelRows];
     // Seed cross-conversation unread badges on launch: the live conversation_attention
     // event only fires for conversations touched this run, so a conversation that went
     // unread before the app closed would show no badge until it is reopened. Re-emit
-    // the persisted unread — but only for conversations that have a list row to carry
-    // the badge (goal-less conversations like the default DM are masked when active
-    // and have nowhere to render an orphaned count).
+    // the persisted unread for every listed channel.
     for (const entry of listed) {
       if ((entry.unreadCount ?? 0) > 0) {
         this.emit({
@@ -1311,13 +1108,12 @@ export class AgentRuntime {
   }
 
   /**
-   * Pools the Settings Memory pane manages: this agent's own self-model and the user pool. The
-   * user-Dream writes durable user facts, so they must be inspectable/editable here too (review
-   * #6) — a single-pool surface would let user facts accumulate with no way to correct them. The
-   * view carries `principal`, so the renderer can group/label the two pools.
+   * The single believer pool the Settings Memory pane manages: Neva's own knowledge. Memory
+   * collapsed to one believer-keyed first-person pool — the view still carries `principal` (a
+   * constant = the believer) but there are no longer separate pools to group or label.
    */
   private managedMemoryPrincipals(): AgentPrincipal[] {
-    return [this.agentPrincipal(), this.userPrincipal()];
+    return [this.agentPrincipal()];
   }
 
   /** Locate which managed pool owns a memory id, so update/forget target the right pool. */
@@ -1336,8 +1132,7 @@ export class AgentRuntime {
         includeInvalidated: options.includeInvalidated,
         limit,
       })));
-    // Merge the managed pools newest-first into one bounded list; the view's `principal` lets the
-    // renderer separate the agent self-model from the user pool.
+    // One believer pool, newest-first and bounded.
     return pools
       .flat()
       .sort((a, b) => b.createdAt - a.createdAt)
@@ -1354,7 +1149,6 @@ export class AgentRuntime {
     const principal = await this.resolveMemoryPrincipal(memoryId);
     if (!principal) return null;
     const entry = await this.getEventStore().updateMemoryEntry(principal, memoryId, { fact: normalizedFact });
-    this.queuePovInspectorMemoryRefreshForPrincipal(principal);
     return entry ? agentMemoryEntryToView(entry) : null;
   }
 
@@ -1362,7 +1156,6 @@ export class AgentRuntime {
     const principal = await this.resolveMemoryPrincipal(memoryId);
     if (!principal) return null;
     const entry = await this.getEventStore().removeMemoryEntry(principal, memoryId, 'user');
-    this.queuePovInspectorMemoryRefreshForPrincipal(principal);
     return entry ? agentMemoryEntryToView(entry) : null;
   }
 
@@ -1515,8 +1308,7 @@ export class AgentRuntime {
     const memberIds = roster.length > 0
       ? channelAgentMembers(roster).map((member) => member.agentId)
       : [...new Set(summaries.map((summary) => summary.agentId))];
-    const shape: AgentDebugConversationShape = usesChannelActivitySurface(conversationId, roster) ? 'channel' : 'dm';
-    return deriveDebugConversation(conversationId, shape, memberIds, summaries);
+    return deriveDebugConversation(conversationId, 'dm', memberIds, summaries);
   }
 
   /** Run-grounded debug: one run's full execution detail (rounds + per-run snapshot). */
@@ -1718,18 +1510,15 @@ export class AgentRuntime {
   async listAllAgentDefinitions(conversationId: string): Promise<AgentDefinitionView[]> {
     const definitions = await this.listRawAgentDefinitions(conversationId);
     const localRoot = this.authoringLocalRoot();
-    return Promise.all(this.withBuiltInAgentDefinitions(definitions).map(async (definition) => {
-      const agentId = agentDefinitionAgentId(definition);
-      // Surface the built-in's editable model/effort overlay on its view so the
-      // editor renders the user's saved selection (not the inert `inherit` default).
-      const overlaid = definition.source === 'built-in'
-        ? { ...definition, ...(await this.resolveDefinitionModelEffort(agentId, definition)) }
-        : definition;
-      return {
-        ...overlaid,
-        agentId,
-        writable: isAgentDefinitionWritable(definition, localRoot),
-      };
+    // `withBuiltInAgentDefinitions` already layers the built-in's editable overlay
+    // (display name, persona, model/effort, tools, …) onto the injected definition,
+    // so the editor renders the user's saved values. The built-in is directly
+    // editable (its edits persist to the settings overlay, not a file), so it is
+    // `writable` even though it has no AGENT.md.
+    return (await this.withBuiltInAgentDefinitions(definitions)).map((definition) => ({
+      ...definition,
+      agentId: agentDefinitionAgentId(definition),
+      writable: definition.source === 'built-in' ? true : isAgentDefinitionWritable(definition, localRoot),
     }));
   }
 
@@ -1752,13 +1541,42 @@ export class AgentRuntime {
     return tempRuntime.listAllAgentDefinitions();
   }
 
-  private withBuiltInAgentDefinitions(definitions: readonly AgentDefinition[]): AgentDefinition[] {
-    const builtIn = createTenonAssistantAgentDefinition();
+  private async withBuiltInAgentDefinitions(definitions: readonly AgentDefinition[]): Promise<AgentDefinition[]> {
+    const builtIn = await this.materializeBuiltInAgentDefinition();
     const builtInId = agentDefinitionAgentId(builtIn);
     return [
       builtIn,
       ...definitions.filter((definition) => agentDefinitionAgentId(definition) !== builtInId),
     ];
+  }
+
+  /**
+   * The built-in assistant (Neva) definition with the user's editable overlay applied
+   * — the single seam every list/execute path goes through, so an edit to the persona,
+   * display name, tools, etc. takes effect everywhere. The stable `name` (memory
+   * anchor) is never overlaid; only what the user can see and change.
+   */
+  private async materializeBuiltInAgentDefinition(): Promise<AgentDefinition> {
+    const base = createTenonAssistantAgentDefinition();
+    const overlay = await getBuiltInAgentProfile(agentDefinitionAgentId(base));
+    return applyBuiltInAgentProfile(base, overlay);
+  }
+
+  /**
+   * Rebuild the primary agent's identity (display name + composed system prompt +
+   * skills) from the editable built-in overlay. Called at startup to pick up a
+   * persisted overlay, and after each built-in edit. The system prompt is composed
+   * in `main` mode — the same recipe as the code default — so customizing the persona
+   * never silently drops the main-agent capabilities (recall/dream).
+   */
+  private async refreshPrimaryAgentIdentity(): Promise<void> {
+    const definition = await this.materializeBuiltInAgentDefinition();
+    this.agentIdentity = {
+      ...this.agentIdentity,
+      displayName: agentDefinitionDisplayName(definition),
+      systemPrompt: composeAgentPrompt(definition, { mode: 'main' }),
+      skills: definition.skills ?? [],
+    };
   }
 
   // Authoring (user-driven only — see [[agent-authoring]]). Each write goes
@@ -1781,16 +1599,48 @@ export class AgentRuntime {
     input: AgentAuthoringInput,
   ): Promise<AgentDefinitionView[]> {
     const existing = await this.resolveAgentDefinitionById(conversationId, agentId);
-    // A built-in definition is read-only code: only its model/effort are editable,
-    // and they persist to the settings overlay rather than a (non-existent) file.
+    // The built-in assistant (Neva) is directly editable, but it is code, not a
+    // file — so its edits persist to the settings overlay. The editor's name field
+    // edits the display name (the stable `name`/memory anchor never changes), then
+    // we rebuild the primary identity + refresh live conversations so a rename shows
+    // immediately, not only on the next conversation setup.
     if (existing.source === 'built-in') {
+      // Persist ONLY the free-text fields the user actually changed from the code
+      // defaults. The editor round-trips the current persona/description/display
+      // name through the form, so storing them unconditionally would freeze them at
+      // edit time — a later change to the code persona (NEVA_AGENT_PERSONA) would
+      // then be ignored. Diffing against the code base leaves unchanged fields on
+      // the code default (null → not stored). The remaining fields already
+      // default-guard inside setBuiltInAgentProfile (model 'inherit', tools '*', …).
+      const base = createTenonAssistantAgentDefinition();
       await setBuiltInAgentProfile(agentId, {
+        displayName: input.name !== (base.displayName ?? base.name) ? input.name : null,
+        description: input.description !== base.description ? input.description : null,
+        body: input.body !== base.body ? input.body : null,
         model: input.model ?? null,
         effort: typeof input.effort === 'string' ? input.effort : null,
+        permissionMode: input.permissionMode ?? null,
+        maxTurns: input.maxTurns ?? null,
+        tools: input.tools ?? null,
+        disallowedTools: input.disallowedTools ?? null,
+        skills: input.skills ?? null,
+        background: input.background ?? null,
       });
-    } else {
-      await updateAgentDefinitionFile({ existing, input, localRoot: this.authoringLocalRoot() });
+      await this.refreshPrimaryAgentIdentity();
+      const views = await this.reloadAgentDefinitions(conversationId);
+      for (const [id, conversation] of this.conversations) {
+        await this.refreshMemberDisplayNames(conversation);
+        // Reconfigure the live pi-agent so a persona/display-name edit takes effect
+        // on the NEXT turn, not only when the conversation is reopened. (The model
+        // is not hot-swapped here — it still resolves on conversation setup.)
+        if (conversation.defaultAgentId === this.agentIdentity.agentId) {
+          conversation.agent.state.systemPrompt = this.agentIdentity.systemPrompt;
+        }
+        this.emitProjection(id, 'agent_definitions_reloaded');
+      }
+      return views;
     }
+    await updateAgentDefinitionFile({ existing, input, localRoot: this.authoringLocalRoot() });
     return this.reloadAgentDefinitions(conversationId);
   }
 
@@ -1832,7 +1682,7 @@ export class AgentRuntime {
 
   private async resolveAgentDefinitionById(conversationId: string, agentId: string): Promise<AgentDefinition> {
     const definitions = await this.listRawAgentDefinitions(conversationId);
-    const match = this.withBuiltInAgentDefinitions(definitions)
+    const match = (await this.withBuiltInAgentDefinitions(definitions))
       .find((definition) => agentDefinitionAgentId(definition) === agentId);
     if (!match) throw new Error('Agent definition not found.');
     return match;
@@ -1896,9 +1746,6 @@ export class AgentRuntime {
   }
 
   async renameConversation(conversationId: string, title: string) {
-    if (this.isCanonicalDmConversationId(conversationId)) {
-      throw new Error('The canonical agent DM cannot be renamed.');
-    }
     if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) {
       throw new Error('#General cannot be renamed.');
     }
@@ -1929,9 +1776,6 @@ export class AgentRuntime {
   }
 
   async deleteConversation(conversationId: string) {
-    if (this.isCanonicalDmConversationId(conversationId)) {
-      throw new Error('The canonical agent DM cannot be deleted.');
-    }
     if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) {
       throw new Error('#General cannot be deleted.');
     }
@@ -1940,9 +1784,6 @@ export class AgentRuntime {
       await this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_deleted');
       for (const run of this.activeRunList(conversation)) run.agent.abort();
       conversation.agent.abort();
-      // Settle the detached idle watcher before dropping the conversation: an
-      // unresolved parked watcher would pin it and could emit on a deleted one.
-      this.teardownChannelDraining(conversation);
       conversation.unsubscribe?.();
       clearPendingProjection(conversation);
       this.conversations.delete(conversationId);
@@ -1967,34 +1808,26 @@ export class AgentRuntime {
       const attachments = materialized.attachments;
       const messageText = rewriteFileReferenceMarkerPaths(message, materialized.pathMap);
       if (!messageText.trim() && attachments.length === 0) return;
-      const channelMembers = conversation.eventState.conversation?.members ?? [];
-      const channelSurface = usesChannelActivitySurface(conversationId, channelMembers);
-      const readerNeutralSharedLog = isMultiAgentConversation(channelMembers);
-      if (this.hasActiveRuns(conversation) && !channelSurface) {
+      if (this.hasActiveRuns(conversation)) {
         if (attachments.length > 0) {
           throw new Error('Attachments cannot be queued while the agent is running.');
         }
         await this.steerConversation(conversationId, messageText);
         return;
       }
-      const channelActive = channelSurface && this.hasActiveRuns(conversation);
       const runtimeSettings = await this.refreshRuntimeSettings(conversation);
       const compactCommand = attachments.length === 0 && runtimeSettings.compactEnabled
         ? parseCompactSlashCommand(messageText)
         : null;
       if (compactCommand) {
-        if (channelActive) throw new Error('Cannot compact while a Channel run is active.');
         await this.compactConversation(conversationId, conversation, compactCommand.instructions);
         return;
       }
       if (attachments.length === 0 && parseDreamSlashCommand(messageText) && this.dreamMemoryExtractionEnabled()) {
-        if (channelActive) throw new Error('Cannot run /dream while a Channel run is active.');
         await this.runManualDreamFromConversation(conversationId);
         return;
       }
-      if (!channelActive) {
-        conversation.skillRuntime.resetRunPermissionRules();
-      }
+      conversation.skillRuntime.resetRunPermissionRules();
       const normalizedUserViewContext = normalizeAgentUserViewContext(userViewContextInput);
       const userViewContextReminder = this.userViewContextReminderTracker.prepare(
         conversationId,
@@ -2003,15 +1836,7 @@ export class AgentRuntime {
       const userViewReminderText = userViewContextReminder.reminder;
       const now = new Date();
       const outlinerContext = buildOutlinerContextReminder(this.outlinerToolHost);
-      // In a multi-agent Channel the persisted user message stays reader-neutral:
-      // a memory briefing belongs to ONE reader, so it is injected transiently
-      // per run at assembly time instead of being written into the shared log.
-      // Skill/agent listings are likewise main-agent-POV and stay out of the
-      // shared message. A coordinator-only Channel still has the Channel UI
-      // surface, but its reader is DM-equivalent and keeps these turn reminders.
-      const memoryReminder = readerNeutralSharedLog
-        ? null
-        : await this.buildMemoryReminder(conversation.defaultAgentId, conversation);
+      const memoryReminder = await this.buildMemoryReminder(conversation.defaultAgentId, conversation);
       const turnContextReminder = joinReminderParts([
         buildEnvironmentContextReminder(now),
         memoryReminder,
@@ -2021,10 +1846,10 @@ export class AgentRuntime {
       const userSkillPrompt = attachments.length === 0 && runtimeSettings.slashSkillsEnabled
         ? await createUserSkillPrompt(conversation.skillRuntime, messageText, turnContextReminder)
         : null;
-      const skillListingReminder = userSkillPrompt || readerNeutralSharedLog
+      const skillListingReminder = userSkillPrompt
         ? null
         : await this.buildSkillListingReminder(conversation);
-      const agentListingReminder = userSkillPrompt || readerNeutralSharedLog
+      const agentListingReminder = userSkillPrompt
         ? null
         : await this.buildAgentListingReminder(conversation);
       let prompt: UserMessage;
@@ -2050,43 +1875,15 @@ export class AgentRuntime {
           agentListingReminder,
         }, now);
       }
-      if (channelSurface) {
-        const addressedTo = this.resolveAddressedMembers(messageText, channelMembers);
-        const messageId = await this.appendUserPromptEvent(conversationId, conversation, prompt, { addressedTo });
-        userViewContextReminder.commit();
-        this.enqueueChannelTurns(
-          conversationId,
-          conversation,
-          addressedTo
-            .filter((target): target is Extract<AgentPrincipal, { type: 'agent' }> => target.type === 'agent')
-            .map((target) => ({ agentId: target.agentId, addressedByMessageId: messageId })),
-        );
-        // Channel send returns on acceptance: the user message is persisted and
-        // the addressed turns are enqueued and projected (above). The runs drain
-        // asynchronously; scheduleChannelIdleEmit emits the final idle state. A
-        // settled Channel for tests uses drainChannelTurnsForTest.
-        //
-        // DISPATCH CONTRACT (keep in sync): this accept-and-return shape is
-        // mirrored in editMessage and rerunSettledTurn (the latter enqueues a
-        // single owner turn, with a different guard). A change to the contract — a
-        // new ChannelTurnRequest field, an extra accept-time step — must land in
-        // ALL THREE or one entry point silently diverges (an edit/retry-only bug).
-        // Deliberately NOT unified into one dispatchTurn: the three differ enough
-        // (addressing source, continue verb, guard) that a careless merge would
-        // itself reintroduce that entry-point-specific divergence.
-        return;
-      } else {
-        await this.appendUserPromptEvent(conversationId, conversation, prompt);
-        userViewContextReminder.commit();
-        startedRunId = await this.startRun(conversationId, conversation, prompt);
-        await conversation.agent.prompt(prompt);
-        await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
-      }
+      await this.appendUserPromptEvent(conversationId, conversation, prompt);
+      userViewContextReminder.commit();
+      startedRunId = await this.startRun(conversationId, conversation, prompt);
+      await conversation.agent.prompt(prompt);
+      await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
-      // Scoped to the run THIS call started: the Channel path's turns recover
-      // inside runChannelTurn, and a startRun rejected by the already-active
-      // guard must never clear the healthy foreign run that owns the slot.
+      // Scoped to the run THIS call started: a startRun rejected by the
+      // already-active guard must never clear the healthy run that owns the slot.
       await this.recoverFromRunError(conversationId, startedRunId);
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     }
@@ -2107,11 +1904,6 @@ export class AgentRuntime {
       const target = requireEventMessage(conversation.eventState, nodeId);
       if (target.role !== 'user') throw new Error('Only user messages can be edited');
       this.userViewContextReminderTracker.reset(conversationId);
-      const members = conversation.eventState.conversation?.members ?? [];
-      const channelSurface = usesChannelActivitySurface(conversationId, members);
-      // The edited text is a fresh addressing message: re-resolve `@` routing
-      // (the original event's addressedTo must not silently carry over).
-      const addressedTo = channelSurface ? this.resolveAddressedMembers(trimmed, members) : null;
       const messageId = this.createMessageId('user');
       await this.appendConversationEvents(conversationId, conversation, [{
         type: 'user_message.created',
@@ -2120,25 +1912,10 @@ export class AgentRuntime {
         parentMessageId: target.parentMessageId,
         replacesMessageId: target.id,
         content: textPersistedContent(trimmed),
-        addressedTo: addressedTo ?? undefined,
       }]);
       conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
       this.emitProjection(conversationId, 'message_edited');
       conversation.skillRuntime.resetRunPermissionRules();
-      if (channelSurface && addressedTo) {
-        this.enqueueChannelTurns(
-          conversationId,
-          conversation,
-          addressedTo
-            .filter((target): target is Extract<AgentPrincipal, { type: 'agent' }> => target.type === 'agent')
-            .map((target) => ({ agentId: target.agentId, addressedByMessageId: messageId })),
-        );
-        // Returns on acceptance like a Channel send: the edited addressing message
-        // is persisted and re-dispatched; the runs drain asynchronously.
-        // (Channel-dispatch sibling of sendMessage / rerunSettledTurn — keep the
-        // dispatch contract synced; see the DISPATCH CONTRACT note in sendMessage.)
-        return;
-      }
       startedRunId = await this.startRun(conversationId, conversation);
       await conversation.agent.continue();
       await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
@@ -2166,9 +1943,7 @@ export class AgentRuntime {
       conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
       this.emitProjection(conversationId, 'message_regenerate_started');
       conversation.skillRuntime.resetRunPermissionRules();
-      // rerunSettledTurn emits idle for the synchronous DM path; the Channel path
-      // returns on acceptance and drains asynchronously.
-      await this.rerunSettledTurn(conversationId, conversation, target, parentId);
+      await this.rerunSettledTurn(conversationId, conversation);
     } catch (error) {
       // Run recovery happens inside rerunSettledTurn (it knows the run it
       // started); this catch only surfaces the error.
@@ -2192,9 +1967,7 @@ export class AgentRuntime {
       conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
       this.emitProjection(conversationId, 'message_retry_started');
       conversation.skillRuntime.resetRunPermissionRules();
-      // rerunSettledTurn emits idle for the synchronous DM path; the Channel path
-      // returns on acceptance and drains asynchronously.
-      await this.rerunSettledTurn(conversationId, conversation, target, parentId);
+      await this.rerunSettledTurn(conversationId, conversation);
     } catch (error) {
       // Run recovery happens inside rerunSettledTurn (it knows the run it
       // started); this catch only surfaces the error.
@@ -2203,43 +1976,19 @@ export class AgentRuntime {
   }
 
   /**
-   * Re-run a settled assistant turn (regenerate/retry) AS its original speaker:
-   * the regenerated record's run identity — not the coordinator — picks the
-   * executing member, so a peer's alternate branch keeps the peer's persona,
-   * tools, memory line, and POV. The branch was just reselected to `parentId`,
-   * which is therefore the addressing boundary (the cut is a no-op on a path
-   * that already ends there — recorded for the retry chain's benefit). A
-   * regenerated reply does not re-trigger hand-off routing (noted in the PR;
-   * the alternate branch is a re-statement, not a new round).
+   * Re-run a settled assistant turn (regenerate/retry): the caller has already
+   * reselected the branch to the parent, so the agent re-runs from there. Emits
+   * idle once the run settles.
    */
   private async rerunSettledTurn(
     conversationId: string,
     conversation: AgentConversationState,
-    originalRecord: AgentEventMessageRecord,
-    parentId: string,
   ) {
-    const owner = channelMessageOwner(originalRecord, conversation.eventState.runs, this.coordinatorAgentId());
-    const ownerAgentId = owner.type === 'agent' ? owner.agentId : this.coordinatorAgentId();
-    const members = conversation.eventState.conversation?.members ?? [];
-    if (usesChannelActivitySurface(conversationId, members) || ownerAgentId !== this.coordinatorAgentId()) {
-      this.enqueueChannelTurns(conversationId, conversation, [{
-        agentId: ownerAgentId,
-        addressedByMessageId: parentId,
-      }]);
-      // Returns on acceptance: the re-run turn is enqueued and projected; it
-      // drains asynchronously via scheduleChannelIdleEmit.
-      // (Channel-dispatch sibling of sendMessage / editMessage, but a SINGLE owner
-      // turn and a wider guard — keep the dispatch contract synced; see the
-      // DISPATCH CONTRACT note in sendMessage.)
-      return;
-    }
     let startedRunId: string | null = null;
     try {
       startedRunId = await this.startRun(conversationId, conversation);
       await continueFromActivePath(conversation.agent);
       await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
-      // DM rerun is synchronous: emit idle here once the run settles. The Channel
-      // branch returned early and drains via scheduleChannelIdleEmit instead.
       await this.persistAndEmitIdle(conversationId, conversation);
     } catch (error) {
       // Free the slot of the run THIS rerun started, then let the caller's
@@ -2275,14 +2024,6 @@ export class AgentRuntime {
     }
     const text = message.trim();
     if (!text) return { queued: false };
-    // Channels use the round queue, not the pi follow-up queue: the DM follow-up
-    // builds the MAIN agent's private memory briefing into the prompt, which
-    // must never enter the reader-neutral shared log; routing also has to
-    // re-resolve `@` addressing. sendMessage does both.
-    if (usesChannelActivitySurface(conversationId, conversation.eventState.conversation?.members ?? [])) {
-      void this.sendMessage(conversationId, text, [], userViewContextInput);
-      return { queued: true };
-    }
     this.releaseQueuedFollowUpSkillListing(conversation);
     conversation.agent.clearFollowUpQueue();
     this.userViewContextReminderTracker.reset(conversationId);
@@ -2309,13 +2050,6 @@ export class AgentRuntime {
     }
     const text = message.trim();
     if (!text) return { queued: false };
-    // No steer in Channels (ratified): there is no streamed turn to steer, and
-    // an explicit `@` must produce the addressed member's run, not an injection
-    // into whichever member happens to be running. Route as a normal message.
-    if (usesChannelActivitySurface(conversationId, conversation.eventState.conversation?.members ?? [])) {
-      void this.sendMessage(conversationId, text);
-      return { queued: true };
-    }
     if (!conversation.agent.state.isStreaming) return { queued: false };
     conversation.agent.clearSteeringQueue();
     conversation.agent.steer({
@@ -2346,9 +2080,6 @@ export class AgentRuntime {
     const conversation = this.conversations.get(conversationId);
     if (!conversation) return;
     void this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_stopped')
-      .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
-    conversation.channelStopRequested = this.activeOrStartingChannelRunCount(conversation) > 0 || conversation.pendingChannelTurns.length > 0;
-    void this.discardPendingChannelTurns(conversationId, conversation, '')
       .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
     for (const run of this.activeRunList(conversation)) run.agent.abort();
     conversation.agent.abort();
@@ -2381,12 +2112,10 @@ export class AgentRuntime {
       const previousConversation = conversation.eventState.conversation;
       await this.getEventStore().deleteConversation(conversationId);
       const eventState = createEmptyAgentEventReplayState();
-      const fallbackDmAgentId = this.directMessageAgentId(conversation.eventState) ?? this.agentIdentity.agentId;
       const events = this.buildEvents(eventState, conversationId, [{
         type: 'conversation.created',
         actor: systemActor(),
-        title: previousConversation?.title
-          ?? (this.isCanonicalDmConversationId(conversationId) ? await this.displayNameForAgentId(fallbackDmAgentId) : 'Untitled'),
+        title: previousConversation?.title ?? 'Untitled',
         members: previousConversation?.members.slice() ?? this.defaultConversationMembers(),
         goal: previousConversation?.goal,
       }]);
@@ -2399,12 +2128,6 @@ export class AgentRuntime {
       conversation.activeRuns.clear();
       conversation.activeRun = null;
       conversation.lastRun = null;
-      conversation.pendingChannelTurns = [];
-      conversation.channelTurnStartsInProgress = 0;
-      // Tears down the detached idle watcher too: clearing channelDrainWaiters
-      // without resolving them would orphan a parked watcher and leave
-      // channelIdleEmitInFlight stuck true, blocking every later idle emit.
-      this.teardownChannelDraining(conversation);
       conversation.pendingChildRunNotifications.length = 0;
       conversation.queuedFollowUpSkillListingReservation = null;
       conversation.reactiveCompactRequested = false;
@@ -2425,9 +2148,6 @@ export class AgentRuntime {
       .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
     for (const run of this.activeRunList(conversation)) run.agent.abort();
     conversation.agent.abort();
-    // Settle the detached idle watcher before dropping the conversation: an
-    // unresolved parked watcher would pin it and could emit on a deleted one.
-    this.teardownChannelDraining(conversation);
     conversation.unsubscribe?.();
     clearPendingProjection(conversation);
     this.conversations.delete(conversationId);
@@ -2670,14 +2390,23 @@ export class AgentRuntime {
     const defaultAgentProfile = providerConfig && defaultAgentId !== this.agentIdentity.agentId
       ? await this.resolveAgentProfile(defaultAgentId, delegationRuntime, skillRuntime, { providerConfig }).catch(() => null)
       : null;
-    // The built-in assistant owns its model/effort through a settings overlay, not
-    // the provider connection — resolve it the same way a profile agent resolves
-    // its own, while keeping the built-in's base system prompt unchanged.
+    // The built-in assistant (Neva) is user-customizable: its display name + persona
+    // ride `this.agentIdentity` (refreshed from the editable overlay), its model/effort
+    // resolve through the same overlay over the provider connection, and its tool
+    // allow/deny list comes from the overlaid definition below.
     const builtInModelEffort = providerConfig && defaultAgentId === this.agentIdentity.agentId
       // null when the connection has no resolvable model yet (a fresh custom endpoint
       // with no assistant default chosen) — surfaced below as a configuration error.
       ? await this.resolveBuiltInAssistantModelEffort(providerConfig).catch(() => null)
       : null;
+    const builtInToolOverlay = defaultAgentId === this.agentIdentity.agentId
+      ? await this.materializeBuiltInAgentDefinition().catch(() => null)
+      : null;
+    const agentToolFilter = resolveAgentToolFilter({
+      isBuiltIn: defaultAgentId === this.agentIdentity.agentId,
+      tools: defaultAgentProfile?.definition.tools ?? builtInToolOverlay?.tools,
+      disallowedTools: defaultAgentProfile?.definition.disallowedTools ?? builtInToolOverlay?.disallowedTools,
+    });
     if (defaultAgentProfile) {
       await this.getEventStore().writeAgentIdentity(defaultAgentProfile.identity);
     } else {
@@ -2706,17 +2435,8 @@ export class AgentRuntime {
           selfMaintenance: defaultAgentId === this.agentIdentity.agentId
             ? this.createSelfMaintenanceRuntime(() => conversationId, () => conversationRef.current)
             : undefined,
-          channelOrg: defaultAgentId === this.agentIdentity.agentId
-            ? {
-                currentConversationId: () => conversationId,
-                createConversation: (options) => this.createConversation(options),
-                updateConversation: (targetConversationId, updates) => this.updateConversationChannel(targetConversationId, updates),
-                listConversations: () => this.listConversations(),
-                listAllAgentDefinitions: (targetConversationId) => this.listAllAgentDefinitions(targetConversationId),
-              }
-            : undefined,
-          allowedTools: defaultAgentProfile?.definition.tools,
-          disallowedTools: defaultAgentProfile?.definition.disallowedTools,
+          allowedTools: agentToolFilter.allowedTools,
+          disallowedTools: agentToolFilter.disallowedTools,
           streamFn: this.options.streamFn,
           completeSimpleFn: this.options.completeSimpleFn,
           providerApiKeyLoader: this.options.providerApiKeyLoader,
@@ -2754,6 +2474,7 @@ export class AgentRuntime {
     const conversation: AgentConversationState = {
       agent,
       defaultAgentId,
+      agentToolFilter,
       activeRuns: new Map(),
       activeRun: null,
       lastRun: null,
@@ -2781,15 +2502,6 @@ export class AgentRuntime {
         [this.agentIdentity.agentId]: this.agentIdentity.displayName,
         [defaultAgentId]: defaultAgentDisplayName,
       },
-      povInspectorMemoryByAgentId: {},
-      povInspectorMemoryRefreshInProgress: false,
-      povInspectorMemoryRefreshQueued: false,
-      pendingChannelTurns: [],
-      channelTurnStartsInProgress: 0,
-      channelStopRequested: false,
-      channelDrainWaiters: new Set(),
-      channelIdleEmitInFlight: false,
-      channelIdleEmitToken: 0,
       unsubscribe: null,
     };
     conversationRef.current = conversation;
@@ -2806,7 +2518,6 @@ export class AgentRuntime {
       this.emitProjection(conversationId, event.type, event.type === 'message_update' ? 'coalesce' : 'immediate');
     });
     this.conversations.set(conversationId, conversation);
-    this.queuePovInspectorMemoryRefresh(conversationId, conversation);
     this.emitProjection(conversationId, 'conversation_created');
     return conversation;
   }
@@ -2816,11 +2527,6 @@ export class AgentRuntime {
     if (existing) return existing;
     let eventState = await this.loadEventState(conversationId);
     if (!eventState.conversation) {
-      const dmAgentId = await this.agentIdForCanonicalDmConversationId(conversationId);
-      if (dmAgentId) {
-        await this.restoreOrCreateAgentDm(dmAgentId);
-        return this.conversations.get(conversationId)!;
-      }
       if (!titleOverride) throw new Error(`Agent conversation not found: ${conversationId}`);
       eventState = createEmptyAgentEventReplayState();
       const title = titleOverride?.trim() || 'Untitled';
@@ -2882,62 +2588,6 @@ export class AgentRuntime {
     conversation.memberDisplayNames = names;
   }
 
-  private queuePovInspectorMemoryRefresh(conversationId: string, conversation: AgentConversationState): void {
-    if (conversation.povInspectorMemoryRefreshInProgress) {
-      conversation.povInspectorMemoryRefreshQueued = true;
-      return;
-    }
-    const members = conversation.eventState.conversation?.members ?? [];
-    if (!isMultiAgentConversation(members)) {
-      conversation.povInspectorMemoryByAgentId = {};
-      return;
-    }
-    conversation.povInspectorMemoryRefreshQueued = false;
-    conversation.povInspectorMemoryRefreshInProgress = true;
-    void this.refreshPovInspectorMemory(conversation)
-      .then((next) => {
-        conversation.povInspectorMemoryByAgentId = next;
-        if (this.conversations.get(conversationId) === conversation) {
-          this.emitProjection(conversationId, 'pov_inspector_memory_refreshed', 'coalesce');
-        }
-      })
-      .catch((error) => {
-        this.reportWarn(
-          'persistence',
-          `Failed to refresh agent POV inspector memory: ${error instanceof Error ? error.message : String(error)}`,
-          error,
-          { operation: 'refreshPovInspectorMemory' },
-          'agent-pov-inspector-memory-failed',
-        );
-      })
-      .finally(() => {
-        conversation.povInspectorMemoryRefreshInProgress = false;
-        if (conversation.povInspectorMemoryRefreshQueued && this.conversations.get(conversationId) === conversation) {
-          this.queuePovInspectorMemoryRefresh(conversationId, conversation);
-        }
-      });
-  }
-
-  private async refreshPovInspectorMemory(
-    conversation: AgentConversationState,
-  ): Promise<Record<string, string | null>> {
-    const next: Record<string, string | null> = {};
-    const agentMembers = channelAgentMembers(conversation.eventState.conversation?.members ?? []);
-    await Promise.all(agentMembers.map(async (member) => {
-      next[member.agentId] = await this.buildPovInspectorMemoryBriefing(member.agentId, conversation);
-    }));
-    return next;
-  }
-
-  private queuePovInspectorMemoryRefreshForPrincipal(principal: AgentPrincipal): void {
-    for (const [conversationId, conversation] of this.conversations) {
-      const members = conversation.eventState.conversation?.members ?? [];
-      if (members.some((member) => samePrincipal(member, principal))) {
-        this.queuePovInspectorMemoryRefresh(conversationId, conversation);
-      }
-    }
-  }
-
   private async refreshRuntimeSettings(conversation: AgentConversationState): Promise<AgentRuntimeSettings> {
     const runtimeSettings = await this.getRuntimeSettings();
     conversation.runtimeSettings = runtimeSettings;
@@ -2950,15 +2600,6 @@ export class AgentRuntime {
 
   private applyRuntimeToolSettings(conversation: AgentConversationState): void {
     conversation.delegationRuntime.updateAdditionalAgentDirectories(conversation.runtimeSettings.additionalAgentDirectories);
-    const activeRun = conversation.activeRun;
-    if (
-      activeRun
-      && activeRun.executingAgentId !== this.agentIdentity.agentId
-      && activeRun.channelDefinition
-    ) {
-      this.applyChannelTurnToolSettings(conversation, activeRun.executingAgentId, activeRun.channelDefinition);
-      return;
-    }
     conversation.agent.state.tools = createAgentTools(this.outlinerToolHost, {
       localFileRoot: this.options.localFileRoot,
       localWorkspace: conversation.localWorkspace,
@@ -2968,6 +2609,8 @@ export class AgentRuntime {
       recall: this.createRecallToolRuntime(this.agentIdentity.agentId, () => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
       askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
       selfMaintenance: this.createSelfMaintenanceRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
+      allowedTools: conversation.agentToolFilter.allowedTools,
+      disallowedTools: conversation.agentToolFilter.disallowedTools,
     });
   }
 
@@ -3255,15 +2898,15 @@ export class AgentRuntime {
   private async flushChildRunNotifications(conversationId: string, conversation: AgentConversationState): Promise<void> {
     if (conversation.childRunNotificationFlushInProgress) return;
     if (conversation.pendingChildRunNotifications.length === 0) return;
-    // A notification-delivery run is the COORDINATOR's turn (its child runs);
-    // never interleave it into active Channel member turns.
-    if (this.hasActiveRuns(conversation) || conversation.pendingChannelTurns.length > 0) return;
+    // A notification-delivery run is the agent's own turn (its child runs);
+    // never interleave it into an active run.
+    if (this.hasActiveRuns(conversation)) return;
 
     conversation.childRunNotificationFlushInProgress = true;
     let startedRunId: string | null = null;
     try {
       while (conversation.pendingChildRunNotifications.length > 0) {
-        if (this.hasActiveRuns(conversation) || conversation.pendingChannelTurns.length > 0) break;
+        if (this.hasActiveRuns(conversation)) break;
         const notifications = conversation.pendingChildRunNotifications.splice(0);
         const prompt: UserMessage = {
           role: 'user',
@@ -3762,29 +3405,26 @@ export class AgentRuntime {
   }
 
   /**
-   * One scheduled pass = one Dream per pool ([[agent-data-model]] §4: one writer, one subject,
-   * one activity layer each). Pools are independent: one pool throwing (e.g. a provider error)
-   * must not abort the rest of the pass. `runDreamMemoryExtractionTask` already records its own
-   * failures; the guard here only covers task-creation throws.
+   * One scheduled pass = the believer pool's Dream over the user's member conversations. Memory
+   * collapsed to one believer-keyed pool, so the pass runs a single Dream. The per-pool try/catch
+   * + backoff bookkeeping stays (over the one principal): `runDreamMemoryExtractionTask` records
+   * its own failures, and this guard covers task-creation throws.
    */
   private async fireDream(trigger: AgentDreamTrigger, now: Date): Promise<void> {
-    // Gates before any scanning: a disabled/read-only/provider-less pass must
-    // not pay the all-conversations replay sweep just to bail per pool.
+    // Gates before any scanning: a disabled/read-only/provider-less pass must not pay the
+    // conversation replay sweep just to bail.
     if (!await this.dreamPassGatesOpen()) return;
-    // ONE replay sweep per pass: every pool reads this harvest instead of
-    // re-replaying every conversation per principal.
-    const childRunHarvest = await this.harvestChildRunRecords();
-    const principals = await this.listDreamPrincipals(childRunHarvest);
-    // Drop failure-backoff entries for pools that are no longer dream principals (e.g. a deleted
-    // agent), so the in-memory map stays bounded to live pools. A live pool with an armed window
-    // is always in this set (it ran a Dream to arm it), so its backoff is never pruned here.
+    const principals = this.listDreamPrincipals();
+    // Drop failure-backoff entries for pools that are no longer dream principals, so the in-memory
+    // map stays bounded to live pools. A live pool with an armed window is always in this set (it
+    // ran a Dream to arm it), so its backoff is never pruned here.
     const liveKeys = new Set(principals.map(principalKey));
     for (const key of this.dreamFailureBackoff.keys()) {
       if (!liveKeys.has(key)) this.dreamFailureBackoff.delete(key);
     }
     for (const principal of principals) {
       try {
-        await this.fireDreamForPool(principal, trigger, now, childRunHarvest);
+        await this.fireDreamForPool(principal, trigger, now);
       } catch (error) {
         this.reportWarn(
           'dream',
@@ -3800,17 +3440,12 @@ export class AgentRuntime {
   /** The pass-level Dream gates (also re-checked per task for the manual path). */
   private async dreamPassGatesOpen(): Promise<boolean> {
     if (!this.dreamMemoryExtractionEnabled()) return false;
-    if ((await this.dreamMemoryScope()).readOnly) return false;
     return Boolean(await this.getActiveProviderConfig());
   }
 
-  /** Every pool with a Dream: the user pool plus each known agent's pool. */
-  private async listDreamPrincipals(harvest?: DreamChildRunHarvest): Promise<AgentPrincipal[]> {
-    const agentIds = new Set<string>([this.agentIdentity.agentId]);
-    for (const { runs } of harvest ?? await this.harvestChildRunRecords()) {
-      for (const run of runs) agentIds.add(this.memoryOwnerAgentIdForChildRun(run));
-    }
-    return [this.userPrincipal(), ...[...agentIds].sort().map((agentId): AgentPrincipal => ({ type: 'agent', agentId }))];
+  /** The single believer pool with a Dream. */
+  private listDreamPrincipals(): AgentPrincipal[] {
+    return [this.agentPrincipal()];
   }
 
   /** Run one pool's Dream, serialized per pool by `principalKey`. */
@@ -3818,7 +3453,6 @@ export class AgentRuntime {
     principal: AgentPrincipal,
     trigger: AgentDreamTrigger,
     now: Date,
-    childRunHarvest?: DreamChildRunHarvest,
   ): Promise<AgentDreamRunResult | null> {
     const guardKey = principalKey(principal);
     if (this.dreamingPools.has(guardKey)) {
@@ -3835,7 +3469,7 @@ export class AgentRuntime {
     }
     this.dreamingPools.add(guardKey);
     try {
-      const task = await this.createDreamMemoryExtractionTask(principal, trigger, now, childRunHarvest);
+      const task = await this.createDreamMemoryExtractionTask(principal, trigger, now);
       if (!task) return null;
       const result = await this.runDreamMemoryExtractionTask(task);
       this.recordDreamFailureBackoff(guardKey, result, now);
@@ -3863,14 +3497,12 @@ export class AgentRuntime {
   }
 
   /**
-   * A manual /dream fires the user pool's Dream: it consolidates the user's member
-   * conversations since the Dream watermark — in practice the current conversation's new
-   * turns — into durable user memory. Conversation evidence models the user
-   * ([[agent-data-model]] §4); agent self-models (run logs) consolidate on schedule, not on
-   * demand. The run is folded into the Dream tail so a quit-time drain awaits an in-flight
-   * manual Dream instead of tearing the pool's trailing JSONL line — folded, not serialized
-   * behind it: concurrent Dreams on the same pool are the `dreamingPools` guard's job (a
-   * second /dream skips immediately rather than queueing).
+   * A manual /dream fires the believer pool's Dream: it consolidates the user's member
+   * conversations since the Dream watermark — in practice the current conversation's new turns
+   * — into Neva's durable knowledge. The run is folded into the Dream tail so a quit-time drain
+   * awaits an in-flight manual Dream instead of tearing the pool's trailing JSONL line — folded,
+   * not serialized behind it: concurrent Dreams on the same pool are the `dreamingPools` guard's
+   * job (a second /dream skips immediately rather than queueing).
    */
   private fireManualDream(now: Date): Promise<AgentDreamRunResult> {
     const work = this.runManualDream(now);
@@ -3883,7 +3515,7 @@ export class AgentRuntime {
 
   private async runManualDream(now: Date): Promise<AgentDreamRunResult> {
     try {
-      return await this.fireDreamForPool(this.userPrincipal(), 'manual', now)
+      return await this.fireDreamForPool(this.agentPrincipal(), 'manual', now)
         ?? skippedDreamRunResult(this.agentIdentity.agentId, 'manual', now, 'Dream is unavailable for the current memory/provider configuration.');
     } catch (error) {
       return {
@@ -3898,23 +3530,19 @@ export class AgentRuntime {
   }
 
   /**
-   * Build one pool's Dream task. A principal's Dream reads that principal's own activity layer
-   * ([[agent-data-model]] §4: one writer, one subject, one activity layer each): an agent-Dream
-   * models the agent's working self from its run log (execution); the user-Dream models the
-   * person from the conversations they are a member of (communication, both sides). Everything
-   * else — schedule gate, volume gate, batching, watermark — is the same machinery for every
-   * pool. Concurrent passes are safe: the store serializes by principalKey and the watermark
-   * skips already-consolidated evidence.
+   * Build the believer pool's Dream task. Memory collapsed to one believer-keyed pool, and the
+   * retained Dream reads CONVERSATION evidence (the user's member conversations) — communication,
+   * both sides. The schedule gate, volume gate, batching, and watermark are the same machinery.
+   * Concurrent passes are safe: the store serializes by principalKey and the watermark skips
+   * already-consolidated evidence.
    */
   private async createDreamMemoryExtractionTask(
     principal: AgentPrincipal,
     trigger: AgentDreamTrigger,
     now: Date,
-    childRunHarvest?: DreamChildRunHarvest,
   ): Promise<AgentDreamMemoryExtractionTask | null> {
     if (!this.dreamMemoryExtractionEnabled()) return null;
     const memoryScope = await this.dreamMemoryScope();
-    if (memoryScope.readOnly) return null;
     if (!await this.getActiveProviderConfig()) return null;
 
     const dreamState = await this.getEventStore().readDreamState(principal);
@@ -3922,20 +3550,8 @@ export class AgentRuntime {
     if (trigger === 'schedule' && !scheduleDecision.shouldFire) return null;
 
     const runId = `dream-run-${randomUUID()}`;
-    const evidence = principal.type === 'agent'
-      ? {
-          conversations: [],
-          runs: await this.collectDreamRunInputs(
-            principal.agentId,
-            dreamState.watermark,
-            childRunHarvest ?? await this.harvestChildRunRecords(),
-          ),
-        }
-      : {
-          conversations: await this.collectDreamConversationInputs(dreamState),
-          runs: [],
-        };
-    const evidenceSpan = buildDreamMemoryExtractionSpanFromEvidence(runId, evidence);
+    const conversations = await this.collectDreamConversationInputs(dreamState);
+    const evidenceSpan = buildDreamMemoryExtractionSpanFromEvents(runId, conversations);
     const newVolume = evidenceSpan?.totalCharCount ?? 0;
     if (trigger === 'schedule' && newVolume < DREAM_MIN_VOLUME_CHARS) return null;
 
@@ -3944,7 +3560,7 @@ export class AgentRuntime {
       : null);
     if (!span) return null;
     const batches = evidenceSpan
-      ? this.buildDreamMemoryExtractionBatches(runId, memoryScope, evidence)
+      ? [{ span: evidenceSpan, originWorkspace: memoryScope.originWorkspace }]
       : [{ span, originWorkspace: memoryScope.originWorkspace }];
     if (batches.length === 0) return null;
 
@@ -3960,7 +3576,7 @@ export class AgentRuntime {
     };
   }
 
-  /** Conversation evidence for the user-Dream: new events in the user's member conversations. */
+  /** Conversation evidence for the Dream: new events in the user's member conversations. */
   private async collectDreamConversationInputs(dreamState: AgentDreamState) {
     const conversationIds = await this.userMemberConversationIds();
     return Promise.all(conversationIds.map(async (conversationId) => ({
@@ -3970,116 +3586,13 @@ export class AgentRuntime {
     })));
   }
 
-  /** Conversation ids the user principal is a member of (the user-Dream's evidence set). */
+  /** Conversation ids the user principal is a member of (the Dream's evidence set). */
   private async userMemberConversationIds(): Promise<string[]> {
     const user = this.userPrincipal();
     const entries = await this.getEventStore().listConversationIndexEntries();
     return entries
       .filter((entry) => entry.members.some((member) => samePrincipal(member, user)))
       .map((entry) => entry.id);
-  }
-
-  private buildDreamMemoryExtractionBatches(
-    runId: string,
-    memoryScope: AgentDreamMemoryScope,
-    inputs: {
-      conversations: readonly {
-        conversationId: string;
-        events: readonly AgentEvent[];
-        fromSeqExclusive: number;
-      }[];
-      runs: readonly DreamMemoryExtractionRunInput[];
-    },
-  ): AgentDreamMemoryExtractionBatch[] {
-    const batches: AgentDreamMemoryExtractionBatch[] = [];
-    const conversationSpan = buildDreamMemoryExtractionSpanFromEvidence(runId, {
-      conversations: inputs.conversations,
-      runs: [],
-    });
-    if (conversationSpan) {
-      batches.push({
-        span: conversationSpan,
-        originWorkspace: memoryScope.originWorkspace,
-      });
-    }
-
-    // Run evidence still groups by the workspace each run happened in, so a new fact's
-    // provenance tag names where it was learned — grouping is for tagging, not partitioning.
-    for (const group of groupDreamRunInputsByOriginWorkspace(inputs.runs)) {
-      const span = buildDreamMemoryExtractionSpanFromEvidence(runId, {
-        conversations: [],
-        runs: group.inputs,
-      });
-      if (!span) continue;
-      batches.push({
-        span,
-        originWorkspace: group.originWorkspace ?? memoryScope.originWorkspace,
-      });
-    }
-    return batches;
-  }
-
-  /** One sweep over every conversation's childRuns records (the per-pass harvest). */
-  private async harvestChildRunRecords(): Promise<DreamChildRunHarvest> {
-    const harvest: DreamChildRunHarvest = [];
-    for (const conversationId of await this.getEventStore().listConversationIds()) {
-      const state = await this.getEventStore().replay(conversationId);
-      const runs = Object.values(state.childRuns ?? {});
-      if (runs.length > 0) harvest.push({ conversationId, runs });
-    }
-    return harvest;
-  }
-
-  private async collectDreamRunInputs(
-    agentId: string,
-    watermark: AgentDreamWatermark,
-    harvest: DreamChildRunHarvest,
-  ): Promise<DreamMemoryExtractionRunInput[]> {
-    const inputs: DreamMemoryExtractionRunInput[] = [];
-    for (const { conversationId, runs } of harvest) {
-      for (const run of runs) {
-        if (run.status === 'running') continue;
-        const owner = this.memoryOwnerAgentIdForChildRun(run);
-        if (owner !== agentId) continue;
-
-        // Already-consolidated skip BEFORE the ledger file read: the watermark
-        // records the scanned tail seq, so one tiny run-meta read settles a
-        // terminal run that was already digested.
-        const cursorSeq = watermark.runs?.[run.id]?.seq ?? 0;
-        if (cursorSeq > 0) {
-          const meta = await this.getEventStore().readRunMetaProjection(run.id);
-          if (meta && meta.latestSeq <= cursorSeq) continue;
-        }
-
-        // The run's own ledger digests like any stream ([[agent-run-unification]]
-        // Design 3): one `{seq, eventId}` cursor, no payload pinning, no positional
-        // coordinates. The fork boundary is structural — the ledger's first
-        // `run.started` seq — so a compaction can never stale it.
-        const events = await this.getEventStore().readRunStreamEvents(run.id);
-        if (events.length === 0) continue;
-        // No `run.started` means the ledger has no evidence boundary (a partial
-        // seed/crash artifact). A 0 fallback would leak the inherited fork
-        // prefix into this run's evidence — skip rather than over-collect.
-        const boundarySeq = events.find((event) => event.type === 'run.started')?.seq;
-        if (boundarySeq === undefined) continue;
-        const fromSeqExclusive = Math.max(cursorSeq, boundarySeq);
-        const latestSeq = events.at(-1)?.seq ?? 0;
-        if (latestSeq <= fromSeqExclusive) continue;
-        inputs.push({
-          conversationId,
-          agentId,
-          runId: run.id,
-          originWorkspace: run.memoryOriginWorkspace,
-          events,
-          fromSeqExclusive,
-        });
-      }
-    }
-    return inputs;
-  }
-
-  private memoryOwnerAgentIdForChildRun(run: AgentChildRunRecord): string {
-    return resolveChildRunMemoryOwner(run, this.agentIdentity.agentId);
   }
 
   private async runDreamMemoryExtractionTask(task: AgentDreamMemoryExtractionTask): Promise<AgentDreamRunResult> {
@@ -4105,16 +3618,15 @@ export class AgentRuntime {
       const runtimeSettings = await this.getRuntimeSettings();
       const changes = emptyDreamChanges();
       for (const [index, batch] of task.batches.entries()) {
-        // Consolidation/dedup reads the WHOLE pool — memory is one undivided self-model per
-        // principal; `originWorkspace` is provenance on each entry, never a retrieval fence.
-        // 200 is the store's query clamp max; the prompt's existing-memory list is bounded
-        // separately (DREAM_EXISTING_MEMORY_LIMIT) inside buildDreamMemoryExtractionRequest.
+        // Consolidation/dedup reads the WHOLE believer pool — memory is one undivided store;
+        // `originWorkspace` is provenance on each entry, never a retrieval fence. 200 is the
+        // store's query clamp max; the prompt's existing-memory list is bounded separately
+        // (DREAM_EXISTING_MEMORY_LIMIT) inside buildDreamMemoryExtractionRequest.
         const existingMemories = await this.getEventStore().listMemoryEntries(task.principal, { limit: 200 });
         const request = buildDreamMemoryExtractionRequest({
           span: batch.span,
           existingMemories,
           originWorkspace: batch.originWorkspace,
-          subject: task.principal.type === 'user' ? 'user' : 'agent',
         });
         const response = await (this.options.completeSimpleFn ?? completeSimple)(model, {
           messages: [request],
@@ -4170,9 +3682,6 @@ export class AgentRuntime {
       });
       await this.writeDreamRunMeta(task, 'completed', model);
       this.clearChildRunMemoryReminderCaches();
-      if (changes.added > 0 || changes.updated > 0 || changes.forgotten > 0) {
-        this.queuePovInspectorMemoryRefreshForPrincipal(task.principal);
-      }
       return {
         agentId: this.agentIdentity.agentId,
         runId: task.runId,
@@ -4233,12 +3742,11 @@ export class AgentRuntime {
         : { type: 'manual' },
       fingerprint: {
         appVersion: electronAppVersion(),
-        // The Dream's prompt is the subject-framed extraction request — not the executing
+        // The Dream's prompt is the believer-pool extraction request — not the executing
         // agent's system prompt, which never reaches a Dream completion call.
         promptHash: hashJson({
           dream: 'memory',
           principal: principalKey(task.principal),
-          subject: task.principal.type,
         }),
         toolSchemaHash: 'no-tools',
         skillBindings: [],
@@ -4257,22 +3765,30 @@ export class AgentRuntime {
   }
 
   private async refreshAgentTaskCache(): Promise<void> {
+    this.agentTaskCache = await this.collectDreamTasks();
+  }
+
+  private async collectDreamTasks(limit = 50): Promise<AgentRenderDreamTaskEntity[]> {
     const store = this.getEventStore();
-    // A pool's reflective-run history and its dream state are keyed by the same principal, so
-    // each pool's tasks join locally — no cross-pool indexing.
-    const principals = await this.listDreamPrincipals();
-    const taskGroups = await Promise.all(principals.map(async (principal): Promise<AgentRenderTaskEntity[]> => {
+    // The believer pool's reflective-run history and its dream state are keyed by the same
+    // principal, so its tasks join locally.
+    const principals = this.listDreamPrincipals();
+    const taskGroups = await Promise.all(principals.map(async (principal): Promise<AgentRenderDreamTaskEntity[]> => {
       const [runs, dreamState] = await Promise.all([
-        store.listPrincipalRunMetaProjections(principal, { limit: 50 }),
+        store.listPrincipalRunMetaProjections(principal, { limit }),
         store.readDreamState(principal),
       ]);
-      return runs.flatMap((run): AgentRenderTaskEntity[] => {
+      return runs.flatMap((run): AgentRenderDreamTaskEntity[] => {
         const completed = dreamState.lastCompleted?.runId === run.id ? dreamState.lastCompleted : null;
         const task = dreamTaskFromRunMeta(run, completed);
         return task ? [task] : [];
       });
     }));
-    this.agentTaskCache = taskGroups.flat().sort(compareRenderTasks);
+    return taskGroups.flat().sort(compareRenderTasks);
+  }
+
+  async listDreamHistory(options: { limit?: number } = {}): Promise<AgentRenderDreamTaskEntity[]> {
+    return this.collectDreamTasks(options.limit ?? 50);
   }
 
   private emitAgentTaskProjection(lastEventType: string) {
@@ -4372,19 +3888,8 @@ export class AgentRuntime {
     return `lin-agent-${randomUUID()}`;
   }
 
-  private canonicalDmConversationId(agentId: string) {
-    return `lin-agent-dm-${hashJson({
-      userId: LOCAL_USER_ID,
-      agentId,
-    }).slice(0, 16)}`;
-  }
-
   private createChannelId() {
     return `lin-agent-channel-${randomUUID()}`;
-  }
-
-  private isCanonicalDmConversationId(conversationId: string) {
-    return conversationId.startsWith('lin-agent-dm-');
   }
 
   private userPrincipal(): AgentPrincipal {
@@ -4399,14 +3904,9 @@ export class AgentRuntime {
     return [this.userPrincipal(), this.agentPrincipal()];
   }
 
-  private directMessageAgentId(eventState: AgentEventReplayState): string | null {
-    if (eventState.conversation?.goal) return null;
-    const agentMembers = channelAgentMembers(eventState.conversation?.members ?? []);
-    return agentMembers.length === 1 ? agentMembers[0]!.agentId : null;
-  }
-
-  private defaultAgentIdForConversation(eventState: AgentEventReplayState): string {
-    return this.directMessageAgentId(eventState) ?? this.agentIdentity.agentId;
+  private defaultAgentIdForConversation(_eventState: AgentEventReplayState): string {
+    // Single-agent collapse: every conversation's agent is Neva.
+    return this.agentIdentity.agentId;
   }
 
   private createMessageId(prefix: string) {
@@ -4440,37 +3940,6 @@ export class AgentRuntime {
     return conversation.activeRuns.size > 0 || conversation.agent.state.isStreaming;
   }
 
-  private activeChannelRuns(conversation: AgentConversationState): AgentActiveRunState[] {
-    return this.activeRunList(conversation).filter((run) => run.channelTurn);
-  }
-
-  private activeOrStartingChannelRunCount(conversation: AgentConversationState): number {
-    return this.activeChannelRuns(conversation).length + conversation.channelTurnStartsInProgress;
-  }
-
-  private maybeClearChannelStopRequested(conversation: AgentConversationState): void {
-    // Clear once the stopped round's runs have drained — deliberately NOT gated on
-    // pendingChannelTurns being empty. `stopConversation` synchronously discards the
-    // pending-at-stop-time turns (discardPendingChannelTurns), and hand-offs are
-    // suppressed while the flag is set, so any pending that appears afterward is a
-    // NEW user send. It must resume the Channel; gating on pending-emptiness would
-    // pin the flag true forever (the late send pumps nothing), deadlocking the
-    // Channel — see the async-accept regression this guards against.
-    if (
-      conversation.channelStopRequested
-      && this.activeOrStartingChannelRunCount(conversation) === 0
-    ) {
-      conversation.channelStopRequested = false;
-    }
-  }
-
-  private notifyChannelDrainWaiters(conversation: AgentConversationState): void {
-    if (!this.channelFullyIdle(conversation)) return;
-    const waiters = [...conversation.channelDrainWaiters];
-    conversation.channelDrainWaiters.clear();
-    for (const resolve of waiters) resolve();
-  }
-
   private scopedConversation(
     conversation: AgentConversationState,
     activeRun: AgentActiveRunState,
@@ -4501,22 +3970,11 @@ export class AgentRuntime {
   }
 
   private currentRuntimeConversation(fallback: AgentConversationState | null): AgentConversationState | null {
-    return this.runScope.getStore()?.conversation ?? fallback;
+    return fallback;
   }
 
   private currentRuntimeAgent(fallback: Agent | null): Agent | null {
-    return this.runScope.getStore()?.agent ?? fallback;
-  }
-
-  private runWithScope<T>(
-    conversation: AgentConversationState,
-    runState: AgentActiveRunState,
-    callback: () => T,
-  ): T {
-    return this.runScope.run({
-      conversation: this.scopedConversation(conversation, runState, runState.agent),
-      agent: runState.agent,
-    }, callback);
+    return fallback;
   }
 
   private currentAgentIdentity(model: Model<Api> | null, effort?: AgentReasoningLevel): AgentIdentityRecord {
@@ -4565,8 +4023,6 @@ export class AgentRuntime {
   }
 
   private renderProjection(conversation: AgentConversationState) {
-    const members = conversation.eventState.conversation?.members ?? [];
-    const channelSurface = usesChannelActivitySurface(conversation.eventState.conversation?.id, members);
     const hasActiveRuns = this.hasActiveRuns(conversation);
     // Sort the active-run list once: renderProjection reads it three times below.
     const runList = this.activeRunList(conversation);
@@ -4576,18 +4032,11 @@ export class AgentRuntime {
       activeRuns: runList.map((run) => ({
         runId: run.id,
         agentId: run.executingAgentId,
-        addressedByMessageId: run.addressedByMessageId,
         startedAt: run.startedAt,
       })),
-      activeRunAddressedByMessageId: conversation.activeRun?.addressedByMessageId ?? null,
-      channelActivityEntries: this.channelActivityEntries(conversation, runList),
       activeCompaction: conversation.activeCompaction,
       activeDream: conversation.activeDream,
-      // Mode-specific run state: a Channel never drives the DM
-      // composer (its async work shows in channelActivityEntries), and pending
-      // (not-yet-launched) addressed turns count as Channel work in flight.
-      dmRunActive: !channelSurface && hasActiveRuns,
-      channelRunsActive: channelSurface && (hasActiveRuns || conversation.pendingChannelTurns.length > 0),
+      runActive: hasActiveRuns,
       model: clone(conversation.agent.state.model) as unknown as Record<string, unknown>,
       thinkingLevel: conversation.agent.state.thinkingLevel,
       pendingToolCallIds: uniqueStrings([
@@ -4600,7 +4049,6 @@ export class AgentRuntime {
       errorMessage: null,
       agentTasks: this.agentTaskCache,
       memberDisplayNames: conversation.memberDisplayNames,
-      povInspectorMemoryByAgentId: conversation.povInspectorMemoryByAgentId,
       coordinatorAgentId: this.agentIdentity.agentId,
     });
     return {
@@ -4615,11 +4063,9 @@ export class AgentRuntime {
   ): AgentRenderProjectionPatch | null {
     const previous = conversation.lastRenderProjection;
     if (!previous || previous.revision !== revision - 1) return null;
-    const members = conversation.eventState.conversation?.members ?? [];
-    if (usesChannelActivitySurface(conversation.eventState.conversation?.id, members)) return null;
     const activeRun = conversation.activeRun;
     const messageId = activeRun?.assistantMessageId;
-    if (!activeRun || activeRun.channelTurn || !messageId) return null;
+    if (!activeRun || !messageId) return null;
     const previousMessage = previous.entities.messages[messageId];
     const eventMessage = conversation.eventState.messages[messageId];
     if (!previousMessage || previousMessage.role !== 'assistant') return null;
@@ -4644,68 +4090,18 @@ export class AgentRuntime {
       activeRuns: runList.map((run) => ({
         runId: run.id,
         agentId: run.executingAgentId,
-        addressedByMessageId: run.addressedByMessageId,
         startedAt: run.startedAt,
       })),
-      dmRunActive: true,
-      channelRunsActive: false,
+      runActive: true,
       pendingToolCallIds,
       entities: { messages: { [messageId]: message } },
-      dmStreaming: {
+      streaming: {
         messageId,
-        rowId: previous.dmStreaming?.rowId ?? `assistant:${messageId}`,
+        rowId: previous.streaming?.rowId ?? `assistant:${messageId}`,
         text: activeRun.assistantText,
         updatedAt: eventMessage.updatedAt,
       },
     };
-  }
-
-  private channelActivityEntries(
-    conversation: AgentConversationState,
-    runList: AgentActiveRunState[] = this.activeRunList(conversation),
-  ): AgentRenderActivityEntry[] {
-    const entries = new Map<string, AgentRenderActivityEntry>();
-    const toolResultsByRun = toolResultIndexByRun(conversation.eventState);
-    for (const run of runList) {
-      if (!run.addressedByMessageId) continue;
-      const toolCallStatus = channelLiveToolCallStatus(run, toolResultsByRun.get(run.id));
-      const persistedRun = conversation.eventState.runs[run.id];
-      const entry: AgentRenderActivityEntry = {
-        id: `${run.addressedByMessageId}:${run.executingAgentId}`,
-        agentId: run.executingAgentId,
-        runId: run.id,
-        messageId: latestAssistantMessageIdForRun(conversation.eventState, run.id),
-        addressedByMessageId: run.addressedByMessageId,
-        state: toolCallStatus.pendingToolCallIds.length > 0 ? 'using_tools' : 'thinking',
-        updatedAt: persistedRun?.updatedAt ?? run.startedAt,
-        // The live composing blocks for the per-run detail view; retained on
-        // the run (not the shared log) so concurrent runs never collide and the
-        // transcript stays whole-utterance.
-        streamingText: run.assistantText || undefined,
-        pendingToolCallIds: toolCallStatus.pendingToolCallIds,
-        failedToolCallIds: toolCallStatus.failedToolCallIds,
-        ...(run.assistantContent.length > 0 ? { streamingContent: run.assistantContent } : {}),
-      };
-      entries.set(entry.id, entry);
-    }
-
-    for (const turn of conversation.pendingChannelTurns) {
-      const id = `${turn.addressedByMessageId}:${turn.agentId}`;
-      if (entries.has(id)) continue;
-      const addressingMessage = conversation.eventState.messages[turn.addressedByMessageId];
-      entries.set(id, {
-        id,
-        agentId: turn.agentId,
-        runId: null,
-        messageId: null,
-        addressedByMessageId: turn.addressedByMessageId,
-        state: 'received',
-        updatedAt: addressingMessage?.updatedAt ?? 0,
-      });
-    }
-
-    return [...entries.values()]
-      .sort((left, right) => left.updatedAt - right.updatedAt || left.id.localeCompare(right.id));
   }
 
   private beginCompaction(
@@ -4972,17 +4368,15 @@ export class AgentRuntime {
   private createRecallToolRuntime(
     agentId: string,
     _getConversationId: () => string,
-    getConversation: () => AgentConversationState | null,
+    _getConversation: () => AgentConversationState | null,
   ): AgentRecallToolRuntime {
     const reader: AgentPrincipal = { type: 'agent', agentId };
     return {
-      reader,
-      principalNameFor: (principal) => this.memoryPrincipalName(principal, getConversation()),
       recall: async (options) => {
-        const conversation = getConversation();
         const limit = clampRecallLimit(options.limit);
         const query = options.query?.trim();
-        const readPrincipals = this.memoryReadPrincipals(reader, conversation);
+        // One believer pool: the read hits the single memory pool, and the reader is that pool.
+        const readPrincipals = this.memoryReadPrincipals();
         if (!query) {
           const now = Date.now();
           const activations = await Promise.all(readPrincipals.map((principal) => (
@@ -5001,18 +4395,15 @@ export class AgentRuntime {
             ),
           };
         }
-        // Cross-principal read by membership ([[agent-data-model]] §4): the reader searches its
-        // own pool plus every co-member principal's pool. Each pool is one undivided self-model;
-        // `originWorkspace` is provenance on entries, never a retrieval fence.
+        // One believer pool: search it. `originWorkspace` is provenance on entries, never a
+        // retrieval fence.
         const queryResults = await Promise.all(readPrincipals.map((principal) => (
           this.getEventStore().queryMemoryEntries(principal, { query, limit })
         )));
-        // Fair interleave so a large own pool never fully starves co-member pool hits.
         const mergedEntries = interleaveMemoryEntryGroups(queryResults.map((result) => result.entries), limit);
         const visibleEntries = mergedEntries.map((entry) => this.memoryEntryVisibleToReader(entry, reader));
-        // Total durable matches across all readable pools — reachable by raising `limit` (which
-        // lifts each pool's per-query cap and the interleave cap together), so it is an honest
-        // paging signal rather than an over-report of this single capped page.
+        // Total durable matches — reachable by raising `limit`, so it is an honest paging signal
+        // rather than an over-report of this single capped page.
         const totalEntries = queryResults.reduce((sum, result) => sum + result.totalEntries, 0);
 
         if (!options.includeEvidence) {
@@ -5104,31 +4495,9 @@ export class AgentRuntime {
     };
   }
 
-  private memoryReadPrincipals(
-    reader: AgentPrincipal,
-    conversation: AgentConversationState | null,
-  ): AgentPrincipal[] {
-    const principals: AgentPrincipal[] = [];
-    const push = (principal: AgentPrincipal): void => {
-      if (principals.some((current) => samePrincipal(current, principal))) return;
-      principals.push(principal);
-    };
-    push(reader);
-    const members = conversation?.eventState.conversation?.members;
-    if (!members) {
-      push(this.userPrincipal());
-      return principals;
-    }
-    const readerIsMember = members.some((member) => samePrincipal(member, reader));
-    if (!readerIsMember) {
-      // Fresh child sidechains borrow the parent conversation for user context but are not
-      // co-members of that conversation, so they do not inherit the parent agent's pool.
-      const user = this.userPrincipal();
-      if (members.some((member) => samePrincipal(member, user))) push(user);
-      return principals;
-    }
-    for (const member of members) push(member);
-    return principals;
+  /** The single believer pool every memory read hits. */
+  private memoryReadPrincipals(): AgentPrincipal[] {
+    return [this.agentPrincipal()];
   }
 
   private memoryEntryVisibleToReader(entry: AgentMemoryEntry, reader: AgentPrincipal): AgentMemoryEntry {
@@ -5160,14 +4529,6 @@ export class AgentRuntime {
       };
     }
     return null;
-  }
-
-  private memoryPrincipalName(
-    principal: AgentPrincipal,
-    conversation: AgentConversationState | null,
-  ): string {
-    if (principal.type === 'user') return 'The user';
-    return conversation?.memberDisplayNames[principal.agentId] ?? agentMentionToken(principal.agentId);
   }
 
   private createAskUserQuestionRuntime(
@@ -5612,14 +4973,9 @@ export class AgentRuntime {
   }
 
   private async dreamMemoryScope(): Promise<AgentDreamMemoryScope> {
-    const runtimeSettings = await this.getRuntimeSettings();
-    // 'read-only-global' pauses Dream writes (stop learning); otherwise memory is one undivided
-    // pool per principal — `originWorkspace` only tags new entries with provenance.
-    if ((runtimeSettings.memoryIsolation ?? 'global') === 'read-only-global') return { readOnly: true };
-    return {
-      readOnly: false,
-      originWorkspace: this.memoryOriginWorkspace() ?? undefined,
-    };
+    // Memory is one undivided believer pool; `originWorkspace` only tags new entries
+    // with provenance, never fences retrieval.
+    return { originWorkspace: this.memoryOriginWorkspace() ?? undefined };
   }
 
   private async buildMemoryReminder(
@@ -5633,37 +4989,22 @@ export class AgentRuntime {
     });
   }
 
-  private async buildPovInspectorMemoryBriefing(
-    agentId: string,
-    conversation: AgentConversationState | null,
-  ): Promise<string | null> {
-    return this.deriveMemoryBriefing(agentId, conversation, {
-      recordAccess: false,
-      operation: 'buildPovInspectorMemoryBriefing',
-      warningCode: 'agent-pov-inspector-memory-failed',
-    });
-  }
-
   private async deriveMemoryBriefing(
-    agentId: string,
-    conversation: AgentConversationState | null,
+    _agentId: string,
+    _conversation: AgentConversationState | null,
     options: { recordAccess: boolean; operation: string; warningCode: string },
   ): Promise<string | null> {
     try {
-      const reader: AgentPrincipal = { type: 'agent', agentId };
       // Chronic activation: the briefing is the distilled-memory prefix, so it lists
       // strength-selected active entries plus a schema overview rather than query-specific hits.
       // Query-specific retrieval remains the `recall` tool's job ([5] tail).
       //
-      // Membership read ([[agent-data-model]] §4): the reader sees its own pool (`<self>`) plus
-      // every co-member principal's pool (`<principal>`). Each pool is one undivided self-model
-      // — like a person, a principal never partitions its own memory by where it works.
+      // One believer pool: the briefing reads the single memory pool and renders a flat
+      // `<memory>` bullet list of its activated facts.
       const now = Date.now();
-      const activations = await Promise.all(this.memoryReadPrincipals(reader, conversation).map((principal) => (
+      const activations = await Promise.all(this.memoryReadPrincipals().map((principal) => (
         this.getEventStore().activateMemoryEntries(principal, { limit: 200, now })
       )));
-      // Interleave so co-member pools get a fair share of the resident budget — a self-first
-      // concatenation would let an agent with a full self-model starve foreign zones entirely.
       const selected = interleaveMemoryEntryGroups(
         activations.map((activation) => (
           orderMemoryEntriesForBriefing(activation.entries, { now }).map((item) => item.entry)
@@ -5679,11 +5020,7 @@ export class AgentRuntime {
           totalEntries,
         },
       );
-      return renderAgentMemoryBriefing(selected, {
-        reader,
-        overview,
-        principalNameFor: (principal) => this.memoryPrincipalName(principal, conversation),
-      });
+      return renderAgentMemoryBriefing(selected, { overview });
     } catch (error) {
       this.reportWarn(
         'persistence',
@@ -5960,7 +5297,6 @@ export class AgentRuntime {
     conversationId: string,
     conversation: AgentConversationState,
     prompt: UserMessage,
-    options: { addressedTo?: AgentPrincipal[] } = {},
   ): Promise<string> {
     const messageId = this.createMessageId('user');
     const persisted = await this.persistPiUserContent(conversationId, prompt.content, {
@@ -5980,7 +5316,6 @@ export class AgentRuntime {
         parentMessageId: conversation.eventState.selectedLeafMessageId,
         content: persisted.content,
         attachments: persisted.payloads.length > 0 ? persisted.payloads : undefined,
-        addressedTo: options.addressedTo,
       },
       {
         type: 'branch.selected',
@@ -6280,7 +5615,6 @@ export class AgentRuntime {
     scoped.lastRun = activeRun;
     scoped.activeRun = null;
     activeRun.resolveSettled();
-    this.notifyChannelDrainWaiters(conversation);
   }
 
   private async startRun(
@@ -6290,11 +5624,8 @@ export class AgentRuntime {
     triggerOverride: AgentRunTrigger | null = null,
     identity: {
       executingAgentId?: string;
-      addressedByMessageId?: string | null;
       agent?: Agent;
-      channelTurn?: boolean;
       allowConcurrent?: boolean;
-      channelDefinition?: AgentDefinition;
     } = {},
   ): Promise<string> {
     if (!identity.allowConcurrent && this.hasActiveRuns(conversation)) {
@@ -6311,8 +5642,6 @@ export class AgentRuntime {
       id: runId,
       startedAt: Date.now(),
       agent,
-      channelTurn: identity.channelTurn === true,
-      channelDefinition: identity.channelDefinition,
       settled,
       resolveSettled,
       assistantMessageId: null,
@@ -6324,7 +5653,6 @@ export class AgentRuntime {
       toolOutputPayloads: new Map(),
       toolCallMessageIds: new Map(),
       executingAgentId: agentId,
-      addressedByMessageId: identity.addressedByMessageId ?? null,
     };
     conversation.activeRuns.set(runId, runState);
     if (!identity.allowConcurrent) conversation.activeRun = runState;
@@ -6336,7 +5664,6 @@ export class AgentRuntime {
         actor: systemActor(),
         runId,
         agentId,
-        addressedByMessageId: runState.addressedByMessageId,
         anchor: { type: 'conversation', agentId, conversationId },
         kind: 'turn',
         trigger: triggerOverride ?? this.runTrigger(scoped),
@@ -6352,371 +5679,6 @@ export class AgentRuntime {
       throw error;
     }
     return runId;
-  }
-
-  /**
-   * Routing for a Channel user turn: explicit `@member` mentions (scoped to the
-   * roster) bypass the coordinator entirely; no mention → the coordinator (the
-   * main agent by default — PM gate Q1, ratified 2026-06-10).
-   */
-  private resolveAddressedMembers(messageText: string, members: readonly AgentPrincipal[]): AgentPrincipal[] {
-    const mentioned = parseAgentMentionTargets(messageText, members);
-    if (mentioned.length > 0) return mentioned;
-    return [{ type: 'agent', agentId: this.coordinatorAgentId() as AgentId }];
-  }
-
-  private enqueueChannelTurns(
-    conversationId: string,
-    conversation: AgentConversationState,
-    turns: readonly ChannelTurnRequest[],
-  ): void {
-    if (turns.length === 0) {
-      this.notifyChannelDrainWaiters(conversation);
-      return;
-    }
-    conversation.pendingChannelTurns.push(...turns);
-    this.emitProjection(conversationId, 'channel_turns_enqueued');
-    // Detach the final idle emit from the (now non-blocking) send: the work is
-    // accepted and projected above; this watcher emits idle once it all drains.
-    this.scheduleChannelIdleEmit(conversationId, conversation);
-    void this.pumpChannelTurns(conversationId, conversation)
-      .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
-  }
-
-  private async pumpChannelTurns(conversationId: string, conversation: AgentConversationState): Promise<void> {
-    while (
-      !conversation.channelStopRequested
-      && conversation.pendingChannelTurns.length > 0
-      && this.activeOrStartingChannelRunCount(conversation) < CHANNEL_MAX_CONCURRENT_RUNS
-    ) {
-      const request = conversation.pendingChannelTurns.shift()!;
-      const members = conversation.eventState.conversation?.members ?? [];
-      if (!members.some((member) => member.type === 'agent' && member.agentId === request.agentId)) continue;
-      conversation.channelTurnStartsInProgress += 1;
-      try {
-        await this.launchChannelTurn(conversationId, conversation, request);
-      } finally {
-        conversation.channelTurnStartsInProgress = Math.max(0, conversation.channelTurnStartsInProgress - 1);
-        this.maybeClearChannelStopRequested(conversation);
-        this.notifyChannelDrainWaiters(conversation);
-      }
-    }
-    this.notifyChannelDrainWaiters(conversation);
-  }
-
-  private channelFullyIdle(conversation: AgentConversationState): boolean {
-    return conversation.pendingChannelTurns.length === 0
-      && conversation.channelTurnStartsInProgress === 0
-      && this.activeChannelRuns(conversation).length === 0;
-  }
-
-  /** Resolve once the Channel has no pending, starting, or active addressed runs. */
-  private async awaitChannelIdle(conversation: AgentConversationState): Promise<void> {
-    while (!this.channelFullyIdle(conversation)) {
-      await new Promise<void>((resolve) => {
-        conversation.channelDrainWaiters.add(resolve);
-      });
-    }
-  }
-
-  private async waitForChannelIdle(conversationId: string, conversation: AgentConversationState): Promise<void> {
-    await this.awaitChannelIdle(conversation);
-    await this.persistAndEmitIdle(conversationId, conversation);
-  }
-
-  /**
-   * Emit the final idle projection once the Channel drains, WITHOUT blocking the
-   * caller. A Channel send/edit/retry returns on acceptance — the addressed runs
-   * drain asynchronously — so the idle finalization is detached here. At most one
-   * watcher runs per conversation; it re-arms if fresh work (a follow-up send or a
-   * hand-off turn) arrives during the emit, so the drain always emits exactly once.
-   *
-   * Ownership is tracked by `channelIdleEmitToken`: a teardown (reset/close/delete,
-   * via {@link teardownChannelDraining}) bumps the token and resolves the parked
-   * waiter, so the orphaned watcher neither emits on a dead conversation nor leaves
-   * `channelIdleEmitInFlight` stuck true (which would block every later idle emit).
-   */
-  private scheduleChannelIdleEmit(conversationId: string, conversation: AgentConversationState): void {
-    if (conversation.channelIdleEmitInFlight || this.channelFullyIdle(conversation)) return;
-    conversation.channelIdleEmitInFlight = true;
-    const token = conversation.channelIdleEmitToken;
-    const stillOwned = () => conversation.channelIdleEmitToken === token
-      && this.conversations.get(conversationId) === conversation;
-    void (async () => {
-      try {
-        await this.awaitChannelIdle(conversation);
-        // A teardown (reset/close/delete) supersedes this watcher; skip the emit so
-        // we never persist/emit on a conversation that is gone or restarted. The
-        // emitGuard re-checks ownership AFTER persistAndEmitIdle's internal awaits,
-        // closing the window where a teardown lands mid-emit.
-        if (stillOwned()) await this.persistAndEmitIdle(conversationId, conversation, { emitGuard: stillOwned });
-      } catch (error) {
-        this.emitError(conversationId, error instanceof Error ? error.message : String(error));
-      } finally {
-        // Only the owning watcher clears the flag and re-arms; a superseded one bows out.
-        if (conversation.channelIdleEmitToken === token) {
-          conversation.channelIdleEmitInFlight = false;
-          if (stillOwned() && !this.channelFullyIdle(conversation)) {
-            this.scheduleChannelIdleEmit(conversationId, conversation);
-          }
-        }
-      }
-    })();
-  }
-
-  /**
-   * Tear down the detached idle-drain machinery for a conversation being reset,
-   * closed, or deleted: supersede any in-flight watcher (bump the token) and
-   * resolve its parked waiter so the watcher's Promise settles and is collected
-   * instead of pinning the conversation, then clear the stop flag. Idempotent.
-   */
-  private teardownChannelDraining(conversation: AgentConversationState): void {
-    conversation.channelStopRequested = false;
-    conversation.channelIdleEmitInFlight = false;
-    conversation.channelIdleEmitToken += 1;
-    const waiters = [...conversation.channelDrainWaiters];
-    conversation.channelDrainWaiters.clear();
-    for (const resolve of waiters) resolve();
-  }
-
-  async drainChannelTurnsForTest(conversationId: string): Promise<void> {
-    const conversation = await this.ensureConversationWithId(conversationId);
-    await this.waitForChannelIdle(conversationId, conversation);
-  }
-
-  private async discardPendingChannelTurns(
-    conversationId: string,
-    conversation: AgentConversationState,
-    reason: string,
-  ): Promise<void> {
-    const discardedTurns = conversation.pendingChannelTurns.length;
-    conversation.pendingChannelTurns = [];
-    try {
-      if (discardedTurns > 0) {
-        await this.appendSystemPromptEvent(conversationId, conversation, {
-          role: 'user',
-          content: [{
-            type: 'text',
-            text: systemReminder(`The user stopped this round. ${discardedTurns} unstarted turn(s) were discarded. ${reason}`.trim()),
-          }],
-          timestamp: Date.now(),
-        });
-      }
-    } finally {
-      this.maybeClearChannelStopRequested(conversation);
-      // Re-pump after clearing the stop flag, like finishChannelTurn does: a send
-      // that enqueued a turn during the await above had its pump bailed while the
-      // flag was still set, and nothing else would re-pump it (no active run to
-      // finish) — it would stick in pendingChannelTurns forever.
-      void this.pumpChannelTurns(conversationId, conversation)
-        .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
-      this.notifyChannelDrainWaiters(conversation);
-    }
-  }
-
-  private async launchChannelTurn(
-    conversationId: string,
-    conversation: AgentConversationState,
-    request: ChannelTurnRequest,
-  ): Promise<void> {
-    let runState: AgentActiveRunState | null = null;
-    try {
-      const { agent, definition } = await this.createChannelTurnAgent(conversationId, conversation, request.agentId, () => {
-        if (!runState) return conversation;
-        return this.scopedConversation(conversation, runState, agent);
-      });
-      if (conversation.channelStopRequested) return;
-      const runId = await this.startRun(conversationId, conversation, null, { type: 'message', messageId: request.addressedByMessageId }, {
-        executingAgentId: request.agentId,
-        addressedByMessageId: request.addressedByMessageId,
-        agent,
-        channelTurn: true,
-        allowConcurrent: true,
-        channelDefinition: definition,
-      });
-      runState = conversation.activeRuns.get(runId) ?? null;
-      if (!runState) throw new Error(`Channel run failed to register: ${runId}`);
-      const scoped = this.scopedConversation(conversation, runState, agent);
-      agent.transformContext = async (_messages, signal) => this.contextManager.prepareModelContext(conversationId, scoped, signal);
-      runState.unsubscribe = agent.subscribe(async (event) => {
-        await this.handlePiAgentEvent(conversationId, scoped, event);
-        this.emitProjection(conversationId, event.type, event.type === 'message_update' ? 'coalesce' : 'immediate');
-      });
-      agent.state.messages = await this.deriveRuntimePiMessages(conversationId, scoped.eventState, scoped) as never;
-      this.emitProjection(conversationId, 'channel_turn_started');
-      void this.finishChannelTurn(conversationId, conversation, runState, request)
-        .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
-    } catch (error) {
-      await this.recoverFromRunError(conversationId, runState?.id ?? null);
-      this.emitError(conversationId, error instanceof Error ? error.message : String(error));
-      void this.pumpChannelTurns(conversationId, conversation)
-        .catch((pumpError) => this.emitError(conversationId, pumpError instanceof Error ? pumpError.message : String(pumpError)));
-    }
-  }
-
-  private async finishChannelTurn(
-    conversationId: string,
-    conversation: AgentConversationState,
-    runState: AgentActiveRunState,
-    request: ChannelTurnRequest,
-  ): Promise<void> {
-    try {
-      await this.runWithScope(conversation, runState, () => runState.agent.continue());
-    } catch (error) {
-      await this.recoverFromRunError(conversationId, runState.id);
-      this.emitError(conversationId, error instanceof Error ? error.message : String(error));
-    } finally {
-      await runState.settled;
-      try {
-        const run = conversation.eventState.runs[runState.id];
-        const assistantMessageId = latestAssistantMessageIdForRun(conversation.eventState, runState.id);
-        if (run?.status === 'completed' && assistantMessageId) {
-          // Enqueue hand-off turns FIRST (synchronous) so channelRunsActive does not
-          // dip false between this run's agent_end projection and the next turn —
-          // before the awaited, backgrounded-only unread raise would widen that gap.
-          if (!conversation.channelStopRequested) {
-            const reply = conversation.eventState.messages[assistantMessageId];
-            const handoffTurns = channelAgentMembers(reply?.addressedTo ?? [])
-              .filter((target) => target.agentId !== request.agentId)
-              .map((target): ChannelTurnRequest => ({
-                agentId: target.agentId,
-                addressedByMessageId: assistantMessageId,
-              }));
-            this.enqueueChannelTurns(conversationId, conversation, handoffTurns);
-          }
-          // A delivered reply bumps unread for a backgrounded Channel (badge-only).
-          await this.raiseChannelReplyUnread(conversationId, conversation, runState, assistantMessageId);
-        }
-        await this.flushPendingDreamFinishedEvents(conversationId, conversation);
-      } catch (error) {
-        // Best-effort: a notification / dream-flush write failure must NOT abort the
-        // drain release below, or the detached watcher and any drainChannelTurnsForTest
-        // park forever and the Channel wedges (channelRunsActive stuck) with no recovery.
-        this.emitError(conversationId, error instanceof Error ? error.message : String(error));
-      }
-      // Drain release — MUST run even if the bookkeeping above threw.
-      this.maybeClearChannelStopRequested(conversation);
-      void this.pumpChannelTurns(conversationId, conversation)
-        .catch((error) => this.emitError(conversationId, error instanceof Error ? error.message : String(error)));
-      this.notifyChannelDrainWaiters(conversation);
-      this.emitProjection(conversationId, 'channel_turn_finished');
-    }
-  }
-
-  /**
-   * A delivered in-Channel peer reply bumps the conversation's unread badge when
-   * the user is not viewing it — reusing the existing `notification.created` /
-   * `conversation_attention` fold (the only unread mechanism; see the reducer).
-   * Badge-only by design: no OS notification is delivered for in-Channel chatter
-   * (a count, not a ding). Skipped for the viewed conversation (nothing unread to
-   * raise) and idempotent on the reply's message id.
-   */
-  private async raiseChannelReplyUnread(
-    conversationId: string,
-    conversation: AgentConversationState,
-    runState: AgentActiveRunState,
-    assistantMessageId: string,
-  ): Promise<void> {
-    if (this.viewedConversationId === conversationId) return;
-    // Reuse the shared notification path (idempotency + notification.created +
-    // conversation_attention fold); badge-only — no OS ding for in-Channel chatter.
-    await this.emitTaskNotification(conversationId, conversation, {
-      notificationId: `channel-reply:${assistantMessageId}`,
-      kind: 'channel_reply',
-      title: `@${agentMentionToken(runState.executingAgentId)}`,
-      source: { type: 'run', runId: runState.id },
-      deliverOs: false,
-    });
-  }
-
-  private async createChannelTurnAgent(
-    conversationId: string,
-    conversation: AgentConversationState,
-    targetAgentId: string,
-    getScopedConversation: () => AgentConversationState,
-  ): Promise<{ agent: Agent; definition?: AgentDefinition }> {
-    const providerConfig = await this.getActiveProviderConfig();
-    if (!providerConfig) throw new Error('No enabled agent provider is configured.');
-    const runtimeSettings = await this.refreshRuntimeSettings(conversation);
-    const isMainAgent = targetAgentId === this.coordinatorAgentId();
-    // null when a peer's model can't resolve (custom endpoint, profile on 'inherit')
-    // — degrades to the configuration-error agent below, not a thrown channel turn.
-    const profile = isMainAgent ? null : await this.resolveChannelPeerProfile(conversation, targetAgentId).catch(() => null);
-    if (profile) await this.getEventStore().writeAgentIdentity(profile.identity);
-    // The built-in coordinator owns its model/effort through the settings overlay,
-    // resolved the same way as a peer profile; its base system prompt is unchanged.
-    // null when the coordinator's connection has no resolvable model yet (a fresh
-    // custom endpoint, no assistant default chosen) — degrade like the direct
-    // conversation path rather than throwing the whole channel turn.
-    const builtIn = isMainAgent
-      ? await this.resolveBuiltInAssistantModelEffort(providerConfig).catch(() => null)
-      : null;
-    const model = profile?.model ?? builtIn?.model;
-    const thinkingLevel = profile?.thinkingLevel ?? builtIn?.thinkingLevel;
-    const systemPrompt = profile?.systemPrompt ?? this.agentIdentity.systemPrompt;
-    const definition = profile?.definition;
-    if (!model) {
-      return {
-        agent: createConfigurationErrorAgent(
-          conversationId,
-          'No model is configured. Choose a default model for the assistant in Settings → Agents.',
-        ),
-        definition,
-      };
-    }
-    const agent = createConfiguredAgent(conversationId, providerConfig, [], this.outlinerToolHost, {
-      localFileRoot: this.options.localFileRoot,
-      localWorkspace: conversation.localWorkspace,
-      model,
-      thinkingLevel,
-      systemPrompt,
-      permissionMode: this.options.permissionMode,
-      runtimeSettingsLoader: () => this.getRuntimeSettings(),
-      skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
-      skillRuntime: conversation.skillRuntime,
-      delegationRuntime: conversation.delegationRuntime,
-      recall: this.createRecallToolRuntime(targetAgentId, () => conversationId, () => getScopedConversation()),
-      askUserQuestion: this.createAskUserQuestionRuntime(() => conversationId, () => getScopedConversation()),
-      selfMaintenance: isMainAgent ? this.createSelfMaintenanceRuntime(() => conversationId, () => getScopedConversation()) : undefined,
-      streamFn: this.options.streamFn,
-      completeSimpleFn: this.options.completeSimpleFn,
-      providerApiKeyLoader: this.options.providerApiKeyLoader,
-      permissionEventHandler: (input) => this.appendToolPermissionEvent(conversationId, getScopedConversation(), input),
-      approvalHandler: (input, signal) => this.requestToolApproval(conversationId, getScopedConversation(), input, signal),
-      afterToolResult: (toolCallId, toolName, result, isError) => (
-        this.contextManager.afterToolResultForModelContext(conversationId, getScopedConversation(), toolCallId, toolName, result, isError)
-      ),
-      allowedTools: definition?.tools,
-      disallowedTools: definition?.disallowedTools,
-      l0CacheBreakpointEnabled: isMultiAgentConversation(conversation.eventState.conversation?.members ?? []),
-    }, async (payload) => {
-      try {
-        await this.captureDebugRunSnapshot(conversationId, payload, getScopedConversation().activeRun?.id);
-      } catch (error) {
-        this.emitError(conversationId, error instanceof Error ? error.message : String(error));
-      }
-      return undefined;
-    });
-    return { agent, definition };
-  }
-
-  /**
-   * A Channel member's runtime profile, resolved from its agent definition
-   * (capability binds to the agent, never the conversation): identity record,
-   * model/effort overrides, and a member-voiced system prompt with its profile
-   * skills inlined.
-   */
-  private async resolveChannelPeerProfile(
-    conversation: AgentConversationState,
-    agentId: string,
-  ): Promise<{
-    identity: AgentIdentityRecord;
-    model: Model<Api>;
-    thinkingLevel: AgentReasoningLevel;
-    systemPrompt: string;
-    definition: AgentDefinition;
-  }> {
-    return this.resolveAgentProfile(agentId, conversation.delegationRuntime, conversation.skillRuntime);
   }
 
   /**
@@ -6769,7 +5731,7 @@ export class AgentRuntime {
     systemPrompt: string;
     definition: AgentDefinition;
   }> {
-    const definitions = this.withBuiltInAgentDefinitions(await delegationRuntime.listAllAgentDefinitions());
+    const definitions = await this.withBuiltInAgentDefinitions(await delegationRuntime.listAllAgentDefinitions());
     const definition = definitions.find((candidate) => agentDefinitionAgentId(candidate) === agentId);
     if (!definition) throw new Error(`Agent definition not found: ${agentId}`);
     const providerConfig = options.providerConfig ?? await this.getActiveProviderConfig();
@@ -6827,72 +5789,6 @@ export class AgentRuntime {
     }
   }
 
-  /** Per-turn tool surface for a peer member: its tool allow/deny lists, its own recall pool. */
-  private applyChannelTurnToolSettings(
-    conversation: AgentConversationState,
-    agentId: string,
-    definition: AgentDefinition,
-  ): void {
-    conversation.agent.state.tools = createAgentTools(this.outlinerToolHost, {
-      localFileRoot: this.options.localFileRoot,
-      localWorkspace: conversation.localWorkspace,
-      skillRuntime: conversation.skillRuntime,
-      skillToolEnabled: conversation.runtimeSettings.automaticSkillsEnabled,
-      delegationRuntime: conversation.delegationRuntime,
-      recall: this.createRecallToolRuntime(agentId, () => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
-      askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
-      // Self-maintenance configures THIS runtime — main-agent-first stays the
-      // standing default (M3-A non-goal: no who-configures-whom), so peers don't get it.
-      allowedTools: definition.tools,
-      disallowedTools: definition.disallowedTools,
-    });
-  }
-
-  /**
-   * §8 POV assembly for a Channel member's run: the member's own turns verbatim
-   * (toolCall/toolResult pairing intact); the user and other members coalesced
-   * into user-role blocks with one identity preamble per source turn; the
-   * member's memory briefing appended transiently (the persisted log stays
-   * reader-neutral).
-   */
-  private async deriveChannelPiMessages(
-    conversationId: string,
-    conversation: AgentConversationState,
-    povAgentId: string,
-    memoryReminder: string | null,
-    addressedByMessageId: string | null,
-  ): Promise<AgentMessage[]> {
-    const projection = deriveAgentPovProjection(conversation.eventState, povAgentId, {
-      addressedByMessageId,
-      mainAgentId: this.coordinatorAgentId(),
-      displayNameByAgentId: conversation.memberDisplayNames,
-    });
-    const messages: AgentMessage[] = [];
-    for (const step of projection.steps) {
-      if (step.kind === 'verbatim') {
-        messages.push(await this.runtimePiMessageFromRecord(conversationId, step.record));
-        continue;
-      }
-      const content: (TextContent | ImageContent)[] = [];
-      for (const part of step.parts) {
-        if (part.preamble) content.push({ type: 'text', text: systemReminder(part.preamble) });
-        if (part.record.role === 'user') {
-          content.push(...await this.runtimeUserContent(conversationId, part.record.content));
-        } else {
-          const text = persistedTextContent(part.record.content);
-          if (text) content.push({ type: 'text', text });
-        }
-      }
-      messages.push({
-        role: 'user',
-        content: content.length > 0 ? content : [{ type: 'text', text: '' }],
-        timestamp: step.parts.at(-1)!.record.createdAt,
-      } satisfies UserMessage);
-    }
-    if (memoryReminder) this.appendTrailingSystemReminder(messages, memoryReminder);
-    return messages;
-  }
-
   private async compactConversation(conversationId: string, conversation: AgentConversationState, customInstructions?: string) {
     await this.contextManager.compactConversation(conversationId, conversation, {
       trigger: 'manual',
@@ -6905,21 +5801,6 @@ export class AgentRuntime {
   private async handlePiAgentEvent(conversationId: string, conversation: AgentConversationState, event: PiAgentEvent) {
     if (event.type === 'message_start' || event.type === 'message_update') {
       if (isAssistantMessage(event.message)) {
-        if (conversation.activeRun?.channelTurn) {
-          // Channel turns are not token-streamed into the transcript (the message
-          // stream is whole-utterance only). Retain the live composing text on the
-          // run so the per-run detail view can surface it, without writing
-          // streaming deltas to the shared log (concurrent runs would interleave,
-          // and off-active-path siblings never reach the transcript anyway). The
-          // final utterance is appended whole on message_end. Only update on
-          // NON-EMPTY content/text: each continuation segment opens with an
-          // empty message_start, which would otherwise blank the detail view
-          // mid-turn (and stay blank through a tool-only segment), defeating
-          // the cross-segment retention.
-          const liveContent = renderableAssistantContent(fromPiAssistantContent(event.message.content));
-          if (liveContent.length > 0) updateChannelLiveAssistantSegment(conversation.activeRun, liveContent);
-          return;
-        }
         await this.ensureAssistantStarted(conversationId, conversation, event.message);
         await this.appendAssistantDelta(conversationId, conversation, event.message);
       }
@@ -6985,7 +5866,6 @@ export class AgentRuntime {
       activeRun.resolveSettled();
       conversation.skillRuntime.resetRunPermissionRules(activeRun.id);
       await this.getEventStore().maybeWriteCheckpoint(conversationId, conversation.eventState, { force: true });
-      if (!activeRun.channelTurn) this.notifyChannelDrainWaiters(conversation);
     }
   }
 
@@ -6994,22 +5874,16 @@ export class AgentRuntime {
     if (!activeRun || activeRun.assistantMessageId) return;
     const messageId = this.createMessageId('assistant');
     activeRun.assistantMessageId = messageId;
-    // DM accumulates streamed deltas from an empty base. A Channel turn's
-    // assistantText is only the per-run live-detail buffer (set whole on each
-    // message_update), so keep the prior segment's text visible during a tool
-    // segment instead of blanking the detail view between segments.
-    if (!activeRun.channelTurn) activeRun.assistantText = '';
+    activeRun.assistantText = '';
     await this.appendConversationEvents(conversationId, conversation, [{
       type: 'assistant_message.started',
       actor: this.runActor(conversation),
       runId: this.activeRunId(conversation) ?? randomUUID(),
       messageId,
-      addressedByMessageId: activeRun.addressedByMessageId,
-      // A run's first segment parents to its addressing message (so concurrent
-      // peers fan out as siblings under it); every later segment parents to the
-      // run's own tail (`lastMessageId`) so the run stays a linear spine. Falling
-      // back to the shared `selectedLeafMessageId` would interleave parallel runs.
-      parentMessageId: activeRun.lastMessageId ?? activeRun.addressedByMessageId ?? conversation.eventState.selectedLeafMessageId,
+      // A run's first segment parents to the conversation's selected leaf; every
+      // later segment parents to the run's own tail (`lastMessageId`) so the run
+      // stays a linear spine.
+      parentMessageId: activeRun.lastMessageId ?? conversation.eventState.selectedLeafMessageId,
       providerId: message.provider,
       modelId: message.model,
       apiId: message.api,
@@ -7051,16 +5925,6 @@ export class AgentRuntime {
       && !isContextOverflow(message, conversation.agent.state.model.contextWindow)
       ? message.errorMessage
       : null;
-    // Hand-off routing record: a Channel reply's `@member` mentions are its
-    // addressedTo — persisted so the relay decision lives in the log. Stamped
-    // ONLY on the run's final segment (a `toolUse` stop means the turn
-    // continues), exactly the record the round loop routes from
-    // (`latestAssistantMessageIdForRun`) — the log never claims addressing
-    // that does not route.
-    const members = conversation.eventState.conversation?.members ?? [];
-    const handOffAddressedTo = isMultiAgentConversation(members) && message.stopReason !== 'toolUse'
-      ? handOffTargets(assistantVisibleText(message), members, activeRun.executingAgentId)
-      : [];
     await this.appendConversationEvents(conversationId, conversation, [
       {
         type: 'assistant_message.completed',
@@ -7070,7 +5934,6 @@ export class AgentRuntime {
         stopReason: message.stopReason,
         content: fromPiAssistantContent(message.content),
         usage: message.usage,
-        addressedTo: handOffAddressedTo.length > 0 ? handOffAddressedTo : undefined,
       },
       ...(inlineFailure ? [{
         type: 'assistant_message.failed' as const,
@@ -7080,14 +5943,8 @@ export class AgentRuntime {
         errorMessage: inlineFailure,
       }] : []),
     ]);
-    if (activeRun.channelTurn) {
-      const finalLiveContent = renderableAssistantContent(fromPiAssistantContent(message.content));
-      if (finalLiveContent.length > 0) updateChannelLiveAssistantSegment(activeRun, finalLiveContent);
-      activeRun.assistantLiveSegmentStart = activeRun.assistantContent.length;
-    }
     activeRun.assistantMessageId = null;
-    // Keep a Channel turn's live-detail text across segments (see ensureAssistantStarted).
-    if (!activeRun.channelTurn) activeRun.assistantText = '';
+    activeRun.assistantText = '';
   }
 
   private async appendToolResultMessage(conversationId: string, conversation: AgentConversationState, message: ToolResultMessage) {
@@ -7219,50 +6076,21 @@ export class AgentRuntime {
     scopedConversation?: AgentConversationState,
   ): Promise<AgentMessage[]> {
     // Every model call re-derives its context through here (the agent's
-    // transformContext → prepareModelContext), so this is THE seam where a
-    // multi-agent Channel turn gets its §8 POV assembly: the in-flight run's
-    // executing member is the POV. Outside a run (restore, Dream, DMs) the
-    // linear derivation stands.
+    // transformContext → prepareModelContext). The single agent always reads
+    // its own linear transcript; the environment reminder below rides the tail
+    // on a real reply run.
     const conversation = scopedConversation ?? this.conversations.get(conversationId);
     const activeRun = conversation?.activeRun;
     const liveConversation = conversation && conversation.eventState === eventState ? conversation : null;
-    let messages: AgentMessage[];
-    if (liveConversation && activeRun && this.requiresChannelPov(eventState, activeRun.executingAgentId)) {
-      const memoryReminder = await this.buildMemoryReminder(activeRun.executingAgentId, liveConversation);
-      messages = await this.deriveChannelPiMessages(
-        conversationId,
-        liveConversation,
-        activeRun.executingAgentId,
-        memoryReminder,
-        activeRun.addressedByMessageId,
-      );
-    } else {
-      messages = [];
-      for (const message of getAgentEventRuntimeTranscriptPath(eventState)) {
-        messages.push(await this.runtimePiMessageFromRecord(conversationId, message));
-      }
+    const messages: AgentMessage[] = [];
+    for (const message of getAgentEventRuntimeTranscriptPath(eventState)) {
+      messages.push(await this.runtimePiMessageFromRecord(conversationId, message));
     }
-    // Channel/DM environment reminder (the reminder-stack `environment` slot):
-    // the member system prompt is identity-only, so DM-vs-Channel framing + the
-    // member roster + Channel communication norms ride here instead. POV-correct
-    // (written for the executing member) and uniform across the main agent
-    // (whose prompt is built separately) and peers. Keyed off conversation
-    // identity (DM id prefix), not the live headcount or the POV branch above —
-    // a coordinator-only Channel is still a Channel. Only on a real reply run;
-    // restore/Dream/compaction have no activeRun.
+    // Conversation environment reminder (the reminder-stack `environment` slot):
+    // the system prompt is identity-only, so the 1:1 framing rides here instead.
+    // Only on a real reply run; restore/Dream/compaction have no activeRun.
     if (liveConversation && activeRun) {
-      // liveConversation.eventState === eventState by construction, so read the
-      // already-in-scope eventState.conversation (matches the POV branch above).
-      const environment = buildConversationEnvironmentReminder({
-        // DM-vs-Channel is conversation identity, not headcount: a coordinator-only
-        // Channel (no extra agents, or shrunk) is still a Channel.
-        isChannel: !this.isCanonicalDmConversationId(conversationId),
-        members: eventState.conversation?.members ?? [],
-        povAgentId: activeRun.executingAgentId,
-        channelName: eventState.conversation?.goal ?? null,
-        displayNames: liveConversation.memberDisplayNames,
-      });
-      if (environment) this.appendTrailingSystemReminder(messages, environment);
+      this.appendTrailingSystemReminder(messages, buildConversationEnvironmentReminder());
     }
     return messages;
   }
@@ -7285,23 +6113,6 @@ export class AgentRuntime {
         timestamp: Date.now(),
       } satisfies UserMessage);
     }
-  }
-
-  /**
-   * The POV flatten applies whenever the transcript CONTAINS another agent's
-   * records — not merely when the live roster has ≥2 agents. A Channel shrunk
-   * to one member must never feed the remaining agent the raw transcript (other
-   * agents' turns would read as its own); membership history, not the roster,
-   * is the authority.
-   */
-  private requiresChannelPov(eventState: AgentEventReplayState, executingAgentId: string): boolean {
-    if (isMultiAgentConversation(eventState.conversation?.members ?? [])) return true;
-    const coordinatorId = this.coordinatorAgentId();
-    return getAgentEventRuntimeTranscriptPath(eventState).some((record) => {
-      if (record.role === 'user') return false;
-      const owner = channelMessageOwner(record, eventState.runs, coordinatorId);
-      return owner.type === 'agent' && owner.agentId !== executingAgentId;
-    });
   }
 
   private async runtimePiMessageFromRecord(
@@ -7855,22 +6666,6 @@ function buildEnvironmentContextReminder(now: Date): string {
   ].filter(Boolean).join('\n');
 }
 
-function groupDreamRunInputsByOriginWorkspace(
-  inputs: readonly DreamMemoryExtractionRunInput[],
-): Array<{ originWorkspace?: string; inputs: DreamMemoryExtractionRunInput[] }> {
-  const groups = new Map<string, { originWorkspace?: string; inputs: DreamMemoryExtractionRunInput[] }>();
-  for (const input of inputs) {
-    const key = input.originWorkspace ?? '';
-    let group = groups.get(key);
-    if (!group) {
-      group = { originWorkspace: input.originWorkspace, inputs: [] };
-      groups.set(key, group);
-    }
-    group.inputs.push(input);
-  }
-  return [...groups.values()];
-}
-
 function buildOutlinerContextReminder(host: OutlinerToolHost): string | null {
   try {
     const projection = host.getProjection();
@@ -8154,78 +6949,6 @@ function assistantText(message: AssistantMessage): string {
     .join('');
 }
 
-function updateChannelLiveAssistantSegment(run: AgentActiveRunState, content: AgentRenderLiveContent[]) {
-  run.assistantContent = [
-    ...run.assistantContent.slice(0, run.assistantLiveSegmentStart),
-    ...content,
-  ];
-  run.assistantText = liveAssistantText(run.assistantContent);
-}
-
-interface ChannelLiveToolCallStatus {
-  pendingToolCallIds: string[];
-  failedToolCallIds: string[];
-}
-
-interface ToolResultIndexEntry {
-  terminalToolCallIds: Set<string>;
-  failedToolCallIds: Set<string>;
-}
-
-function channelLiveToolCallStatus(
-  run: AgentActiveRunState,
-  resultIndex: ToolResultIndexEntry | undefined,
-): ChannelLiveToolCallStatus {
-  const terminalToolCallIds = resultIndex?.terminalToolCallIds ?? new Set<string>();
-  const pending = new Set<string>();
-
-  for (const toolCallId of run.agent.state.pendingToolCalls) {
-    if (!terminalToolCallIds.has(toolCallId)) pending.add(toolCallId);
-  }
-  for (const toolCallId of run.toolCallMessageIds.keys()) {
-    if (!terminalToolCallIds.has(toolCallId)) pending.add(toolCallId);
-  }
-  for (const toolCallId of liveToolCallIds(run.assistantContent.slice(run.assistantLiveSegmentStart))) {
-    if (!terminalToolCallIds.has(toolCallId)) pending.add(toolCallId);
-  }
-
-  return {
-    pendingToolCallIds: [...pending],
-    failedToolCallIds: [...(resultIndex?.failedToolCallIds ?? [])],
-  };
-}
-
-function toolResultIndexByRun(state: AgentEventReplayState): Map<string, ToolResultIndexEntry> {
-  const byRun = new Map<string, ToolResultIndexEntry>();
-  for (const message of Object.values(state.messages)) {
-    if (message.role !== 'toolResult' || !message.runId || !message.toolCallId) continue;
-    let entry = byRun.get(message.runId);
-    if (!entry) {
-      entry = { terminalToolCallIds: new Set(), failedToolCallIds: new Set() };
-      byRun.set(message.runId, entry);
-    }
-    entry.terminalToolCallIds.add(message.toolCallId);
-    if (message.isError) entry.failedToolCallIds.add(message.toolCallId);
-  }
-  return byRun;
-}
-
-function liveToolCallIds(content: readonly AgentRenderLiveContent[]): string[] {
-  const ids: string[] = [];
-  for (const part of content) {
-    if (part.type === 'toolCall') ids.push(part.id);
-  }
-  return ids;
-}
-
-function liveAssistantText(content: readonly AgentRenderLiveContent[]): string {
-  return content
-    .filter((part): part is Extract<AgentRenderLiveContent, { type: 'text' }> => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n')
-    .trim();
-}
-
 function persistedText(content: AgentPersistedContent[]): string {
   return content
     .filter((part): part is Extract<AgentPersistedContent, { type: 'text' }> => part.type === 'text')
@@ -8475,6 +7198,28 @@ function addUsage(left: Usage, right: Usage): Usage {
   };
 }
 
+/**
+ * Layer the user's editable overlay onto the code-default built-in assistant. Only
+ * the fields the user can change are overlaid; `name`/`source`/`rootDir`/`agentFile`
+ * stay from the base so the agentId — the stable memory anchor — never moves, no
+ * matter how Neva is renamed ([[single-agent-collapse]]).
+ */
+function applyBuiltInAgentProfile(base: AgentDefinition, overlay: StoredBuiltInAgentProfile): AgentDefinition {
+  const next: AgentDefinition = { ...base };
+  if (overlay.displayName !== undefined) next.displayName = overlay.displayName;
+  if (overlay.description !== undefined) next.description = overlay.description;
+  if (overlay.body !== undefined) next.body = overlay.body;
+  if (overlay.model !== undefined) next.model = overlay.model;
+  if (overlay.effort !== undefined) next.effort = overlay.effort;
+  if (overlay.permissionMode !== undefined) next.permissionMode = overlay.permissionMode;
+  if (overlay.maxTurns !== undefined) next.maxTurns = overlay.maxTurns;
+  if (overlay.tools !== undefined) next.tools = overlay.tools;
+  if (overlay.disallowedTools !== undefined) next.disallowedTools = overlay.disallowedTools;
+  if (overlay.skills !== undefined) next.skills = overlay.skills;
+  if (overlay.background !== undefined) next.background = overlay.background;
+  return next;
+}
+
 function createDefaultAgentIdentity(): AgentIdentityRecord {
   return {
     agentId: 'built-in:tenon:assistant',
@@ -8513,15 +7258,6 @@ function latestAssistantRecordForRun(eventState: AgentEventReplayState, runId: s
       record.role === 'assistant' && record.runId === runId
     ))
     .sort((left, right) => right.createdAt - left.createdAt || right.id.localeCompare(left.id))[0] ?? null;
-}
-
-/** Visible text of a live pi assistant message (the hand-off mention source at completion time). */
-function assistantVisibleText(message: AssistantMessage): string {
-  return message.content
-    .filter((part): part is TextContent => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n')
-    .trim();
 }
 
 function persistedTextContent(content: readonly AgentPersistedContent[]): string {
@@ -8620,10 +7356,9 @@ function createConfiguredAgent(
     recall?: AgentToolsOptions['recall'];
     askUserQuestion?: AgentToolsOptions['askUserQuestion'];
     selfMaintenance?: AgentToolsOptions['selfMaintenance'];
-    channelOrg?: AgentToolsOptions['channelOrg'];
     localWorkspace?: AgentLocalWorkspaceContext;
-    allowedTools?: string[];
-    disallowedTools?: string[];
+    allowedTools?: readonly string[];
+    disallowedTools?: readonly string[];
     preapprovedToolRules?: string[];
     l0CacheBreakpointEnabled?: boolean;
     approvalHandler?: (input: AgentToolApprovalInput, signal?: AbortSignal) => Promise<AgentToolApprovalResolution>;
@@ -8661,7 +7396,6 @@ function createConfiguredAgent(
         recall: options.recall,
         askUserQuestion: options.askUserQuestion,
         selfMaintenance: options.selfMaintenance,
-        channelOrg: options.channelOrg,
         allowedTools: options.allowedTools,
         disallowedTools: options.disallowedTools,
       }),

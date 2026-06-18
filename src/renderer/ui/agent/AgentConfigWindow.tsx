@@ -71,13 +71,10 @@ export function AgentConfigWindow() {
     ? agents.find((agent) => agent.agentId === agentId) ?? null
     : null;
   const titleAgentName = selectedAgent?.displayName || selectedAgent?.name || '';
-  const selectedAgentIsBuiltIn = selectedAgent?.source === 'built-in';
   const windowTitle = mode === 'create'
     ? t.settings.agents.createTitle
     : selectedAgent
-      ? selectedAgentIsBuiltIn
-        ? titleAgentName
-        : t.settings.agents.editTitle({ name: titleAgentName })
+      ? t.settings.agents.editTitle({ name: titleAgentName })
       : t.window.agentConfigTitle;
   const windowSubtitle = mode === 'create'
     ? t.settings.categories.agents.label

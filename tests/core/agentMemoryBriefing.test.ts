@@ -3,13 +3,12 @@ import type { AgentMemoryEntry, AgentPrincipal } from '../../src/core/agentEvent
 import type { AgentMemoryOverview } from '../../src/core/agentMemoryActivation';
 import { MEMORY_BRIEFING_INTRO, renderAgentMemoryBriefing } from '../../src/main/agentMemoryBriefing';
 
-const READER: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
-const USER: AgentPrincipal = { type: 'user', userId: 'lixiaobo' };
+const BELIEVER: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
 
 function entry(input: Partial<AgentMemoryEntry> & { id: string; fact: string }): AgentMemoryEntry {
   return {
     id: input.id,
-    principal: input.principal ?? READER,
+    principal: input.principal ?? BELIEVER,
     fact: input.fact,
     originWorkspace: input.originWorkspace,
     sources: input.sources ?? [{
@@ -40,26 +39,23 @@ function overview(): AgentMemoryOverview {
 }
 
 describe('renderAgentMemoryBriefing', () => {
-  test('renders the reader pool as a <self> bullet list and hides scaffolding', () => {
-    const briefing = renderAgentMemoryBriefing(
-      [
-        entry({ id: 'm1', fact: 'verifies a worktree HEAD before trusting a gate run' }),
-        entry({ id: 'm2', fact: 'escalates directional decisions to lixiaobo before building' }),
-      ],
-      { reader: READER },
-    );
+  test('renders the believer pool as a flat <memory> bullet list and hides scaffolding', () => {
+    const briefing = renderAgentMemoryBriefing([
+      entry({ id: 'm1', fact: 'the user prefers terse code reviews' }),
+      entry({ id: 'm2', fact: 'the auth module verifies JWTs before authorizing' }),
+    ]);
 
     expect(briefing).not.toBeNull();
     expect(briefing).toContain('<memory>');
     // The briefing introduces itself as the working-memory slice of the semantic store
     // ([[agent-memory-foundations]] §6.3).
     expect(briefing).toContain(MEMORY_BRIEFING_INTRO);
-    expect(briefing).toContain('<self>');
-    // Facts render verbatim as bullets — no subject prepending, no conjugation (D-2).
-    expect(briefing).toContain('- verifies a worktree HEAD before trusting a gate run');
-    expect(briefing).toContain('- escalates directional decisions to lixiaobo before building');
-    expect(briefing).not.toContain('You verifies');
-    expect(briefing).not.toContain('You verify');
+    // One pool, one flat list — no zone tags.
+    expect(briefing).not.toContain('<self>');
+    expect(briefing).not.toContain('<principal');
+    // Facts render verbatim as bullets; the subject is named inside the fact text.
+    expect(briefing).toContain('- the user prefers terse code reviews');
+    expect(briefing).toContain('- the auth module verifies JWTs before authorizing');
     // Storage scaffolding never leaks into the briefing.
     expect(briefing).not.toContain('m1');
     expect(briefing).not.toContain('id=');
@@ -67,114 +63,64 @@ describe('renderAgentMemoryBriefing', () => {
     expect(briefing).not.toContain('<agent-memory>');
   });
 
-  test('renders a non-reader pool as a named <principal> zone with the same bullet shape', () => {
-    const briefing = renderAgentMemoryBriefing(
-      [entry({ id: 'p1', principal: USER, fact: 'prefers terse code reviews' })],
-      { reader: READER, principalNameFor: () => 'lixiaobo' },
-    );
-
-    expect(briefing).toContain('<principal name="lixiaobo">');
-    // The subject lives in the zone tag, never in the fact line.
-    expect(briefing).toContain('- prefers terse code reviews');
-    expect(briefing).not.toContain('lixiaobo prefers');
-    expect(briefing).not.toContain('<self>');
-  });
-
-  test('defaults a user pool name to "The user" when no resolver is given', () => {
-    const briefing = renderAgentMemoryBriefing(
-      [entry({ id: 'p1', principal: USER, fact: 'prefers terse code reviews' })],
-      { reader: READER },
-    );
-
-    expect(briefing).toContain('<principal name="The user">');
-    expect(briefing).toContain('- prefers terse code reviews');
-  });
-
-  test('orders principal zones before self and separates the two pools', () => {
-    const briefing = renderAgentMemoryBriefing(
-      [
-        entry({ id: 's1', fact: 'verifies HEAD before a gate run' }),
-        entry({ id: 'p1', principal: USER, fact: 'wants the repo in English' }),
-      ],
-      { reader: READER, principalNameFor: () => 'lixiaobo' },
-    );
-
-    expect(briefing).not.toBeNull();
-    const principalAt = briefing!.indexOf('<principal');
-    const selfAt = briefing!.indexOf('<self>');
-    expect(principalAt).toBeGreaterThanOrEqual(0);
-    expect(selfAt).toBeGreaterThan(principalAt);
-  });
-
   test('renders facts verbatim — never prepends, rewrites, or deletes words', () => {
     // Regression: the render must not mutate a fact's words, which would change its meaning.
-    // The phrasing contract (third-person-singular, subject-elided) is enforced at the Dream
-    // layer, not by mangling stored facts here.
-    const briefing = renderAgentMemoryBriefing(
-      [
-        entry({ id: 'm1', fact: 'the user interface uses slate focus rings' }),
-        entry({ id: 'm2', fact: 'we work on the launcher this week' }),
-      ],
-      { reader: READER },
-    );
+    // The phrasing contract (subject-named third person) is enforced at the Dream layer, not
+    // by mangling stored facts here.
+    const briefing = renderAgentMemoryBriefing([
+      entry({ id: 'm1', fact: 'the user interface uses slate focus rings' }),
+      entry({ id: 'm2', fact: 'the team works on the launcher this week' }),
+    ]);
 
     expect(briefing).toContain('- the user interface uses slate focus rings');
-    expect(briefing).toContain('- we work on the launcher this week');
+    expect(briefing).toContain('- the team works on the launcher this week');
     expect(briefing).not.toContain('You ');
   });
 
   test('collapses internal whitespace so a fact cannot inject an extra line or fake bullet', () => {
-    const briefing = renderAgentMemoryBriefing(
-      [entry({ id: 'm1', fact: 'verifies HEAD\nthen trusts the gate run' })],
-      { reader: READER },
-    );
+    const briefing = renderAgentMemoryBriefing([
+      entry({ id: 'm1', fact: 'the gate run is trusted\nonly after HEAD verification' }),
+    ]);
 
-    expect(briefing).toContain('- verifies HEAD then trusts the gate run');
-    // The only newlines are the structural ones around the intro, zone, and bullets —
+    expect(briefing).toContain('- the gate run is trusted only after HEAD verification');
+    // The only newlines are the structural ones around the intro and bullets —
     // never inside a fact.
     expect(briefing).toBe(
-      `<memory>\n${MEMORY_BRIEFING_INTRO}\n<self>\n- verifies HEAD then trusts the gate run\n</self>\n</memory>`,
+      `<memory>\n${MEMORY_BRIEFING_INTRO}\n- the gate run is trusted only after HEAD verification\n</memory>`,
     );
   });
 
   test('one fact per bullet line', () => {
-    const briefing = renderAgentMemoryBriefing(
-      [
-        entry({ id: 'm1', fact: 'verifies HEAD before a gate run' }),
-        entry({ id: 'm2', fact: 'keeps PRs single-purpose' }),
-      ],
-      { reader: READER },
-    );
+    const briefing = renderAgentMemoryBriefing([
+      entry({ id: 'm1', fact: 'the gate run requires a verified HEAD' }),
+      entry({ id: 'm2', fact: 'the project keeps PRs single-purpose' }),
+    ]);
 
-    const selfZone = briefing!.split('<self>\n')[1]!.split('\n</self>')[0]!;
-    expect(selfZone.split('\n')).toEqual([
-      '- verifies HEAD before a gate run',
-      '- keeps PRs single-purpose',
+    const body = briefing!.split(`${MEMORY_BRIEFING_INTRO}\n`)[1]!.split('\n</memory>')[0]!;
+    expect(body.split('\n')).toEqual([
+      '- the gate run requires a verified HEAD',
+      '- the project keeps PRs single-purpose',
     ]);
   });
 
   test('renders a schema overview without exposing memory ids', () => {
     const briefing = renderAgentMemoryBriefing(
-      [entry({ id: 'm1', fact: 'prefers terse code reviews' })],
-      { reader: READER, overview: overview() },
+      [entry({ id: 'm1', fact: 'the user prefers terse code reviews' })],
+      { overview: overview() },
     );
 
     expect(briefing).toContain('<overview>');
     expect(briefing).toContain('- reviews: 2 facts');
     expect(briefing).not.toContain('memory-schema:reviews');
     expect(briefing).not.toContain('m2');
-    expect(briefing).toContain('<self>');
   });
 
   test('skips invalidated entries and dedupes by id', () => {
-    const briefing = renderAgentMemoryBriefing(
-      [
-        entry({ id: 'm1', fact: 'keeps this active fact' }),
-        entry({ id: 'm1', fact: 'duplicate id should be dropped' }),
-        entry({ id: 'm2', fact: 'this one is gone', status: 'invalidated' }),
-      ],
-      { reader: READER },
-    );
+    const briefing = renderAgentMemoryBriefing([
+      entry({ id: 'm1', fact: 'keeps this active fact' }),
+      entry({ id: 'm1', fact: 'duplicate id should be dropped' }),
+      entry({ id: 'm2', fact: 'this one is gone', status: 'invalidated' }),
+    ]);
 
     expect(briefing).toContain('- keeps this active fact');
     expect(briefing).not.toContain('duplicate id should be dropped');
@@ -182,40 +128,30 @@ describe('renderAgentMemoryBriefing', () => {
   });
 
   test('returns null when there is no active memory', () => {
-    expect(renderAgentMemoryBriefing([], { reader: READER })).toBeNull();
+    expect(renderAgentMemoryBriefing([])).toBeNull();
     expect(
-      renderAgentMemoryBriefing(
-        [entry({ id: 'm1', fact: 'gone', status: 'invalidated' })],
-        { reader: READER },
-      ),
+      renderAgentMemoryBriefing([entry({ id: 'm1', fact: 'gone', status: 'invalidated' })]),
     ).toBeNull();
   });
 
-  test('XML-escapes fact bodies and principal names', () => {
-    const briefing = renderAgentMemoryBriefing(
-      [
-        entry({ id: 'm1', fact: 'prefers a < b style comparisons & terse output' }),
-        entry({ id: 'p1', principal: { type: 'user', userId: 'x' }, fact: 'likes "quotes"' }),
-      ],
-      { reader: READER, principalNameFor: () => 'A & "B"' },
-    );
+  test('XML-escapes fact bodies', () => {
+    const briefing = renderAgentMemoryBriefing([
+      entry({ id: 'm1', fact: 'the comparator prefers a < b style comparisons & terse output' }),
+      entry({ id: 'p1', fact: 'the formatter likes "quotes"' }),
+    ]);
 
     expect(briefing).toContain('&lt; b style comparisons &amp; terse');
-    expect(briefing).toContain('name="A &amp; &quot;B&quot;"');
+    expect(briefing).toContain('the formatter likes &quot;quotes&quot;');
     expect(briefing).not.toContain('< b style');
   });
 
-  test('redacts secret-like foreign pool facts before injection', () => {
-    const briefing = renderAgentMemoryBriefing(
-      [
-        entry({
-          id: 'p1',
-          principal: { type: 'agent', agentId: 'agent-peer' },
-          fact: 'keeps api_key=abcdefghijklmnopqrstuvwxyz123456 for tests',
-        }),
-      ],
-      { reader: READER, principalNameFor: () => 'Peer' },
-    );
+  test('redacts secret-like facts before injection', () => {
+    const briefing = renderAgentMemoryBriefing([
+      entry({
+        id: 'p1',
+        fact: 'the test harness keeps api_key=abcdefghijklmnopqrstuvwxyz123456 for tests',
+      }),
+    ]);
 
     expect(briefing).toContain('[redacted secret-like content]');
     expect(briefing).not.toContain('abcdefghijklmnopqrstuvwxyz123456');

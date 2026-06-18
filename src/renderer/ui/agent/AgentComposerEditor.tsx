@@ -719,8 +719,8 @@ export const AgentComposerEditor = forwardRef<AgentComposerEditorHandle, AgentCo
                     const view = viewRef.current;
                     if (!view) return;
                     if (item.kind === 'member') {
-                      // Plain text on purpose: routing parses `@mention` from the raw
-                      // message text (parseAgentMentionTargets), no atom node needed.
+                      // Plain text on purpose: the `@mention` lives in the raw
+                      // message text, no atom node needed.
                       replaceWithText(view, trigger, `@${item.member.mention} `);
                     } else if (item.kind === 'node') {
                       replaceWithNodeReference(view, trigger, {

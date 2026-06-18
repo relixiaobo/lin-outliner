@@ -2380,7 +2380,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentRuntime.restoreConversation(conversationId());
     case 'agent_create_conversation':
       return agentRuntime.createConversation({
-        agentIds: Array.isArray(args.agentIds) ? args.agentIds.map(String) : undefined,
         title: typeof args.title === 'string'
           ? args.title
           : typeof args.goal === 'string'
@@ -2390,10 +2389,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       });
     case 'agent_list_conversations':
       return agentRuntime.listConversations();
-    case 'agent_add_conversation_member':
-      return agentRuntime.addConversationMember(conversationId(), String(args.agentId));
-    case 'agent_remove_conversation_member':
-      return agentRuntime.removeConversationMember(conversationId(), String(args.agentId));
     case 'agent_rename_conversation':
       return agentRuntime.renameConversation(conversationId(), String(args.title ?? ''));
     case 'agent_delete_conversation':
@@ -2403,6 +2398,8 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         includeInvalidated: args.includeInvalidated === true,
         limit: typeof args.limit === 'number' ? args.limit : undefined,
       });
+    case 'agent_list_dream_history':
+      return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
     case 'agent_update_memory':
       return agentRuntime.updateMemory(String(args.memoryId), String(args.fact ?? ''));
     case 'agent_forget_memory':

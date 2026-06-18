@@ -9,6 +9,7 @@ import type {
   AgentCreateConversationOptions,
   AgentConversationListMeta,
   AgentMemoryEntryView,
+  AgentRenderDreamTaskEntity,
   AgentPickScopeFolderResult,
   AgentSlashCommandView,
   AgentApprovalResolutionScope,
@@ -307,16 +308,14 @@ export const api = {
   agentCreateConversation: (options: AgentCreateConversationOptions) =>
     command<AgentConversation>('agent_create_conversation', { ...options }),
   agentListConversations: () => command<AgentConversationListMeta[]>('agent_list_conversations'),
-  agentAddConversationMember: (conversationId: string, agentId: string) =>
-    command<AgentConversation>('agent_add_conversation_member', { conversationId, agentId }),
-  agentRemoveConversationMember: (conversationId: string, agentId: string) =>
-    command<AgentConversation>('agent_remove_conversation_member', { conversationId, agentId }),
   agentRenameConversation: (conversationId: string, title: string) =>
     command<AgentConversationListMeta | null>('agent_rename_conversation', { conversationId, title }),
   agentDeleteConversation: (conversationId: string) =>
     command<void>('agent_delete_conversation', { conversationId }),
   agentListMemory: (options: { includeInvalidated?: boolean; limit?: number } = {}) =>
     command<AgentMemoryEntryView[]>('agent_list_memory', options),
+  agentListDreamHistory: (options: { limit?: number } = {}) =>
+    command<AgentRenderDreamTaskEntity[]>('agent_list_dream_history', options),
   agentUpdateMemory: (memoryId: string, fact: string) =>
     command<AgentMemoryEntryView | null>('agent_update_memory', { memoryId, fact }),
   agentForgetMemory: (memoryId: string) =>

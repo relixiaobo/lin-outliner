@@ -103,65 +103,6 @@ describe('run-unification visible-transcript guard (PR-1 invariant)', () => {
     });
   });
 
-  test('Channel: two peer turn runs splice under their addressing message', async () => {
-    await withStore(async (store) => {
-      const conversationId = 'lin-agent-channel-guard';
-      const agentOne: AgentActor = { type: 'agent', agentId: 'agent-1' };
-      const agentTwo: AgentActor = { type: 'agent', agentId: 'agent-2' };
-      const events: AgentEvent[] = [
-        { ...base(conversationId, 1, 'conversation.created'), title: 'Channel' },
-        {
-          ...base(conversationId, 2, 'user_message.created', userActor),
-          messageId: 'user-channel',
-          parentMessageId: null,
-          content: [{ type: 'text', text: 'Both of you, answer' }],
-        },
-        { ...base(conversationId, 3, 'run.started'), runId: 'run-one', agentId: 'agent-1', addressedByMessageId: 'user-channel' },
-        {
-          ...base(conversationId, 4, 'assistant_message.started', agentOne),
-          runId: 'run-one',
-          messageId: 'assistant-one',
-          parentMessageId: 'user-channel',
-          addressedByMessageId: 'user-channel',
-          providerId: 'p',
-          modelId: 'm',
-        },
-        {
-          ...base(conversationId, 5, 'assistant_message.completed', agentOne),
-          runId: 'run-one',
-          messageId: 'assistant-one',
-          parentMessageId: 'user-channel',
-          stopReason: 'stop',
-          content: [{ type: 'text', text: 'Agent one here' }],
-        },
-        { ...base(conversationId, 6, 'run.completed'), runId: 'run-one' },
-        { ...base(conversationId, 7, 'run.started'), runId: 'run-two', agentId: 'agent-2', addressedByMessageId: 'user-channel' },
-        {
-          ...base(conversationId, 8, 'assistant_message.started', agentTwo),
-          runId: 'run-two',
-          messageId: 'assistant-two',
-          parentMessageId: 'user-channel',
-          addressedByMessageId: 'user-channel',
-          providerId: 'p',
-          modelId: 'm',
-        },
-        {
-          ...base(conversationId, 9, 'assistant_message.completed', agentTwo),
-          runId: 'run-two',
-          messageId: 'assistant-two',
-          parentMessageId: 'user-channel',
-          stopReason: 'stop',
-          content: [{ type: 'text', text: 'Agent two here' }],
-        },
-        { ...base(conversationId, 10, 'run.completed'), runId: 'run-two' },
-      ] as AgentEvent[];
-
-      const { store: storeIds, oracle } = await storeVisibleIds(store, conversationId, events);
-      expect(storeIds).toEqual(['user-channel', 'assistant-one', 'assistant-two']);
-      expect(storeIds).toEqual(oracle);
-    });
-  });
-
   test('delegation: a child run stream stays out of the conversation transcript', async () => {
     await withStore(async (store) => {
       const conversationId = 'lin-agent-delegation-guard';

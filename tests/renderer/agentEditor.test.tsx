@@ -44,7 +44,7 @@ function builtIn(): AgentDefinitionView {
     source: 'built-in',
     rootDir: 'built-in',
     agentFile: 'built-in/assistant',
-    writable: false,
+    writable: true,
     description: 'Default Tenon assistant profile',
     body: 'You are Neva.',
   };
@@ -85,27 +85,31 @@ function skill(name: string): SkillDefinition {
 }
 
 describe('AgentEditor', () => {
-  test('built-in renders through the same editor: read-only except an editable model/effort + Save', async () => {
-    let duplicated: AgentDefinitionView | null = null;
+  test('the built-in assistant is directly editable: Save, no Delete, no Duplicate', async () => {
+    let updated: { agentId: string; input: AgentAuthoringInput } | null = null;
     const rendered = renderComponent(
-      <AgentEditor agent={builtIn()} availableSkills={[]} providerSettings={null} busy={false} {...NOOP} onDuplicate={(agent) => { duplicated = agent; }} />,
+      <AgentEditor agent={builtIn()} availableSkills={[]} providerSettings={null} busy={false} {...NOOP} onUpdate={(agentId, input) => { updated = { agentId, input }; }} />,
     );
-    expect(rendered.container.textContent).toContain('read-only except for the model');
-    // Same Form editor as a user agent — the Name field exists and is pre-filled;
-    // the definition controls are read-only (the tool toggles render natively disabled).
+    // The Name field edits the display name (the stable id stays `assistant`), and the
+    // definition controls are live — no longer the read-only built-in.
     const nameInput = rendered.document.querySelector('input[aria-label="Name"]') as HTMLInputElement | null;
     expect(nameInput?.value).toBe('Neva');
-    expect(rendered.document.querySelector('button[aria-label="Toggle file_read"]')?.hasAttribute('disabled')).toBe(true);
-    // ...but the model/effort selector stays editable (it persists to the settings
-    // overlay), so the built-in gets a real Save alongside Duplicate. The Provider
-    // select is the always-present entry point (the Model select only appears once a
-    // provider is chosen), so assert it is enabled.
-    const providerSelect = rendered.document.querySelector('select[aria-label="Provider"]') as HTMLSelectElement | null;
-    expect(providerSelect).not.toBeNull();
-    expect(providerSelect?.hasAttribute('disabled')).toBe(false);
+    expect(nameInput?.hasAttribute('readOnly')).toBe(false);
+    expect(rendered.document.querySelector('button[aria-label="Toggle file_read"]')?.hasAttribute('disabled')).toBe(false);
+    // permissionMode / maxTurns / background steer only delegation child runs, so they
+    // are hidden for the built-in Neva — offering them would be a control that does nothing.
+    expect(rendered.container.textContent).not.toContain('Delegation Sandbox');
+    expect(rendered.document.querySelector('input[aria-label="Max Turns"]')).toBeNull();
+    expect(rendered.container.textContent).not.toContain('Run in background');
+    // No "duplicate to edit" friction and no read-only hint — it is editable in place.
+    expect(rendered.container.textContent).not.toContain('read-only');
+    expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Duplicate'))).toBe(false);
+    // Editable but not deletable: Save present, Delete absent (it is the one agent
+    // that always exists, with no AGENT.md to remove).
     expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Save'))).toBe(true);
-    await click(rendered, textButton(rendered, 'Duplicate to my agents'));
-    expect((duplicated as unknown as AgentDefinitionView | null)?.agentId).toBe('built-in:tenon:assistant');
+    expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Delete'))).toBe(false);
+    await click(rendered, textButton(rendered, 'Save'));
+    expect((updated as unknown as { agentId: string } | null)?.agentId).toBe('built-in:tenon:assistant');
   });
 
   test('create mode is a pre-filled scaffold with a storage choice', async () => {
@@ -143,6 +147,9 @@ describe('AgentEditor', () => {
       <AgentEditor agent={userAgent()} availableSkills={[]} busy={false} {...NOOP} onUpdate={(agentId, input) => { updated = { agentId, input }; }} onDelete={(agent) => { deleted = agent; }} />,
     );
     expect((rendered.document.querySelector('input[aria-label="Name"]') as HTMLInputElement | null)?.value).toBe('My-Helper');
+    // The delegation-only controls DO show for file-backed agents — they run as child runs.
+    expect(rendered.container.textContent).toContain('Delegation Sandbox');
+    expect(rendered.document.querySelector('input[aria-label="Max Turns"]')).not.toBeNull();
     await click(rendered, textButton(rendered, 'Save'));
     expect((updated as unknown as { agentId: string } | null)?.agentId).toBe('user:abc123:my-helper');
     await click(rendered, textButton(rendered, 'Delete'));

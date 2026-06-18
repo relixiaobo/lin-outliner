@@ -163,7 +163,6 @@ export type AgentConversationEvent =
       messageId: string;
       parentMessageId?: string;
       role: 'user' | 'assistant';
-      addressedTo?: AgentPrincipal[];
       runId?: string;
       content: AgentPersistedContent[];
       forwarded?: {
@@ -717,12 +716,6 @@ export interface UserMessageCreatedEvent extends AgentEventBase {
   content: AgentPersistedContent[];
   attachments?: AgentPayloadRef[];
   replacesMessageId?: string;
-  /**
-   * The principals this turn addresses ([[agent-conversation-model]] routing rule:
-   * a run is produced iff a principal is in `addressedTo`). Written by the runtime
-   * router in multi-agent Channels; absent in DMs (single implicit addressee).
-   */
-  addressedTo?: AgentPrincipal[];
 }
 
 export interface UserMessageEditedEvent extends AgentEventBase {
@@ -735,11 +728,6 @@ export interface AssistantMessageStartedEvent extends AgentEventBase {
   type: 'assistant_message.started';
   messageId: string;
   parentMessageId: string | null;
-  /**
-   * Channel reply anchor source: the user/assistant message that addressed this
-   * run. Optional for legacy records and non-Channel runs.
-   */
-  addressedByMessageId?: string | null;
   runId: string;
   providerId: string;
   modelId: string;
@@ -761,12 +749,6 @@ export interface AssistantMessageCompletedEvent extends AgentEventBase {
   stopReason: AssistantMessage['stopReason'];
   content: AgentPersistedContent[];
   usage?: Usage;
-  /**
-   * Hand-off routing record: the members this reply `@`-addressed (Channel
-   * relay). Written at completion so the routing decision is in the durable
-   * log, not only re-derivable from text.
-   */
-  addressedTo?: AgentPrincipal[];
 }
 
 export interface AssistantMessageFailedEvent extends AgentEventBase {
@@ -980,8 +962,6 @@ export interface RunStartedEvent extends AgentEventBase {
   type: 'run.started';
   runId: string;
   agentId?: AgentId;
-  /** Channel source message that addressed this run; absent outside Channel routing. */
-  addressedByMessageId?: string | null;
   anchor?: AgentRunAnchor;
   kind?: AgentRunKind;
   trigger?: AgentRunTrigger;
@@ -1140,7 +1120,6 @@ export interface AgentEventMessageRecord {
   updatedAt: number;
   status: AgentMessageStatus;
   runId?: string;
-  addressedByMessageId?: string | null;
   providerId?: string;
   modelId?: string;
   apiId?: string;
@@ -1152,13 +1131,11 @@ export interface AgentEventMessageRecord {
   isError?: boolean;
   outputSummary?: string;
   attachments?: AgentPayloadRef[];
-  addressedTo?: AgentPrincipal[];
 }
 
 export interface AgentRunRecord {
   id: string;
   agentId?: string;
-  addressedByMessageId?: string | null;
   status: AgentRunStatus;
   startedAt: number;
   updatedAt: number;
@@ -1376,99 +1353,12 @@ export function getAgentEventVisibleTranscript(
 ): AgentEventVisibleTranscriptEntry[] {
   const entries: AgentEventVisibleTranscriptEntry[] = [];
   const expandingCompactions = new Set<string>();
-  for (const message of getAgentEventVisibleTranscriptPath(state)) {
+  // The single agent's transcript is the linear active path; there are no
+  // off-active-path peer replies to graft in.
+  for (const message of getAgentEventActivePath(state)) {
     appendVisibleTranscriptEntry(state, entries, expandingCompactions, message, false);
   }
   return entries;
-}
-
-function getAgentEventVisibleTranscriptPath(state: AgentEventReplayState): AgentEventMessageRecord[] {
-  const activePath = getAgentEventActivePath(state);
-  const activePathIds = new Set(activePath.map((message) => message.id));
-  const insertedChannelReplyIds = new Set<string>();
-  const visible: AgentEventMessageRecord[] = [];
-
-  // Each run is a linear spine (its first segment is a child of its addressing
-  // message; continuation segments + tool results chain onto the run's own tail).
-  // `state.messages` is populated in append order during replay, so grouping by
-  // runId yields each run's messages already in chronological order.
-  const messagesByRunId = new Map<string, AgentEventMessageRecord[]>();
-  for (const message of Object.values(state.messages)) {
-    if (!message.runId) continue;
-    const spine = messagesByRunId.get(message.runId);
-    if (spine) spine.push(message);
-    else messagesByRunId.set(message.runId, [message]);
-  }
-
-  for (const message of activePath) {
-    if (!insertedChannelReplyIds.has(message.id)) visible.push(message);
-    const replies = activeChannelReplySlotsForParent(state, message.id, activePathIds);
-    for (const reply of replies) {
-      // The active run's whole spine is already on the active path and renders in
-      // order via this loop. Graft only non-active peer spines here; inserting an
-      // active root as a slot would let peer replies split the active run's own
-      // tool/result continuation.
-      if (activePathIds.has(reply.id)) continue;
-      const spine = (reply.runId ? messagesByRunId.get(reply.runId) : undefined) ?? [reply];
-      for (const segment of spine) {
-        if (insertedChannelReplyIds.has(segment.id)) continue;
-        visible.push(segment);
-        insertedChannelReplyIds.add(segment.id);
-      }
-    }
-  }
-
-  return visible;
-}
-
-function activeChannelReplySlotsForParent(
-  state: AgentEventReplayState,
-  parentMessageId: string,
-  activePathIds: ReadonlySet<string>,
-): AgentEventMessageRecord[] {
-  const children = state.childrenByParentId[parentMessageId] ?? [];
-  const slots = new Map<string, AgentEventMessageRecord[]>();
-  for (const childId of children) {
-    const child = state.messages[childId];
-    if (!isChannelReplySlotRoot(state, child, parentMessageId)) continue;
-    const agentId = agentSlotIdForMessage(state, child);
-    if (!agentId) continue;
-    const slotId = `${parentMessageId}:${agentId}`;
-    const slot = slots.get(slotId);
-    if (slot) slot.push(child);
-    else slots.set(slotId, [child]);
-  }
-
-  return [...slots.values()]
-    .map((slot) => (
-      slot.find((candidate) => activePathIds.has(candidate.id))
-      ?? slot.reduce((latest, candidate) => (
-        candidate.updatedAt > latest.updatedAt
-        || (candidate.updatedAt === latest.updatedAt && candidate.createdAt > latest.createdAt)
-          ? candidate
-          : latest
-      ))
-    ))
-    .sort((left, right) => left.updatedAt - right.updatedAt || left.createdAt - right.createdAt || left.id.localeCompare(right.id));
-}
-
-function isChannelReplySlotRoot(
-  state: AgentEventReplayState,
-  message: AgentEventMessageRecord | undefined,
-  parentMessageId: string,
-): message is AgentEventMessageRecord {
-  if (!message || message.role !== 'assistant') return false;
-  if (message.parentMessageId !== parentMessageId) return false;
-  if (message.addressedByMessageId !== parentMessageId) return false;
-  return Boolean(agentSlotIdForMessage(state, message));
-}
-
-function agentSlotIdForMessage(state: AgentEventReplayState, message: AgentEventMessageRecord): string | null {
-  if (message.runId) {
-    const runAgentId = state.runs[message.runId]?.agentId;
-    if (runAgentId) return runAgentId;
-  }
-  return message.actor.type === 'agent' ? message.actor.agentId : null;
 }
 
 export function getAgentEventConversationPath(state: AgentEventReplayState): AgentEventMessageRecord[] {
@@ -1633,7 +1523,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         updatedAt: event.createdAt,
         status: 'completed',
         attachments: event.attachments?.slice(),
-        addressedTo: event.addressedTo?.slice(),
       });
       state.selectedLeafMessageId = event.messageId;
       return;
@@ -1655,7 +1544,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         updatedAt: event.createdAt,
         status: 'streaming',
         runId: event.runId,
-        addressedByMessageId: event.addressedByMessageId ?? null,
         providerId: event.providerId,
         modelId: event.modelId,
         apiId: event.apiId,
@@ -1676,7 +1564,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       message.status = 'completed';
       message.stopReason = event.stopReason;
       message.usage = event.usage;
-      if (event.addressedTo) message.addressedTo = event.addressedTo.slice();
       message.updatedAt = event.createdAt;
       return;
     }
@@ -1726,7 +1613,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       state.runs[event.runId] = {
         id: event.runId,
         agentId: event.agentId ?? (event.anchor ? agentIdOfRunAnchor(event.anchor) : undefined),
-        addressedByMessageId: event.addressedByMessageId ?? null,
         status: 'running',
         startedAt: event.createdAt,
         updatedAt: event.createdAt,

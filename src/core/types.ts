@@ -746,7 +746,6 @@ export interface AgentConversation {
 
 export interface AgentCreateConversationOptions {
   title: string;
-  agentIds?: string[];
   seedText?: string;
 }
 
@@ -755,7 +754,6 @@ export interface AgentConversationListMeta {
   title: string | null;
   members: AgentPrincipal[];
   goal?: string;
-  canonicalDmAgentId?: string;
   createdAt: number;
   updatedAt: number;
   messageCount: number;
@@ -797,19 +795,11 @@ export const AGENT_REASONING_LADDER: readonly AgentReasoningLevel[] = ['off', 'm
 export type AgentPermissionMode = 'trusted' | 'restricted';
 export type AgentDelegationPermissionMode = 'restricted';
 export type AgentCacheRetention = 'none' | 'short' | 'long';
-/**
- * Memory is one undivided pool per principal — like a person, a principal never partitions its
- * own memory by where it works ('isolated' was removed; `originWorkspace` is provenance metadata
- * only, never a retrieval fence). 'read-only-global' pauses Dream writes (stop learning) while
- * reads stay global.
- */
-export type AgentMemoryIsolation = 'global' | 'read-only-global';
 
 export interface AgentRuntimeSettings {
   automaticSkillsEnabled: boolean;
   slashSkillsEnabled: boolean;
   compactEnabled: boolean;
-  memoryIsolation: AgentMemoryIsolation;
   additionalSkillDirectories: string[];
   additionalAgentDirectories: string[];
   providerTimeoutMs: number | null;
@@ -826,7 +816,6 @@ export interface AgentRuntimeSettingsInput {
   automaticSkillsEnabled?: boolean;
   slashSkillsEnabled?: boolean;
   compactEnabled?: boolean;
-  memoryIsolation?: AgentMemoryIsolation;
   additionalSkillDirectories?: string[];
   additionalAgentDirectories?: string[];
   providerTimeoutMs?: number | null;

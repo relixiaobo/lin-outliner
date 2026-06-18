@@ -4,8 +4,13 @@ import type { ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { ToolCall, Usage } from '../../src/core/agentTypes';
-import type { AgentRenderChildRunEntity } from '../../src/core/agentRenderProjection';
+import type {
+  AgentRenderChildRunEntity,
+  AgentRenderDreamTaskEntity,
+  AgentRenderProjection,
+} from '../../src/core/agentRenderProjection';
 import type { AgentTaskEntry } from '../../src/renderer/agent/runtime';
+import { buildAgentTaskEntries } from '../../src/renderer/agent/runtime';
 import type { DocumentIndex } from '../../src/renderer/state/document';
 import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import { AgentChildRunDetailsPanel } from '../../src/renderer/ui/agent/AgentChildRunDetailsPanel';
@@ -453,14 +458,17 @@ describe('agent child run UI', () => {
     expect(fetchCount()).toBeGreaterThan(before);
   });
 
-  test('lists Dream tasks as read-only agent tasks', async () => {
-    let openedChildRunId: string | null = null;
-    const dreamTask: AgentTaskEntry = {
+  test('Dream tasks are surfaced in Settings, not the conversation task panel', async () => {
+    // Dreams ride in the projection but are filtered out of buildAgentTaskEntries —
+    // they now live in Settings → Agent's Dream-history group. Only child-run tasks
+    // reach the in-conversation panel.
+    const childRun = childRunEntity();
+    const dreamTask: AgentRenderDreamTaskEntity = {
       id: 'dream:dream-run-1',
       kind: 'dream',
       status: 'completed',
       trigger: 'manual',
-      principal: { type: 'user', userId: 'local-user' },
+      principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
       startedAt: 100,
       updatedAt: 150,
       completedAt: 150,
@@ -468,28 +476,49 @@ describe('agent child run UI', () => {
       processed: { totalMessageCount: 3, totalCharCount: 900, consolidateOnly: false },
       changes: { added: 1, updated: 0, forgotten: 0, skipped: 0 },
     };
+    const childRunTask = taskEntry(childRun);
+    const projection = {
+      taskIds: [dreamTask.id, childRunTask.id],
+      childRunIds: [childRun.id],
+      entities: {
+        messages: {},
+        childRuns: { [childRun.id]: childRun },
+        compactions: {},
+        dreams: {},
+        tasks: {
+          [dreamTask.id]: dreamTask,
+          [childRunTask.id]: {
+            id: childRunTask.id,
+            kind: 'child-run' as const,
+            status: childRunTask.status,
+            title: childRunTask.title,
+            subtitle: childRunTask.subtitle,
+            startedAt: childRunTask.startedAt,
+            updatedAt: childRunTask.updatedAt,
+            completedAt: childRunTask.completedAt,
+            childRunId: childRunTask.childRunId,
+          },
+        },
+      },
+    } as unknown as AgentRenderProjection;
+
+    const entries = buildAgentTaskEntries(projection);
+    // Only the child-run task survives; the dream is dropped.
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.kind).toBe('child-run');
+    expect(entries.some((entry) => entry.id === dreamTask.id)).toBe(false);
+
+    // And the panel renders nothing dream-shaped for those entries.
     const rendered = renderComponent(
       <AgentTaskPanel
         conversationId="conversation-1"
         onClose={() => undefined}
-        onOpenChildRun={(childRunId) => {
-          openedChildRunId = childRunId;
-        }}
-        tasks={[dreamTask]}
+        onOpenChildRun={() => undefined}
+        tasks={entries}
       />,
     );
-
-    expect(rendered.container.textContent).toContain('Dream');
-    expect(rendered.container.textContent).toContain('Memory Dream');
-    expect(rendered.container.textContent).toContain('Manual');
-    expect(rendered.container.textContent).toContain('3 messages');
-    expect(rendered.container.textContent).toContain('1 memory change');
-    const meta = rendered.container.querySelector('.agent-task-meta');
-    // The leading part labels whose pool this Dream maintains (the run anchor principal).
-    expect(meta?.textContent).toContain('About you · Manual · 3 messages · 1 memory change');
-    expect(meta?.childElementCount).toBe(0);
-    expect(rendered.container.querySelector('[aria-label="Open task"]')).toBeNull();
-    expect(openedChildRunId).toBeNull();
+    expect(rendered.container.textContent).not.toContain('Memory Dream');
+    expect(rendered.container.textContent).toContain('Inspect child run UI');
   });
 });
 

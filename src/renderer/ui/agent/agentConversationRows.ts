@@ -50,8 +50,7 @@ function sameAssistantActor(left: AssistantEntry, right: AssistantEntry): boolea
   const leftAgentId = left.actor?.type === 'agent' ? left.actor.agentId : null;
   const rightAgentId = right.actor?.type === 'agent' ? right.actor.agentId : null;
   if (leftAgentId === null || rightAgentId === null) return true;
-  if (leftAgentId !== rightAgentId) return false;
-  return (left.addressedByMessageId ?? null) === (right.addressedByMessageId ?? null);
+  return leftAgentId === rightAgentId;
 }
 
 function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {

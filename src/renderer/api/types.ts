@@ -71,6 +71,10 @@ export type {
   AgentStorageLocation,
 } from '../../core/agentTypes';
 
+export type {
+  AgentRenderDreamTaskEntity,
+} from '../../core/agentRenderProjection';
+
 export interface AgentToolPermissionSettingsView {
   grants: string[];
   blocks: string[];

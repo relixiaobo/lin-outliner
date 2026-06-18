@@ -107,12 +107,9 @@ function projection(
     revision: options.revision ?? 1,
     conversationTitle: 'Saved conversation',
     activeRunId: options.isStreaming ? 'run-1' : null,
-    channelActivityEntries: [],
-    povInspectors: {},
     activeCompaction: options.activeCompaction ?? null,
     activeDream: options.activeDream ?? null,
-    dmRunActive: !!options.isStreaming,
-    channelRunsActive: false,
+    runActive: !!options.isStreaming,
     model: { id: 'test-model', provider: 'test' },
     thinkingLevel: 'off',
     pendingToolCallIds: [],
@@ -142,7 +139,7 @@ function projection(
       dreams: options.dreams ?? {},
       tasks,
     },
-    dmStreaming: options.streamingMessageId ? {
+    streaming: options.streamingMessageId ? {
       messageId: options.streamingMessageId,
       rowId: `assistant:${options.streamingMessageId}`,
       text: entries
@@ -493,12 +490,15 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('derives Dream task entries from agent-level task projection', async () => {
+  test('Dream tasks ride in the projection but are not surfaced in the task panel', async () => {
+    // Dreams moved to Settings → Agent's Dream-history group; the in-conversation
+    // task panel keeps only child-run entries, so the store filters dreams out.
     const dreamTask: AgentRenderTaskEntity = {
       id: 'dream:dream-run-1',
       kind: 'dream',
       status: 'completed',
       trigger: 'schedule',
+      principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
       startedAt: 100,
       updatedAt: 150,
       completedAt: 150,
@@ -516,7 +516,7 @@ describe('agent runtime store', () => {
 
     await flushMicrotasks();
 
-    expect(store.getSnapshot().tasks).toEqual([dreamTask]);
+    expect(store.getSnapshot().tasks).toEqual([]);
     unsubscribe();
   });
 
@@ -996,7 +996,7 @@ describe('agent runtime store', () => {
         baseRevision: 1,
         revision: 2,
         entities: { messages: { 'assistant-stream': nextAssistant } },
-        dmStreaming: {
+        streaming: {
           messageId: 'assistant-stream',
           rowId: 'assistant:assistant-stream',
           text: 'hi',

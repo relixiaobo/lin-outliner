@@ -148,9 +148,6 @@ export function normalizeRuntimeSettingPatch(setting: string, value: unknown): A
   switch (setting) {
     case 'agent.runtime.compactEnabled':
       return { compactEnabled: requireBoolean(setting, value) };
-    case 'agent.runtime.memoryIsolation':
-      if (value === 'global' || value === 'read-only-global') return { memoryIsolation: value };
-      throw new Error(`${setting} must be "global" or "read-only-global".`);
     case 'agent.runtime.automaticSkillsEnabled':
       return { automaticSkillsEnabled: requireBoolean(setting, value) };
     case 'agent.runtime.slashSkillsEnabled':
@@ -177,8 +174,6 @@ export function readRuntimeSetting(settings: AgentRuntimeSettings, setting: stri
   switch (setting) {
     case 'agent.runtime.compactEnabled':
       return settings.compactEnabled;
-    case 'agent.runtime.memoryIsolation':
-      return settings.memoryIsolation;
     case 'agent.runtime.automaticSkillsEnabled':
       return settings.automaticSkillsEnabled;
     case 'agent.runtime.slashSkillsEnabled':

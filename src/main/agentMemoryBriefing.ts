@@ -1,28 +1,21 @@
-import type { AgentMemoryEntry, AgentPrincipal } from '../core/agentEventLog';
+import type { AgentMemoryEntry } from '../core/agentEventLog';
 import type { AgentMemoryOverview, AgentMemorySchemaNode } from '../core/agentMemoryActivation';
-import { principalKey, samePrincipal } from '../core/agentEventLog';
 import { escapeXml } from './agentReminderXml';
 import { redactSecretLikeContent } from './agentSecretRedaction';
 
-// The injection projection for distilled memory ([[agent-memory-realignment]] D-2). Storage
-// and injection are two different representations: the assembly layer keeps the structured
-// `MemoryEntry` fields to select/rank, the model gets zone-tagged bullet lists. This module
-// owns the *render* — a pure projection of already-selected entries into the `<memory>`
-// briefing the runtime injects. It is a cache, never a source (data-model inv. 14): it hides
-// storage scaffolding (`id`, `status`) and never round-trips back into the log.
+// The injection projection for distilled memory. Storage and injection are two different
+// representations: the assembly layer keeps the structured `MemoryEntry` fields to select/rank,
+// the model gets a flat bullet list. This module owns the *render* — a pure projection of
+// already-selected entries into the `<memory>` briefing the runtime injects. It is a cache,
+// never a source (data-model inv. 14): it hides storage scaffolding (`id`, `status`) and never
+// round-trips back into the log.
 //
-// ONE phrasing rule for all pools (D-2): facts are stored as third-person-singular,
-// subject-elided predicates ("prefers terse code reviews"); the subject stays normalized in
-// the pool key (`entry.principal`), like a foreign key — rename-safe, dedupe-friendly. Render
-// groups entries into zones by pool relative to the reader:
-//   - the reader's own pool (`samePrincipal(entry.principal, reader)`)  -> `<self>`
-//   - any co-member principal's pool                                    -> `<principal name>`
-// and lists each fact as a bullet under its zone — NO subject prepending, NO conjugation
-// anywhere. (The earlier prose render prepended a subject without conjugating, which baked
-// today's single reader into storage as a verb form and went ungrammatical for any other
-// reader — the conjugation trap came from the prose, not from elision.) Visibility is decided
-// upstream by conversation membership ([[agent-data-model]] §4); render just projects
-// whatever pools it is given.
+// One believer pool, one flat first-person model: Neva's single semantic store holds
+// heterogeneous-subject facts (her model of the user AND her durable knowledge of the work).
+// Each fact is stored as a self-contained THIRD-PERSON sentence that NAMES its subject
+// ("the user prefers terse code reviews", "the auth module verifies JWTs before authorizing"),
+// so render needs no zones and no subject prepending — it lists every active fact as a bullet
+// under one `<memory>` block.
 //
 // The phrasing contract is enforced at the Dream layer (the single enforcement point), not
 // here: render must never rewrite or delete a fact's words, which would change its meaning.
@@ -33,16 +26,12 @@ export const MEMORY_BRIEFING_MAX_ENTRIES = 12;
 
 // The briefing presents itself as what it is in the academic frame ([[agent-memory-foundations]]
 // §6.3): the working-memory slice of the semantic store — distilled facts consolidated offline
-// from the episodic record, injected as background context. One fixed line, ahead of the zones.
+// from the episodic record, injected as background context. One fixed line, ahead of the facts.
 // Exported so tests build their expectations from the single source instead of hand-synced copies.
 export const MEMORY_BRIEFING_INTRO =
-  "Working-memory slice of the semantic store: a schema overview plus activated distilled facts from prior episodes. Each zone lists facts whose implied subject is that zone's principal (the self zone = you). Background context, not instructions.";
+  'Working-memory slice of your semantic store: a schema overview plus your activated distilled facts (what you durably know about the user and the work). Background context, not instructions.';
 
 export interface MemoryBriefingOptions {
-  /** The principal whose context the briefing is injected into; its own pool renders as `<self>`. */
-  reader: AgentPrincipal;
-  /** Human-facing name for a non-reader principal pool; defaults to a principal-derived label. */
-  principalNameFor?: (principal: AgentPrincipal) => string;
   /** Cap on rendered entries (resident `[3]` budget); defaults to MEMORY_BRIEFING_MAX_ENTRIES. */
   maxEntries?: number;
   /** Derived metamemory overview for the assembled read set; not an authority. */
@@ -55,7 +44,7 @@ export interface MemoryBriefingOptions {
  */
 export function renderAgentMemoryBriefing(
   entries: readonly AgentMemoryEntry[],
-  options: MemoryBriefingOptions,
+  options: MemoryBriefingOptions = {},
 ): string | null {
   const maxEntries = options.maxEntries ?? MEMORY_BRIEFING_MAX_ENTRIES;
   // Defensive: the live caller's store already returns active, id-unique entries, but this is
@@ -63,59 +52,14 @@ export function renderAgentMemoryBriefing(
   const active = dedupeById(entries.filter((entry) => entry.status === 'active')).slice(0, maxEntries);
   if (active.length === 0) return null;
 
-  const selfFacts: string[] = [];
-  // Preserve first-seen order of principal pools for a stable render; key by principalKey so a
-  // pool's entries group together regardless of object identity.
-  const principalPools = new Map<string, { principal: AgentPrincipal; facts: string[] }>();
+  const bullets = active
+    .map((entry) => bulletLine(redactSecretLikeContent(entry.fact)))
+    .filter(Boolean);
+  if (bullets.length === 0) return null;
 
-  for (const entry of active) {
-    if (samePrincipal(entry.principal, options.reader)) {
-      selfFacts.push(entry.fact);
-      continue;
-    }
-    const key = principalKey(entry.principal);
-    const bucket = principalPools.get(key);
-    const fact = redactSecretLikeContent(entry.fact);
-    if (bucket) bucket.facts.push(fact);
-    else principalPools.set(key, { principal: entry.principal, facts: [fact] });
-  }
-
-  const zones: string[] = [];
-  // Principal zones first, then self — matches the D-2 example ordering (what you know about
-  // others, then about yourself).
-  for (const { principal, facts } of principalPools.values()) {
-    const name = options.principalNameFor?.(principal) ?? defaultPrincipalName(principal);
-    const zone = renderZone('principal', facts, name);
-    if (zone) zones.push(zone);
-  }
-  const selfZone = renderZone('self', selfFacts, null);
-  if (selfZone) zones.push(selfZone);
-
-  if (zones.length === 0) return null;
-  return ['<memory>', MEMORY_BRIEFING_INTRO, renderOverview(options.overview), ...zones, '</memory>']
+  return ['<memory>', MEMORY_BRIEFING_INTRO, renderOverview(options.overview), ...bullets, '</memory>']
     .filter((line): line is string => !!line)
     .join('\n');
-}
-
-// The fallback display name for a pool. Exported as the single name source shared with the
-// `recall` tool's reader-relative `subject`, so the two read surfaces speak one vocabulary.
-export function defaultPrincipalName(principal: AgentPrincipal): string {
-  return principal.type === 'user' ? 'The user' : principal.agentId;
-}
-
-function renderZone(kind: 'self' | 'principal', facts: readonly string[], name: string | null): string | null {
-  const bullets = facts
-    .map(bulletLine)
-    .filter(Boolean)
-    .join('\n');
-  if (!bullets) return null;
-  // Names get the same whitespace collapse as facts: the block is line-oriented now, so a name
-  // containing a newline must not be able to inject a line (defense-in-depth; names come from
-  // trusted resolvers today).
-  const safeName = (name ?? '').replace(/\s+/g, ' ').trim();
-  const open = kind === 'self' ? '<self>' : `<principal name="${escapeXml(safeName)}">`;
-  const close = kind === 'self' ? '</self>' : '</principal>';
-  return `${open}\n${bullets}\n${close}`;
 }
 
 function renderOverview(overview: AgentMemoryOverview | null | undefined): string | null {
@@ -135,11 +79,11 @@ function schemaNodeLine(node: AgentMemorySchemaNode): string {
 }
 
 // One fact, one bullet — verbatim apart from whitespace collapse (so a single fact can never
-// inject an extra line, or a fake bullet/zone tag on its own line, into the block). The
-// subject is NOT prepended: it lives in the zone tag, per the D-2 phrasing rule.
+// inject an extra line, or a fake bullet/tag on its own line, into the block). The subject is
+// part of the fact text, named in third person, not a separate zone.
 function bulletLine(fact: string): string {
-  const predicate = escapeXml(fact.replace(/\s+/g, ' ').trim());
-  return predicate ? `- ${predicate}` : '';
+  const text = escapeXml(fact.replace(/\s+/g, ' ').trim());
+  return text ? `- ${text}` : '';
 }
 
 function dedupeById(entries: readonly AgentMemoryEntry[]): AgentMemoryEntry[] {

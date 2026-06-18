@@ -3,13 +3,21 @@
 This document is the working checklist for Lin's local agent integration. Keep
 it current whenever a meaningful agent milestone lands or a priority changes.
 
-Last updated: 2026-06-10
+Last updated: 2026-06-18
 
 ## Current Direction
 
 Lin uses pi-mono as the current TypeScript agent core. Local document tools,
 file tools, bash, web access, validation, previews, approval policy/schema,
 persistence, and undo stay inside Lin's TypeScript/Electron boundary.
+
+The product is **single-agent**: one user-customizable agent, **Neva** (stable
+`agentId` `built-in:tenon:assistant`, handle `assistant`), editable in
+Settings → Agent through a stored overlay. There is no multi-agent roster, no
+peers, and no `@`-routing. Conversations are the only conversation primitive —
+single-agent, inline-streaming, members always `{user, Neva}`; there is no DM
+vs. Channel split. Delegation (child runs / sub-agents for tasks) stays, but
+sub-agents are task runtimes, not conversational peers.
 
 Agent persistence, debug, streaming, multimedia payloads, and transcript
 rendering now follow `docs/spec/agent-event-log-rendering.md`: the durable
@@ -111,117 +119,74 @@ truth.
   - manual, automatic, and reactive compaction with prompt-too-large retry
   - stable tool-output slimming and recent file-context restore across compact
   - same-conversation `Agent`, `AgentStatus`, `AgentSend`, and `AgentStop`
-  - coordinator-only `channel_create` and `channel_update` tools for explicit
-    chat-driven local Channel organization; child/delegated runs do not receive
-    them
   - fresh and fork child runs, each with its OWN run ledger (run unification;
     sidechain transcripts replay from the ledger) and background
     notifications
-  - task panel derived from the shared render task projection: child-run tasks keep
-    open-details/stop actions, and agent-level Dream runs show as read-only
-    reflective tasks with trigger, processed count, and memory-change count
+  - conversation task panel derived from the shared render task projection: it
+    shows only child-run tasks with open-details/stop actions (Dream history
+    moved to the Settings → Agent "Memory & activity" panel)
   - skill `execution: isolated` routed through the delegation runtime
   - provider overflow detection, response debug capture, stream option pass-through,
     and session resource cleanup via pi-ai
-- [x] Agent memory foundation:
-  - per-principal memory pools keyed by `MemoryEntry.principal` (`principalKey =
-    user:<userId> | agent:<agentId>`): every pool lives under
-    `principals/<agent-<agentId> | user-<userId>>/memory/events.jsonl`
-    (`agents/<agentId>/` keeps only `identity.json`), on the shared append-only
-    seq-log primitive with conversation/run logs
-  - single model-visible `recall` tool over active durable memory entries, reading
-    the reader's own pool + every conversation co-member principal's pool, with
-    optional nested evidence expansion through `MemoryEntry.sources` gated in the
-    evidence service to the reader's own pool (cross-principal requests return a
-    typed refusal and distilled facts only)
+- [x] Agent memory foundation (one believer-keyed first-person pool):
+  - a single believer-keyed memory pool on the shared append-only seq-log
+    primitive (alongside the conversation/run logs); facts are stored
+    subject-named in the **third person** and the pool is one undivided
+    body of first-person knowledge — `originWorkspace` is provenance metadata,
+    never a retrieval fence
+  - single model-visible `recall` tool over the active durable memory entries,
+    with optional nested evidence expansion through `MemoryEntry.sources`
   - bounded `<memory>` turn briefing injection: derived schema overview +
-    activation-ranked fact selection over the reader's own pool + every
-    conversation co-member principal's pool, rendered into reader-relative
-    `<self>` / `<principal>` zones as verbatim bullet lists (one phrasing rule:
-    third-person-singular subject-elided storage, no subject prepending at render
-    — [[agent-memory-realignment]] D-2; storage scaffolding hidden; foreign facts
-    pass the shared secret-like redaction heuristic before injection)
-  - runtime `memoryIsolation` modes: global and read-only-global (pause Dream
-    writes); a pool is one undivided self-model — `originWorkspace` is provenance
-    metadata, never a retrieval fence
-  - Settings Memory pane for list/edit/forget
-  - runtime-owned per-principal Dream write-back as a scheduled/manual reflective
-    run: the **agent-Dream** consolidates an agent's run log into its pool, the
-    **user-Dream** consolidates the user's member-conversations into the user pool,
-    with subject-aware consolidation prompts; the automatic path uses the shared
-    `date` schedule primitive plus a minimum-volume gate (firing one Dream per
-    pool), `/dream` forces the user-Dream over the conversation, raw evidence is
-    read since the Dream watermark, and `dream.completed` records the processed
-    range; a Dream run is **principal-anchored** — anchored to the pool it
-    maintains, with the executing main agent recorded separately — so each
-    principal's reflective-run index lives beside its pool and the task panel
-    joins run meta with completions locally per principal (rows are labelled with
-    the pool they maintain); manual `/dream` projects a chat-stream Dream
-    boundary, and the foreground `dream` tool can request the same runtime-owned
-    path without supplying memory facts
-  - fresh typed child agents use their own agent identity for the `<memory>` briefing,
-    `recall`, and child-ledger Dream evidence; forks inherit the
-    parent agent's memory owner and use the structural fork boundary (events past
-    the child ledger's first `run.started`); run-sourced memory sources bind
-    evidence to stable run-ledger ids (`{seq, eventId}` + message ids, post-#184),
-    and owner-anchored Dream tasks appear in the shared task projection
+    activation-ranked fact selection rendered as a **flat `<memory>` bullet
+    list** of verbatim third-person facts (no `<self>`/`<principal>` zones;
+    storage scaffolding hidden; facts pass the shared secret-like redaction
+    heuristic before injection)
+  - Settings → Agent Memory pane for list/edit/forget
+  - runtime-owned Dream write-back as a scheduled/manual reflective run: **one
+    Dream** consolidates conversation evidence into the pool with a subject-aware
+    consolidation prompt; the automatic path uses the shared `date` schedule
+    primitive plus a minimum-volume gate, `/dream` forces a Dream over the
+    conversation, raw evidence is read since the Dream watermark, and
+    `dream.completed` records the processed range; Dream history is surfaced in
+    the Settings → Agent "Memory & activity" panel; the foreground `dream` tool
+    can request the same runtime-owned path without supplying memory facts
+  - run-sourced memory sources bind evidence to stable run-ledger ids
+    (`{seq, eventId}` + message ids, post-#184), and Dream tasks appear in the
+    shared task projection
   - projected-state cache, idempotent explicit forget, two-strength access
     projection from `memory.accessed`, and high-churn log compaction
   - permission classification for read-only `agent.memory.recall` and
     trigger-only `agent.memory.dream`
-  - prompt guidance that foreground memory writes are handled by Settings/Profile
-    UI and runtime-owned consolidation (Dream), not by a model-visible CRUD tool
+  - prompt guidance that foreground memory writes are handled by the
+    Settings → Agent UI and runtime-owned consolidation (Dream), not by a
+    model-visible CRUD tool
 - [x] Agent M1 self-maintenance and structured input:
-  - one canonical DM per configured agent, restored by find-or-create; user-created
-    Channels require a name and can invite agents now or later
   - `ask_user_question` tool with pending question persistence and renderer
     resolution
   - `runtime_status`, `config`, `doctor`, and `dream` tools with
     permission-gated config/Dream writes
   - mixed-resolution compaction source ranges for replay/render/runtime context
-- [x] Agent M3-A multi-agent Channel (membership + routing + peer reply, #179;
-  IM group-chat semantics PM-ratified 2026-06-10):
-  - `member.added`/`member.removed` events applied on replay and folded into the
-    conversation index (membership events only — ordinary event actors never
-    resurrect a removed member); `addressedTo` persisted on user messages AND on
-    handing-off assistant replies
-  - Channel creation with a name and optional invited agents; the Channels section
-    action opens New Channel, while DMs never convert or share history; the
-    Channel config window can rename, add members, and remove invited members;
-    coordinator and DM members are immovable; member removal blocked while a round
-    is active; mention-token collisions rejected at create/add time
-  - routing: explicit user `@`s all run, uncounted (independent answers — each
-    run's context cuts at the message that addressed it,
-    `cutChannelPathForRun`); no `@` routes to the coordinator (PM-ratified); an
-    agent reply `@`-ing members hands off, routed from the persisted record,
-    **unbounded** (user stop is the circuit breaker: kills the active run and
-    discards unstarted routing with a thread trace); one addressee's failure
-    never skips siblings
-  - delivery: the Channel **message stream is whole-utterance only** — replies
-    are not token-streamed into the transcript; whole reply lands on completion;
-    live assistant content is retained for the per-run detail view
-    (`channelActivityEntries[].streamingContent`, with `streamingText` as the
-    text fallback/summary), never in the message flow (PM-ratified 2026-06-13).
-    A Channel send/edit/retry **returns on
-    acceptance** (persist + enqueue, then return; runs drain async — tests use
-    `drainChannelTurnsForTest`); a user message sent during any active Channel run
-    is persisted immediately and routed independently with its own context cut (no
-    steer in Channels); excess addressed turns wait behind the per-conversation
-    execution cap, not in a renderer-visible message queue. The projection splits
-    the old `isStreaming` into `dmRunActive`/`dmStreaming` (DM composer) and
-    `channelRunsActive`/`channelActivityEntries` (Channel work), so every Channel
-    uses the activity surface instead of direct transcript streaming, Channel
-    activity never turns the composer into Stop/Steer, and navigation/unread
-    continue while runs work; DM behavior unchanged
-  - each peer turn executes as the addressed agent (definition, model/effort,
-    skills, memory line, `actor` stamp) and reads the thread through the
-    transient per-POV flatten (own turns verbatim; other principals coalesced
-    into identity-preambled user-role blocks; selected by transcript content,
-    not the live roster); the persisted log stays reader-neutral
-  - UI: composer `@` member typeahead, member strip + Members popover on the
-    Channel header (add/remove invited members while preserving the coordinator),
-    conversation-list member display, speaker badges on non-coordinator
-    assistant rows that survive member removal
+- [x] Single-agent collapse (one editable agent; conversations-only; one memory
+  pool): the prior multi-agent Channel apparatus was removed and the model
+  collapsed to a single user-customizable agent.
+  - **One editable agent, Neva** — `built-in:tenon:assistant` (handle
+    `assistant`), edited in Settings → Agent via a stored overlay; no
+    multi-agent roster, peers, or `@`-routing
+  - **Conversations are the only conversation primitive — no DM.**
+    Conversations are single-agent and inline-streaming with members always
+    `{user, Neva}`; one conversation list, no nav-lock, "General" as the default
+    landing. Removed `canonicalDmAgentId`, the DM-vs-Channel branching, and the
+    two-list / two-"+" UI
+  - **Render projection collapsed** to one `runActive` flag (the old
+    `dmRunActive`/`channelRunsActive` split is gone) with inline transcript
+    streaming; the channel activity surface was removed
+  - **Removed multi-agent apparatus:** channel-org tools
+    (`channel_create`/`channel_update`/`channelOrg`), member roster +
+    `@`-routing/typeahead/handoff, POV/independence + the POV inspector, the
+    channel activity surface, channel permission gates, multi-agent channel-turn
+    execution + parallel-channel runtime, ChannelConfigWindow configure
+    plumbing, and the message-addressing protocol fields (`addressedTo`,
+    `member.added`/`member.removed`)
 
 ## Next Milestone
 
