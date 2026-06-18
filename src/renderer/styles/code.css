@@ -20,6 +20,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-soft);
+  --code-block-editor-max-height: min(42vh, 420px);
   --code-block-scrollbar-edge-inset: var(--space-1);
   --code-block-content-inset: var(--space-5);
   --code-block-scrollbar-gutter: var(--space-4);
@@ -237,6 +238,8 @@
    layer, sized by a hidden <pre> so the height stays exact while Shiki resolves. */
 .code-block-editor {
   position: relative;
+  max-height: var(--code-block-editor-max-height);
+  overflow: hidden;
   padding: var(--code-block-content-inset);
 }
 
@@ -267,7 +270,7 @@
   height: auto;
   resize: none;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
   background: transparent;
   color: transparent;
   caret-color: var(--text-strong);
