@@ -12,13 +12,10 @@ export type SettingsCategoryTarget = 'general' | 'providers' | 'permissions' | '
 export interface SettingsOpenTarget {
   category?: SettingsCategoryTarget;
   agentId?: string;
-  agentCreate?: boolean;
 }
 
 export const SETTINGS_CATEGORY_PARAM = 'category';
 export const SETTINGS_AGENT_PARAM = 'agent';
-export const SETTINGS_AGENT_MODE_PARAM = 'agentMode';
-export const SETTINGS_AGENT_CREATE_VALUE = 'create';
 export const LIN_SETTINGS_NAVIGATE_CHANNEL = 'lin:settings-navigate';
 
 export function windowSurfaceFromSearch(search: string): WindowSurface {
@@ -43,10 +40,8 @@ export function settingsOpenTargetFromSearch(search: string): SettingsOpenTarget
   const params = new URLSearchParams(search);
   const category = params.get(SETTINGS_CATEGORY_PARAM);
   const agentParam = params.get(SETTINGS_AGENT_PARAM)?.trim();
-  const agentMode = params.get(SETTINGS_AGENT_MODE_PARAM);
   return {
     ...(isSettingsCategoryTarget(category) ? { category } : {}),
-    ...(agentMode === SETTINGS_AGENT_CREATE_VALUE ? { agentCreate: true } : {}),
     ...(agentParam ? { agentId: agentParam } : {}),
   };
 }
@@ -73,19 +68,17 @@ export function providerConfigParamsFromSearch(search: string): ProviderConfigPa
 }
 
 export const AGENT_CONFIG_AGENT_PARAM = 'agent';
-export const AGENT_CONFIG_MODE_PARAM = 'mode';
-export type AgentConfigMode = 'create' | 'configure';
 
 export interface AgentConfigParams {
   agentId: string;
-  mode: AgentConfigMode;
 }
 
+// The agent-config window only ever *configures* the one agent (Neva); the
+// one-Neva invariant removed the create surface, so there is no mode.
 export function agentConfigParamsFromSearch(search: string): AgentConfigParams {
   const params = new URLSearchParams(search);
   return {
     agentId: params.get(AGENT_CONFIG_AGENT_PARAM) ?? '',
-    mode: params.get(AGENT_CONFIG_MODE_PARAM) === 'create' ? 'create' : 'configure',
   };
 }
 

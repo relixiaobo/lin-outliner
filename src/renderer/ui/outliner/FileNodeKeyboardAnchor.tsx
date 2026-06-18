@@ -4,6 +4,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 import type { FocusRequest, FocusTarget } from '../../state/document';
+import type { TriggerAnchor } from '../shared';
 import { focusTargetMatches } from '../focus/focusModel';
 import { isCompositionLive } from '../editor/compositionRelay';
 
@@ -12,6 +13,10 @@ export interface FileNodeKeyboardAnchorProps {
   label?: string;
   /** Selection bookkeeping when the row gains focus. */
   onFocus: () => void;
+  tagTriggerQuery?: string | null;
+  onOpenTagTrigger: (anchor?: TriggerAnchor) => void;
+  onUpdateTagTriggerQuery: (query: string) => void;
+  onCloseTagTrigger: () => void;
   onArrowUp: () => void;
   onArrowDown: () => void;
   /** Enter: create a sibling row below (or a first child when expanded). */
@@ -31,13 +36,11 @@ export interface FileNodeKeyboardAnchorProps {
 }
 
 /**
- * A file node renders as a click-to-open card/image with a display-only filename,
- * so its row has no inline text editor. This visually hidden, focusable anchor
- * restores full keyboard parity for the row: it owns the same block keyboard
- * contract the (now removed) BlockNodeRow had — arrow nav, Enter → sibling,
- * Backspace → remove, Tab → indent, Escape, undo/redo, select-all — without
- * mounting a heavyweight read-only ProseMirror just to catch keystrokes (a plain
- * div also cannot type-to-rename or fire slash/tag triggers, for free).
+ * Image file rows render the image itself as their visible row content, so there
+ * is no filename caret surface to own keyboard focus. This visually hidden,
+ * focusable anchor restores the block keyboard contract for that row: arrow nav,
+ * Enter → sibling, Backspace → remove, Tab → indent, Escape, undo/redo,
+ * select-all, and `#` tag trigger.
  */
 export function FileNodeKeyboardAnchor(props: FileNodeKeyboardAnchorProps) {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -62,6 +65,27 @@ export function FileNodeKeyboardAnchor(props: FileNodeKeyboardAnchorProps) {
     const p = propsRef.current;
     const mod = event.metaKey || event.ctrlKey;
 
+    if (p.tagTriggerQuery !== undefined && p.tagTriggerQuery !== null) {
+      if (event.key === 'Backspace') {
+        event.preventDefault();
+        if (p.tagTriggerQuery.length === 0) {
+          p.onCloseTagTrigger();
+        } else {
+          p.onUpdateTagTriggerQuery(p.tagTriggerQuery.slice(0, -1));
+        }
+        return;
+      }
+      if (!mod && !event.altKey && event.key.length === 1) {
+        event.preventDefault();
+        if (/\s/.test(event.key)) {
+          p.onCloseTagTrigger();
+        } else {
+          p.onUpdateTagTriggerQuery(`${p.tagTriggerQuery}${event.key}`);
+        }
+        return;
+      }
+    }
+
     if (mod && event.key.toLowerCase() === 'a') {
       event.preventDefault();
       p.onSelectAllRows();
@@ -76,6 +100,15 @@ export function FileNodeKeyboardAnchor(props: FileNodeKeyboardAnchorProps) {
     if (mod && event.key.toLowerCase() === 'y') {
       event.preventDefault();
       p.onRedo();
+      return;
+    }
+
+    if (!mod && !event.altKey && event.key === '#') {
+      event.preventDefault();
+      const rect = ref.current?.getBoundingClientRect();
+      p.onOpenTagTrigger(rect
+        ? { left: rect.left, top: rect.top, bottom: rect.bottom }
+        : undefined);
       return;
     }
 

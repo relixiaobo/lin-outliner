@@ -14,17 +14,6 @@ import {
 export const DEFAULT_GENERAL_CHANNEL_ID = 'lin-agent-channel-general';
 export const DEFAULT_GENERAL_CHANNEL_TITLE = 'General';
 
-/**
- * Single-agent collapse: a conversation never routes between agents — there is
- * exactly one agent (Neva). Always `false` so the reader-neutral shared-log path
- * and POV inspectors (the multi-agent reminder/independence machinery) are
- * unreachable and get removed wholesale in the teardown slice. Kept as a function
- * for call-site stability; the param is retained for the same reason.
- */
-export function isMultiAgentConversation(_members: readonly AgentPrincipal[]): boolean {
-  return false;
-}
-
 /** Runtime Channel identity is carried by the stable conversation id namespace. */
 export function isChannelConversationId(conversationId: string | null | undefined): boolean {
   return conversationId?.startsWith('lin-agent-channel-') ?? false;

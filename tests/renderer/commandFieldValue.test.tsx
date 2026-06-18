@@ -4,7 +4,6 @@ import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import {
   buildScheduleString,
-  CommandAgentFieldValue,
   CommandRunButton,
   CommandScheduleFieldValue,
   scheduleChipSummary,
@@ -71,13 +70,7 @@ describe('scheduleChipSummary', () => {
 });
 
 // A stub bridge: every command the field editors fire (set_command_schedule /
-// set_command_agent / the run flow) is recorded so writes are observable, and the
-// agent listing resolves to a fixed registry for the picker.
-const AGENT_DEFS = [
-  { name: 'research', displayName: 'Research' },
-  { name: 'writer', displayName: 'Writer' },
-];
-
+// the run flow) is recorded so writes are observable.
 interface Rendered {
   cleanup: () => void;
   invokes: { name: string; args: Record<string, unknown> | undefined }[];
@@ -182,48 +175,9 @@ describe('CommandRunButton', () => {
   });
 });
 
-describe('CommandAgentFieldValue', () => {
-  test('reflects the stored choice and lists Main agent plus every definition', async () => {
-    const rendered = await renderAsync(CommandAgentFieldValue, { agent: 'research' });
-    // The stored agent renders as plain value text (its displayName), standard
-    // outliner style — not a pill <select>.
-    const value = rendered.document.querySelector('.command-field-value-label');
-    expect(value?.textContent).toBe('Research');
-
-    await click(rendered, rendered.document.querySelector('.command-agent-value'));
-    const popover = rendered.document.querySelector('.command-agent-popover');
-    if (!popover) throw new Error('Missing agent popover');
-    const items = Array.from(popover.querySelectorAll<HTMLButtonElement>('.popover-item'));
-    expect(items.map((item) => item.textContent?.trim())).toEqual([labels.mainAgent, 'Research', 'Writer']);
-    // The stored agent is marked selected in the listbox.
-    const selected = items.find((item) => item.getAttribute('aria-selected') === 'true');
-    expect(selected?.textContent?.trim()).toBe('Research');
-  });
-
-  test('selecting an agent writes set_command_agent', async () => {
-    const rendered = await renderAsync(CommandAgentFieldValue, { agent: null });
-    await click(rendered, rendered.document.querySelector('.command-agent-value'));
-    const popover = rendered.document.querySelector('.command-agent-popover');
-    const writer = Array.from(popover?.querySelectorAll<HTMLButtonElement>('.popover-item') ?? [])
-      .find((item) => item.textContent?.trim() === 'Writer');
-    await click(rendered, writer ?? null);
-    const write = rendered.invokes.findLast((call) => call.name === 'set_command_agent');
-    expect(write?.args).toMatchObject({ nodeId: 'cmd', agent: 'writer' });
-  });
-});
-
 type ScheduleProps = { schedule: string | null };
-type AgentProps = { agent: string | null };
 
-function render(
-  Component: typeof CommandScheduleFieldValue,
-  props: ScheduleProps,
-): Rendered;
-function render(
-  Component: typeof CommandAgentFieldValue,
-  props: AgentProps,
-): Rendered;
-function render(Component: (props: never) => JSX.Element, props: ScheduleProps | AgentProps): Rendered {
+function render(Component: (props: never) => JSX.Element, props: ScheduleProps): Rendered {
   const win = globalThis.window as unknown as Window;
   const doc = win.document;
   const container = doc.createElement('div');
@@ -245,22 +199,10 @@ function render(Component: (props: never) => JSX.Element, props: ScheduleProps |
   return rendered;
 }
 
-// The agent picker fetches its options asynchronously (a cached IPC listing), so
-// flush microtasks after mount before asserting the rendered <option>s.
-async function renderAsync(
-  Component: typeof CommandAgentFieldValue,
-  props: AgentProps,
-): Promise<Rendered> {
-  const rendered = render(Component, props);
-  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-  return rendered;
-}
-
 function installBridge(win: Window, invokes: Rendered['invokes']) {
   (win as unknown as { lin: unknown }).lin = {
     invoke: (name: string, args?: Record<string, unknown>) => {
       invokes.push({ name, args });
-      if (name === 'agent_list_all_definitions') return Promise.resolve(AGENT_DEFS);
       if (name === 'agent_ensure_command_conversation' || name === 'agent_run_command_now') {
         return Promise.resolve({ conversationId: 'conv-cmd' });
       }

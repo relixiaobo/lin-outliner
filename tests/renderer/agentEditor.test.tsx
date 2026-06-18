@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import { AgentEditor } from '../../src/renderer/ui/agent/AgentEditor';
-import type { AgentAuthoringInput, AgentDefinitionView, AgentStorageLocation, SkillDefinition } from '../../src/core/agentTypes';
+import type { AgentAuthoringInput, AgentDefinitionView, SkillDefinition } from '../../src/core/agentTypes';
 
 interface Rendered {
   cleanup: () => void;
@@ -30,12 +30,11 @@ afterEach(() => {
 });
 
 const NOOP = {
-  onCreate: () => undefined,
   onUpdate: () => undefined,
-  onDelete: () => undefined,
-  onDuplicate: () => undefined,
 };
 
+// The one agent, Neva. Under the one-Neva invariant the editor only ever edits
+// her: built-in, always writable, edited in place via the settings overlay.
 function builtIn(): AgentDefinitionView {
   return {
     agentId: 'built-in:tenon:assistant',
@@ -50,36 +49,6 @@ function builtIn(): AgentDefinitionView {
   };
 }
 
-function userAgent(): AgentDefinitionView {
-  return {
-    agentId: 'user:abc123:my-helper',
-    name: 'My-Helper',
-    displayName: 'My-Helper',
-    source: 'user',
-    rootDir: '/home/u/.agents/agents/my-helper',
-    agentFile: '/home/u/.agents/agents/my-helper/AGENT.md',
-    writable: true,
-    description: 'Helps with research',
-    body: 'You help with research.',
-    model: 'claude-opus-4-8',
-  };
-}
-
-function additionalDirectoryAgent(): AgentDefinitionView {
-  return {
-    agentId: 'user:external123:external-reviewer',
-    name: 'external-reviewer',
-    displayName: 'external-reviewer',
-    source: 'user',
-    rootDir: '/opt/shared-agents/external-reviewer',
-    agentFile: '/opt/shared-agents/external-reviewer/AGENT.md',
-    writable: false,
-    description: 'Reviews work from a shared directory',
-    body: 'You review work.',
-    effort: 'high',
-  };
-}
-
 function skill(name: string): SkillDefinition {
   return { name, displayName: name, source: 'user', rootDir: '/s', skillFile: '/s/SKILL.md', description: '', hasUserSpecifiedDescription: false, userInvocable: true, modelInvocable: true, allowedTools: [], argumentNames: [], execution: 'inline', contentLength: 0, body: '' };
 }
@@ -91,94 +60,34 @@ describe('AgentEditor', () => {
       <AgentEditor agent={builtIn()} availableSkills={[]} providerSettings={null} busy={false} {...NOOP} onUpdate={(agentId, input) => { updated = { agentId, input }; }} />,
     );
     // The Name field edits the display name (the stable id stays `assistant`), and the
-    // definition controls are live — no longer the read-only built-in.
+    // definition controls are live — never read-only.
     const nameInput = rendered.document.querySelector('input[aria-label="Name"]') as HTMLInputElement | null;
     expect(nameInput?.value).toBe('Neva');
     expect(nameInput?.hasAttribute('readOnly')).toBe(false);
     expect(rendered.document.querySelector('button[aria-label="Toggle file_read"]')?.hasAttribute('disabled')).toBe(false);
-    // permissionMode / maxTurns / background steer only delegation child runs, so they
-    // are hidden for the built-in Neva — offering them would be a control that does nothing.
+    // permissionMode / maxTurns / background steer only delegation child runs; the
+    // single-agent editor never offers them — there is no second agent to delegate to.
     expect(rendered.container.textContent).not.toContain('Delegation Sandbox');
     expect(rendered.document.querySelector('input[aria-label="Max Turns"]')).toBeNull();
     expect(rendered.container.textContent).not.toContain('Run in background');
-    // No "duplicate to edit" friction and no read-only hint — it is editable in place.
+    // No "duplicate to edit" friction and no read-only hint — it is editable in place,
+    // and there is nothing to duplicate to.
     expect(rendered.container.textContent).not.toContain('read-only');
     expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Duplicate'))).toBe(false);
-    // Editable but not deletable: Save present, Delete absent (it is the one agent
-    // that always exists, with no AGENT.md to remove).
+    // Editable but not deletable: Save present, Delete absent (Neva always exists).
     expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Save'))).toBe(true);
     expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Delete'))).toBe(false);
     await click(rendered, textButton(rendered, 'Save'));
     expect((updated as unknown as { agentId: string } | null)?.agentId).toBe('built-in:tenon:assistant');
   });
 
-  test('create mode is a pre-filled scaffold with a storage choice', async () => {
-    const calls: Array<{ input: AgentAuthoringInput; storage: AgentStorageLocation }> = [];
-    const rendered = renderComponent(
-      <AgentEditor agent={null} availableSkills={[]} busy={false} {...NOOP} onCreate={(input, storage) => { calls.push({ input, storage }); }} />,
-    );
-    // Pre-filled with the scaffold (not blank), so neither mode starts empty.
-    expect((rendered.document.querySelector('input[aria-label="Name"]') as HTMLInputElement | null)?.value).toBe('my-agent');
-    expect(rendered.container.textContent).toContain('Storage location');
-    await click(rendered, textButton(rendered, 'Create'));
-    expect(calls.length).toBe(1);
-    expect(calls[0]?.input.name).toBe('my-agent');
-    expect(calls[0]?.input.permissionMode).toBe('restricted');
-    expect(calls[0]?.storage).toBe('user');
-  });
-
-  test('a new agent scaffolds the Raw AGENT.md with sensible default fields', async () => {
-    const rendered = renderComponent(<AgentEditor agent={null} availableSkills={[]} busy={false} {...NOOP} />);
-    await click(rendered, textButton(rendered, 'Raw'));
-    const raw = textareaValue(rendered.document.querySelector('textarea[aria-label="AGENT.md"]'));
-    expect(raw).toContain('name: my-agent');
-    expect(raw).toContain('permission-mode: restricted');
-    expect(raw).toContain('max-turns: 20');
-    expect(raw).toContain('You are a focused child agent.');
-    // All tools on + model inherit by default ⇒ neither key appears in Raw.
-    expect(raw).not.toContain('tools:');
-    expect(raw).not.toContain('model:');
-  });
-
-  test('edit mode exposes Save and Delete for a user agent', async () => {
-    let deleted: AgentDefinitionView | null = null;
-    let updated: { agentId: string; input: AgentAuthoringInput } | null = null;
-    const rendered = renderComponent(
-      <AgentEditor agent={userAgent()} availableSkills={[]} busy={false} {...NOOP} onUpdate={(agentId, input) => { updated = { agentId, input }; }} onDelete={(agent) => { deleted = agent; }} />,
-    );
-    expect((rendered.document.querySelector('input[aria-label="Name"]') as HTMLInputElement | null)?.value).toBe('My-Helper');
-    // The delegation-only controls DO show for file-backed agents — they run as child runs.
-    expect(rendered.container.textContent).toContain('Delegation Sandbox');
-    expect(rendered.document.querySelector('input[aria-label="Max Turns"]')).not.toBeNull();
-    await click(rendered, textButton(rendered, 'Save'));
-    expect((updated as unknown as { agentId: string } | null)?.agentId).toBe('user:abc123:my-helper');
-    await click(rendered, textButton(rendered, 'Delete'));
-    expect(deleted).not.toBeNull();
-  });
-
-  test('non-writable additional-directory agents render read-only with Duplicate only', async () => {
-    let duplicated: AgentDefinitionView | null = null;
-    const rendered = renderComponent(
-      <AgentEditor agent={additionalDirectoryAgent()} availableSkills={[]} busy={false} {...NOOP} onDuplicate={(agent) => { duplicated = agent; }} />,
-    );
-    const nameInput = rendered.document.querySelector('input[aria-label="Name"]') as HTMLInputElement | null;
-    expect(nameInput?.value).toBe('external-reviewer');
-    expect(nameInput?.hasAttribute('readOnly')).toBe(true);
-    expect((rendered.document.querySelector('select[aria-label="Thinking Level"]') as HTMLSelectElement | null)?.hasAttribute('disabled')).toBe(true);
-    expect(rendered.document.querySelector('button[aria-label="Toggle file_read"]')?.hasAttribute('disabled')).toBe(true);
-    expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Save'))).toBe(false);
-    expect(Array.from(rendered.document.querySelectorAll('button')).some((b) => b.textContent?.includes('Delete'))).toBe(false);
-
-    await click(rendered, textButton(rendered, 'Duplicate to my agents'));
-    expect((duplicated as unknown as AgentDefinitionView | null)?.agentId).toBe('user:external123:external-reviewer');
-  });
-
   test('out-of-catalog effort values render as inherit and are dropped on save', async () => {
     let updated: { agentId: string; input: AgentAuthoringInput } | null = null;
     const rendered = renderComponent(
       <AgentEditor
-        agent={{ ...userAgent(), effort: 'turbo' }}
+        agent={{ ...builtIn(), effort: 'turbo' }}
         availableSkills={[]}
+        providerSettings={null}
         busy={false}
         {...NOOP}
         onUpdate={(agentId, input) => { updated = { agentId, input }; }}
@@ -193,9 +102,9 @@ describe('AgentEditor', () => {
 
   test('tools default to all-on; unchecking one is reflected when switching to Raw', async () => {
     const rendered = renderComponent(
-      <AgentEditor agent={null} availableSkills={[]} busy={false} {...NOOP} />,
+      <AgentEditor agent={builtIn()} availableSkills={[]} providerSettings={null} busy={false} {...NOOP} />,
     );
-    // All catalog tools start enabled (unrestricted).
+    // All catalog tools start enabled (unrestricted) for the inherit-everything default.
     const readSwitch = rendered.document.querySelector('button[aria-label="Toggle file_read"]');
     expect(readSwitch?.getAttribute('aria-checked')).toBe('true');
 
@@ -212,7 +121,7 @@ describe('AgentEditor', () => {
 
   test('skills toggle list shows installed skills', () => {
     const rendered = renderComponent(
-      <AgentEditor agent={null} availableSkills={[skill('research'), skill('writing')]} busy={false} {...NOOP} />,
+      <AgentEditor agent={builtIn()} availableSkills={[skill('research'), skill('writing')]} providerSettings={null} busy={false} {...NOOP} />,
     );
     expect(rendered.document.querySelector('button[aria-label="Toggle research"]')).not.toBeNull();
     expect(rendered.document.querySelector('button[aria-label="Toggle writing"]')).not.toBeNull();

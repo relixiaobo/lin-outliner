@@ -15,8 +15,6 @@ export interface DueCommand {
   dueAt: number;
   /** The fire watermark before this fire (ms epoch), or null if never fired. */
   lastSuccessAt: number | null;
-  /** Which agent runs the brief (an `AgentDefinition.name`); empty = main agent. */
-  commandAgent: string | undefined;
 }
 
 // Anacron decision, as a pure function of the document + the clock. A command
@@ -28,7 +26,7 @@ type CommandNodeProjection = Extract<NodeProjection, { type: 'command' }>;
 
 // The brief the agent runs: the command node's own text (the title) plus every
 // non-field descendant serialized as a nested bullet outline. Field-entry
-// children (the Agent / Schedule rows) are config, not prompt, so they're
+// children (the Schedule row) are config, not prompt, so they're
 // skipped; inline references are preserved via reference markup. A command with
 // no body children reduces to just its title (backward compatible).
 export function commandBriefText(
@@ -88,7 +86,6 @@ export function selectDueCommands(projection: DocumentProjection, now: Date): Du
       schedule,
       dueAt: decision.dueAt.getTime(),
       lastSuccessAt,
-      commandAgent: node.commandAgent,
     });
   }
   return due;

@@ -144,17 +144,6 @@ is the small set below: a few feature-completion tails inside the program, the s
 items at the end, and one explicitly-deferred memory faculty. Escalate the capability boundary
 before any directional/security-sensitive build.
 
-- **single-agent-finish-collapse** (P0, **draft** — ready to dispatch) — enforce the **one-Neva
-  invariant** as code. PM ruling 2026-06-18: the product has exactly one agent (Neva); no surface may
-  create, load, or delegate-to a second agent. #294 collapsed the data model but the
-  *second-agent surfaces* are still live: `/create-agent` authoring (#286), file-backed agent loading
-  (`~/.agents/agents/`, `<root>/.agents/agents/`), and `agent_type`/"fresh" cross-agent delegation.
-  Remove all three; keep Neva editable + same-agent **fork** sub-runs (research, dream, Task). Closes
-  **finding #1** of the #294 post-merge `/code-review max` (memory privacy) by removing the only way a
-  reader ≠ Neva can exist. **Shape (a)** one PR; **touches `commands.ts`** (removes 3 command kinds —
-  coordinate). **Supersedes** `cross-agent consultation`, `agent-communication-colleague-model`, and
-  the `/create-agent` part of `agent-capability-ceiling` below. See
-  [`docs/plans/single-agent-finish-collapse.md`](docs/plans/single-agent-finish-collapse.md).
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
@@ -172,13 +161,14 @@ before any directional/security-sensitive build.
   which tools are wired — so no agent holds private authority a child could exceed, and there is no
   per-agent ceiling to clamp. `conversational-agent-authoring` (shipped #286)
   safety rests on human ratification + the universal floor. **Don't re-propose a per-agent clamp.**
-- **cross-agent consultation — backlog** (design = `agent-conversation-model` §"Cross-agent help")
-  — the **colleague model** is PM-ratified (2026-06-13) and shipped: `ungate-contact` (PR #236)
-  made cross-agent contact (`agent.delegate.spawn`) baseline-allow, with the consultee acting under
-  its **own** capability permissions, attributed to it at the delegation layer (#233 closed/
-  absorbed). **Deferred:** (a) *consultation surfacing* — a `purpose` field (consult vs task),
-  "consulted @B" rendering, a structured brief/result schema; (b) *cross-boundary* — adopt **A2A**
-  as the transport only when consulting agents outside the trust domain.
+- **cross-agent consultation — superseded** (by `single-agent-finish-collapse`, PR #300, 2026-06-18)
+  — the **colleague model** (PM-ratified 2026-06-13, partly shipped as `ungate-contact` #236, with the
+  consultee acting under its **own** capability permissions) and its deferred tail (*consultation
+  surfacing* — a `purpose` field, "consulted @B" rendering, a brief/result schema; *cross-boundary* —
+  **A2A** transport for agents outside the trust domain) all presupposed two or more agents that could
+  consult one another. The **one-Neva invariant** removes that premise: there is exactly one agent
+  (Neva) and delegation is fork-only, so cross-agent consultation has no subject and is dropped. The
+  `agent-communication-colleague-model` framing is likewise superseded; path-not-taken kept here.
 - **research = a base read-only capability** (PM + codex 2026-06-14) — shipped as built-in
   `/research` (PR #235): an `execution: isolated` same-agent read-only child run, tools filtered
   through the read-only `AgentToolActionKind` partition. The "memory-bearing `researcher` agent"
@@ -426,6 +416,36 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **single-agent-finish-collapse** (cc-2, PR #300) — makes "there is exactly one agent, Neva" a
+  hard, code-enforced invariant, completing the #294 collapse. Removes every second-agent surface:
+  agent-definition authoring (`agent_create`/`delete`/`duplicate` command kinds + IPC/client/UI + the
+  `/create-agent` skill), file-backed agent loading (the `.agents/agents/` registry scan,
+  `additionalAgentDirectories`), the `Agent` tool's `agent_type` param (delegation is now structurally
+  **fork-only** — a fork runs *as* Neva), the skill `agent` field, dead cross-principal memory
+  redaction, and `isMultiAgentConversation`. Closes **finding #1** of the #294 post-merge
+  `/code-review max` (memory privacy) — a reader ≠ Neva can no longer exist. Neva stays editable;
+  same-agent fork sub-runs (research/dream/Task) unchanged. Net −3791/+546 across 61 files; design
+  folded into `agent-architecture` / `agent-tool-design` / `agent-delegation-runtime` (A6); plan →
+  [`archive/single-agent-finish-collapse.md`](docs/plans/archive/single-agent-finish-collapse.md).
+  **Gate (main):** `/code-review high` → 5 findings, all addressed in a follow-up commit
+  (scheduled-command `commandAgent` removed end-to-end, `context_mode` narrowed to `'fork'`, dead
+  `resolveChildRunMemoryOwner` deleted); typecheck ✓, `test:core` 1034 / `test:renderer` 547 /
+  `docs:check` ✓. **Shape (a)** one PR.
+- **file-node-preview-interactions** (codex, PR #295) — follow-up to `file-presentation-redesign`
+  (#285): non-image file rows are read-only but caret-focusable (filename wraps like a locked row,
+  caret + `#` tags work, typing never renames), image rows render tags too; redesigned PDF
+  summary/expand + metadata-card + resizable preview surfaces with one Open/Expand/`⋯` location;
+  clipboard-paste & external-drop file ingestion with insertion guides; pane scroll preserved across
+  navigation; the expanded indent guide moved onto the shared flat overlay and is measured from the
+  real `.row-bullet-button` marker rects (line on the parent marker column, starts just below it,
+  ends on the last visible descendant marker centerline, virtualized + flow). Spec synced (A6).
+  **Gate (main):** `/code-review xhigh` → a guide-geometry directive + 6 confirmed findings
+  (image-node tags invisible; scroll-restore self-overwrite; PDF resize re-jump; preview state
+  leaking across file switches; B8 focus ring; B5 reduced-transparency fallback) + 3 secondary, all
+  fixed across 3 follow-up commits; typecheck ✓, guide/file-row e2e + new `workspaceLayoutHistory`
+  renderer test 2/2 green. Two env-dependent e2e (PDF-geometry, day-node note-density) confirmed
+  pre-existing / non-regression (fail identically on `main`), to verify in a real-render CI.
+  Fast-track (no plan file). **Shape (a)** one PR.
 - **builtin-tool-edit-hot-swap** (main, PR #299) — editing Neva's tool allow/deny list through the
   settings editor persisted to the overlay but never re-resolved the open conversation's
   `agentToolFilter`, so a just-removed tool stayed callable until reopen. The `updateAgentDefinition`

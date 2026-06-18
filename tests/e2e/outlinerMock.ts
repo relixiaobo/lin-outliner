@@ -31,7 +31,6 @@ export const ids = {
   gamma: 'node-gamma',
   commandNode: 'node-command',
   commandScheduleEntry: 'field-entry-command-schedule',
-  commandAgentEntry: 'field-entry-command-agent',
 } as const;
 
 interface MockFixtureOptions {
@@ -44,8 +43,6 @@ interface MockFixtureOptions {
   noProvider?: boolean;
   /** Adds an armed `command` (scheduled routine) node under today for the command-node specs. */
   commandNode?: boolean;
-  /** Adds an agent loaded from an additional directory outside writable authoring roots. */
-  additionalAgentDirectoryAgent?: boolean;
   /** Preloads remembered permission grants for settings/security specs. */
   permissionGrants?: string[];
   /** Preloads user blocklist rules for settings/security specs. */
@@ -71,7 +68,7 @@ type E2EWindow = Window & {
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
     onAgentOAuthEvent?: (listener: (envelope: unknown) => void) => () => void;
     openProviderConfig?: (params: { providerId: string; mode: string }) => Promise<void>;
-    openAgentConfig?: (params: { agentId?: string; mode: string }) => Promise<void>;
+    openAgentConfig?: (params: { agentId?: string }) => Promise<void>;
     openChannelConfig?: (params: { conversationId?: string; mode: string }) => Promise<void>;
     openSettings?: (target?: unknown) => Promise<void>;
     agentNavigateToConversation?: (conversationId: string) => Promise<void>;
@@ -240,7 +237,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      configKey?: string;
 	      refRole?: string;
 	      commandSchedule?: string;
-	      commandAgent?: string;
 	    };
     type CreateNodeTree = {
       content: RichText;
@@ -294,7 +290,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         slashSkillsEnabled: true,
         compactEnabled: true,
         additionalSkillDirectories: [],
-        additionalAgentDirectories: [],
         providerTimeoutMs: null,
         providerMaxRetries: null,
         providerMaxRetryDelayMs: 60_000,
@@ -475,23 +470,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         maxTurns: null,
       },
     ];
-    if (options.additionalAgentDirectoryAgent) {
-      agentDefinitions.push({
-        agentId: 'user:external123:external-reviewer',
-        name: 'external-reviewer',
-        displayName: 'external-reviewer',
-        source: 'user',
-        rootDir: '/mock/shared-agents/external-reviewer',
-        agentFile: '/mock/shared-agents/external-reviewer/AGENT.md',
-        writable: false,
-        description: 'Reviews work from a shared directory.',
-        model: 'gpt-5.4-mini',
-        effort: 'high',
-        body: 'You review work from a shared directory.',
-        permissionMode: 'restricted',
-        maxTurns: null,
-      });
-    }
     const debugUsage = {
       input: 12000,
       output: 420,
@@ -727,7 +705,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
     const previewPdfBytes = () => {
-      const base64 = 'JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA0IDAgUiA+PiA+PiAvQ29udGVudHMgNSAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iago1IDAgb2JqCjw8IC9MZW5ndGggNDMgPj4Kc3RyZWFtCkJUIC9GMSAyNCBUZiA3MiA3MjAgVGQgKFByZXZpZXcgUERGKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCnhyZWYKMCA2CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAwOSAwMDAwMCBuIAowMDAwMDAwMDU4IDAwMDAwIG4gCjAwMDAwMDAxMTUgMDAwMDAgbiAKMDAwMDAwMDI0MSAwMDAwMCBuIAowMDAwMDAwMzExIDAwMDAwIG4gCnRyYWlsZXIKPDwgL1NpemUgNiAvUm9vdCAxIDAgUiA+PgpzdGFydHhyZWYKNDAzCiUlRU9GCg==';
+      const base64 = 'JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUiA1IDAgUiA3IDAgUl0gL0NvdW50IDMgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA5IDAgUiA+PiA+PiAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0OSA+PgpzdHJlYW0KQlQgL0YxIDI0IFRmIDcyIDcyMCBUZCAoUHJldmlldyBQREYgUGFnZSAxKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjUgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA5IDAgUiA+PiA+PiAvQ29udGVudHMgNiAwIFIgPj4KZW5kb2JqCjYgMCBvYmoKPDwgL0xlbmd0aCA0OSA+PgpzdHJlYW0KQlQgL0YxIDI0IFRmIDcyIDcyMCBUZCAoUHJldmlldyBQREYgUGFnZSAyKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjcgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA5IDAgUiA+PiA+PiAvQ29udGVudHMgOCAwIFIgPj4KZW5kb2JqCjggMCBvYmoKPDwgL0xlbmd0aCA0OSA+PgpzdHJlYW0KQlQgL0YxIDI0IFRmIDcyIDcyMCBUZCAoUHJldmlldyBQREYgUGFnZSAzKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjkgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagp4cmVmCjAgMTAKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDEyNyAwMDAwMCBuIAowMDAwMDAwMjUzIDAwMDAwIG4gCjAwMDAwMDAzNTIgMDAwMDAgbiAKMDAwMDAwMDQ3OCAwMDAwMCBuIAowMDAwMDAwNTc3IDAwMDAwIG4gCjAwMDAwMDA3MDMgMDAwMDAgbiAKMDAwMDAwMDgwMiAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDEwIC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo4NzIKJSVFT0YK';
       const binary = atob(base64);
       const bytes = new Uint8Array(binary.length);
       for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
@@ -1038,7 +1016,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         originalFilename: name,
         createdAt: ++now,
         ...(mimeType.startsWith('image/') ? { imageWidth: 320, imageHeight: 180 } : {}),
-        ...(mimeType === 'application/pdf' ? { pdfPageCount: 1 } : {}),
+        ...(mimeType === 'application/pdf' ? { pdfPageCount: 3 } : {}),
         ...(mimeType === 'audio/wav' ? { audioDurationMs: 1000 } : {}),
         ...(mimeType === 'video/mp4' ? { videoDurationMs: 1000 } : {}),
       };
@@ -1466,19 +1444,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         type: 'command',
         parentId: ids.today,
         commandSchedule: '2026-06-09T09:00 RRULE:FREQ=DAILY',
-        commandAgent: 'self',
       });
-      // The two node-native config rows (Schedule / Agent) — real field entries
-      // pointing at the built-in system fields, as `setCommandNode` seeds them.
+      // The node-native Schedule config row — a real field entry pointing at the
+      // built-in system field, as `setCommandNode` seeds it.
       makeNode(ids.commandScheduleEntry, '', {
         type: 'fieldEntry',
         parentId: ids.commandNode,
         fieldDefId: 'sys:commandSchedule',
-      });
-      makeNode(ids.commandAgentEntry, '', {
-        type: 'fieldEntry',
-        parentId: ids.commandNode,
-        fieldDefId: 'sys:commandAgent',
       });
     }
     appendChild(ids.workspace, ids.root);
@@ -1506,7 +1478,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     if (options.commandNode) {
       appendChild(ids.today, ids.commandNode);
       appendChild(ids.commandNode, ids.commandScheduleEntry);
-      appendChild(ids.commandNode, ids.commandAgentEntry);
     }
 
     Object.defineProperty(navigator, 'clipboard', {
@@ -1601,55 +1572,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       if (agentId === USER_AGENT_ID) return 'self';
       return 'reviewer';
     };
-    const povInspectorsForConversation = (conversationId: string) => {
-      if (conversationId !== PLANNING_CHANNEL_ID) return {};
-      return {
-        [USER_AGENT_ID]: {
-          agentId: USER_AGENT_ID,
-          addressedByMessageId: 'assistant-planning-e2e',
-          memoryBriefing: [
-            '<memory>',
-            '<self>',
-            '- Prefers terse launch-risk notes.',
-            '</self>',
-            '<principal name="Neva">',
-            '- Tracks architecture seams for handoffs.',
-            '</principal>',
-            '</memory>',
-          ].join('\n'),
-          messages: [{
-            id: 'flattened:planning:1',
-            role: 'user',
-            sourceMessageIds: ['user-planning-e2e', 'assistant-planning-e2e'],
-            createdAt: now - 55_000,
-            parts: [{
-              preamble: '@user (the human user) said:',
-              text: 'Coordinate the launch plan.',
-              sourceMessageId: 'user-planning-e2e',
-              sourceRole: 'user',
-              sourceActor: { type: 'user', userId: 'local-user' },
-            }, {
-              preamble: '@assistant (agent "Neva") said:',
-              text: '@self please review launch risk.',
-              sourceMessageId: 'assistant-planning-e2e',
-              sourceRole: 'assistant',
-              sourceActor: { type: 'agent', agentId: MAIN_AGENT_ID },
-            }],
-          }, {
-            id: 'verbatim:self-planning-e2e',
-            role: 'assistant',
-            sourceMessageIds: ['self-planning-e2e'],
-            createdAt: now - 50_000,
-            parts: [{
-              text: 'Self sees the launch-risk request and answers as itself.',
-              sourceMessageId: 'self-planning-e2e',
-              sourceRole: 'assistant',
-              sourceActor: { type: 'agent', agentId: USER_AGENT_ID },
-            }],
-          }],
-        },
-      };
-    };
     const renderMembers = (agentIds: string[]) => [
       { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
       ...agentIds.map((agentId) => ({
@@ -1707,7 +1629,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         activeRunId: null,
         activeRuns: [],
         channelActivityEntries: [],
-        povInspectors: povInspectorsForConversation(conversationId),
         activeCompaction: null,
         activeDream: null,
         dmRunActive: false,
@@ -1735,7 +1656,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       openProviderConfig: async (params: { providerId: string; mode: string }) => {
         calls.push({ cmd: 'open_provider_config', args: clone(params) });
       },
-      openAgentConfig: async (params: { agentId?: string; mode: string }) => {
+      openAgentConfig: async (params: { agentId?: string }) => {
         calls.push({ cmd: 'open_agent_config', args: clone(params) });
       },
       openChannelConfig: async (params: { conversationId?: string; mode: string }) => {
@@ -1886,7 +1807,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             slashSkillsEnabled?: boolean;
             compactEnabled?: boolean;
             additionalSkillDirectories?: string[];
-            additionalAgentDirectories?: string[];
             providerTimeoutMs?: number | null;
             providerMaxRetries?: number | null;
             providerMaxRetryDelayMs?: number | null;
@@ -1899,9 +1819,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             additionalSkillDirectories: Array.isArray(settings.additionalSkillDirectories)
               ? settings.additionalSkillDirectories.map(String)
               : agentSettings.agent.additionalSkillDirectories,
-            additionalAgentDirectories: Array.isArray(settings.additionalAgentDirectories)
-              ? settings.additionalAgentDirectories.map(String)
-              : agentSettings.agent.additionalAgentDirectories,
             providerTimeoutMs: typeof settings.providerTimeoutMs === 'number' || settings.providerTimeoutMs === null
               ? settings.providerTimeoutMs
               : agentSettings.agent.providerTimeoutMs,
@@ -2216,6 +2133,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 mimeType: asset.mimeType,
                 entryKind: 'file',
                 sizeBytes: asset.byteSize,
+                lastModified: asset.createdAt,
                 streamUrl: `asset://${target.assetId}`,
               } : null,
             }) as T;
@@ -2980,8 +2898,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const node = nodes.get(String(args.nodeId));
           if (node) {
             node.type = 'command';
-            // Seed the two node-native config rows (Schedule / Agent) if absent —
-            // find-or-create, mirroring `ensureCommandFieldEntriesDirect`.
+            // Seed the node-native Schedule config row if absent — find-or-create,
+            // mirroring `ensureCommandFieldEntriesDirect`.
             const seedField = (defId: string, index: number) => {
               const exists = node.children.some((childId) => {
                 const child = nodes.get(childId);
@@ -2993,7 +2911,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               appendChild(node.id, entryId, index);
             };
             seedField('sys:commandSchedule', 0);
-            seedField('sys:commandAgent', 1);
           }
           return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
         }
@@ -3002,14 +2919,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (node) {
             const schedule = args.schedule == null ? '' : String(args.schedule);
             if (schedule) node.commandSchedule = schedule; else delete node.commandSchedule;
-          }
-          return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
-        }
-        if (cmd === 'set_command_agent') {
-          const node = nodes.get(String(args.nodeId));
-          if (node) {
-            const agent = args.agent == null ? '' : String(args.agent);
-            if (agent) node.commandAgent = agent; else delete node.commandAgent;
           }
           return clone(outcome({ nodeId: String(args.nodeId), selectAll: false }));
         }
@@ -3359,7 +3268,6 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
         startedAt: now,
       }] : []),
       channelActivityEntries: projectionChannelActivity,
-      povInspectors: state.povInspectors ?? {},
       activeCompaction: state.activeCompaction ?? null,
       activeDream: state.activeDream ?? null,
       // Mode-specific run state (mirrors the real projection split): DM

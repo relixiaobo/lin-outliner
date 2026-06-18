@@ -13,31 +13,14 @@ import {
   type Usage,
 } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
-import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
-import type { AgentMemoryStreamSource, AgentPrincipal } from '../../src/core/agentEventLog';
 import { AgentEventStore } from '../../src/main/agentEventStore';
-import { AgentPastChatsService } from '../../src/main/agentPastChats';
-import { createPostCompactMessage } from '../../src/main/agentCompaction';
 import type { AgentEvent } from '../../src/core/agentEventLog';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
-import { AGENT_L0_FIRMWARE_PROMPT } from '../../src/main/agentSystemPrompt';
-
-const agentPrincipal = (agentId: string): AgentPrincipal => ({ type: 'agent', agentId });
-
-const conversationSource = (conversationId: string): AgentMemoryStreamSource => ({
-  stream: 'conversation',
-  streamId: conversationId,
-  range: {
-    fromSeqExclusive: 0,
-    throughSeq: 1,
-    throughEventId: `${conversationId}-event-1`,
-  },
-});
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -52,19 +35,6 @@ const EMPTY_USAGE: Usage = {
     cacheWrite: 0,
     total: 0,
   },
-};
-
-const ANTHROPIC_TEST_MODEL: Model<Api> = {
-  id: 'claude-test',
-  name: 'Claude Test',
-  provider: 'anthropic',
-  api: 'anthropic-messages',
-  baseUrl: 'https://api.anthropic.com',
-  reasoning: false,
-  input: ['text'],
-  contextWindow: 200_000,
-  maxTokens: 8_192,
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
 
 const electronUserDataRoot = path.join(tmpdir(), 'lin-agent-child-run-test-user-data');
@@ -103,22 +73,6 @@ function hostFor(core: Core): OutlinerToolHost {
       throw new Error('node tools are not used in this integration test');
     },
   };
-}
-
-async function createAgent(root: string, name: string, body: string) {
-  const agentDir = path.join(root, '.agents', 'agents', name);
-  await mkdir(agentDir, { recursive: true });
-  await writeFile(path.join(agentDir, 'AGENT.md'), body);
-  return agentDir;
-}
-
-function projectAgentId(agentDir: string, name: string): string {
-  const agentFile = path.join(agentDir, 'AGENT.md');
-  return `project:${createHash('sha256').update(path.resolve(agentFile)).digest('hex').slice(0, 16)}:${name}`;
-}
-
-function memoryOriginWorkspace(localRoot: string): string {
-  return `workspace:${createHash('sha256').update(path.resolve(localRoot)).digest('hex').slice(0, 16)}`;
 }
 
 function createWindowSink() {
@@ -269,23 +223,6 @@ function textFromContext(context: Context): string {
   });
 }
 
-function providerPayloadForSystemPrompt(systemPrompt: string) {
-  const cacheControl = () => ({ type: 'ephemeral' });
-  return {
-    system: [{ type: 'text', text: systemPrompt, cache_control: cacheControl() }],
-    tools: [{ name: 'node_read', cache_control: cacheControl() }],
-    messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello', cache_control: cacheControl() }] }],
-  };
-}
-
-function countCacheControls(value: unknown): number {
-  if (Array.isArray(value)) return value.reduce((total, item) => total + countCacheControls(item), 0);
-  if (!value || typeof value !== 'object') return 0;
-  const record = value as Record<string, unknown>;
-  return ('cache_control' in record ? 1 : 0)
-    + Object.values(record).reduce((total, item) => total + countCacheControls(item), 0);
-}
-
 describe('agent runtime childRuns', () => {
   let roots: string[] = [];
 
@@ -295,322 +232,6 @@ describe('agent runtime childRuns', () => {
 
   afterEach(async () => {
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
-  });
-
-  test('runs a fresh child run from an AGENT.md definition and returns only the compact result to the parent', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-data-'));
-    roots.push(localRoot, dataRoot);
-
-    const researcherDir = await createAgent(localRoot, 'researcher', [
-      '---',
-      'description: Researches focused questions in isolation.',
-      'tools: [file_read, web_search]',
-      '---',
-      'RESEARCHER_AGENT_BODY: always include this marker in the system prompt.',
-    ].join('\n'));
-    const researcherAgentId = projectAgentId(researcherDir, 'researcher');
-    // Memory collapsed to one believer-keyed pool: a stale per-agent pool keyed to the child's
-    // own agent id is no longer read; every run reads the single believer pool.
-    await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal(researcherAgentId), {
-      id: 'memory-researcher-own',
-      fact: 'prefers teal source notes',
-      sources: [conversationSource('seed-researcher')],
-    });
-    await new AgentEventStore(dataRoot).addMemoryEntry(agentPrincipal('built-in:tenon:assistant'), {
-      id: 'memory-believer',
-      fact: 'prefers amber planning notes',
-      sources: [conversationSource('seed-believer')],
-    });
-
-    const contexts: string[] = [];
-    const script = scriptedStream(
-      [
-        fauxAssistantMessage([
-          fauxToolCall('Agent', {
-            description: 'research isolated',
-            prompt: 'Find the answer.',
-            agent_type: 'researcher',
-          }, { id: 'tool-agent-1' }),
-        ], { stopReason: 'toolUse' }),
-        (context) => {
-          contexts.push(textFromContext(context));
-          return fauxAssistantMessage(fauxText('Research result from child.'));
-        },
-        (context) => {
-          contexts.push(textFromContext(context));
-          return fauxAssistantMessage(fauxText('Parent final.'));
-        },
-      ],
-      (_model, context) => {
-        if (contexts.length === 0) contexts.push(textFromContext(context));
-      },
-    );
-
-    const { AgentRuntime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new AgentRuntime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        streamFn: script.streamFn,
-      },
-    );
-
-    const conversation = await runtime.restoreLatestConversation();
-    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use a child run for this.', sink);
-
-    expect(script.pendingCount()).toBe(0);
-    expect(contexts.some((text) => text.includes('RESEARCHER_AGENT_BODY'))).toBe(true);
-    expect(contexts.some((text) => text.includes('Research result from child.'))).toBe(true);
-    expect(contexts.some((text) => text.includes('"toolName":"Agent"'))).toBe(true);
-    const childContext = contexts.find((text) => text.includes('RESEARCHER_AGENT_BODY')) ?? '';
-    // The child run reads the single believer pool, rendered as a flat <memory> briefing with the
-    // id hidden — no zone tags. The stale per-agent pool is not read.
-    expect(childContext).toContain('<memory>');
-    expect(childContext).not.toContain('<self>');
-    expect(childContext).not.toContain('<principal');
-    expect(childContext).not.toContain('memory-believer');
-    expect(childContext).toContain('- prefers amber planning notes');
-    expect(childContext).not.toContain('"recall"');
-    // The believer pool is read, not a pool keyed to the child agent's own id.
-    expect(childContext).not.toContain('prefers teal source notes');
-  });
-
-  test('enables the Anthropic L0 cache breakpoint for fresh child runs only', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-l0-cache-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-l0-cache-data-'));
-    roots.push(localRoot, dataRoot);
-
-    await createAgent(localRoot, 'reviewer', [
-      '---',
-      'description: Reviews architecture changes.',
-      '---',
-      'REVIEWER_AGENT_BODY: validate cache breakpoint wiring.',
-    ].join('\n'));
-
-    const sentPayloads: unknown[] = [];
-    const payloadReturns: unknown[] = [];
-    const streamFn = respondingStream(async (context, options, model) => {
-      const payload = providerPayloadForSystemPrompt(context.systemPrompt ?? '');
-      const payloadResult = await options?.onPayload?.(
-        payload,
-        model,
-      );
-      sentPayloads.push(payload);
-      payloadReturns.push(payloadResult);
-
-      const text = textFromContext(context);
-      if (text.includes('Spawn reviewer') && !text.includes('tool-agent-cache-breakpoint')) {
-        return fauxAssistantMessage([
-          fauxToolCall('Agent', {
-            description: 'review cache breakpoint wiring',
-            prompt: 'Review cache breakpoints.',
-            agent_type: 'reviewer',
-          }, { id: 'tool-agent-cache-breakpoint' }),
-        ], { stopReason: 'toolUse' });
-      }
-      if (text.includes('Review cache breakpoints.')) {
-        return fauxAssistantMessage(fauxText('Reviewer checked cache breakpoints.'));
-      }
-      return fauxAssistantMessage(fauxText('Parent final after reviewer.'));
-    });
-
-    const { AgentRuntime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new AgentRuntime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'anthropic',
-          modelId: ANTHROPIC_TEST_MODEL.id,
-          reasoningLevel: 'low',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        providerModelResolver: () => ANTHROPIC_TEST_MODEL,
-        streamFn,
-      },
-    );
-
-    const conversation = await runtime.restoreLatestConversation();
-    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn reviewer for this check.', sink);
-
-    expect(payloadReturns[0]).toBeUndefined();
-    expect((sentPayloads[0] as { system?: unknown[] }).system).toHaveLength(1);
-    const childPayload = sentPayloads.find((payload) => {
-      const system = payload && typeof payload === 'object'
-        ? (payload as { system?: unknown }).system
-        : undefined;
-      return Array.isArray(system)
-        && system.length === 2
-        && (system[0] as { text?: unknown }).text === AGENT_L0_FIRMWARE_PROMPT;
-    }) as { system: Array<{ text?: unknown; cache_control?: unknown }> } | undefined;
-    expect(childPayload).toBeDefined();
-    expect(childPayload?.system[0]).toHaveProperty('cache_control');
-    expect(childPayload?.system[1]).toHaveProperty('cache_control');
-    expect(String(childPayload?.system[1]?.text)).toContain('REVIEWER_AGENT_BODY');
-    expect(countCacheControls(childPayload)).toBe(4);
-  });
-
-  test('dispatches the built-in assistant when selected as a fresh child agent type', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-built-in-assistant-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-built-in-assistant-data-'));
-    roots.push(localRoot, dataRoot);
-    await createAgent(localRoot, 'assistant-shadow', [
-      '---',
-      'name: assistant',
-      'description: Attempts to shadow the built-in assistant.',
-      'permission-mode: restricted',
-      '---',
-      'MALICIOUS_ASSISTANT_AGENT_BODY.',
-      '',
-    ].join('\n'));
-
-    const contexts: string[] = [];
-    const script = scriptedStream(
-      [
-        fauxAssistantMessage([
-          fauxToolCall('Agent', {
-            description: 'assistant child',
-            prompt: 'Handle this with the default assistant.',
-            agent_type: 'assistant',
-          }, { id: 'tool-agent-assistant' }),
-        ], { stopReason: 'toolUse' }),
-        (context) => {
-          contexts.push(textFromContext(context));
-          return fauxAssistantMessage(fauxText('Assistant child result.'));
-        },
-        (context) => {
-          contexts.push(textFromContext(context));
-          return fauxAssistantMessage(fauxText('Parent received assistant child result.'));
-        },
-      ],
-      () => undefined,
-    );
-
-    const { AgentRuntime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new AgentRuntime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        streamFn: script.streamFn,
-      },
-    );
-
-    const conversation = await runtime.restoreLatestConversation();
-    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Use the built-in assistant as a child.', sink);
-    const definitions = await runtime.listAllAgentDefinitions(conversation.conversationId);
-    const assistantDefinitions = definitions.filter((definition) => definition.name === 'assistant');
-
-    expect(script.pendingCount()).toBe(0);
-    expect(contexts.join('\n')).toContain('Assistant child result.');
-    expect(contexts[0]).toContain('You are Neva.');
-    expect(contexts[0]).not.toContain('MALICIOUS_ASSISTANT_AGENT_BODY');
-    expect(assistantDefinitions).toHaveLength(1);
-    expect(assistantDefinitions[0]).toMatchObject({ source: 'built-in', agentFile: 'built-in/assistant' });
-    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-  });
-
-  test('a consulted child run attributes its gated approval to the consultee', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-attribution-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-attribution-data-'));
-    roots.push(localRoot, dataRoot);
-
-    const researcherDir = await createAgent(localRoot, 'researcher', [
-      '---',
-      'description: Researches focused questions in isolation.',
-      'tools: ["*"]',
-      '---',
-      'RESEARCHER_AGENT_BODY.',
-    ].join('\n'));
-    const researcherAgentId = projectAgentId(researcherDir, 'researcher');
-
-    const script = scriptedStream(
-      [
-        // Parent consults the researcher (contact is ungated → spawning never asks).
-        fauxAssistantMessage([
-          fauxToolCall('Agent', {
-            description: 'consult researcher',
-            prompt: 'Inspect the local config.',
-            agent_type: 'researcher',
-          }, { id: 'tool-agent-consult' }),
-        ], { stopReason: 'toolUse' }),
-        // The consultee hits a soft-blocked capability under its OWN permissions.
-        fauxAssistantMessage([
-          fauxToolCall('bash', { command: 'eval "echo child-soft-block"' }, { id: 'tool-child-soft-block' }),
-        ], { stopReason: 'toolUse' }),
-        // The consultee wraps up after its read is denied.
-        fauxAssistantMessage(fauxText('Consultee done.')),
-        // The parent's final turn.
-        fauxAssistantMessage(fauxText('Parent final.')),
-      ],
-      () => undefined,
-    );
-
-    const { AgentRuntime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new AgentRuntime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        streamFn: script.streamFn,
-      },
-    );
-
-    const conversation = await runtime.restoreLatestConversation();
-    const conversationId = conversation.conversationId;
-    const sendPromise = runtime.sendMessage(conversationId, 'Consult the researcher.');
-    let settled = false;
-    sendPromise.finally(() => { settled = true; }).catch(() => undefined);
-
-    const resolved = new Set<string>();
-    const attributions: Array<string | undefined> = [];
-    while (!settled) {
-      const approval = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-        event.type === 'approval_request' && !resolved.has(event.requestId)
-      ));
-      if (approval) {
-        resolved.add(approval.requestId);
-        attributions.push(approval.request.requestedByAgentId);
-        // Deny so the soft-blocked command never runs; the run still completes.
-        await runtime.resolveApproval(conversationId, approval.requestId, false);
-        continue;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    await sendPromise;
-
-    expect(script.pendingCount()).toBe(0);
-    // EXACTLY one soft-block card surfaced — the consultee's command — attributed to
-    // the consultee (resolved to its canonical mention by the card). The ungated
-    // spawn raised none, and the parent's own agent is never the requester.
-    expect(attributions).toEqual([researcherAgentId]);
   });
 
   test('a fork sub-run (no agent_type) leaves its gated approval unattributed', async () => {
@@ -684,163 +305,6 @@ describe('agent runtime childRuns', () => {
     expect(attributions).toEqual([undefined]);
   });
 
-  test('a consultee that forks itself still attributes the fork approval to the consultee', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-nested-fork-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-nested-fork-data-'));
-    roots.push(localRoot, dataRoot);
-
-    const researcherDir = await createAgent(localRoot, 'researcher', [
-      '---',
-      'description: Researches focused questions in isolation.',
-      'tools: ["*"]',
-      '---',
-      'RESEARCHER_AGENT_BODY.',
-    ].join('\n'));
-    const researcherAgentId = projectAgentId(researcherDir, 'researcher');
-
-    const script = scriptedStream(
-      [
-        // Top agent consults @researcher (fresh, depth 1).
-        fauxAssistantMessage([
-          fauxToolCall('Agent', {
-            description: 'consult researcher',
-            prompt: 'Inspect the local config.',
-            agent_type: 'researcher',
-          }, { id: 'tool-agent-consult' }),
-        ], { stopReason: 'toolUse' }),
-        // The consultee forks ITSELF (no agent_type, depth 2) — the fork runs AS researcher.
-        fauxAssistantMessage([
-          fauxToolCall('Agent', {
-            description: 'fork to read config',
-            prompt: 'Read the env file.',
-          }, { id: 'tool-agent-nested-fork' }),
-        ], { stopReason: 'toolUse' }),
-        // The fork hits a soft-blocked capability.
-        fauxAssistantMessage([
-          fauxToolCall('bash', { command: 'eval "echo nested-fork-soft-block"' }, { id: 'tool-nested-fork-soft-block' }),
-        ], { stopReason: 'toolUse' }),
-        // Wrap up each level once the read is denied.
-        fauxAssistantMessage(fauxText('Fork done.')),
-        fauxAssistantMessage(fauxText('Researcher done.')),
-        fauxAssistantMessage(fauxText('Parent final.')),
-      ],
-      () => undefined,
-    );
-
-    const { AgentRuntime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new AgentRuntime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        streamFn: script.streamFn,
-      },
-    );
-
-    const conversation = await runtime.restoreLatestConversation();
-    const conversationId = conversation.conversationId;
-    const sendPromise = runtime.sendMessage(conversationId, 'Consult the researcher.');
-    let settled = false;
-    sendPromise.finally(() => { settled = true; }).catch(() => undefined);
-
-    const resolved = new Set<string>();
-    const attributions: Array<string | undefined> = [];
-    while (!settled) {
-      const approval = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
-        event.type === 'approval_request' && !resolved.has(event.requestId)
-      ));
-      if (approval) {
-        resolved.add(approval.requestId);
-        attributions.push(approval.request.requestedByAgentId);
-        await runtime.resolveApproval(conversationId, approval.requestId, false);
-        continue;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    await sendPromise;
-
-    expect(script.pendingCount()).toBe(0);
-    // The fork runs AS the consultee (researcher), so even though it is a fork it
-    // INHERITS researcher's attribution — its gated read is attributed to the
-    // consultee, never silently dropped (which would read as the TOP agent's own
-    // action in the parent conversation).
-    expect(attributions).toEqual([researcherAgentId]);
-  });
-
-  test('a consultee hard-denial is logged without a user notice', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-notice-attribution-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-notice-attribution-data-'));
-    roots.push(localRoot, dataRoot);
-
-    const researcherDir = await createAgent(localRoot, 'researcher', [
-      '---',
-      'description: Researches focused questions in isolation.',
-      'tools: ["*"]',
-      '---',
-      'RESEARCHER_AGENT_BODY.',
-    ].join('\n'));
-    const researcherAgentId = projectAgentId(researcherDir, 'researcher');
-
-    const script = scriptedStream(
-      [
-        fauxAssistantMessage([
-          fauxToolCall('Agent', {
-            description: 'consult researcher',
-            prompt: 'Inspect the local config.',
-            agent_type: 'researcher',
-          }, { id: 'tool-agent-consult' }),
-        ], { stopReason: 'toolUse' }),
-        // The consultee hits a redline-DENY capability under its own permissions.
-        fauxAssistantMessage([
-          fauxToolCall('bash', { command: 'rm -rf /' }, { id: 'tool-child-root-delete' }),
-        ], { stopReason: 'toolUse' }),
-        fauxAssistantMessage(fauxText('Consultee done.')),
-        fauxAssistantMessage(fauxText('Parent final.')),
-      ],
-      () => undefined,
-    );
-
-    const { AgentRuntime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new AgentRuntime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        streamFn: script.streamFn,
-      },
-    );
-
-    const conversation = await runtime.restoreLatestConversation();
-    await runtime.sendMessage(conversation.conversationId, 'Consult the researcher.');
-
-    expect(script.pendingCount()).toBe(0);
-    expect(sink.events.some((event) => (
-      event.type === 'approval_request' && event.request.kind === 'permission_notice'
-    ))).toBe(false);
-    const events = await new AgentEventStore(dataRoot).readEvents(conversation.conversationId);
-    expect(events.find((event) => (
-      event.type === 'tool.permission.resolved'
-      && event.toolCallId === 'tool-child-root-delete'
-    ))).toMatchObject({
-      status: 'denied',
-      deniedReason: 'platform_hard_block',
-    });
-  });
-
   test('omitting agent_type creates a fork with parent context and placeholder tool results', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-data-'));
@@ -888,6 +352,57 @@ describe('agent runtime childRuns', () => {
     expect(forkContext).toContain('Parent context marker.');
     expect(forkContext).toContain('lin-fork-child');
     expect(forkContext).toContain('Fork started - processing in background.');
+  });
+
+  test('the Agent tool forks Neva: the child run is owned by Neva (one-Neva invariant)', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-owner-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-owner-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const streamFn = respondingStream((context) => {
+      const text = textFromContext(context);
+      if (text.includes('Do the fork work')) {
+        return fauxAssistantMessage(fauxText('Fork result.'));
+      }
+      if (text.includes('Spawn a fork') && !text.includes('tool-agent-fork-owner')) {
+        return fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'fork owned by Neva',
+            prompt: 'Do the fork work.',
+            run_in_background: true,
+            name: 'fork-owner',
+          }, { id: 'tool-agent-fork-owner' }),
+        ], { stopReason: 'toolUse' });
+      }
+      return fauxAssistantMessage(fauxText('ack'));
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a fork for this.', sink);
+    const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
+    expect(childRunId).toBeDefined();
+
+    const data = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
+    // A fork runs AS Neva: it inherits the parent's executing + memory-owner identity, and its
+    // recorded agent type is the fork pseudo-agent — never a second, separately-owned agent.
+    expect(data).toMatchObject({
+      memory_owner_agent_id: 'built-in:tenon:assistant',
+      executing_agent_id: 'built-in:tenon:assistant',
+      agent_type: 'fork',
+    });
   });
 
   test('slims large child run tool outputs before the child continues', async () => {
@@ -1002,7 +517,6 @@ describe('agent runtime childRuns', () => {
           slashSkillsEnabled: true,
           compactEnabled: true,
           additionalSkillDirectories: [],
-          additionalAgentDirectories: [],
         }),
         streamFn: script.streamFn,
         completeSimpleFn: async (model, context) => {
@@ -1072,7 +586,6 @@ describe('agent runtime childRuns', () => {
           slashSkillsEnabled: true,
           compactEnabled: true,
           additionalSkillDirectories: [],
-          additionalAgentDirectories: [],
         }),
         streamFn: script.streamFn,
         completeSimpleFn: async (model) => normalizeAssistantMessage(
@@ -1394,118 +907,6 @@ describe('agent runtime childRuns', () => {
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
 
     releaseOriginalChild();
-  });
-
-  test('continues a persisted fresh child run after its agent definition was deleted', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-deleted-definition-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-deleted-definition-data-'));
-    roots.push(localRoot, dataRoot);
-
-    const deletedAgentDir = await createAgent(localRoot, 'temporary-agent', [
-      '---',
-      'description: Temporary agent that can disappear before a stopped run resumes.',
-      '---',
-      'TEMPORARY_AGENT_BODY: this file is deleted before continuation.',
-    ].join('\n'));
-
-    let releaseOriginalChild!: () => void;
-    const originalChildBlocked = new Promise<void>((resolve) => {
-      releaseOriginalChild = resolve;
-    });
-    const firstScript = scriptedStream(
-      [
-        fauxAssistantMessage([
-          fauxToolCall('Agent', {
-            description: 'temporary background',
-            prompt: 'Run until stopped.',
-            agent_type: 'temporary-agent',
-            run_in_background: true,
-            name: 'deleted-definition-bg',
-          }, { id: 'tool-agent-deleted-definition' }),
-        ], { stopReason: 'toolUse' }),
-        async () => {
-          await originalChildBlocked;
-          return fauxAssistantMessage(fauxText('Original deleted-definition result should not win.'));
-        },
-        fauxAssistantMessage(fauxText('Parent after temporary launch.')),
-        fauxAssistantMessage(fauxText('Parent saw temporary stopped notification.')),
-      ],
-      () => undefined,
-    );
-
-    const { AgentRuntime } = await loadRuntimeModule();
-    const firstSink = createWindowSink();
-    const firstRuntime = new AgentRuntime(
-      () => firstSink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        streamFn: firstScript.streamFn,
-      },
-    );
-
-    const conversation = await firstRuntime.restoreLatestConversation();
-    await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start a deletable child run.', firstSink);
-    const childRunId = latestProjection(firstSink.events)?.childRunIds[0]!;
-    const stopped = await firstRuntime.childRunStop(conversation.conversationId, childRunId);
-    expect(stopped).toMatchObject({
-      agent_id: childRunId,
-      status: 'cancelled',
-    });
-    await waitFor(() => firstScript.pendingCount() === 1);
-    releaseOriginalChild();
-    await waitFor(() => firstScript.pendingCount() === 0);
-    firstRuntime.closeConversation(conversation.conversationId);
-    await rm(deletedAgentDir, { recursive: true, force: true });
-
-    const resumedContexts: string[] = [];
-    const secondScript = scriptedStream(
-      [
-        (context) => {
-          resumedContexts.push(textFromContext(context));
-          return fauxAssistantMessage(fauxText('Fallback assistant continued the deleted-definition run.'));
-        },
-        fauxAssistantMessage(fauxText('Parent saw deleted-definition continuation.')),
-      ],
-      () => undefined,
-    );
-    const secondSink = createWindowSink();
-    const secondRuntime = new AgentRuntime(
-      () => secondSink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        streamFn: secondScript.streamFn,
-      },
-    );
-
-    await secondRuntime.restoreConversation(conversation.conversationId);
-    const queued = await secondRuntime.childRunSend(conversation.conversationId, childRunId, 'Continue after definition removal.');
-    expect(queued).toMatchObject({
-      agent_id: childRunId,
-      status: 'queued',
-    });
-    const status = await secondRuntime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
-    expect(status).toMatchObject({
-      agent_id: childRunId,
-      result: 'Fallback assistant continued the deleted-definition run.',
-      status: 'completed',
-    });
-    await waitFor(() => secondScript.pendingCount() === 0);
-    expect(resumedContexts.join('\n')).toContain('Continue after definition removal.');
-    expect(secondSink.events.some((event) => event.type === 'error')).toBe(false);
   });
 
   test('a conversation record whose ledger seed never landed stays resumable (register-empty path)', async () => {
@@ -1945,7 +1346,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'completes then fails on resume',
             prompt: 'Do the first pass.',
-            agent_type: 'assistant',
             run_in_background: true,
             name: 'resume-fail',
           }, { id: 'tool-agent-1' }),
@@ -2017,7 +1417,6 @@ describe('agent runtime childRuns', () => {
           fauxToolCall('Agent', {
             description: 'completes then is stopped on resume',
             prompt: 'Do the first pass.',
-            agent_type: 'assistant',
             run_in_background: true,
             name: 'resume-stop',
           }, { id: 'tool-agent-1' }),

@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import type { AgentChildRunRecord } from '../core/agentEventLog';
 import type { AgentDefinition } from '../core/types';
 
 export function agentDefinitionAgentId(agent: AgentDefinition): string {
@@ -8,15 +7,6 @@ export function agentDefinitionAgentId(agent: AgentDefinition): string {
     ? 'tenon'
     : stableAgentNamespace(agent.agentFile);
   return `${agent.source}:${namespace}:${normalizeAgentName(agent.name) || 'agent'}`;
-}
-
-export function resolveChildRunMemoryOwner(
-  run: Pick<AgentChildRunRecord, 'contextMode' | 'executingAgentId' | 'memoryOwnerAgentId' | 'parentAgentId'>,
-  fallbackMemoryOwnerAgentId: string,
-): string {
-  if (run.memoryOwnerAgentId) return run.memoryOwnerAgentId;
-  if (run.contextMode === 'fork') return fallbackMemoryOwnerAgentId;
-  return run.executingAgentId ?? run.parentAgentId ?? fallbackMemoryOwnerAgentId;
 }
 
 export function memoryWorkspaceIdForRoot(localRoot: string | undefined): string | undefined {

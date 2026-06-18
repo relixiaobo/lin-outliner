@@ -998,7 +998,8 @@ export interface ChildRunStartedEvent extends AgentEventBase {
   description: string;
   prompt: string;
   agentType: string;
-  contextMode: 'fresh' | 'fork';
+  /** Always 'fork': a child run is the current agent in an isolated context, never a different agent. */
+  contextMode: 'fork';
   /** Persisted so a cross-restart resume honors the unattended approval policy. */
   unattended?: boolean;
 }
@@ -1158,7 +1159,8 @@ export interface DelegationDetail {
   description: string;
   prompt: string;
   agentType: string;
-  contextMode: 'fresh' | 'fork';
+  /** Always 'fork': a child run is the current agent in an isolated context, never a different agent. */
+  contextMode: 'fork';
   parentRunId?: string;
   executingAgentId: string;
   parentAgentId: string;

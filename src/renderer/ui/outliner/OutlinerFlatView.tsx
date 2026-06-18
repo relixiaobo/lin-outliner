@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -16,9 +15,10 @@ import {
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { freshNodeId } from '../../../core/nodeId';
-import type { DocumentIndex, UiState } from '../../state/document';
+import { outlinerChildParentId, type DocumentIndex, type UiState } from '../../state/document';
 import { buildVisualRows, type VisualRow } from '../../state/visualRows';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
+import { outlinerChildren } from '../shared';
 import { hiddenFieldKey, readViewConfig } from './row-model';
 import { RENDER_PROBE_ENABLED } from './renderProbe';
 import { OutlinerFieldRow } from './OutlinerFieldRow';
@@ -26,6 +26,7 @@ import { OutlinerItem } from './OutlinerItem';
 import { ViewToolbar } from './ViewToolbar';
 import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 import { OutlinerEmptyState } from './OutlinerEmptyState';
+import { IndentGuide } from './IndentGuide';
 
 // The flat renderer is the default outliner path. The old recursive renderer is
 // retained as a reload-scoped diagnostic fallback while parity work settles.
@@ -61,6 +62,14 @@ interface RowLayout {
   totalHeight: number;
 }
 
+interface FlatGuideGeometry {
+  key: string;
+  nodeId: NodeId;
+  left: number;
+  top: number;
+  height: number;
+}
+
 function buildRowLayout(rows: readonly VisualRow[], measured: Map<string, number>): RowLayout {
   const items: RowLayoutItem[] = [];
   let top = 0;
@@ -70,6 +79,33 @@ function buildRowLayout(rows: readonly VisualRow[], measured: Map<string, number
     top += height;
   }
   return { items, totalHeight: top };
+}
+
+function descendantEndIndexFor(rows: readonly VisualRow[], rowIndex: number): number {
+  const row = rows[rowIndex];
+  if (!row) return rowIndex;
+  let endIndex = rowIndex + 1;
+  while (endIndex < rows.length && rows[endIndex]!.depth > row.depth) {
+    endIndex += 1;
+  }
+  return endIndex;
+}
+
+function rowCanAnchorGuide(row: VisualRow): row is Extract<VisualRow, { kind: 'content' | 'field' }> {
+  return row.kind === 'content' || row.kind === 'field';
+}
+
+function sameFlatGuides(a: readonly FlatGuideGeometry[], b: readonly FlatGuideGeometry[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((guide, index) => {
+    const other = b[index];
+    return other !== undefined
+      && guide.key === other.key
+      && guide.nodeId === other.nodeId
+      && Math.abs(guide.left - other.left) < 0.5
+      && Math.abs(guide.top - other.top) < 0.5
+      && Math.abs(guide.height - other.height) < 0.5;
+  });
 }
 
 // First index whose row ends at or after `y` (rows are sorted by top, contiguous).
@@ -191,6 +227,38 @@ function FlatRowShell({
   );
 }
 
+function FlowRowShell({
+  children,
+  onMeasure,
+  rowKey,
+}: {
+  children: ReactNode;
+  onMeasure: (rowKey: string, height: number) => void;
+  rowKey: string;
+}) {
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const element = rowRef.current;
+    if (!element) return undefined;
+    const measure = () => onMeasure(rowKey, element.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [onMeasure, rowKey]);
+  return (
+    <div
+      className="outliner-flat-flow-row"
+      role="presentation"
+      data-flat-row-key={rowKey}
+      ref={rowRef}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   const { index, ui } = props;
   const byId = index.byId;
@@ -246,9 +314,11 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
 
   // ── Measurement + layout ──────────────────────────────────────────────────
   const listRef = useRef<HTMLDivElement | null>(null);
+  const guideOverlayRef = useRef<HTMLDivElement | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
   const [measureVersion, setMeasureVersion] = useState(0);
   const [scrollMetrics, setScrollMetrics] = useState({ top: 0, height: 0 });
+  const [flatGuides, setFlatGuides] = useState<FlatGuideGeometry[]>([]);
 
   const measureRow = useCallback((rowKey: string, height: number) => {
     const current = rowHeightsRef.current.get(rowKey);
@@ -397,6 +467,101 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     return [...set].sort((a, b) => a - b);
   }, [virtualize, layout, scrollMetrics.top, scrollMetrics.height, forcedIndices]);
 
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const overlay = guideOverlayRef.current;
+    if (!list || !overlay) {
+      setFlatGuides((current) => (current.length === 0 ? current : []));
+      return;
+    }
+
+    const overlayRect = overlay.getBoundingClientRect();
+    const viewportRect = resolveScroller()?.getBoundingClientRect() ?? overlayRect;
+    const markerByRowKey = new Map<string, HTMLElement>();
+    list.querySelectorAll<HTMLElement>('[data-flat-row-key]').forEach((shell) => {
+      const key = shell.dataset.flatRowKey;
+      const marker = shell.querySelector<HTMLElement>('.row-bullet-button');
+      if (key && marker) markerByRowKey.set(key, marker);
+    });
+
+    const renderedIndices = virtualize && renderIndices ? new Set(renderIndices) : null;
+    const nextGuides: FlatGuideGeometry[] = [];
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      if (!row || row.kind !== 'content' || row.draft) continue;
+      if (renderedIndices && !renderedIndices.has(i)) continue;
+      const endIndex = descendantEndIndexFor(rows, i);
+      if (endIndex <= i + 1) continue;
+
+      const parentMarker = markerByRowKey.get(row.key);
+      if (!parentMarker) continue;
+      let lastMarker: HTMLElement | undefined;
+      for (let j = endIndex - 1; j > i; j -= 1) {
+        const descendant = rows[j];
+        if (!descendant || !rowCanAnchorGuide(descendant)) continue;
+        if (renderedIndices && !renderedIndices.has(j)) continue;
+        lastMarker = markerByRowKey.get(descendant.key);
+        if (lastMarker) break;
+      }
+      if (!lastMarker) continue;
+
+      const parentRect = parentMarker.getBoundingClientRect();
+      const lastRect = lastMarker.getBoundingClientRect();
+      if (parentRect.bottom < viewportRect.top || parentRect.top > viewportRect.bottom) continue;
+      const topAbs = parentRect.top + parentRect.height / 2;
+      const bottomAbs = lastRect.top + lastRect.height / 2;
+      if (bottomAbs <= topAbs) continue;
+      if (bottomAbs < viewportRect.top || topAbs > viewportRect.bottom) continue;
+
+      nextGuides.push({
+        key: row.key,
+        nodeId: row.nodeId,
+        left: parentRect.left + parentRect.width / 2 - overlayRect.left,
+        top: topAbs - overlayRect.top,
+        height: bottomAbs - topAbs,
+      });
+    }
+
+    setFlatGuides((current) => (sameFlatGuides(current, nextGuides) ? current : nextGuides));
+  }, [
+    measureVersion,
+    renderIndices,
+    resolveScroller,
+    rows,
+    scrollMetrics.height,
+    scrollMetrics.top,
+    virtualize,
+  ]);
+
+  const toggleDirectChildrenExpansion = useCallback((rowId: NodeId) => {
+    const childParentId = outlinerChildParentId(rowId, byId);
+    const childParentNode = childParentId ? byId.get(childParentId) : undefined;
+    const childIds = outlinerChildren(childParentNode, byId);
+    if (childIds.length === 0) return;
+    props.setUi((prev) => {
+      const expandedSet = new Set(prev.expanded);
+      const anyChildExpanded = childIds.some((childId) => expandedSet.has(childId));
+      for (const childId of childIds) {
+        if (anyChildExpanded) expandedSet.delete(childId);
+        else expandedSet.add(childId);
+      }
+      return { ...prev, expanded: expandedSet };
+    });
+  }, [byId, props.setUi]);
+
+  const renderFlatGuides = () => (
+    <div className="outliner-flat-guides" role="presentation" ref={guideOverlayRef}>
+      {flatGuides.map((guide) => (
+        <IndentGuide
+          key={`guide>${guide.key}`}
+          guideFor={guide.nodeId}
+          flatMetrics={guide}
+          onToggleChildren={() => toggleDirectChildrenExpansion(guide.nodeId)}
+        />
+      ))}
+    </div>
+  );
+
   // ── Live-search refresh ────────────────────────────────────────────────────
   // A search node recomputes its results whenever they are visible — when it is
   // the panel root, or an expanded content row. Mirrors OutlinerView's per-node
@@ -433,7 +598,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     };
   }, [searchKey, index.projection, props.parentId]);
 
-  const renderRow = (row: VisualRow): ReactNode => {
+  const renderRow = (row: VisualRow, rowIndex: number): ReactNode => {
     switch (row.kind) {
       case 'toolbar': {
         const node = byId.get(row.nodeId);
@@ -539,7 +704,14 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
           rootLevel={props.parentId === props.rootId}
           searchLoading={rootSearchRefreshing}
         />
-        {rows.map((row) => <Fragment key={row.key}>{renderRow(row)}</Fragment>)}
+        <div className="outliner-flat-flow" role="presentation" ref={listRef}>
+          {renderFlatGuides()}
+          {rows.map((row, i) => (
+            <FlowRowShell key={row.key} onMeasure={measureRow} rowKey={row.key}>
+              {renderRow(row, i)}
+            </FlowRowShell>
+          ))}
+        </div>
       </>
     );
   }
@@ -556,12 +728,13 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
         searchLoading={rootSearchRefreshing}
       />
       <div className="outliner-flat" role="presentation" ref={listRef} style={containerStyle}>
+        {renderFlatGuides()}
         {renderIndices.map((i) => {
           const row = rows[i]!;
           const item = layout.items[i]!;
           return (
             <FlatRowShell key={row.key} onMeasure={measureRow} rowKey={row.key} top={item.top}>
-              {renderRow(row)}
+              {renderRow(row, i)}
             </FlatRowShell>
           );
         })}

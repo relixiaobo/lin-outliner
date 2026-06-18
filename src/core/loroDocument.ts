@@ -72,12 +72,10 @@ const NODE_SCALAR_KEYS: NodeFieldKey[] = [
   'queryFieldDefId',
   'queryTargetId',
   // command node: the user-armed schedule string + the system fire watermark
-  // (plus the at-most-once last-attempt marker), plus the executing-agent
-  // selection.
+  // (plus the at-most-once last-attempt marker).
   'commandSchedule',
   'sysLastRunAt',
   'sysLastAttemptAt',
-  'commandAgent',
   'codeLanguage',
   'assetId',
   'mediaUrl',

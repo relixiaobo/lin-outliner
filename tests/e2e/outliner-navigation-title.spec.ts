@@ -177,6 +177,63 @@ test.describe('outliner navigation and page title parity', () => {
     ))).toBe(0);
   });
 
+  test('panel history restores scroll when returning to a scrolled page', async ({ page }) => {
+    const childIds = await page.evaluate(async (parentId) => {
+      const win = window as typeof window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitDocumentEvent: (event: unknown) => void };
+      };
+      const created: string[] = [];
+      let projection: unknown = null;
+      for (let index = 0; index < 44; index += 1) {
+        const outcome = await win.lin!.invoke<{ update: { projection: unknown }; focus?: { nodeId: string } }>('create_node', {
+          parentId,
+          index: null,
+          text: `Alpha child ${String(index).padStart(2, '0')}`,
+        });
+        projection = outcome.update.projection;
+        created.push(outcome.focus!.nodeId);
+      }
+      win.__LIN_E2E__?.emitDocumentEvent({ type: 'projection_changed', projection });
+      return created;
+    }, ids.alpha);
+
+    await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
+
+    const panel = page.locator('.outline-panel-surface.active-panel .main-panel');
+    await panel.evaluate((element) => {
+      element.scrollTop = 900;
+      element.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+    await expect.poll(async () => panel.evaluate((element) => Math.round(element.scrollTop))).toBeGreaterThan(300);
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+    }));
+    const savedScrollTop = await panel.evaluate((element) => element.scrollTop);
+    await expect.poll(async () => page.evaluate((rootId) => {
+      const raw = window.localStorage.getItem('lin-outliner:workspace-layout:v4');
+      if (!raw) return 0;
+      const layout = JSON.parse(raw) as {
+        activePanelId?: string;
+        panels?: Array<{ id: string; view?: { kind?: string; rootId?: string; scrollTop?: number } }>;
+      };
+      const activePanel = layout.panels?.find((entry) => entry.id === layout.activePanelId);
+      return activePanel?.view?.kind === 'outliner' && activePanel.view.rootId === rootId
+        ? activePanel.view.scrollTop ?? 0
+        : 0;
+    }, ids.alpha)).toBeGreaterThan(Math.max(100, Math.round(savedScrollTop) - 80));
+
+    const targetChildId = childIds[30]!;
+    await expect(row(page, targetChildId)).toBeVisible();
+    await row(page, targetChildId).getByRole('button', { name: 'Open' }).click();
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha child 30');
+    await page.getByRole('button', { name: 'Previous page' }).first().click();
+    await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
+    await expect.poll(async () => panel.evaluate((element) => Math.round(element.scrollTop)))
+      .toBeGreaterThan(Math.max(100, Math.round(savedScrollTop) - 80));
+  });
+
   test('keyboard back and forward navigate page history without document undo', async ({ page }) => {
     await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
     await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');

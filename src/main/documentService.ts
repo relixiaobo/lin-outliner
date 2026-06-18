@@ -437,8 +437,6 @@ export class DocumentService {
           nullableString(args.schedule) ?? undefined,
           meta.origin ?? 'user',
         );
-      case 'set_command_agent':
-        return this.core.setCommandAgent(String(args.nodeId), nullableString(args.agent) ?? undefined);
       case 'mark_command_fired':
         return this.core.markCommandFired(
           String(args.nodeId),

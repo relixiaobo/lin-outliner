@@ -9,6 +9,20 @@
 > like a conversation's. Vocabulary below was rewritten accordingly; cc-2.1
 > references describe the SOURCE system's wording, not ours.
 
+> **Single-agent collapse — fork-only (2026-06-18, `single-agent-finish-collapse`).**
+> The end-state supersedes every "fresh vs fork" / `agent_type` / file-backed
+> agent-loading passage below. There is exactly one agent, **Neva**; delegation is
+> **fork-only**. Concretely: the `Agent` tool schema carries **no** `agent_type`
+> (and no agent name/type field at all — "delegate to a different agent" is
+> structurally unrepresentable); `contextMode` is always `'fork'`; the registry
+> loads only the built-in Neva and never scans `~/.agents/agents` or
+> `<workspace>/.agents/agents`; a fork runs AS Neva (`executingAgentId` /
+> `memoryOwnerAgentId` are always the parent = Neva). `/research`, dream, and
+> background self-work are forks. The cross-agent "fresh" run, the by-name agent
+> registry scan, the `additionalAgentDirectories` setting, and the cross-principal
+> memory redaction are all removed as dead code. Read the `fresh` material below
+> as historical design context, not current behavior.
+
 This document is the design and implementation baseline for Tenon's delegation
 runtime. It records both the cc-2.1 source references used for alignment and the
 Lin-specific choices made while implementing the current same-conversation child run
@@ -367,7 +381,7 @@ type AgentRunRecord = {
   description: string;
   prompt: string;
   agentType: string;
-  contextMode: 'fresh' | 'fork';
+  contextMode: 'fork';              // always 'fork' — a child run is the current agent, never a different one
   status: 'running' | 'completed' | 'failed' | 'stopped';
   executingAgentId: string;
   parentAgentId: string;
@@ -548,7 +562,7 @@ Foreground completion:
   "description": "string",
   "prompt": "string",
   "agent_type": "string",
-  "context_mode": "fresh | fork",
+  "context_mode": "fork",
   "result": "string",
   "started_at": 0,
   "updated_at": 0,
@@ -567,7 +581,7 @@ Background launch:
   "description": "string",
   "prompt": "string",
   "agent_type": "string",
-  "context_mode": "fresh | fork",
+  "context_mode": "fork",
   "started_at": 0,
   "updated_at": 0,
   "transcript_message_count": 0,
@@ -711,77 +725,47 @@ Later layers with the same `name` override earlier layers.
 
 #### Authoring & hot-reload
 
-Agent definitions are **user-authorable in-app** through two surfaces. Settings
-remains the full create / edit / duplicate / delete surface. The built-in
-`/create-agent` skill may create or edit one restricted `AGENT.md` after preview
-and confirmation, using the same typed `file_write` / `file_edit` gateway as
-project work. Chat authoring is deliberately narrower than Settings: it cannot
-grant trusted permission, enable background mode, claim a reserved built-in name,
-rename/move, delete, or create support files.
+The one-Neva invariant collapses authoring to a single surface: **editing the one
+built-in agent, Neva, in Settings**. There is no create, duplicate, delete, or
+chat-authoring path, and no `.agents/agents` file-write surface — all of those
+were removed (`single-agent-finish-collapse`). Neva's edits persist to an
+**editable built-in overlay** stored in settings (not an `AGENT.md` file); the
+base built-in definition stays immutable and the overlay is layered on top at
+load (`getBuiltInAgentProfile` / `applyBuiltInAgentProfile`).
 
-The settings "Agent Profiles" pane lists agents and opens the dedicated
+The settings "Agent Profiles" pane lists Neva and opens the dedicated
 `AgentConfigWindow`:
 
 - **Format layer** (`src/core/agentMarkdown.ts`, pure — `yaml` only, no fs):
   `serializeAgentMarkdown(AgentAuthoringInput) → AGENT.md` text and its inverses
   `parseAgentMarkdownDocument` / `parseAgentAuthoringInput`. Shared by **both**
-  main (the write surface below) and the renderer (the Form⇄Raw editor toggle), so
+  main (the overlay write below) and the renderer (the Form⇄Raw editor toggle), so
   the AGENT.md format lives in exactly one place and the two sides cannot drift.
-- **Write surface** (`src/main/agentAuthoring.ts`, pure filesystem): serialize an
-  `AgentAuthoringInput` via `serializeAgentMarkdown` and atomic-write it under a
-  writable agents dir. The target is forced inside `~/.agents/agents/<slug>`
-  (`source: user`) or `<workspace>/.agents/agents/<slug>` (`source: project`); the
-  name is slugged to a filesystem-safe segment and path containment is asserted in
-  main, so a renderer-supplied name can never escape via traversal. Built-in
-  agents (`rootDir === 'built-in'`) are never a write target — editing one means
-  **duplicating** to a user copy.
-- **Chat create/edit surface** (`src/main/agentAuthoring.ts` validation plus
-  `src/main/agentLocalTools.ts` execution): `/create-agent` writes exactly one
-  `AGENT.md` under `<workspace>/.agents/agents/<agent-name>/AGENT.md` by default,
-  or under `~/.agents/agents/<agent-name>/AGENT.md` only when that personal/global
-  write scope is explicitly granted. The gateway requires strict frontmatter with
-  `name`, a routing-grade `description`, and `permission-mode: restricted`;
-  rejects trusted permission mode, reserved built-in names, support files,
-  deletes, malformed frontmatter, unsafe metadata, oversize content, and
-  secret-looking content; then notifies the runtime to reload registries on
-  success. Existing-file edits
-  use the ordinary file-tool freshness rules: `file_edit` and replacing
-  `file_write` require a current `file_read`.
-- **Editor UI** (`AgentEditor.tsx`): **one** editor abstraction for every agent —
-  built-in, user, or new — with two switchable modes behind a header
-  `SegmentedControl`. **Form** = structured controls (name / description / model /
-  effort / permission-mode / max-turns / background) plus on/off **toggle lists**
-  for tools and skills — all-on or all-off ⇒ the agent inherits every tool (the
-  `tools` field is omitted), a proper subset is stored, and any tool/skill outside
-  the curated catalog is preserved so Form editing never drops it. **Raw** = the
-  full `AGENT.md` text. The toggle converts losslessly through the format layer
-  (`serializeAgentMarkdown` Form→Raw, `parseAgentAuthoringInput` Raw→Form). A
-  **non-writable** definition (built-in, or an agent loaded from outside the
-  writable authoring roots such as `additionalAgentDirectories`) renders through
-  this same editor but **read-only** (every control disabled; the mode toggle
-  stays live so Raw is viewable; the only action is "Duplicate to my agents") —
-  so opening Neva, an external-directory agent, and a writable user
-  agent use the same viewing surface; the difference is only editability. A
-  **new** agent seeds a
-  **scaffold** (real defaults — `permission-mode: restricted`, `effort: medium`,
-  `max-turns: 20`, a starter persona — plus all tools on and model inherit), so
-  the Form starts populated and the Raw is a fill-in template rather than a bare
-  `name: ""`. Default mode is Form.
-- **Hot-reload**: `AgentDefinitionRegistry.reload()` drops the startup cache
-  (`loaded` / `agents` / `seenAgentFileIds`) so the next read re-scans. After any
-  authoring write `AgentRuntime` reloads **every live conversation's** registry, so a
-  new/edited/deleted agent appears in the child run picker and settings list
-  without an app restart. A run resolves its `AgentDefinition` at spawn, so reload
-  only affects future spawns — live runs are unaffected.
-- **IPC** (additive, `AGENT_COMMANDS`): `agent_create_agent_definition`,
-  `agent_update_agent_definition`, `agent_delete_agent_definition`,
-  `agent_duplicate_agent_definition`, `agent_reload_agent_definitions`. Each
+- **Editor UI** (`AgentEditor.tsx`): one editor for the one agent, with two
+  switchable modes behind a header `SegmentedControl`. **Form** = structured
+  controls (name / description / model / effort) plus on/off **toggle lists** for
+  tools and skills — all-on or all-off ⇒ Neva inherits every tool (the `tools`
+  field is omitted), a proper subset is stored, and any tool/skill outside the
+  curated catalog is preserved so Form editing never drops it; other fields
+  (permission-mode, max-turns, background) round-trip losslessly through Raw.
+  **Raw** = the full `AGENT.md` text. The toggle converts losslessly through the
+  format layer (`serializeAgentMarkdown` Form→Raw, `parseAgentAuthoringInput`
+  Raw→Form). Default mode is Form; the only actions are Cancel and Save.
+- **Write surface** (built-in overlay): `agent_update_agent_definition` validates
+  the `AgentAuthoringInput` and persists it as Neva's editable overlay; the base
+  built-in is never overwritten. `AgentRuntime` then re-composes Neva's identity
+  (display name, persona, model/effort, tool/skill set) from the refreshed overlay.
+- **Hot-reload**: `AgentDefinitionRegistry.reload()` drops the cached seed
+  (`loaded` / `agents`) so the next read re-seeds Neva with the current overlay.
+  After an edit `AgentRuntime` reloads **every live conversation's** registry, so
+  the change takes effect without an app restart. A run resolves its
+  `AgentDefinition` at spawn, so reload only affects future spawns — live runs are
+  unaffected.
+- **IPC** (`AGENT_COMMANDS`): `agent_update_agent_definition` (addresses Neva by
+  `agentId` and writes her overlay) and `agent_reload_agent_definitions`. Each
   returns the freshly reloaded `AgentDefinitionView[]` (an `AgentDefinition` plus
-  its `agentId`). `update`/`delete`/`duplicate` address an agent by `agentId`,
-  which main resolves to the definition (and rejects built-ins).
-- **`additionalAgentDirectories`** is editable from the same pane (comma-separated
-  paths), wired to `updateAdditionalAgentDirectories` (which also invalidates the
-  cache).
+  its `agentId`). There are no create / delete / duplicate commands — a second
+  agent is structurally impossible.
 
 #### Disabling by identity
 

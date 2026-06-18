@@ -87,7 +87,6 @@ async function createRuntime(dataRoot: string, localRoot?: string) {
         slashSkillsEnabled: false,
         compactEnabled: true,
         additionalSkillDirectories: [],
-        additionalAgentDirectories: [],
       }),
     },
   );
@@ -152,6 +151,32 @@ describe('agent runtime conversations', () => {
       writable: true,
     });
     expect(assistant?.body).toContain('You are Neva.');
+  });
+
+  test('the registry loads only Neva — a dropped AGENT.md under .agents/agents is ignored (one-Neva invariant)', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-local-'));
+    roots.push(dataRoot, localRoot);
+    // A user drops a file-backed agent under the workspace agents dir. Pre-collapse this
+    // would have loaded a second agent; the registry now never scans it.
+    await createProjectAgent(localRoot, 'shadow-researcher');
+    const { runtime } = await createRuntime(dataRoot, localRoot);
+
+    const definitions = await runtime.listAllAgentDefinitions('workspace');
+
+    expect(definitions).toHaveLength(1);
+    expect(definitions[0]).toMatchObject({ agentId: ASSISTANT_AGENT_ID, name: 'assistant', source: 'built-in' });
+  });
+
+  test('memoryReadPrincipals returns only Neva — the single believer pool (one-Neva invariant)', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+
+    // The defense-in-depth cross-principal redaction was removed as dead code; this is the
+    // invariant that makes it unreachable — recall only ever reads Neva's pool.
+    const principals = (runtime as unknown as { memoryReadPrincipals(): unknown[] }).memoryReadPrincipals();
+    expect(principals).toEqual([{ type: 'agent', agentId: ASSISTANT_AGENT_ID }]);
   });
 
   test('editing the built-in assistant overlays display name + persona, keeping the stable id', async () => {
@@ -276,40 +301,23 @@ describe('agent runtime conversations', () => {
     await expect(runtime.previewPayloadBytes(conversationId, payload.id, runId)).resolves.toEqual(Buffer.from('full tool output'));
   });
 
-  test('#General membership stays {user, Neva} regardless of agent definitions', async () => {
+  test('#General membership is exactly {user, Neva}', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-local-'));
     roots.push(dataRoot, localRoot);
     const { runtime } = await createRuntime(dataRoot, localRoot);
 
     await runtime.restoreConversation(DEFAULT_GENERAL_CHANNEL_ID);
-    const expectedMembers = [
+    // The one-Neva invariant: the only conversation members are the local user and
+    // Neva. There is no second agent to add, and no member.added beyond setup.
+    const state = await new AgentEventStore(dataRoot).replay(DEFAULT_GENERAL_CHANNEL_ID);
+    expect(state.conversation?.members).toEqual([
       { type: 'user', userId: 'local-user' },
       { type: 'agent', agentId: ASSISTANT_AGENT_ID },
-    ];
-    let state = await new AgentEventStore(dataRoot).replay(DEFAULT_GENERAL_CHANNEL_ID);
-    expect(state.conversation?.members).toEqual(expectedMembers);
-
-    // Single-agent collapse: agent definitions are delegation child-types, never
-    // conversation members — creating one must not touch #General membership.
-    const definitions = await runtime.createAgentDefinition('workspace', {
-      name: 'writer',
-      description: 'Writes clear product notes.',
-      body: 'You write concise product notes.',
-    }, 'project');
-    const writer = definitions.find((definition) => definition.name === 'writer');
-    expect(writer?.agentId).toBeTruthy();
-
-    state = await new AgentEventStore(dataRoot).replay(DEFAULT_GENERAL_CHANNEL_ID);
-    expect(state.conversation?.members).toEqual(expectedMembers);
+    ]);
     expect((await new AgentEventStore(dataRoot).readEvents(DEFAULT_GENERAL_CHANNEL_ID))
       .filter((event) => event.type === 'member.added'))
       .toHaveLength(0);
-
-    await runtime.deleteAgentDefinition('workspace', writer!.agentId);
-
-    state = await new AgentEventStore(dataRoot).replay(DEFAULT_GENERAL_CHANNEL_ID);
-    expect(state.conversation?.members).toEqual(expectedMembers);
   });
 
   test('creates, renames, and deletes channels; #General stays immutable', async () => {

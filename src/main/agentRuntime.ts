@@ -48,7 +48,6 @@ import {
   type AgentApprovalResolutionScope,
   type AgentAuthoringInput,
   type AgentDefinitionView,
-  type AgentStorageLocation,
   type AgentUserViewContext,
   type AskUserQuestionResult,
   type ImageContent,
@@ -192,19 +191,11 @@ import {
   agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
 } from './agentDelegationIdentity';
-import {
-  createAgentDefinitionFile,
-  deleteAgentDefinitionFile,
-  duplicateAgentDefinitionFile,
-  isAgentDefinitionWritable,
-  updateAgentDefinitionFile,
-} from './agentAuthoring';
 import { AgentRunLedgerWriter, fromPiAssistantContent } from './agentRunLedger';
 import type { AgentSkillWriteAudit } from './agentSkillAuthoring';
 import { executeAgentSkillShellCommand } from './agentSkillShell';
 import type { AgentRecallEvidence, AgentRecallRuntimeEntry, AgentRecallToolRuntime } from './agentRecallTool';
 import { renderAgentMemoryBriefing, MEMORY_BRIEFING_MAX_ENTRIES } from './agentMemoryBriefing';
-import { redactSecretLikeContent } from './agentSecretRedaction';
 import {
   evaluateAgentToolPermission,
   type AgentPermissionAskDecision,
@@ -1535,16 +1526,16 @@ export class AgentRuntime {
 
   async listAllAgentDefinitions(conversationId: string): Promise<AgentDefinitionView[]> {
     const definitions = await this.listRawAgentDefinitions(conversationId);
-    const localRoot = this.authoringLocalRoot();
     // `withBuiltInAgentDefinitions` already layers the built-in's editable overlay
     // (display name, persona, model/effort, tools, …) onto the injected definition,
-    // so the editor renders the user's saved values. The built-in is directly
-    // editable (its edits persist to the settings overlay, not a file), so it is
-    // `writable` even though it has no AGENT.md.
+    // so the editor renders the user's saved values. The built-in Neva is the only
+    // editable agent — her edits persist to the settings overlay, not a file — and
+    // under the one-Neva invariant no other definition can exist, so `writable` is
+    // exactly "is the built-in".
     return (await this.withBuiltInAgentDefinitions(definitions)).map((definition) => ({
       ...definition,
       agentId: agentDefinitionAgentId(definition),
-      writable: definition.source === 'built-in' ? true : isAgentDefinitionWritable(definition, localRoot),
+      writable: definition.source === 'built-in',
     }));
   }
 
@@ -1610,15 +1601,6 @@ export class AgentRuntime {
   // registry cache is invalidated so the change is visible (child run picker +
   // settings list) without an app restart. The fresh view list is returned so
   // the renderer can re-select by agentId.
-  async createAgentDefinition(
-    conversationId: string,
-    input: AgentAuthoringInput,
-    storage: AgentStorageLocation,
-  ): Promise<AgentDefinitionView[]> {
-    await createAgentDefinitionFile({ input, storage, localRoot: this.authoringLocalRoot() });
-    return this.reloadAgentDefinitions(conversationId);
-  }
-
   async updateAgentDefinition(
     conversationId: string,
     agentId: string,
@@ -1694,25 +1676,11 @@ export class AgentRuntime {
       }
       return views;
     }
-    await updateAgentDefinitionFile({ existing, input, localRoot: this.authoringLocalRoot() });
-    return this.reloadAgentDefinitions(conversationId);
-  }
-
-  async deleteAgentDefinition(conversationId: string, agentId: string): Promise<AgentDefinitionView[]> {
-    const existing = await this.resolveAgentDefinitionById(conversationId, agentId);
-    await deleteAgentDefinitionFile({ existing, localRoot: this.authoringLocalRoot() });
-    return this.reloadAgentDefinitions(conversationId);
-  }
-
-  async duplicateAgentDefinition(
-    conversationId: string,
-    agentId: string,
-    newName: string,
-    storage: AgentStorageLocation,
-  ): Promise<AgentDefinitionView[]> {
-    const source = await this.resolveAgentDefinitionById(conversationId, agentId);
-    await duplicateAgentDefinitionFile({ source, newName, storage, localRoot: this.authoringLocalRoot() });
-    return this.reloadAgentDefinitions(conversationId);
+    // Only the built-in assistant (Neva) is editable, and she is the only agent
+    // definition that can exist (the one-Neva invariant — no create / load of a
+    // second agent). A non-built-in source here is unreachable; treat it as a bug
+    // rather than silently writing an agent file.
+    throw new Error(`Agent "${agentId}" is not editable.`);
   }
 
   // Invalidate every live conversation's registry cache, then return the fresh list.
@@ -1725,25 +1693,12 @@ export class AgentRuntime {
     return this.listAllAgentDefinitions(conversationId);
   }
 
-  private async notifyAgentDefinitionContentWritten(conversationId: string): Promise<void> {
-    await this.reloadAgentDefinitions(conversationId);
-    const conversation = this.conversations.get(conversationId);
-    if (conversation) {
-      await this.refreshMemberDisplayNames(conversation);
-      this.emitProjection(conversationId, 'agent_definitions_reloaded');
-    }
-  }
-
   private async resolveAgentDefinitionById(conversationId: string, agentId: string): Promise<AgentDefinition> {
     const definitions = await this.listRawAgentDefinitions(conversationId);
     const match = (await this.withBuiltInAgentDefinitions(definitions))
       .find((definition) => agentDefinitionAgentId(definition) === agentId);
     if (!match) throw new Error('Agent definition not found.');
     return match;
-  }
-
-  private authoringLocalRoot(): string {
-    return this.options.localFileRoot ?? process.cwd();
   }
 
   async listAllSkills(conversationId: string) {
@@ -2347,7 +2302,6 @@ export class AgentRuntime {
           skillName: skill.name,
           description: skill.description,
           renderedContent,
-          agent: skill.agent,
           model: skill.model,
           effort: skill.effort,
           allowedTools: skill.allowedTools,
@@ -2365,19 +2319,13 @@ export class AgentRuntime {
     skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
     skillRuntime.restoreInvokedSkillsFromMessages(activePath);
     let delegationRuntime: AgentDelegationRuntime;
-    const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, this.scratchRoot(), skillRuntime, {
-      notifyAgentDefinitionContentWritten: async (filePaths) => {
-        await this.notifyAgentDefinitionContentWritten(conversationId);
-        void filePaths;
-      },
-    });
+    const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, this.scratchRoot(), skillRuntime);
     delegationRuntime = new AgentDelegationRuntime({
       conversationId,
       executingAgentId: defaultAgentId,
       memoryOwnerAgentId: defaultAgentId,
       localRoot: this.options.localFileRoot,
       scratchRoot: this.scratchRoot(),
-      additionalAgentDirectories: runtimeSettings.additionalAgentDirectories,
       host: {
         createChildAgent: (input) => {
           if (!providerConfig) throw new Error('No enabled agent provider is configured.');
@@ -2419,7 +2367,6 @@ export class AgentRuntime {
           if (!current) return Promise.resolve();
           return this.notifyChildRun(conversationId, current, snapshot);
         },
-        agentDefinitionContentWritten: () => this.notifyAgentDefinitionContentWritten(conversationId),
         reportError: (report) => this.reportError(report),
         restoreChildRunLedger: (runId) => this.restoreChildRunLedger(conversationId, runId),
         persistToolOutputPayload: (toolCallId, toolName, text) => (
@@ -2653,7 +2600,6 @@ export class AgentRuntime {
   }
 
   private applyRuntimeToolSettings(conversation: AgentConversationState): void {
-    conversation.delegationRuntime.updateAdditionalAgentDirectories(conversation.runtimeSettings.additionalAgentDirectories);
     conversation.agent.state.tools = createAgentTools(this.outlinerToolHost, {
       localFileRoot: this.options.localFileRoot,
       localWorkspace: conversation.localWorkspace,
@@ -3328,7 +3274,6 @@ export class AgentRuntime {
     await this.runCommandChildAgent(
       this.commandConversationId(command.nodeId),
       brief,
-      command.commandAgent,
       command.lastSuccessAt,
     );
   }
@@ -3389,7 +3334,7 @@ export class AgentRuntime {
     this.firingCommandNodeIds.add(nodeId);
     this.knownCommandConversationNodeIds.add(nodeId);
     try {
-      await this.runCommandChildAgent(conversationId, brief, node.commandAgent, node.sysLastRunAt ?? null);
+      await this.runCommandChildAgent(conversationId, brief, node.sysLastRunAt ?? null);
       return { conversationId: conversationId };
     } finally {
       this.firingCommandNodeIds.delete(nodeId);
@@ -3400,22 +3345,18 @@ export class AgentRuntime {
   // brief — the command title plus its non-field child outline (see
   // `commandBriefText`) — is run as a DELEGATED child run anchored to the command's own
   // delivery conversation, so every fire shows up as a task in that conversation's
-  // task panel. `agent` picks the executing agent definition (an
-  // `AgentDefinition.name`); empty forks the otherwise-empty delivery conversation
-  // so the run executes under the main agent's identity and capabilities. Resolves
-  // only when the child run reaches a terminal state; throws on failure/stop so the
-  // caller leaves the watermark unadvanced and arms the failure backoff.
+  // task panel. Under the one-Neva invariant a fire always forks the otherwise-empty
+  // delivery conversation, so the run executes under Neva's identity and capabilities.
+  // Resolves only when the child run reaches a terminal state; throws on failure/stop
+  // so the caller leaves the watermark unadvanced and arms the failure backoff.
   private async runCommandChildAgent(
     conversationId: string,
     brief: string,
-    agent: string | undefined,
     lastSuccessAt: number | null,
   ): Promise<void> {
     const conversation = await this.ensureConversationWithId(conversationId, commandConversationTitle(brief));
     await this.refreshRuntimeSettings(conversation);
-    const agentType = agent?.trim() ? agent.trim() : undefined;
     let data = await conversation.delegationRuntime.invokeAgent({
-      agent_type: agentType,
       description: commandConversationTitle(brief),
       prompt: buildTriggeredCommandPrompt(brief, lastSuccessAt),
       run_in_background: false,
@@ -4455,7 +4396,6 @@ export class AgentRuntime {
           this.getEventStore().queryMemoryEntries(principal, { query, limit })
         )));
         const mergedEntries = interleaveMemoryEntryGroups(queryResults.map((result) => result.entries), limit);
-        const visibleEntries = mergedEntries.map((entry) => this.memoryEntryVisibleToReader(entry, reader));
         // Total durable matches — reachable by raising `limit`, so it is an honest paging signal
         // rather than an over-report of this single capped page.
         const totalEntries = queryResults.reduce((sum, result) => sum + result.totalEntries, 0);
@@ -4463,23 +4403,17 @@ export class AgentRuntime {
         if (!options.includeEvidence) {
           await this.recordMemoryAccessForEntries(mergedEntries, 'recall');
           return {
-            entries: visibleEntries.map((entry) => ({ entry })),
+            entries: mergedEntries.map((entry) => ({ entry })),
             totalEntries,
           };
         }
 
         let remainingChars = Math.max(0, options.maxChars ?? 0);
         const entries: AgentRecallRuntimeEntry[] = [];
-        for (const [index, entry] of mergedEntries.entries()) {
-          const visibleEntry = visibleEntries[index] ?? this.memoryEntryVisibleToReader(entry, reader);
-          if (!samePrincipal(entry.principal, reader)) {
-            const refusal = await this.crossPrincipalEvidenceRefusal(entry, reader);
-            entries.push({
-              entry: visibleEntry,
-              evidence: refusal ? [refusal] : undefined,
-            });
-            continue;
-          }
+        // The one-Neva invariant: every memory read hits Neva's single pool and the
+        // reader is Neva, so `entry.principal === reader` always holds — there is no
+        // cross-principal entry to redact or refuse evidence for.
+        for (const entry of mergedEntries) {
           const evidence: AgentRecallEvidence[] = [];
           let evidenceTruncated = false;
           for (const source of entry.sources) {
@@ -4534,7 +4468,7 @@ export class AgentRuntime {
             }
           }
           entries.push({
-            entry: visibleEntry,
+            entry,
             evidence: evidence.length > 0 ? evidence : undefined,
             evidenceTruncated,
           });
@@ -4549,40 +4483,14 @@ export class AgentRuntime {
     };
   }
 
-  /** The single believer pool every memory read hits. */
+  /**
+   * The single believer pool every memory read hits. Under the one-Neva invariant
+   * this only ever returns `[Neva]` — there is no second principal whose pool a
+   * reader could reach, so cross-principal redaction/evidence-refusal is removed as
+   * dead code (a test asserts this returns only Neva).
+   */
   private memoryReadPrincipals(): AgentPrincipal[] {
     return [this.agentPrincipal()];
-  }
-
-  private memoryEntryVisibleToReader(entry: AgentMemoryEntry, reader: AgentPrincipal): AgentMemoryEntry {
-    if (samePrincipal(entry.principal, reader)) return entry;
-    return {
-      ...entry,
-      fact: redactSecretLikeContent(entry.fact),
-      sources: [],
-    };
-  }
-
-  private async crossPrincipalEvidenceRefusal(
-    entry: AgentMemoryEntry,
-    reader: AgentPrincipal,
-  ): Promise<AgentRecallEvidence | null> {
-    const source = entry.sources[0];
-    if (!source) return null;
-    const sourceEvidence = await this.getPastChatsService().readMemorySourceEvidence({
-      principal: entry.principal,
-      reader,
-      source,
-      maxChars: 1,
-    });
-    if (sourceEvidence.mode === 'error' && sourceEvidence.code === 'CROSS_PRINCIPAL_EVIDENCE') {
-      return {
-        kind: 'evidence_refusal',
-        code: sourceEvidence.code,
-        message: sourceEvidence.message,
-      };
-    }
-    return null;
   }
 
   private createAskUserQuestionRuntime(
