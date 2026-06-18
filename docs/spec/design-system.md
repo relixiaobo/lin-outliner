@@ -424,7 +424,9 @@ Use these default desktop tokens before adding component-specific values:
   surface uses `--material-popover` + `--material-backdrop`, so
   reduced-transparency and high-contrast fall back through the shared material
   tokens. Language and copy controls stay neutral; the copy affordance is
-  circular, never a branded or square hover fill.
+  circular, never a branded or square hover fill. The text viewport is inset
+  inside the outer frame like file/PDF previews; long-line scrolling must not let
+  text sit directly on the frame edge.
 - `--workspace-surface-radius` is the canonical outer radius for workspace
   structural surfaces. `--panel-radius` and `--agent-composer-radius` both map
   to it.

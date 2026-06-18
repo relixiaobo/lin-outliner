@@ -9,6 +9,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-soft);
+  --code-block-content-inset: var(--space-5);
 }
 
 .code-block {
@@ -18,6 +19,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-soft);
+  --code-block-content-inset: var(--space-5);
 }
 
 .agent-code-header,
@@ -187,7 +189,7 @@
 .code-block-highlight pre.shiki,
 .code-block-textarea {
   margin: 0;
-  padding: var(--space-5) var(--space-5);
+  padding: 0;
   font-family: var(--font-family-mono);
   font-size: var(--font-code-block);
   line-height: var(--line-code-block);
@@ -217,6 +219,10 @@
 }
 
 /* Agent transcript code is read-only and scrolls within a bounded height. */
+.agent-code-body {
+  padding: var(--code-block-content-inset);
+}
+
 .agent-code-block pre {
   max-height: 280px;
   overflow: auto;
@@ -227,6 +233,7 @@
    layer, sized by a hidden <pre> so the height stays exact while Shiki resolves. */
 .code-block-editor {
   position: relative;
+  padding: var(--code-block-content-inset);
 }
 
 .code-block-sizer {
@@ -238,7 +245,7 @@
 
 .code-block-highlight {
   position: absolute;
-  inset: 0;
+  inset: var(--code-block-content-inset);
   overflow: hidden;
   pointer-events: none;
 }
@@ -249,10 +256,10 @@
 
 .code-block-textarea {
   position: absolute;
-  inset: 0;
+  inset: var(--code-block-content-inset);
   display: block;
-  width: 100%;
-  height: 100%;
+  width: auto;
+  height: auto;
   resize: none;
   overflow-x: auto;
   overflow-y: hidden;

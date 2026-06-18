@@ -136,13 +136,18 @@ test.describe('code block editor', () => {
 
     const metrics = await textarea.evaluate((element) => {
       const ta = element as HTMLTextAreaElement;
+      const block = ta.closest('.code-block');
+      const textareaRect = ta.getBoundingClientRect();
+      const blockRect = block?.getBoundingClientRect();
       return {
+        insetLeft: blockRect ? textareaRect.left - blockRect.left : 0,
         lines: ta.value.split('\n').length,
         scrollWidth: ta.scrollWidth,
         clientWidth: ta.clientWidth,
         whiteSpace: getComputedStyle(ta).whiteSpace,
       };
     });
+    expect(metrics.insetLeft).toBeGreaterThanOrEqual(8);
     expect(metrics.lines).toBe(1);
     expect(metrics.whiteSpace).toBe('pre');
     expect(metrics.scrollWidth).toBeGreaterThan(metrics.clientWidth);
