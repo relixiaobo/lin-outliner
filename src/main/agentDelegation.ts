@@ -2,17 +2,10 @@ import { Agent, type AfterToolCallResult, type AgentEvent, type AgentTool } from
 import { isContextOverflow } from '@earendil-works/pi-ai';
 import type { Api, AssistantMessage, ImageContent, Model, TextContent, ToolResultMessage, UserMessage } from '@earendil-works/pi-ai';
 import { randomUUID } from 'node:crypto';
-import { readdir, readFile, realpath } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import path from 'node:path';
 import {
   coerceString,
-  normalizeModelField,
-  parseAgentMarkdownDocument,
-  parseBoolean,
-  parsePermissionMode,
   parsePositiveInteger,
-  parseStringList,
 } from '../core/agentMarkdown';
 import type { AgentMessage, AgentChildRunActionResult } from '../core/agentTypes';
 import { systemReminder } from '../core/agentAttachments';
@@ -44,7 +37,7 @@ import {
   type ToolResultBudgetState,
 } from './agentToolOutputSlimming';
 import { autoCompactThreshold } from './agentRuntimeContext';
-import { NEVA_AGENT_PERSONA, composeAgentPrompt } from './agentSystemPrompt';
+import { NEVA_AGENT_PERSONA } from './agentSystemPrompt';
 import { isAbortError, throwIfAborted } from './agentAwaitWithAbort';
 import {
   agentDefinitionAgentId,
@@ -57,7 +50,6 @@ export const AGENT_STATUS_TOOL_NAME = 'AgentStatus';
 export const AGENT_SEND_TOOL_NAME = 'AgentSend';
 export const AGENT_STOP_TOOL_NAME = 'AgentStop';
 
-const AGENT_FILE_NAME = 'AGENT.md';
 const AGENT_LISTING_CONTEXT_PERCENT = 0.01;
 const CHARS_PER_TOKEN = 4;
 const DEFAULT_AGENT_LISTING_CHAR_BUDGET = 8_000;
@@ -91,11 +83,6 @@ const AGENT_TOOL_PARAMETERS = {
       type: 'string',
       minLength: 1,
       description: 'The task for the agent to perform.',
-    },
-    agent_type: {
-      type: 'string',
-      minLength: 1,
-      description: 'Optional specialized agent type. If omitted, Tenon starts a fork child run with the current conversation context.',
     },
     model: {
       type: 'string',
@@ -222,7 +209,6 @@ export interface AgentDelegationRuntimeHost {
   /** Status transition: `child_run.updated` (conversation) + run lifecycle event (child ledger). */
   childRunStatusChanged(snapshot: AgentChildRunSnapshot): Promise<void>;
   notifyChildRun(snapshot: AgentChildRunSnapshot): Promise<void>;
-  agentDefinitionContentWritten?(filePaths: string[]): Promise<void>;
   reportError?(report: ErrorReport): void;
   /**
    * Re-register the run's ledger writer and re-derive its transcript from the
@@ -251,8 +237,6 @@ export interface AgentDelegationRuntimeOptions {
   memoryOwnerAgentId?: string;
   localRoot?: string;
   scratchRoot?: string;
-  additionalAgentDirectories?: string[];
-  includeUserAgents?: boolean;
   depth?: number;
   ancestry?: string[];
   maxDepth?: number;
@@ -315,7 +299,6 @@ export type AgentChildRunSnapshot = DelegationDetail;
 interface AgentToolParams {
   description: string;
   prompt: string;
-  agent_type?: string;
   model?: string;
   effort?: string;
   run_in_background?: boolean;
@@ -337,7 +320,6 @@ export interface AgentChildRunSkillInput {
   skillName: string;
   description: string;
   renderedContent: string;
-  agent?: string;
   model?: string;
   effort?: string;
   allowedTools?: string[];
@@ -349,7 +331,6 @@ export class AgentDelegationRuntime {
   private readonly conversationId: string;
   private readonly localRoot: string;
   private readonly scratchRoot: string;
-  private additionalAgentDirectories: string[];
   private readonly depth: number;
   private readonly maxDepth: number;
   private readonly ancestry: string[];
@@ -367,7 +348,6 @@ export class AgentDelegationRuntime {
     this.conversationId = options.conversationId;
     this.localRoot = path.resolve(options.localRoot ?? process.cwd());
     this.scratchRoot = scratchRootForWorkdir(this.localRoot, options.scratchRoot);
-    this.additionalAgentDirectories = normalizeConfiguredDirectories(options.additionalAgentDirectories, this.localRoot);
     this.depth = options.depth ?? 0;
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DELEGATION_DEPTH;
     this.ancestry = options.ancestry ?? [];
@@ -375,18 +355,7 @@ export class AgentDelegationRuntime {
     this.memoryOwnerAgentId = options.memoryOwnerAgentId ?? options.executingAgentId;
     this.requestedByAgentId = options.requestedByAgentId;
     this.host = options.host;
-    this.registry = new AgentDefinitionRegistry({
-      localRoot: this.localRoot,
-      includeUserAgents: options.includeUserAgents ?? true,
-      additionalAgentDirectories: this.additionalAgentDirectories,
-    });
-  }
-
-  updateAdditionalAgentDirectories(directories: readonly string[]): void {
-    const normalized = normalizeConfiguredDirectories(directories, this.localRoot);
-    if (sameStringList(this.additionalAgentDirectories, normalized)) return;
-    this.additionalAgentDirectories = normalized;
-    this.registry.updateAdditionalAgentDirectories(normalized);
+    this.registry = new AgentDefinitionRegistry();
   }
 
   updateDisabledAgents(disabledAgents: string[]): void {
@@ -420,7 +389,7 @@ export class AgentDelegationRuntime {
       '',
       listing,
       '',
-      `To fork from the current conversation context, call ${AGENT_DELEGATE_TOOL_NAME} without agent_type.`,
+      `Calling ${AGENT_DELEGATE_TOOL_NAME} forks the current conversation context into an isolated worker that runs as the current agent.`,
     ].join('\n');
   }
 
@@ -505,11 +474,9 @@ export class AgentDelegationRuntime {
   ): Promise<AgentDelegateToolData> {
     const releaseStartupSlot = this.reserveRunningSlot();
     try {
-      const agentType = await this.resolveSkillAgentType(input.agent);
       return await this.startAgent({
         description: compactInlineText(input.description) || `skill ${input.skillName}`,
         prompt: input.renderedContent,
-        ...(agentType ? { agent_type: agentType } : {}),
         model: input.model,
         effort: input.effort,
         run_in_background: false,
@@ -619,17 +586,12 @@ export class AgentDelegationRuntime {
     signal?: AbortSignal,
     parentToolCallId?: string,
   ): Promise<AgentDelegateToolData> {
-    const contextMode = params.agent_type ? 'fresh' : 'fork';
-    const baseDefinition = contextMode === 'fork'
-      ? createForkAgentDefinition()
-      : await this.resolveFreshAgent(params.agent_type);
-    const definition = restrictAgentDefinitionTools(baseDefinition, params.allowedTools);
+    // The one-Neva invariant: the agent tool is fork-only — a fork is the current
+    // agent (Neva) working in an isolated context, never a second agent.
+    const contextMode = 'fork';
+    const definition = restrictAgentDefinitionTools(createForkAgentDefinition(), params.allowedTools);
 
-    if (contextMode !== 'fork' && this.disabledAgents.includes(agentDefinitionAgentId(definition))) {
-      throw new Error(`Agent '${definition.name}' is currently disabled in settings.`);
-    }
-
-    if (contextMode === 'fork') this.assertCanFork();
+    this.assertCanFork();
     this.assertCanDescend(definition.name);
     const name = params.name?.trim();
     if (name && this.names.has(name)) throw new Error(`Agent name is already in use in this session: ${name}`);
@@ -637,18 +599,15 @@ export class AgentDelegationRuntime {
     const runId = `child-${randomUUID()}`;
     const parentAgentId = this.host.getParentAgentId?.() ?? this.executingAgentId;
     const parentMemoryOwnerAgentId = this.host.getParentMemoryOwnerAgentId?.() ?? this.memoryOwnerAgentId;
-    const executingAgentId = contextMode === 'fork'
-      ? parentAgentId
-      : agentDefinitionAgentId(definition);
-    const memoryOwnerAgentId = contextMode === 'fork'
-      ? parentMemoryOwnerAgentId
-      : executingAgentId;
+    // A fork runs AS its spawner (Neva): it inherits the parent's executing and
+    // memory-owner identity, never its own.
+    const executingAgentId = parentAgentId;
+    const memoryOwnerAgentId = parentMemoryOwnerAgentId;
     const memoryOriginWorkspace = memoryWorkspaceIdForRoot(this.localRoot);
     let run: DelegationRunState | null = null;
     const { skillRuntime, localWorkspace, childAgent } = await this.buildChildAgentHarness({
       runId,
       definition,
-      contextMode,
       executingAgentId,
       parentAgentId,
       memoryOwnerAgentId,
@@ -664,17 +623,12 @@ export class AgentDelegationRuntime {
         run ? this.afterRunToolResult(run, toolCallId, toolName, result, isError) : undefined
       ),
     });
-    const preloadMessages = await this.preloadAgentSkills(definition, skillRuntime);
-    // The ledger seed split ([[agent-run-unification]]): inherited context (the
-    // fork prefix) lands BEFORE `run.started` and is excluded from Dream
-    // evidence; the directive (+ skill preloads) land after it — the same
-    // boundary `dreamEvidenceStartMessageIndex` used to express positionally.
-    const contextMessages = contextMode === 'fork'
-      ? buildForkContextMessages(this.host.getParentMessages())
-      : [];
-    const evidenceMessages = contextMode === 'fork'
-      ? [createHiddenUserMessage(buildForkDirective(params.prompt))]
-      : [...preloadMessages, createUserMessage(params.prompt)];
+    // The ledger seed split ([[agent-run-unification]]): the inherited fork-context
+    // prefix lands BEFORE `run.started` and is excluded from Dream evidence; the
+    // fork directive lands after it — the boundary `dreamEvidenceStartMessageIndex`
+    // expresses positionally.
+    const contextMessages = buildForkContextMessages(this.host.getParentMessages());
+    const evidenceMessages = [createHiddenUserMessage(buildForkDirective(params.prompt))];
     const promptMessages = [...contextMessages, ...evidenceMessages];
 
     const background = params.run_in_background === true || definition.background === true;
@@ -746,7 +700,6 @@ export class AgentDelegationRuntime {
   private async buildChildAgentHarness(input: {
     runId: string;
     definition: AgentDefinition;
-    contextMode: 'fresh' | 'fork';
     executingAgentId: string;
     parentAgentId: string;
     memoryOwnerAgentId: string;
@@ -776,7 +729,6 @@ export class AgentDelegationRuntime {
           skillName: skill.name,
           description: skill.description,
           renderedContent,
-          agent: skill.agent,
           model: skill.model,
           effort: skill.effort,
           allowedTools: skill.allowedTools,
@@ -792,20 +744,11 @@ export class AgentDelegationRuntime {
       },
     });
     skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
-    const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, this.scratchRoot, skillRuntime, {
-      notifyAgentDefinitionContentWritten: async (filePaths) => {
-        childRuntime.reloadAgentDefinitions();
-        await this.host.agentDefinitionContentWritten?.(filePaths);
-      },
-    });
-    // Attribution travels with consultee identity (authoritative `contextMode`, not
-    // an id heuristic): a FRESH child IS a consultee → attribute to it; a FORK runs
-    // as its spawner → INHERIT the spawner's attribution (undefined when the spawner
-    // is the user's own top agent). The child's runtime carries it so the child's
-    // OWN forks inherit it in turn.
-    const requestedByAgentId = input.contextMode === 'fresh'
-      ? input.executingAgentId
-      : this.requestedByAgentId;
+    const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, this.scratchRoot, skillRuntime);
+    // A fork runs AS its spawner, so it INHERITS the spawner's approval attribution
+    // (undefined when the spawner is the user's own top agent). The child's runtime
+    // carries it so the child's OWN forks inherit it in turn.
+    const requestedByAgentId = this.requestedByAgentId;
     childRuntime = new AgentDelegationRuntime({
       conversationId: childConversationId,
       executingAgentId: input.executingAgentId,
@@ -813,7 +756,6 @@ export class AgentDelegationRuntime {
       requestedByAgentId,
       localRoot: this.localRoot,
       scratchRoot: this.scratchRoot,
-      additionalAgentDirectories: this.additionalAgentDirectories,
       depth: this.depth + 1,
       maxDepth: this.maxDepth,
       ancestry: [...this.ancestry, input.definition.name],
@@ -821,9 +763,7 @@ export class AgentDelegationRuntime {
       host: this.buildChildHost(() => input.runId, () => childAgent),
     });
     childRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
-    const systemPrompt = input.contextMode === 'fork'
-      ? this.host.getParentSystemPrompt()
-      : composeAgentPrompt(input.definition, { mode: 'child' });
+    const systemPrompt = this.host.getParentSystemPrompt();
     childAgent = this.host.createChildAgent({
       conversationId: childConversationId,
       messages: input.initialMessages,
@@ -843,22 +783,11 @@ export class AgentDelegationRuntime {
       allowedTools: input.definition.tools,
       disallowedTools: input.definition.disallowedTools,
       preapprovedToolRules: input.preapprovedToolRules,
-      l0CacheBreakpointEnabled: input.contextMode === 'fresh',
+      l0CacheBreakpointEnabled: false,
       unattended: input.unattended,
       afterToolResult: input.afterToolResult,
     });
     return { skillRuntime, localWorkspace, childAgent };
-  }
-
-  private async resolveFreshAgent(agentType: string | undefined): Promise<AgentDefinition> {
-    const normalized = normalizeAgentName(agentType ?? '');
-    if (!normalized) throw new Error('agent_type is required for a fresh child run. Omit agent_type only when you want to fork the current context.');
-    const definition = await this.registry.resolve(normalized);
-    if (!definition) {
-      const names = (await this.registry.listAgents()).map((agent) => agent.name).join(', ');
-      throw new Error(`Agent type '${normalized}' not found. Available agents: ${names || 'none'}`);
-    }
-    return definition;
   }
 
   private async preloadAgentSkills(definition: AgentDefinition, skillRuntime: AgentSkillRuntime): Promise<UserMessage[]> {
@@ -1108,9 +1037,10 @@ export class AgentDelegationRuntime {
         `${this.conversationId}-${run.id}-${trigger}-compact`,
         messages,
         model,
-        run.contextMode === 'fork'
-          ? 'This is a fork child run transcript. Omit copied parent conversation context that only predates the fork assignment; preserve the fork assignment, child run actions, user follow-ups, and final result.'
-          : undefined,
+        // Every child run is a fork (the one-Neva invariant): omit copied parent
+        // context that only predates the fork assignment; preserve the assignment,
+        // child run actions, user follow-ups, and final result.
+        'This is a fork child run transcript. Omit copied parent conversation context that only predates the fork assignment; preserve the fork assignment, child run actions, user follow-ups, and final result.',
         signal,
       );
       throwIfAborted(signal);
@@ -1164,7 +1094,6 @@ export class AgentDelegationRuntime {
     const { skillRuntime, localWorkspace, childAgent } = await this.buildChildAgentHarness({
       runId: run.id,
       definition,
-      contextMode: run.contextMode,
       executingAgentId: run.executingAgentId,
       parentAgentId: run.parentAgentId,
       memoryOwnerAgentId: run.memoryOwnerAgentId,
@@ -1210,10 +1139,6 @@ export class AgentDelegationRuntime {
       childRunCompacted: (snapshot, input) => this.host.childRunCompacted(snapshot, input),
       childRunStatusChanged: (snapshot) => this.host.childRunStatusChanged(snapshot),
       notifyChildRun: (snapshot) => this.host.notifyChildRun(snapshot),
-      agentDefinitionContentWritten: async (filePaths) => {
-        this.reloadAgentDefinitions();
-        await this.host.agentDefinitionContentWritten?.(filePaths);
-      },
       reportError: (report) => this.host.reportError?.(report),
       restoreChildRunLedger: (runId) => this.host.restoreChildRunLedger(runId),
       persistToolOutputPayload: (toolCallId, toolName, text) => (
@@ -1227,18 +1152,9 @@ export class AgentDelegationRuntime {
 
   private async resolveDefinitionForRun(run: DelegationRunState): Promise<AgentDefinition> {
     if (run.definition) return run.definition;
-    if (run.contextMode === 'fork') return createForkAgentDefinition();
-    const definition = await this.registry.resolve(run.agentType);
-    return definition ?? createTenonAssistantAgentDefinition();
-  }
-
-  private async resolveSkillAgentType(agentName: string | undefined): Promise<string | undefined> {
-    const normalized = normalizeAgentName(agentName ?? '');
-    if (!normalized) return undefined;
-    const definition = await this.registry.resolve(normalized);
-    if (definition) return definition.name;
-    const names = (await this.registry.listAgents()).map((agent) => agent.name).join(', ');
-    throw new Error(`Agent type '${normalized}' not found. Available agents: ${names || 'none'}`);
+    // Every child run is a fork of Neva (the one-Neva invariant) — there is no
+    // by-name agent to resolve.
+    return createForkAgentDefinition();
   }
 
   private reserveRunningSlot(): RunningSlotReservation {
@@ -1292,9 +1208,8 @@ export function createAgentDelegationTools(runtime: AgentDelegationRuntime): Age
       name: AGENT_DELEGATE_TOOL_NAME,
       label: 'Agent',
       description: [
-        'Start a focused child run for isolated task execution.',
-        'Use agent_type for a fresh specialized agent from the available agent listing.',
-        'Omit agent_type to fork the current conversation context into an isolated worker.',
+        'Fork the current conversation context into an isolated worker for a focused task.',
+        'A fork is yourself working in a separate context — not a different agent.',
         'Launch multiple agents in the same turn when independent work can run in parallel.',
         'For long work, set run_in_background and use AgentStatus, AgentSend, or AgentStop with the returned agent_id.',
       ].join('\n'),
@@ -1387,41 +1302,25 @@ function restrictAgentDefinitionTools(definition: AgentDefinition, allowedTools:
   return { ...definition, tools };
 }
 
+// The one-Neva invariant: the registry holds exactly one agent — the built-in
+// Neva. No file-backed agents are scanned or loaded; the only "delegation target"
+// besides Neva herself is the implicit fork pseudo-agent, which is never in this
+// registry (it is constructed on demand in startAgent).
 class AgentDefinitionRegistry {
-  private readonly localRoot: string;
-  private readonly includeUserAgents: boolean;
-  private additionalAgentDirectories: string[];
   private loaded = false;
   private readonly agents = new Map<string, AgentDefinition>();
-  private readonly seenAgentFileIds = new Set<string>();
-
-  constructor(options: { localRoot: string; includeUserAgents: boolean; additionalAgentDirectories: readonly string[] }) {
-    this.localRoot = path.resolve(options.localRoot);
-    this.includeUserAgents = options.includeUserAgents;
-    this.additionalAgentDirectories = normalizeConfiguredDirectories(options.additionalAgentDirectories, this.localRoot);
-  }
-
-  updateAdditionalAgentDirectories(directories: readonly string[]): void {
-    const normalized = normalizeConfiguredDirectories(directories, this.localRoot);
-    if (sameStringList(this.additionalAgentDirectories, normalized)) return;
-    this.additionalAgentDirectories = normalized;
-    this.reload();
-  }
 
   /**
-   * Drop the startup-cached scan so the next read re-scans the agents dirs. Used
-   * after an authoring write so a new/edited/deleted agent is live without an app
-   * restart. A run already resolved its definition at spawn, so live runs are
-   * unaffected — only future spawns see the change.
+   * Drop the cached load so the next read rebuilds. Kept so an edit to the
+   * built-in overlay is picked up without an app restart; it simply re-seeds Neva.
    */
   reload(): void {
     this.loaded = false;
     this.agents.clear();
-    this.seenAgentFileIds.clear();
   }
 
   async listAgents(): Promise<AgentDefinition[]> {
-    await this.ensureLoaded();
+    this.ensureLoaded();
     return [...this.agents.values()].sort((left, right) => left.name.localeCompare(right.name));
   }
 
@@ -1430,40 +1329,19 @@ class AgentDefinitionRegistry {
   }
 
   async resolve(name: string): Promise<AgentDefinition | null> {
-    await this.ensureLoaded();
+    this.ensureLoaded();
     const normalized = normalizeAgentName(name);
     return this.agents.get(normalized)
       ?? [...this.agents.values()].find((agent) => agent.displayName === normalized)
       ?? null;
   }
 
-  private async ensureLoaded(): Promise<void> {
+  private ensureLoaded(): void {
     if (this.loaded) return;
     this.loaded = true;
     this.agents.clear();
-    this.seenAgentFileIds.clear();
-    await this.addLoadedAgent(createTenonAssistantAgentDefinition());
-    for (const { dir, source } of agentSearchDirs(this.localRoot, this.includeUserAgents, this.additionalAgentDirectories)) {
-      for (const agent of await loadAgentsFromDir(dir, source)) {
-        await this.addLoadedAgent(agent);
-      }
-    }
-  }
-
-  private async addLoadedAgent(agent: AgentDefinition): Promise<void> {
-    const existing = this.agents.get(agent.name);
-    if (existing?.source === 'built-in') {
-      if (agent.source === 'built-in') {
-        throw new Error(`Duplicate built-in agent "${agent.name}" from ${existing.agentFile} and ${agent.agentFile}.`);
-      }
-      return;
-    }
-    const fileId = agent.source === 'built-in'
-      ? agent.agentFile
-      : await agentFileIdentity(agent.agentFile);
-    if (this.seenAgentFileIds.has(fileId)) return;
-    this.seenAgentFileIds.add(fileId);
-    this.agents.set(agent.name, agent);
+    const neva = createTenonAssistantAgentDefinition();
+    this.agents.set(neva.name, neva);
   }
 }
 
@@ -1494,96 +1372,6 @@ export function createTenonAssistantAgentDefinition(): AgentDefinition {
     body: NEVA_AGENT_PERSONA,
   };
 }
-
-function agentSearchDirs(
-  root: string,
-  includeUserAgents: boolean,
-  additionalAgentDirectories: readonly string[] = [],
-): Array<{ dir: string; source: AgentDefinition['source'] }> {
-  const dirs: Array<{ dir: string; source: AgentDefinition['source'] }> = [
-    ...(includeUserAgents ? [{ dir: path.join(homedir(), '.agents', 'agents'), source: 'user' as const }] : []),
-    { dir: path.join(root, '.agents', 'agents'), source: 'project' },
-    ...additionalAgentDirectories.map((dir): { dir: string; source: AgentDefinition['source'] } => ({
-      dir,
-      source: isPathInside(dir, root) ? 'project' : 'user',
-    })),
-  ];
-  const seen = new Set<string>();
-  return dirs.filter((entry) => {
-    const normalized = path.resolve(entry.dir);
-    if (seen.has(normalized)) return false;
-    seen.add(normalized);
-    return true;
-  });
-}
-
-async function loadAgentsFromDir(agentsDir: string, source: AgentDefinition['source']): Promise<AgentDefinition[]> {
-  let entries;
-  try {
-    entries = await readdir(agentsDir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const agents: AgentDefinition[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-    const rootDir = path.join(agentsDir, entry.name);
-    const agentFile = path.join(rootDir, AGENT_FILE_NAME);
-    let raw: string;
-    try {
-      raw = await readFile(agentFile, 'utf8');
-    } catch {
-      continue;
-    }
-    const parsed = parseAgentMarkdownDocument(raw);
-    agents.push(createAgentDefinition({
-      name: entry.name,
-      rootDir,
-      agentFile,
-      source,
-      body: parsed.body,
-      frontmatter: parsed.frontmatter,
-    }));
-  }
-  return agents;
-}
-
-export function createAgentDefinition(input: {
-  name: string;
-  rootDir: string;
-  agentFile: string;
-  source: AgentDefinition['source'];
-  body: string;
-  frontmatter: Record<string, unknown>;
-}): AgentDefinition {
-  const description = compactInlineText(
-    coerceString(input.frontmatter.description)
-      ?? extractDescriptionFromMarkdown(input.body)
-      ?? `${input.name} agent`,
-  );
-  return {
-    name: normalizeAgentName(coerceString(input.frontmatter.name) ?? input.name) || input.name,
-    displayName: normalizeAgentName(coerceString(input.frontmatter.name) ?? ''),
-    source: input.source,
-    rootDir: input.rootDir,
-    agentFile: input.agentFile,
-    description,
-    tools: parseStringList(input.frontmatter.tools),
-    disallowedTools: parseStringList(input.frontmatter['disallowed-tools'] ?? input.frontmatter.disallowedTools),
-    model: normalizeModelField(coerceString(input.frontmatter.model)),
-    effort: coerceString(input.frontmatter.effort),
-    permissionMode: parsePermissionMode(input.frontmatter['permission-mode'] ?? input.frontmatter.permissionMode),
-    maxTurns: parsePositiveInteger(input.frontmatter['max-turns'] ?? input.frontmatter.maxTurns),
-    skills: parseStringList(input.frontmatter.skills),
-    background: parseBoolean(input.frontmatter.background),
-    body: input.body.trim(),
-  };
-}
-
-// The AGENT.md parser exists exactly ONCE — `core/agentMarkdown.ts` (the
-// pre-release architecture sweep's consolidation, landed with run unification).
-export { parseAgentMarkdownDocument as parseAgentMarkdown } from '../core/agentMarkdown';
 
 function buildForkDirective(directive: string): string {
   return [
@@ -1777,7 +1565,6 @@ function normalizeAgentToolParams(raw: unknown): AgentToolParams {
   return {
     description,
     prompt,
-    agent_type: coerceString(raw.agent_type),
     model: coerceString(raw.model),
     run_in_background: raw.run_in_background === true,
     name: coerceString(raw.name),
@@ -1887,49 +1674,10 @@ function waitWithTimeout(promise: Promise<unknown>, timeoutMs: number): Promise<
   });
 }
 
-function normalizeConfiguredDirectories(value: readonly string[] | undefined, root: string): string[] {
-  if (!value?.length) return [];
-  const seen = new Set<string>();
-  const dirs: string[] = [];
-  for (const item of value) {
-    const expanded = expandConfiguredPath(item, root);
-    if (!expanded || seen.has(expanded)) continue;
-    seen.add(expanded);
-    dirs.push(expanded);
-  }
-  return dirs;
-}
-
-function expandConfiguredPath(value: string, root: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return '';
-  if (trimmed === '~') return homedir();
-  if (trimmed.startsWith('~/')) return path.join(homedir(), trimmed.slice(2));
-  if (trimmed.startsWith('$HOME/')) return path.join(homedir(), trimmed.slice('$HOME/'.length));
-  if (trimmed.startsWith('${HOME}/')) return path.join(homedir(), trimmed.slice('${HOME}/'.length));
-  return path.resolve(root, trimmed);
-}
-
-async function agentFileIdentity(agentFile: string): Promise<string> {
-  if (agentFile.startsWith('built-in/')) return agentFile;
-  try {
-    return await realpath(agentFile);
-  } catch {
-    return path.resolve(agentFile);
-  }
-}
-
 function normalizeAgentName(name: string): string {
   const normalized = name.trim().replace(/^\//, '');
   if (!normalized) return '';
   return normalized.replace(/\s+/g, '-');
-}
-
-function extractDescriptionFromMarkdown(body: string): string | undefined {
-  return body
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^#+\s*/, '').trim())
-    .find(Boolean);
 }
 
 function compactInlineText(value: string): string {
@@ -1945,17 +1693,8 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isPathInside(target: string, root: string): boolean {
-  const relative = path.relative(root, target);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
 function normalizePathForPrompt(filePath: string): string {
   return filePath.split(path.sep).join('/');
-}
-
-function sameStringList(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function messageTextParts(message: AgentMessage): string[] {

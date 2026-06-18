@@ -1694,15 +1694,6 @@ export class AgentRuntime {
     return this.listAllAgentDefinitions(conversationId);
   }
 
-  private async notifyAgentDefinitionContentWritten(conversationId: string): Promise<void> {
-    await this.reloadAgentDefinitions(conversationId);
-    const conversation = this.conversations.get(conversationId);
-    if (conversation) {
-      await this.refreshMemberDisplayNames(conversation);
-      this.emitProjection(conversationId, 'agent_definitions_reloaded');
-    }
-  }
-
   private async resolveAgentDefinitionById(conversationId: string, agentId: string): Promise<AgentDefinition> {
     const definitions = await this.listRawAgentDefinitions(conversationId);
     const match = (await this.withBuiltInAgentDefinitions(definitions))
@@ -2312,7 +2303,6 @@ export class AgentRuntime {
           skillName: skill.name,
           description: skill.description,
           renderedContent,
-          agent: skill.agent,
           model: skill.model,
           effort: skill.effort,
           allowedTools: skill.allowedTools,
@@ -2330,19 +2320,13 @@ export class AgentRuntime {
     skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
     skillRuntime.restoreInvokedSkillsFromMessages(activePath);
     let delegationRuntime: AgentDelegationRuntime;
-    const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, this.scratchRoot(), skillRuntime, {
-      notifyAgentDefinitionContentWritten: async (filePaths) => {
-        await this.notifyAgentDefinitionContentWritten(conversationId);
-        void filePaths;
-      },
-    });
+    const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, this.scratchRoot(), skillRuntime);
     delegationRuntime = new AgentDelegationRuntime({
       conversationId,
       executingAgentId: defaultAgentId,
       memoryOwnerAgentId: defaultAgentId,
       localRoot: this.options.localFileRoot,
       scratchRoot: this.scratchRoot(),
-      additionalAgentDirectories: runtimeSettings.additionalAgentDirectories,
       host: {
         createChildAgent: (input) => {
           if (!providerConfig) throw new Error('No enabled agent provider is configured.');
@@ -2384,7 +2368,6 @@ export class AgentRuntime {
           if (!current) return Promise.resolve();
           return this.notifyChildRun(conversationId, current, snapshot);
         },
-        agentDefinitionContentWritten: () => this.notifyAgentDefinitionContentWritten(conversationId),
         reportError: (report) => this.reportError(report),
         restoreChildRunLedger: (runId) => this.restoreChildRunLedger(conversationId, runId),
         persistToolOutputPayload: (toolCallId, toolName, text) => (
@@ -2618,7 +2601,6 @@ export class AgentRuntime {
   }
 
   private applyRuntimeToolSettings(conversation: AgentConversationState): void {
-    conversation.delegationRuntime.updateAdditionalAgentDirectories(conversation.runtimeSettings.additionalAgentDirectories);
     conversation.agent.state.tools = createAgentTools(this.outlinerToolHost, {
       localFileRoot: this.options.localFileRoot,
       localWorkspace: conversation.localWorkspace,

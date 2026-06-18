@@ -250,7 +250,6 @@ export interface BuiltInSkillInput {
   model?: string;
   effort?: string;
   execution?: 'inline' | 'isolated';
-  agent?: string;
   paths?: string[];
   readOnlyIsolated?: boolean;
 }
@@ -1543,7 +1542,6 @@ function createSkillDefinition(input: {
     effort: coerceString(input.frontmatter.effort),
     shell: coerceString(input.frontmatter.shell),
     execution: parseSkillExecutionFrontmatter(input.frontmatter),
-    agent: coerceString(input.frontmatter.agent),
     paths: parsePathsFrontmatter(input.frontmatter.paths),
     contentLength: input.body.length,
     body: input.body,
@@ -1563,7 +1561,6 @@ function createBuiltInSkillDefinition(input: BuiltInSkillInput): SkillDefinition
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
     ...(input.execution === 'isolated' ? { execution: 'isolated' } : {}),
-    ...(input.agent ? { agent: input.agent } : {}),
     ...(input.paths?.length ? { paths: input.paths } : {}),
   };
   return createSkillDefinition({

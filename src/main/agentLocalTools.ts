@@ -31,11 +31,6 @@ interface LocalToolOptions {
   scratchRoot?: string;
   workspace?: AgentLocalWorkspaceContext;
   skillRuntime?: AgentSkillRuntime;
-  agentDefinitionRuntime?: AgentDefinitionRuntime;
-}
-
-export interface AgentDefinitionRuntime {
-  notifyAgentDefinitionContentWritten(filePaths: string[]): Promise<void>;
 }
 
 export interface AgentLocalWorkspaceContext {
@@ -51,7 +46,6 @@ export interface AgentLocalWorkspaceContext {
   permissionRoots: ResolvedAgentLocalPermissionRoot[];
   readFileState: Map<string, ReadFileState>;
   skillRuntime?: AgentSkillRuntime;
-  agentDefinitionRuntime?: AgentDefinitionRuntime;
 }
 
 export interface AgentLocalPermissionRoot {
@@ -586,7 +580,7 @@ const TASK_STOP_PARAMETERS = {
 };
 
 export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>[] {
-  const workspace = options.workspace ?? createWorkspaceContext(options.localRoot, options.scratchRoot, options.skillRuntime, options.agentDefinitionRuntime);
+  const workspace = options.workspace ?? createWorkspaceContext(options.localRoot, options.scratchRoot, options.skillRuntime);
   return [
     createFileReadTool(workspace),
     createFileGlobTool(workspace),
@@ -647,7 +641,6 @@ function createWorkspaceContext(
   localRoot?: string,
   scratchRoot?: string,
   skillRuntime?: AgentSkillRuntime,
-  agentDefinitionRuntime?: AgentDefinitionRuntime,
 ): WorkspaceContext {
   return {
     root: path.resolve(localRoot ?? process.cwd()),
@@ -655,7 +648,6 @@ function createWorkspaceContext(
     permissionRoots: [],
     readFileState: new Map<string, ReadFileState>(),
     skillRuntime,
-    agentDefinitionRuntime,
   };
 }
 
@@ -663,9 +655,8 @@ export function createAgentLocalWorkspaceContext(
   localRoot?: string,
   scratchRoot?: string,
   skillRuntime?: AgentSkillRuntime,
-  agentDefinitionRuntime?: AgentDefinitionRuntime,
 ): AgentLocalWorkspaceContext {
-  return createWorkspaceContext(localRoot, scratchRoot, skillRuntime, agentDefinitionRuntime);
+  return createWorkspaceContext(localRoot, scratchRoot, skillRuntime);
 }
 
 export function setAgentLocalPermissionRoots(

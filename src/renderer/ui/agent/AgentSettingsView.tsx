@@ -73,7 +73,6 @@ interface DraftConfig {
   slashSkillsEnabled: boolean;
   compactEnabled: boolean;
   additionalSkillDirectoriesText: string;
-  additionalAgentDirectoriesText: string;
   disabledSkills: string[];
   disabledAgents: string[];
 }
@@ -157,7 +156,6 @@ const EMPTY_DRAFT: DraftConfig = {
   slashSkillsEnabled: true,
   compactEnabled: true,
   additionalSkillDirectoriesText: '',
-  additionalAgentDirectoriesText: '',
   disabledSkills: [],
   disabledAgents: [],
 };
@@ -626,7 +624,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
         slashSkillsEnabled: draft.slashSkillsEnabled,
         compactEnabled: draft.compactEnabled,
         additionalSkillDirectories: parseDirectoryListInput(draft.additionalSkillDirectoriesText),
-        additionalAgentDirectories: parseDirectoryListInput(draft.additionalAgentDirectoriesText),
         disabledSkills: draft.disabledSkills,
         disabledAgents: draft.disabledAgents,
       });
@@ -1357,24 +1354,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                         );
                       })}
                     </InsetGroup>
-
-                    <div className="inset-group">
-                      <div className="inset-group-header">{t.settings.agents.directoriesGroup}</div>
-                      <div className="inset-card" role="group">
-                        <label className="settings-sheet-row settings-sheet-row-stack">
-                          <span className="settings-sheet-row-label">{t.settings.agents.directoriesLabel}</span>
-                          <Input
-                            className="settings-sheet-row-input"
-                            label={t.settings.agents.directoriesLabel}
-                            onChange={(event) => setDraft((current) => ({ ...current, additionalAgentDirectoriesText: event.target.value }))}
-                            placeholder={t.settings.agents.directoriesPlaceholder}
-                            value={draft.additionalAgentDirectoriesText}
-                            variant="bare"
-                          />
-                        </label>
-                      </div>
-                      <p className="inset-group-footnote">{t.settings.agents.directoriesSublabel}</p>
-                    </div>
                   </>
                 )}
               </section>
@@ -1547,14 +1526,13 @@ function providerToDraft(provider: AgentProviderConfigView, settings: AgentProvi
 
 function runtimeSettingsToDraft(settings: AgentProviderSettingsView): Pick<
   DraftConfig,
-  'automaticSkillsEnabled' | 'slashSkillsEnabled' | 'compactEnabled' | 'additionalSkillDirectoriesText' | 'additionalAgentDirectoriesText'
+  'automaticSkillsEnabled' | 'slashSkillsEnabled' | 'compactEnabled' | 'additionalSkillDirectoriesText'
 > {
   return {
     automaticSkillsEnabled: settings.agent.automaticSkillsEnabled,
     slashSkillsEnabled: settings.agent.slashSkillsEnabled,
     compactEnabled: settings.agent.compactEnabled,
     additionalSkillDirectoriesText: settings.agent.additionalSkillDirectories.join(', '),
-    additionalAgentDirectoriesText: settings.agent.additionalAgentDirectories.join(', '),
   };
 }
 
@@ -1564,7 +1542,6 @@ function hasRuntimeDraftChanged(draft: DraftConfig, settings: AgentProviderSetti
     || draft.slashSkillsEnabled !== runtime.slashSkillsEnabled
     || draft.compactEnabled !== runtime.compactEnabled
     || draft.additionalSkillDirectoriesText !== runtime.additionalSkillDirectoriesText
-    || draft.additionalAgentDirectoriesText !== runtime.additionalAgentDirectoriesText
     || !sameStringSet(draft.disabledSkills, settings.agent.disabledSkills ?? [])
     || !sameStringSet(draft.disabledAgents, settings.agent.disabledAgents ?? []);
 }

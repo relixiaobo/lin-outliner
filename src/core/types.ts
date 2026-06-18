@@ -801,7 +801,6 @@ export interface AgentRuntimeSettings {
   slashSkillsEnabled: boolean;
   compactEnabled: boolean;
   additionalSkillDirectories: string[];
-  additionalAgentDirectories: string[];
   providerTimeoutMs: number | null;
   providerMaxRetries: number | null;
   providerMaxRetryDelayMs: number | null;
@@ -817,7 +816,6 @@ export interface AgentRuntimeSettingsInput {
   slashSkillsEnabled?: boolean;
   compactEnabled?: boolean;
   additionalSkillDirectories?: string[];
-  additionalAgentDirectories?: string[];
   providerTimeoutMs?: number | null;
   providerMaxRetries?: number | null;
   providerMaxRetryDelayMs?: number | null;
@@ -879,7 +877,6 @@ export interface SkillDefinition {
   effort?: string;
   shell?: string;
   execution: 'inline' | 'isolated';
-  agent?: string;
   paths?: string[];
   contentLength: number;
   body: string;

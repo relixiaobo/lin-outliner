@@ -1012,63 +1012,6 @@ describe('agent runtime skill integration', () => {
     expect(parentContexts.join('\n')).toContain('Research child inspected available context.');
   });
 
-  test('fails isolated-execution skills with an explicit unknown agent instead of falling back to fork', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-isolated-skill-unknown-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-isolated-skill-unknown-data-'));
-    roots.push(localRoot, dataRoot);
-
-    await createSkill(localRoot, 'unknown-agent-skill', [
-      '---',
-      'description: Use when an unknown isolated skill agent is requested.',
-      'execution: isolated',
-      'agent: missing-specialist',
-      '---',
-      'UNKNOWN_AGENT_SKILL_BODY.',
-    ].join('\n'));
-
-    const parentContexts: string[] = [];
-    const script = scriptedStream(
-      [
-        fauxAssistantMessage([
-          fauxToolCall('skill', {
-            skill: 'unknown-agent-skill',
-          }, { id: 'tool-skill-unknown-agent' }),
-        ], { stopReason: 'toolUse' }),
-        (context) => {
-          parentContexts.push(JSON.stringify(context.messages));
-          return fauxAssistantMessage(fauxText('Parent handled unknown skill agent.'));
-        },
-      ],
-      () => undefined,
-    );
-
-    const { AgentRuntime: Runtime } = await loadRuntimeModule();
-    const sink = createWindowSink();
-    const runtime = new Runtime(
-      () => sink.window as never,
-      hostFor(Core.new()),
-      {
-        agentDataRoot: dataRoot,
-        localFileRoot: localRoot,
-        providerConfigLoader: async () => ({
-          providerId: 'openai',
-          enabled: true,
-          apiKey: 'test-key',
-        }),
-        streamFn: script.streamFn,
-      },
-    );
-
-    const created = await runtime.restoreLatestConversation();
-    await acceptRuntimeSkill(runtime, created.conversationId, 'unknown-agent-skill');
-    await runtime.sendMessage(created.conversationId, 'Use the unknown agent isolated skill.');
-
-    expect(script.pendingCount()).toBe(0);
-    const parentText = parentContexts.join('\n');
-    expect(parentText).toContain("Agent type 'missing-specialist' not found");
-    expect(parentText).not.toContain('UNKNOWN_AGENT_SKILL_BODY.');
-  });
-
   test('runs skill shell expansion through the runtime permission layer', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-shell-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-shell-data-'));

@@ -294,7 +294,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         slashSkillsEnabled: true,
         compactEnabled: true,
         additionalSkillDirectories: [],
-        additionalAgentDirectories: [],
         providerTimeoutMs: null,
         providerMaxRetries: null,
         providerMaxRetryDelayMs: 60_000,
@@ -1886,7 +1885,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             slashSkillsEnabled?: boolean;
             compactEnabled?: boolean;
             additionalSkillDirectories?: string[];
-            additionalAgentDirectories?: string[];
             providerTimeoutMs?: number | null;
             providerMaxRetries?: number | null;
             providerMaxRetryDelayMs?: number | null;
@@ -1899,9 +1897,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             additionalSkillDirectories: Array.isArray(settings.additionalSkillDirectories)
               ? settings.additionalSkillDirectories.map(String)
               : agentSettings.agent.additionalSkillDirectories,
-            additionalAgentDirectories: Array.isArray(settings.additionalAgentDirectories)
-              ? settings.additionalAgentDirectories.map(String)
-              : agentSettings.agent.additionalAgentDirectories,
             providerTimeoutMs: typeof settings.providerTimeoutMs === 'number' || settings.providerTimeoutMs === null
               ? settings.providerTimeoutMs
               : agentSettings.agent.providerTimeoutMs,

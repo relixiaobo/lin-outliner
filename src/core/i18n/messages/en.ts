@@ -278,10 +278,6 @@ export const en = {
       savedAgentNotice: 'Agent saved.',
       deletedNotice: 'Agent deleted.',
       duplicatedNotice: 'Agent duplicated.',
-      directoriesGroup: 'Agent directories',
-      directoriesLabel: 'Additional agent directories',
-      directoriesSublabel: 'Comma-separated paths scanned for extra agents.',
-      directoriesPlaceholder: '~/my-agents, ./team-agents',
     },
     footer: {
       cancel: 'Cancel',

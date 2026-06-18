@@ -249,10 +249,6 @@ export const zhHans: PartialMessages = {
       savedAgentNotice: '智能体已保存。',
       deletedNotice: '智能体已删除。',
       duplicatedNotice: '智能体已复制。',
-      directoriesGroup: '智能体目录',
-      directoriesLabel: '额外的智能体目录',
-      directoriesSublabel: '以逗号分隔的路径，用于扫描额外的智能体。',
-      directoriesPlaceholder: '~/my-agents, ./team-agents',
     },
     footer: {
       cancel: '取消',
