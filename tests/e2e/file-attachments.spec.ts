@@ -931,6 +931,31 @@ test.describe('file attachments', () => {
     })).toEqual({ bottomAction: true, centeredInFrame: true, compactWidth: true });
   });
 
+  test('file preview action menus dismiss on outside clicks without a surface focus outline', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await pasteClipboardFile(page, {
+      name: 'dismiss-menu.zip',
+      mimeType: 'application/zip',
+      text: 'zip bytes',
+    });
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const pastedId = (await todayChildren(page)).at(-1)!;
+    const attachmentRow = row(page, pastedId);
+    await attachmentRow.locator('> .row').first().hover();
+    await attachmentRow.locator('.row-chevron-button').first().click();
+    const metadataPreview = attachmentRow.locator('.file-node-row-preview .file-node-preview--metadata');
+    await expect(metadataPreview).toBeVisible();
+
+    await metadataPreview.locator('.file-preview-pill-more').click();
+    const menu = page.getByRole('menu', { name: 'Preview actions' });
+    await expect(menu).toBeVisible();
+    await expect.poll(async () => menu.evaluate((element) => getComputedStyle(element).outlineStyle)).toBe('none');
+
+    await row(page, ids.alpha).locator('> .row').click();
+    await expect(menu).toBeHidden();
+  });
+
   test('a file row has a read-only caret surface: display-only name, but tag/Enter nav works', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();

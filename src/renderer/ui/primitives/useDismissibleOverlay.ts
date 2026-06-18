@@ -2,6 +2,7 @@ import { useEffect, type RefObject } from 'react';
 
 interface DismissibleOverlayOptions {
   disabled?: boolean;
+  ignoreRefs?: Array<RefObject<HTMLElement | null>>;
   // Leave Escape to a more specific owner (e.g. `useMenuKeyboard`, which scopes ESC
   // to the focused surface and restores focus). When false, this hook only handles
   // outside-pointer dismissal. Defaults to true (outside-pointer + Escape).
@@ -14,20 +15,23 @@ export function useDismissibleOverlay(
   options: DismissibleOverlayOptions = {},
 ) {
   const escape = options.escape ?? true;
+  const ignoreRefs = options.ignoreRefs ?? [];
   useEffect(() => {
     if (options.disabled) return undefined;
-    const closeOnOutsideMouseDown = (event: globalThis.MouseEvent) => {
-      if (ref.current?.contains(event.target as Node)) return;
+    const closeOnOutsidePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (ref.current?.contains(target)) return;
+      if (ignoreRefs.some((ignoreRef) => ignoreRef.current?.contains(target))) return;
       onDismiss();
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onDismiss();
     };
-    document.addEventListener('mousedown', closeOnOutsideMouseDown);
+    document.addEventListener('pointerdown', closeOnOutsidePointerDown, true);
     if (escape) document.addEventListener('keydown', closeOnEscape);
     return () => {
-      document.removeEventListener('mousedown', closeOnOutsideMouseDown);
+      document.removeEventListener('pointerdown', closeOnOutsidePointerDown, true);
       if (escape) document.removeEventListener('keydown', closeOnEscape);
     };
-  }, [escape, onDismiss, options.disabled, ref]);
+  }, [escape, ignoreRefs, onDismiss, options.disabled, ref]);
 }

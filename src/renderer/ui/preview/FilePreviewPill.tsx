@@ -1,4 +1,4 @@
-import { useRef, useState, type ComponentType, type RefObject } from 'react';
+import { useMemo, useRef, useState, type ComponentType, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../../i18n/I18nProvider';
 import { ICON_SIZE, MoreIcon, OpenIcon } from '../icons';
@@ -51,6 +51,7 @@ export function FilePreviewPill({
   const [open, setOpen] = useState(false);
   const [menuInitialFocus, setMenuInitialFocus] = useState<MenuInitialFocus>('surface');
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const dismissIgnoreRefs = useMemo(() => [triggerRef], []);
 
   const allMenuActions: FilePreviewMenuAction[] = previewable && primaryOpen
     ? [{ key: 'open', label: primaryOpen.label, icon: OpenIcon, run: primaryOpen.run }, ...menuActions]
@@ -125,6 +126,7 @@ export function FilePreviewPill({
               actions={allMenuActions}
               anchorRef={triggerRef}
               ariaLabel={labels.actions}
+              dismissIgnoreRefs={dismissIgnoreRefs}
               initialFocus={menuInitialFocus}
               meta={meta}
               onClose={() => setOpen(false)}
@@ -140,6 +142,7 @@ function PillMenu({
   actions,
   anchorRef,
   ariaLabel,
+  dismissIgnoreRefs,
   initialFocus,
   meta,
   onClose,
@@ -147,6 +150,7 @@ function PillMenu({
   actions: FilePreviewMenuAction[];
   anchorRef: RefObject<HTMLElement | null>;
   ariaLabel: string;
+  dismissIgnoreRefs: Array<RefObject<HTMLElement | null>>;
   initialFocus: MenuInitialFocus;
   meta: string | null;
   onClose: () => void;
@@ -160,7 +164,7 @@ function PillMenu({
   });
   // Outside-pointer dismissal; Escape + roving Arrow/Home/End + focus-in/restore come
   // from useMenuKeyboard (escape:false here so the two do not both handle Escape).
-  useDismissibleOverlay(menuRef, onClose, { escape: false });
+  useDismissibleOverlay(menuRef, onClose, { escape: false, ignoreRefs: dismissIgnoreRefs });
   const { onKeyDown } = useMenuKeyboard({
     surfaceRef: menuRef,
     onClose,

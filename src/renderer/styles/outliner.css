@@ -2419,6 +2419,10 @@
   padding: calc(var(--space-2) + var(--space-hairline));
 }
 
+.node-context-menu:focus {
+  outline: none;
+}
+
 .node-context-item {
   display: flex;
   width: 100%;
