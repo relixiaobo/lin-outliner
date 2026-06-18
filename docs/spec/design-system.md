@@ -985,8 +985,11 @@ category history; see "Settings window".)
   must be centered inside the cell and must not move the structural marker axis.
   Expanded-scope guides use that transparent marker slot as the single geometry
   source; they never calculate from a visible glyph's size. The visible guide line
-  sits on the marker slot's leading edge, and its hover/click band stays outside
-  the slot. The band starts below the parent marker slot, so marker clicks remain
+  and its hover/click band are aligned from the actual `.row-bullet-button` rects
+  that rows render. The flat renderer measures the parent marker and the last
+  mounted descendant marker relative to `.outliner-flat-guides`; it does not
+  derive guide x/y from estimated row layout, depth constants, or visible glyph
+  size. The band starts below the parent marker slot, so marker clicks remain
   owned by the marker itself. The visible glyph (5px dot, file icon,
   reference/field glyph, command glyph) is centered inside the same slot. This
   keeps file icons, small dots, and other marker glyphs using one structural

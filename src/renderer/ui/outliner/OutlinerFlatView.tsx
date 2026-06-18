@@ -17,7 +17,6 @@ import type { NodeId, NodeProjection } from '../../api/types';
 import { freshNodeId } from '../../../core/nodeId';
 import { outlinerChildParentId, type DocumentIndex, type UiState } from '../../state/document';
 import { buildVisualRows, type VisualRow } from '../../state/visualRows';
-import { MAX_OUTLINE_INDENT_DEPTH } from '../workspaceResponsiveLayout';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { outlinerChildren } from '../shared';
 import { hiddenFieldKey, readViewConfig } from './row-model';
@@ -63,6 +62,14 @@ interface RowLayout {
   totalHeight: number;
 }
 
+interface FlatGuideGeometry {
+  key: string;
+  nodeId: NodeId;
+  left: number;
+  top: number;
+  height: number;
+}
+
 function buildRowLayout(rows: readonly VisualRow[], measured: Map<string, number>): RowLayout {
   const items: RowLayoutItem[] = [];
   let top = 0;
@@ -74,26 +81,31 @@ function buildRowLayout(rows: readonly VisualRow[], measured: Map<string, number
   return { items, totalHeight: top };
 }
 
-function flatGuideExtentFor(
-  rows: readonly VisualRow[],
-  layout: RowLayout,
-  rowIndex: number,
-): number | undefined {
+function descendantEndIndexFor(rows: readonly VisualRow[], rowIndex: number): number {
   const row = rows[rowIndex];
-  const rowItem = layout.items[rowIndex];
-  if (!row || row.kind !== 'content' || !rowItem) return undefined;
+  if (!row) return rowIndex;
   let endIndex = rowIndex + 1;
   while (endIndex < rows.length && rows[endIndex]!.depth > row.depth) {
     endIndex += 1;
   }
-  if (endIndex <= rowIndex + 1) return undefined;
-  const lastChildItem = layout.items[endIndex - 1];
-  if (!lastChildItem) return undefined;
-  // The guide follows marker centers, not the descendant row's full content
-  // height. Tall previews or wrapped text under the last child should not stretch
-  // the line past that child's marker center.
-  const extent = lastChildItem.top - rowItem.top;
-  return extent > 0 ? extent : undefined;
+  return endIndex;
+}
+
+function rowCanAnchorGuide(row: VisualRow): row is Extract<VisualRow, { kind: 'content' | 'field' }> {
+  return row.kind === 'content' || row.kind === 'field';
+}
+
+function sameFlatGuides(a: readonly FlatGuideGeometry[], b: readonly FlatGuideGeometry[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((guide, index) => {
+    const other = b[index];
+    return other !== undefined
+      && guide.key === other.key
+      && guide.nodeId === other.nodeId
+      && Math.abs(guide.left - other.left) < 0.5
+      && Math.abs(guide.top - other.top) < 0.5
+      && Math.abs(guide.height - other.height) < 0.5;
+  });
 }
 
 // First index whose row ends at or after `y` (rows are sorted by top, contiguous).
@@ -302,9 +314,11 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
 
   // ── Measurement + layout ──────────────────────────────────────────────────
   const listRef = useRef<HTMLDivElement | null>(null);
+  const guideOverlayRef = useRef<HTMLDivElement | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
   const [measureVersion, setMeasureVersion] = useState(0);
   const [scrollMetrics, setScrollMetrics] = useState({ top: 0, height: 0 });
+  const [flatGuides, setFlatGuides] = useState<FlatGuideGeometry[]>([]);
 
   const measureRow = useCallback((rowKey: string, height: number) => {
     const current = rowHeightsRef.current.get(rowKey);
@@ -453,6 +467,72 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     return [...set].sort((a, b) => a - b);
   }, [virtualize, layout, scrollMetrics.top, scrollMetrics.height, forcedIndices]);
 
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const overlay = guideOverlayRef.current;
+    if (!list || !overlay) {
+      setFlatGuides((current) => (current.length === 0 ? current : []));
+      return;
+    }
+
+    const overlayRect = overlay.getBoundingClientRect();
+    const viewportRect = resolveScroller()?.getBoundingClientRect() ?? overlayRect;
+    const markerByRowKey = new Map<string, HTMLElement>();
+    list.querySelectorAll<HTMLElement>('[data-flat-row-key]').forEach((shell) => {
+      const key = shell.dataset.flatRowKey;
+      const marker = shell.querySelector<HTMLElement>('.row-bullet-button');
+      if (key && marker) markerByRowKey.set(key, marker);
+    });
+
+    const renderedIndices = virtualize && renderIndices ? new Set(renderIndices) : null;
+    const nextGuides: FlatGuideGeometry[] = [];
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      if (!row || row.kind !== 'content' || row.draft) continue;
+      if (renderedIndices && !renderedIndices.has(i)) continue;
+      const endIndex = descendantEndIndexFor(rows, i);
+      if (endIndex <= i + 1) continue;
+
+      const parentMarker = markerByRowKey.get(row.key);
+      if (!parentMarker) continue;
+      let lastMarker: HTMLElement | undefined;
+      for (let j = endIndex - 1; j > i; j -= 1) {
+        const descendant = rows[j];
+        if (!descendant || !rowCanAnchorGuide(descendant)) continue;
+        if (renderedIndices && !renderedIndices.has(j)) continue;
+        lastMarker = markerByRowKey.get(descendant.key);
+        if (lastMarker) break;
+      }
+      if (!lastMarker) continue;
+
+      const parentRect = parentMarker.getBoundingClientRect();
+      const lastRect = lastMarker.getBoundingClientRect();
+      if (parentRect.bottom < viewportRect.top || parentRect.top > viewportRect.bottom) continue;
+      const topAbs = parentRect.top + parentRect.height / 2;
+      const bottomAbs = lastRect.top + lastRect.height / 2;
+      if (bottomAbs <= topAbs) continue;
+      if (bottomAbs < viewportRect.top || topAbs > viewportRect.bottom) continue;
+
+      nextGuides.push({
+        key: row.key,
+        nodeId: row.nodeId,
+        left: parentRect.left + parentRect.width / 2 - overlayRect.left,
+        top: topAbs - overlayRect.top,
+        height: bottomAbs - topAbs,
+      });
+    }
+
+    setFlatGuides((current) => (sameFlatGuides(current, nextGuides) ? current : nextGuides));
+  }, [
+    measureVersion,
+    renderIndices,
+    resolveScroller,
+    rows,
+    scrollMetrics.height,
+    scrollMetrics.top,
+    virtualize,
+  ]);
+
   const toggleDirectChildrenExpansion = useCallback((rowId: NodeId) => {
     const childParentId = outlinerChildParentId(rowId, byId);
     const childParentNode = childParentId ? byId.get(childParentId) : undefined;
@@ -470,26 +550,15 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   }, [byId, props.setUi]);
 
   const renderFlatGuides = () => (
-    <div className="outliner-flat-guides" role="presentation">
-      {rows.map((row, i) => {
-        if (row.kind !== 'content' || row.draft) return null;
-        const extent = flatGuideExtentFor(rows, layout, i);
-        if (extent === undefined) return null;
-        const guideTop = (layout.items[i]?.top ?? 0);
-        const marginLeft = Math.min(row.depth, MAX_OUTLINE_INDENT_DEPTH) * 28;
-        return (
-          <IndentGuide
-            key={`guide>${row.key}`}
-            guideFor={row.nodeId}
-            flatMetrics={{
-              top: guideTop,
-              height: extent,
-              marginLeft,
-            }}
-            onToggleChildren={() => toggleDirectChildrenExpansion(row.nodeId)}
-          />
-        );
-      })}
+    <div className="outliner-flat-guides" role="presentation" ref={guideOverlayRef}>
+      {flatGuides.map((guide) => (
+        <IndentGuide
+          key={`guide>${guide.key}`}
+          guideFor={guide.nodeId}
+          flatMetrics={guide}
+          onToggleChildren={() => toggleDirectChildrenExpansion(guide.nodeId)}
+        />
+      ))}
     </div>
   );
 
@@ -635,7 +704,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
           rootLevel={props.parentId === props.rootId}
           searchLoading={rootSearchRefreshing}
         />
-        <div className="outliner-flat-flow" role="presentation">
+        <div className="outliner-flat-flow" role="presentation" ref={listRef}>
           {renderFlatGuides()}
           {rows.map((row, i) => (
             <FlowRowShell key={row.key} onMeasure={measureRow} rowKey={row.key}>

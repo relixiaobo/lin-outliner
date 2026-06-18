@@ -182,17 +182,102 @@ test.describe('outliner trailing input and expansion parity', () => {
     expect(metrics.betaMarker).not.toBeNull();
     expect(metrics.betaRow!.height).toBeGreaterThan(metrics.betaMarker!.height + 30);
     const alphaMarkerCenter = metrics.alphaMarker!.top + metrics.alphaMarker!.height / 2;
+    const alphaMarkerCenterX = metrics.alphaMarker!.left + metrics.alphaMarker!.width / 2;
     const betaMarkerCenter = metrics.betaMarker!.top + metrics.betaMarker!.height / 2;
     const guideLineCenterX = metrics.guideLine!.left + metrics.guideLine!.width / 2;
-    expect(Math.abs(guideLineCenterX - metrics.alphaMarker!.left)).toBeLessThanOrEqual(1);
-    expect(metrics.guide!.right).toBeLessThanOrEqual(metrics.alphaMarker!.left + 0.5);
-    expect(metrics.guide!.left).toBeLessThan(metrics.alphaMarker!.left);
+    expect(Math.abs(guideLineCenterX - alphaMarkerCenterX)).toBeLessThanOrEqual(1);
     expect(metrics.guideLine!.top - alphaMarkerCenter).toBeGreaterThanOrEqual(16);
     expect(metrics.guideLine!.top - alphaMarkerCenter).toBeLessThanOrEqual(19);
     expect(Math.abs(metrics.guideLine!.bottom - betaMarkerCenter)).toBeLessThanOrEqual(2);
     expect(metrics.guideLine!.bottom).toBeLessThan(metrics.betaRow!.bottom - 20);
     expect(metrics.guide!.top - metrics.alphaMarker!.bottom).toBeGreaterThanOrEqual(3);
     expect(metrics.guide!.top - metrics.alphaMarker!.bottom).toBeLessThanOrEqual(5);
+  });
+
+  test('virtualized flat guides are measured from mounted marker DOM only', async ({ page }) => {
+    await page.evaluate(async ({ alphaId }) => {
+      const win = window as Window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      for (let i = 0; i < 75; i += 1) {
+        await win.lin?.invoke('create_node', {
+          id: `bulk-child-${i}`,
+          parentId: alphaId,
+          index: null,
+          text: `Bulk child ${i}`,
+        });
+      }
+    }, { alphaId: ids.alpha });
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+
+    await row(page, ids.alpha).locator('.row-chevron-button').click({ force: true });
+    await expect(page.locator('.outliner-flat')).toBeVisible();
+    await expect(row(page, 'bulk-child-0')).toBeVisible();
+
+    await expect.poll(async () => page.evaluate((alphaId) => {
+      const guide = document.querySelector(
+        `.outliner-flat-guides .indent-guide[data-guide-node-id="${alphaId}"]`,
+      );
+      const guideLine = guide?.querySelector('.indent-guide-line');
+      const parentMarker = document.querySelector(`[data-node-id="${alphaId}"] > .row .row-bullet-button`);
+      const mountedChildMarkers = Array.from(document.querySelectorAll<HTMLElement>('[data-node-id^="bulk-child-"] > .row .row-bullet-button'));
+      const lastChildMarker = mountedChildMarkers.at(-1);
+      if (!guide || !guideLine || !parentMarker || !lastChildMarker) return null;
+      const centerX = (rect: DOMRect) => rect.left + rect.width / 2;
+      const guideLineRect = guideLine.getBoundingClientRect();
+      const parentRect = parentMarker.getBoundingClientRect();
+      const lastChildRect = lastChildMarker.getBoundingClientRect();
+      return {
+        childMarkersMounted: mountedChildMarkers.length,
+        guideCenterX: Math.round(centerX(guideLineRect)),
+        parentCenterX: Math.round(centerX(parentRect)),
+        guideBottom: Math.round(guideLineRect.bottom),
+        lastChildCenterY: Math.round(lastChildRect.top + lastChildRect.height / 2),
+      };
+    }, ids.alpha)).toMatchObject({
+      guideBottom: expect.any(Number),
+      guideCenterX: expect.any(Number),
+      lastChildCenterY: expect.any(Number),
+      parentCenterX: expect.any(Number),
+    });
+
+    const topMetrics = await page.evaluate((alphaId) => {
+      const guideLine = document.querySelector(
+        `.outliner-flat-guides .indent-guide[data-guide-node-id="${alphaId}"] .indent-guide-line`,
+      );
+      const parentMarker = document.querySelector(`[data-node-id="${alphaId}"] > .row .row-bullet-button`);
+      const mountedChildMarkers = Array.from(document.querySelectorAll<HTMLElement>('[data-node-id^="bulk-child-"] > .row .row-bullet-button'));
+      const lastChildMarker = mountedChildMarkers.at(-1);
+      if (!guideLine || !parentMarker || !lastChildMarker) return null;
+      const centerX = (rect: DOMRect) => rect.left + rect.width / 2;
+      const guideLineRect = guideLine.getBoundingClientRect();
+      const parentRect = parentMarker.getBoundingClientRect();
+      const lastChildRect = lastChildMarker.getBoundingClientRect();
+      return {
+        childMarkersMounted: mountedChildMarkers.length,
+        guideCenterX: centerX(guideLineRect),
+        parentCenterX: centerX(parentRect),
+        guideBottom: guideLineRect.bottom,
+        lastChildCenterY: lastChildRect.top + lastChildRect.height / 2,
+      };
+    }, ids.alpha);
+
+    expect(topMetrics).not.toBeNull();
+    expect(topMetrics!.childMarkersMounted).toBeLessThan(75);
+    expect(Math.abs(topMetrics!.guideCenterX - topMetrics!.parentCenterX)).toBeLessThanOrEqual(1);
+    expect(Math.abs(topMetrics!.guideBottom - topMetrics!.lastChildCenterY)).toBeLessThanOrEqual(1);
+
+    await page.locator('.outline-panel-surface.active-panel .main-panel').evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      element.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+
+    await expect.poll(async () => indentGuide(page, ids.alpha).count()).toBe(0);
   });
 
   test('typing in the panel trailing input eagerly commits a real node', async ({ page }) => {

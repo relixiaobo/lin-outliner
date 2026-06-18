@@ -582,14 +582,14 @@ test.describe('file attachments', () => {
       const guideLineRect = guideLine.getBoundingClientRect();
       const centerX = (rect: DOMRect) => rect.left + rect.width / 2;
       return {
-        hitBandOutsideSlot: guideRect.right <= markerButtonRect.left + 0.5,
-        lineOnSlotLeadingEdge: Math.abs(centerX(guideLineRect) - markerButtonRect.left) <= 1,
+        lineOnSlotCenter: Math.abs(centerX(guideLineRect) - centerX(markerButtonRect)) <= 1,
+        measuredFromSlot: guideRect.left < centerX(markerButtonRect) && guideRect.right > centerX(markerButtonRect),
         startsBelowSlot: guideLineRect.top - markerButtonRect.bottom >= 3
           && guideLineRect.top - markerButtonRect.bottom <= 5,
       };
     }, attachmentId)).toEqual({
-      hitBandOutsideSlot: true,
-      lineOnSlotLeadingEdge: true,
+      lineOnSlotCenter: true,
+      measuredFromSlot: true,
       startsBelowSlot: true,
     });
   });

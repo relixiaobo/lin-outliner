@@ -5,9 +5,9 @@ import { useT } from '../../i18n/I18nProvider';
 interface IndentGuideProps {
   guideFor?: string;
   flatMetrics?: {
+    left: number;
     top: number;
     height: number;
-    marginLeft: number;
   };
   onToggleChildren: () => void;
 }
@@ -21,7 +21,7 @@ export function IndentGuide({
   const flatStyle = flatMetrics
     ? ({
       '--flat-indent-guide-height': `${Math.max(0, flatMetrics.height)}px`,
-      '--flat-indent-guide-margin-left': `${Math.max(0, flatMetrics.marginLeft)}px`,
+      '--flat-indent-guide-left': `${Math.max(0, flatMetrics.left)}px`,
       '--flat-indent-guide-top': `${Math.max(0, flatMetrics.top)}px`,
     } as CSSProperties)
     : undefined;
