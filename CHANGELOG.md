@@ -1604,6 +1604,13 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **Composer model-control test: silence the act() warning (main, fast-track)** — the
+  `AgentComposerModelControl` test mounts the anchored-overlay flyout, which (lacking
+  `requestAnimationFrame` under linkedom) deferred its reposition `setStyle` to a `setTimeout`
+  that fired after the render's `act()` block ("An update … was not wrapped in act(...)"). The test
+  harness now installs a synchronous `requestAnimationFrame` stub so the reposition runs inline
+  inside `act` — deterministic and warning-free (no product-code change; the two remaining
+  `CommandAgentPicker` / `DateValuePicker` warnings are pre-existing and unrelated).
 - **self-definition write dedup in `agentLocalTools` (PR #287, main)** — behavior-preserving
   cleanup of the #286 self-definition gateway: `file_edit` and `file_write` shared a 4×-duplicated
   `selfDefinitionWrite?.kind === 'skill'/'agent'` ladder (data spread, registry-reload notify, success
