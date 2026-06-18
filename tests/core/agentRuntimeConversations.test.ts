@@ -87,7 +87,6 @@ async function createRuntime(dataRoot: string, localRoot?: string) {
         slashSkillsEnabled: false,
         compactEnabled: true,
         additionalSkillDirectories: [],
-        additionalAgentDirectories: [],
       }),
     },
   );
@@ -152,6 +151,32 @@ describe('agent runtime conversations', () => {
       writable: true,
     });
     expect(assistant?.body).toContain('You are Neva.');
+  });
+
+  test('the registry loads only Neva — a dropped AGENT.md under .agents/agents is ignored (one-Neva invariant)', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-local-'));
+    roots.push(dataRoot, localRoot);
+    // A user drops a file-backed agent under the workspace agents dir. Pre-collapse this
+    // would have loaded a second agent; the registry now never scans it.
+    await createProjectAgent(localRoot, 'shadow-researcher');
+    const { runtime } = await createRuntime(dataRoot, localRoot);
+
+    const definitions = await runtime.listAllAgentDefinitions('workspace');
+
+    expect(definitions).toHaveLength(1);
+    expect(definitions[0]).toMatchObject({ agentId: ASSISTANT_AGENT_ID, name: 'assistant', source: 'built-in' });
+  });
+
+  test('memoryReadPrincipals returns only Neva — the single believer pool (one-Neva invariant)', async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
+    roots.push(dataRoot);
+    const { runtime } = await createRuntime(dataRoot);
+
+    // The defense-in-depth cross-principal redaction was removed as dead code; this is the
+    // invariant that makes it unreachable — recall only ever reads Neva's pool.
+    const principals = (runtime as unknown as { memoryReadPrincipals(): unknown[] }).memoryReadPrincipals();
+    expect(principals).toEqual([{ type: 'agent', agentId: ASSISTANT_AGENT_ID }]);
   });
 
   test('editing the built-in assistant overlays display name + persona, keeping the stable id', async () => {

@@ -13,31 +13,14 @@ import {
   type Usage,
 } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
-import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
-import type { AgentMemoryStreamSource, AgentPrincipal } from '../../src/core/agentEventLog';
 import { AgentEventStore } from '../../src/main/agentEventStore';
-import { AgentPastChatsService } from '../../src/main/agentPastChats';
-import { createPostCompactMessage } from '../../src/main/agentCompaction';
 import type { AgentEvent } from '../../src/core/agentEventLog';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
-import { AGENT_L0_FIRMWARE_PROMPT } from '../../src/main/agentSystemPrompt';
-
-const agentPrincipal = (agentId: string): AgentPrincipal => ({ type: 'agent', agentId });
-
-const conversationSource = (conversationId: string): AgentMemoryStreamSource => ({
-  stream: 'conversation',
-  streamId: conversationId,
-  range: {
-    fromSeqExclusive: 0,
-    throughSeq: 1,
-    throughEventId: `${conversationId}-event-1`,
-  },
-});
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -52,19 +35,6 @@ const EMPTY_USAGE: Usage = {
     cacheWrite: 0,
     total: 0,
   },
-};
-
-const ANTHROPIC_TEST_MODEL: Model<Api> = {
-  id: 'claude-test',
-  name: 'Claude Test',
-  provider: 'anthropic',
-  api: 'anthropic-messages',
-  baseUrl: 'https://api.anthropic.com',
-  reasoning: false,
-  input: ['text'],
-  contextWindow: 200_000,
-  maxTokens: 8_192,
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
 
 const electronUserDataRoot = path.join(tmpdir(), 'lin-agent-child-run-test-user-data');
@@ -103,22 +73,6 @@ function hostFor(core: Core): OutlinerToolHost {
       throw new Error('node tools are not used in this integration test');
     },
   };
-}
-
-async function createAgent(root: string, name: string, body: string) {
-  const agentDir = path.join(root, '.agents', 'agents', name);
-  await mkdir(agentDir, { recursive: true });
-  await writeFile(path.join(agentDir, 'AGENT.md'), body);
-  return agentDir;
-}
-
-function projectAgentId(agentDir: string, name: string): string {
-  const agentFile = path.join(agentDir, 'AGENT.md');
-  return `project:${createHash('sha256').update(path.resolve(agentFile)).digest('hex').slice(0, 16)}:${name}`;
-}
-
-function memoryOriginWorkspace(localRoot: string): string {
-  return `workspace:${createHash('sha256').update(path.resolve(localRoot)).digest('hex').slice(0, 16)}`;
 }
 
 function createWindowSink() {
@@ -269,23 +223,6 @@ function textFromContext(context: Context): string {
   });
 }
 
-function providerPayloadForSystemPrompt(systemPrompt: string) {
-  const cacheControl = () => ({ type: 'ephemeral' });
-  return {
-    system: [{ type: 'text', text: systemPrompt, cache_control: cacheControl() }],
-    tools: [{ name: 'node_read', cache_control: cacheControl() }],
-    messages: [{ role: 'user', content: [{ type: 'text', text: 'Hello', cache_control: cacheControl() }] }],
-  };
-}
-
-function countCacheControls(value: unknown): number {
-  if (Array.isArray(value)) return value.reduce((total, item) => total + countCacheControls(item), 0);
-  if (!value || typeof value !== 'object') return 0;
-  const record = value as Record<string, unknown>;
-  return ('cache_control' in record ? 1 : 0)
-    + Object.values(record).reduce((total, item) => total + countCacheControls(item), 0);
-}
-
 describe('agent runtime childRuns', () => {
   let roots: string[] = [];
 
@@ -417,6 +354,57 @@ describe('agent runtime childRuns', () => {
     expect(forkContext).toContain('Fork started - processing in background.');
   });
 
+  test('the Agent tool forks Neva: the child run is owned by Neva (one-Neva invariant)', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-owner-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-owner-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const streamFn = respondingStream((context) => {
+      const text = textFromContext(context);
+      if (text.includes('Do the fork work')) {
+        return fauxAssistantMessage(fauxText('Fork result.'));
+      }
+      if (text.includes('Spawn a fork') && !text.includes('tool-agent-fork-owner')) {
+        return fauxAssistantMessage([
+          fauxToolCall('Agent', {
+            description: 'fork owned by Neva',
+            prompt: 'Do the fork work.',
+            run_in_background: true,
+            name: 'fork-owner',
+          }, { id: 'tool-agent-fork-owner' }),
+        ], { stopReason: 'toolUse' });
+      }
+      return fauxAssistantMessage(fauxText('ack'));
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a fork for this.', sink);
+    const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
+    expect(childRunId).toBeDefined();
+
+    const data = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
+    // A fork runs AS Neva: it inherits the parent's executing + memory-owner identity, and its
+    // recorded agent type is the fork pseudo-agent — never a second, separately-owned agent.
+    expect(data).toMatchObject({
+      memory_owner_agent_id: 'built-in:tenon:assistant',
+      executing_agent_id: 'built-in:tenon:assistant',
+      agent_type: 'fork',
+    });
+  });
+
   test('slims large child run tool outputs before the child continues', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-slim-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-slim-data-'));
@@ -529,7 +517,6 @@ describe('agent runtime childRuns', () => {
           slashSkillsEnabled: true,
           compactEnabled: true,
           additionalSkillDirectories: [],
-          additionalAgentDirectories: [],
         }),
         streamFn: script.streamFn,
         completeSimpleFn: async (model, context) => {
@@ -599,7 +586,6 @@ describe('agent runtime childRuns', () => {
           slashSkillsEnabled: true,
           compactEnabled: true,
           additionalSkillDirectories: [],
-          additionalAgentDirectories: [],
         }),
         streamFn: script.streamFn,
         completeSimpleFn: async (model) => normalizeAssistantMessage(

@@ -9,6 +9,20 @@
 > like a conversation's. Vocabulary below was rewritten accordingly; cc-2.1
 > references describe the SOURCE system's wording, not ours.
 
+> **Single-agent collapse — fork-only (2026-06-18, `single-agent-finish-collapse`).**
+> The end-state supersedes every "fresh vs fork" / `agent_type` / file-backed
+> agent-loading passage below. There is exactly one agent, **Neva**; delegation is
+> **fork-only**. Concretely: the `Agent` tool schema carries **no** `agent_type`
+> (and no agent name/type field at all — "delegate to a different agent" is
+> structurally unrepresentable); `contextMode` is always `'fork'`; the registry
+> loads only the built-in Neva and never scans `~/.agents/agents` or
+> `<workspace>/.agents/agents`; a fork runs AS Neva (`executingAgentId` /
+> `memoryOwnerAgentId` are always the parent = Neva). `/research`, dream, and
+> background self-work are forks. The cross-agent "fresh" run, the by-name agent
+> registry scan, the `additionalAgentDirectories` setting, and the cross-principal
+> memory redaction are all removed as dead code. Read the `fresh` material below
+> as historical design context, not current behavior.
+
 This document is the design and implementation baseline for Tenon's delegation
 runtime. It records both the cc-2.1 source references used for alignment and the
 Lin-specific choices made while implementing the current same-conversation child run

@@ -54,7 +54,6 @@ async function createRuntime(dataRoot: string, core: Core, calls: HandleCall[]) 
         slashSkillsEnabled: false,
         compactEnabled: true,
         additionalSkillDirectories: [],
-        additionalAgentDirectories: [],
       }),
     },
   );

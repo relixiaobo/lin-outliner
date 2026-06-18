@@ -148,7 +148,6 @@ function defaultRuntimeOptions(localRoot: string, dataRoot: string, assetResolve
       slashSkillsEnabled: false,
       compactEnabled: true,
       additionalSkillDirectories: [],
-      additionalAgentDirectories: [],
     }),
     streamFn: captureStream(contexts),
   };

@@ -13,7 +13,6 @@ const RUNTIME_SETTINGS: AgentRuntimeSettings = {
   slashSkillsEnabled: true,
   compactEnabled: true,
   additionalSkillDirectories: ['/tmp/skills'],
-  additionalAgentDirectories: [],
   providerTimeoutMs: null,
   providerMaxRetries: null,
   providerMaxRetryDelayMs: 60_000,

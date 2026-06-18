@@ -938,9 +938,10 @@ describe('agent skills', () => {
   test('ships research as a built-in read-only isolated skill', async () => {
     const runtime = new AgentSkillRuntime({
       includeUserSkills: false,
-      executeIsolatedSkill: async ({ skill, renderedContent, readOnlyIsolated }) => ({
+      executeIsolatedSkill: async ({ renderedContent, readOnlyIsolated }) => ({
         agentId: 'research-child',
-        agentType: skill.agent ?? 'fork',
+        // Isolated skills always fork the current agent (Neva) — there is no per-skill agent type.
+        agentType: 'fork',
         status: readOnlyIsolated ? 'completed' : 'failed',
         result: renderedContent,
       }),
