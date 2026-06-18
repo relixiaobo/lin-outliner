@@ -31,23 +31,37 @@
   min-width: 0;
   height: calc(var(--control-size-xl) + var(--space-2));
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast);
+  user-select: none;
+}
+
+.agent-code-block:hover .agent-code-header,
+.agent-code-block:focus-within .agent-code-header,
+.code-block:hover .code-block-chrome,
+.code-block:focus-within .code-block-chrome,
+.code-block-chrome:has(.code-block-language[aria-expanded="true"]) {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.agent-code-header > span {
+  display: inline-flex;
+  height: calc(var(--control-size-xl) + var(--space-1));
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
   border: 1px solid var(--separator);
   border-radius: var(--radius-pill);
   background: var(--material-popover);
   backdrop-filter: var(--material-backdrop);
   -webkit-backdrop-filter: var(--material-backdrop);
   box-shadow: var(--shadow);
-  color: var(--text-soft);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
-  padding: var(--space-1);
-  user-select: none;
-}
-
-.agent-code-header > span {
-  min-width: 0;
-  overflow: hidden;
   padding: 0 var(--space-3) 0 var(--space-4);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -61,16 +75,19 @@
   flex: 0 0 calc(var(--control-size-xl) - var(--space-1));
   align-items: center;
   justify-content: center;
+  border: 1px solid var(--separator);
   border-radius: var(--radius-pill);
-  background: var(--fill-2);
+  background: var(--material-popover);
+  backdrop-filter: var(--material-backdrop);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--shadow);
   color: var(--text-soft);
-  transition: background var(--motion-fast), color var(--motion-fast), opacity var(--motion-fast);
+  transition: color var(--motion-fast), opacity var(--motion-fast);
 }
 
 /* Quiet icon button: hover deepens the icon color rather than adding a fill. */
 .agent-code-copy:hover:not(:disabled),
 .code-block-copy:hover:not(:disabled) {
-  background: var(--fill-3);
   color: var(--text-strong);
 }
 
@@ -88,12 +105,15 @@
   height: calc(var(--control-size-xl) - var(--space-1));
   align-items: center;
   gap: var(--space-1);
+  border: 1px solid var(--separator);
   font-family: var(--font-family-sans);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
   color: var(--text-soft);
-  background: transparent;
-  border: 0;
+  background: var(--material-popover);
+  backdrop-filter: var(--material-backdrop);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--shadow);
   border-radius: var(--radius-pill);
   padding: 0 var(--space-3) 0 var(--space-4);
   transition: color var(--motion-fast);
