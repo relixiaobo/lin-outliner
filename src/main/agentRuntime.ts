@@ -1628,13 +1628,25 @@ export class AgentRuntime {
       });
       await this.refreshPrimaryAgentIdentity();
       const views = await this.reloadAgentDefinitions(conversationId);
+      // Re-resolve the (possibly changed) model/effort once so a model/effort edit —
+      // from Settings or the composer's quick chip — applies on the NEXT turn, not
+      // only when the conversation is reopened. The agent loop re-reads
+      // state.model/thinkingLevel at each agent_start. Best-effort: if no provider
+      // resolves, keep the live model rather than failing the edit.
+      const providerConfig = await this.getActiveProviderConfig().catch(() => null);
+      const resolvedModelEffort = providerConfig
+        ? await this.resolveBuiltInAssistantModelEffort(providerConfig).catch(() => null)
+        : null;
       for (const [id, conversation] of this.conversations) {
         await this.refreshMemberDisplayNames(conversation);
-        // Reconfigure the live pi-agent so a persona/display-name edit takes effect
-        // on the NEXT turn, not only when the conversation is reopened. (The model
-        // is not hot-swapped here — it still resolves on conversation setup.)
+        // Reconfigure the live pi-agent so a persona / display-name / model / effort
+        // edit takes effect on the NEXT turn, not only when the conversation reopens.
         if (conversation.defaultAgentId === this.agentIdentity.agentId) {
           conversation.agent.state.systemPrompt = this.agentIdentity.systemPrompt;
+          if (resolvedModelEffort) {
+            conversation.agent.state.model = resolvedModelEffort.model;
+            conversation.agent.state.thinkingLevel = resolvedModelEffort.thinkingLevel;
+          }
         }
         this.emitProjection(id, 'agent_definitions_reloaded');
       }

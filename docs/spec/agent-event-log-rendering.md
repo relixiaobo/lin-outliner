@@ -117,14 +117,19 @@ The old mutable chat snapshot store is no longer part of the runtime.
   message context menu's Details action opens an anchored popover with speaker,
   timestamp, model/provider, and token usage. These details are derived from the
   event log; no separate metadata store is introduced.
-- The composer footer shows **no model identity control**. A conversation talks to
-  an agent identity (Neva), not to a single model, so the footer never presents
-  model/provider as a primary conversation affordance (it would imply the model is
-  the conversation's identity rather than a property of the agent profile).
-  Model/provider/effort stay visible only where they are diagnostic or
-  configuration-relevant: the Details popover, the run/debug panel, ledger
-  metadata, and the agent profile (where the model is actually chosen). See
-  `agent-delegation-runtime.md` for how a profile owns model + effort.
+- The composer footer's model control edits the **agent profile**, not a
+  per-conversation model identity. A conversation talks to an agent identity
+  (Neva), not to a single model, so the quick model/effort chip
+  (`AgentComposerModelControl`) is a shortcut to Neva's *standing* model/effort —
+  the same value Settings → Agent owns — never a per-conversation override. It
+  writes through the normal `agent_update_agent_definition` path (mirroring the
+  current definition so the user's tools/persona/skills are preserved), and the
+  runtime applies the change on the **next turn** (the agent loop re-reads
+  `state.model`/`thinkingLevel` at each `agent_start`, the same hot-swap as a
+  persona edit). Model/provider/effort otherwise stay visible only where they are
+  diagnostic or configuration-relevant: the Details popover, the run/debug panel,
+  ledger metadata, and the agent profile editor. See `agent-delegation-runtime.md`
+  for how a profile owns model + effort.
 
 ## Reference Analysis
 

@@ -926,6 +926,9 @@ commandPalette: {
       appendSteerPlaceholder: 'Append another steer...',
       dropFilesToAttach: 'Drop files to attach',
       addAttachment: 'Add attachment',
+      // Composer quick model/reasoning chip (edits Neva's standing profile).
+      modelControlLabel: 'Model and reasoning',
+      modelDefault: 'Default model',
       // Reasoning effort levels shown on the agent profile model/effort selector.
       reasoningLevels: {
         off: 'Off',

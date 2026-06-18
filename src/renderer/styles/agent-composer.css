@@ -632,6 +632,26 @@
   line-height: var(--line-meta-tight);
 }
 
+/* Quick model/effort picker, anchored above the chip (the .agent-composer-model
+   wrapper is position: relative). Menu glass per design-system B5/D2; the
+   --material-backdrop carries the reduced-transparency / high-contrast fallback. */
+.agent-composer-model-popover {
+  position: absolute;
+  z-index: var(--z-popover);
+  right: 0;
+  bottom: calc(100% + var(--space-2));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(320px, calc(100vw - 32px));
+  padding: var(--space-3);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--shadow);
+}
+
 .agent-composer-tool-button,
 .agent-composer-action-button {
   display: inline-flex;

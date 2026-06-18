@@ -292,11 +292,18 @@ Model and effort are owned by the agent identity that actually runs:
 
 - **User / project agents** keep `AgentDefinition.model` / `AgentDefinition.effort`
   (persisted to the agent's `.md` / `.json`).
-- **The built-in assistant** is a read-only definition, so its model/effort live in
-  a settings-owned overlay keyed by `agentId` (`builtInAgentProfiles` above),
-  reachable via `getBuiltInAgentProfile` / `setBuiltInAgentProfile`. Editing the
-  built-in's model/effort in its profile editor persists to this overlay (a real
-  Save), while name / tools / persona stay read-only (Duplicate for a full copy).
+- **The built-in assistant** is code, so the user's edits — display name, persona,
+  tools, skills, model, effort — live in a settings-owned overlay keyed by
+  `agentId` (`builtInAgentProfiles` above), reachable via `getBuiltInAgentProfile`
+  / `setBuiltInAgentProfile`. Two entry points write the same overlay: the
+  Settings → Agent profile editor and the composer's quick model/effort chip
+  (`AgentComposerModelControl`, model/effort only). Both round-trip the current
+  definition and persist only the fields that differ from the code base (so an
+  unchanged persona is never frozen), and `updateAgentDefinition` reconfigures the
+  live conversations — `state.systemPrompt` plus a re-resolved `state.model` /
+  `thinkingLevel` — so a model / effort / persona edit takes effect on the **next
+  turn**, not only on reopen. The stable `name` (Neva's memory anchor) is never
+  overlaid.
 
 The profile selector is **capability-driven**: pick a provider, then a model; the
 effort options are derived from that model's `supportedThinkingLevels`. Saved

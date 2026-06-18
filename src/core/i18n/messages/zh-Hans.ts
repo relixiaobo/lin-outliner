@@ -856,6 +856,8 @@ commandPalette: {
       appendSteerPlaceholder: '追加引导……',
       dropFilesToAttach: '拖放文件以附加',
       addAttachment: '添加附件',
+      modelControlLabel: '模型与推理',
+      modelDefault: '默认模型',
       reasoningLevels: {
         off: '关闭',
         minimal: '最低',

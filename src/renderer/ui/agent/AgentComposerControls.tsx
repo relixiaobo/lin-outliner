@@ -68,12 +68,15 @@ export function AgentComposerAttachmentButton({
 export function AgentComposerToolbar({
   attachmentDisabled,
   fileInputRef,
+  modelControl,
   onAttachmentClick,
   onFileInputChange,
   primaryAction,
 }: {
   attachmentDisabled: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
+  /** The quick model/reasoning chip; omitted when no agent profile is editable yet. */
+  modelControl?: ReactNode;
   onAttachmentClick: () => void;
   onFileInputChange: (event: ChangeEvent<HTMLInputElement>) => void;
   primaryAction: ReactNode;
@@ -93,6 +96,7 @@ export function AgentComposerToolbar({
       />
       <div className="agent-composer-spacer" />
       <div className="agent-composer-control-group">
+        {modelControl}
         {primaryAction}
       </div>
     </div>
