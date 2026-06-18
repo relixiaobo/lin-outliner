@@ -476,8 +476,8 @@ export function useWorkspaceLayout({
         }
         : candidate
     )));
-    if (isOutlinerView(previousView) && previousView.scrollTop === undefined) {
-      focusNode(previousView.rootId);
+    if (isOutlinerView(previousView)) {
+      focusNode(previousView.scrollTop === undefined ? previousView.rootId : null);
     } else {
       clearPreviewNavigationState();
     }
@@ -501,8 +501,8 @@ export function useWorkspaceLayout({
         }
         : candidate
     )));
-    if (isOutlinerView(nextView) && nextView.scrollTop === undefined) {
-      focusNode(nextView.rootId);
+    if (isOutlinerView(nextView)) {
+      focusNode(nextView.scrollTop === undefined ? nextView.rootId : null);
     } else {
       clearPreviewNavigationState();
     }

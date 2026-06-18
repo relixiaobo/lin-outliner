@@ -2063,6 +2063,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       onRedo={() => void props.run(() => api.redo())}
       onSelectAllRows={selectAllVisibleRows}
       onModEnter={() => void handleModEnter(EMPTY_RICH_TEXT)}
+      onPasteFiles={(files) => void handlePasteFiles(files)}
       onEscape={() => void exitToSelection()}
       onTriggerChange={() => undefined}
       focusTarget={editorRequestTarget}

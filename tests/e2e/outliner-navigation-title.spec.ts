@@ -211,12 +211,23 @@ test.describe('outliner navigation and page title parity', () => {
       window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
     }));
     const savedScrollTop = await panel.evaluate((element) => element.scrollTop);
+    await expect.poll(async () => page.evaluate((rootId) => {
+      const raw = window.localStorage.getItem('lin-outliner:workspace-layout:v4');
+      if (!raw) return 0;
+      const layout = JSON.parse(raw) as {
+        activePanelId?: string;
+        panels?: Array<{ id: string; view?: { kind?: string; rootId?: string; scrollTop?: number } }>;
+      };
+      const activePanel = layout.panels?.find((entry) => entry.id === layout.activePanelId);
+      return activePanel?.view?.kind === 'outliner' && activePanel.view.rootId === rootId
+        ? activePanel.view.scrollTop ?? 0
+        : 0;
+    }, ids.alpha)).toBeGreaterThan(Math.max(100, Math.round(savedScrollTop) - 80));
 
     const targetChildId = childIds[30]!;
     await expect(row(page, targetChildId)).toBeVisible();
     await row(page, targetChildId).getByRole('button', { name: 'Open' }).click();
     await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha child 30');
-
     await page.getByRole('button', { name: 'Previous page' }).first().click();
     await expect(page.locator('.panel-title-editor').first()).toContainText('Alpha');
     await expect.poll(async () => panel.evaluate((element) => Math.round(element.scrollTop)))

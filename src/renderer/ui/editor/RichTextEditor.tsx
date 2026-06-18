@@ -541,11 +541,6 @@ export function RichTextEditor(props: RichTextEditorProps) {
           return true;
         },
         paste(viewInstance, event) {
-          if (propsRef.current.readOnly) {
-            event.preventDefault();
-            return true;
-          }
-
           const clipboardEvent = event as ClipboardEvent;
 
           // First-chance hook: the trailing slot owns create-on-paste semantics
@@ -561,17 +556,22 @@ export function RichTextEditor(props: RichTextEditorProps) {
           // create a node in the trailing input).
           const mediaPaste = classifyMediaPaste(clipboardEvent.clipboardData, { hasSelection: from !== to });
 
-          const onPasteImage = propsRef.current.onPasteImage;
-          if (mediaPaste?.kind === 'images' && onPasteImage) {
-            clipboardEvent.preventDefault();
-            void readPastedImages(mediaPaste.files).then((images) => onPasteImage(images));
-            return true;
-          }
-
           const onPasteFiles = propsRef.current.onPasteFiles;
           if (mediaPaste?.kind === 'files' && onPasteFiles) {
             clipboardEvent.preventDefault();
             onPasteFiles(mediaPaste.files);
+            return true;
+          }
+
+          if (propsRef.current.readOnly) {
+            event.preventDefault();
+            return true;
+          }
+
+          const onPasteImage = propsRef.current.onPasteImage;
+          if (mediaPaste?.kind === 'images' && onPasteImage) {
+            clipboardEvent.preventDefault();
+            void readPastedImages(mediaPaste.files).then((images) => onPasteImage(images));
             return true;
           }
 

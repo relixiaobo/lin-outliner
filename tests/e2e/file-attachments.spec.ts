@@ -857,7 +857,26 @@ test.describe('file attachments', () => {
     await expect(rowName).toContainText('picked-report.pdf');
     await expect(rowName).not.toContainText('renamed');
 
+    const countBeforeFilePaste = (await todayChildren(page)).length;
+    await titleEditor.click();
+    await pasteClipboardFile(page, {
+      name: 'file-title-paste.pdf',
+      mimeType: 'application/pdf',
+      text: '%PDF pasted from a read-only file title',
+    });
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(countBeforeFilePaste + 1);
+    const pastedFromTitleId = (await todayChildren(page))[countBeforeFilePaste];
+    expect(pastedFromTitleId).toBeTruthy();
+    await expect.poll(async () => {
+      const pasted = (await e2eProjection(page)).nodes.find((node) => node.id === pastedFromTitleId);
+      return {
+        name: pasted?.originalFilename ?? pasted?.content.text ?? null,
+        type: pasted?.type ?? null,
+      };
+    }).toEqual({ name: 'file-title-paste.pdf', type: 'attachment' });
+
     // But # is still a node-level command surface for the file node itself.
+    await titleEditor.click();
     await page.keyboard.type('#project');
     const tagListbox = page.getByRole('listbox', { name: 'Tag suggestions' });
     await expect(tagListbox).toBeVisible();
