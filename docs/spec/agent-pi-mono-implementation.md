@@ -297,11 +297,11 @@ Model and effort are owned by the agent identity that actually runs:
   `agentId` (`builtInAgentProfiles` above), reachable via `getBuiltInAgentProfile`
   / `setBuiltInAgentProfile`. Two entry points write the same overlay: the
   Settings → Agent profile editor and the composer's quick model/effort chip
-  (`AgentComposerModelControl`, model/effort only — a Claude-desktop-style menu: the
-  active provider's recommended (top-ranked) model shown directly, with the
-  supported reasoning levels and the long tail of models as side-anchored flyout
-  submenus (`Reasoning ›`, `More models ›` — the latter grouped by provider when
-  more than one is usable). Both round-trip the current
+  (`AgentComposerModelControl`, model/effort only — a Codex-style menu: the main menu
+  lists the effective model's supported reasoning levels directly plus a single row
+  for the *current* model; that row opens a side-anchored flyout submenu listing all
+  models, grouped by provider when more than one is usable). Both round-trip the
+  current
   definition and persist only the fields that differ from the code base (so an
   unchanged persona is never frozen), and `updateAgentDefinition` reconfigures the
   live conversations — `state.systemPrompt` plus a re-resolved `state.model` /

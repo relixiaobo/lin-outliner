@@ -692,11 +692,6 @@
   white-space: nowrap;
 }
 
-.agent-composer-model-item-meta {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-}
-
 .agent-composer-model-check,
 .agent-composer-model-item-caret {
   display: inline-flex;
@@ -708,13 +703,28 @@
   color: var(--text-faint);
 }
 
+/* Faint section header above the reasoning levels and the model list ("Reasoning",
+   "Model"), and the optional per-provider sub-label inside the model submenu. */
+.agent-composer-model-section-label {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  color: var(--text-faint);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm-tight);
+}
+
+.agent-composer-model-divider {
+  height: 1px;
+  margin: var(--space-1) var(--space-2);
+  background: var(--border-subtle);
+}
+
 .agent-composer-model-group {
   display: flex;
   flex-direction: column;
 }
 
 .agent-composer-model-group-label {
-  padding: var(--space-2) var(--space-3) var(--space-1);
+  padding: var(--space-1) var(--space-3);
   color: var(--text-faint);
   font-size: var(--font-meta);
   line-height: var(--line-meta-tight);

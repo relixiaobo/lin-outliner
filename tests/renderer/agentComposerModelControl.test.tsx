@@ -177,24 +177,7 @@ describe('AgentComposerModelControl', () => {
     expect(rendered.container.querySelector('.agent-composer-model-name')?.textContent).toBe('Default model');
   });
 
-  test('clicking the chip opens the model menu; picking a model emits a provider-qualified id', async () => {
-    let saved = '';
-    const rendered = renderComponent(
-      <AgentComposerModelControl
-        settings={settings()} model="" effort="" disabled={false}
-        onModelChange={(value) => { saved = value; }} onEffortChange={NOOP}
-      />,
-    );
-    expect(rendered.document.querySelector('.agent-composer-model-popover')).toBeNull();
-    await click(rendered, chip(rendered));
-    expect(rendered.document.querySelector('.agent-composer-model-popover')).not.toBeNull();
-    expect(chip(rendered).getAttribute('aria-expanded')).toBe('true');
-    // The active provider's models list directly; choosing one emits its qualified id.
-    await click(rendered, modelItem(rendered, 'GPT-5.4'));
-    expect(saved).toBe('openai/gpt-5.4');
-  });
-
-  test('the Reasoning row opens a submenu; picking a level emits it', async () => {
+  test('the reasoning levels are inline; picking one emits the level', async () => {
     let savedEffort = '';
     const rendered = renderComponent(
       <AgentComposerModelControl
@@ -203,15 +186,13 @@ describe('AgentComposerModelControl', () => {
       />,
     );
     await click(rendered, chip(rendered));
-    // Effort is a submenu row (not inline) — opening it reveals the supported levels.
+    // The main menu lists the reasoning levels directly (no submenu needed).
     expect(rendered.document.querySelector('.agent-composer-model-submenu')).toBeNull();
-    await click(rendered, triggerRow(rendered, 'Reasoning'));
-    expect(rendered.document.querySelector('.agent-composer-model-submenu')).not.toBeNull();
     await click(rendered, modelItem(rendered, 'High'));
     expect(savedEffort).toBe('high');
   });
 
-  test('only the recommended model shows directly; older models hide under More models, grouped by provider', async () => {
+  test('the main menu shows the current model as a single row; the submenu lists all models', async () => {
     let saved = '';
     const rendered = renderComponent(
       <AgentComposerModelControl
@@ -220,16 +201,17 @@ describe('AgentComposerModelControl', () => {
       />,
     );
     await click(rendered, chip(rendered));
-    // Top level shows the active provider's recommended (first-ranked) model directly.
-    expect(modelItem(rendered, 'GPT-5.4')).toBeTruthy();
-    // The older sibling + the other provider are hidden until "More models" opens.
+    // Main menu: a single model row for the current selection (active provider's first-ranked).
+    expect(triggerRow(rendered, 'GPT-5.4')).toBeTruthy();
+    // The full list (incl. the current one) is hidden until the model row opens the submenu.
     expect(() => modelItem(rendered, 'GPT-5.3')).toThrow();
-    await click(rendered, triggerRow(rendered, 'More models'));
+    await click(rendered, triggerRow(rendered, 'GPT-5.4'));
     const submenu = rendered.document.querySelector('.agent-composer-model-submenu');
     expect(submenu).not.toBeNull();
-    // Multiple providers → grouped by provider header.
+    // Multiple providers → grouped by provider header; every model is listed.
     const headers = Array.from(submenu!.querySelectorAll('.agent-composer-model-group-label')).map((el) => el.textContent);
     expect(headers).toEqual(['openai', 'anthropic']);
+    expect(modelItem(rendered, 'GPT-5.3')).toBeTruthy();
     await click(rendered, modelItem(rendered, 'Claude Sonnet'));
     expect(saved).toBe('anthropic/claude-sonnet');
   });

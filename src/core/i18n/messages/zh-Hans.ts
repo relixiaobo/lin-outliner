@@ -858,9 +858,8 @@ commandPalette: {
       addAttachment: '添加附件',
       modelControlLabel: '模型与推理',
       modelDefault: '默认模型',
-      moreModels: '更多模型',
       reasoningHeading: '推理',
-      effortDefault: '默认',
+      modelHeading: '模型',
       reasoningLevels: {
         off: '关闭',
         minimal: '最低',
