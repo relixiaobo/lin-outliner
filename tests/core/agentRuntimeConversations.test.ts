@@ -276,40 +276,23 @@ describe('agent runtime conversations', () => {
     await expect(runtime.previewPayloadBytes(conversationId, payload.id, runId)).resolves.toEqual(Buffer.from('full tool output'));
   });
 
-  test('#General membership stays {user, Neva} regardless of agent definitions', async () => {
+  test('#General membership is exactly {user, Neva}', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-local-'));
     roots.push(dataRoot, localRoot);
     const { runtime } = await createRuntime(dataRoot, localRoot);
 
     await runtime.restoreConversation(DEFAULT_GENERAL_CHANNEL_ID);
-    const expectedMembers = [
+    // The one-Neva invariant: the only conversation members are the local user and
+    // Neva. There is no second agent to add, and no member.added beyond setup.
+    const state = await new AgentEventStore(dataRoot).replay(DEFAULT_GENERAL_CHANNEL_ID);
+    expect(state.conversation?.members).toEqual([
       { type: 'user', userId: 'local-user' },
       { type: 'agent', agentId: ASSISTANT_AGENT_ID },
-    ];
-    let state = await new AgentEventStore(dataRoot).replay(DEFAULT_GENERAL_CHANNEL_ID);
-    expect(state.conversation?.members).toEqual(expectedMembers);
-
-    // Single-agent collapse: agent definitions are delegation child-types, never
-    // conversation members — creating one must not touch #General membership.
-    const definitions = await runtime.createAgentDefinition('workspace', {
-      name: 'writer',
-      description: 'Writes clear product notes.',
-      body: 'You write concise product notes.',
-    }, 'project');
-    const writer = definitions.find((definition) => definition.name === 'writer');
-    expect(writer?.agentId).toBeTruthy();
-
-    state = await new AgentEventStore(dataRoot).replay(DEFAULT_GENERAL_CHANNEL_ID);
-    expect(state.conversation?.members).toEqual(expectedMembers);
+    ]);
     expect((await new AgentEventStore(dataRoot).readEvents(DEFAULT_GENERAL_CHANNEL_ID))
       .filter((event) => event.type === 'member.added'))
       .toHaveLength(0);
-
-    await runtime.deleteAgentDefinition('workspace', writer!.agentId);
-
-    state = await new AgentEventStore(dataRoot).replay(DEFAULT_GENERAL_CHANNEL_ID);
-    expect(state.conversation?.members).toEqual(expectedMembers);
   });
 
   test('creates, renames, and deletes channels; #General stays immutable', async () => {

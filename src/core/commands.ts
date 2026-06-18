@@ -151,10 +151,7 @@ export const AGENT_COMMANDS = [
   'agent_accept_skill',
   'agent_revoke_skill_acceptance',
   'agent_undo_skill_agent_edit',
-  'agent_create_agent_definition',
   'agent_update_agent_definition',
-  'agent_delete_agent_definition',
-  'agent_duplicate_agent_definition',
   'agent_reload_agent_definitions',
 ] as const;
 

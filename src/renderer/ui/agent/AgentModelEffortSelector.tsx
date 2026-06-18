@@ -43,7 +43,7 @@ interface AgentModelEffortSelectorProps {
   settings: AgentProviderSettingsView | null;
   model: string;
   effort: string;
-  disabled: boolean;
+  disabled?: boolean;
   providerLabel: string;
   modelLabel: string;
   effortLabel: string;
@@ -56,7 +56,7 @@ export function AgentModelEffortSelector({
   settings,
   model,
   effort,
-  disabled,
+  disabled = false,
   providerLabel,
   modelLabel,
   effortLabel,

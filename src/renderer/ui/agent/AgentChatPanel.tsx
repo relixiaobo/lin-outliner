@@ -943,16 +943,10 @@ export function AgentChatPanel({
     void window.lin?.openChannelConfig?.({ mode: 'create' });
   }
 
-  function handleNewAgent() {
-    setHistoryOpen(false);
-    setRowActionMenu(null);
-    void window.lin?.openAgentConfig?.({ mode: 'create' });
-  }
-
   function handleConfigureAgent(agentId: string) {
     setHistoryOpen(false);
     setRowActionMenu(null);
-    void window.lin?.openAgentConfig?.({ agentId, mode: 'configure' });
+    void window.lin?.openAgentConfig?.({ agentId });
   }
 
   function handleConfigureChannel(targetConversationId: string) {

@@ -280,7 +280,7 @@ const api = {
   openProviderConfig: (params: { providerId: string; mode: 'configure' | 'custom' }) =>
     ipcRenderer.invoke('lin:open-provider-config', params) as Promise<void>,
   closeProviderConfig: () => ipcRenderer.invoke('lin:close-provider-config') as Promise<void>,
-  openAgentConfig: (params: { agentId?: string; mode: 'create' | 'configure' }) =>
+  openAgentConfig: (params: { agentId: string }) =>
     ipcRenderer.invoke('lin:open-agent-config', params) as Promise<void>,
   closeAgentConfig: () => ipcRenderer.invoke('lin:close-agent-config') as Promise<void>,
   openChannelConfig: (params: { conversationId?: string; mode: 'create' | 'configure' }) =>

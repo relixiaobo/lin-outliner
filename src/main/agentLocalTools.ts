@@ -18,11 +18,7 @@ import {
   type AgentSkillWriteAudit,
 } from './agentSkillAuthoring';
 import {
-  AgentDefinitionAuthoringError,
-  resolveAgentDefinitionContentTarget,
   selfDefinitionRootEntries,
-  validateAgentDefinitionContentWrite,
-  type AgentDefinitionWriteAudit,
   type SelfDefinitionSurface,
 } from './agentAuthoring';
 import {
@@ -195,7 +191,6 @@ interface FileEditData {
   userModified: boolean;
   replaceAll: boolean;
   skillWrite?: AgentSkillWriteAudit;
-  agentDefinitionWrite?: AgentDefinitionWriteAudit;
 }
 
 interface FileWriteParams {
@@ -210,7 +205,6 @@ interface FileWriteData {
   structuredPatch: Hunk[];
   originalFile: string | null;
   skillWrite?: AgentSkillWriteAudit;
-  agentDefinitionWrite?: AgentDefinitionWriteAudit;
 }
 
 interface FileDeleteParams {
@@ -768,16 +762,7 @@ async function notifySuccessfulSkillContentWrite(
   await workspace.skillRuntime?.notifySkillContentWritten([filePath]);
 }
 
-async function notifySuccessfulAgentDefinitionContentWrite(
-  workspace: WorkspaceContext,
-  filePath: string,
-): Promise<void> {
-  await workspace.agentDefinitionRuntime?.notifyAgentDefinitionContentWritten([filePath]);
-}
-
-type SelfDefinitionWrite =
-  | { kind: 'skill'; skillWrite: AgentSkillWriteAudit }
-  | { kind: 'agent'; agentDefinitionWrite: AgentDefinitionWriteAudit };
+type SelfDefinitionWrite = { kind: 'skill'; skillWrite: AgentSkillWriteAudit };
 
 function validateSelfDefinitionContentWriteOrThrow(input: {
   workspace: WorkspaceContext;
@@ -808,41 +793,11 @@ function validateSelfDefinitionContentWriteOrThrow(input: {
     }
   }
 
-  const agentTarget = resolveAgentDefinitionContentTarget(input.filePath, input.workspace.root);
-  if (agentTarget) {
-    if (!input.workspace.agentDefinitionRuntime) {
-      throw new LocalToolFailure(
-        'agent_definition_runtime_unavailable',
-        'Agent definition writes require a live agent registry reload path.',
-        'Retry inside an agent conversation so the new AGENT.md can be validated and hot-reloaded.',
-      );
-    }
-    try {
-      return {
-        kind: 'agent',
-        agentDefinitionWrite: validateAgentDefinitionContentWrite({
-          target: agentTarget,
-          content: input.content,
-          previousContent: input.previousContent,
-          operation: input.operation,
-        }),
-      };
-    } catch (error) {
-      if (error instanceof AgentDefinitionAuthoringError) {
-        throw new LocalToolFailure(error.code, error.message, error.instructions);
-      }
-      throw error;
-    }
-  }
-
-  const surface = selfDefinitionSurfaceForPath(input.workspace, input.filePath);
-  if (surface) {
+  if (selfDefinitionSurfaceForPath(input.workspace, input.filePath)) {
     throw new LocalToolFailure(
       'ungoverned_self_definition_write',
-      `Self-definition writes must target a governed ${surface} definition file.`,
-      surface === 'skill'
-        ? 'Write a SKILL.md or visible support file under .agents/skills/<skill-name>/ with the skill runtime enabled.'
-        : 'Write a complete AGENT.md under .agents/agents/<agent-name>/AGENT.md.',
+      'Self-definition writes must target a governed skill definition file.',
+      'Write a SKILL.md or visible support file under .agents/skills/<skill-name>/ with the skill runtime enabled.',
     );
   }
 
@@ -853,22 +808,14 @@ function skillWriteInstructions(skillWrite: AgentSkillWriteAudit): string {
   return `Skill content write validated for ${skillWrite.skillName}; the skill registry has been reloaded. Previous content metadata is retained in tool details for rollback. The skill is slash-invocable now, and model-invocable skills can appear in the automatic model skill listing without a separate trust prompt.`;
 }
 
-function agentDefinitionWriteInstructions(agentDefinitionWrite: AgentDefinitionWriteAudit): string {
-  const availability = agentDefinitionWrite.changeType === 'create'
-    ? 'The new agent is available for future DMs, Channels, and delegation'
-    : 'The updated agent definition is available for future DMs, Channels, and delegation';
-  return `Agent definition write validated for ${agentDefinitionWrite.agentName}; the agent registry has been reloaded. ${availability}, and it remains restricted under the global permission gate.`;
-}
-
-// The skill/agent self-definition outcome maps onto a file-write the same way for
-// both file_edit and file_write: extra `data` fields, a registry-reload notify, and
-// the success `instructions`. These three helpers own that mapping once so the two
+// The skill self-definition outcome maps onto a file-write the same way for both
+// file_edit and file_write: extra `data` fields, a registry-reload notify, and the
+// success `instructions`. These three helpers own that mapping once so the two
 // tools stay in lockstep.
 function selfDefinitionWriteData(
   write: SelfDefinitionWrite | null,
-): { skillWrite?: AgentSkillWriteAudit; agentDefinitionWrite?: AgentDefinitionWriteAudit } {
+): { skillWrite?: AgentSkillWriteAudit } {
   if (write?.kind === 'skill') return { skillWrite: write.skillWrite };
-  if (write?.kind === 'agent') return { agentDefinitionWrite: write.agentDefinitionWrite };
   return {};
 }
 
@@ -880,14 +827,11 @@ async function notifySelfDefinitionContentWrite(
 ): Promise<void> {
   if (write?.kind === 'skill') {
     await notifySuccessfulSkillContentWrite(workspace, filePath, write.skillWrite, previousContent);
-  } else if (write?.kind === 'agent') {
-    await notifySuccessfulAgentDefinitionContentWrite(workspace, filePath);
   }
 }
 
 function selfDefinitionWriteInstructions(write: SelfDefinitionWrite | null): string | undefined {
   if (write?.kind === 'skill') return skillWriteInstructions(write.skillWrite);
-  if (write?.kind === 'agent') return agentDefinitionWriteInstructions(write.agentDefinitionWrite);
   return undefined;
 }
 
@@ -2873,7 +2817,6 @@ function visibleFileEdit(data: FileEditData) {
     filePath: data.filePath,
     structuredPatch: data.structuredPatch,
     ...(data.skillWrite ? { skillWrite: visibleSkillWrite(data.skillWrite) } : {}),
-    ...(data.agentDefinitionWrite ? { agentDefinitionWrite: visibleAgentDefinitionWrite(data.agentDefinitionWrite) } : {}),
   };
 }
 
@@ -2919,7 +2862,6 @@ function visibleFileWrite(data: FileWriteData) {
     filePath: data.filePath,
     structuredPatch: data.structuredPatch,
     ...(data.skillWrite ? { skillWrite: visibleSkillWrite(data.skillWrite) } : {}),
-    ...(data.agentDefinitionWrite ? { agentDefinitionWrite: visibleAgentDefinitionWrite(data.agentDefinitionWrite) } : {}),
   };
 }
 
@@ -2938,16 +2880,6 @@ function visibleSkillWrite(skillWrite: AgentSkillWriteAudit) {
     relativePath: skillWrite.relativePath,
     changeType: skillWrite.changeType,
     warnings: skillWrite.warnings,
-  };
-}
-
-function visibleAgentDefinitionWrite(agentDefinitionWrite: AgentDefinitionWriteAudit) {
-  return {
-    agentName: agentDefinitionWrite.agentName,
-    source: agentDefinitionWrite.source,
-    relativePath: agentDefinitionWrite.relativePath,
-    changeType: agentDefinitionWrite.changeType,
-    warnings: agentDefinitionWrite.warnings,
   };
 }
 

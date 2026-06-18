@@ -178,7 +178,7 @@ const SETTINGS_CATEGORY_ICONS = {
 const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter'];
 
 function routeFromOpenTarget(target: SettingsOpenTarget | undefined): SettingsRoute {
-  if (target?.agentCreate || target?.agentId?.trim()) return { type: 'category', category: 'agents' };
+  if (target?.agentId?.trim()) return { type: 'category', category: 'agents' };
   if (target?.category) return { type: 'category', category: target.category };
   return { type: 'category', category: 'providers' };
 }
@@ -390,18 +390,10 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   }
 
   function openAgentConfig(agentId: string) {
-    void window.lin?.openAgentConfig?.({ agentId, mode: 'configure' });
-  }
-
-  function openAgentCreate() {
-    void window.lin?.openAgentConfig?.({ mode: 'create' });
+    void window.lin?.openAgentConfig?.({ agentId });
   }
 
   function openAgentTarget(target: SettingsOpenTarget | undefined) {
-    if (target?.agentCreate) {
-      openAgentCreate();
-      return;
-    }
     const agentId = target?.agentId?.trim();
     if (agentId) openAgentConfig(agentId);
   }
@@ -1337,12 +1329,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                 ) : (
                   <>
                     <InsetGroup ariaLabel={t.settings.agents.profilesAriaLabel}>
-                      <InsetRow
-                        ariaLabel={t.settings.agents.newAgent}
-                        leading={<AddIcon size={ICON_SIZE.rowGlyph} aria-hidden />}
-                        label={t.settings.agents.newAgent}
-                        onSelect={openAgentCreate}
-                      />
                       {allAgents.map((agent) => {
                         const label = agent.displayName || agent.name;
                         return (

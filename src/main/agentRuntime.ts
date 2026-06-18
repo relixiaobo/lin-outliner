@@ -48,7 +48,6 @@ import {
   type AgentApprovalResolutionScope,
   type AgentAuthoringInput,
   type AgentDefinitionView,
-  type AgentStorageLocation,
   type AgentUserViewContext,
   type AskUserQuestionResult,
   type ImageContent,
@@ -192,13 +191,6 @@ import {
   agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
 } from './agentDelegationIdentity';
-import {
-  createAgentDefinitionFile,
-  deleteAgentDefinitionFile,
-  duplicateAgentDefinitionFile,
-  isAgentDefinitionWritable,
-  updateAgentDefinitionFile,
-} from './agentAuthoring';
 import { AgentRunLedgerWriter, fromPiAssistantContent } from './agentRunLedger';
 import type { AgentSkillWriteAudit } from './agentSkillAuthoring';
 import { executeAgentSkillShellCommand } from './agentSkillShell';
@@ -1535,16 +1527,16 @@ export class AgentRuntime {
 
   async listAllAgentDefinitions(conversationId: string): Promise<AgentDefinitionView[]> {
     const definitions = await this.listRawAgentDefinitions(conversationId);
-    const localRoot = this.authoringLocalRoot();
     // `withBuiltInAgentDefinitions` already layers the built-in's editable overlay
     // (display name, persona, model/effort, tools, …) onto the injected definition,
-    // so the editor renders the user's saved values. The built-in is directly
-    // editable (its edits persist to the settings overlay, not a file), so it is
-    // `writable` even though it has no AGENT.md.
+    // so the editor renders the user's saved values. The built-in Neva is the only
+    // editable agent — her edits persist to the settings overlay, not a file — and
+    // under the one-Neva invariant no other definition can exist, so `writable` is
+    // exactly "is the built-in".
     return (await this.withBuiltInAgentDefinitions(definitions)).map((definition) => ({
       ...definition,
       agentId: agentDefinitionAgentId(definition),
-      writable: definition.source === 'built-in' ? true : isAgentDefinitionWritable(definition, localRoot),
+      writable: definition.source === 'built-in',
     }));
   }
 
@@ -1610,15 +1602,6 @@ export class AgentRuntime {
   // registry cache is invalidated so the change is visible (child run picker +
   // settings list) without an app restart. The fresh view list is returned so
   // the renderer can re-select by agentId.
-  async createAgentDefinition(
-    conversationId: string,
-    input: AgentAuthoringInput,
-    storage: AgentStorageLocation,
-  ): Promise<AgentDefinitionView[]> {
-    await createAgentDefinitionFile({ input, storage, localRoot: this.authoringLocalRoot() });
-    return this.reloadAgentDefinitions(conversationId);
-  }
-
   async updateAgentDefinition(
     conversationId: string,
     agentId: string,
@@ -1694,25 +1677,11 @@ export class AgentRuntime {
       }
       return views;
     }
-    await updateAgentDefinitionFile({ existing, input, localRoot: this.authoringLocalRoot() });
-    return this.reloadAgentDefinitions(conversationId);
-  }
-
-  async deleteAgentDefinition(conversationId: string, agentId: string): Promise<AgentDefinitionView[]> {
-    const existing = await this.resolveAgentDefinitionById(conversationId, agentId);
-    await deleteAgentDefinitionFile({ existing, localRoot: this.authoringLocalRoot() });
-    return this.reloadAgentDefinitions(conversationId);
-  }
-
-  async duplicateAgentDefinition(
-    conversationId: string,
-    agentId: string,
-    newName: string,
-    storage: AgentStorageLocation,
-  ): Promise<AgentDefinitionView[]> {
-    const source = await this.resolveAgentDefinitionById(conversationId, agentId);
-    await duplicateAgentDefinitionFile({ source, newName, storage, localRoot: this.authoringLocalRoot() });
-    return this.reloadAgentDefinitions(conversationId);
+    // Only the built-in assistant (Neva) is editable, and she is the only agent
+    // definition that can exist (the one-Neva invariant — no create / load of a
+    // second agent). A non-built-in source here is unreachable; treat it as a bug
+    // rather than silently writing an agent file.
+    throw new Error(`Agent "${agentId}" is not editable.`);
   }
 
   // Invalidate every live conversation's registry cache, then return the fresh list.
@@ -1740,10 +1709,6 @@ export class AgentRuntime {
       .find((definition) => agentDefinitionAgentId(definition) === agentId);
     if (!match) throw new Error('Agent definition not found.');
     return match;
-  }
-
-  private authoringLocalRoot(): string {
-    return this.options.localFileRoot ?? process.cwd();
   }
 
   async listAllSkills(conversationId: string) {

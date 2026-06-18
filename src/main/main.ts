@@ -17,18 +17,14 @@ import {
   LIN_SETTINGS_CHANGED_CHANNEL,
   LIN_SETTINGS_NAVIGATE_CHANNEL,
   AGENT_CONFIG_AGENT_PARAM,
-  AGENT_CONFIG_MODE_PARAM,
   CHANNEL_CONFIG_CONVERSATION_PARAM,
   CHANNEL_CONFIG_MODE_PARAM,
-  SETTINGS_AGENT_MODE_PARAM,
-  SETTINGS_AGENT_CREATE_VALUE,
   SETTINGS_AGENT_PARAM,
   SETTINGS_CATEGORY_PARAM,
   PROVIDER_CONFIG_MODE_PARAM,
   PROVIDER_CONFIG_PROVIDER_PARAM,
   WINDOW_SURFACE_QUERY_PARAM,
   isSettingsCategoryTarget,
-  type AgentConfigMode,
   type ChannelConfigMode,
   type ProviderConfigMode,
   type SettingsOpenTarget,
@@ -915,25 +911,22 @@ function executeLauncherCommand(id: unknown): LauncherExecuteResult {
 // region. It isn't persisted across launches.
 function sanitizeSettingsOpenTarget(raw: unknown): SettingsOpenTarget {
   if (!raw || typeof raw !== 'object') return {};
-  const input = raw as { category?: unknown; agentId?: unknown; agentCreate?: unknown };
+  const input = raw as { category?: unknown; agentId?: unknown };
   const category = isSettingsCategoryTarget(input.category) ? input.category : undefined;
-  const agentCreate = input.agentCreate === true;
   const agentId = typeof input.agentId === 'string' && input.agentId.trim()
     ? input.agentId.trim()
     : undefined;
   return {
-    ...(agentCreate ? { agentCreate: true } : {}),
-    ...(!agentCreate && category ? { category } : {}),
-    ...(!agentCreate && agentId ? { agentId } : {}),
+    ...(category ? { category } : {}),
+    ...(agentId ? { agentId } : {}),
   };
 }
 
 function settingsWindowQuery(target: SettingsOpenTarget = {}): Record<string, string> {
   return {
     [WINDOW_SURFACE_QUERY_PARAM]: 'settings',
-    ...(target.agentCreate ? { [SETTINGS_CATEGORY_PARAM]: 'agents', [SETTINGS_AGENT_MODE_PARAM]: SETTINGS_AGENT_CREATE_VALUE } : {}),
-    ...(!target.agentCreate && target.agentId ? { [SETTINGS_CATEGORY_PARAM]: 'agents', [SETTINGS_AGENT_PARAM]: target.agentId } : {}),
-    ...(!target.agentCreate && !target.agentId && target.category ? { [SETTINGS_CATEGORY_PARAM]: target.category } : {}),
+    ...(target.agentId ? { [SETTINGS_CATEGORY_PARAM]: 'agents', [SETTINGS_AGENT_PARAM]: target.agentId } : {}),
+    ...(!target.agentId && target.category ? { [SETTINGS_CATEGORY_PARAM]: target.category } : {}),
   };
 }
 
@@ -1140,7 +1133,7 @@ function configChildWindowParent(excluded: BrowserWindow | null = null): Browser
 // Agent and Channel create/edit are their own native config windows, like the
 // provider config child. Settings owns the list; these child windows own the
 // create/edit process.
-function openAgentConfigWindow(agentId: string, mode: AgentConfigMode) {
+function openAgentConfigWindow(agentId: string) {
   const previous = agentConfigWindow;
   if (isLiveWindow(previous)) {
     previous.close();
@@ -1160,7 +1153,6 @@ function openAgentConfigWindow(agentId: string, mode: AgentConfigMode) {
     query: {
       [WINDOW_SURFACE_QUERY_PARAM]: 'agent-config',
       [AGENT_CONFIG_AGENT_PARAM]: agentId,
-      [AGENT_CONFIG_MODE_PARAM]: mode,
     },
   });
   agentConfigWindow = target;
@@ -1440,10 +1432,9 @@ function registerIpc() {
     openProviderConfigWindow(providerId, mode);
   });
   ipcMain.handle('lin:close-provider-config', () => liveWindow(providerConfigWindow)?.close());
-  ipcMain.handle('lin:open-agent-config', (_event, args?: { agentId?: unknown; mode?: unknown }) => {
+  ipcMain.handle('lin:open-agent-config', (_event, args?: { agentId?: unknown }) => {
     const agentId = typeof args?.agentId === 'string' ? args.agentId : '';
-    const mode: AgentConfigMode = args?.mode === 'create' ? 'create' : 'configure';
-    openAgentConfigWindow(agentId, mode);
+    openAgentConfigWindow(agentId);
   });
   ipcMain.handle('lin:close-agent-config', () => liveWindow(agentConfigWindow)?.close());
   ipcMain.handle('lin:open-channel-config', (_event, args?: { conversationId?: unknown; mode?: unknown }) => {
@@ -2544,26 +2535,11 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentRuntime.revokeSkillAcceptance(conversationId(), String(args.skillName));
     case 'agent_undo_skill_agent_edit':
       return agentRuntime.undoLastAgentSkillEdit(conversationId(), String(args.skillName));
-    case 'agent_create_agent_definition':
-      return agentRuntime.createAgentDefinition(
-        conversationId(),
-        args.input as AgentAuthoringInput,
-        args.storage as AgentStorageLocation,
-      );
     case 'agent_update_agent_definition':
       return agentRuntime.updateAgentDefinition(
         conversationId(),
         String(args.agentId),
         args.input as AgentAuthoringInput,
-      );
-    case 'agent_delete_agent_definition':
-      return agentRuntime.deleteAgentDefinition(conversationId(), String(args.agentId));
-    case 'agent_duplicate_agent_definition':
-      return agentRuntime.duplicateAgentDefinition(
-        conversationId(),
-        String(args.agentId),
-        String(args.newName),
-        args.storage as AgentStorageLocation,
       );
     case 'agent_reload_agent_definitions':
       return agentRuntime.reloadAgentDefinitions(conversationId());
