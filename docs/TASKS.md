@@ -426,6 +426,21 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **file-node-preview-interactions** (codex, PR #295) — follow-up to `file-presentation-redesign`
+  (#285): non-image file rows are read-only but caret-focusable (filename wraps like a locked row,
+  caret + `#` tags work, typing never renames), image rows render tags too; redesigned PDF
+  summary/expand + metadata-card + resizable preview surfaces with one Open/Expand/`⋯` location;
+  clipboard-paste & external-drop file ingestion with insertion guides; pane scroll preserved across
+  navigation; the expanded indent guide moved onto the shared flat overlay and is measured from the
+  real `.row-bullet-button` marker rects (line on the parent marker column, starts just below it,
+  ends on the last visible descendant marker centerline, virtualized + flow). Spec synced (A6).
+  **Gate (main):** `/code-review xhigh` → a guide-geometry directive + 6 confirmed findings
+  (image-node tags invisible; scroll-restore self-overwrite; PDF resize re-jump; preview state
+  leaking across file switches; B8 focus ring; B5 reduced-transparency fallback) + 3 secondary, all
+  fixed across 3 follow-up commits; typecheck ✓, guide/file-row e2e + new `workspaceLayoutHistory`
+  renderer test 2/2 green. Two env-dependent e2e (PDF-geometry, day-node note-density) confirmed
+  pre-existing / non-regression (fail identically on `main`), to verify in a real-render CI.
+  Fast-track (no plan file). **Shape (a)** one PR.
 - **builtin-tool-edit-hot-swap** (main, PR #299) — editing Neva's tool allow/deny list through the
   settings editor persisted to the overlay but never re-resolved the open conversation's
   `agentToolFilter`, so a just-removed tool stayed callable until reopen. The `updateAgentDefinition`

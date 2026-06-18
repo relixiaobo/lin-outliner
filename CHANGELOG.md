@@ -12,6 +12,30 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **File node preview interactions (PR #295, codex)** — a follow-up to `file-presentation-redesign`
+  (#285). Non-image file rows become read-only but caret-focusable: the filename wraps like a
+  locked/reference row, a caret can land in it for structural commands and `#` tags, but ordinary
+  typing never renames it; image file rows now render their tags too. The file preview surfaces are
+  redesigned — a PDF summary strip whose Expand opens the full scrollable reader (clicking a summary
+  page jumps to it), a compact metadata card for unsupported types, a resizable preview viewport, and
+  one consistent Open/Expand/`⋯` action location. Clipboard file paste and external file drop insert
+  file nodes with drop-position insertion guides. Pane scroll position is preserved across node
+  navigation. The expanded indent guide moved onto the shared flat overlay and is now measured from
+  the real marker DOM (`.row-bullet-button` rects): the line sits on the parent marker column, starts
+  just below it, and ends on the last visible descendant's marker centerline, in both the virtualized
+  and flow renderers (replacing the drifting `layout.items` + hardcoded-`28px` model). Spec synced:
+  `design-system.md`, `ui-behavior.md`, `workspace-layout.md` (A6). **Gate (main):** `/code-review
+  xhigh` (10 finder angles + verify + sweep) surfaced a guide-geometry root-cause directive + 6
+  confirmed correctness/design-system findings (image-node tags rendered nowhere; scroll-restore
+  overwriting the saved position with a clamped value; the PDF reader re-jumping to the clicked
+  summary page on resize; preview view-state leaking across in-pane file switches; the non-image file
+  row's lost B8 focus ring; `--preview-action-*` missing the B5 reduced-transparency opaque fallback)
+  + 3 secondary items, all addressed across three follow-up commits and re-verified: typecheck ✓,
+  guide e2e 3/3, file-row e2e (image tags / focus ring / paste) ✓, new `workspaceLayoutHistory`
+  renderer test 2/2. Two env-dependent e2e (`file-attachments` PDF-geometry, `outliner-navigation-title`
+  day-node note-density) fail only in local headless and were confirmed pre-existing / non-regression
+  (they fail identically on the base commit / `main`) — to be confirmed green in a real-render CI.
+  Fast-track (no plan file).
 - **Agent dock: channel header glyph + composer model/effort chip (PR #296, cc-2)** — post-collapse
   UI for the single agent. The dock header shows a `#` channel glyph + conversation name (no
   per-conversation avatar — every conversation is one of Neva's channels). The composer regains a
