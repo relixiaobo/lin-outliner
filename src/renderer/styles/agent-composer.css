@@ -632,6 +632,143 @@
   line-height: var(--line-meta-tight);
 }
 
+/* Quick model/effort picker. Portaled to <body> and positioned by
+   useAnchoredOverlay (position: fixed + left/top/width/max-height inline), so it
+   never clips against the composer's overflow and flips above/below as room
+   allows. The effort + long-tail models open as side-anchored flyout submenus
+   (.agent-composer-model-submenu, positioned by useFlyoutStyle). Menu glass per
+   design-system B5/D2; --material-backdrop carries the reduced-transparency /
+   high-contrast fallback. */
+.agent-composer-model-popover {
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: var(--space-2);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--shadow);
+}
+
+/* The submenu floats above its parent menu (the parent stays open behind it). */
+.agent-composer-model-submenu {
+  z-index: calc(var(--z-popover) + 1);
+}
+
+/* Menu rows reuse the shared MenuItem look: neutral hover/selected fill per
+   design-system B3 (never a brand accent), trailing check or value + caret. */
+.agent-composer-model-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm-tight);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+.agent-composer-model-item:hover,
+.agent-composer-model-item.is-selected,
+.agent-composer-model-row.is-open {
+  background: var(--control-hover);
+  color: var(--surface-inverse);
+}
+
+.agent-composer-model-item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.agent-composer-model-item-label {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A growing spacer separates the left cluster (label, optional badge) from the right
+   cluster (optional value + check/caret), so a row can carry a badge next to its
+   label while the indicator stays pinned to the right edge. */
+.agent-composer-model-spacer {
+  flex: 1 1 auto;
+}
+
+.agent-composer-model-item-meta {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.agent-composer-model-check,
+.agent-composer-model-item-caret {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+}
+
+/* The "Show all (N)" / "Show less" per-provider expander reads as a faint action. */
+.agent-composer-model-expander {
+  color: var(--text-faint);
+}
+
+/* "Default" pill next to the reasoning level inherit resolves to. */
+.agent-composer-model-badge {
+  flex: 0 0 auto;
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--fill-1);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: calc(var(--line-meta) + var(--space-1));
+}
+
+/* Faint help line introducing the reasoning levels. */
+.agent-composer-model-section-hint {
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  white-space: normal;
+}
+
+/* Faint section header above the model list ("Model"). */
+.agent-composer-model-section-label {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  color: var(--text-faint);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm-tight);
+}
+
+.agent-composer-model-divider {
+  height: 1px;
+  margin: var(--space-1) var(--space-2);
+  background: var(--border-subtle);
+}
+
+.agent-composer-model-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-composer-model-group-label {
+  padding: var(--space-1) var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .agent-composer-tool-button,
 .agent-composer-action-button {
   display: inline-flex;

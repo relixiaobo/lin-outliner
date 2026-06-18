@@ -20,6 +20,7 @@ import type {
   AgentRenderMemberView,
 } from '../../../core/agentRenderProjection';
 import type {
+  AgentAuthoringInput,
   AgentDefinitionView,
   AgentApprovalResolutionScope,
   AgentProviderSettingsView,
@@ -29,6 +30,7 @@ import type {
 } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
+import { builtInDefinitionToAuthoringInput } from './agentProfileInput';
 import { linAgentRuntimeStore, useLinAgentRuntime } from '../../agent/runtime';
 import { onAgentRevealRequest } from '../../agent/agentReveal';
 import type {
@@ -64,7 +66,6 @@ import type { AgentConversationRenderRow } from './agentConversationRows';
 import { AgentChildRunDetailsPanel } from './AgentChildRunDetailsPanel';
 import { AgentTaskPanel } from './AgentTaskPanel';
 import { composerCurrentNodeId } from './userViewContext';
-import { AgentIdentityAvatar } from './AgentIdentityAvatar';
 import { resolveUsableActiveProvider } from './providerCatalog';
 import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -552,13 +553,56 @@ export function AgentChatPanel({
     for (const definition of agentDefinitions) map.set(definition.agentId, definition);
     return map;
   }, [agentDefinitions]);
+  // The single editable agent (Neva). The composer's quick model/effort chip writes
+  // to her standing profile. Kept in a ref so two quick edits in a row (model then
+  // effort) both build on the latest definition, not a stale render.
+  const builtInDefinition = useMemo(
+    () => agentDefinitions.find((definition) => definition.source === 'built-in') ?? null,
+    [agentDefinitions],
+  );
+  const builtInDefinitionRef = useRef<AgentDefinitionView | null>(null);
+  builtInDefinitionRef.current = builtInDefinition;
+  // Serialize writes: a model switch fires an effort reconciliation + a model change
+  // back-to-back, so each `build` must run against the result of the previous write,
+  // not the same stale ref (two concurrent IPCs would race, last-writer-wins dropping
+  // one of the edits). Chaining off a ref-held promise makes each build read the
+  // freshly-persisted definition.
+  const persistQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const persistBuiltInModelEffort = useCallback(
+    (build: (input: AgentAuthoringInput) => AgentAuthoringInput): Promise<void> => {
+      const run = async () => {
+        const definition = builtInDefinitionRef.current;
+        if (!definition || !conversationId) return;
+        const input = build(builtInDefinitionToAuthoringInput(definition));
+        try {
+          const views = await api.agentUpdateAgentDefinition(conversationId, definition.agentId, input);
+          if (!mountedRef.current) return;
+          setAgentDefinitions(views);
+          builtInDefinitionRef.current = views.find((view) => view.source === 'built-in') ?? null;
+        } catch {
+          // The chip is a convenience; a failed write leaves the prior selection in place.
+        }
+      };
+      const next = persistQueueRef.current.then(run, run);
+      persistQueueRef.current = next;
+      return next;
+    },
+    [conversationId],
+  );
+  const handleAgentModelChange = useCallback(
+    (model: string) => void persistBuiltInModelEffort((input) => ({ ...input, model: model.trim() || undefined })),
+    [persistBuiltInModelEffort],
+  );
+  const handleAgentEffortChange = useCallback(
+    (effort: string) => void persistBuiltInModelEffort((input) => ({ ...input, effort: effort.trim() || undefined })),
+    [persistBuiltInModelEffort],
+  );
   const dmAgentMember = agentMembers.length === 1 ? agentMembers[0]! : null;
   const dmAgentId = dmAgentMember?.principal.type === 'agent' ? dmAgentMember.principal.agentId : null;
   const dmAgentDefinition = dmAgentId ? agentDefinitionById.get(dmAgentId) : undefined;
   const dmAgentLabel = dmAgentId
     ? agentDefinitionName(dmAgentDefinition) ?? dmAgentMember?.displayName ?? `@${agentMentionToken(dmAgentId)}`
     : null;
-  const dmAgentMention = dmAgentMember?.mention ?? (dmAgentId ? agentMentionToken(dmAgentId) : null);
   // Single-agent collapse: one conversation primitive (channels), General first.
   const channelRows = useMemo(
     () => [...conversations]
@@ -1056,22 +1100,14 @@ export function AgentChatPanel({
           onClick={() => setHistoryOpen((open) => !open)}
           title={t.agent.chat.showConversations}
         >
-          {/* Single-agent collapse: every conversation is Neva's — show her avatar
-              and the conversation (workstream) title. */}
-          {dmAgentId && dmAgentLabel ? (
-            <>
-              <span className="agent-dock-title-leading">
-                <AgentIdentityAvatar
-                  label={dmAgentLabel}
-                  mention={dmAgentMention}
-                  size="xs"
-                />
-              </span>
-              <span className="agent-dock-title">{displayTitle}</span>
-            </>
-          ) : (
-            <span className="agent-dock-title">{displayTitle}</span>
-          )}
+          {/* Single-agent collapse: every conversation is one of Neva's channels.
+              The agent is always Neva, so a per-conversation avatar here carried no
+              signal — show the channel glyph + title, matching the conversation list
+              (agent-conversation-channel-icon). */}
+          <span className="agent-dock-title-leading">
+            <HashIcon aria-hidden="true" size={ICON_SIZE.menu} />
+          </span>
+          <span className="agent-dock-title">{displayTitle}</span>
           <ChevronDownIcon
             className={historyOpen ? 'agent-title-chevron is-open' : 'agent-title-chevron'}
             size={ICON_SIZE.menu}
@@ -1281,6 +1317,10 @@ export function AgentChatPanel({
           pendingApproval={pendingApproval}
           pendingUserQuestion={pendingUserQuestion}
           settings={providerSettings}
+          agentModel={typeof builtInDefinition?.model === 'string' ? builtInDefinition.model : ''}
+          agentEffort={typeof builtInDefinition?.effort === 'string' ? builtInDefinition.effort : ''}
+          onModelChange={builtInDefinition ? handleAgentModelChange : undefined}
+          onEffortChange={builtInDefinition ? handleAgentEffortChange : undefined}
           slashCommands={slashCommands}
           steeringNote={steeringNote}
         />

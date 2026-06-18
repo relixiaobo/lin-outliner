@@ -31,6 +31,7 @@ import {
   AgentComposerToolbar,
   AgentQueuedSteer,
 } from './AgentComposerControls';
+import { AgentComposerModelControl } from './AgentComposerModelControl';
 import { resolveUsableActiveProvider } from './providerCatalog';
 import {
   AgentComposerEditor,
@@ -77,6 +78,14 @@ interface AgentComposerProps {
   pendingApproval: AgentApprovalRequestView | null;
   pendingUserQuestion: AgentUserQuestionPendingView | null;
   settings: AgentProviderSettingsView | null;
+  /** Current model selection of the conversation's editable agent (Neva), for the quick chip. */
+  agentModel?: string;
+  /** Current reasoning effort of the editable agent, for the quick chip. */
+  agentEffort?: string;
+  /** Persist a model change to the editable agent's profile (applies on the next turn). */
+  onModelChange?: (next: string) => void;
+  /** Persist an effort change to the editable agent's profile. */
+  onEffortChange?: (next: string) => void;
   slashCommands: AgentSlashCommandView[];
   steeringNote: string | null;
 }
@@ -175,6 +184,10 @@ export function AgentComposer({
   pendingApproval,
   pendingUserQuestion,
   settings,
+  agentModel,
+  agentEffort,
+  onModelChange,
+  onEffortChange,
   slashCommands,
   steeringNote,
 }: AgentComposerProps) {
@@ -413,6 +426,16 @@ export function AgentComposer({
             <AgentComposerToolbar
               attachmentDisabled={steering || attachments.length >= MAX_ATTACHMENTS}
               fileInputRef={fileInputRef}
+              modelControl={onModelChange && onEffortChange ? (
+                <AgentComposerModelControl
+                  settings={settings}
+                  model={agentModel ?? ''}
+                  effort={agentEffort ?? ''}
+                  disabled={!settings}
+                  onModelChange={onModelChange}
+                  onEffortChange={onEffortChange}
+                />
+              ) : undefined}
               onAttachmentClick={() => void handleAttachmentClick()}
               onFileInputChange={handleFileInputChange}
               primaryAction={(

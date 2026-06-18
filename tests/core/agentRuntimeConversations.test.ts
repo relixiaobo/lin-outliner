@@ -838,3 +838,30 @@ describe('resolveAgentToolFilter', () => {
     expect(new Set(result.disallowedTools).size).toBe(result.disallowedTools!.length);
   });
 });
+
+describe('builtInModelEffortChanged', () => {
+  test('a persona/display-name-only edit (model + effort round-tripped unchanged) is not a change', async () => {
+    const { builtInModelEffortChanged } = await loadRuntimeModule();
+    // The composer chip and the editor both re-send the existing model/effort.
+    // Re-resolving on such an edit would silently swap a live conversation's
+    // model when the active provider had changed since setup — the #2 bug.
+    expect(builtInModelEffortChanged({ model: 'inherit', effort: '' }, { model: 'inherit', effort: '' })).toBe(false);
+    expect(builtInModelEffortChanged({ model: 'openai/gpt-5.4', effort: 'high' }, { model: 'openai/gpt-5.4', effort: 'high' })).toBe(false);
+  });
+
+  test('the unset sentinels (undefined / blank / whitespace / `inherit`) all normalize together', async () => {
+    const { builtInModelEffortChanged } = await loadRuntimeModule();
+    expect(builtInModelEffortChanged({ model: undefined, effort: undefined }, { model: 'inherit', effort: '' })).toBe(false);
+    expect(builtInModelEffortChanged({ model: '  ', effort: '  ' }, { model: 'inherit', effort: '' })).toBe(false);
+    expect(builtInModelEffortChanged({ model: null, effort: null }, { model: undefined, effort: undefined })).toBe(false);
+  });
+
+  test('an actual model or effort move is a change', async () => {
+    const { builtInModelEffortChanged } = await loadRuntimeModule();
+    expect(builtInModelEffortChanged({ model: 'inherit', effort: '' }, { model: 'openai/gpt-5.4', effort: '' })).toBe(true);
+    expect(builtInModelEffortChanged({ model: 'openai/gpt-5.4', effort: 'low' }, { model: 'openai/gpt-5.4', effort: 'high' })).toBe(true);
+    // Setting an explicit model that happens to equal `inherit`'s resolution is
+    // still an unset model — not a change.
+    expect(builtInModelEffortChanged({ model: 'inherit', effort: 'high' }, { model: '', effort: 'high' })).toBe(false);
+  });
+});

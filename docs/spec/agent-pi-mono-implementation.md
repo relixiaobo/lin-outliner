@@ -292,14 +292,38 @@ Model and effort are owned by the agent identity that actually runs:
 
 - **User / project agents** keep `AgentDefinition.model` / `AgentDefinition.effort`
   (persisted to the agent's `.md` / `.json`).
-- **The built-in assistant** is a read-only definition, so its model/effort live in
-  a settings-owned overlay keyed by `agentId` (`builtInAgentProfiles` above),
-  reachable via `getBuiltInAgentProfile` / `setBuiltInAgentProfile`. Editing the
-  built-in's model/effort in its profile editor persists to this overlay (a real
-  Save), while name / tools / persona stay read-only (Duplicate for a full copy).
+- **The built-in assistant** is code, so the user's edits — display name, persona,
+  tools, skills, model, effort — live in a settings-owned overlay keyed by
+  `agentId` (`builtInAgentProfiles` above), reachable via `getBuiltInAgentProfile`
+  / `setBuiltInAgentProfile`. Two entry points write the same overlay: the
+  Settings → Agent profile editor and the composer's quick model/effort chip
+  (`AgentComposerModelControl`, model/effort only). Its main menu shows only the
+  *results* — the current reasoning level and the current model — as two rows that
+  each open a side-anchored flyout submenu: the reasoning levels (`off` is a level,
+  not a toggle; the level inherit resolves to is badged "Default"; a help line on
+  top), and the model list grouped by provider with each provider's recent models
+  (catalog is ranked newest-first) shown and the older tail behind a per-provider
+  "Show all" — so a long catalog and a second provider stay reachable. The
+  default-level math (`medium` coerced to the model's nearest supported level) lives
+  in `core/agentReasoning` (`defaultThinkingLevelFor` / `nearestSupportedLevel`),
+  shared by the runtime and this picker so they never disagree. Both round-trip the
+  current
+  definition and persist only the fields that differ from the code base (so an
+  unchanged persona is never frozen), and `updateAgentDefinition` reconfigures the
+  live conversations so an edit takes effect on the **next turn**, not only on
+  reopen. `state.systemPrompt` is always refreshed; `state.model` / `thinkingLevel`
+  are re-resolved and swapped **only when the edit actually changed model or
+  effort** (`builtInModelEffortChanged`). The built-in defaults to `model:'inherit'`,
+  so re-resolving on every save would silently switch a running conversation's model
+  to whatever provider is active *now* whenever the user merely edited the persona —
+  a change they never made; gating on the real model/effort diff prevents that. The
+  stable `name` (Neva's memory anchor) is never overlaid.
 
-The profile selector is **capability-driven**: pick a provider, then a model; the
-effort options are derived from that model's `supportedThinkingLevels`. Saved
+The Settings → Agent profile selector (`AgentModelEffortSelector`) is
+**capability-driven**: pick a provider, then a model; the
+effort options are derived from that model's `supportedThinkingLevels`. The
+composer chip presents the same catalog as the Codex-style menu above instead, but
+writes the identical values. Saved
 values are the canonical model id (provider-qualified `providerId/modelId`) and the
 adapter's canonical effort, never a display label. The provider→model string is
 parsed by one shared `core/agentModelId` helper (renderer + runtime), so a model id

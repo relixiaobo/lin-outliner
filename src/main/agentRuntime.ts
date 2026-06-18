@@ -253,6 +253,7 @@ import {
   type AgentRuntimeContextEventInput,
 } from './agentRuntimeContext';
 import type { ErrorReport, ErrorReportContext } from '../core/errorObservability';
+import { defaultThinkingLevelFor } from '../core/agentReasoning';
 import { AGENT_REASONING_LADDER } from '../core/types';
 import type {
   AgentDefinition,
@@ -520,6 +521,31 @@ export function resolveAgentToolFilter(input: {
     if (!tools.includes(name) && !merged.includes(name)) merged.push(name);
   }
   return { allowedTools: undefined, disallowedTools: merged };
+}
+
+/**
+ * Did a built-in agent edit actually change the model or effort?
+ *
+ * The composer chip and the editor both round-trip the *full* definition, so a
+ * persona/display-name/tools edit re-sends the existing `model`/`effort`
+ * unchanged. We only re-resolve and live-swap the conversation's model when one
+ * of these two fields really moved — otherwise editing Neva's persona while a
+ * different provider happens to be active would silently switch the running
+ * conversation's model (model is `inherit` → it resolves to the *current*
+ * provider, not the one the conversation started under).
+ *
+ * `inherit`/blank model and blank effort are the "unset" sentinels, so they
+ * normalize together: `undefined`, `''`, `'  '`, and `'inherit'` are all "no
+ * model override" and compare equal.
+ */
+export function builtInModelEffortChanged(
+  prev: { model?: string | null; effort?: string | null },
+  next: { model?: string | null; effort?: string | null },
+): boolean {
+  const normModel = (value?: string | null) =>
+    value && value.trim() && value.trim() !== 'inherit' ? value.trim() : 'inherit';
+  const normEffort = (value?: string | null) => (value && value.trim() ? value.trim() : '');
+  return normModel(prev.model) !== normModel(next.model) || normEffort(prev.effort) !== normEffort(next.effort);
 }
 
 interface AgentConversationState {
@@ -1628,13 +1654,29 @@ export class AgentRuntime {
       });
       await this.refreshPrimaryAgentIdentity();
       const views = await this.reloadAgentDefinitions(conversationId);
+      // Re-resolve the model/effort and hot-swap it into live conversations ONLY when
+      // this edit actually changed model or effort — so a model/effort edit (Settings or
+      // the composer chip) applies on the NEXT turn without reopening, while a
+      // persona/display-name-only edit never re-resolves. The built-in defaults to
+      // model:'inherit'; re-resolving unconditionally would silently switch a live
+      // conversation's model if the active provider had changed since setup, a model
+      // change the user never made. The agent loop re-reads state.model/thinkingLevel at
+      // each agent_start. Best-effort: if no provider resolves, keep the live model.
+      const modelEffortChanged = builtInModelEffortChanged(existing, input);
+      const providerConfig = modelEffortChanged ? await this.getActiveProviderConfig().catch(() => null) : null;
+      const resolvedModelEffort = providerConfig
+        ? await this.resolveBuiltInAssistantModelEffort(providerConfig).catch(() => null)
+        : null;
       for (const [id, conversation] of this.conversations) {
         await this.refreshMemberDisplayNames(conversation);
-        // Reconfigure the live pi-agent so a persona/display-name edit takes effect
-        // on the NEXT turn, not only when the conversation is reopened. (The model
-        // is not hot-swapped here — it still resolves on conversation setup.)
+        // Reconfigure the live pi-agent so a persona / display-name / model / effort
+        // edit takes effect on the NEXT turn, not only when the conversation reopens.
         if (conversation.defaultAgentId === this.agentIdentity.agentId) {
           conversation.agent.state.systemPrompt = this.agentIdentity.systemPrompt;
+          if (resolvedModelEffort) {
+            conversation.agent.state.model = resolvedModelEffort.model;
+            conversation.agent.state.thinkingLevel = resolvedModelEffort.thinkingLevel;
+          }
         }
         this.emitProjection(id, 'agent_definitions_reloaded');
       }
@@ -7634,13 +7676,10 @@ function createConfiguredAgent(
   return agent;
 }
 
-// `AGENT_REASONING_LEVELS` membership and `nearestSupportedLevel` distance both
-// derive from the single shared ordered ladder in core (`AGENT_REASONING_LADDER`).
+// `AGENT_REASONING_LEVELS` membership derives from the single shared ordered ladder
+// in core (`AGENT_REASONING_LADDER`); the default level + nearest-level coercion are
+// shared with the renderer via `core/agentReasoning`.
 const AGENT_REASONING_LEVELS = new Set<AgentReasoningLevel>(AGENT_REASONING_LADDER);
-// The default effort an agent runs at when it has not chosen one. `medium` keeps a
-// reasoning-capable model actually reasoning by default (a provider connection no
-// longer carries a global reasoning level), coerced to the model's nearest level.
-const DEFAULT_AGENT_THINKING_LEVEL: AgentReasoningLevel = 'medium';
 
 function resolveSkillTurnUpdate(
   effect: SkillTurnEffect | null,
@@ -7750,37 +7789,16 @@ function resolveAgentModel(
   throw new Error(`Model not found for provider ${config.providerId}: ${requested}`);
 }
 
-/** The supported reasoning level nearest `target` on the ladder (ties favour lower). */
-function nearestSupportedLevel(
-  target: AgentReasoningLevel,
-  supported: readonly AgentReasoningLevel[],
-): AgentReasoningLevel {
-  if (supported.includes(target)) return target;
-  const targetIndex = AGENT_REASONING_LADDER.indexOf(target);
-  let best = supported[0];
-  let bestDistance = Infinity;
-  for (const level of supported) {
-    const distance = Math.abs(AGENT_REASONING_LADDER.indexOf(level) - targetIndex);
-    if (distance < bestDistance
-      || (distance === bestDistance && AGENT_REASONING_LADDER.indexOf(level) < AGENT_REASONING_LADDER.indexOf(best))) {
-      best = level;
-      bestDistance = distance;
-    }
-  }
-  return best;
-}
-
 /**
  * The default thinking level an agent runs at when its profile sets no effort:
- * `medium` coerced to the model's nearest supported level (a non-reasoning model
- * supporting only `off` stays `off`).
+ * `medium` coerced to the model's nearest supported level (shared with the renderer
+ * via `core/agentReasoning`; a non-reasoning model supporting only `off` stays `off`).
  */
 function defaultThinkingLevel(model: Model<Api>): AgentReasoningLevel {
   const supported = getSupportedThinkingLevels(model).filter((item): item is AgentReasoningLevel => (
     AGENT_REASONING_LEVELS.has(item as AgentReasoningLevel)
   ));
-  if (!supported.length) return 'off';
-  return nearestSupportedLevel(DEFAULT_AGENT_THINKING_LEVEL, supported);
+  return defaultThinkingLevelFor(supported);
 }
 
 /**
