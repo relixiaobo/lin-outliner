@@ -19,9 +19,9 @@ let savedGlobals: Array<[string, PropertyDescriptor | undefined]> = [];
 
 afterEach(async () => {
   while (mounted.length) mounted.pop()?.cleanup();
-  // The anchored overlay schedules a deferred frame (rAF, or a setTimeout fallback)
-  // to reposition; drain pending macrotasks while the linkedom globals are still
-  // installed so that work never runs after `window` is removed below.
+  // Frames are synchronous here (see renderComponent's requestAnimationFrame stub), but
+  // drain any stray macrotask while the linkedom globals are still installed so no late
+  // work runs after `window` is removed below.
   await new Promise((resolve) => setTimeout(resolve, 0));
   for (const [key, descriptor] of savedGlobals) {
     if (descriptor) Object.defineProperty(globalThis, key, descriptor);
@@ -44,6 +44,15 @@ function renderComponent(element: ReactNode): Rendered {
     Node: window.Node,
   });
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: window.navigator });
+  // linkedom has no requestAnimationFrame, so the anchored-overlay hooks fall back to a
+  // deferred `setTimeout` whose reposition `setStyle` fires AFTER the render's act() block
+  // ("An update … was not wrapped in act(...)"). A synchronous frame runs that reposition
+  // inline, inside act — deterministic and warning-free (the deps exclude `style`, so the
+  // extra synchronous `update()` cannot loop). Set on the per-test window (discarded after).
+  (window as unknown as { requestAnimationFrame: (cb: FrameRequestCallback) => number })
+    .requestAnimationFrame = (cb) => { cb(0); return 0; };
+  (window as unknown as { cancelAnimationFrame: (handle: number) => void })
+    .cancelAnimationFrame = () => { /* synchronous frame: nothing to cancel */ };
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
   const container = window.document.getElementById('root');
