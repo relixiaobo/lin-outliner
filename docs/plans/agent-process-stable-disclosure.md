@@ -41,15 +41,15 @@ PM-approved live process rows default collapsed, expose latest live activity in
 the header, and update to the settled summary in the same disclosure row.
 
 The earlier draft bundled broader row-identity cleanup, generic scroll-anchor
-infrastructure, and Channel working-row geometry. After #294/#296, those are not
-all prerequisites for this feature:
+infrastructure, and Channel working-row geometry. After #294/#296 and the
+post-review audit against #300, those are not all prerequisites for this feature:
 
-- Row identity is a verification point. If the current unified transcript keys
-  already preserve the visible row across live -> sealed, do not add identity
-  infrastructure.
+- Row identity is already stable in the current code path. Keep it as a test
+  assertion, not an implementation workstream.
 - Scroll anchoring is a targeted safety net. Add only local compensation required
-  by process disclosure toggles/completion tests; do not introduce broad
-  transcript infrastructure unless the focused tests prove it is necessary.
+  by process disclosure toggles/completion tests. The upper bound for this
+  Shape-(a) PR is first-visible-row top compensation via existing transcript
+  `row.key` measurement deltas. Do not introduce broad transcript infrastructure.
 - Multi-agent Channel working-row geometry is out of scope. #294 collapsed the
   agent model to one agent and removed the multi-agent channel activity surface.
 
@@ -58,10 +58,12 @@ and split an interface-first PR instead of expanding this feature PR.
 
 ## Collision Self-check
 
-#294 and #296 have merged. This plan is based on post-merge `main`:
+#294, #296, #295, and #300 have merged. This plan is based on post-#300 `main`:
 
-- The agent subsystem is now a single-agent conversation model. There is no
-  DM-vs-Channel branch in the renderer path this plan targets.
+- The agent subsystem is now a single-agent conversation model.
+- `isChannel` is vestigial in this path, not fully deleted:
+  `AgentChatPanel` passes `isChannel={false}`, while `renderAssistantBlocks`
+  still carries old branches. Treat it as always false for this plan.
 - `summarizeProcess(... liveCollapsed)` already exists in
   `AgentProcessBlock.tsx` and can produce a live collapsed header from pending
   tool calls or latest thinking text.
@@ -69,6 +71,13 @@ and split an interface-first PR instead of expanding this feature PR.
   `defaultExpanded = surfaceResultlessProcess || liveSegment`.
 - `AgentTurnProcessFold` also forces live turns open with
   `expanded = liveSegment ? true : ...`.
+- Row identity is already stable across live -> sealed in the current transcript
+  row model: the assistant turn's stable key is reused as both React key and
+  `contentKey`, so expand state should survive without render-row work.
+- #300 touched `AgentChatPanel` narrowly and did not change the process-disclosure
+  targets. #295 reshaped `OutlinerFlatView`, but it did not touch agent transcript
+  files; the outliner still has only partial height-correction anchoring, not
+  expansion add/remove anchoring.
 
 Open PR scan at implementation-claim time is still required, but #294/#296 are
 no longer blockers or unknowns.
@@ -82,6 +91,8 @@ main-agent-owned.
 - `src/renderer/ui/agent/AgentProcessBlock.tsx`
 - `src/renderer/ui/agent/AgentAssistantTurnContent.tsx`
 - `src/renderer/ui/agent/AgentMessageRow.tsx`
+- `src/renderer/ui/agent/AgentChatPanel.tsx` only for bounded transcript anchor
+  compensation if focused tests prove it is needed
 - `src/renderer/ui/agent/AgentTranscriptMessageList.tsx` only if focused tests
   prove row anchoring must be handled at the list layer
 - `src/renderer/styles/agent-tool-rows.css`
@@ -104,8 +115,8 @@ The same class of perceived instability can appear outside the agent transcript.
 For example, in the outliner, collapsing a node whose expanded body extends below
 the viewport can move the visible node/header because descendant rows are removed
 from the flat list and later rows are re-positioned. The current outliner flat
-view compensates height-only measurement corrections, but not expansion
-add/remove projections.
+view, including the post-#295 reshaped implementation, compensates height-only
+measurement corrections, but not expansion add/remove projections.
 
 This agent plan should not implement the outliner fix, but it should follow the
 same invariant so the solution is not agent-specific:
@@ -149,6 +160,10 @@ Target behavior:
   completion must not auto-collapse it.
 - If the user never expanded, completion keeps the row collapsed and only updates
   the header summary.
+- Sticky user expansion is keyed to the outer turn fold id
+  `process:${contentKey}`. Inner process-group ids can stay local to their
+  adjacent thinking/tool groups and should not own the turn-level live -> sealed
+  stickiness contract.
 
 The implementation should reuse the existing
 `summarizeProcess(... liveCollapsed)` path. The main code change is the default
@@ -172,19 +187,21 @@ row. Completion should not remove a previously visible process list unless that
 list was explicitly opened by the user or required by an exceptional
 resultless/error case.
 
-### 3. Row identity is verified before expanded in scope
+### 3. Row identity should remain a no-op
 
 The feature needs the visible process disclosure to survive live -> sealed
-without remounting into a different transcript row. After #294, the renderer has
-a simpler single-agent path, so do not assume a broad identity rewrite is needed.
+without remounting into a different transcript row. The current post-#300
+renderer already provides that stable identity for ordinary assistant turns, so
+this section is an assertion to preserve, not planned infrastructure.
 
 Implementation rule:
 
 - First add focused tests around live collapsed -> sealed collapsed behavior.
-- If they pass with the existing `contentKey` / row keys, leave row identity
-  infrastructure alone.
-- If the same visible turn still remounts or loses expand-state, fix the smallest
-  renderer-local key boundary.
+- Expect those tests to pass with the existing `contentKey` / row keys.
+- Leave row identity infrastructure alone unless the focused tests prove a
+  same-turn remount or expand-state reset.
+- If the same visible turn still remounts, fix the smallest renderer-local key
+  boundary.
 - If the fix would require protocol/shared projection shape changes, stop and
   split an interface-first PR.
 
@@ -209,12 +226,25 @@ Anchor policy:
   on `scrollHeight`.
 - Do not force bottom pinning for users who have scrolled away from the bottom.
 
+Upper bound for this Shape-(a) PR:
+
+- Implement at most a local transcript compensation helper that records bottom
+  distance or the first visible transcript `row.key` + viewport top before known
+  process disclosure layout updates, then adjusts `scrollTop` from the measured
+  row-key delta in `useLayoutEffect`.
+- A clicked process trigger may be used as the anchor only when it can be mapped
+  to the same mounted transcript row/key path without new generic trigger-anchor
+  infrastructure.
+- If the fix requires a broader clicked-trigger anchoring system, shared
+  outliner/agent abstraction, or protocol/shared projection changes, split that
+  into a separate PR.
+
 Implementation direction:
 
 - Start with tests that capture bounding boxes before/after live -> sealed and
   manual disclosure toggles.
-- Add local `useLayoutEffect` scroll compensation only where tests show visible
-  movement remains.
+- Add only the bounded local `useLayoutEffect` compensation above where tests show
+  visible movement remains.
 - Keep reads grouped before writes.
 - Respect `prefers-reduced-motion`; scroll compensation is instantaneous and not
   a smooth scroll.
@@ -227,6 +257,17 @@ clicked disclosure row or the user's current viewport anchor should not move
 unexpectedly as the rest of the transcript reflows.
 
 ## Testing
+
+This change must rewrite existing tests and spec text that currently assert the
+opposite behavior. Treat this as a first-class deliverable, not a side effect:
+
+- `tests/e2e/agent-process.spec.ts` currently asserts live process rows are
+  expanded while working, including the final-prose streaming case where the fold
+  is expanded and disabled/locked. Those assertions must be rewritten to the
+  approved collapsed-live behavior.
+- `docs/spec/agent-event-log-rendering.md` currently documents "auto-expands
+  while working" and "auto-collapses when the turn settles." The implementation PR
+  must rewrite that section to the new collapsed-live contract.
 
 Add or update focused Playwright coverage:
 
@@ -269,9 +310,8 @@ Visual verification before marking ready:
   clearly so review does not treat it as a bug fix.
 - `AgentTurnProcessFold` currently locks live rows open. Changing that may expose
   assumptions in tests that expect live folds to be disabled/non-interactive.
-- Row identity changes can accidentally reset branch/action/menu state if keys
-  are too broad or too narrow. Avoid touching keys unless focused tests prove a
-  remount.
+- Row identity is expected to be a no-op. Touching keys anyway can accidentally
+  reset branch/action/menu state; avoid it unless focused tests prove a remount.
 - Scroll anchoring can fight the browser's own scroll anchoring if it is applied
   unconditionally. It must only compensate known disclosure/transcript layout
   updates.
@@ -295,11 +335,12 @@ Visual verification before marking ready:
 - Update `AgentTurnProcessFold` so live outer folds are not forced open/locked
   when the PM-approved collapsed-live policy applies.
 - Preserve existing resultless/interrupted surfacing rules.
-- Verify row/content keys across live -> sealed transitions before changing any
-  identity infrastructure.
-- Add targeted scroll-anchor compensation only if focused tests still show
-  movement after the default collapsed behavior lands.
-- Update focused E2E tests.
-- Fold the shipped behavior into `docs/spec/agent-event-log-rendering.md` and any
-  agent architecture text that still describes the old live-open default.
+- Preserve existing row/content keys across live -> sealed transitions; treat row
+  identity work as a no-op unless tests prove otherwise.
+- Add at most the bounded transcript `row.key`/top scroll compensation if focused
+  tests still show movement after the default collapsed behavior lands.
+- Rewrite focused E2E tests that currently assert live-open/locked behavior.
+- Rewrite `docs/spec/agent-event-log-rendering.md` so it no longer documents the
+  old live-open default; update any agent architecture text that still points
+  readers at the old behavior.
 - Run `bun run typecheck`, focused e2e, and `bun run docs:check`.
