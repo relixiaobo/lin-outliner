@@ -765,6 +765,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Single-agent finish collapse — the one-Neva invariant is now code-enforced (PR #300, cc-2)** —
+  removes every surface that could create, load, or delegate-to a *second* agent, completing the
+  collapse begun in #294. Gone: agent-definition authoring (the `agent_create` / `delete` /
+  `duplicate` command kinds + IPC / client / UI + the `/create-agent` skill), file-backed agent
+  loading (the `.agents/agents/` registry scan, `additionalAgentDirectories`), the `Agent` tool's
+  `agent_type` parameter (delegation is now structurally **fork-only** — a fork runs *as* Neva in an
+  isolated context, never a different agent), the skill `agent` field, the dead cross-principal
+  memory redaction, and `isMultiAgentConversation`. Neva stays editable in place; her same-agent
+  fork sub-runs (research / dream / Task) are unchanged. The scheduled-command `commandAgent`
+  selector is removed end-to-end (a command always forks the current agent), and
+  `AgentChildRunActionResult.context_mode` is narrowed to `'fork'`. Net −3791/+546 across 61 files;
+  design folded into the agent specs (A6). **Gate (main):** `/code-review high` (8 finder angles +
+  verify) → 5 findings, all addressed in a follow-up commit (commandAgent removed end-to-end,
+  `context_mode` narrowed, dead `resolveChildRunMemoryOwner` deleted); typecheck ✓, `test:core`
+  1034 / `test:renderer` 547 / `docs:check` ✓. **Shape (a)** one PR.
 - **Single-agent collapse — one customizable agent, channels only, one memory (PR #294, cc-2)** —
   the multi-agent surface collapses to a single directly-editable assistant (Neva). Conversations
   become inline channels: the DM primitive, member-roster surface, runtime POV assembly, dead
