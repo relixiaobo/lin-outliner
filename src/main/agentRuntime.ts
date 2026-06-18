@@ -1667,16 +1667,28 @@ export class AgentRuntime {
       const resolvedModelEffort = providerConfig
         ? await this.resolveBuiltInAssistantModelEffort(providerConfig).catch(() => null)
         : null;
+      // Re-resolve the built-in tool allow/deny filter from the freshly-saved overlay so a
+      // tools edit takes effect on the NEXT turn, not only when the conversation reopens.
+      // The live tool set is a setup-time snapshot (conversation.agentToolFilter); without
+      // recomputing it here a just-removed tool stays callable for the rest of the session.
+      const builtInToolOverlay = await this.materializeBuiltInAgentDefinition().catch(() => null);
+      const builtInToolFilter = resolveAgentToolFilter({
+        isBuiltIn: true,
+        tools: builtInToolOverlay?.tools,
+        disallowedTools: builtInToolOverlay?.disallowedTools,
+      });
       for (const [id, conversation] of this.conversations) {
         await this.refreshMemberDisplayNames(conversation);
-        // Reconfigure the live pi-agent so a persona / display-name / model / effort
-        // edit takes effect on the NEXT turn, not only when the conversation reopens.
+        // Reconfigure the live pi-agent so a persona / display-name / model / effort /
+        // tools edit takes effect on the NEXT turn, not only when the conversation reopens.
         if (conversation.defaultAgentId === this.agentIdentity.agentId) {
           conversation.agent.state.systemPrompt = this.agentIdentity.systemPrompt;
           if (resolvedModelEffort) {
             conversation.agent.state.model = resolvedModelEffort.model;
             conversation.agent.state.thinkingLevel = resolvedModelEffort.thinkingLevel;
           }
+          conversation.agentToolFilter = builtInToolFilter;
+          this.applyRuntimeToolSettings(conversation);
         }
         this.emitProjection(id, 'agent_definitions_reloaded');
       }
