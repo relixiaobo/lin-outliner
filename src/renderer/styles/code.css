@@ -3,6 +3,7 @@
    read-only, bounded-height <pre>; the outliner row is an editable textarea
    layered over a Shiki highlight layer with a language <select>. */
 .agent-code-block {
+  position: relative;
   overflow: hidden;
   margin: var(--space-1) 0;
   border: 1px solid var(--border-subtle);
@@ -11,6 +12,7 @@
 }
 
 .code-block {
+  position: relative;
   overflow: hidden;
   margin: var(--space-1) 0;
   border: 1px solid var(--border-subtle);
@@ -20,32 +22,55 @@
 
 .agent-code-header,
 .code-block-chrome {
+  position: absolute;
+  z-index: 2;
+  top: var(--space-3);
+  right: var(--space-3);
   display: flex;
-  height: var(--control-size-xl);
+  max-width: min(68%, 280px);
+  min-width: 0;
+  height: calc(var(--control-size-xl) + var(--space-2));
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  border-bottom: 1px solid var(--border-subtle);
-  padding: 0 var(--space-3) 0 var(--space-4);
+  gap: var(--space-1);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-pill);
+  background: var(--material-popover);
+  backdrop-filter: var(--material-backdrop);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--shadow);
   color: var(--text-soft);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
+  padding: var(--space-1);
+  user-select: none;
+}
+
+.agent-code-header > span {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 var(--space-3) 0 var(--space-4);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-code-copy,
 .code-block-copy {
   display: inline-flex;
-  width: var(--control-size-md);
-  height: var(--control-size-md);
+  width: calc(var(--control-size-xl) - var(--space-1));
+  height: calc(var(--control-size-xl) - var(--space-1));
+  flex: 0 0 calc(var(--control-size-xl) - var(--space-1));
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-sm);
-  color: var(--text-faint);
+  border-radius: var(--radius-pill);
+  background: var(--fill-2);
+  color: var(--text-soft);
+  transition: background var(--motion-fast), color var(--motion-fast), opacity var(--motion-fast);
 }
 
 /* Quiet icon button: hover deepens the icon color rather than adding a fill. */
 .agent-code-copy:hover:not(:disabled),
 .code-block-copy:hover:not(:disabled) {
+  background: var(--fill-3);
   color: var(--text-strong);
 }
 
@@ -59,6 +84,8 @@
    resting fill, so hover only deepens the text/icon color. */
 .code-block-language {
   display: inline-flex;
+  min-width: 0;
+  height: calc(var(--control-size-xl) - var(--space-1));
   align-items: center;
   gap: var(--space-1);
   font-family: var(--font-family-sans);
@@ -67,7 +94,16 @@
   color: var(--text-soft);
   background: transparent;
   border: 0;
-  padding: var(--space-1) 0;
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-3) 0 var(--space-4);
+  transition: color var(--motion-fast);
+}
+
+.code-block-language-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .code-block-language svg {
@@ -88,7 +124,9 @@
   z-index: var(--z-popover);
   min-width: 160px;
   border-radius: var(--radius-md);
-  background: var(--bg);
+  background: var(--material-popover);
+  backdrop-filter: var(--material-backdrop);
+  -webkit-backdrop-filter: var(--material-backdrop);
   box-shadow: var(--shadow);
   padding: var(--space-2);
   overflow-y: auto;
@@ -129,7 +167,7 @@
 .code-block-highlight pre.shiki,
 .code-block-textarea {
   margin: 0;
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-5) var(--space-5);
   font-family: var(--font-family-mono);
   font-size: var(--font-code-block);
   line-height: var(--line-code-block);
