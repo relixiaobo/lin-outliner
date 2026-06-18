@@ -170,12 +170,9 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     const scopeShowsTrailingInput = (scopeParentId: NodeId) => scopeParentId === rootId;
 
     // Down from an expanded row with no materialized children focuses the trailing
-    // child draft so a first child can be typed before leaving the row. An attachment
-    // is the exception: its expansion means "inline preview open", and it renders no
-    // trailing child draft (see visualRows), so the focus must fall through to the
-    // next sibling instead of stalling on a draft that is never mounted.
-    const isAttachmentRow = byId.get(rowId)?.type === 'attachment';
-    if (direction === 1 && expanded && !isAttachmentRow) {
+    // child draft so a first child can be typed before leaving the row. File rows
+    // follow the same rule; their inline preview sits above the normal children group.
+    if (direction === 1 && expanded) {
       const childRows = buildOutlinerRows(byId.get(childParentId), byId);
       if (childRows.length === 0) {
         setUi((prev) => requestFocusState(prev, focusTarget(childParentId, childParentId, panelId, 'trailing'), cursorEnd()));

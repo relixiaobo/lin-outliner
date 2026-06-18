@@ -2377,7 +2377,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       )}
     >
 
-      {!props.flat && row.expanded && (!nonImageFileRow || row.hasChildren) && (
+      {!props.flat && row.expanded && (
         <IndentGuide onToggleChildren={row.toggleDirectChildrenExpansion} />
       )}
 
@@ -2448,12 +2448,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         />
       )}
 
-      {!props.flat && row.expanded && !props.fieldValue && (!nonImageFileRow || row.hasChildren) && (
+      {!props.flat && row.expanded && !props.fieldValue && (
         // role="group" owns the nested treeitems under this row, completing the
-        // ARIA tree nesting (treeitem → group → treeitems). A file row's expansion
-        // means "preview open"; it only renders this children group when it has real
-        // children, and never a trailing draft (see `trailingDraft` below), so an
-        // empty file node shows no phantom child draft under its preview.
+        // ARIA tree nesting (treeitem → group → treeitems). A non-image file row's
+        // expansion also opens its inline preview above this group, but its children
+        // remain normal outline children; childless file rows therefore show the
+        // same trailing draft as any other expanded leaf.
         <div className="children" role="group">
           <OutlinerView
             panelId={props.panelId}
@@ -2476,9 +2476,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
             referencePath={childReferencePath}
             // The trailing draft (eager materialization) replaces the old child
             // TrailingInput: shown for an empty child list or when nav focuses
-            // the trailing surface, unless this is a reference cycle — or a file
-            // node, whose container is preview-only and never typed into.
-            trailingDraft={referenceCycle || nonImageFileRow ? 'none' : 'auto'}
+            // the trailing surface, unless this is a reference cycle.
+            trailingDraft={referenceCycle ? 'none' : 'auto'}
           />
         </div>
       )}

@@ -104,6 +104,25 @@ describe('buildVisualRows depth and extras', () => {
     expect(visualRowNodeIds(rows)).toEqual(['a', 'b']);
   });
 
+  test('expanded attachment rows emit their first-child trailing draft', () => {
+    const byId = byIdOf([
+      node('lib', { children: ['file'] }),
+      node('file', { parentId: 'lib', type: 'attachment' } as Partial<NodeProjection>),
+    ]);
+    const rows = buildVisualRows('lib', byId, {
+      expanded: new Set(['file']),
+      draftIdFor: (parentId) => (parentId === 'file' ? 'draft-file' : null),
+    });
+
+    expect(rows.map((row) => (row.kind === 'content' ? row.nodeId : row.kind))).toEqual(['file', 'draft-file']);
+    expect(rows.find((row) => row.kind === 'content' && row.draft)).toMatchObject({
+      nodeId: 'draft-file',
+      parentId: 'file',
+      depth: 1,
+    });
+    expect(visualRowNodeIds(rows)).toEqual(['file']);
+  });
+
   test('trailing draft is keyed by its id so it survives materialization', () => {
     const draftId = 'node:draft1';
     const before = buildVisualRows('lib', fixture(), {

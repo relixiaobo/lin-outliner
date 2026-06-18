@@ -365,18 +365,22 @@ test.describe('file attachments', () => {
     await expect.poll(async () => inlinePreviewFrame.evaluate((element) => Math.round(element.getBoundingClientRect().height)))
       .toBeGreaterThanOrEqual(Math.round(beforeResizeHeight + 48));
 
-    // Expanding a childless file row must NOT create a phantom editable child draft:
-    // the attachment node stays childless and no new node materializes.
+    // Expanding a childless file row still exposes the normal child trailing draft
+    // below the inline preview, so users can annotate the file without drilling in.
+    await expect(trailingEditor(page, attachmentId!)).toBeVisible();
+    await expect.poll(async () => trailingEditor(page, attachmentId!).evaluate((editor, nodeId) => {
+      const preview = document.querySelector<HTMLElement>(`[data-node-id="${nodeId}"] .file-node-row-preview`);
+      if (!preview) return false;
+      return editor.getBoundingClientRect().top > preview.getBoundingClientRect().bottom;
+    }, attachmentId!)).toBe(true);
     await expect.poll(async () => {
       const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId);
       return node?.children.length ?? 0;
     }).toBe(0);
-    const childCountAfterExpand = (await todayChildren(page)).length;
-    expect(childCountAfterExpand).toBe(beforeChildren.length + 1);
 
     // The file-type bullet drills to the node page.
     await attachmentRowLine.hover();
-    await attachmentRow.locator('.row-bullet-button').first().click();
+    await attachmentRow.locator('> .row .row-bullet-button').first().click();
     const nodePage = page.locator('.outline-panel-surface.active-panel');
     await expect(nodePage.locator('.panel-title-file-heading')).toContainText(longFilename);
     await expect(nodePage.locator('.panel-title-file-heading')).not.toContainText('Untitled');
@@ -569,6 +573,39 @@ test.describe('file attachments', () => {
     expect(calls.some((call) => call.cmd === 'open_asset')).toBe(true);
     expect(calls.some((call) => call.cmd === 'reveal_asset')).toBe(true);
     expect(calls.some((call) => call.cmd === 'copy_asset_file')).toBe(true);
+  });
+
+  test('expanded childless file rows show an inline child trailing draft', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await page.keyboard.type('/attachment');
+    await expect(page.getByRole('option', { name: /Attachment/ })).toBeVisible();
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const attachmentId = (await todayChildren(page)).at(-1)!;
+    const attachmentRow = row(page, attachmentId);
+
+    await attachmentRow.locator('> .row').first().hover();
+    await attachmentRow.locator('> .row .row-chevron-button').first().click();
+    await expect(attachmentRow.locator('.file-node-row-preview .file-node-preview.collapsed')).toBeVisible();
+    const inlineDraft = trailingEditor(page, attachmentId);
+    await expect(inlineDraft).toBeVisible();
+    await expect.poll(async () => inlineDraft.evaluate((editor, nodeId) => {
+      const preview = document.querySelector<HTMLElement>(`[data-node-id="${nodeId}"] .file-node-row-preview`);
+      if (!preview) return false;
+      return editor.getBoundingClientRect().top > preview.getBoundingClientRect().bottom;
+    }, attachmentId)).toBe(true);
+
+    await inlineDraft.click();
+    await page.keyboard.type('inline note on this file');
+    await expect.poll(async () => {
+      const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId);
+      return node?.children.length ?? 0;
+    }).toBe(1);
+    const inlineChildId = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId)?.children[0];
+    expect(inlineChildId).toBeTruthy();
+    await expect(row(page, inlineChildId!)).toContainText('inline note on this file');
+    expect(await todayChildren(page)).toHaveLength(beforeChildren.length + 1);
   });
 
   test('file marker guides use the shared transparent marker slot geometry', async ({ page }) => {
