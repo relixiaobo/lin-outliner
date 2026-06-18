@@ -192,6 +192,22 @@ describe('AgentComposerModelControl', () => {
     expect(savedEffort).toBe('high');
   });
 
+  test('the reasoning section shows the hint, lists Off as a level, and badges the default', async () => {
+    const rendered = renderComponent(
+      <AgentComposerModelControl
+        settings={settings()} model="openai/gpt-5.4" effort="" disabled={false}
+        onModelChange={NOOP} onEffortChange={NOOP}
+      />,
+    );
+    await click(rendered, chip(rendered));
+    expect(rendered.document.querySelector('.agent-composer-model-section-hint')?.textContent).toContain('Higher effort');
+    // "Off" is a regular level (no separate Thinking toggle).
+    expect(modelItem(rendered, 'Off')).toBeTruthy();
+    // The level inherit resolves to (medium, for off/low/medium/high) carries the badge.
+    expect(modelItem(rendered, 'Medium').querySelector('.agent-composer-model-badge')?.textContent).toBe('Default');
+    expect(modelItem(rendered, 'High').querySelector('.agent-composer-model-badge')).toBeNull();
+  });
+
   test('the main menu shows the current model as a single row; the submenu lists all models', async () => {
     let saved = '';
     const rendered = renderComponent(

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { composeProviderQualifiedModel } from '../../../core/agentModelId';
+import { defaultThinkingLevelFor } from '../../../core/agentReasoning';
 import { AGENT_REASONING_LADDER } from '../../../core/types';
 import type { AgentModelOption, AgentProviderSettingsView, AgentReasoningLevel } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
@@ -109,6 +110,8 @@ export function AgentComposerModelControl({
     : AGENT_REASONING_LADDER;
   const reasoningLevels = AGENT_REASONING_LADDER.filter((level) => supportedLevels.includes(level));
   const supportsReasoning = Boolean(effectiveModelOption?.reasoning) || reasoningLevels.some((level) => level !== 'off');
+  // The level inherit resolves to (shared with the runtime), badged as the default.
+  const defaultLevel = defaultThinkingLevelFor(reasoningLevels);
 
   function close() {
     setOpen(false);
@@ -173,7 +176,7 @@ export function AgentComposerModelControl({
           >
             {supportsReasoning ? (
               <>
-                <div className="agent-composer-model-section-label">{composer.reasoningHeading}</div>
+                <div className="agent-composer-model-section-hint">{composer.reasoningHint}</div>
                 {reasoningLevels.map((level) => {
                   const selected = effort === level;
                   return (
@@ -186,6 +189,9 @@ export function AgentComposerModelControl({
                       type="button"
                     >
                       <span className="agent-composer-model-item-label">{reasoningLabel(level)}</span>
+                      {level === defaultLevel ? (
+                        <span className="agent-composer-model-badge">{composer.effortDefault}</span>
+                      ) : null}
                       <span className="agent-composer-model-check">{selected ? <CheckIcon size={ICON_SIZE.menu} /> : null}</span>
                     </button>
                   );

@@ -253,6 +253,7 @@ import {
   type AgentRuntimeContextEventInput,
 } from './agentRuntimeContext';
 import type { ErrorReport, ErrorReportContext } from '../core/errorObservability';
+import { defaultThinkingLevelFor } from '../core/agentReasoning';
 import { AGENT_REASONING_LADDER } from '../core/types';
 import type {
   AgentDefinition,
@@ -7646,13 +7647,10 @@ function createConfiguredAgent(
   return agent;
 }
 
-// `AGENT_REASONING_LEVELS` membership and `nearestSupportedLevel` distance both
-// derive from the single shared ordered ladder in core (`AGENT_REASONING_LADDER`).
+// `AGENT_REASONING_LEVELS` membership derives from the single shared ordered ladder
+// in core (`AGENT_REASONING_LADDER`); the default level + nearest-level coercion are
+// shared with the renderer via `core/agentReasoning`.
 const AGENT_REASONING_LEVELS = new Set<AgentReasoningLevel>(AGENT_REASONING_LADDER);
-// The default effort an agent runs at when it has not chosen one. `medium` keeps a
-// reasoning-capable model actually reasoning by default (a provider connection no
-// longer carries a global reasoning level), coerced to the model's nearest level.
-const DEFAULT_AGENT_THINKING_LEVEL: AgentReasoningLevel = 'medium';
 
 function resolveSkillTurnUpdate(
   effect: SkillTurnEffect | null,
@@ -7762,37 +7760,16 @@ function resolveAgentModel(
   throw new Error(`Model not found for provider ${config.providerId}: ${requested}`);
 }
 
-/** The supported reasoning level nearest `target` on the ladder (ties favour lower). */
-function nearestSupportedLevel(
-  target: AgentReasoningLevel,
-  supported: readonly AgentReasoningLevel[],
-): AgentReasoningLevel {
-  if (supported.includes(target)) return target;
-  const targetIndex = AGENT_REASONING_LADDER.indexOf(target);
-  let best = supported[0];
-  let bestDistance = Infinity;
-  for (const level of supported) {
-    const distance = Math.abs(AGENT_REASONING_LADDER.indexOf(level) - targetIndex);
-    if (distance < bestDistance
-      || (distance === bestDistance && AGENT_REASONING_LADDER.indexOf(level) < AGENT_REASONING_LADDER.indexOf(best))) {
-      best = level;
-      bestDistance = distance;
-    }
-  }
-  return best;
-}
-
 /**
  * The default thinking level an agent runs at when its profile sets no effort:
- * `medium` coerced to the model's nearest supported level (a non-reasoning model
- * supporting only `off` stays `off`).
+ * `medium` coerced to the model's nearest supported level (shared with the renderer
+ * via `core/agentReasoning`; a non-reasoning model supporting only `off` stays `off`).
  */
 function defaultThinkingLevel(model: Model<Api>): AgentReasoningLevel {
   const supported = getSupportedThinkingLevels(model).filter((item): item is AgentReasoningLevel => (
     AGENT_REASONING_LEVELS.has(item as AgentReasoningLevel)
   ));
-  if (!supported.length) return 'off';
-  return nearestSupportedLevel(DEFAULT_AGENT_THINKING_LEVEL, supported);
+  return defaultThinkingLevelFor(supported);
 }
 
 /**

@@ -686,25 +686,47 @@
 
 .agent-composer-model-item-label {
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* The trailing check / caret floats right (margin-left:auto), so a row can carry a
+   badge right after its label without the indicator being pushed off the edge. */
 .agent-composer-model-check,
 .agent-composer-model-item-caret {
   display: inline-flex;
   width: 16px;
   height: 16px;
   flex: 0 0 16px;
+  margin-left: auto;
   align-items: center;
   justify-content: center;
   color: var(--text-faint);
 }
 
-/* Faint section header above the reasoning levels and the model list ("Reasoning",
-   "Model"), and the optional per-provider sub-label inside the model submenu. */
+/* "Default" pill next to the reasoning level inherit resolves to. */
+.agent-composer-model-badge {
+  flex: 0 0 auto;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--fill-1);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: calc(var(--line-meta) + var(--space-1));
+}
+
+/* Faint help line introducing the reasoning levels. */
+.agent-composer-model-section-hint {
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  white-space: normal;
+}
+
+/* Faint section header above the model list ("Model"). */
 .agent-composer-model-section-label {
   padding: var(--space-2) var(--space-3) var(--space-1);
   color: var(--text-faint);

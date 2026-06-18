@@ -298,9 +298,13 @@ Model and effort are owned by the agent identity that actually runs:
   / `setBuiltInAgentProfile`. Two entry points write the same overlay: the
   Settings → Agent profile editor and the composer's quick model/effort chip
   (`AgentComposerModelControl`, model/effort only — a Codex-style menu: the main menu
-  lists the effective model's supported reasoning levels directly plus a single row
+  lists the effective model's supported reasoning levels directly (`off` is a level,
+  not a toggle; the level inherit resolves to is badged "Default") plus a single row
   for the *current* model; that row opens a side-anchored flyout submenu listing all
-  models, grouped by provider when more than one is usable). Both round-trip the
+  models, grouped by provider when more than one is usable). The default-level math
+  (`medium` coerced to the model's nearest supported level) lives in
+  `core/agentReasoning` (`defaultThinkingLevelFor` / `nearestSupportedLevel`), shared
+  by the runtime and this picker so they never disagree. Both round-trip the
   current
   definition and persist only the fields that differ from the code base (so an
   unchanged persona is never frozen), and `updateAgentDefinition` reconfigures the
@@ -312,8 +316,8 @@ Model and effort are owned by the agent identity that actually runs:
 The Settings → Agent profile selector (`AgentModelEffortSelector`) is
 **capability-driven**: pick a provider, then a model; the
 effort options are derived from that model's `supportedThinkingLevels`. The
-composer chip presents the same catalog as a flat model menu instead, but writes
-the identical values. Saved
+composer chip presents the same catalog as the Codex-style menu above instead, but
+writes the identical values. Saved
 values are the canonical model id (provider-qualified `providerId/modelId`) and the
 adapter's canonical effort, never a display label. The provider→model string is
 parsed by one shared `core/agentModelId` helper (renderer + runtime), so a model id
