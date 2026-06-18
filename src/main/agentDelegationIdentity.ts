@@ -11,12 +11,12 @@ export function agentDefinitionAgentId(agent: AgentDefinition): string {
 }
 
 export function resolveChildRunMemoryOwner(
-  run: Pick<AgentChildRunRecord, 'contextMode' | 'executingAgentId' | 'memoryOwnerAgentId' | 'parentAgentId'>,
+  run: Pick<AgentChildRunRecord, 'memoryOwnerAgentId'>,
   fallbackMemoryOwnerAgentId: string,
 ): string {
-  if (run.memoryOwnerAgentId) return run.memoryOwnerAgentId;
-  if (run.contextMode === 'fork') return fallbackMemoryOwnerAgentId;
-  return run.executingAgentId ?? run.parentAgentId ?? fallbackMemoryOwnerAgentId;
+  // A child run is always a fork — the current agent in an isolated context — so memory
+  // ownership falls back to the host agent unless an explicit owner was recorded.
+  return run.memoryOwnerAgentId || fallbackMemoryOwnerAgentId;
 }
 
 export function memoryWorkspaceIdForRoot(localRoot: string | undefined): string | undefined {

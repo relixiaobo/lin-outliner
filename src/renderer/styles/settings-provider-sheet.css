@@ -85,20 +85,6 @@
   line-height: var(--line-ui-sm);
 }
 
-.channel-config-member-checkbox {
-  min-width: var(--checkbox-mark-size);
-  min-height: var(--checkbox-mark-size);
-}
-
-.channel-config-member-checkbox-label {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-}
-
 /* Head: large brand avatar + title / subtitle (native alert layout). */
 .settings-sheet-head {
   display: flex;

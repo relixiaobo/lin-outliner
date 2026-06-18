@@ -19,7 +19,6 @@ import {
 } from './agentSkillAuthoring';
 import {
   selfDefinitionRootEntries,
-  type SelfDefinitionSurface,
 } from './agentAuthoring';
 import {
   optionalNormalizedString,
@@ -784,7 +783,7 @@ function validateSelfDefinitionContentWriteOrThrow(input: {
     }
   }
 
-  if (selfDefinitionSurfaceForPath(input.workspace, input.filePath)) {
+  if (isSelfDefinitionWritePath(input.workspace, input.filePath)) {
     throw new LocalToolFailure(
       'ungoverned_self_definition_write',
       'Self-definition writes must target a governed skill definition file.',
@@ -1309,7 +1308,7 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
       try {
         const params = normalizeFileDeleteParams(rawParams);
         const filePath = resolveWorkspacePath(workspace, params.file_path, 'write');
-        if (selfDefinitionSurfaceForPath(workspace, filePath)) {
+        if (isSelfDefinitionWritePath(workspace, filePath)) {
           throw new LocalToolFailure(
             'self_definition_delete_not_supported',
             'Deleting skills or agents through file_delete is not supported.',
@@ -1610,7 +1609,7 @@ function resolveSingleConvertOutputPath(
 }
 
 function assertNotSelfDefinitionConvertOutput(workspace: WorkspaceContext, outputPath: string): void {
-  if (!selfDefinitionSurfaceForPath(workspace, outputPath)) return;
+  if (!isSelfDefinitionWritePath(workspace, outputPath)) return;
   throw new LocalToolFailure(
     'self_definition_convert_output_not_supported',
     'file_convert cannot write skill or agent definition content.',
@@ -3010,16 +3009,16 @@ function allowedRealRoots(workspace: WorkspaceContext, rootRealPath: string, acc
   return roots;
 }
 
-function selfDefinitionSurfaceForPath(workspace: WorkspaceContext, filePath: string): SelfDefinitionSurface | null {
+function isSelfDefinitionWritePath(workspace: WorkspaceContext, filePath: string): boolean {
   const lexicalPath = path.resolve(filePath);
   const canonicalPath = resolveCanonicalPath(filePath)?.realPath ?? null;
-  for (const { dir, surface } of selfDefinitionRootEntries(workspace.root)) {
+  for (const { dir } of selfDefinitionRootEntries(workspace.root)) {
     const lexicalRoot = path.resolve(dir);
-    if (isSelfDefinitionContentPath(lexicalRoot, lexicalPath)) return surface;
+    if (isSelfDefinitionContentPath(lexicalRoot, lexicalPath)) return true;
     const canonicalRoot = resolveCanonicalPath(dir)?.realPath ?? null;
-    if (canonicalPath && canonicalRoot && isSelfDefinitionContentPath(canonicalRoot, canonicalPath)) return surface;
+    if (canonicalPath && canonicalRoot && isSelfDefinitionContentPath(canonicalRoot, canonicalPath)) return true;
   }
-  return null;
+  return false;
 }
 
 function isSelfDefinitionContentPath(root: string, candidate: string): boolean {

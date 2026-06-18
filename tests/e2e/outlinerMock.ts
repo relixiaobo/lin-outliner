@@ -44,8 +44,6 @@ interface MockFixtureOptions {
   noProvider?: boolean;
   /** Adds an armed `command` (scheduled routine) node under today for the command-node specs. */
   commandNode?: boolean;
-  /** Adds an agent loaded from an additional directory outside writable authoring roots. */
-  additionalAgentDirectoryAgent?: boolean;
   /** Preloads remembered permission grants for settings/security specs. */
   permissionGrants?: string[];
   /** Preloads user blocklist rules for settings/security specs. */
@@ -71,7 +69,7 @@ type E2EWindow = Window & {
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
     onAgentOAuthEvent?: (listener: (envelope: unknown) => void) => () => void;
     openProviderConfig?: (params: { providerId: string; mode: string }) => Promise<void>;
-    openAgentConfig?: (params: { agentId?: string; mode: string }) => Promise<void>;
+    openAgentConfig?: (params: { agentId?: string }) => Promise<void>;
     openChannelConfig?: (params: { conversationId?: string; mode: string }) => Promise<void>;
     openSettings?: (target?: unknown) => Promise<void>;
     agentNavigateToConversation?: (conversationId: string) => Promise<void>;
@@ -474,23 +472,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         maxTurns: null,
       },
     ];
-    if (options.additionalAgentDirectoryAgent) {
-      agentDefinitions.push({
-        agentId: 'user:external123:external-reviewer',
-        name: 'external-reviewer',
-        displayName: 'external-reviewer',
-        source: 'user',
-        rootDir: '/mock/shared-agents/external-reviewer',
-        agentFile: '/mock/shared-agents/external-reviewer/AGENT.md',
-        writable: false,
-        description: 'Reviews work from a shared directory.',
-        model: 'gpt-5.4-mini',
-        effort: 'high',
-        body: 'You review work from a shared directory.',
-        permissionMode: 'restricted',
-        maxTurns: null,
-      });
-    }
     const debugUsage = {
       input: 12000,
       output: 420,
@@ -1684,7 +1665,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       openProviderConfig: async (params: { providerId: string; mode: string }) => {
         calls.push({ cmd: 'open_provider_config', args: clone(params) });
       },
-      openAgentConfig: async (params: { agentId?: string; mode: string }) => {
+      openAgentConfig: async (params: { agentId?: string }) => {
         calls.push({ cmd: 'open_agent_config', args: clone(params) });
       },
       openChannelConfig: async (params: { conversationId?: string; mode: string }) => {

@@ -385,11 +385,9 @@ export class AgentDelegationRuntime {
     if (!listing) return null;
     for (const agent of newAgents) this.listedAgents.set(agent.name, agentListingIdentity(agent));
     return [
-      `The following agents are available for use with the ${AGENT_DELEGATE_TOOL_NAME} tool:`,
+      `You are operating as the agent below. Calling ${AGENT_DELEGATE_TOOL_NAME} forks the current conversation context into an isolated worker that runs as this same agent — it does not select or switch to a different agent:`,
       '',
       listing,
-      '',
-      `Calling ${AGENT_DELEGATE_TOOL_NAME} forks the current conversation context into an isolated worker that runs as the current agent.`,
     ].join('\n');
   }
 
@@ -1324,18 +1322,6 @@ class AgentDefinitionRegistry {
     return [...this.agents.values()].sort((left, right) => left.name.localeCompare(right.name));
   }
 
-  listKnownNames(): string[] {
-    return [...this.agents.keys()].sort();
-  }
-
-  async resolve(name: string): Promise<AgentDefinition | null> {
-    this.ensureLoaded();
-    const normalized = normalizeAgentName(name);
-    return this.agents.get(normalized)
-      ?? [...this.agents.values()].find((agent) => agent.displayName === normalized)
-      ?? null;
-  }
-
   private ensureLoaded(): void {
     if (this.loaded) return;
     this.loaded = true;
@@ -1638,7 +1624,7 @@ function parsePersistedAgentListingStateLine(line: string): { name: string; iden
 
 function parseLiveAgentListing(text: string): string[] {
   const body = unwrapSystemReminder(text);
-  if (!body.includes(`The following agents are available for use with the ${AGENT_DELEGATE_TOOL_NAME} tool:`)) {
+  if (!body.includes(`You are operating as the agent below. Calling ${AGENT_DELEGATE_TOOL_NAME} forks`)) {
     return [];
   }
   return body

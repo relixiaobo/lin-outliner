@@ -10,12 +10,10 @@
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-export type SelfDefinitionSurface = 'skill';
 export type SelfDefinitionScope = 'user' | 'project';
 
 export interface SelfDefinitionRootEntry {
   dir: string;
-  surface: SelfDefinitionSurface;
   scope: SelfDefinitionScope;
 }
 
@@ -25,7 +23,7 @@ export interface SelfDefinitionRootEntry {
 export function selfDefinitionRootEntries(localRoot: string): SelfDefinitionRootEntry[] {
   const root = path.resolve(localRoot);
   return [
-    { dir: path.join(homedir(), '.agents', 'skills'), surface: 'skill', scope: 'user' },
-    { dir: path.join(root, '.agents', 'skills'), surface: 'skill', scope: 'project' },
+    { dir: path.join(homedir(), '.agents', 'skills'), scope: 'user' },
+    { dir: path.join(root, '.agents', 'skills'), scope: 'project' },
   ];
 }

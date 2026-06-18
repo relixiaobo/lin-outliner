@@ -57,12 +57,12 @@ realpath containment:
 
 - **workdir**: the cwd and default write root. Relative file-tool paths resolve
   here.
-- **project self-definition roots**: `<workdir>/.agents/skills` and
-  `<workdir>/.agents/agents`. These roots are part of the typed file-tool area so
-  `/skillify` and `/create-agent` can use the same file tools as normal project
-  work. Personal/global self-definition roots such as `~/.agents/skills` and
-  `~/.agents/agents` are not implicitly in every workspace's file area; they
-  require an explicit handed write scope.
+- **project self-definition root**: `<workdir>/.agents/skills`. This root is part
+  of the typed file-tool area so `/skillify` can use the same file tools as normal
+  project work. (The one-Neva invariant makes skills the only self-definition
+  surface; agent authoring under `.agents/agents` is no longer a write surface.)
+  The personal/global self-definition root `~/.agents/skills` is not implicitly in
+  every workspace's file area; it requires an explicit handed write scope.
 - **scratch**: app-owned materialized attachments, web-fetch binaries, overflow
   logs, and PDF page images. Reads may use scratch; writes do not.
 - **active skill resource roots**: when an inline skill has been invoked and has a
