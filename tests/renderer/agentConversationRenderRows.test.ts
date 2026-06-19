@@ -174,3 +174,31 @@ describe('buildConversationRenderRows — merged turn duration', () => {
     expect(mergedAssistantRunDurationMs(rows)).toBe(null);
   });
 });
+
+describe('buildConversationRenderRows — stable assistant turn key', () => {
+  test('includes the assistant actor without depending on entry id churn', () => {
+    const rows = buildConversationRenderRows(
+      [
+        userEntry('user-1', 0),
+        assistantEntry({ id: 'active-assistant-0', agentId: 'alpha', runId: 'run-stable', timestamp: 10 }),
+      ],
+      'streaming_text',
+    );
+
+    expect(rows[1]!.key).toBe('assistant-turn-10:agent:alpha');
+    expect(rows[1]!.contentKey).toBe('assistant-turn-10:agent:alpha');
+  });
+
+  test('falls back to the assistant message timestamp before an actor is known', () => {
+    const rows = buildConversationRenderRows(
+      [
+        userEntry('user-1', 0),
+        assistantEntry({ id: 'active-assistant-0', agentId: null, runId: null, timestamp: 10 }),
+      ],
+      'streaming_text',
+    );
+
+    expect(rows[1]!.key).toBe('assistant-turn-10:actor:none');
+    expect(rows[1]!.contentKey).toBe('assistant-turn-10:actor:none');
+  });
+});

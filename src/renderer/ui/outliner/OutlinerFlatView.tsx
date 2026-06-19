@@ -7,7 +7,6 @@ import {
   useState,
   type CSSProperties,
   type Dispatch,
-  type MouseEvent,
   type MutableRefObject,
   type ReactNode,
   type RefObject,
@@ -326,7 +325,6 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   const [scrollMetrics, setScrollMetrics] = useState({ top: 0, height: 0 });
   const [flatGuides, setFlatGuides] = useState<FlatGuideGeometry[]>([]);
   const pendingDisclosureAnchorRef = useRef<DisclosureScrollAnchorSnapshot | null>(null);
-  const disclosureAnchorFrameRef = useRef<number | null>(null);
 
   const measureRow = useCallback((rowKey: string, height: number) => {
     const current = rowHeightsRef.current.get(rowKey);
@@ -376,23 +374,23 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   }, [resolveScroller]);
 
   const captureDisclosureAnchor = useCallback((anchorElement: HTMLElement | null) => {
-    const snapshot = captureDisclosureScrollAnchor(anchorElement, resolveScroller());
+    const scroller = resolveScroller();
+    const guideAnchor = anchorElement?.classList.contains('indent-guide') ?? false;
+    const guideNodeId = anchorElement?.dataset.guideNodeId ?? null;
+    const rowId = guideNodeId
+      ?? anchorElement?.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId
+      ?? null;
+    const resolveElement = rowId && scroller
+      ? () => {
+        const chevron = scroller.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(rowId)}"] .row-chevron-button`);
+        if (!guideAnchor) return chevron;
+        return scroller.querySelector<HTMLElement>(`.indent-guide[data-guide-node-id="${CSS.escape(rowId)}"]`) ?? chevron;
+      }
+      : undefined;
+    const snapshot = captureDisclosureScrollAnchor(anchorElement, scroller, resolveElement);
     if (!snapshot) return;
     pendingDisclosureAnchorRef.current = snapshot;
-    if (disclosureAnchorFrameRef.current !== null) {
-      window.cancelAnimationFrame(disclosureAnchorFrameRef.current);
-    }
-    disclosureAnchorFrameRef.current = window.requestAnimationFrame(() => {
-      disclosureAnchorFrameRef.current = null;
-      if (restoreDisclosureScrollAnchor(snapshot)) updateScrollMetrics();
-    });
-  }, [resolveScroller, updateScrollMetrics]);
-  const captureDisclosureClick = useCallback((event: MouseEvent<HTMLDivElement>) => {
-    const target = event.target instanceof HTMLElement ? event.target : null;
-    const anchor = target?.closest<HTMLElement>('.row-chevron-button, .indent-guide') ?? null;
-    if (!anchor || !event.currentTarget.contains(anchor)) return;
-    captureDisclosureAnchor(anchor);
-  }, [captureDisclosureAnchor]);
+  }, [resolveScroller]);
 
   const scrollFrameRef = useRef<number | null>(null);
   const scheduleScrollMetrics = useCallback(() => {
@@ -427,10 +425,6 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
       if (scrollFrameRef.current !== null) {
         window.cancelAnimationFrame(scrollFrameRef.current);
         scrollFrameRef.current = null;
-      }
-      if (disclosureAnchorFrameRef.current !== null) {
-        window.cancelAnimationFrame(disclosureAnchorFrameRef.current);
-        disclosureAnchorFrameRef.current = null;
       }
     };
   }, [virtualize, resolveScroller, updateScrollMetrics, scheduleScrollMetrics]);
@@ -748,7 +742,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
           rootLevel={props.parentId === props.rootId}
           searchLoading={rootSearchRefreshing}
         />
-        <div className="outliner-flat-flow" role="presentation" ref={listRef} onClickCapture={captureDisclosureClick}>
+        <div className="outliner-flat-flow" role="presentation" ref={listRef}>
           {renderFlatGuides()}
           {rows.map((row, i) => (
             <FlowRowShell key={row.key} onMeasure={measureRow} rowKey={row.key}>
@@ -771,7 +765,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
         rootLevel={props.parentId === props.rootId}
         searchLoading={rootSearchRefreshing}
       />
-      <div className="outliner-flat" role="presentation" ref={listRef} style={containerStyle} onClickCapture={captureDisclosureClick}>
+      <div className="outliner-flat" role="presentation" ref={listRef} style={containerStyle}>
         {renderFlatGuides()}
         {renderIndices.map((i) => {
           const row = rows[i]!;

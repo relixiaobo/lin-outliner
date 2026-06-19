@@ -79,6 +79,19 @@ function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {
   };
 }
 
+function assistantActorKey(entry: AssistantEntry): string {
+  if (entry.actor?.type === 'agent') return `agent:${entry.actor.agentId}`;
+  if (entry.actor?.type === 'user') return `user:${entry.actor.userId}`;
+  if (entry.actor?.type === 'tool') return `tool:${entry.actor.toolCallId}`;
+  if (entry.actor?.type === 'system') return 'system';
+  return 'actor:none';
+}
+
+function assistantTurnStableKey(entries: readonly AssistantEntry[]): string {
+  const first = entries[0]!;
+  return `assistant-turn-${first.message.timestamp}:${assistantActorKey(first)}`;
+}
+
 export function buildConversationRenderRows(
   entries: AgentConversationEntry[],
   turnPhase: AgentTurnPhase,
@@ -99,7 +112,7 @@ export function buildConversationRenderRows(
         index += 1;
       }
 
-      const stableKey = `assistant-turn-${assistantEntries[0]!.message.timestamp}`;
+      const stableKey = assistantTurnStableKey(assistantEntries);
       const mergedEntry = assistantEntries.length >= 2
         ? mergeAssistantEntries(assistantEntries)
         : assistantEntries[0]!;
