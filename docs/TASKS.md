@@ -45,9 +45,10 @@ the just-shipped activation/briefing engine; **GO on the full direction, PR1 fir
 — the generic ranking substrate #302's pull-only recall reuses; **GO**, since **revised +
 re-reviewed via #304** into two build-ready PRs — PR A personal-access + PR B
 reference-authority, the latter ratified 2026-06-19). Both plans landed on `main`
-(#302/#303/#304 merged). **#302 PR1 shipped (#305, 2026-06-19)** — `past_chats` re-provided;
-**#302 PR2 shipped (#308, 2026-06-19)** — node-based agent memory (chat-source refs + pull-only
-node memory + runtime-only `memory-dream` skill); **PR3 (jump-to-source UI) remains**.
+(#302/#303/#304 merged). **#302 `agent-memory-on-timeline` fully shipped (2026-06-19)** — PR1
+`past_chats` re-provided (#305) + PR2 node-based agent memory (#308, chat-source refs + pull-only
+node memory + runtime-only `memory-dream` skill) + PR3 jump-to-source UI (#310, chat-source refs
+navigate to the transcript by projected `sourceSeq` range); plan archived.
 **#303 `node-search-access-ranking` fully shipped (2026-06-19)** — PR A personal-access (#307) +
 PR B reference-authority (#309); plan archived. Of the four
 disjoint lanes from the 2026-06-19 dispatch plan, **agent/outliner disclosure stability shipped
@@ -216,27 +217,9 @@ before any directional/security-sensitive build.
     briefing are gone (pull-only via `node_search`/`node_read`), `dream` is now a runtime-only
     skill, and the relevant `docs/spec/` were rewritten in the PR. The DEFERRED
     associative-retrieval faculty is **dropped** by #302 (pull-only; no passive surfacing).
-    Note: the believer-pool store + Dream extraction substrate still ships under the hood;
-    PR3 (jump-to-source UI) remains.
-- **agent-memory-on-timeline** (P1, **ratified 2026-06-19 — GO full direction, PR1 first**)
-  — rebuild agent memory as ordinary outliner nodes on the daily timeline
-  (`d-memory` / `d-episode` / `d-belief`), written/read via `node_*` + a re-provided
-  `past_chats` tool, with consolidation (dream) expressed as an **editable skill** on the
-  shipped scheduled-routines trigger. A deliberate **reversal** of the just-shipped
-  activation/briefing engine: reading is **pull-only** (no passive briefing; cold-start
-  accepted), and `agent-data-model` §0–§2's "memory never touches Loro" + single-writer
-  axioms are consciously abandoned (concurrency/undo de-risked via whole-node replacement +
-  origin-scoped undo). Protocol delta = **one** `ReferenceTarget` variant (`chat-source`),
-  interface-first. **Set of independent PRs:** **PR1** re-provide `past_chats` (**✓ shipped
-  #305, 2026-06-19** — read-only `recent`/`search`/`read`/`read-by-source` with source
-  coordinates for later inline citation); **PR2** the atomic node-memory flip (read+write flip
-  together — genuinely unsplittable pre-release; **✓ shipped #308, 2026-06-19** — chat-source refs +
-  validate-on-write, pull-only `node_search`/`node_read` replacing `recall`+briefing, runtime-only
-  `memory-dream` skill replacing `dream`); **PR3** jump-to-source UI (*next to build*). Reverses the
-  **memory** item above; the recency/access ranking it loses is restored
-  generically by `node-search-access-ranking` (#303). PM postures ratified: pull-only
-  regression · memory-in-exportable-document · single-writer abandoned. See
-  [`docs/plans/agent-memory-on-timeline.md`](docs/plans/agent-memory-on-timeline.md).
+    Note: the believer-pool store + Dream extraction substrate still ships under the hood.
+    **PR3 jump-to-source UI shipped (#310, 2026-06-19)** — the whole #302 subsystem replacement
+    is complete.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
@@ -544,8 +527,25 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   `agent-event-log-rendering.md`, A6). **Gate (main):** `/code-review` recall-mode, **3 rounds** — 13
   findings (2 data-loss-class: `node_edit` mark/metadata stripping, Dream watermark advancing on
   zero-write) all fixed + verified, plus a 4th-round preview-edit-miscount fix; merge re-verified
-  against current `main` (typecheck + `test:core` 1036/0 + `test:renderer` 552/0). **PR3 (jump-to-source
-  UI) remains** — plan stays active, not archived.
+  against current `main` (typecheck + `test:core` 1036/0 + `test:renderer` 552/0).
+- **agent-memory-on-timeline PR3 — jump-to-source UI** (codex, PR #310) — the final PR of the #302 set:
+  `chat-source` inline references (the `[[chat:…]]` citations PR2 writes) become clickable navigation
+  into the agent transcript. Core projects a per-message **`sourceSeq` / `sourceSeqs[]`** (every event seq
+  that represents a message as source evidence) through replay + render projection, so matching uses
+  event-log coordinates, not timestamps/text — and keeping **every** evidence seq means a citation still
+  resolves after the cited message is edited/regenerated. A click on a `conversation` source opens the
+  dock, selects the conversation, and scrolls/highlights the first row whose `sourceSeq` is inside the
+  cited `(fromSeqExclusive, throughSeq]` range; a `run` source opens the owning child-run panel (resolved
+  by `childRuns` membership, so tool-spawned/parentless runs work, not just boundary-row runs). Reveal
+  state is conversation-scoped so a no-match clears instead of lingering/cross-jumping. **Gate (main):**
+  `/code-review xhigh` (9 finder angles + verify + sweep) → 1 blocking cluster (run-source silently
+  no-op'd for tool-spawned runs; stuck pending-target with cross-conversation spurious jump; double
+  `--fill-1` highlight; sourceSeq drift past the cited range after edit) + advisory items — all fixed in
+  `1430f23a` with new coverage (tool-derived-run e2e, edit-survival + merged-row `sourceSeqs` unit tests,
+  NaN-reject parse test). Re-verified: typecheck ✓ · `test:core` 1037/0 · `test:renderer` 554/0 ·
+  `agent-process` e2e 15/15 · `docs:check` ✓. **Completes `agent-memory-on-timeline`** (PR1 #305 + PR2
+  #308 + PR3 #310); plan archived. Residual fast-track follow-up: the `run` source resolver still does an
+  O(N) sequential per-conversation scan (core has an O(1) `conversationIdOfRun` not yet renderer-exposed).
 - **code-block-floating-toolbar** (codex, PR #301) — editable outliner code blocks + read-only agent
   markdown code blocks get a top-right floating toolbar (language selector + copy as separate
   hover/focus-revealed popover-material controls over an opaque code surface), an inset text viewport

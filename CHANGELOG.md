@@ -12,6 +12,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Jump-to-source UI — `agent-memory-on-timeline` PR3 (PR #310, codex)** — the `[[chat:…]]` citations
+  agent memory writes are now clickable navigation back into the transcript. Core projects a per-message
+  **`sourceSeq` / `sourceSeqs[]`** (every event-log seq that represents a message as source evidence)
+  through replay and the render projection, so a citation resolves by event-log coordinates rather than
+  timestamp/text guessing — and because **every** evidence seq is kept, a citation still resolves after the
+  cited message is edited or regenerated. Clicking a `conversation` chat-source reference opens the agent
+  dock, selects that conversation, and scrolls to + briefly highlights the first transcript row whose
+  `sourceSeq` falls inside the cited `(fromSeqExclusive, throughSeq]` range; clicking a `run` chat-source
+  reference opens the owning child-run panel (resolved by child-run membership, so tool-spawned/parentless
+  runs work, not only runs with a transcript boundary row). The pending reveal is conversation-scoped, so a
+  non-matching citation clears cleanly instead of lingering or jumping in the wrong conversation. **Gate
+  (main):** `/code-review xhigh` (9 finder angles → verify → sweep) caught a blocking cluster in the first
+  cut — run-source citations silently no-op'd for tool-spawned runs, a stuck pending-target could cause a
+  cross-conversation spurious jump, message rows double-painted the `--fill-1` highlight, and `sourceSeq`
+  drifted past the cited range after an edit — all fixed in `1430f23a` with new tool-derived-run e2e,
+  edit-survival + merged-row `sourceSeqs` unit tests, and a NaN-reject parse test. typecheck ✓ ·
+  `test:core` 1037 pass / 2 skip / 0 fail · `test:renderer` 554 pass / 0 fail · `agent-process` e2e 15/15
+  · `docs:check` ✓. Completes `agent-memory-on-timeline` (PR1 #305 + PR2 #308 + PR3 #310).
 - **Node-based agent memory — `agent-memory-on-timeline` PR2 (PR #308, codex-2)** — durable agent
   memory moves onto the daily timeline as ordinary outline nodes. New **`chat-source`**
   `ReferenceTarget` variant (a `[[chat:…]]` inline reference into a conversation/run span, with
