@@ -171,6 +171,51 @@ fires the believer pool's conversation Dream.
 `agent_list_dream_history` — it is no longer in the in-conversation task panel.
 The conversation task panel keeps only child-run (delegation) tasks.
 
+## The runtime/policy seam (trigger · mechanism · policy)
+
+A standing architectural rule for every handler shaped *"the runtime fires a smart
+thing on a trigger"* (Dream, compaction, scheduled routines, tool-result trim,
+context-budget management). Each such handler decomposes into **three layers, and
+only the bottom one may leave the runtime**:
+
+| Layer | What it owns | Home |
+|---|---|---|
+| **Trigger** (*when*) | schedule / threshold / event, plus the durable cursor (watermark, `dueAt`, budget), at-most-once + crash recovery, backoff, and the **bright line** — an agent can't forge or suppress a fire | **always runtime** |
+| **Mechanism** (*how it moves*) | the deterministic, invariant-bearing pipe: windowing, splicing, the **persistent format contract**, transactions, abort/retry | **always runtime** |
+| **Policy** (*the judgment*) | what to extract / keep / how to phrase | **outsourceable** — an editable prompt or a skill |
+
+**The seam test.** Before moving any handler (or part of one) into userland, ask:
+*is this a judgment the user would want to read and edit, AND can it tolerate
+existing as one forked, offline agent run — failure-recoverable, and **not
+bootstrapping the substrate it runs on**?* Policy that passes is liftable;
+trigger and mechanism never are.
+
+Worked classification:
+
+- **Dream — policy is liftable.** Dream is a *faculty Neva owns* (it produces an
+  artifact: memory), so its judgment (segment → distill) can become an editable
+  skill, leaving only trigger + mechanism in the runtime. The trigger is **not a
+  Dream-specific scheduler**: it is a special case of the shipped scheduled-routines
+  machinery (timeline command nodes + `{type:'schedule'}` + anacron scheduler +
+  at-most-once recovery + backoff + forward-only, **agent-barred** watermark +
+  unattended permission model; see `commands.md` § scheduled routines). *Lifting
+  Dream's policy into a skill is a direction under review (#302), not current state
+  — Dream today is runtime code (`agentDreamExtraction.ts`).*
+- **Compaction — the boundary marker; NOT skill-able.** Compaction is *substrate
+  Neva runs on* (context management that lets a long run continue), not a faculty
+  it owns. A skill is itself an agent run, so implementing compaction as a skill
+  bootstraps the floor with something that runs on the floor. It is also hot-path
+  (stalls the live turn) and carries a strict persistent format contract (changing
+  the summary wording silently breaks extraction of on-disk summaries —
+  `agentCompaction.ts`). Its *policy* is already an editable prompt
+  (`FULL_COMPACT_PROMPT_BODY`; `/compact` takes custom instructions), so the
+  retention judgment is tunable — but the **operation** stays in the kernel.
+  Mechanism stays in; policy can move out; never move both.
+
+By this test: Dream / periodic review / triage / import / research → policy is
+skill-able; compaction / tool-result trim / context-budget / the scheduler itself /
+single-writer + transactions / the permission floor → kernel.
+
 ## Removed multi-agent apparatus
 
 The single-agent collapse removed the whole multi-agent layer. There is no longer
