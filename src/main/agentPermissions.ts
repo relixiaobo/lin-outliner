@@ -157,6 +157,7 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
   'web_search',
   'web_fetch',
   'recall',
+  'past_chats',
   'ask_user_question',
   'runtime_status',
   'config',
@@ -188,6 +189,8 @@ const TOOL_ALIASES = new Map<string, string>([
   ['websearch', 'web_search'],
   ['web_search', 'web_search'],
   ['recall', 'recall'],
+  ['past_chats', 'past_chats'],
+  ['pastchats', 'past_chats'],
   ['ask_user_question', 'ask_user_question'],
   ['askuserquestion', 'ask_user_question'],
   ['runtime_status', 'runtime_status'],
@@ -581,6 +584,18 @@ export function deriveAgentToolActionDescriptors(input: {
       title: 'agent memory recall',
       summary: "Read the local agent's active distilled memory entries (cued retrieval).",
       consequence: 'This reads local agent memory and optional cited episodic evidence without changing it.',
+      reversible: true,
+      externalEffect: false,
+      highConsequence: false,
+    })];
+  }
+
+  if (toolName === 'past_chats') {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.memory.recall'), {
+      accessScope: 'none',
+      title: 'past chat recall',
+      summary: 'Read visible local agent conversation history and raw cited spans.',
+      consequence: 'This reads local prior conversations without changing them.',
       reversible: true,
       externalEffect: false,
       highConsequence: false,
@@ -2145,7 +2160,7 @@ function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAc
   if (toolName === 'operation_history') {
     return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';
   }
-  if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'recall' || toolName === 'node_read' || toolName === 'node_search') return 'read';
+  if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'recall' || toolName === 'past_chats' || toolName === 'node_read' || toolName === 'node_search') return 'read';
   return 'unknown';
 }
 

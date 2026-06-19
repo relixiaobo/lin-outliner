@@ -1,6 +1,7 @@
 import {
   conversationIdOfRun,
   getAgentEventVisibleTranscript,
+  type AgentEvent,
   samePrincipal,
   type AgentEventMessageRecord,
   type AgentMemoryEpisode,
@@ -58,6 +59,21 @@ export interface PastChatsReadParams {
   includeCurrentConversation?: boolean;
 }
 
+export interface PastChatsSourceParams {
+  source: PastChatsStreamSourceInput;
+  maxChars?: number;
+}
+
+export interface PastChatsStreamSourceInput {
+  stream: AgentMemoryStreamSource['stream'];
+  streamId: string;
+  range: {
+    fromSeqExclusive: number;
+    throughSeq?: number;
+    throughEventId?: string | null;
+  };
+}
+
 export interface PastChatsEvidenceParams {
   source: AgentMemorySource;
   principal: AgentPrincipal;
@@ -82,6 +98,7 @@ export type PastChatsResult =
   | PastChatsRecentResult
   | PastChatsSearchResult
   | PastChatsReadResult
+  | PastChatsSourceResult
   | PastChatsErrorResult;
 
 export type PastChatsEvidenceResult =
@@ -100,6 +117,7 @@ export interface PastChatsRecentItem {
   conversationId: string;
   conversationTitle: string | null;
   createdAt: string;
+  source: AgentMemoryStreamSource;
   text: string;
   totalChars: number;
   textTruncated: boolean;
@@ -119,6 +137,7 @@ export interface PastChatsSearchHit {
   conversationTitle: string | null;
   role: PastChatsRole;
   createdAt: string;
+  source: AgentMemoryStreamSource;
   snippet: string;
 }
 
@@ -127,6 +146,15 @@ export interface PastChatsReadResult {
   conversation: { id: string; title: string | null; createdAt: string; updatedAt: string };
   anchorMessageId: string;
   messages: PastChatsReadMessage[];
+  totalChars: number;
+  outputTruncated: boolean;
+}
+
+export interface PastChatsSourceResult {
+  mode: 'source';
+  source: AgentMemoryStreamSource;
+  conversation?: { id: string; title: string | null; createdAt: string; updatedAt: string };
+  messages: PastChatsEvidenceMessage[];
   totalChars: number;
   outputTruncated: boolean;
 }
@@ -146,6 +174,7 @@ export interface PastChatsReadMessage {
   role: PastChatsRole;
   createdAt: string;
   text: string;
+  source?: AgentMemoryStreamSource;
   toolName?: string;
   isError?: boolean;
   messageTruncated?: boolean;
@@ -179,6 +208,7 @@ interface VisibleConversationCacheEntry {
   messageById: Map<string, AgentEventMessageRecord>;
   messages: AgentEventMessageRecord[];
   compactionMessageIds: Set<string>;
+  sourceByMessageId: Map<string, AgentMemoryStreamSource>;
 }
 
 interface ConversationIndexedEntry {
@@ -213,14 +243,18 @@ export class AgentPastChatsService {
       .filter((entry) => before === null || entry.createdAt <= before)
       .filter((entry) => textSearchTextMatchesQuery(entry.normalizedText, analysis));
 
-    const visibleHits: Array<{ entry: AgentEventSearchIndexEntry; match: PastChatTextMatch }> = [];
+    const visibleHits: Array<{ entry: AgentEventSearchIndexEntry; match: PastChatTextMatch; source: AgentMemoryStreamSource }> = [];
     for (const entry of candidates) {
       const visible = await this.visibleConversationMessages(entryConversationId(entry));
       if (!visible.messageIds.has(entry.messageId)) continue;
       const text = searchResultText(entry, visible.messageById.get(entry.messageId));
       const match = scorePastChatText(text, analysis);
       if (!match) continue;
-      visibleHits.push({ entry, match });
+      visibleHits.push({
+        entry,
+        match,
+        source: visible.sourceByMessageId.get(entry.messageId) ?? sourceForIndexEntry(entry),
+      });
     }
 
     visibleHits.sort((left, right) => {
@@ -234,11 +268,12 @@ export class AgentPastChatsService {
     const selected = visibleHits.slice(0, limit);
     return {
       mode: 'search',
-      hits: selected.map(({ entry, match }) => ({
+      hits: selected.map(({ entry, match, source }) => ({
         messageId: entry.messageId,
         ...conversationFieldsForEntry(entry, conversations),
         role: entry.role,
         createdAt: isoTime(entry.createdAt),
+        source,
         snippet: match.snippet,
       })),
       totalHits: visibleHits.length,
@@ -282,6 +317,7 @@ export class AgentPastChatsService {
         messageId: entry.messageId,
         ...conversationFieldsForEntry(entry, conversations),
         createdAt: isoTime(entry.createdAt),
+        source: visible.sourceByMessageId.get(entry.messageId) ?? sourceForIndexEntry(entry),
         text: truncateForDisplay(text, maxMessageChars),
         totalChars: text.length,
         textTruncated: text.length > maxMessageChars,
@@ -339,7 +375,7 @@ export class AgentPastChatsService {
     const afterContext = clampInteger(params.afterContext, DEFAULT_AFTER_CONTEXT, 0, MAX_AFTER_CONTEXT);
     const maxChars = clampInteger(params.maxChars, DEFAULT_READ_CHARS, 1, MAX_READ_CHARS);
     const windowMessages = readWindow(visible.messages, anchorIndex, beforeContext, afterContext);
-    const assembled = clampReadMessages(windowMessages, maxChars);
+    const assembled = clampReadMessages(windowMessages, maxChars, visible.sourceByMessageId);
 
     return {
       mode: 'read',
@@ -353,6 +389,23 @@ export class AgentPastChatsService {
       messages: assembled.messages,
       totalChars: assembled.totalChars,
       outputTruncated: assembled.outputTruncated,
+    };
+  }
+
+  async readSource(params: PastChatsSourceParams): Promise<PastChatsResult> {
+    const source = await this.concreteStreamSource(params.source);
+    if (!source) {
+      return pastChatsError('SOURCE_NOT_FOUND', `No source stream was found for ${params.source.stream} ${params.source.streamId}.`);
+    }
+    const evidence = await this.readStreamMemorySourceEvidence(source, params.maxChars, source);
+    if (evidence.mode !== 'evidence') return evidence;
+    return {
+      mode: 'source',
+      source,
+      conversation: evidence.conversation,
+      messages: evidence.messages,
+      totalChars: evidence.totalChars,
+      outputTruncated: evidence.outputTruncated,
     };
   }
 
@@ -466,17 +519,46 @@ export class AgentPastChatsService {
     return new Map((await this.eventStore.listConversationIndexEntries()).map((entry) => [entry.id, entry]));
   }
 
+  private async concreteStreamSource(input: PastChatsStreamSourceInput): Promise<AgentMemoryStreamSource | null> {
+    const events = input.stream === 'run'
+      ? await this.eventStore.readRunStreamEvents(input.streamId)
+      : await this.eventStore.readEvents(input.streamId);
+    if (events.length === 0) return null;
+    const throughSeq = input.range.throughSeq;
+    const tail = throughSeq === undefined
+      ? events.at(-1)
+      : events.filter((event) => event.seq <= throughSeq).at(-1);
+    if (!tail) return null;
+    const throughEventId = input.range.throughEventId ?? tail.eventId;
+    if (input.range.throughEventId && input.range.throughEventId !== tail.eventId) return null;
+    return {
+      stream: input.stream,
+      streamId: input.streamId,
+      range: {
+        fromSeqExclusive: Math.max(0, Math.trunc(input.range.fromSeqExclusive)),
+        throughSeq: throughSeq ?? tail.seq,
+        throughEventId,
+      },
+    };
+  }
+
   private async visibleConversationMessages(conversationId: string): Promise<VisibleConversationCacheEntry> {
     const state = await this.eventStore.replay(conversationId);
     const cached = this.visibleConversationCache.get(conversationId);
     if (cached && cached.latestEventId === state.latestEventId) return cached;
     const messages = getAgentEventVisibleTranscript(state).map((entry) => entry.message);
+    const sourceByMessageId = messageSourcesForEvents(
+      'conversation',
+      conversationId,
+      await this.eventStore.readEvents(conversationId),
+    );
     const next = {
       latestEventId: state.latestEventId,
       messageIds: new Set(messages.map((message) => message.id)),
       messageById: new Map(messages.map((message) => [message.id, message])),
       messages,
       compactionMessageIds: new Set(Object.keys(state.compactionsByMessageId)),
+      sourceByMessageId,
     };
     this.visibleConversationCache.set(conversationId, next);
     return next;
@@ -516,7 +598,11 @@ function readWindow(
   return messages.slice(start, end);
 }
 
-function clampReadMessages(messages: readonly AgentEventMessageRecord[], maxChars: number): {
+function clampReadMessages(
+  messages: readonly AgentEventMessageRecord[],
+  maxChars: number,
+  sourceByMessageId: ReadonlyMap<string, AgentMemoryStreamSource> = new Map(),
+): {
   messages: PastChatsReadMessage[];
   totalChars: number;
   outputTruncated: boolean;
@@ -543,6 +629,7 @@ function clampReadMessages(messages: readonly AgentEventMessageRecord[], maxChar
       role: item.message.role,
       createdAt: isoTime(item.message.createdAt),
       text,
+      source: sourceByMessageId.get(item.message.id),
       toolName: item.message.toolName,
       isError: item.message.isError,
       messageTruncated: truncated || undefined,
@@ -551,6 +638,63 @@ function clampReadMessages(messages: readonly AgentEventMessageRecord[], maxChar
   }
 
   return { messages: out, totalChars, outputTruncated };
+}
+
+function messageSourcesForEvents(
+  stream: AgentMemoryStreamSource['stream'],
+  streamId: string,
+  events: readonly AgentEvent[],
+): Map<string, AgentMemoryStreamSource> {
+  const sources = new Map<string, AgentMemoryStreamSource>();
+  const createdSeqByMessageId = new Map<string, number>();
+  for (const event of [...events].sort((left, right) => left.seq - right.seq)) {
+    if (messageCreationEvent(event) && !createdSeqByMessageId.has(event.messageId)) {
+      createdSeqByMessageId.set(event.messageId, event.seq);
+    }
+    const messageId = evidenceMessageId(event);
+    if (!messageId) continue;
+    const createdSeq = createdSeqByMessageId.get(messageId);
+    sources.set(messageId, {
+      stream,
+      streamId,
+      range: {
+        fromSeqExclusive: Math.max(0, (event.type === 'tool_result.replaced' && createdSeq ? createdSeq : event.seq) - 1),
+        throughSeq: event.seq,
+        throughEventId: event.eventId,
+      },
+    });
+  }
+  return sources;
+}
+
+function messageCreationEvent(event: AgentEvent): event is AgentEvent & { messageId: string } {
+  return (event.type === 'user_message.created'
+    || event.type === 'assistant_message.started'
+    || event.type === 'tool_result.created')
+    && typeof event.messageId === 'string';
+}
+
+function evidenceMessageId(event: AgentEvent): string | null {
+  return event.type === 'user_message.created'
+    || event.type === 'user_message.edited'
+    || event.type === 'assistant_message.completed'
+    || event.type === 'assistant_message.failed'
+    || event.type === 'tool_result.created'
+    || event.type === 'tool_result.replaced'
+    ? event.messageId
+    : null;
+}
+
+function sourceForIndexEntry(entry: AgentEventSearchIndexEntry): AgentMemoryStreamSource {
+  return {
+    stream: 'conversation',
+    streamId: entry.conversationId,
+    range: {
+      fromSeqExclusive: Math.max(0, entry.latestSeq - 1),
+      throughSeq: entry.latestSeq,
+      throughEventId: null,
+    },
+  };
 }
 
 function messageText(message: AgentEventMessageRecord): string {

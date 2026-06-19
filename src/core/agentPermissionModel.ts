@@ -196,6 +196,7 @@ export const AGENT_TOOL_ACTION_KIND_PROFILES = {
   node_delete: ['outline.delete'],
   operation_history: ['outline.read', 'outline.edit'],
   recall: ['agent.memory.recall'],
+  past_chats: ['agent.memory.recall'],
   ask_user_question: ['agent.user_question.ask'],
   runtime_status: ['agent.runtime.status'],
   config: ['agent.config.read', 'agent.config.write'],

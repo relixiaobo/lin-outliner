@@ -60,6 +60,7 @@ surface.
 | Tool | Kind | Mutates | Approval | Purpose |
 |---|---|---:|---|---|
 | `recall` | agent | No | No | Cued retrieval over active semantic memory entries, with optional nested source evidence. |
+| `past_chats` | agent | No | No | Read/search visible prior conversation history and raw cited spans. |
 | `ask_user_question` | agent | No | No | Pause the active run for structured user input, including refs/attachments or an explicit discuss outcome. |
 | `dream` | agent | Indirect | Yes | Request runtime-owned Memory Dream (offline consolidation) over the conversation; cannot specify facts to save. |
 
@@ -81,8 +82,10 @@ permission behavior harder to reason about.
 - Use `task_stop` for stopping background commands created by `bash`.
 - Use `web_*` for network read tools.
 - Use `recall` for durable agent memory (cued retrieval over the semantic
-  store). Raw episodic search is internal to runtime-owned evidence expansion
-  and Dream consolidation, not a model-visible tool.
+  store).
+- Use `past_chats` for visible prior conversation history and raw stream spans.
+  Search/recent results are navigation; the model must read by `message_id` or
+  `source` before relying on details.
 - Use `ask_user_question` for decisions or missing context, not permission
   approval. Permission approval answers "may the agent do this"; this tool
   answers "what information or direction should the agent use next".
@@ -2335,10 +2338,10 @@ vocabulary*; definitions live in `agent-memory-foundations.md`.
 
 ### `recall`
 
-`recall` is the single model-visible long-term retrieval tool: **cued
-retrieval** over the semantic store (active durable memory entries) of the
-running agent's believer pool. It does not write, update, or invalidate memory,
-and it does not expose a raw episodic-record (conversation-history) search mode.
+`recall` is the model-visible semantic-memory retrieval tool: **cued retrieval**
+over the semantic store (active durable memory entries) of the running agent's
+believer pool. It does not write, update, or invalidate memory. Raw episodic
+conversation-history recall is exposed separately through `past_chats`.
 
 Parameters:
 
@@ -2499,10 +2502,34 @@ every raw source is gone or no longer resolves, the episode still returns as
 evidence with its durable gist and an empty raw span list. Conversation sources
 verify the retained active branch; run sources replay the referenced run's own
 ledger. Both paths clamp output by `max_chars`. Older conversations that have
-not been distilled into active memory entries are intentionally not
-foreground-recallable. Internal summary search and raw conversation/run reads
-remain available to runtime-owned Dream consolidation and diagnostics, not as
-public model tools.
+not been distilled into active memory entries are not returned by `recall`, but
+they can be searched or read through `past_chats`. Internal summary search
+remains available to runtime-owned Dream consolidation and diagnostics.
+
+### `past_chats`
+
+`past_chats` is a read-only tool over the local event-log conversation/run
+record. It introduces no transcript snapshot store. It reuses the same visible
+transcript rules as the renderer and the same raw-span dereference path as
+memory evidence expansion.
+
+Modes:
+
+- `recent=true`: list recent visible user-message anchors. This is navigation,
+  not evidence.
+- `query`: search visible prior conversation messages by concrete text terms.
+  Search results include `message_id` anchors and source coordinates.
+- `message_id`: read a bounded conversation window around a returned anchor.
+- `source`: read a raw `{stream, stream_id, from_seq_exclusive, through_seq?}`
+  conversation/run span. Returned results include the concrete source range
+  (`through_seq`, `through_event_id`) so later writers can cite only spans they
+  have actually read.
+
+The current conversation is excluded by default from `recent`, `search`, and
+`message_id` reads. The model may opt into `include_current_conversation` only
+when it is recovering compacted current-conversation content that is no longer
+in the active context. Source reads are explicit coordinates and are not
+current-conversation filtered.
 
 Tool results use the shared envelope and expose only the slim model-visible
 projection:

@@ -28,6 +28,7 @@ describe('agent permissions', () => {
       ['node_delete', { node_id: 'node:1' }],
       ['web_search', { query: 'current docs' }],
       ['web_fetch', { url: 'https://example.com' }],
+      ['past_chats', { query: 'prior decision' }],
       ['bash', { command: 'npm test' }],
       ['bash', { command: 'python3 -c "print(1)"' }],
       ['bash', { command: 'npm install' }],
@@ -42,6 +43,18 @@ describe('agent permissions', () => {
       const decision = evaluateAgentToolPermission({ toolName, args, policy: { workspaceRoot } });
       expect(decision.behavior, `${toolName} ${JSON.stringify(args)}`).toBe('allow');
     }
+  });
+
+  test('allows past chat recall in restricted mode as a read-only memory tool', () => {
+    const decision = evaluateAgentToolPermission({
+      toolName: 'past_chats',
+      args: { query: 'prior decision' },
+      policy: { workspaceRoot, mode: 'restricted' },
+    });
+
+    expect(decision.behavior).toBe('allow');
+    expect(decision.access).toBe('read');
+    expect(decision.descriptor.actionKind).toBe('agent.memory.recall');
   });
 
   test('treats project self-definition directories as allowed file areas only', () => {

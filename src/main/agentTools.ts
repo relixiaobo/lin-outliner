@@ -16,6 +16,7 @@ import { createSkillTool, type AgentSkillRuntime } from './agentSkills';
 import { createAgentDelegationTools, type AgentDelegationRuntime } from './agentDelegation';
 import { normalizeAgentToolNames } from './agentToolRules';
 import { createRecallTool, type AgentRecallToolRuntime } from './agentRecallTool';
+import { createPastChatsTool, type PastChatsToolRuntime } from './agentPastChatsTool';
 import { createAskUserQuestionTool, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
 import { createSelfMaintenanceTools, type AgentSelfMaintenanceRuntime } from './agentSelfMaintenanceTools';
 import {
@@ -213,6 +214,7 @@ export interface AgentToolsOptions {
   skillToolEnabled?: boolean;
   delegationRuntime?: AgentDelegationRuntime;
   recall?: AgentRecallToolRuntime;
+  pastChats?: PastChatsToolRuntime;
   askUserQuestion?: AgentAskUserQuestionRuntime;
   selfMaintenance?: AgentSelfMaintenanceRuntime;
   allowedTools?: readonly string[];
@@ -231,6 +233,7 @@ export function createAgentTools(outliner?: OutlinerToolHost, options: AgentTool
     createWebSearchTool(),
     createWebFetchTool(scratchRoot),
     ...(options.recall ? [createRecallTool(options.recall)] : []),
+    ...(options.pastChats ? [createPastChatsTool(options.pastChats)] : []),
     ...(options.askUserQuestion ? [createAskUserQuestionTool(options.askUserQuestion)] : []),
     ...(options.selfMaintenance ? createSelfMaintenanceTools(options.selfMaintenance) : []),
     ...(options.skillRuntime && options.skillToolEnabled !== false ? [createSkillTool(options.skillRuntime)] : []),

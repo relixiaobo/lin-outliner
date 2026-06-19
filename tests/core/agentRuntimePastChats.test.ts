@@ -296,8 +296,8 @@ describe('agent runtime past chats integration', () => {
     expect(contextText).toContain('"config"');
     expect(contextText).toContain('"doctor"');
     expect(contextText).toContain('"recall"');
+    expect(contextText).toContain('"past_chats"');
     expect(contextText).toContain('"dream"');
-    expect(contextText).not.toContain('"past_chats"');
   });
 
   test('agent can request Dream through the foreground tool surface', async () => {
