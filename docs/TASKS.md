@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | shipped single-agent-collapse #294 + agent-dock-ui #296; authored plans #302/#303 — both **ratified 2026-06-19 + merged**, now boarded (build unassigned) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305**; authored ratified plan agent-process-stable-disclosure #297) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -47,9 +47,10 @@ re-reviewed via #304** into two build-ready PRs — PR A personal-access + PR B
 reference-authority, the latter ratified 2026-06-19). Both plans landed on `main`
 (#302/#303/#304 merged). **#302 PR1 shipped (#305, 2026-06-19)** — `past_chats` re-provided.
 Next build dispatch: **#302 PR2** (atomic node-memory flip; gate `/code-review ultra`) and
-**#303 PR A** can start immediately and in parallel; the four
-disjoint lanes from the 2026-06-19 dispatch plan (agent/outliner disclosure stability ·
-command-surface one-pager · dark-mode-contrast-pass · anthropic-auth-clarity) remain open.
+**#303 PR A** can start immediately and in parallel; of the four
+disjoint lanes from the 2026-06-19 dispatch plan, **agent/outliner disclosure stability shipped
+(#306, codex-3)** — command-surface one-pager · dark-mode-contrast-pass · anthropic-auth-clarity
+remain open.
 
 **The 2026-06-14/15 portfolio wave shipped** (all in Recently completed): the agent-permission
 redesign (#252 `decide(effect)` core + #266 folder-handoff / typed `file_convert`), unified
@@ -399,32 +400,6 @@ archived `done` (see Recently completed). Remaining active work:
   the other boarded fast-tracks (outliner-indent-draft-fixes **merged as PR #182** —
   it touched the same Tab/draft paths, so rebase this branch on current `main`).
 
-- **outliner-collapse-scroll-anchor** (P2, *no plan file* — design = the shared
-  disclosure-anchor invariant in
-  [`agent-process-stable-disclosure.md`](docs/plans/agent-process-stable-disclosure.md)
-  §"Shared disclosure anchor invariant") — collapsing an outliner node whose expanded
-  body extends below the viewport moves the visible node/header, because descendant rows
-  are removed from the flat list and later rows reposition. The current `OutlinerFlatView`
-  (incl. post-#295) compensates height-only measurement corrections but **not** the
-  expand/collapse add/remove projection. Fix = the same **clicked-trigger anchor rule** the
-  agent transcript uses: on a user-initiated disclosure toggle, capture the clicked row's
-  viewport top *before* the state change, then after layout commit restore the scroll
-  container so that row stays put (fall back to first-visible-row top). One renderer-only
-  PR; share one invariant helper with `agent-process-stable-disclosure` rather than forking
-  a second anchoring path. Promoted from that plan's open question #327 (2026-06-19).
-- **agent-process-stable-disclosure** (P2, **draft** — PM-ratified design, ready to build) — make
-  agent process rendering feel stable across working→worked. Live process rows default **collapsed**
-  (reversing the current auto-expand-live / auto-collapse-on-settle default — a PM-approved behavior
-  change), the collapsed header shows the latest live activity and updates **in place** to
-  `Worked for {duration}` on completion, and the transcript anchor stays stable. Row identity is
-  already stable (`agentConversationRows.ts` stable key reused as React key + `contentKey`) → a no-op
-  to preserve, not new infrastructure; scroll anchoring is bounded to first-visible-row-top
-  compensation via existing `row.key` deltas (anything broader splits an interface-first PR). Sticky
-  user-expand keys on the outer fold id `process:${contentKey}`. **Shape (a)** one renderer-only PR
-  (`AgentProcessBlock` / `AgentTurnProcessFold` + bounded `AgentChatPanel` anchor); rewriting the
-  contradicting `agent-process.spec.ts` assertions + `agent-event-log-rendering.md` is a first-class
-  deliverable (A6). Design ratified after the main-gate post-#300 grounding review (PR #297). See
-  [`docs/plans/agent-process-stable-disclosure.md`](docs/plans/agent-process-stable-disclosure.md).
 - **macos-liquid-glass-icon** (P2) — true Liquid Glass app icon for macOS 26
   (Tahoe): the layered `.icon` (Icon Composer) format the OS renders with dynamic
   glass material, specular edges + depth, with a legacy `.icns` fallback for
@@ -504,6 +479,26 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **stable-disclosure-anchor** (codex-3, PR #306) — settles two boarded lanes in one renderer-only
+  PR: `agent-process-stable-disclosure` + `outliner-collapse-scroll-anchor`, sharing one disclosure
+  scroll-anchor invariant (`src/renderer/ui/interactions/disclosureScrollAnchor.ts` +
+  `usePendingDisclosureAnchor`). Live agent process rows now default **collapsed** (reversing the old
+  auto-expand-live / auto-collapse-on-settle), the collapsed header carries the live status line
+  (pending tool → latest thinking preview → `Working...`) and updates **in place** to
+  `Worked for {duration}` on seal; user expansion is **sticky** across live→sealed (turn React key is
+  now runId-first with a same-render dedup backstop, so it survives the streaming-id churn that forced
+  the remount). On a disclosure toggle the helper captures the clicked trigger's viewport top and
+  restores it after the layout commit (chevron/indent-guide on long flat lists; agent process folds),
+  resolving the detached trigger via a `data-agent-process-id` / `data-node-id` re-query. Spec synced:
+  `agent-event-log-rendering.md`, `ui-behavior.md` (A6). **Gate (main):** `/code-review high` → 10
+  findings, all addressed in `3efd82d2` and re-verified — typecheck ✓, `test:renderer` 552/0,
+  `agent-process.spec.ts` 13/13, `outliner-trailing-expand.spec.ts` 23/23 (incl. the `<1px`
+  clicked-chevron anchor assertion). The review-recommended depth fixes landed: native CSS
+  `overflow-anchor` kept (the manual JS is the final authority for the clicked element), `resolveScroller`
+  now calls the shared `nearestScrollContainer`, dead `.is-locked` CSS removed, redundant rAF gated on
+  an actual scroll move, inert `dmRunActive` test field dropped. **Shape (b)** two complete lanes, one
+  PR. Plan archived. See
+  [`docs/plans/archive/agent-process-stable-disclosure.md`](docs/plans/archive/agent-process-stable-disclosure.md).
 - **agent-memory-on-timeline PR1 — re-provide `past_chats`** (codex-2, PR #305) — first of the
   `agent-memory-on-timeline` (#302) PR set: re-exposes the model-visible **read-only** `past_chats`
   tool over the existing `AgentPastChatsService` (`recent` / `search` / `read`-by-message /

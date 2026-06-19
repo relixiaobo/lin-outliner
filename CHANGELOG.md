@@ -803,6 +803,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Stabilize disclosure scroll anchoring — live agent process + outliner collapse (PR #306, codex-3)** —
+  live agent process rows now default **collapsed** (reversing the previous auto-expand-while-working /
+  auto-collapse-on-settle): the collapsed header is the live status line — the pending tool, then the
+  latest non-empty thinking preview, then `Working...` — and updates **in place** to
+  `Worked for {duration}` once the turn seals, with no header jump. A user's expand/collapse choice is
+  now **sticky across the live→sealed transition**: the assistant-turn React key is runId-first (with a
+  same-render dedup backstop), so the row no longer remounts when the streaming placeholder id is
+  replaced by the sealed id, and the spinner moves into the timeline only while the fold is expanded.
+  On any disclosure toggle — agent process folds, and outliner chevron / indent-guide collapse on long
+  flat lists — a shared scroll-anchor helper (`disclosureScrollAnchor.ts` + `usePendingDisclosureAnchor`)
+  captures the clicked trigger's viewport top before the state change and restores it after the layout
+  commit (re-resolving a detached trigger via `data-agent-process-id` / `data-node-id`), so removing or
+  adding descendant rows never pulls the clicked row up or down; the correction is instantaneous, never
+  smooth-scrolled. Native CSS `overflow-anchor` is retained as the floor for non-disclosure layout
+  shifts, with the manual JS as the final authority for the clicked element. Spec synced:
+  `agent-event-log-rendering.md`, `ui-behavior.md`. **Gate (main):** `/code-review high` → 10 findings,
+  all addressed in `3efd82d2` and re-verified — typecheck, `test:renderer` 552/0,
+  `agent-process.spec.ts` 13/13, `outliner-trailing-expand.spec.ts` 23/23 (incl. the `<1px`
+  clicked-chevron anchor assertion).
 - **Single-agent finish collapse — the one-Neva invariant is now code-enforced (PR #300, cc-2)** —
   removes every surface that could create, load, or delegate-to a *second* agent, completing the
   collapse begun in #294. Gone: agent-definition authoring (the `agent_create` / `delete` /
