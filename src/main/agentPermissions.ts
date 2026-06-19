@@ -156,13 +156,11 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
   'file_grep',
   'web_search',
   'web_fetch',
-  'recall',
   'past_chats',
   'ask_user_question',
   'runtime_status',
   'config',
   'doctor',
-  'dream',
   'skill',
   'task_stop',
   'node_read',
@@ -188,7 +186,6 @@ const TOOL_ALIASES = new Map<string, string>([
   ['web_fetch', 'web_fetch'],
   ['websearch', 'web_search'],
   ['web_search', 'web_search'],
-  ['recall', 'recall'],
   ['past_chats', 'past_chats'],
   ['pastchats', 'past_chats'],
   ['ask_user_question', 'ask_user_question'],
@@ -197,7 +194,6 @@ const TOOL_ALIASES = new Map<string, string>([
   ['runtimestatus', 'runtime_status'],
   ['config', 'config'],
   ['doctor', 'doctor'],
-  ['dream', 'dream'],
   ['skill', 'skill'],
   ['task_stop', 'task_stop'],
   ['agent', 'agent'],
@@ -578,18 +574,6 @@ export function deriveAgentToolActionDescriptors(input: {
     })];
   }
 
-  if (toolName === 'recall') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.memory.recall'), {
-      accessScope: 'none',
-      title: 'agent memory recall',
-      summary: "Read the local agent's active distilled memory entries (cued retrieval).",
-      consequence: 'This reads local agent memory and optional cited episodic evidence without changing it.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
   if (toolName === 'past_chats') {
     return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.memory.recall'), {
       accessScope: 'none',
@@ -599,20 +583,6 @@ export function deriveAgentToolActionDescriptors(input: {
       reversible: true,
       externalEffect: false,
       highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'dream') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.memory.dream'), {
-      accessScope: 'none',
-      title: 'agent memory dream',
-      summary: 'Request runtime-owned memory consolidation (Dream) for the current agent.',
-      consequence: 'This may consolidate recorded episodic evidence into local durable agent memory; the model cannot provide memory facts directly.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-      requestTitle: 'Approve Memory Dream?',
-      requestTarget: 'current agent memory',
     })];
   }
 
@@ -2155,12 +2125,12 @@ function toolPathArgumentName(toolName: string): string | null {
 
 function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
-  if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'runtime_status' || toolName === 'config' || toolName === 'doctor' || toolName === 'dream') return 'control';
+  if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'runtime_status' || toolName === 'config' || toolName === 'doctor') return 'control';
   if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'file_convert' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete') return 'write';
   if (toolName === 'operation_history') {
     return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';
   }
-  if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'recall' || toolName === 'past_chats' || toolName === 'node_read' || toolName === 'node_search') return 'read';
+  if (toolName === 'file_read' || toolName === 'file_glob' || toolName === 'file_grep' || toolName === 'web_fetch' || toolName === 'web_search' || toolName === 'past_chats' || toolName === 'node_read' || toolName === 'node_search') return 'read';
   return 'unknown';
 }
 

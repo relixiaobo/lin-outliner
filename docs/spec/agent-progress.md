@@ -129,44 +129,28 @@ truth.
   - provider overflow detection, response debug capture, stream option pass-through,
     and session resource cleanup via pi-ai
 - [x] Agent memory foundation (one believer-keyed first-person pool):
-  - a single believer-keyed memory pool on the shared append-only seq-log
-    primitive (alongside the conversation/run logs); facts are stored
-    subject-named in the **third person** and the pool is one undivided
-    body of first-person knowledge — `originWorkspace` is provenance metadata,
-    never a retrieval fence
-  - model-visible `recall` tool over the active durable memory entries, with
-    optional nested evidence expansion through `MemoryEntry.sources`, plus
-    read-only `past_chats` for visible prior conversation history and raw cited
-    spans
-  - bounded `<memory>` turn briefing injection: derived schema overview +
-    activation-ranked fact selection rendered as a **flat `<memory>` bullet
-    list** of verbatim third-person facts (no `<self>`/`<principal>` zones;
-    storage scaffolding hidden; facts pass the shared secret-like redaction
-    heuristic before injection)
-  - Settings → Agent Memory pane for list/edit/forget
-  - runtime-owned Dream write-back as a scheduled/manual reflective run: **one
-    Dream** consolidates conversation evidence into the pool with a subject-aware
-    consolidation prompt; the automatic path uses the shared `date` schedule
-    primitive plus a minimum-volume gate, `/dream` forces a Dream over the
-    conversation, raw evidence is read since the Dream watermark, and
-    `dream.completed` records the processed range; Dream history is surfaced in
-    the Settings → Agent "Memory & activity" panel; the foreground `dream` tool
-    can request the same runtime-owned path without supplying memory facts
-  - run-sourced memory sources bind evidence to stable run-ledger ids
-    (`{seq, eventId}` + message ids, post-#184), and Dream tasks appear in the
-    shared task projection
-  - projected-state cache, idempotent explicit forget, two-strength access
-    projection from `memory.accessed`, and high-churn log compaction
-  - permission classification for read-only `agent.memory.recall` and
-    trigger-only `agent.memory.dream`
-  - prompt guidance that foreground memory writes are handled by the
-    Settings → Agent UI and runtime-owned consolidation (Dream), not by a
-    model-visible CRUD tool
+  - durable memory is ordinary timeline outline content: per-day `#d-memory`
+    containers, `#d-episode` source episodes, and `#d-belief` durable beliefs
+  - model memory is pull-only through `node_search` / `node_read`; the old
+    resident `<memory>` briefing and model-visible `recall` tool are removed
+  - read-only `past_chats` exposes visible prior conversation history and raw
+    cited spans, and `chat-source` inline refs let memory nodes cite exact
+    conversation/run seq ranges
+  - write-time validation dereferences every `chat-source` marker before
+    mutating nodes, so fabricated or stale raw-source coordinates fail loudly
+  - runtime-owned Dream write-back is a scheduled private `memory-dream` skill
+    run with only `past_chats` and `node_*` memory tools; it reads sources since
+    the Dream watermark, writes `#d-episode` / `#d-belief` nodes, records
+    `dream.completed`, and advances the watermark
+  - `/dream` and the foreground `dream` tool are removed; Dream history remains
+    a runtime task/history projection, not a model command surface
+  - permission classification keeps `past_chats` as read-only
+    `agent.memory.recall`; no `agent.memory.dream` action remains
 - [x] Agent M1 self-maintenance and structured input:
   - `ask_user_question` tool with pending question persistence and renderer
     resolution
-  - `runtime_status`, `config`, `doctor`, and `dream` tools with
-    permission-gated config/Dream writes
+  - `runtime_status`, `config`, and `doctor` tools with permission-gated config
+    writes
   - mixed-resolution compaction source ranges for replay/render/runtime context
 - [x] Single-agent collapse (one editable agent; conversations-only; one memory
   pool): the prior multi-agent Channel apparatus was removed and the model

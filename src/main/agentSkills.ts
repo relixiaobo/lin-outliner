@@ -105,7 +105,7 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     'file_grep',
     'web_search',
     'web_fetch',
-    'recall',
+    'past_chats',
   ],
   body: [
     'You are a codebase research specialist running in an isolated child run of the current Tenon agent. You excel at thoroughly navigating and exploring existing context.',
@@ -127,7 +127,7 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '',
     'Guidelines:',
     '1. Restate the concrete research question and scope before searching.',
-    '2. Prefer local evidence first: node_search/node_read for outline context, file_glob for broad file pattern matching, file_grep for content and regex search, file_read when you know the specific path, and recall for relevant memory.',
+    '2. Prefer local evidence first: node_search/node_read for outline context and timeline memory nodes, past_chats for prior conversation history, file_glob for broad file pattern matching, file_grep for content and regex search, and file_read when you know the specific path.',
     '3. Start broad and narrow down. Use multiple search strategies if the first one does not find the right files; check related names, conventions, tests, specs, and call sites.',
     '4. Adapt thoroughness to the caller: quick means basic targeted searches; medium means moderate exploration across likely locations; very thorough means comprehensive analysis across multiple locations and naming conventions.',
     '5. Make efficient use of read/search tools. When independent searches or reads do not depend on each other, issue them in parallel.',
@@ -266,7 +266,7 @@ export type SkillShellExecutor = (input: SkillShellExecutionInput) => Promise<st
 interface InvokeSkillInput {
   skill: string;
   args?: string;
-  trigger: 'agent' | 'slash';
+  trigger: 'agent' | 'slash' | 'runtime';
   parentToolCallId?: string;
   signal?: AbortSignal;
 }
@@ -275,7 +275,7 @@ export interface SkillIsolatedExecutionInput {
   skill: SkillDefinition;
   renderedContent: string;
   args: string;
-  trigger: 'agent' | 'slash';
+  trigger: 'agent' | 'slash' | 'runtime';
   parentToolCallId?: string;
   readOnlyIsolated?: boolean;
 }

@@ -170,6 +170,12 @@ export type AgentToolResultWithPayloads = ToolResultMessage & {
   payloadRefs?: AgentToolResultPayloadPart[];
 };
 
+export interface AgentChildRunNodeChanges {
+  createdNodeIds?: string[];
+  updatedNodeIds?: string[];
+  trashedNodeIds?: string[];
+}
+
 export interface AgentChildRunActionResult {
   status: 'completed' | 'async_launched' | 'queued' | 'running' | 'failed' | 'cancelled';
   agent_id: string;
@@ -188,6 +194,7 @@ export interface AgentChildRunActionResult {
   updated_at: number;
   completed_at?: number;
   transcript_message_count: number;
+  node_changes?: AgentChildRunNodeChanges;
   instructions?: string;
 }
 

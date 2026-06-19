@@ -199,7 +199,17 @@ export interface TextMark {
 
 export type ReferenceTarget =
   | { kind: 'node'; nodeId: NodeId }
-  | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' };
+  | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' }
+  | {
+      kind: 'chat-source';
+      stream: 'conversation' | 'run';
+      streamId: string;
+      range: {
+        fromSeqExclusive: number;
+        throughSeq: number;
+        throughEventId?: string | null;
+      };
+    };
 
 export interface InlineRef {
   offset: number;
@@ -1007,14 +1017,24 @@ export function inlineRefNodeId(ref: InlineRef): NodeId | null {
 export function referenceTargetsEqual(left: ReferenceTarget, right: ReferenceTarget): boolean {
   if (left.kind !== right.kind) return false;
   if (left.kind === 'node') return left.nodeId === (right as Extract<ReferenceTarget, { kind: 'node' }>).nodeId;
+  if (left.kind === 'chat-source') {
+    const chatRight = right as Extract<ReferenceTarget, { kind: 'chat-source' }>;
+    return left.stream === chatRight.stream
+      && left.streamId === chatRight.streamId
+      && left.range.fromSeqExclusive === chatRight.range.fromSeqExclusive
+      && left.range.throughSeq === chatRight.range.throughSeq
+      && (left.range.throughEventId ?? null) === (chatRight.range.throughEventId ?? null);
+  }
   const localRight = right as Extract<ReferenceTarget, { kind: 'local-file' }>;
   return left.path === localRight.path && left.entryKind === localRight.entryKind;
 }
 
 export function referenceTargetSortKey(target: ReferenceTarget): string {
-  return target.kind === 'node'
-    ? `node:${target.nodeId}`
-    : `file:${target.entryKind}:${target.path}`;
+  if (target.kind === 'node') return `node:${target.nodeId}`;
+  if (target.kind === 'chat-source') {
+    return `chat:${target.stream}:${target.streamId}:${target.range.fromSeqExclusive}:${target.range.throughSeq}:${target.range.throughEventId ?? ''}`;
+  }
+  return `file:${target.entryKind}:${target.path}`;
 }
 
 export function replaceAllRichTextPatch(content: RichText): RichTextPatch {

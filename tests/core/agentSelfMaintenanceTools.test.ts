@@ -127,31 +127,6 @@ describe('agent self-maintenance tools', () => {
     });
   });
 
-  test('dream skipped status is a successful trigger result', async () => {
-    const dream = createSelfMaintenanceTools(fakeRuntime({
-      dream: async () => ({
-        status: 'skipped',
-        errorMessage: 'Dream is already running for this agent.',
-      }),
-    })).find((tool) => tool.name === 'dream')!;
-
-    const result = await dream.execute('call-dream', {});
-
-    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
-      ok: true,
-      status: 'unchanged',
-      data: {
-        status: 'skipped',
-        error_message: 'Dream is already running for this agent.',
-      },
-    });
-    expect(result.details).toMatchObject({
-      ok: true,
-      tool: 'dream',
-      data: { status: 'skipped' },
-    });
-  });
-
   test('runtime setting normalization rejects unsupported or invalid writes', () => {
     expect(normalizeRuntimeSettingPatch('agent.runtime.compactEnabled', false)).toEqual({ compactEnabled: false });
     expect(normalizeRuntimeSettingPatch('agent.runtime.disabledSkills', ['a', ' a ', '', 'b'])).toEqual({
@@ -224,7 +199,6 @@ function fakeRuntime(overrides: Partial<AgentSelfMaintenanceRuntime> = {}): Agen
         message: '1 additional skill directory configured.',
       }],
     }),
-    dream: async () => ({ status: 'completed' }),
     ...overrides,
   };
 }

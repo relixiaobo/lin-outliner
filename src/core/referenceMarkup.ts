@@ -43,9 +43,21 @@ export interface FileReferenceSegment {
   entryKind: 'file' | 'directory';
 }
 
+export interface ChatSourceReferenceSegment {
+  type: 'chat';
+  raw: string;
+  ref: string;
+  label: string;
+  target: Extract<ReferenceTarget, { kind: 'chat-source' }>;
+}
+
 export type FileReferenceTextSegment =
   | { type: 'text'; text: string }
   | FileReferenceSegment;
+
+export type ChatSourceReferenceTextSegment =
+  | { type: 'text'; text: string }
+  | ChatSourceReferenceSegment;
 
 const REFERENCE_PATTERN = /\[\[([^\[\]\r\n]*?)\]\]/gu;
 
@@ -72,11 +84,23 @@ export function sanitizeFileReferenceRef(ref: string): string {
   return sanitizeReferenceLabel(ref) || 'attachment';
 }
 
+export function formatChatSourceReferenceMarker(
+  label: string,
+  target: Extract<ReferenceTarget, { kind: 'chat-source' }>,
+): string {
+  return formatReferenceMarker(sanitizeReferenceLabel(label) || chatSourceFallbackLabel(target), target);
+}
+
 export function formatReferenceMarker(label: string, target: ReferenceTarget): string {
   const safeLabel = sanitizeReferenceLabel(label);
   if (target.kind === 'node') {
     const nodeId = target.nodeId.trim();
     return `[[node:${safeLabel}^${encodeReferenceValue(nodeId)}]]`;
+  }
+  if (target.kind === 'chat-source') {
+    const streamId = encodeReferenceValue(target.streamId.trim());
+    const eventId = target.range.throughEventId ? `:${encodeReferenceValue(target.range.throughEventId)}` : '';
+    return `[[chat:${safeLabel}^${target.stream}:${streamId}@${target.range.fromSeqExclusive}-${target.range.throughSeq}${eventId}]]`;
   }
   const path = target.path;
   const encodedPath = encodeReferenceValue(path);
@@ -168,6 +192,21 @@ export function splitFileReferenceMarkers(text: string): FileReferenceTextSegmen
   });
 }
 
+export function splitChatSourceReferenceMarkers(text: string): ChatSourceReferenceTextSegment[] {
+  return splitReferenceMarkers(text).map((segment): ChatSourceReferenceTextSegment => {
+    if (segment.type === 'text') return segment;
+    if (segment.target.kind !== 'chat-source') return { text: segment.raw, type: 'text' };
+    const label = segment.label || chatSourceFallbackLabel(segment.target);
+    return {
+      type: 'chat',
+      raw: segment.raw,
+      ref: label,
+      label: segment.label,
+      target: segment.target,
+    };
+  });
+}
+
 export function rewriteFileReferenceMarkerPaths(text: string, paths: ReadonlyMap<string, string>): string {
   if (paths.size === 0) return text;
   return splitFileReferenceMarkers(text)
@@ -178,6 +217,26 @@ export function rewriteFileReferenceMarkerPaths(text: string, paths: ReadonlyMap
       return formatFileReferenceMarker(segment.label || segment.ref, nextPath, segment.entryKind);
     })
     .join('');
+}
+
+export function referenceMarkupToRichText(text: string): RichText {
+  const markers = parseReferenceMarkers(text);
+  if (markers.length === 0) return { text, marks: [], inlineRefs: [] };
+  const inlineRefs: RichText['inlineRefs'] = [];
+  let cursor = 0;
+  let out = '';
+  for (const marker of markers) {
+    out += text.slice(cursor, marker.start);
+    const displayName = marker.label || referenceDisplayFallback(marker.target);
+    inlineRefs.push({
+      offset: out.length,
+      target: marker.target,
+      ...(displayName ? { displayName } : {}),
+    });
+    cursor = marker.end;
+  }
+  out += text.slice(cursor);
+  return { text: out, marks: [], inlineRefs };
 }
 
 export function richTextToReferenceMarkup(content: Pick<RichText, 'text' | 'inlineRefs'>): string {
@@ -210,6 +269,9 @@ function inlineRefMarker(ref: RichText['inlineRefs'][number]): string {
   if (ref.target.kind === 'node') {
     return formatNodeReferenceMarker(displayName || ref.target.nodeId, ref.target.nodeId);
   }
+  if (ref.target.kind === 'chat-source') {
+    return formatChatSourceReferenceMarker(displayName || chatSourceFallbackLabel(ref.target), ref.target);
+  }
   const path = ref.target.path;
   return formatFileReferenceMarker(displayName || basenameForPath(path) || path, path, ref.target.entryKind);
 }
@@ -223,7 +285,7 @@ function parseReferenceInner(inner: string): { label: string; target: ReferenceT
   const prefixEnd = inner.indexOf(':');
   if (prefixEnd <= 0) return null;
   const prefix = inner.slice(0, prefixEnd);
-  if (prefix !== 'node' && prefix !== 'file') return null;
+  if (prefix !== 'node' && prefix !== 'file' && prefix !== 'chat') return null;
 
   const body = inner.slice(prefixEnd + 1);
   const caret = body.indexOf('^');
@@ -231,6 +293,10 @@ function parseReferenceInner(inner: string): { label: string; target: ReferenceT
   const label = sanitizeReferenceLabel(body.slice(0, caret));
   let rawValue = body.slice(caret + 1);
   let entryKind: 'file' | 'directory' = 'file';
+  if (prefix === 'chat') {
+    const target = parseChatSourceReferenceValue(rawValue);
+    return target ? { label, target } : null;
+  }
   if (prefix === 'file') {
     const kindCaret = rawValue.lastIndexOf('^');
     if (kindCaret >= 0) {
@@ -246,6 +312,55 @@ function parseReferenceInner(inner: string): { label: string; target: ReferenceT
   if (!value) return null;
   if (prefix === 'node') return { label, target: { kind: 'node', nodeId: value } };
   return { label, target: { kind: 'local-file', path: value, entryKind } };
+}
+
+function parseChatSourceReferenceValue(rawValue: string): Extract<ReferenceTarget, { kind: 'chat-source' }> | null {
+  const streamEnd = rawValue.indexOf(':');
+  if (streamEnd <= 0) return null;
+  const stream = rawValue.slice(0, streamEnd);
+  if (stream !== 'conversation' && stream !== 'run') return null;
+  const afterStream = rawValue.slice(streamEnd + 1);
+  const at = afterStream.indexOf('@');
+  if (at <= 0) return null;
+  const rawStreamId = afterStream.slice(0, at);
+  const rawRange = afterStream.slice(at + 1);
+  const eventSeparator = rawRange.indexOf(':');
+  const rawBounds = eventSeparator >= 0 ? rawRange.slice(0, eventSeparator) : rawRange;
+  const rawEventId = eventSeparator >= 0 ? rawRange.slice(eventSeparator + 1) : '';
+  const dash = rawBounds.indexOf('-');
+  if (dash <= 0) return null;
+  const fromSeqExclusive = parseNonNegativeInteger(rawBounds.slice(0, dash));
+  const throughSeq = parseNonNegativeInteger(rawBounds.slice(dash + 1));
+  if (fromSeqExclusive === null || throughSeq === null || throughSeq <= fromSeqExclusive) return null;
+  const streamId = decodeReferenceValue(rawStreamId);
+  if (!streamId) return null;
+  const throughEventId = rawEventId ? decodeReferenceValue(rawEventId) : undefined;
+  return {
+    kind: 'chat-source',
+    stream,
+    streamId,
+    range: {
+      fromSeqExclusive,
+      throughSeq,
+      ...(throughEventId ? { throughEventId } : {}),
+    },
+  };
+}
+
+function parseNonNegativeInteger(value: string): number | null {
+  if (!/^\d+$/u.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function referenceDisplayFallback(target: ReferenceTarget): string {
+  if (target.kind === 'node') return target.nodeId;
+  if (target.kind === 'chat-source') return chatSourceFallbackLabel(target);
+  return basenameForPath(target.path) || target.path;
+}
+
+function chatSourceFallbackLabel(target: Extract<ReferenceTarget, { kind: 'chat-source' }>): string {
+  return `${target.stream}:${target.streamId}@${target.range.fromSeqExclusive}-${target.range.throughSeq}`;
 }
 
 function sanitizeReferenceLabel(label: string): string {

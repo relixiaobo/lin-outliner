@@ -65,10 +65,10 @@ only in id scheme, writer, retention, and vocabulary.
 |---|---|---|---|
 | **Conversation** | `conversationId` | communication: user message + final assistant reply + membership | ~2 events/turn |
 | **Run** | `runId` (anchored to a conversation) | all execution: assistant deltas, `tool_call ↔ tool_result`, thinking, permission, ask/widget | 10–50+/turn, self-cleans |
-| **Memory** | the single believer principal (`agent:built-in:tenon:assistant`, under `principals/`) | memory-mutation + dream events | sub-linear |
+| **Memory** | timeline outline nodes (`#d-memory`, `#d-episode`, `#d-belief`) plus Dream watermark/run metadata side stores | user-editable durable memory nodes + runtime Dream progress | sub-linear |
 
-The event store stays principal-keyed internally (the storage API is unchanged),
-but every MEMORY read/write is pinned to the single believer.
+The legacy event-store memory projection remains a pre-release management store,
+but model-readable memory is now ordinary outline content on the timeline.
 
 Write-time split routes run-execution events to the run log and only communication
 to the conversation log (`agentEventStore.ts` `appendSplitEvents` / `isRunLogEvent`),
@@ -90,7 +90,7 @@ and every conversation's members are `{user, Neva}`.
   "fresh" path (a sub-agent with its own identity + memory line) is **removed**
   (`single-agent-finish-collapse`): the `Agent` tool carries no `agent_type`, the
   registry loads only Neva, and no file-backed `.agents/agents/*` definition is
-  loaded. `/research`, dream, and background self-work are all forks of Neva. Child
+  loaded. `/research`, runtime Dream, and background self-work are all forks of Neva. Child
   runs carry `parentRunId`; they are **not** conversation members and **not** peers. ✅ — and
   the code honors the model (`agent-run-unification`, shipped): a delegated run is
   an ordinary Run with its OWN `runs/<runId>/` ledger (its own seq space, replayed
@@ -135,36 +135,26 @@ removed — memory is always one writable pool.
   facts to episodic evidence, bidirectionally (`MemoryEntry.sources[]` fact →
   episode, plus the episode→facts reverse lookup). It points, never copies,
   never holds content — gist is episodic content, not index.
-- **Processes:** consolidation (Dream — offline replay distilling into the
-  semantic store; evidence-preserving under compaction) · retrieval (three
-  modes: chronic activation = the resident briefing's full-read-set schema
-  overview + strength-selected fact budget, with co-cited facts lightly boosted
-  from `sources[]` · deliberate cued retrieval = `recall` ranked by BM25-class
-  lexical relevance + retrieval strength + query-time `sources[]` co-citation
-  association, with provenance zoom down the ladder schema → fact → episode
-  gist → raw span · automatic association = deferred on a data gate) · forgetting
-  (two-strength projection: storage strength never decays, retrieval strength
-  governs injection — never deletion).
+- **Processes:** consolidation (runtime-only Dream skill — offline replay of
+  visible conversation spans into `#d-episode` / `#d-belief` nodes with
+  `[[chat:...]]` provenance) · retrieval (foreground pull through
+  `node_search` / `node_read`, plus `past_chats` for raw prior chat spans) ·
+  forgetting/supersession as ordinary node edits.
 
-**Fact phrasing:** facts are self-contained **third-person sentences that NAME
-their subject** (`"the user prefers terse code reviews"`, `"the auth module
-verifies JWTs before authorizing"`) — heterogeneous subjects, both the user and
-the work/domain. There is **no subject-elision**. The briefing renders a **flat
-`<memory>` bullet list** — no `<self>`/`<principal>` zones. The transactive /
-cross-principal social layer is gone: there is one writable pool, so no co-member
-subscription and no cross-principal isolation gate on the memory read path.
+**Belief phrasing:** `#d-belief` nodes are concise, self-contained statements
+that name their subject. There is no resident `<memory>` briefing and no
+cross-principal social layer.
 
 Definitions + the memory tool surface: `agent-tool-design.md` § *Memory*.
 
 ## Dream (one consolidation process)
 
-There is **one Dream**: the conversation-evidence consolidation that distills the
-user's member CONVERSATIONS (episodic) into Neva's believer pool (semantic),
-single first-person framing (subject-named facts). Neva's own persona/habits are
-**authored**, never dreamed; skills are **authored** procedural memory, never
-dreamed. The former agent-self / run-log Dream (a per-agent self-model built from
-run evidence) is **cut**, along with run-evidence harvesting. Manual `/dream`
-fires the believer pool's conversation Dream.
+There is **one Dream**: the scheduled `memory-dream` skill that reads visible
+conversation spans via `past_chats` and writes timeline memory nodes. Neva's own
+persona/habits are **authored**, never dreamed; skills are **authored**
+procedural memory, never dreamed. The former agent-self / run-log Dream,
+run-evidence harvesting, manual `/dream`, and the foreground `dream` tool are
+cut.
 
 **Dream/run surfacing is relocated.** Dream history lives in Settings → Agent
 "Memory & activity" panel (alongside memory inspect/correct/forget), fetched via
@@ -248,16 +238,17 @@ environment reminder is single-agent. The conversation noun
 | Channels-only conversations (no DM) | ✅ built | every conversation is single-agent + inline-streaming + steerable; one conversation list (no two sections / two "+" buttons), no nav-lock, "General" default landing; `canonicalDmAgentId` / `lin-agent-dm-` prefix / DM-vs-Channel branching removed |
 | Run→conversation anchor + per-conversation run index | ✅ built | `runs WHERE conversationId=X` is enumerable |
 | Delegation / child-run runtime (#164) | ✅ built | sub-agents spawned for a TASK (NOT peers/members); ordinary Runs with their own `runs/<runId>/` ledger, joined by `parentRunId`/`parentToolCallId`; surfaced in the conversation task panel (child-run tasks only) |
-| One believer-keyed first-person memory pool | ✅ built | all MEMORY read/write pinned to `agent:built-in:tenon:assistant`; flat `<memory>` briefing of subject-named third-person facts; `memoryIsolation` removed; no transactive / cross-principal sharing |
-| One Dream (conversation-evidence) | ✅ built | distills member conversations (episodic) into the believer pool (semantic); agent-self / run-log Dream + run-evidence harvesting cut; manual `/dream` fires it; Dream history relocated to Settings → Agent "Memory & activity" (`agent_list_dream_history`) |
-| Memory source binding under compaction (#164) | ✅ built | fact sources recorded as `{episodeId}` and episodes as `{stream, streamId, range}` raw sources over the ledgers; `recall include_evidence` zooms fact → episode gist → raw span; the compaction evidence invariant is described in `agent-event-log-rendering.md` |
+| Timeline memory nodes | ✅ built | durable memory lives in `#d-memory`, `#d-episode`, and `#d-belief` outline nodes; foreground retrieval is pull-only through `node_search` / `node_read` |
+| One Dream (conversation-evidence) | ✅ built | scheduled `memory-dream` child run reads member conversations through `past_chats` and writes memory nodes; agent-self / run-log Dream, manual `/dream`, and foreground `dream` are cut |
+| Chat source binding under compaction (#302) | ✅ built | `chat-source` inline refs encode `{stream, streamId, range}` raw sources over the ledgers; node writes validate the exact source before mutation |
 | Permission gate | ✅ built | ask / allow / deny over the hard A3 floor |
 
 ## Known tensions / honest caveats
 
 - **Heterogeneous subjects in one pool.** The single believer pool mixes facts
   about the user with facts about the work/domain; self-contained subject-naming
-  (no elision) is what keeps a flat `<memory>` list legible.
+  (no elision) is what keeps timeline memory nodes legible without a resident
+  `<memory>` briefing.
 - **Authored vs dreamed.** Neva's persona/habits and skills are authored and are
   never produced by Dream; only conversation evidence is consolidated.
 - **Principal stays dual-use.** `principalKey` / `AgentPrincipal` remain in the

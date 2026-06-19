@@ -10,12 +10,11 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { createNodeTools, type OutlinerToolHost } from './agentNodeTools';
+import { createNodeTools, type ChatSourceValidator, type OutlinerToolHost } from './agentNodeTools';
 import { createLocalTools, scratchRootForWorkdir, type AgentLocalWorkspaceContext } from './agentLocalTools';
 import { createSkillTool, type AgentSkillRuntime } from './agentSkills';
 import { createAgentDelegationTools, type AgentDelegationRuntime } from './agentDelegation';
 import { normalizeAgentToolNames } from './agentToolRules';
-import { createRecallTool, type AgentRecallToolRuntime } from './agentRecallTool';
 import { createPastChatsTool, type PastChatsToolRuntime } from './agentPastChatsTool';
 import { createAskUserQuestionTool, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
 import { createSelfMaintenanceTools, type AgentSelfMaintenanceRuntime } from './agentSelfMaintenanceTools';
@@ -213,9 +212,9 @@ export interface AgentToolsOptions {
   skillRuntime?: AgentSkillRuntime;
   skillToolEnabled?: boolean;
   delegationRuntime?: AgentDelegationRuntime;
-  recall?: AgentRecallToolRuntime;
   pastChats?: PastChatsToolRuntime;
   askUserQuestion?: AgentAskUserQuestionRuntime;
+  chatSourceValidator?: ChatSourceValidator;
   selfMaintenance?: AgentSelfMaintenanceRuntime;
   allowedTools?: readonly string[];
   disallowedTools?: readonly string[];
@@ -228,11 +227,13 @@ export function createAgentTools(outliner?: OutlinerToolHost, options: AgentTool
   const scratchRoot = options.localWorkspace?.scratchRoot
     ?? scratchRootForWorkdir(options.localFileRoot, undefined);
   const tools = [
-    ...(outliner ? createNodeTools(outliner, { localFileRoot: options.localFileRoot }) : []),
+    ...(outliner ? createNodeTools(outliner, {
+      chatSourceValidator: options.chatSourceValidator,
+      localFileRoot: options.localFileRoot,
+    }) : []),
     ...createLocalTools({ localRoot: options.localFileRoot, workspace: options.localWorkspace, skillRuntime: options.skillRuntime }),
     createWebSearchTool(),
     createWebFetchTool(scratchRoot),
-    ...(options.recall ? [createRecallTool(options.recall)] : []),
     ...(options.pastChats ? [createPastChatsTool(options.pastChats)] : []),
     ...(options.askUserQuestion ? [createAskUserQuestionTool(options.askUserQuestion)] : []),
     ...(options.selfMaintenance ? createSelfMaintenanceTools(options.selfMaintenance) : []),

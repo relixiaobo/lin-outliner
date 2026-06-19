@@ -77,7 +77,7 @@ the cross-principal redaction (`memoryEntryVisibleToReader` cross branch +
 `crossPrincipalEvidenceRefusal`) is **already removed**. No remaining ordering gate;
 PR2 builds on post-#300 `main`.
 
-## Background — what exists today (post-#300 `main`, `c56f1a46`)
+## Background — pre-PR2 baseline (post-#300 `main`, `c56f1a46`)
 
 - **Memory store.** A separate append-only event log per principal
   (`principals/<principal>/memory/events.jsonl`) in `src/main/agentEventStore.ts`
@@ -91,13 +91,12 @@ PR2 builds on post-#300 `main`.
   extraction prompt, applies add/update/forget. Fired by the `dream` self-maintenance
   tool (`agentSelfMaintenanceTools.ts:126`) + an autonomous daily-cadence scheduler +
   backoff (`dreamBackoff.ts`). No `/dream` slash command.
-- **Recall + briefing.** `recall` is a tool doing BM25 + a three-component
+- **Recall + briefing (removed by PR1/PR2).** `recall` was a tool doing BM25 + a three-component
   activation/decay model + source-association ranking
   (`src/core/agentMemoryRetrieval.ts`, `src/core/agentMemoryActivation.ts`). The
-  activation engine ranks **both** the briefing **and** recall
-  (`compareHybridRankedEntries`). **Briefing is LIVE**: per-turn injection via
-  `buildMemoryReminder` → `withMemoryReminder` (`agentDelegation.ts`, anchors shifted
-  post-#300, ~`:945/982/986/989/1500`).
+  activation engine ranked **both** the briefing **and** recall
+  (`compareHybridRankedEntries`). PR1 restored raw pull access as `past_chats`;
+  PR2 removes resident briefing injection.
 - **`AgentPastChatsService`** (`src/main/agentPastChats.ts:188`): `search` / `recent` /
   `read` / `readMemorySourceEvidence`; only the last is wired (into `recall`'s evidence
   expansion). A `past_chats` *tool* existed (`11a5b680`), removed in `1a04f6ce`; engine

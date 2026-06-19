@@ -1,14 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  formatChatSourceReferenceMarker,
   formatFileReferenceMarker,
   formatNodeReferenceIdMarker,
   formatNodeReferenceMarker,
   nodeReferenceMarkersToText,
   parseNodeReferenceMarkers,
   parseReferenceMarkers,
+  referenceMarkupToRichText,
   rewriteFileReferenceMarkerPaths,
   richTextToReferenceMarkup,
   sanitizeFileReferenceRef,
+  splitChatSourceReferenceMarkers,
   splitFileReferenceMarkers,
   splitNodeReferenceMarkers,
 } from '../../src/core/referenceMarkup';
@@ -120,6 +123,34 @@ describe('reference markup', () => {
     }]);
   });
 
+  test('formats and parses chat source reference markers', () => {
+    const target = {
+      kind: 'chat-source',
+      stream: 'conversation',
+      streamId: 'lin-agent:1@branch',
+      range: {
+        fromSeqExclusive: 12,
+        throughSeq: 18,
+        throughEventId: 'event:18@tail',
+      },
+    } as const;
+    const marker = formatChatSourceReferenceMarker('source chat', target);
+
+    expect(marker).toBe('[[chat:source chat^conversation:lin-agent%3A1%40branch@12-18:event%3A18%40tail]]');
+    expect(parseReferenceMarkers(`See ${marker}`)).toEqual([{
+      end: 84,
+      label: 'source chat',
+      raw: marker,
+      start: 4,
+      target,
+    }]);
+    expect(splitChatSourceReferenceMarkers(`See ${marker} now`)).toEqual([
+      { type: 'text', text: 'See ' },
+      { type: 'chat', raw: marker, ref: 'source chat', label: 'source chat', target },
+      { type: 'text', text: ' now' },
+    ]);
+  });
+
   test('does not parse labels containing raw square brackets', () => {
     const text = 'Keep [[node:[Alpha^node-alpha]] plain';
     expect(parseReferenceMarkers(text)).toEqual([]);
@@ -142,8 +173,14 @@ describe('reference markup', () => {
   });
 
   test('serializes rich text inline refs as reference markers', () => {
+    const chatSource = {
+      kind: 'chat-source' as const,
+      stream: 'conversation' as const,
+      streamId: 'lin-agent-1',
+      range: { fromSeqExclusive: 1, throughSeq: 2, throughEventId: 'event-2' },
+    };
     expect(richTextToReferenceMarkup({
-      text: 'Review  then .',
+      text: 'Review  then  .',
       inlineRefs: [{
         offset: 7,
         target: { kind: 'local-file', path: '/Users/me/report.pdf', entryKind: 'file' },
@@ -154,9 +191,38 @@ describe('reference markup', () => {
         offset: 13,
         target: { kind: 'node', nodeId: 'node-alpha' },
         displayName: 'Alpha',
+      }, {
+        offset: 14,
+        target: chatSource,
+        displayName: 'source',
       }],
     })).toBe(
-      `Review ${formatFileReferenceMarker('report.pdf', '/Users/me/report.pdf')} then [[node:Alpha^node-alpha]].`,
+      `Review ${formatFileReferenceMarker('report.pdf', '/Users/me/report.pdf')} then [[node:Alpha^node-alpha]] ${formatChatSourceReferenceMarker('source', chatSource)}.`,
     );
+  });
+
+  test('deserializes reference markup into rich text inline refs', () => {
+    const fileMarker = formatFileReferenceMarker('report.pdf', '/Users/me/report.pdf');
+    const chatSource = {
+      kind: 'chat-source',
+      stream: 'run',
+      streamId: 'run-1',
+      range: { fromSeqExclusive: 3, throughSeq: 5 },
+    } as const;
+    const chatMarker = formatChatSourceReferenceMarker('run source', chatSource);
+
+    expect(referenceMarkupToRichText(`Read ${fileMarker} and ${chatMarker}.`)).toEqual({
+      text: 'Read  and .',
+      marks: [],
+      inlineRefs: [{
+        offset: 5,
+        target: { kind: 'local-file', path: '/Users/me/report.pdf', entryKind: 'file' },
+        displayName: 'report.pdf',
+      }, {
+        offset: 10,
+        target: chatSource,
+        displayName: 'run source',
+      }],
+    });
   });
 });

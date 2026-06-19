@@ -17,7 +17,7 @@
 > structurally unrepresentable); `contextMode` is always `'fork'`; the registry
 > loads only the built-in Neva and never scans `~/.agents/agents` or
 > `<workspace>/.agents/agents`; a fork runs AS Neva (`executingAgentId` /
-> `memoryOwnerAgentId` are always the parent = Neva). `/research`, dream, and
+> `memoryOwnerAgentId` are always the parent = Neva). `/research`, runtime Dream, and
 > background self-work are forks. The cross-agent "fresh" run, the by-name agent
 > registry scan, the `additionalAgentDirectories` setting, and the cross-principal
 > memory redaction are all removed as dead code. Read the `fresh` material below
@@ -1020,15 +1020,12 @@ Implemented.
 
 - `Agent` with `agent_type` creates a fresh sidechain pi-mono `Agent`.
 - The child receives its agent definition system prompt plus the supplied task.
-- The child derives `executingAgentId` and `memoryOwnerAgentId` from the called
-  agent definition. Its `<memory>` briefing and `recall` tool read that
-  owner id, not the parent agent id. In isolated memory mode, its memory origin
-  workspace is derived from the called agent definition root, not the caller's
-  workspace.
-- Explicit agent-definition `tools` remain an allow-list. Fresh child runs do not
-  receive `recall` unless the definition allows it, either directly or by using
-  an unrestricted tool profile; the hidden `<memory>` briefing is still
-  owner-scoped background context.
+- Child runs are forks of Neva under the single-agent model. There is no
+  owner-scoped `<memory>` briefing and no `recall` tool; memory retrieval remains
+  pull-only through the child's allowed `node_search` / `node_read` tools, and
+  raw prior chat lookup requires `past_chats`.
+- Explicit agent-definition `tools` remain an allow-list. A child receives only
+  the tools allowed by its definition or skill-isolated execution wrapper.
 - The parent receives only the final result or error.
 - The sidechain transcript is the run's own ledger (`runs/<run-id>/`); there
   are no transcript snapshot payloads.
