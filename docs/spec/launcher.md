@@ -149,8 +149,9 @@ views (single-line title + parent text + emoji icon), since the locked-down
 launcher renderer can't read the document. Resolution looks up only the hit nodes
 (+ their parents) by id via `Core.projectionNodesByIds`, never materializing the
 whole-document projection per keystroke. `search_nodes` is a transient lookup
-surface and opts into per-user personal access ranking; this affects ordering
-only and never changes saved search rules or materialized saved-search results.
+surface. It uses the same document-derived reference-authority boost as saved
+searches, then opts into per-user personal access ranking; both affect ordering
+only and never change saved search rules or materialized saved-search results.
 `Enter` on a node calls
 `launcher:openNode` → `navigateMainToNode`, which brings up / creates the main
 window and sends `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL` so the main renderer runs

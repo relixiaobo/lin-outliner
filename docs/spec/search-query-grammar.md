@@ -75,9 +75,14 @@ false positives.
 
 Ranking for `STRING_MATCH` prefers exact title matches, then title prefixes,
 phrases, all-term matches, and lower-ranked loose term matches. Tags and field
-values are searchable, but they do not outrank exact primary text. If a saved
-search has an explicit sort, that sort remains primary and relevance is only a
-tie-breaker.
+values are searchable, but they do not outrank exact primary text. Default
+relevance also applies a conservative, capped reference-authority boost from the
+document's distinct linked inbound source nodes (tree references, inline node
+references, and reference field values; trashed/internal metadata references do
+not count). Because this signal is derived from document state, it is safe for
+saved search materialization. If a saved search has an explicit sort, that sort
+remains primary and relevance is only a tie-breaker; `sys:refCount` sorts by the
+same linked reference count displayed by the References system field.
 
 Transient node lookup surfaces can opt into personal access ranking on top of
 the default relevance order. Personal access is stored outside the Loro document
