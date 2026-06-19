@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { AssistantMessage, AgentToolResultWithPayloads } from '../../../core/agentTypes';
+import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import {
@@ -28,6 +29,7 @@ export function renderAssistantBlocks(
   turnInterrupted: boolean,
   isChannel: boolean,
   workedForMs: number | null,
+  toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>,
 ) {
   const rendered: ReactNode[] = [];
   const isError = !!message.errorMessage && message.stopReason !== 'aborted';
@@ -116,6 +118,7 @@ export function renderAssistantBlocks(
           kind: 'toolCall',
           childRun: childRunsByParentToolCallId?.get(candidate.id),
           toolCall: candidate,
+          outcome: toolCallOutcomes?.get(candidate.id),
         };
       }
       return { kind: 'narration', sourceIndex, streaming: streaming && !hasLater, text: candidate.text };

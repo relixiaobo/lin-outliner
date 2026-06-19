@@ -713,6 +713,7 @@ function AgentMessageRowComponent({
     entry.turnInterrupted,
     isChannel,
     entry.runDurationMs,
+    entry.toolCallOutcomes,
   );
   const showToolbar = nodeId !== null && !turnActive && isLastInTurn;
 

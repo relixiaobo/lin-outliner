@@ -37,7 +37,7 @@ import type {
   AgentRenderTaskStatus,
 } from '../../core/agentRenderProjection';
 import { applyAgentRenderProjectionPatch } from '../../core/agentRenderProjection';
-import type { AgentActor, AgentPersistedContent } from '../../core/agentEventLog';
+import type { AgentActor, AgentPersistedContent, AgentToolCallOutcome } from '../../core/agentEventLog';
 
 export interface AgentMessageEntry {
   id: string;
@@ -54,6 +54,13 @@ export interface AgentMessageEntry {
   sourceSeq?: number;
   /** Every event seq that represents this message as source evidence. */
   sourceSeqs?: number[];
+  /**
+   * Settled outcome per tool call (toolCallId → completed/failed), derived from
+   * the entity's persisted content. The pi `AssistantMessage` above drops it, so
+   * the process timeline reads it from here to stop a completed-but-resultless
+   * tool call from spinning forever. Omitted when no call has settled.
+   */
+  toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>;
   /** Wall-clock the producing run took, for the collapsed "Worked for …" header; null when unknown. */
   runDurationMs: number | null;
   /**
@@ -141,6 +148,24 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
 const EMPTY_MEMBERS: AgentRenderMemberView[] = [];
 const CONVERSATION_MESSAGE_CACHE = new WeakMap<AgentRenderMessageEntity, AgentConversationMessage>();
 const TOOL_RESULT_CACHE = new WeakMap<AgentRenderMessageEntity, AgentToolResultWithPayloads>();
+// The pi `AssistantMessage` the renderer consumes drops the persisted toolCall
+// `outcome`, so derive the per-call settled state straight off the entity's
+// persisted content (cached per entity so its identity is stable across rebuilds
+// until the entity's content actually changes). undefined when no call has settled.
+const TOOL_CALL_OUTCOME_CACHE = new WeakMap<AgentRenderMessageEntity, ReadonlyMap<string, AgentToolCallOutcome>>();
+
+function toolCallOutcomesFromEntity(
+  entity: AgentRenderMessageEntity,
+): ReadonlyMap<string, AgentToolCallOutcome> | undefined {
+  const cached = TOOL_CALL_OUTCOME_CACHE.get(entity);
+  if (cached) return cached.size > 0 ? cached : undefined;
+  const map = new Map<string, AgentToolCallOutcome>();
+  for (const part of entity.content) {
+    if (part.type === 'toolCall' && part.outcome) map.set(part.id, part.outcome);
+  }
+  TOOL_CALL_OUTCOME_CACHE.set(entity, map);
+  return map.size > 0 ? map : undefined;
+}
 
 export const EMPTY_USAGE: Usage = {
   input: 0,
@@ -270,6 +295,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       runId: entity.runId ?? null,
       sourceSeq: entity.sourceSeq,
       sourceSeqs: entity.sourceSeqs?.slice(),
+      toolCallOutcomes: toolCallOutcomesFromEntity(entity),
       runDurationMs: entity.runDurationMs ?? null,
       turnInterrupted: entity.turnInterrupted ?? false,
     });

@@ -646,6 +646,14 @@ Runtime-emitted execution events carry `runId` so run-log assembly has an
 explicit join key. Replacement events preserve the existing run ownership unless
 they provide a more explicit `runId`.
 
+`tool_call.completed` and `tool_call.failed` fire for **every** tool execution
+(authoritative, unlike `tool_result.created`, which some built-in SDK tools never
+emit). Replay handles them by stamping `outcome: 'completed' | 'failed'` onto the
+matching `toolCall` content part — the durable, reload-surviving signal the
+renderer uses to settle a tool row's status (see the live-header/tool-status rule
+under Rendering). It is render-only metadata: the model context derivation never
+includes `outcome`.
+
 The pi-mono projection reconstructs pi-ai messages as:
 
 ```txt
@@ -978,12 +986,19 @@ Rules:
   running after a crash, has `updatedAt === startedAt` and so no meaningful
   wall-clock, and is left unknown rather than shown as "<1s"; a multi-run turn
   sums each run's wall-clock). When the duration is unknown the header falls back
-  to the static group summary (e.g. "Thought · used N tools"). A tool row is
-  running only when its id is present in `pendingToolCallIds`; the renderer may
-  only use an active-turn fallback for the latest resultless tool when the
-  projection currently reports no pending ids at all. It must not treat every
-  resultless tool call in an active turn as pending, because later continuation
-  text can coexist with an earlier resultless/stale tool row. A **genuinely
+  to the static group summary (e.g. "Thought · used N tools"). A tool call's
+  **settled outcome** is authoritative for its status: replay stamps
+  `outcome: 'completed' | 'failed'` onto the `toolCall` content part from the
+  `tool_call.completed` / `tool_call.failed` events (independent of whether a
+  `tool_result.created` ever lands — some built-in SDK tools complete without one).
+  A settled `outcome` resolves the row to **done**/**error** even with no result
+  message, so a completed step never spins forever. Only a tool call that is
+  **neither** settled nor resulted is eligible for the live-activity heuristic: a
+  row is running when its id is present in `pendingToolCallIds`, and the renderer
+  may use an active-turn fallback for the latest *un-settled, resultless* tool only
+  when the projection currently reports no pending ids at all. It must not treat
+  every resultless tool call in an active turn as pending, because later
+  continuation text can coexist with an earlier resultless/stale tool row. A **genuinely
   interrupted** turn (run `failed`/`cancelled`/crash-orphaned —
   `turnInterrupted` — with no trailing answer) keeps the "Interrupted…" label,
   never a duration. A cleanly `completed` resultless turn never shows

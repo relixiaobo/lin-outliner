@@ -1,4 +1,5 @@
 import type { ToolCall } from '../../../core/agentTypes';
+import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 
 export interface AgentExpandState {
@@ -17,6 +18,10 @@ export type AgentProcessSegmentBlock =
     kind: 'toolCall';
     childRun?: AgentRenderChildRunEntity;
     toolCall: ToolCall;
+    // Settled state from `tool_call.completed` / `.failed`; undefined while the
+    // call is still executing. Authoritative over the (possibly-absent) result
+    // message for deciding whether the spinner should stop.
+    outcome?: AgentToolCallOutcome;
   }
   // Interim narration: assistant text emitted before the turn's final answer
   // (e.g. "let me check the weather first"). It is part of the working process,

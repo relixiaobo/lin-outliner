@@ -40,9 +40,15 @@ export function AgentProcessTimeline({
   // captures the solo case without three throwaway classification passes.
   const onlyBlock = blocks.length === 1 ? blocks[0]! : null;
   const soloThinkingBlock = onlyBlock?.kind === 'thinking' ? onlyBlock : null;
+  // The runtime `pendingToolCallIds` set can momentarily lag a freshly-started
+  // tool call, so an active turn keeps the most recent un-settled tool call
+  // spinning as a bridge. A call with a settled `outcome` (or a result, or a
+  // child run) is NOT un-settled — excluding those is what stops a completed
+  // step from spinning forever when its result message never arrives.
   const fallbackActiveToolCall = turnActive && pendingToolCallIds.size === 0
     ? [...blocks].reverse().find((block): block is Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }> => (
       block.kind === 'toolCall'
+      && !block.outcome
       && !results.has(block.toolCall.id)
       && !(block.childRun ?? childRunsByParentToolCallId?.get(block.toolCall.id))
     ))
@@ -96,6 +102,7 @@ export function AgentProcessTimeline({
               conversationId={conversationId}
               childRun={childRun}
               toolCall={block.toolCall}
+              outcome={block.outcome}
               turnActive={pendingToolCallIds.has(block.toolCall.id) || fallbackActiveToolCallId === block.toolCall.id}
             />
           );
