@@ -12,6 +12,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Personal access ranking for node search — `node-search-access-ranking` PR A (PR #307, codex)** —
+  transient node retrieval (launcher / app search / agent `node_search`) now boosts nodes the user
+  recently and frequently lands on. A per-`NodeId` **single weighted, time-decayed accumulator**
+  `{s, tUpdate}` lives in an off-Loro flat-JSON userData side store (`nodeAccessStore.ts`) and folds
+  into the single ranking chokepoint `sortSearchHits` **only** when a caller passes
+  `personalAccess: true`; deliberate human landings carry weight 1 and a dampened `agentRecall` source
+  0.15, sharing one half-life (so a weak agent recall nudges recency weakly instead of overwriting it).
+  Saved-search materialization stays document-reproducible **structurally** — `personalAccess` exists
+  only on `TransientSearchOptions`, never on the `SearchRunOptions` materialization uses — and any
+  explicit sort rule (incl. custom fields) still overrides personalization. A new cross-process
+  `recordNodeAccess` lane (IPC + preload + main handler + debounced deliberate-landing emit) records
+  access, with projection-update pruning of deleted/trashed nodes + a 5000-entry cap. The file is
+  written `0600`. Reference-authority ranking (`sys:referenceCount` + default boost) is PR B, still to
+  build. **Gate (main):** `/code-review high` → 10 findings (0600 perms, custom-sort override,
+  per-keystroke map clone, I/O-fault swallowing, convention-only opt-in, …) all resolved in `ba681049`
+  (the opt-in fixed structurally via the `SearchRunOptions`/`TransientSearchOptions` split); one
+  high-consensus finder candidate refuted at verify. typecheck ✓ · `test:core` 1051 pass / 2 skip /
+  0 fail · `test:renderer` 548 pass / 0 fail · `docs:check` ✓.
 - **Re-provide the `past_chats` agent tool — `agent-memory-on-timeline` PR1 (PR #305, codex-2)** —
   the first PR of the #302 set re-exposes the model-visible, **read-only** `past_chats` tool over the
   existing `AgentPastChatsService`: `recent` (recent visible user-message anchors), `search` (visible

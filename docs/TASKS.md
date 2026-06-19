@@ -235,7 +235,8 @@ before any directional/security-sensitive build.
   — better node-search ranking, now **a set of two independent complete PRs** (the
   reference-authority signal was split out from the personal-access work during the #304
   review):
-  - **PR A — personal-access ranking** (ratified #303 scope, **build-ready**): a per-`NodeId`
+  - **PR A — personal-access ranking** (ratified #303 scope, **SHIPPED #307** — see Recently
+    completed): a per-`NodeId`
     **single weighted, time-decayed accumulator** `{s, tUpdate}` (off Loro, flat JSON;
     `s = s·2^(-Δt/HALF_LIFE) + W[source]`, `W = {human:1, agentRecall:0.15}` — one half-life,
     so a weak agent recall nudges weakly instead of overwriting recency) folded into
@@ -479,6 +480,24 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **node-search-access-ranking PR A — personal-access ranking** (codex, PR #307) — gives transient
+  node retrieval (launcher/app search + agent `node_search`) a per-user recency/access boost via a
+  per-`NodeId` **single weighted, time-decayed accumulator** `{s, tUpdate}` in an off-Loro flat-JSON
+  side store (`src/main/nodeAccessStore.ts`), folded into the one ranking chokepoint `sortSearchHits`
+  only when a caller opts in with `personalAccess:true`. Human deliberate-landings (weight 1) and a
+  dampened `agentRecall` source (0.15) share one half-life; saved-search materialization stays
+  document-reproducible (structurally — `personalAccess` lives only on `TransientSearchOptions`, not
+  the `SearchRunOptions` materialization uses). New cross-process `recordNodeAccess` lane
+  (IPC + preload + main handler + debounced renderer emit) with projection-update pruning + a 5000-entry
+  cap. Implements `node-search-access-ranking` PR A (ratified #303 scope; PR B reference-authority
+  still build-ready). **Gate (main):** `/code-review high` (7 finder angles + verify) → 10 findings
+  (headline: access-stats file written 0644 not 0600; a custom-field saved-search sort silently
+  overridden by personalization; full stats-map clone per keystroke; load swallowing real I/O faults;
+  `personalAccess` enforced only by convention) — all resolved in `ba681049`, the convention one fixed
+  structurally (type-level `SearchRunOptions` vs `TransientSearchOptions` split). One headline finder
+  consensus (agent-open records human access) was **refuted** at verify (it is a human chat-link click).
+  Re-verified on the rebased branch: typecheck ✓ · `test:core` 1051 pass / 2 skip / 0 fail ·
+  `test:renderer` 548 pass / 0 fail · `docs:check` ✓. **Shape (b)** member — PR A of a two-PR set.
 - **stable-disclosure-anchor** (codex-3, PR #306) — settles two boarded lanes in one renderer-only
   PR: `agent-process-stable-disclosure` + `outliner-collapse-scroll-anchor`, sharing one disclosure
   scroll-anchor invariant (`src/renderer/ui/interactions/disclosureScrollAnchor.ts` +
