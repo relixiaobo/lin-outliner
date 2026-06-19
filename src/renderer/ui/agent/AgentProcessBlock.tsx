@@ -1,4 +1,5 @@
 import type { AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
+import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import type { MouseEvent, ReactNode } from 'react';
@@ -75,10 +76,19 @@ interface AgentTurnProcessFoldProps extends Omit<AgentProcessBlockProps, 'conver
 
 interface ProcessSummaryFacts {
   childRunsByToolCallId?: ReadonlyMap<string, AgentRenderChildRunEntity>;
+  toolCallOutcomes: ReadonlyMap<string, AgentToolCallOutcome>;
   firstThinkingText: string | null;
   lastThinkingText: string | null;
   thinkingCount: number;
   toolCalls: ToolCall[];
+}
+
+function toolCallOutcomeMap(blocks: AgentProcessSegmentBlock[]): ReadonlyMap<string, AgentToolCallOutcome> {
+  const map = new Map<string, AgentToolCallOutcome>();
+  for (const block of blocks) {
+    if (block.kind === 'toolCall' && block.outcome) map.set(block.toolCall.id, block.outcome);
+  }
+  return map;
 }
 
 function processSummaryFacts(blocks: AgentProcessSegmentBlock[]): ProcessSummaryFacts {
@@ -90,6 +100,7 @@ function processSummaryFacts(blocks: AgentProcessSegmentBlock[]): ProcessSummary
     .map((block) => block.toolCall);
   return {
     childRunsByToolCallId: childRunMapFromToolSegments(blocks),
+    toolCallOutcomes: toolCallOutcomeMap(blocks),
     firstThinkingText: firstLine(thinkingBlocks[0]?.text ?? ''),
     lastThinkingText: lastNonEmptyThinking(thinkingBlocks),
     thinkingCount: thinkingBlocks.length,
@@ -104,6 +115,7 @@ export function summarizeProcess({
   pendingToolCallIds,
   results,
   childRunsByToolCallId,
+  toolCallOutcomes,
   toolCalls,
   turnActive,
   liveCollapsed,
@@ -120,6 +132,7 @@ export function summarizeProcess({
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
   childRunsByToolCallId?: ReadonlyMap<string, AgentRenderChildRunEntity>;
+  toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>;
   toolCalls: ToolCall[];
   liveCollapsed: boolean;
   turnActive: boolean;
@@ -132,7 +145,11 @@ export function summarizeProcess({
 }): string {
   const toolCount = toolCalls.length;
   const fallbackActiveToolCallId = turnActive && pendingToolCallIds.size === 0
-    ? [...toolCalls].reverse().find((toolCall) => !results.has(toolCall.id) && !childRunsByToolCallId?.has(toolCall.id))?.id ?? null
+    ? [...toolCalls].reverse().find((toolCall) => (
+      !toolCallOutcomes?.has(toolCall.id)
+      && !results.has(toolCall.id)
+      && !childRunsByToolCallId?.has(toolCall.id)
+    ))?.id ?? null
     : null;
   const toolStatus = (toolCall: ToolCall) => {
     const childRun = childRunsByToolCallId?.get(toolCall.id);
@@ -142,6 +159,7 @@ export function summarizeProcess({
       results.get(toolCall.id),
       pendingToolCallIds,
       fallbackActiveToolCallId === toolCall.id,
+      toolCallOutcomes?.get(toolCall.id),
     );
   };
 

@@ -83,10 +83,17 @@ export interface AgentPayloadRef {
   display?: AgentPayloadDisplayMetadata;
 }
 
+// The authoritative settled state of a tool call, stamped from the
+// `tool_call.completed` / `tool_call.failed` events during replay. Distinct from
+// the tool *result message*: a tool can complete without a `tool_result.created`
+// (e.g. some built-in SDK tools), so this is the only reliable "done" signal the
+// renderer can trust to stop a spinner. Absent while the call is still executing.
+export type AgentToolCallOutcome = 'completed' | 'failed';
+
 export type AgentPersistedContent =
   | { type: 'text'; text: string }
   | { type: 'thinking'; thinking: string; redacted?: boolean }
-  | { type: 'toolCall'; id: string; name: string; arguments: Record<string, unknown> }
+  | { type: 'toolCall'; id: string; name: string; arguments: Record<string, unknown>; outcome?: AgentToolCallOutcome }
   | { type: 'image'; imageRef: AgentPayloadRef; alt?: string }
   | { type: 'payload_ref'; payload: AgentPayloadRef; label?: string };
 
@@ -1700,6 +1707,12 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
     case 'tool_call.started':
       applyToolCallStarted(state, event);
       return;
+    case 'tool_call.completed':
+      applyToolCallOutcome(state, event.messageId, event.toolCallId, 'completed', event.createdAt);
+      return;
+    case 'tool_call.failed':
+      applyToolCallOutcome(state, event.messageId, event.toolCallId, 'failed', event.createdAt);
+      return;
     case 'compaction.completed':
       state.compactionsByMessageId[event.messageId] = {
         id: event.eventId,
@@ -1728,8 +1741,6 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       return;
     case 'thinking.delta':
     case 'tool_call.delta':
-    case 'tool_call.completed':
-    case 'tool_call.failed':
     case 'tool.permission.checked':
     case 'tool.permission.resolved':
     case 'widget_state.updated':
@@ -1942,6 +1953,27 @@ function applyToolCallStarted(state: AgentEventReplayState, event: ToolCallStart
     },
   ];
   message.updatedAt = event.createdAt;
+}
+
+// Stamp the settled outcome onto the matching tool-call content part. The part
+// was created by `tool_call.started`; if it is missing (out-of-order/partial
+// replay) there is nothing to settle, so this is a no-op rather than an error.
+function applyToolCallOutcome(
+  state: AgentEventReplayState,
+  messageId: string,
+  toolCallId: string,
+  outcome: AgentToolCallOutcome,
+  createdAt: number,
+) {
+  const message = state.messages[messageId];
+  if (!message) return;
+  const part = message.content.find(
+    (candidate): candidate is Extract<AgentPersistedContent, { type: 'toolCall' }> =>
+      candidate.type === 'toolCall' && candidate.id === toolCallId,
+  );
+  if (!part || part.outcome === outcome) return;
+  part.outcome = outcome;
+  message.updatedAt = createdAt;
 }
 
 function toPiUserContent(content: AgentPersistedContent[]): UserMessage['content'] {

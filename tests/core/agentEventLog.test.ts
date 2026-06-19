@@ -477,6 +477,62 @@ describe('agent event log', () => {
     expect(deriveAgentPiMessages(state).map(textOf)).toEqual(['Screenshot attachment']);
   });
 
+  test('stamps tool call outcome from tool_call.completed / tool_call.failed', () => {
+    function toolCallPart(state: ReturnType<typeof replayAgentEvents>, messageId: string, toolCallId: string) {
+      const message = state.messages[messageId];
+      const part = message?.content.find((candidate) => candidate.type === 'toolCall' && candidate.id === toolCallId);
+      return part?.type === 'toolCall' ? part : undefined;
+    }
+
+    const baseEvents: AgentEvent[] = [
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
+      {
+        ...base(2, 'assistant_message.started', agentActor),
+        runId: 'run-1',
+        messageId: 'assistant-1',
+        parentMessageId: null,
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(3, 'tool_call.started', agentActor),
+        messageId: 'assistant-1',
+        toolCallId: 'tool-ok',
+        name: 'web_search',
+        inputSummary: '{"query":"weather"}',
+        args: { query: 'weather' },
+      },
+      {
+        ...base(4, 'tool_call.started', agentActor),
+        messageId: 'assistant-1',
+        toolCallId: 'tool-bad',
+        name: 'web_search',
+        inputSummary: '{"query":"news"}',
+        args: { query: 'news' },
+      },
+    ];
+
+    // Before any completion event, the parts carry no outcome (still executing).
+    const executing = replayAgentEvents(baseEvents);
+    expect(toolCallPart(executing, 'assistant-1', 'tool-ok')?.outcome).toBeUndefined();
+
+    // A completed call — even with NO tool_result.created — is stamped 'completed';
+    // a failed call is stamped 'failed'. This is the signal the renderer trusts to
+    // stop a spinner when the result message never lands.
+    const settled = replayAgentEvents([
+      ...baseEvents,
+      { ...base(5, 'tool_call.completed', agentActor), messageId: 'assistant-1', toolCallId: 'tool-ok' },
+      {
+        ...base(6, 'tool_call.failed', agentActor),
+        messageId: 'assistant-1',
+        toolCallId: 'tool-bad',
+        errorMessage: 'boom',
+      },
+    ]);
+    expect(toolCallPart(settled, 'assistant-1', 'tool-ok')?.outcome).toBe('completed');
+    expect(toolCallPart(settled, 'assistant-1', 'tool-bad')?.outcome).toBe('failed');
+  });
+
   test('reconstructs assistant tool calls and tool results for pi-mono', () => {
     const events: AgentEvent[] = [
       { ...base(1, 'conversation.created'), title: 'Untitled' },

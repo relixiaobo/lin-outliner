@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentToolResultPayloadPart, AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
+import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import { basenameForPath } from '../../../core/referenceMarkup';
 import { formatRunDuration } from './agentProcessTypes';
@@ -50,6 +51,7 @@ interface AgentToolCallBlockProps {
   conversationId?: string | null;
   childRun?: AgentRenderChildRunEntity;
   toolCall: ToolCall;
+  outcome?: AgentToolCallOutcome;
   turnActive?: boolean;
 }
 
@@ -73,11 +75,14 @@ export function getToolCallStatus(
   result: AgentToolResultWithPayloads | undefined,
   pendingToolCallIds: ReadonlySet<string>,
   toolActive: boolean | undefined,
+  outcome?: AgentToolCallOutcome,
 ): ToolStatus {
-  if (!result) {
-    return pendingToolCallIds.has(toolCallId) || toolActive ? 'pending' : 'error';
-  }
-  return result.isError ? 'error' : 'done';
+  if (result) return result.isError ? 'error' : 'done';
+  // The settled `outcome` is authoritative even with no result message: some
+  // tools complete without emitting a `tool_result.created`, so trust it to stop
+  // the spinner rather than waiting on a result that may never arrive.
+  if (outcome) return outcome === 'failed' ? 'error' : 'done';
+  return pendingToolCallIds.has(toolCallId) || toolActive ? 'pending' : 'error';
 }
 
 export function getToolIcon(toolCall: ToolCall) {
@@ -802,11 +807,12 @@ export function AgentToolCallBlock({
   conversationId,
   childRun,
   toolCall,
+  outcome,
   turnActive,
 }: AgentToolCallBlockProps) {
   const t = useT();
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
-  const status = childRun ? childRunToolStatus(childRun) : getToolCallStatus(toolCall.id, result, pendingToolCallIds, turnActive);
+  const status = childRun ? childRunToolStatus(childRun) : getToolCallStatus(toolCall.id, result, pendingToolCallIds, turnActive, outcome);
   const Icon = getToolIcon(toolCall);
   const StatusIcon = status === 'pending' ? LoaderIcon : Icon;
   const isExpanded = expanded ?? internalExpanded;

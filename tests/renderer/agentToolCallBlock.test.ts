@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { ToolCall } from '../../src/core/agentTypes';
+import type { AgentToolResultWithPayloads, ToolCall } from '../../src/core/agentTypes';
 import { getToolCallStatus, getToolIcon, summarizeToolCall } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import { BrainIcon, NodeCreateToolIcon } from '../../src/renderer/ui/icons';
 import { getMessages } from '../../src/core/i18n';
@@ -39,6 +39,25 @@ describe('agent tool call block', () => {
     expect(getToolCallStatus('tool-stale', undefined, new Set(['tool-running']), false)).toBe('error');
     expect(getToolCallStatus('tool-finishing', undefined, new Set(), true)).toBe('pending');
     expect(getToolCallStatus('tool-idle', undefined, new Set(), false)).toBe('error');
+  });
+
+  test('a settled outcome stops the spinner even with no result message', () => {
+    // The bug: a tool whose `tool_call.completed` arrived but whose result message
+    // never landed in the projection used to spin forever (active turn) via the
+    // pending/active fallback. The settled outcome is now authoritative.
+    expect(getToolCallStatus('tool-done', undefined, new Set(['tool-done']), true, 'completed')).toBe('done');
+    expect(getToolCallStatus('tool-done', undefined, new Set(), false, 'completed')).toBe('done');
+    expect(getToolCallStatus('tool-failed', undefined, new Set(), true, 'failed')).toBe('error');
+    // A result message still wins (it carries isError), regardless of outcome.
+    const okResult = {
+      role: 'toolResult',
+      toolCallId: 'tool-done',
+      content: [],
+      isError: false,
+    } as AgentToolResultWithPayloads;
+    expect(getToolCallStatus('tool-done', okResult, new Set(), false, 'failed')).toBe('done');
+    // No outcome yet (still executing) keeps the active-turn spinner.
+    expect(getToolCallStatus('tool-exec', undefined, new Set(['tool-exec']), true, undefined)).toBe('pending');
   });
 
   test('uses memory icon and summarizes recall', () => {
