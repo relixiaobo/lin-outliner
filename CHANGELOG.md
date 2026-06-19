@@ -12,6 +12,26 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Node-based agent memory — `agent-memory-on-timeline` PR2 (PR #308, codex-2)** — durable agent
+  memory moves onto the daily timeline as ordinary outline nodes. New **`chat-source`**
+  `ReferenceTarget` variant (a `[[chat:…]]` inline reference into a conversation/run span, with
+  parse/serialize/normalize and ProseMirror/renderer plumbing) that is **validated on write**: a
+  node_create/node_edit carrying a chat citation must resolve to a readable `past_chats` source or the
+  write is rejected. Foreground memory is now **pull-only** — the model-visible `recall` tool and the
+  resident `<memory>` briefing are removed; the agent reads memory via `node_search`/`node_read` over
+  the `#d-memory`/`#d-episode`/`#d-belief` tag family and reads raw spans via `past_chats`. The `dream`
+  self-maintenance tool and manual `/dream` are replaced by a **private runtime-only `memory-dream`
+  skill** that the scheduled Dream path launches as a restricted child agent (allowed tools:
+  `past_chats`, `node_search`, `node_read`, `node_create`, `node_edit`), consolidating visible past
+  chats into timeline memory nodes with `[[chat:…]]` provenance. Dream change counts are derived from
+  the child run's real node writes; a **zero-write Dream does not record `dream.completed` or advance
+  the watermark** (evidence is retried, not silently dropped), and the internal consolidation
+  conversation is hidden from the channel list and deleted after each run. Removes the
+  `agent.memory.dream` permission action kind. **Gate (main):** `/code-review` recall-mode over 3
+  rounds (13 findings incl. two data-loss-class bugs — `node_edit` silently stripping marks/inline-ref
+  metadata, and the Dream watermark advancing on a zero-write child — all fixed and verified, plus a
+  follow-up preview-edit miscount fix); merge re-verified against `main` with typecheck + `test:core`
+  (1036 pass) + `test:renderer` (552 pass). PR3 (jump-to-source UI) still to come.
 - **Reference-authority ranking for node search — `node-search-access-ranking` PR B (PR #309, codex)** —
   default node-search relevance now folds in a capped, **document-derived reference-authority** boost: a
   node ranks higher the more **distinct linked inbound source nodes** point at it (tree references, inline

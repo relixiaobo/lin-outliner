@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | shipped single-agent-collapse #294 + agent-dock-ui #296; authored plans #302/#303 — both **ratified 2026-06-19 + merged**, now boarded (build unassigned) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305**; authored ratified plan agent-process-stable-disclosure #297) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -45,10 +45,11 @@ the just-shipped activation/briefing engine; **GO on the full direction, PR1 fir
 — the generic ranking substrate #302's pull-only recall reuses; **GO**, since **revised +
 re-reviewed via #304** into two build-ready PRs — PR A personal-access + PR B
 reference-authority, the latter ratified 2026-06-19). Both plans landed on `main`
-(#302/#303/#304 merged). **#302 PR1 shipped (#305, 2026-06-19)** — `past_chats` re-provided.
+(#302/#303/#304 merged). **#302 PR1 shipped (#305, 2026-06-19)** — `past_chats` re-provided;
+**#302 PR2 shipped (#308, 2026-06-19)** — node-based agent memory (chat-source refs + pull-only
+node memory + runtime-only `memory-dream` skill); **PR3 (jump-to-source UI) remains**.
 **#303 `node-search-access-ranking` fully shipped (2026-06-19)** — PR A personal-access (#307) +
-PR B reference-authority (#309); plan archived. Remaining build dispatch: **#302 PR2** (atomic
-node-memory flip; gate `/code-review ultra`); of the four
+PR B reference-authority (#309); plan archived. Of the four
 disjoint lanes from the 2026-06-19 dispatch plan, **agent/outliner disclosure stability shipped
 (#306, codex-3)** — command-surface one-pager · dark-mode-contrast-pass · anthropic-auth-clarity
 remain open.
@@ -209,12 +210,14 @@ before any directional/security-sensitive build.
     accumulated retrieval events (≥50 deliberate `recall` hits) · PR-4 engine shipped (✓). The
     strength/usage signal must separate from pure recency before association is selection, not
     wholesale injection.
-  - **Being reversed by #302** — `agent-memory-on-timeline` (below, ratified 2026-06-19)
-    replaces this whole event-log memory subsystem with memory-as-timeline-nodes +
-    dream-as-skill + pull-only recall. Until PR2 lands, the academic-model authorities
-    above still describe **current** behavior (the `docs/spec/` rewrite is #302 M5). The
-    DEFERRED associative-retrieval faculty is **dropped** by #302 (pull-only; no passive
-    surfacing).
+  - **Reversed by #302** — `agent-memory-on-timeline` (below) replaces this whole event-log
+    memory subsystem with memory-as-timeline-nodes + dream-as-skill + pull-only recall.
+    **PR2 landed (#308, 2026-06-19)**: the foreground `recall` tool + resident `<memory>`
+    briefing are gone (pull-only via `node_search`/`node_read`), `dream` is now a runtime-only
+    skill, and the relevant `docs/spec/` were rewritten in the PR. The DEFERRED
+    associative-retrieval faculty is **dropped** by #302 (pull-only; no passive surfacing).
+    Note: the believer-pool store + Dream extraction substrate still ships under the hood;
+    PR3 (jump-to-source UI) remains.
 - **agent-memory-on-timeline** (P1, **ratified 2026-06-19 — GO full direction, PR1 first**)
   — rebuild agent memory as ordinary outliner nodes on the daily timeline
   (`d-memory` / `d-episode` / `d-belief`), written/read via `node_*` + a re-provided
@@ -227,8 +230,10 @@ before any directional/security-sensitive build.
   interface-first. **Set of independent PRs:** **PR1** re-provide `past_chats` (**✓ shipped
   #305, 2026-06-19** — read-only `recent`/`search`/`read`/`read-by-source` with source
   coordinates for later inline citation); **PR2** the atomic node-memory flip (read+write flip
-  together — genuinely unsplittable pre-release; gate = `/code-review ultra`, *next to build*);
-  **PR3** jump-to-source UI. Reverses the **memory** item above; the recency/access ranking it loses is restored
+  together — genuinely unsplittable pre-release; **✓ shipped #308, 2026-06-19** — chat-source refs +
+  validate-on-write, pull-only `node_search`/`node_read` replacing `recall`+briefing, runtime-only
+  `memory-dream` skill replacing `dream`); **PR3** jump-to-source UI (*next to build*). Reverses the
+  **memory** item above; the recency/access ranking it loses is restored
   generically by `node-search-access-ranking` (#303). PM postures ratified: pull-only
   regression · memory-in-exportable-document · single-writer abandoned. See
   [`docs/plans/agent-memory-on-timeline.md`](docs/plans/agent-memory-on-timeline.md).
@@ -524,6 +529,23 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   (`agent-tool-design.md`, `agent-progress.md`, A6). **Gate (main):** typecheck + `test:core` 1038/0 +
   docs:check green; manual correctness/security/permission review (source round-trip, single-principal,
   no compaction bypass) — no blocking findings.
+- **agent-memory-on-timeline PR2 — node-based agent memory** (codex-2, PR #308) — the atomic
+  read+write flip of the `agent-memory-on-timeline` (#302) set: durable memory becomes ordinary
+  timeline outline nodes. Adds the **`chat-source`** `ReferenceTarget` variant (parse/serialize/
+  normalize + renderer attrs) with **validate-on-write** so a `[[chat:…]]` citation must resolve to a
+  readable `past_chats` source. Flips foreground memory to **pull-only** via `node_search`/`node_read`
+  — removes the model-visible `recall` tool and the resident `<memory>` briefing. Replaces the `dream`
+  self-maintenance tool + manual `/dream` with a **private runtime-only `memory-dream` skill** the
+  scheduled Dream path launches as a restricted child agent, writing `#d-memory`/`#d-episode`/`#d-belief`
+  nodes with `[[chat:…]]` provenance. Dream change counts derive from the child's real
+  `node_create`/`node_edit` writes; a **zero-write child does not record `dream.completed` or advance
+  the watermark**; the private consolidation conversation is excluded from the channel list and deleted
+  after each run. Specs synced (`agent-tool-design.md`, `agent-architecture.md`, `agent-progress.md`,
+  `agent-event-log-rendering.md`, A6). **Gate (main):** `/code-review` recall-mode, **3 rounds** — 13
+  findings (2 data-loss-class: `node_edit` mark/metadata stripping, Dream watermark advancing on
+  zero-write) all fixed + verified, plus a 4th-round preview-edit-miscount fix; merge re-verified
+  against current `main` (typecheck + `test:core` 1036/0 + `test:renderer` 552/0). **PR3 (jump-to-source
+  UI) remains** — plan stays active, not archived.
 - **code-block-floating-toolbar** (codex, PR #301) — editable outliner code blocks + read-only agent
   markdown code blocks get a top-right floating toolbar (language selector + copy as separate
   hover/focus-revealed popover-material controls over an opaque code surface), an inset text viewport
