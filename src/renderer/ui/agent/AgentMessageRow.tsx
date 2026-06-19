@@ -54,6 +54,11 @@ import {
 } from '../editor/inlineFilePreviewData';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { AgentIdentityAvatar } from './AgentIdentityAvatar';
+import {
+  captureDisclosureScrollAnchor,
+  restoreDisclosureScrollAnchor,
+  type DisclosureScrollAnchorSnapshot,
+} from '../interactions/disclosureScrollAnchor';
 
 const USER_MESSAGE_COLLAPSED_LINES = 5;
 const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
@@ -485,15 +490,27 @@ function AgentMessageRowComponent({
   const [editDraft, setEditDraft] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [expandOverrides, setExpandOverrides] = useState<Record<string, boolean>>({});
+  const pendingDisclosureAnchorRef = useRef<DisclosureScrollAnchorSnapshot | null>(null);
   const expandState = useMemo<AgentExpandState>(() => ({
     isExpanded: (id, defaultExpanded = false) => expandOverrides[id] ?? defaultExpanded,
-    toggle: (id, currentlyExpanded) => {
+    toggle: (id, currentlyExpanded, anchorElement) => {
+      pendingDisclosureAnchorRef.current = captureDisclosureScrollAnchor(anchorElement ?? null);
       setExpandOverrides((current) => ({
         ...current,
         [id]: !currentlyExpanded,
       }));
     },
   }), [expandOverrides]);
+
+  useLayoutEffect(() => {
+    const anchor = pendingDisclosureAnchorRef.current;
+    pendingDisclosureAnchorRef.current = null;
+    if (!restoreDisclosureScrollAnchor(anchor) || !anchor) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      restoreDisclosureScrollAnchor(anchor);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [expandOverrides]);
 
   async function copyMessage(text: string) {
     if (!text) return;

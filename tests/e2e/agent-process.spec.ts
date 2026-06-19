@@ -117,6 +117,7 @@ test.describe('agent process disclosure', () => {
       conversation: [{ nodeId: 'user-node', message: user, branches: null }],
       streamingMessage: null,
       isStreaming: true,
+      dmRunActive: true,
       pendingToolCallIds: [],
       errorMessage: null,
     });
@@ -127,8 +128,8 @@ test.describe('agent process disclosure', () => {
     const liveProcess = row.locator('.agent-process-block').first();
     const liveProcessToggle = liveProcess.locator('.agent-process-toggle').first();
     await expect(liveProcess.locator('.agent-process-title').first()).toHaveText('Working...');
-    await expect(liveProcessToggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(liveProcessToggle).toBeDisabled();
+    await expect(liveProcessToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(liveProcessToggle).not.toBeDisabled();
     const indicator = row.getByLabel('Assistant is responding');
     await expect(indicator).toBeVisible();
     const before = await indicator.boundingBox();
@@ -143,6 +144,7 @@ test.describe('agent process disclosure', () => {
       conversation: [{ nodeId: 'user-node', message: user, branches: null }],
       streamingMessage: assistant,
       isStreaming: true,
+      dmRunActive: true,
       pendingToolCallIds: [],
       errorMessage: null,
     });
@@ -150,7 +152,7 @@ test.describe('agent process disclosure', () => {
     await expect(assistantRows).toHaveCount(1);
     const streamedText = row.getByText('你好，我在。');
     await expect(liveProcess.locator('.agent-process-title').first()).toHaveText('Working...');
-    await expect(liveProcessToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(liveProcessToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(streamedText).toBeVisible();
     const textBox = await streamedText.boundingBox();
     const after = await indicator.boundingBox();
@@ -367,6 +369,22 @@ test.describe('agent process disclosure', () => {
     await expect(preview.locator('.inline-file-preview-image img')).toBeVisible();
 
     await ref.click();
+    await expect.poll(() => page.evaluate(() => (
+      (window as typeof window & { __openedLocalFiles?: string[] }).__openedLocalFiles ?? []
+    ))).toContain('/Users/test/Pictures/diagram.png');
+
+    await page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent('lin:preview-target-open', {
+        detail: {
+          target: {
+            kind: 'local-file',
+            path: '/Users/test/Pictures/diagram.png',
+            entryKind: 'file',
+            label: 'diagram.png',
+          },
+        },
+      }));
+    });
     const panel = page.locator('.outline-panel-surface.active-panel.is-file-preview');
     await expect(panel.locator('.panel-title-file-heading')).toContainText('diagram.png');
     await expect(panel.locator('.panel-breadcrumb')).toContainText('Users');
@@ -376,12 +394,21 @@ test.describe('agent process disclosure', () => {
     // Add to outline: copy the previewed non-node file into the outline as a node,
     // then bind the same mounted file surface to that node in place. The pane stays
     // a file-preview surface; only its breadcrumb source and children outline change.
-    await panel.getByRole('button', { name: 'Add to outline' }).click();
+    await panel.getByRole('button', { name: 'Preview actions' }).click();
+    await page.getByRole('menuitem', { name: 'Add to outline' }).click();
     await expect(panel).toHaveClass(/is-file-preview/);
     await expect(panel.locator('.panel-title-file-heading')).toContainText('diagram.png');
-    await expect(panel.locator('.panel-breadcrumb')).toContainText('2026-05-13');
-    await expect(panel.getByRole('button', { name: 'Add to outline' })).toHaveCount(0);
+    const todayLabel = await page.evaluate(() => {
+      const today = new Date();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      return `${today.getFullYear()}-${month}-${day}`;
+    });
+    await expect(panel.locator('.panel-breadcrumb')).toContainText(todayLabel);
     await expect(panel.locator('.file-preview-content > .outliner')).toBeVisible();
+    await panel.getByRole('button', { name: 'Preview actions' }).click();
+    await expect(page.getByRole('menuitem', { name: 'Add to outline' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
     const calls = await commandCalls(page);
     expect(calls.some((call) => call.cmd === 'ingest_local_file')).toBe(true);
     expect(calls.some((call) => call.cmd === 'create_image_node')).toBe(true);
@@ -546,7 +573,78 @@ test.describe('agent process disclosure', () => {
     await expect(page.getByText('Done — the outline is updated.')).toBeVisible();
   });
 
-  test('keeps DM process expanded while final prose streams, then collapses after settle', async ({ page }) => {
+  test('updates a collapsed live process header in place when the turn settles', async ({ page }) => {
+    const assistant = {
+      role: 'assistant',
+      api: 'responses',
+      provider: 'openai',
+      model: 'gpt-5.4',
+      usage,
+      stopReason: 'stop',
+      timestamp: 1_800_000_001_050,
+      content: [
+        { type: 'thinking', thinking: 'Checking the selected outline node.' },
+        { type: 'toolCall', id: 'tool-read-live-collapsed', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+        { type: 'text', text: 'The answer stays outside the process fold.' },
+      ],
+    };
+    const toolResult = {
+      role: 'toolResult',
+      toolCallId: 'tool-read-live-collapsed',
+      toolName: 'node_read',
+      content: [{ type: 'text', text: 'Alpha node content' }],
+      isError: false,
+      timestamp: 1_800_000_001_051,
+    };
+
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
+      conversationTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [toolResult],
+      conversation: [],
+      streamingMessage: assistant,
+      isStreaming: true,
+      dmRunActive: true,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    });
+
+    const process = page.locator('.agent-process-block').first();
+    const processToggle = process.locator('.agent-process-toggle').first();
+    const beforeBox = await processToggle.boundingBox();
+    expect(beforeBox).toBeTruthy();
+    await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Checking the selected outline node.');
+
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
+      conversationTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [toolResult],
+      conversation: [{
+        nodeId: 'assistant-node-live-collapsed-settled',
+        message: assistant,
+        branches: null,
+        runDurationMs: 9_000,
+      }],
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    }, 2);
+
+    await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Worked for 9s');
+    const afterBox = await processToggle.boundingBox();
+    expect(afterBox).toBeTruthy();
+    expect(Math.abs(afterBox!.y - beforeBox!.y)).toBeLessThan(1);
+    await expect(page.getByText('The answer stays outside the process fold.')).toBeVisible();
+  });
+
+  test('keeps live DM process collapsed by default and preserves user expansion after settle', async ({ page }) => {
     const assistant = {
       role: 'assistant',
       api: 'responses',
@@ -579,16 +677,22 @@ test.describe('agent process disclosure', () => {
       conversation: [],
       streamingMessage: assistant,
       isStreaming: true,
+      dmRunActive: true,
       pendingToolCallIds: [],
       errorMessage: null,
     });
 
     const process = page.locator('.agent-process-block').first();
-    await expect(process.locator('.agent-process-toggle').first()).toHaveAttribute('aria-expanded', 'true');
-    await expect(process.locator('.agent-process-toggle').first()).toBeDisabled();
-    await expect(process.locator('.agent-process-title').first()).toHaveText('Working...');
-    await expect(process.locator('.agent-process-flat .agent-process-title').first()).toHaveText('Thought · Read node "node-alpha"');
+    const processToggle = process.locator('.agent-process-toggle').first();
+    await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(processToggle).not.toBeDisabled();
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Read the source node before answering.');
+    await expect(process.locator('.agent-process-flat .agent-process-title')).toHaveCount(0);
     await expect(page.getByText('The final answer is now streaming below the process.')).toBeVisible();
+
+    await processToggle.click();
+    await expect(processToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(process.locator('.agent-process-flat .agent-process-title').first()).toHaveText('Read the source node before answering.');
 
     await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
@@ -609,7 +713,7 @@ test.describe('agent process disclosure', () => {
     }, 2);
 
     await expect(process.locator('.agent-process-title').first()).toHaveText('Worked for 1m 3s');
-    await expect(process.locator('.agent-process-toggle').first()).toHaveAttribute('aria-expanded', 'false');
+    await expect(process.locator('.agent-process-toggle').first()).toHaveAttribute('aria-expanded', 'true');
     await expect(process.locator('.agent-process-toggle').first()).not.toBeDisabled();
     await expect(page.getByText('The final answer is now streaming below the process.')).toBeVisible();
   });
@@ -635,6 +739,7 @@ test.describe('agent process disclosure', () => {
       conversation: [],
       streamingMessage: assistant,
       isStreaming: true,
+      dmRunActive: true,
       pendingToolCallIds: [],
       errorMessage: null,
     });

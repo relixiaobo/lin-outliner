@@ -99,7 +99,7 @@ export function buildConversationRenderRows(
         index += 1;
       }
 
-      const stableKey = `assistant-turn-${assistantEntries[0]!.id}`;
+      const stableKey = `assistant-turn-${assistantEntries[0]!.message.timestamp}`;
       const mergedEntry = assistantEntries.length >= 2
         ? mergeAssistantEntries(assistantEntries)
         : assistantEntries[0]!;

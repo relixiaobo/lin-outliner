@@ -1,7 +1,7 @@
 import type { AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
-import type { ReactNode } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 import {
   ChevronDownIcon,
   ICON_SIZE,
@@ -224,26 +224,22 @@ export function AgentProcessBlock({
   const t = useT();
   const facts = processSummaryFacts(blocks);
   const liveSegment = turnActive && !sealed;
-  // Codex-style live disclosure: a DM turn auto-expands **while it is working**
-  // (`liveSegment` — thinking/tools/final prose streaming) so the process is
-  // visible, then auto-collapses to "Worked for …" the moment the turn settles.
-  // A resultless turn we're surfacing (`surfaceResultlessProcess` —
-  // a genuine interruption in either mode, or a sealed resultless DM turn per #240)
-  // also auto-expands so its interim work / error context stays visible. Everything
-  // else defaults collapsed — including a cleanly-completed resultless Channel turn,
-  // which folds to "Worked for …" (atomic delivery, process in the activity detail
-  // view, not inline). The sticky override wins over the default: once a user
-  // toggles the block it keeps their choice and never auto-collapses on seal.
-  const defaultExpanded = surfaceResultlessProcess || liveSegment;
+  // Live process rows now default collapsed; the collapsed header carries the
+  // active tool/thinking summary. Resultless/error surfacing still opens by
+  // default so context is not buried.
+  const defaultExpanded = surfaceResultlessProcess;
   const expanded = expandState.isExpanded(id, defaultExpanded);
   const liveCollapsed = liveSegment && !expanded;
+  const toggle = (event: MouseEvent<HTMLElement>) => {
+    expandState.toggle(id, expanded, event.currentTarget);
+  };
 
   return (
     <div className={`agent-process-block ${turnFailedWithoutProse ? 'is-error' : ''}`}>
       <ButtonControl
         aria-expanded={expanded}
         className="agent-process-toggle"
-        onClick={() => expandState.toggle(id, expanded)}
+        onClick={toggle}
       >
         {/* The "Worked for …" header is icon-free (codex-style): the summary text
             carries the state (it already reads "Worked for 13s" / "Thought · used N
@@ -312,37 +308,38 @@ export function AgentTurnProcessFold({
 }: AgentTurnProcessFoldProps) {
   const t = useT();
   const liveSegment = turnActive && !sealed;
-  const defaultExpanded = surfaceResultlessProcess || liveSegment;
-  const expanded = liveSegment ? true : expandState.isExpanded(id, defaultExpanded);
-  const title = turnActive ? t.agent.process.working : (() => {
-    const facts = processSummaryFacts(blocks);
-    return summarizeProcess({
-      ...facts,
-      pendingToolCallIds,
-      results,
-      turnActive,
-      liveCollapsed: false,
-      turnFailedWithoutProse,
-      surfaceResultlessProcess,
-      workedForMs,
-      process: t.agent.process,
-      toolCallLabels: t.agent.toolCall,
-      thinkingLabel: t.agent.thinking.thinking,
-    });
-  })();
+  const defaultExpanded = surfaceResultlessProcess;
+  const expanded = expandState.isExpanded(id, defaultExpanded);
+  const liveCollapsed = liveSegment && !expanded;
+  const facts = processSummaryFacts(blocks);
+  const title = summarizeProcess({
+    ...facts,
+    pendingToolCallIds,
+    results,
+    turnActive,
+    liveCollapsed,
+    turnFailedWithoutProse,
+    surfaceResultlessProcess,
+    workedForMs,
+    process: t.agent.process,
+    toolCallLabels: t.agent.toolCall,
+    thinkingLabel: t.agent.thinking.thinking,
+  });
+  const toggle = (event: MouseEvent<HTMLElement>) => {
+    expandState.toggle(id, expanded, event.currentTarget);
+  };
 
   return (
     <div className={`agent-process-block ${turnFailedWithoutProse ? 'is-error' : ''}`}>
       <ButtonControl
         aria-expanded={expanded}
-        className={`agent-process-toggle${liveSegment ? ' is-locked' : ''}`}
-        disabled={liveSegment}
-        onClick={liveSegment ? undefined : () => expandState.toggle(id, expanded)}
+        className="agent-process-toggle"
+        onClick={toggle}
       >
         <span className="agent-process-title">
           {title}
         </span>
-        {liveSegment ? (
+        {liveCollapsed ? (
           <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
         ) : (
           <ChevronDownIcon

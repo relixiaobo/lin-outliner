@@ -158,6 +158,7 @@ interface OutlinerItemProps {
   // by the flat producer, so this row must not render its own nested OutlinerView.
   // Indentation comes from `depth` (cumulative) instead of nested `.children`.
   flat?: boolean;
+  onDisclosureToggleAnchor?: (anchorElement: HTMLElement | null) => void;
 }
 
 function OutlinerItemImpl(props: OutlinerItemProps) {
@@ -366,6 +367,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       return { ...prev, expanded: expandedSet };
     });
     row.updateSelection();
+  };
+  const toggleRowDisclosure = (anchorElement?: HTMLElement | null) => {
+    props.onDisclosureToggleAnchor?.(anchorElement ?? null);
+    if (nonImageFileRow) {
+      toggleFilePreview();
+      return;
+    }
+    row.toggleExpandOrSelect();
   };
   const childReferencePath = [...props.referencePath, childParentId];
   const pendingReferenceConversion = props.ui.pendingReferenceConversion?.nodeId === props.nodeId;
@@ -2134,7 +2143,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           processing={isCommandNode && commandRun.running}
           bulletColors={appliedTagColors}
           tagDefColor={tagDefColor}
-          onToggleExpand={nonImageFileRow ? toggleFilePreview : row.toggleExpandOrSelect}
+          onToggleExpand={toggleRowDisclosure}
           onDrillDown={() => props.onRoot(drillDownId)}
           draggable={row.dragHandleProps.draggable}
           onDragStart={row.dragHandleProps.onDragStart}

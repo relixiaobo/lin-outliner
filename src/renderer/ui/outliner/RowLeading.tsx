@@ -5,6 +5,11 @@ import {
   ICON_SIZE,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
+import {
+  captureDisclosureScrollAnchor,
+  nearestScrollContainer,
+  restoreDisclosureScrollAnchor,
+} from '../interactions/disclosureScrollAnchor';
 import { RowMarker, type RowMarkerVariant } from './RowMarker';
 import { useT } from '../../i18n/I18nProvider';
 
@@ -21,7 +26,7 @@ interface RowLeadingProps {
   bulletColors?: string[];
   tagDefColor?: string;
   fileIconKind?: string;
-  onToggleExpand: () => void;
+  onToggleExpand: (anchorElement?: HTMLElement | null) => void;
   onDrillDown: () => void;
   draggable?: boolean;
   onDragStart?: (event: DragEvent<HTMLElement>) => void;
@@ -54,7 +59,25 @@ export function RowLeading({
         onMouseDown={(event) => {
           event.preventDefault();
         }}
-        onClick={onToggleExpand}
+        onClick={(event) => {
+          const scroller = nearestScrollContainer(event.currentTarget);
+          const rowId = event.currentTarget.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId ?? null;
+          const anchor = captureDisclosureScrollAnchor(
+            event.currentTarget,
+            scroller,
+            () => (rowId && scroller
+              ? scroller.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(rowId)}"] .row-chevron-button`)
+              : null),
+          );
+          onToggleExpand(event.currentTarget);
+          if (anchor) {
+            window.requestAnimationFrame(() => {
+              window.requestAnimationFrame(() => {
+                restoreDisclosureScrollAnchor(anchor);
+              });
+            });
+          }
+        }}
         onDoubleClick={(event) => {
           event.preventDefault();
           event.stopPropagation();

@@ -7,6 +7,7 @@ import {
   useState,
   type CSSProperties,
   type Dispatch,
+  type MouseEvent,
   type MutableRefObject,
   type ReactNode,
   type RefObject,
@@ -27,6 +28,11 @@ import { ViewToolbar } from './ViewToolbar';
 import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 import { OutlinerEmptyState } from './OutlinerEmptyState';
 import { IndentGuide } from './IndentGuide';
+import {
+  captureDisclosureScrollAnchor,
+  restoreDisclosureScrollAnchor,
+  type DisclosureScrollAnchorSnapshot,
+} from '../interactions/disclosureScrollAnchor';
 
 // The flat renderer is the default outliner path. The old recursive renderer is
 // retained as a reload-scoped diagnostic fallback while parity work settles.
@@ -319,6 +325,8 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   const [measureVersion, setMeasureVersion] = useState(0);
   const [scrollMetrics, setScrollMetrics] = useState({ top: 0, height: 0 });
   const [flatGuides, setFlatGuides] = useState<FlatGuideGeometry[]>([]);
+  const pendingDisclosureAnchorRef = useRef<DisclosureScrollAnchorSnapshot | null>(null);
+  const disclosureAnchorFrameRef = useRef<number | null>(null);
 
   const measureRow = useCallback((rowKey: string, height: number) => {
     const current = rowHeightsRef.current.get(rowKey);
@@ -367,6 +375,25 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     ));
   }, [resolveScroller]);
 
+  const captureDisclosureAnchor = useCallback((anchorElement: HTMLElement | null) => {
+    const snapshot = captureDisclosureScrollAnchor(anchorElement, resolveScroller());
+    if (!snapshot) return;
+    pendingDisclosureAnchorRef.current = snapshot;
+    if (disclosureAnchorFrameRef.current !== null) {
+      window.cancelAnimationFrame(disclosureAnchorFrameRef.current);
+    }
+    disclosureAnchorFrameRef.current = window.requestAnimationFrame(() => {
+      disclosureAnchorFrameRef.current = null;
+      if (restoreDisclosureScrollAnchor(snapshot)) updateScrollMetrics();
+    });
+  }, [resolveScroller, updateScrollMetrics]);
+  const captureDisclosureClick = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const anchor = target?.closest<HTMLElement>('.row-chevron-button, .indent-guide') ?? null;
+    if (!anchor || !event.currentTarget.contains(anchor)) return;
+    captureDisclosureAnchor(anchor);
+  }, [captureDisclosureAnchor]);
+
   const scrollFrameRef = useRef<number | null>(null);
   const scheduleScrollMetrics = useCallback(() => {
     if (scrollFrameRef.current !== null) return;
@@ -400,6 +427,10 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
       if (scrollFrameRef.current !== null) {
         window.cancelAnimationFrame(scrollFrameRef.current);
         scrollFrameRef.current = null;
+      }
+      if (disclosureAnchorFrameRef.current !== null) {
+        window.cancelAnimationFrame(disclosureAnchorFrameRef.current);
+        disclosureAnchorFrameRef.current = null;
       }
     };
   }, [virtualize, resolveScroller, updateScrollMetrics, scheduleScrollMetrics]);
@@ -435,6 +466,17 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     const delta = layout.items[idx]!.top - prevLayout.items[idx]!.top;
     if (delta !== 0) scroller.scrollTop += delta;
   }, [layout, rows, virtualize, resolveScroller]);
+
+  useLayoutEffect(() => {
+    const anchor = pendingDisclosureAnchorRef.current;
+    pendingDisclosureAnchorRef.current = null;
+    if (!restoreDisclosureScrollAnchor(anchor) || !anchor) return undefined;
+    updateScrollMetrics();
+    const frame = window.requestAnimationFrame(() => {
+      if (restoreDisclosureScrollAnchor(anchor)) updateScrollMetrics();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [layout, rows, updateScrollMetrics]);
 
   // ── Window selection ──────────────────────────────────────────────────────
   // Force-mount rows that must accept focus even when scrolled out of view: the
@@ -533,7 +575,8 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     virtualize,
   ]);
 
-  const toggleDirectChildrenExpansion = useCallback((rowId: NodeId) => {
+  const toggleDirectChildrenExpansion = useCallback((rowId: NodeId, anchorElement?: HTMLElement | null) => {
+    captureDisclosureAnchor(anchorElement ?? null);
     const childParentId = outlinerChildParentId(rowId, byId);
     const childParentNode = childParentId ? byId.get(childParentId) : undefined;
     const childIds = outlinerChildren(childParentNode, byId);
@@ -547,7 +590,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
       }
       return { ...prev, expanded: expandedSet };
     });
-  }, [byId, props.setUi]);
+  }, [byId, captureDisclosureAnchor, props.setUi]);
 
   const renderFlatGuides = () => (
     <div className="outliner-flat-guides" role="presentation" ref={guideOverlayRef}>
@@ -556,7 +599,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
           key={`guide>${guide.key}`}
           guideFor={guide.nodeId}
           flatMetrics={guide}
-          onToggleChildren={() => toggleDirectChildrenExpansion(guide.nodeId)}
+          onToggleChildren={(anchorElement) => toggleDirectChildrenExpansion(guide.nodeId, anchorElement)}
         />
       ))}
     </div>
@@ -686,6 +729,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
             draftAfterId={row.draft ? row.afterId ?? null : undefined}
             draftPlaceholder={row.draft && row.parentId === props.parentId ? props.draftPlaceholder : undefined}
             flat
+            onDisclosureToggleAnchor={captureDisclosureAnchor}
           />
         );
       default:
@@ -704,7 +748,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
           rootLevel={props.parentId === props.rootId}
           searchLoading={rootSearchRefreshing}
         />
-        <div className="outliner-flat-flow" role="presentation" ref={listRef}>
+        <div className="outliner-flat-flow" role="presentation" ref={listRef} onClickCapture={captureDisclosureClick}>
           {renderFlatGuides()}
           {rows.map((row, i) => (
             <FlowRowShell key={row.key} onMeasure={measureRow} rowKey={row.key}>
@@ -727,7 +771,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
         rootLevel={props.parentId === props.rootId}
         searchLoading={rootSearchRefreshing}
       />
-      <div className="outliner-flat" role="presentation" ref={listRef} style={containerStyle}>
+      <div className="outliner-flat" role="presentation" ref={listRef} style={containerStyle} onClickCapture={captureDisclosureClick}>
         {renderFlatGuides()}
         {renderIndices.map((i) => {
           const row = rows[i]!;
