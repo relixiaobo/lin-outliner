@@ -59,6 +59,8 @@ describe('agent render projection', () => {
       { id: 'assistant:assistant-1', kind: 'message', messageId: 'assistant-1' },
     ]);
     expect(projection.transcriptRows).toEqual(projection.rows);
+    expect(projection.entities.messages['user-1']?.sourceSeq).toBe(2);
+    expect(projection.entities.messages['assistant-1']?.sourceSeq).toBe(3);
     expect(projection.entities.messages['assistant-1']?.status).toBe('streaming');
     expect(projection.streaming).toMatchObject({
       messageId: 'assistant-1',
@@ -99,6 +101,7 @@ describe('agent render projection', () => {
     const run = state.runs['run-1'];
     expect(run).toBeDefined();
     expect(run!.updatedAt - run!.startedAt).toBeGreaterThan(0);
+    expect(projection.entities.messages['assistant-1']?.sourceSeq).toBe(5);
     expect(projection.entities.messages['assistant-1']?.runDurationMs).toBe(run!.updatedAt - run!.startedAt);
   });
 

@@ -123,7 +123,17 @@ type E2EWindow = Window & {
 
 export type E2EReferenceTarget =
   | { kind: 'node'; nodeId: string }
-  | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' };
+  | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' }
+  | {
+      kind: 'chat-source';
+      stream: 'conversation' | 'run';
+      streamId: string;
+      range: {
+        fromSeqExclusive: number;
+        throughSeq: number;
+        throughEventId?: string | null;
+      };
+    };
 
 export interface E2EInlineRef {
   offset: number;
@@ -145,11 +155,33 @@ export function e2eNodeInlineRef(offset: number, nodeId: string, displayName?: s
   };
 }
 
+export function e2eChatSourceInlineRef(
+  offset: number,
+  target: Extract<E2EReferenceTarget, { kind: 'chat-source' }>,
+  displayName?: string,
+): E2EInlineRef {
+  return {
+    offset,
+    target,
+    ...(displayName ? { displayName } : {}),
+  };
+}
+
 export async function installElectronMock(page: Page, options: MockFixtureOptions = {}) {
   await page.addInitScript(({ ids, options, generalChannelId }) => {
     type ReferenceTarget =
       | { kind: 'node'; nodeId: string }
-      | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' };
+      | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' }
+      | {
+          kind: 'chat-source';
+          stream: 'conversation' | 'run';
+          streamId: string;
+          range: {
+            fromSeqExclusive: number;
+            throughSeq: number;
+            throughEventId?: string | null;
+          };
+        };
     type RichText = { text: string; marks: unknown[]; inlineRefs: Array<{ offset: number; target: ReferenceTarget; displayName?: string; mimeType?: string; sizeBytes?: number }> };
     type RichTextPatch = {
       ops: Array<
@@ -162,6 +194,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const referenceTargetsEqual = (left: ReferenceTarget, right: ReferenceTarget) => {
       if (left.kind !== right.kind) return false;
       if (left.kind === 'node') return left.nodeId === (right as Extract<ReferenceTarget, { kind: 'node' }>).nodeId;
+      if (left.kind === 'chat-source') {
+        const chatRight = right as Extract<ReferenceTarget, { kind: 'chat-source' }>;
+        return left.stream === chatRight.stream
+          && left.streamId === chatRight.streamId
+          && left.range.fromSeqExclusive === chatRight.range.fromSeqExclusive
+          && left.range.throughSeq === chatRight.range.throughSeq
+          && (left.range.throughEventId ?? null) === (chatRight.range.throughEventId ?? null);
+      }
       const localRight = right as Extract<ReferenceTarget, { kind: 'local-file' }>;
       return left.path === localRight.path && left.entryKind === localRight.entryKind;
     };
@@ -3143,6 +3183,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       content: persistedContent(message),
       createdAt: message.timestamp,
       updatedAt: message.timestamp,
+      sourceSeq: entry.sourceSeq ?? message.sourceSeq,
       branches: entry.branches ?? null,
       actor,
       addressedTo: entry.addressedTo ?? message.addressedTo,
@@ -3172,6 +3213,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       content: persistedContent(streamingMessage),
       createdAt: streamingMessage.timestamp,
       updatedAt: streamingMessage.timestamp,
+      sourceSeq: streamingMessage.sourceSeq,
       branches: null,
       actor: streamingMessage.actor ?? { type: 'agent', agentId: 'built-in:tenon:assistant' },
       addressedByMessageId: streamingMessage.addressedByMessageId ?? null,
@@ -3205,6 +3247,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       content: persistedContent(message),
       createdAt: message.timestamp,
       updatedAt: message.timestamp,
+      sourceSeq: message.sourceSeq,
       branches: null,
       actor: message.actor ?? { type: 'tool', toolName: message.toolName, toolCallId: message.toolCallId },
       toolCallId: message.toolCallId,

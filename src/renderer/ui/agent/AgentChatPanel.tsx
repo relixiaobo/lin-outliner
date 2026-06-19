@@ -32,7 +32,7 @@ import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import { builtInDefinitionToAuthoringInput } from './agentProfileInput';
 import { linAgentRuntimeStore, useLinAgentRuntime } from '../../agent/runtime';
-import { onAgentRevealRequest } from '../../agent/agentReveal';
+import { onAgentRevealRequest, type AgentChatSourceRevealTarget } from '../../agent/agentReveal';
 import type {
   AgentConversationEntry,
   AgentMessageEntry,
@@ -80,6 +80,7 @@ const TRANSCRIPT_ROW_GAP_PX = 14;
 const TRANSCRIPT_ROW_ESTIMATE_PX = 104;
 const TRANSCRIPT_VIRTUAL_MIN_ROWS = 40;
 const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
+const TRANSCRIPT_JUMP_HIGHLIGHT_MS = 2_200;
 const MESSAGE_TIME_SEPARATOR_GAP_MS = 60 * 60 * 1000;
 
 interface AgentChatPanelProps {
@@ -316,6 +317,22 @@ function visibleTranscriptRange(
   return { start, end: Math.max(end, start + 1) };
 }
 
+function seqInChatSourceRange(seq: number | undefined, target: AgentChatSourceRevealTarget): boolean {
+  return typeof seq === 'number'
+    && Number.isSafeInteger(seq)
+    && seq > target.range.fromSeqExclusive
+    && seq <= target.range.throughSeq;
+}
+
+function conversationRowMatchesChatSource(row: AgentConversationRenderRow, target: AgentChatSourceRevealTarget): boolean {
+  if (target.stream === 'run') return row.entry.kind === 'child-run' && row.entry.childRun.id === target.streamId;
+  return row.entry.kind === 'message' && row.sourceSeqs.some((seq) => seqInChatSourceRange(seq, target));
+}
+
+function transcriptRowSelector(rowKey: string): string {
+  return `[data-agent-transcript-row="${CSS.escape(rowKey)}"]`;
+}
+
 type PayloadTextPromiseCache = Map<string, Promise<string | null>>;
 
 function payloadCopyCacheKey(conversationId: string, payloadId: string): string {
@@ -400,12 +417,14 @@ async function buildAssistantTurnCopyText(
 
 function AgentTranscriptRowShell({
   children,
+  highlighted,
   onMeasure,
   rowKey,
   style,
   virtualized,
 }: {
   children: ReactNode;
+  highlighted?: boolean;
   onMeasure: (rowKey: string, height: number) => void;
   rowKey: string;
   style?: CSSProperties;
@@ -428,7 +447,7 @@ function AgentTranscriptRowShell({
 
   return (
     <div
-      className={virtualized ? 'agent-chat-virtual-row' : 'agent-chat-flow-row'}
+      className={`${virtualized ? 'agent-chat-virtual-row' : 'agent-chat-flow-row'}${highlighted ? ' is-highlighted' : ''}`}
       data-agent-transcript-row={rowKey}
       ref={rowRef}
       style={style}
@@ -492,6 +511,8 @@ export function AgentChatPanel({
   const [rowActionMenu, setRowActionMenu] = useState<string | null>(null);
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
   const [selectedChildRunId, setSelectedChildRunId] = useState<string | null>(null);
+  const [pendingTranscriptTarget, setPendingTranscriptTarget] = useState<AgentChatSourceRevealTarget | null>(null);
+  const [highlightedTranscriptRowKey, setHighlightedTranscriptRowKey] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
@@ -504,6 +525,7 @@ export function AgentChatPanel({
   const agentDefinitionsRequestRef = useRef(0);
   const scrollFrameRef = useRef<number | null>(null);
   const bottomScrollFrameRef = useRef<number | null>(null);
+  const highlightTimerRef = useRef<number | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
   const copyPayloadTextCacheRef = useRef<PayloadTextPromiseCache>(new Map());
   const copyAssistantTurnSourceRef = useRef({ entries, toolResults, conversationId });
@@ -782,6 +804,42 @@ export function AgentChatPanel({
     scheduleScrollToBottom();
   }, [conversationRows.length, runActive, scheduleScrollToBottom, virtualLayout.totalHeight]);
 
+  useLayoutEffect(() => {
+    if (!pendingTranscriptTarget) return;
+    if (pendingTranscriptTarget.stream === 'conversation' && conversationId !== pendingTranscriptTarget.streamId) return;
+    const rowIndex = conversationRows.findIndex((row) => conversationRowMatchesChatSource(row, pendingTranscriptTarget));
+    if (rowIndex < 0) return;
+
+    const row = conversationRows[rowIndex]!;
+    stickToBottomRef.current = false;
+    const element = scrollRef.current;
+    if (element) {
+      const item = virtualLayout.items[rowIndex];
+      if (shouldVirtualizeTranscript && item) {
+        element.scrollTop = Math.max(0, item.top - Math.max(0, (element.clientHeight - item.height) / 2));
+        updateScrollMetrics(element);
+      } else {
+        element.querySelector<HTMLElement>(transcriptRowSelector(row.key))?.scrollIntoView({ block: 'center' });
+      }
+    }
+
+    if (pendingTranscriptTarget.stream === 'run') setSelectedChildRunId(pendingTranscriptTarget.streamId);
+    setHighlightedTranscriptRowKey(row.key);
+    if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = window.setTimeout(() => {
+      highlightTimerRef.current = null;
+      setHighlightedTranscriptRowKey((current) => current === row.key ? null : current);
+    }, TRANSCRIPT_JUMP_HIGHLIGHT_MS);
+    setPendingTranscriptTarget(null);
+  }, [
+    conversationId,
+    conversationRows,
+    pendingTranscriptTarget,
+    shouldVirtualizeTranscript,
+    updateScrollMetrics,
+    virtualLayout.items,
+  ]);
+
   useEffect(() => {
     rowHeightsRef.current.clear();
     copyPayloadTextCacheRef.current.clear();
@@ -797,6 +855,10 @@ export function AgentChatPanel({
     if (bottomScrollFrameRef.current !== null) {
       window.cancelAnimationFrame(bottomScrollFrameRef.current);
       bottomScrollFrameRef.current = null;
+    }
+    if (highlightTimerRef.current !== null) {
+      window.clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = null;
     }
   }, []);
 
@@ -831,6 +893,11 @@ export function AgentChatPanel({
   // the run is a parentless child run, so it surfaces there (the open task panel
   // persists across the conversation switch this same reveal triggers).
   useEffect(() => onAgentRevealRequest((_conversationId, options) => {
+    if (options.transcriptTarget) {
+      setPendingTranscriptTarget(options.transcriptTarget);
+      setTaskPanelOpen(false);
+      if (options.transcriptTarget.stream === 'conversation') setSelectedChildRunId(null);
+    }
     if (!options.openTasks) return;
     setSelectedChildRunId(null);
     setTaskPanelOpen(true);
@@ -1016,6 +1083,7 @@ export function AgentChatPanel({
         busy={anyRunActive}
         contentKey={row.contentKey}
         entry={row.entry}
+        highlighted={highlightedTranscriptRowKey === row.key}
         index={index}
         isLastInTurn={row.isLastInTurn}
         onCopy={copyAssistantTurn}
@@ -1273,6 +1341,7 @@ export function AgentChatPanel({
                 : false;
               return (
                 <AgentTranscriptRowShell
+                  highlighted={highlightedTranscriptRowKey === row.key}
                   key={row.key}
                   onMeasure={measureConversationRow}
                   rowKey={row.key}

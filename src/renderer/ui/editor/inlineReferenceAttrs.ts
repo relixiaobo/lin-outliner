@@ -57,6 +57,20 @@ export function targetFromInlineReferenceAttrs(attrs: Record<string, unknown>): 
   return null;
 }
 
+export function targetFromInlineReferenceElement(element: HTMLElement): ReferenceTarget | null {
+  return targetFromInlineReferenceAttrs({
+    targetKind: element.dataset.inlineRefKind ?? 'node',
+    targetNodeId: element.dataset.inlineRef ?? '',
+    targetPath: element.dataset.inlineRefPath ?? '',
+    entryKind: element.dataset.inlineRefEntryKind ?? 'file',
+    chatStream: element.dataset.inlineRefChatStream ?? '',
+    chatStreamId: element.dataset.inlineRefChatStreamId ?? '',
+    chatFromSeqExclusive: Number(element.dataset.inlineRefChatFromSeqExclusive ?? Number.NaN),
+    chatThroughSeq: Number(element.dataset.inlineRefChatThroughSeq ?? Number.NaN),
+    chatThroughEventId: element.dataset.inlineRefChatThroughEventId ?? '',
+  });
+}
+
 export function fallbackTextForInlineReferenceAttrs(attrs: Record<string, unknown>): string {
   const displayName = String(attrs.displayName ?? '');
   if (displayName) return displayName;

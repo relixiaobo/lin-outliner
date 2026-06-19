@@ -59,7 +59,7 @@ export const pmSchema = new Schema({
         const targetPath = String(node.attrs.targetPath ?? '');
         const fallbackName = targetKind === 'local-file'
           ? basenameForPath(targetPath) || 'Referenced file'
-          : 'Referenced node';
+          : targetKind === 'chat-source' ? 'Referenced chat' : 'Referenced node';
         const attrs: Record<string, string> = {
           class: 'inline-ref',
           'data-inline-ref-kind': targetKind,

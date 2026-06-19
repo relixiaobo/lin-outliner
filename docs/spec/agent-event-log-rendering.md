@@ -680,6 +680,15 @@ it too keeps its in-app preview-pane click-to-open and native context menu uncha
 (The working file is path-addressed; durability is what Save-to-outliner / Export
 are for — see `docs/plans/agent-file-artifact-model.md`.)
 
+`chat-source` inline references use the same chip renderer but navigate to agent
+history instead of files. A click on a `conversation` source opens the agent dock,
+selects that conversation, and scrolls/highlights the first visible transcript row
+whose projected message `sourceSeq` is inside the cited `(fromSeqExclusive,
+throughSeq]` range. A click on a `run` source opens the owning conversation and the
+matching child-run transcript panel when the run ledger can be resolved. The
+renderer never guesses by timestamp or text content; `sourceSeq` is projected from
+the replayed event that `past_chats` also exposes as source evidence.
+
 ## Conversation vs Runtime Transcript Projections
 
 The on-disk store is physically split, and replay exposes two read seams:

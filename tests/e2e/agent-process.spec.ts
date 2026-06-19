@@ -1,6 +1,16 @@
 import { expect, test, type Locator } from '@playwright/test';
 import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
-import { clipboardText, commandCalls, emitAgentProjection, openMockedApp } from './outlinerMock';
+import {
+  clipboardText,
+  commandCalls,
+  e2eChatSourceInlineRef,
+  e2eProjection,
+  emitAgentProjection,
+  emitDocumentEvent,
+  ids,
+  openMockedApp,
+  rowEditor,
+} from './outlinerMock';
 
 const usage = {
   input: 0,
@@ -981,6 +991,77 @@ test.describe('agent process disclosure', () => {
 
     await expect(page.getByText('User message 0')).toBeVisible();
     await expect.poll(() => page.locator('.agent-message-row').count()).toBeLessThan(80);
+  });
+
+  test('opens and highlights a transcript row from a chat-source inline reference', async ({ page }) => {
+    const sourceMessage = {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'This is the cited transcript source.' }],
+      timestamp: 1_800_000_001_500,
+    };
+    const mergedTailMessage = {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'This is the same rendered assistant row.' }],
+      timestamp: 1_800_000_001_600,
+    };
+
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
+      conversationTitle: 'General',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [],
+      conversation: [{
+        nodeId: 'source-message-e2e',
+        sourceSeq: 5,
+        message: sourceMessage,
+        branches: null,
+      }, {
+        nodeId: 'source-message-e2e-tail',
+        sourceSeq: 6,
+        message: mergedTailMessage,
+        branches: null,
+      }],
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    });
+
+    await page.getByTitle('Collapse agent').click();
+    await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'collapsed');
+
+    const content = {
+      text: 'Open ',
+      marks: [],
+      inlineRefs: [e2eChatSourceInlineRef(5, {
+        kind: 'chat-source',
+        stream: 'conversation',
+        streamId: DEFAULT_GENERAL_CHANNEL_ID,
+        range: { fromSeqExclusive: 4, throughSeq: 5, throughEventId: 'event-5' },
+      }, 'source')],
+    };
+    await page.evaluate(async ({ content, nodeId }) => {
+      const win = window as Window & {
+        lin?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+      };
+      await win.lin?.invoke('apply_node_text_patch', {
+        nodeId,
+        patch: { ops: [{ type: 'replace_all', content }] },
+      });
+    }, { content, nodeId: ids.alpha });
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+
+    await rowEditor(page, ids.alpha).locator('[data-inline-ref-kind="chat-source"]').click();
+
+    await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'open');
+    const sourceRow = page.locator('[data-agent-message-id="source-message-e2e-tail"]');
+    await expect(sourceRow).toContainText('This is the cited transcript source.');
+    await expect(sourceRow).toHaveClass(/is-highlighted/);
   });
 
   test('copies full persisted tool output from payload refs', async ({ page }) => {

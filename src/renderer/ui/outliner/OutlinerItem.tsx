@@ -15,6 +15,7 @@ import { createPortal, flushSync } from 'react-dom';
 import { api } from '../../api/client';
 import type { AssetMetadata, CreateNodeTree, NodeId, NodeProjection, PasteRowMeta, RichText, RichTextPatch } from '../../api/types';
 import { EMPTY_RICH_TEXT, inlineRefNodeId, nodeReferenceTarget, plainText, replaceAllRichTextPatch } from '../../api/types';
+import { requestRevealChatSource } from '../../agent/agentReveal';
 import { projectFieldTypeById, nodeShowsCheckbox } from '../../../core/configProjection';
 import type { CursorPlacement } from '../../state/document';
 import {
@@ -2027,10 +2028,16 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       onPasteMediaUrl={node.type === 'reference' ? undefined : (url) => void handlePasteMediaUrl(url)}
       onInlineReferenceClick={pendingReferenceConversion
         ? undefined
-        : (targetId, options) => props.onRoot(targetId, {
-          focus: false,
-          newPane: options?.newPane,
-        })}
+        : (target, options) => {
+          if (target.kind === 'node') {
+            props.onRoot(target.nodeId, {
+              focus: false,
+              newPane: options?.newPane,
+            });
+            return;
+          }
+          if (target.kind === 'chat-source') void requestRevealChatSource(target);
+        }}
       focusTarget={editorRequestTarget}
       focusRequest={props.ui.focusRequest}
       pendingInput={props.ui.pendingInputChar}
