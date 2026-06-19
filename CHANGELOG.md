@@ -12,6 +12,28 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Code-block floating toolbar + framed preview insets (PR #301, codex)** — editable outliner code
+  blocks and read-only agent markdown code blocks gain a top-right floating toolbar: the language
+  selector and copy button are separate hover/focus-revealed controls on the shared popover material
+  (with the inherited reduced-transparency / high-contrast fallbacks), over an opaque code surface.
+  The code text viewport is inset like file/PDF previews so long-line scrolling never places text on
+  the frame edge, and horizontal scrollbars sit in a reserved bottom gutter; editable blocks grow to
+  `min(42vh, 420px)` then scroll internally with the Shiki highlight layer synced to the textarea's
+  scroll offsets. The same framed-inset + scroll-gutter treatment now covers markdown fenced code,
+  plain/code previews, and CSV/TSV tables. File-preview action menus dismiss from capture-phase
+  outside-pointer clicks even when the clicked row stops propagation, ignore their own trigger so
+  repeat-click toggling works, and suppress the menu surface's default focus outline. Expanded
+  childless file rows now keep the normal children outline with the standard trailing draft below the
+  inline preview, so the first child note can be added inline (flat visual-row producer + row keyboard
+  nav follow the same rule). Spec synced: `design-system.md`, `ui-behavior.md` (A6). **Gate (main):**
+  `/code-review high` (8 finder angles + verify) → 2 confirmed findings — a Shiki highlight layer
+  whose bottom inset (`content-inset`) exceeded the textarea's (`edge-inset`), blanking the last
+  ~`space-4` of code when a tall block is scrolled to the bottom (transparent textarea text, no
+  highlight behind it); and `useDismissibleOverlay`'s `ignoreRefs ?? []` default allocating a fresh
+  array each render, churning the document listener subscription for the 4 consumers that don't pass
+  it. Both fixed (highlight bottom inset aligned to `edge-inset`; empty default hoisted to a
+  module-level constant) and re-verified: typecheck ✓ on the merged tree, `visualRows` renderer test
+  10/10. Fast-track (no plan file).
 - **File node preview interactions (PR #295, codex)** — a follow-up to `file-presentation-redesign`
   (#285). Non-image file rows become read-only but caret-focusable: the filename wraps like a
   locked/reference row, a caret can land in it for structural commands and `#` tags, but ordinary

@@ -429,6 +429,21 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **code-block-floating-toolbar** (codex, PR #301) — editable outliner code blocks + read-only agent
+  markdown code blocks get a top-right floating toolbar (language selector + copy as separate
+  hover/focus-revealed popover-material controls over an opaque code surface), an inset text viewport
+  with a reserved bottom scrollbar gutter, and a `min(42vh, 420px)` grow-then-scroll cap with the
+  Shiki highlight layer synced to the textarea scroll. The same framed-inset + gutter treatment now
+  covers markdown fenced code, plain/code previews, and CSV/TSV tables. File-preview action menus
+  dismiss on capture-phase outside-pointer clicks (ignoring their own trigger so repeat-click still
+  toggles) and drop the menu surface's focus outline. Expanded childless file rows now keep the normal
+  children outline + standard trailing draft below the inline preview (flat producer + keyboard nav
+  aligned). Spec synced: `design-system.md`, `ui-behavior.md` (A6). **Gate (main):** `/code-review
+  high` → 2 confirmed findings (highlight bottom-inset > textarea bottom-inset blanked the last
+  ~`space-4` of code when a tall block scrolled to the bottom; `useDismissibleOverlay` `ignoreRefs ??
+  []` re-allocated each render, churning the listener for the 4 non-passing consumers), both fixed and
+  re-verified — typecheck ✓ on the merged tree, `visualRows` renderer 10/10. Fast-track (no plan
+  file). **Shape (a)** one PR.
 - **single-agent-finish-collapse** (cc-2, PR #300) — makes "there is exactly one agent, Neva" a
   hard, code-enforced invariant, completing the #294 collapse. Removes every second-agent surface:
   agent-definition authoring (`agent_create`/`delete`/`duplicate` command kinds + IPC/client/UI + the
