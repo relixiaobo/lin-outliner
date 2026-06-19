@@ -337,6 +337,19 @@ archived `done` (see Recently completed). Remaining active work:
   the other boarded fast-tracks (outliner-indent-draft-fixes **merged as PR #182** —
   it touched the same Tab/draft paths, so rebase this branch on current `main`).
 
+- **agent-process-stable-disclosure** (P2, **draft** — PM-ratified design, ready to build) — make
+  agent process rendering feel stable across working→worked. Live process rows default **collapsed**
+  (reversing the current auto-expand-live / auto-collapse-on-settle default — a PM-approved behavior
+  change), the collapsed header shows the latest live activity and updates **in place** to
+  `Worked for {duration}` on completion, and the transcript anchor stays stable. Row identity is
+  already stable (`agentConversationRows.ts` stable key reused as React key + `contentKey`) → a no-op
+  to preserve, not new infrastructure; scroll anchoring is bounded to first-visible-row-top
+  compensation via existing `row.key` deltas (anything broader splits an interface-first PR). Sticky
+  user-expand keys on the outer fold id `process:${contentKey}`. **Shape (a)** one renderer-only PR
+  (`AgentProcessBlock` / `AgentTurnProcessFold` + bounded `AgentChatPanel` anchor); rewriting the
+  contradicting `agent-process.spec.ts` assertions + `agent-event-log-rendering.md` is a first-class
+  deliverable (A6). Design ratified after the main-gate post-#300 grounding review (PR #297). See
+  [`docs/plans/agent-process-stable-disclosure.md`](docs/plans/agent-process-stable-disclosure.md).
 - **macos-liquid-glass-icon** (P2) — true Liquid Glass app icon for macOS 26
   (Tahoe): the layered `.icon` (Icon Composer) format the OS renders with dynamic
   glass material, specular edges + depth, with a legacy `.icns` fallback for
