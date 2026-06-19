@@ -51,8 +51,18 @@ import { nodeIsInSubtree } from './treeUtils';
 import {
   nodeAccessRankingMultiplier,
   type NodeAccessStats,
-  type NodeAccessStatsById,
 } from './nodeAccessRanking';
+import {
+  CREATED_FIELD,
+  DONE_AT_FIELD,
+  DONE_FIELD,
+  NAME_FIELD,
+  REF_COUNT_FIELD,
+  UPDATED_FIELD,
+  displayNode,
+  isSystemFieldId,
+  systemFieldValues,
+} from './systemFields';
 
 type SearchDocument = DocumentState | DocumentProjection;
 type SearchNode = Node | NodeProjection;
@@ -173,17 +183,22 @@ export type SearchRunResult =
   | { ok: true; hits: SearchHit[] }
   | { ok: false; issue: SearchConditionIssue };
 
-export interface SearchRankingOptions {
-  personalAccess?: boolean;
-  personalAccessStats?: NodeAccessStatsById;
+export interface SearchPersonalAccessRanking {
+  getNodeAccessStats(nodeId: NodeId): NodeAccessStats | undefined;
   now?: number;
 }
 
-export interface SearchRunOptions extends SearchRankingOptions {
+export interface TransientSearchOptions {
+  personalAccessRanking?: SearchPersonalAccessRanking;
+}
+
+export interface SearchRunOptions {
   limit?: number;
   searchNodeId?: NodeId;
   textIndex?: TextSearchIndex;
 }
+
+export interface TransientSearchRunOptions extends SearchRunOptions, TransientSearchOptions {}
 
 interface SearchIndex {
   rootId: NodeId;
@@ -229,6 +244,24 @@ export function runSearchExpr(
   query: SearchQueryExpr,
   options: SearchRunOptions = {},
 ): SearchRunResult {
+  return runSearchExprInternal(document, query, options);
+}
+
+export function runTransientSearchExpr(
+  document: SearchDocument,
+  query: SearchQueryExpr,
+  options: TransientSearchRunOptions = {},
+): SearchRunResult {
+  const { personalAccessRanking, ...baseOptions } = options;
+  return runSearchExprInternal(document, query, baseOptions, personalAccessRanking);
+}
+
+function runSearchExprInternal(
+  document: SearchDocument,
+  query: SearchQueryExpr,
+  options: SearchRunOptions,
+  personalAccessRanking?: SearchPersonalAccessRanking,
+): SearchRunResult {
   const baseIndex = indexSearchDocument(document);
   const searchNode = options.searchNodeId
     ? baseIndex.nodes.get(options.searchNodeId)
@@ -264,7 +297,7 @@ export function runSearchExpr(
     if (evaluation.match) scored.push({ nodeId: node.id, score: evaluation.score });
   }
 
-  const sorted = sortSearchHits(scored, evalIndex, contextSearchNode, options);
+  const sorted = sortSearchHits(scored, evalIndex, contextSearchNode, personalAccessRanking);
   return { ok: true, hits: typeof options.limit === 'number' ? sorted.slice(0, options.limit) : sorted };
 }
 
@@ -272,41 +305,122 @@ function sortSearchHits(
   hits: SearchHit[],
   index: SearchIndex,
   searchNode: SearchNode,
-  rankingOptions: SearchRankingOptions,
+  personalAccessRanking?: SearchPersonalAccessRanking,
 ): SearchHit[] {
   const sortRule = searchNodeSortRule(index, searchNode);
-  const nodes = index.nodes;
-  const direction: SortDirection = sortRule?.direction === 'asc' ? 'asc' : 'desc';
-  const factor = direction === 'asc' ? 1 : -1;
-  if (sortRule?.field === 'sys:createdAt' || sortRule?.field === 'sys:updatedAt') {
-    const field = sortRule.field === 'sys:createdAt' ? 'createdAt' : 'updatedAt';
-    return hits.sort((left, right) => {
-      const leftNode = nodes.get(left.nodeId);
-      const rightNode = nodes.get(right.nodeId);
-      const leftValue = leftNode?.[field] ?? 0;
-      const rightValue = rightNode?.[field] ?? 0;
-      return (leftValue - rightValue) * factor
-        || right.score - left.score
-        || left.nodeId.localeCompare(right.nodeId);
-    });
+  if (sortRule) return sortSearchHitsByExplicitRule(hits, index, sortRule);
+  if (!personalAccessRanking) {
+    return hits.sort((left, right) => right.score - left.score || left.nodeId.localeCompare(right.nodeId));
   }
-  const now = rankingOptions.now ?? Date.now();
-  return hits.sort((left, right) =>
-    rankingScore(right, rankingOptions.personalAccessStats?.get(right.nodeId), now, rankingOptions)
-      - rankingScore(left, rankingOptions.personalAccessStats?.get(left.nodeId), now, rankingOptions)
-    || right.score - left.score
-    || left.nodeId.localeCompare(right.nodeId)
+  const ranked = hits.map((hit) => ({
+    hit,
+    rankingScore: rankingScore(hit, personalAccessRanking),
+  }));
+  ranked.sort((left, right) =>
+    right.rankingScore - left.rankingScore
+    || right.hit.score - left.hit.score
+    || left.hit.nodeId.localeCompare(right.hit.nodeId)
   );
+  return ranked.map((entry) => entry.hit);
 }
 
-function rankingScore(
-  hit: SearchHit,
-  accessStats: NodeAccessStats | undefined,
-  now: number,
-  rankingOptions: SearchRankingOptions,
+function sortSearchHitsByExplicitRule(
+  hits: SearchHit[],
+  index: SearchIndex,
+  sortRule: { field: string; direction: SortDirection },
+): SearchHit[] {
+  const factor = sortRule.direction === 'asc' ? 1 : -1;
+  return hits.sort((left, right) => {
+    const result = compareSearchHitsBySortField(left, right, index, sortRule.field);
+    return result * factor
+      || right.score - left.score
+      || left.nodeId.localeCompare(right.nodeId);
+  });
+}
+
+function compareSearchHitsBySortField(
+  left: SearchHit,
+  right: SearchHit,
+  index: SearchIndex,
+  fieldId: string,
 ): number {
-  if (!rankingOptions.personalAccess || !accessStats) return hit.score;
-  return hit.score * nodeAccessRankingMultiplier(accessStats, now);
+  const leftNode = index.nodes.get(left.nodeId);
+  const rightNode = index.nodes.get(right.nodeId);
+  if (!leftNode || !rightNode) return 0;
+  if (fieldId === DONE_FIELD) {
+    const leftDone = displayNode(leftNode, index.nodes).completedAt ? 1 : 0;
+    const rightDone = displayNode(rightNode, index.nodes).completedAt ? 1 : 0;
+    return leftDone - rightDone;
+  }
+
+  const fieldType = fieldTypeOf(index, fieldId);
+  const leftValues = sortValuesForNode(index, leftNode, fieldId);
+  const rightValues = sortValuesForNode(index, rightNode, fieldId);
+  if (isNumericSortField(fieldId, fieldType)) {
+    return numericSortValue(leftValues, fieldType) - numericSortValue(rightValues, fieldType);
+  }
+
+  const leftText = leftValues.join(' ').toLocaleLowerCase();
+  const rightText = rightValues.join(' ').toLocaleLowerCase();
+  return leftText.localeCompare(rightText, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function rankingScore(hit: SearchHit, personalAccessRanking: SearchPersonalAccessRanking): number {
+  const accessStats = personalAccessRanking.getNodeAccessStats(hit.nodeId);
+  if (!accessStats) return hit.score;
+  return hit.score * nodeAccessRankingMultiplier(accessStats, personalAccessRanking.now ?? Date.now());
+}
+
+function sortValuesForNode(index: SearchIndex, node: SearchNode, fieldId: string): string[] {
+  const displayed = displaySearchNode(index, node);
+  if (fieldId === NAME_FIELD) return [nodeTreeText(index, displayed)].filter(Boolean);
+  if (isSystemFieldId(fieldId)) {
+    return systemFieldValues(displayed, fieldId, index.nodes);
+  }
+
+  const fieldEntry = fieldEntryNodes(index, displayed).find((entry) => entry.fieldDefId === fieldId);
+  if (!fieldEntry) return [];
+  const values = fieldEntry.children
+    .map((childId) => index.nodes.get(childId))
+    .filter((value): value is SearchNode => value !== undefined && !isInTrash(index, value.id))
+    .map((value) => fieldValueText(index, value))
+    .filter(Boolean);
+  return values.length > 0 ? values : [nodeTreeText(index, fieldEntry)].filter(Boolean);
+}
+
+function nodeTreeText(index: SearchIndex, node: SearchNode | undefined): string {
+  if (!node) return '';
+  const displayed = displaySearchNode(index, node);
+  if (displayed.content.text) return displayed.content.text;
+  return displayed.children
+    .map((childId) => nodeTreeText(index, index.nodes.get(childId)))
+    .filter(Boolean)
+    .join(' ');
+}
+
+function displaySearchNode(index: SearchIndex, node: SearchNode): SearchNode {
+  const displayed = displayNode(node, index.nodes);
+  return index.nodes.get(displayed.id) ?? node;
+}
+
+function isNumericSortField(fieldId: string, fieldType: FieldType | undefined): boolean {
+  return fieldType === 'number'
+    || fieldType === 'date'
+    || fieldId === CREATED_FIELD
+    || fieldId === UPDATED_FIELD
+    || fieldId === DONE_AT_FIELD
+    || fieldId === REF_COUNT_FIELD;
+}
+
+function numericSortValue(values: string[], fieldType: FieldType | undefined): number {
+  const value = values[0]?.trim();
+  if (!value) return Number.POSITIVE_INFINITY;
+  if (fieldType === 'date') {
+    const range = parseDateFieldValueRange(value);
+    if (range) return range.startMs;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
 }
 
 function searchNodeSortRule(index: SearchIndex, searchNode: SearchNode): { field: string; direction: SortDirection } | null {

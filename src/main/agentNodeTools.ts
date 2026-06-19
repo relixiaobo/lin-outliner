@@ -126,7 +126,7 @@ function asAgentToolHost(host: OutlinerToolHost): OutlinerToolHost {
   return {
     getProjection: () => host.getProjection(),
     getTextSearchIndex: host.getTextSearchIndex ? () => host.getTextSearchIndex!() : undefined,
-    getSearchRankingOptions: host.getSearchRankingOptions ? () => host.getSearchRankingOptions!() : undefined,
+    getTransientSearchOptions: host.getTransientSearchOptions ? () => host.getTransientSearchOptions!() : undefined,
     recordNodeAccess: host.recordNodeAccess
       ? (nodeIds, source) => host.recordNodeAccess!(nodeIds, source)
       : undefined,
@@ -971,7 +971,7 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
 
       const resultIds = runSearch(index, search, {
         textIndex: host.getTextSearchIndex?.(),
-        rankingOptions: host.getSearchRankingOptions?.(),
+        transientSearchOptions: host.getTransientSearchOptions?.(),
       });
       if ('error' in resultIds) {
         return nodeErrorResult(errorEnvelope('node_search', resultIds.code, resultIds.error, {
@@ -982,7 +982,13 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       const total = resultIds.length;
       const pageIds = resultIds.slice(offset, offset + limit);
       const items = params.count ? undefined : pageIds.map((nodeId) => buildSearchItem(index, nodeId, search.queryTerms));
-      if (!params.count) await host.recordNodeAccess?.(pageIds, 'agentRecall');
+      if (!params.count) {
+        try {
+          void Promise.resolve(host.recordNodeAccess?.(pageIds, 'agentRecall')).catch(() => undefined);
+        } catch {
+          // Access ranking is best-effort and must not affect tool results.
+        }
+      }
       const data: NodeSearchData = {
         source: search.source,
         title: search.title,

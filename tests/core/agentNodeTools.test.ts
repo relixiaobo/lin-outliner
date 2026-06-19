@@ -1333,10 +1333,11 @@ describe('agent node tools', () => {
       outline: '- %%search%% Agent ranking\n  - STRING_MATCH\n    - value:: agent access ranking needle',
       limit: 1,
     }, undefined, {
-      getSearchRankingOptions: () => ({
-        personalAccess: true,
-        personalAccessStats: new Map([[favored, { s: 8, tUpdate: now }]]),
-        now,
+      getTransientSearchOptions: () => ({
+        personalAccessRanking: {
+          getNodeAccessStats: (nodeId) => nodeId === favored ? { s: 8, tUpdate: now } : undefined,
+          now,
+        },
       }),
       recordNodeAccess: (nodeIds, source) => {
         recorded.push({ nodeIds: [...nodeIds], source });
@@ -1347,6 +1348,34 @@ describe('agent node tools', () => {
     expect(result.details.data!.items?.map((item) => item.nodeId)).toEqual([favored]);
     expect(result.details.data!.items?.map((item) => item.nodeId)).not.toContain(baselineFirst);
     expect(recorded).toEqual([{ nodeIds: [favored], source: 'agentRecall' }]);
+  });
+
+  test('node_search does not await asynchronous agent recall recording', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const chengdu = mustFocus(core.createNode(today, null, 'Async recall needle'));
+    let resolved = false;
+    let resolveRecord: (() => void) | null = null;
+
+    const result = await executeRawTool<{
+      total: number;
+      items?: Array<{ nodeId: string; title: string }>;
+    }>(core, 'node_search', {
+      outline: '- %%search%% Async recall\n  - STRING_MATCH\n    - value:: Async recall needle',
+      limit: 1,
+    }, undefined, {
+      recordNodeAccess: () => new Promise<void>((resolve) => {
+        resolveRecord = () => {
+          resolved = true;
+          resolve();
+        };
+      }),
+    });
+
+    expect(result.details.ok).toBe(true);
+    expect(result.details.data!.items?.map((item) => item.nodeId)).toEqual([chengdu]);
+    expect(resolved).toBe(false);
+    resolveRecord?.();
   });
 
   test('node_search model-visible result returns one annotated outline', async () => {

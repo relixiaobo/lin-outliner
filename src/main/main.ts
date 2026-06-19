@@ -39,7 +39,15 @@ import {
 import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
 import { ASSET_URL_SCHEME } from '../core/assets';
 import { handlePreviewCommand } from './previewSource';
-import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type AssetIngestInput, type CommandResult } from '../core/types';
+import {
+  LIN_AGENT_OAUTH_EVENT_CHANNEL,
+  LIN_DOCUMENT_EVENT_CHANNEL,
+  TRASH_ID,
+  type AssetIngestInput,
+  type CommandResult,
+  type NodeProjection,
+  type ProjectionUpdate,
+} from '../core/types';
 import {
   serializeUnknownError,
   LIN_EXPORT_DIAGNOSTICS_CHANNEL,
@@ -212,7 +220,16 @@ const APP_ICON_PNG_PATH = app.isPackaged
   : join(__dirname, '../../build/icon.png');
 app.setName(APP_NAME);
 const documentService = new DocumentService();
-const nodeAccessStore = new NodeAccessStore(join(app.getPath('userData'), 'node-access-stats.json'));
+const nodeAccessStore = new NodeAccessStore(join(app.getPath('userData'), 'node-access-stats.json'), {
+  onError: (error, operation) => reportError({
+    domain: 'node-access',
+    severity: 'warn',
+    code: `node-access-${operation}`,
+    message: `Node access store ${operation} failed`,
+    context: { operation },
+    error,
+  }),
+});
 const assetService = new AssetService(() => join(app.getPath('userData'), 'assets'));
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
@@ -280,12 +297,14 @@ const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
 
 documentService.onProjectionChanged((event) => {
   mainWindow?.webContents.send(LIN_DOCUMENT_EVENT_CHANNEL, event);
+  pruneNodeAccessForProjectionUpdate(event.update);
 });
 
-documentService.setSearchRankingOptionsProvider(() => ({
-  personalAccess: true,
-  personalAccessStats: nodeAccessStore.snapshot(),
-  now: Date.now(),
+documentService.setTransientSearchOptionsProvider(() => ({
+  personalAccessRanking: {
+    getNodeAccessStats: (nodeId) => nodeAccessStore.get(nodeId),
+    now: Date.now(),
+  },
 }));
 documentService.setNodeAccessRecorder((nodeIds, source) => recordDocumentNodeAccess(nodeIds, source));
 
@@ -296,6 +315,46 @@ async function recordDocumentNodeAccess(nodeIds: readonly string[], source: Node
   const validIds = uniqueIds.filter((nodeId) => existingIds.has(nodeId));
   if (validIds.length === 0) return;
   await nodeAccessStore.recordMany(validIds, source);
+}
+
+function pruneNodeAccessForProjectionUpdate(update: ProjectionUpdate): void {
+  if (update.kind === 'full') {
+    void nodeAccessStore.retainOnly(update.projection.nodes.map((node) => node.id)).catch(() => undefined);
+    return;
+  }
+  const trashedIds = update.changedNodes
+    .filter((node) => node.parentId === TRASH_ID)
+    .map((node) => node.id);
+  const staleIds = new Set([...update.removedIds, ...trashedIds]);
+  if (trashedIds.length > 0) {
+    for (const descendantId of descendantProjectionIds(trashedIds, documentService.getProjection().nodes)) {
+      staleIds.add(descendantId);
+    }
+  }
+  if (staleIds.size === 0) return;
+  void nodeAccessStore.deleteMany([...staleIds]).catch(() => undefined);
+}
+
+function descendantProjectionIds(rootIds: readonly string[], nodes: readonly NodeProjection[]): string[] {
+  if (rootIds.length === 0) return [];
+  const childrenByParent = new Map<string, string[]>();
+  for (const node of nodes) {
+    if (!node.parentId) continue;
+    const children = childrenByParent.get(node.parentId) ?? [];
+    children.push(node.id);
+    childrenByParent.set(node.parentId, children);
+  }
+
+  const descendants: string[] = [];
+  const stack = [...rootIds];
+  while (stack.length > 0) {
+    const parentId = stack.pop()!;
+    for (const childId of childrenByParent.get(parentId) ?? []) {
+      descendants.push(childId);
+      stack.push(childId);
+    }
+  }
+  return descendants;
 }
 
 // Opt-in OS notifications for off-floor task delivery. Default OFF; the durable
@@ -2613,7 +2672,16 @@ if (!app.requestSingleInstanceLock()) {
   }
 
   app.whenReady().then(async () => {
-    await nodeAccessStore.load();
+    await nodeAccessStore.load().catch((error) => {
+      reportError({
+        domain: 'node-access',
+        severity: 'warn',
+        code: 'node-access-startup-load',
+        message: 'Node access store startup load failed',
+        context: { operation: 'startup-load' },
+        error,
+      });
+    });
     const icon = nativeImage.createFromPath(APP_ICON_PNG_PATH);
     if (process.platform === 'darwin' && !icon.isEmpty()) app.dock?.setIcon(icon);
     app.setAboutPanelOptions({

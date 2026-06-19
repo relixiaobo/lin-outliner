@@ -10,7 +10,7 @@ import {
   buildTextSearchIndex,
   buildTextSearchRecordSnapshot,
   textSearchRecordForNodeMap,
-  type SearchRankingOptions,
+  type TransientSearchOptions,
 } from '../core/searchEngine';
 import { addToSetMap, removeFromSetMap } from '../core/setUtils';
 import { createTextSearchIndex, type MutableTextSearchIndex, type TextSearchIndex } from '../core/textSearchIndex';
@@ -93,7 +93,7 @@ export class DocumentService {
     fieldDefIds: string[];
     referencedNodeIds: string[];
   }>();
-  private searchRankingOptionsProvider?: () => SearchRankingOptions;
+  private transientSearchOptionsProvider?: () => TransientSearchOptions;
   private nodeAccessRecorder?: (nodeIds: readonly string[], source: NodeAccessSource) => void | Promise<void>;
   private readonly nodeRetrieval = new NodeRetrievalService({
     getProjection: () => this.core.projection(),
@@ -172,12 +172,12 @@ export class DocumentService {
     return this.textSearchIndex!;
   }
 
-  getSearchRankingOptions(): SearchRankingOptions {
-    return this.searchRankingOptionsProvider?.() ?? {};
+  getTransientSearchOptions(): TransientSearchOptions {
+    return this.transientSearchOptionsProvider?.() ?? {};
   }
 
-  setSearchRankingOptionsProvider(provider: () => SearchRankingOptions): void {
-    this.searchRankingOptionsProvider = provider;
+  setTransientSearchOptionsProvider(provider: () => TransientSearchOptions): void {
+    this.transientSearchOptionsProvider = provider;
   }
 
   setNodeAccessRecorder(recorder: (nodeIds: readonly string[], source: NodeAccessSource) => void | Promise<void>): void {
@@ -690,7 +690,7 @@ export class DocumentService {
   private searchNodes(query: string) {
     return this.nodeRetrieval.searchText(query, {
       limit: 50,
-      ...this.getSearchRankingOptions(),
+      ...this.getTransientSearchOptions(),
     });
   }
 

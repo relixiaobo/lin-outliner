@@ -1,5 +1,3 @@
-import type { NodeId } from './types';
-
 export type NodeAccessSource = 'human' | 'agentRecall';
 
 export interface NodeAccessStats {
@@ -61,5 +59,3 @@ export function nodeAccessRankingMultiplier(
   const boost = Math.min(MAX_RANKING_BOOST, strength * RANKING_BOOST_PER_STRENGTH);
   return 1 + boost;
 }
-
-export type NodeAccessStatsById = ReadonlyMap<NodeId, NodeAccessStats>;

@@ -49,9 +49,10 @@ describe('NodeRetrievalService', () => {
     expect(service.searchText('retrieval ranking needle').map((hit) => hit.nodeId).slice(0, 2))
       .toEqual([baselineFirst, favored]);
     expect(service.searchText('retrieval ranking needle', {
-      personalAccess: true,
-      personalAccessStats: new Map([[favored, { s: 8, tUpdate: now }]]),
-      now,
+      personalAccessRanking: {
+        getNodeAccessStats: (nodeId) => nodeId === favored ? { s: 8, tUpdate: now } : undefined,
+        now,
+      },
     }).map((hit) => hit.nodeId).slice(0, 2)).toEqual([favored, baselineFirst]);
   });
 

@@ -400,27 +400,15 @@ export function App() {
 
   const navigatePanelBack = useCallback((panelId: string) => {
     const view = goPanelBack(panelId);
-    if (view?.kind === 'outliner') {
-      restoreNodeInOutliner(view.rootId);
-      recordNodeLanding(view.rootId);
-    }
-    if (view?.kind === 'file-preview' && view.nodeId) {
-      restoreNodeInOutliner(view.nodeId);
-      recordNodeLanding(view.nodeId);
-    }
-  }, [goPanelBack, recordNodeLanding, restoreNodeInOutliner]);
+    if (view?.kind === 'outliner') restoreNodeInOutliner(view.rootId);
+    if (view?.kind === 'file-preview' && view.nodeId) restoreNodeInOutliner(view.nodeId);
+  }, [goPanelBack, restoreNodeInOutliner]);
 
   const navigatePanelForward = useCallback((panelId: string) => {
     const view = goPanelForward(panelId);
-    if (view?.kind === 'outliner') {
-      restoreNodeInOutliner(view.rootId);
-      recordNodeLanding(view.rootId);
-    }
-    if (view?.kind === 'file-preview' && view.nodeId) {
-      restoreNodeInOutliner(view.nodeId);
-      recordNodeLanding(view.nodeId);
-    }
-  }, [goPanelForward, recordNodeLanding, restoreNodeInOutliner]);
+    if (view?.kind === 'outliner') restoreNodeInOutliner(view.rootId);
+    if (view?.kind === 'file-preview' && view.nodeId) restoreNodeInOutliner(view.nodeId);
+  }, [goPanelForward, restoreNodeInOutliner]);
 
   const navigateActivePanelBack = useCallback(() => {
     if (!pageHistoryPanel) return;

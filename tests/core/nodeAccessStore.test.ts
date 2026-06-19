@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { NODE_ACCESS_HALF_LIFE_MS } from '../../src/core/nodeAccessRanking';
@@ -7,12 +7,20 @@ import { NodeAccessStore } from '../../src/main/nodeAccessStore';
 
 let tempDir: string | null = null;
 
-async function makeStore(flushDelayMs = 60_000): Promise<{ filePath: string; store: NodeAccessStore }> {
+interface StoreTestOptions {
+  flushDelayMs?: number;
+  maxEntries?: number;
+}
+
+async function makeStore(options: StoreTestOptions = {}): Promise<{ filePath: string; store: NodeAccessStore }> {
   tempDir = await mkdtemp(path.join(tmpdir(), 'tenon-node-access-'));
   const filePath = path.join(tempDir, 'node-access-stats.json');
   return {
     filePath,
-    store: new NodeAccessStore(filePath, { flushDelayMs }),
+    store: new NodeAccessStore(filePath, {
+      flushDelayMs: options.flushDelayMs ?? 60_000,
+      maxEntries: options.maxEntries,
+    }),
   };
 }
 
@@ -35,6 +43,9 @@ describe('NodeAccessStore', () => {
     const raw = JSON.parse(await readFile(filePath, 'utf8'));
     expect(raw).toMatchObject({ version: 1 });
     expect(raw.nodes['node:a'].s).toBeCloseTo(0.65);
+    if (process.platform !== 'win32') {
+      expect((await stat(filePath)).mode & 0o777).toBe(0o600);
+    }
 
     const reloaded = new NodeAccessStore(filePath);
     await reloaded.load();
@@ -54,5 +65,38 @@ describe('NodeAccessStore', () => {
 
     const raw = JSON.parse(await readFile(filePath, 'utf8'));
     expect(raw.nodes['node:c']).toEqual({ s: 1, tUpdate: 3_000 });
+  });
+
+  test('surfaces filesystem load failures instead of replacing stats with an empty map', async () => {
+    const { filePath } = await makeStore();
+    await mkdir(filePath);
+    const errors: Array<{ operation: string; error: unknown }> = [];
+    const store = new NodeAccessStore(filePath, {
+      onError: (error, operation) => errors.push({ error, operation }),
+    });
+
+    await expect(store.load()).rejects.toThrow();
+    expect(errors.map((entry) => entry.operation)).toEqual(['load']);
+  });
+
+  test('can prune stale node ids', async () => {
+    const { store } = await makeStore();
+    await store.recordMany(['node:keep', 'node:delete', 'node:gone'], 'human', 1_000);
+
+    await store.deleteMany(['node:delete']);
+    expect(store.snapshot().has('node:delete')).toBe(false);
+
+    await store.retainOnly(['node:keep']);
+    expect([...store.snapshot().keys()]).toEqual(['node:keep']);
+  });
+
+  test('bounds in-memory stats to strongest entries', async () => {
+    const { store } = await makeStore({ maxEntries: 2 });
+
+    await store.recordMany(['node:old'], 'human', 1_000);
+    await store.recordMany(['node:weak'], 'agentRecall', 2_000);
+    await store.recordMany(['node:new'], 'human', 3_000);
+
+    expect([...store.snapshot().keys()].sort()).toEqual(['node:new', 'node:old']);
   });
 });
