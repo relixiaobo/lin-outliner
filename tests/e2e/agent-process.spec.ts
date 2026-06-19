@@ -117,7 +117,6 @@ test.describe('agent process disclosure', () => {
       conversation: [{ nodeId: 'user-node', message: user, branches: null }],
       streamingMessage: null,
       isStreaming: true,
-      dmRunActive: true,
       pendingToolCallIds: [],
       errorMessage: null,
     });
@@ -144,7 +143,6 @@ test.describe('agent process disclosure', () => {
       conversation: [{ nodeId: 'user-node', message: user, branches: null }],
       streamingMessage: assistant,
       isStreaming: true,
-      dmRunActive: true,
       pendingToolCallIds: [],
       errorMessage: null,
     });
@@ -606,7 +604,6 @@ test.describe('agent process disclosure', () => {
       conversation: [],
       streamingMessage: assistant,
       isStreaming: true,
-      dmRunActive: true,
       pendingToolCallIds: [],
       errorMessage: null,
     });
@@ -677,7 +674,6 @@ test.describe('agent process disclosure', () => {
       conversation: [],
       streamingMessage: assistant,
       isStreaming: true,
-      dmRunActive: true,
       pendingToolCallIds: [],
       errorMessage: null,
     });
@@ -739,7 +735,6 @@ test.describe('agent process disclosure', () => {
       conversation: [],
       streamingMessage: assistant,
       isStreaming: true,
-      dmRunActive: true,
       pendingToolCallIds: [],
       errorMessage: null,
     });

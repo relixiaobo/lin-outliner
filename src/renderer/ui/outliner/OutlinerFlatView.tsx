@@ -29,8 +29,8 @@ import { OutlinerEmptyState } from './OutlinerEmptyState';
 import { IndentGuide } from './IndentGuide';
 import {
   captureDisclosureScrollAnchor,
-  restoreDisclosureScrollAnchor,
-  type DisclosureScrollAnchorSnapshot,
+  nearestScrollContainer,
+  usePendingDisclosureAnchor,
 } from '../interactions/disclosureScrollAnchor';
 
 // The flat renderer is the default outliner path. The old recursive renderer is
@@ -324,7 +324,6 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   const [measureVersion, setMeasureVersion] = useState(0);
   const [scrollMetrics, setScrollMetrics] = useState({ top: 0, height: 0 });
   const [flatGuides, setFlatGuides] = useState<FlatGuideGeometry[]>([]);
-  const pendingDisclosureAnchorRef = useRef<DisclosureScrollAnchorSnapshot | null>(null);
 
   const measureRow = useCallback((rowKey: string, height: number) => {
     const current = rowHeightsRef.current.get(rowKey);
@@ -345,15 +344,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   const scrollerRef = useRef<HTMLElement | null>(null);
   const resolveScroller = useCallback((): HTMLElement | null => {
     if (scrollerRef.current) return scrollerRef.current;
-    let el: HTMLElement | null = listRef.current?.parentElement ?? null;
-    while (el) {
-      const style = getComputedStyle(el);
-      if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
-        break;
-      }
-      el = el.parentElement;
-    }
-    scrollerRef.current = el ?? props.scrollParentRef.current;
+    scrollerRef.current = nearestScrollContainer(listRef.current, props.scrollParentRef.current);
     return scrollerRef.current;
   }, [props.scrollParentRef]);
 
@@ -373,6 +364,8 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     ));
   }, [resolveScroller]);
 
+  const { capturePendingAnchor, restorePendingAnchor } = usePendingDisclosureAnchor(updateScrollMetrics);
+
   const captureDisclosureAnchor = useCallback((anchorElement: HTMLElement | null) => {
     const scroller = resolveScroller();
     const guideAnchor = anchorElement?.classList.contains('indent-guide') ?? false;
@@ -388,9 +381,8 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
       }
       : undefined;
     const snapshot = captureDisclosureScrollAnchor(anchorElement, scroller, resolveElement);
-    if (!snapshot) return;
-    pendingDisclosureAnchorRef.current = snapshot;
-  }, [resolveScroller]);
+    capturePendingAnchor(snapshot);
+  }, [capturePendingAnchor, resolveScroller]);
 
   const scrollFrameRef = useRef<number | null>(null);
   const scheduleScrollMetrics = useCallback(() => {
@@ -462,15 +454,8 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   }, [layout, rows, virtualize, resolveScroller]);
 
   useLayoutEffect(() => {
-    const anchor = pendingDisclosureAnchorRef.current;
-    pendingDisclosureAnchorRef.current = null;
-    if (!restoreDisclosureScrollAnchor(anchor) || !anchor) return undefined;
-    updateScrollMetrics();
-    const frame = window.requestAnimationFrame(() => {
-      if (restoreDisclosureScrollAnchor(anchor)) updateScrollMetrics();
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [layout, rows, updateScrollMetrics]);
+    return restorePendingAnchor();
+  }, [layout, restorePendingAnchor, rows]);
 
   // ── Window selection ──────────────────────────────────────────────────────
   // Force-mount rows that must accept focus even when scrolled out of view: the
@@ -570,11 +555,11 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   ]);
 
   const toggleDirectChildrenExpansion = useCallback((rowId: NodeId, anchorElement?: HTMLElement | null) => {
-    captureDisclosureAnchor(anchorElement ?? null);
     const childParentId = outlinerChildParentId(rowId, byId);
     const childParentNode = childParentId ? byId.get(childParentId) : undefined;
     const childIds = outlinerChildren(childParentNode, byId);
     if (childIds.length === 0) return;
+    captureDisclosureAnchor(anchorElement ?? null);
     props.setUi((prev) => {
       const expandedSet = new Set(prev.expanded);
       const anyChildExpanded = childIds.some((childId) => expandedSet.has(childId));

@@ -1632,7 +1632,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         activeCompaction: null,
         activeDream: null,
         runActive: false,
-        dmRunActive: false,
         channelRunsActive: false,
         model: { id: 'gpt-5.4', provider: 'openai' },
         thinkingLevel: 'medium',
@@ -3179,7 +3178,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       apiId: streamingMessage.api,
       providerId: streamingMessage.provider,
       modelId: streamingMessage.model,
-      runId: streamingMessage.runId ?? 'run-e2e',
+      runId: streamingMessage.runId,
       stopReason: streamingMessage.stopReason,
       usage: streamingMessage.usage,
       errorMessage: streamingMessage.errorMessage,
@@ -3309,10 +3308,6 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       activeCompaction: state.activeCompaction ?? null,
       activeDream: state.activeDream ?? null,
       runActive: state.runActive ?? (!!state.isStreaming && !projectionChannel),
-      // Mode-specific run state (mirrors the real projection split): DM
-      // streaming drives the composer; Channel work shows as activity entries,
-      // never the composer.
-      dmRunActive: state.dmRunActive ?? (!!state.isStreaming && !projectionChannel),
       channelRunsActive: state.channelRunsActive
         ?? (projectionChannelActivity.length > 0 || (!!state.isStreaming && projectionChannel)),
       model: state.model ?? {},

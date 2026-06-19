@@ -239,6 +239,7 @@ export function AgentProcessBlock({
       <ButtonControl
         aria-expanded={expanded}
         className="agent-process-toggle"
+        data-agent-process-id={id}
         onClick={toggle}
       >
         {/* The "Worked for …" header is icon-free (codex-style): the summary text
@@ -334,6 +335,7 @@ export function AgentTurnProcessFold({
       <ButtonControl
         aria-expanded={expanded}
         className="agent-process-toggle"
+        data-agent-process-id={id}
         onClick={toggle}
       >
         <span className="agent-process-title">

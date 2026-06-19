@@ -88,8 +88,21 @@ function assistantActorKey(entry: AssistantEntry): string {
 }
 
 function assistantTurnStableKey(entries: readonly AssistantEntry[]): string {
+  const runId = entries.find((entry) => entry.runId)?.runId;
+  if (runId) return `assistant-turn-run:${runId}`;
   const first = entries[0]!;
   return `assistant-turn-${first.message.timestamp}:${assistantActorKey(first)}`;
+}
+
+function uniqueAssistantTurnStableKey(
+  baseKey: string,
+  firstEntry: AssistantEntry,
+  seenKeys: Map<string, number>,
+): string {
+  const count = seenKeys.get(baseKey) ?? 0;
+  seenKeys.set(baseKey, count + 1);
+  if (count === 0) return baseKey;
+  return `${baseKey}:${firstEntry.id}`;
 }
 
 export function buildConversationRenderRows(
@@ -97,6 +110,7 @@ export function buildConversationRenderRows(
   turnPhase: AgentTurnPhase,
 ): AgentConversationRenderRow[] {
   const rows: AgentConversationRenderRow[] = [];
+  const assistantTurnKeyCounts = new Map<string, number>();
 
   let index = 0;
   while (index < entries.length) {
@@ -112,7 +126,11 @@ export function buildConversationRenderRows(
         index += 1;
       }
 
-      const stableKey = assistantTurnStableKey(assistantEntries);
+      const stableKey = uniqueAssistantTurnStableKey(
+        assistantTurnStableKey(assistantEntries),
+        assistantEntries[0]!,
+        assistantTurnKeyCounts,
+      );
       const mergedEntry = assistantEntries.length >= 2
         ? mergeAssistantEntries(assistantEntries)
         : assistantEntries[0]!;

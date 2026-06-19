@@ -176,11 +176,24 @@ describe('buildConversationRenderRows — merged turn duration', () => {
 });
 
 describe('buildConversationRenderRows — stable assistant turn key', () => {
-  test('includes the assistant actor without depending on entry id churn', () => {
+  test('prefers runId over transient active entry id churn', () => {
     const rows = buildConversationRenderRows(
       [
         userEntry('user-1', 0),
         assistantEntry({ id: 'active-assistant-0', agentId: 'alpha', runId: 'run-stable', timestamp: 10 }),
+      ],
+      'streaming_text',
+    );
+
+    expect(rows[1]!.key).toBe('assistant-turn-run:run-stable');
+    expect(rows[1]!.contentKey).toBe('assistant-turn-run:run-stable');
+  });
+
+  test('falls back to timestamp plus assistant actor when no runId is available', () => {
+    const rows = buildConversationRenderRows(
+      [
+        userEntry('user-1', 0),
+        assistantEntry({ id: 'active-assistant-0', agentId: 'alpha', runId: null, timestamp: 10 }),
       ],
       'streaming_text',
     );
@@ -200,5 +213,20 @@ describe('buildConversationRenderRows — stable assistant turn key', () => {
 
     expect(rows[1]!.key).toBe('assistant-turn-10:actor:none');
     expect(rows[1]!.contentKey).toBe('assistant-turn-10:actor:none');
+  });
+
+  test('deduplicates repeated fallback keys without making the first turn unstable', () => {
+    const rows = buildConversationRenderRows(
+      [
+        userEntry('user-1', 0),
+        assistantEntry({ id: 'a1', agentId: 'alpha', runId: null, timestamp: 10 }),
+        userEntry('user-2', 11),
+        assistantEntry({ id: 'a2', agentId: 'alpha', runId: null, timestamp: 10 }),
+      ],
+      'idle',
+    );
+
+    expect(rows[1]!.key).toBe('assistant-turn-10:agent:alpha');
+    expect(rows[3]!.key).toBe('assistant-turn-10:agent:alpha:a2');
   });
 });

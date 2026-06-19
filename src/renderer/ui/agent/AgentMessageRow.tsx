@@ -56,8 +56,8 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { AgentIdentityAvatar } from './AgentIdentityAvatar';
 import {
   captureDisclosureScrollAnchor,
-  restoreDisclosureScrollAnchor,
-  type DisclosureScrollAnchorSnapshot,
+  nearestScrollContainer,
+  usePendingDisclosureAnchor,
 } from '../interactions/disclosureScrollAnchor';
 
 const USER_MESSAGE_COLLAPSED_LINES = 5;
@@ -490,27 +490,25 @@ function AgentMessageRowComponent({
   const [editDraft, setEditDraft] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [expandOverrides, setExpandOverrides] = useState<Record<string, boolean>>({});
-  const pendingDisclosureAnchorRef = useRef<DisclosureScrollAnchorSnapshot | null>(null);
+  const { capturePendingAnchor, restorePendingAnchor } = usePendingDisclosureAnchor();
   const expandState = useMemo<AgentExpandState>(() => ({
     isExpanded: (id, defaultExpanded = false) => expandOverrides[id] ?? defaultExpanded,
     toggle: (id, currentlyExpanded, anchorElement) => {
-      pendingDisclosureAnchorRef.current = captureDisclosureScrollAnchor(anchorElement ?? null);
+      const scroller = nearestScrollContainer(anchorElement ?? null);
+      const resolveElement = scroller
+        ? () => scroller.querySelector<HTMLElement>(`[data-agent-process-id="${CSS.escape(id)}"]`)
+        : undefined;
+      capturePendingAnchor(captureDisclosureScrollAnchor(anchorElement ?? null, scroller, resolveElement));
       setExpandOverrides((current) => ({
         ...current,
         [id]: !currentlyExpanded,
       }));
     },
-  }), [expandOverrides]);
+  }), [capturePendingAnchor, expandOverrides]);
 
   useLayoutEffect(() => {
-    const anchor = pendingDisclosureAnchorRef.current;
-    pendingDisclosureAnchorRef.current = null;
-    if (!restoreDisclosureScrollAnchor(anchor) || !anchor) return undefined;
-    const frame = window.requestAnimationFrame(() => {
-      restoreDisclosureScrollAnchor(anchor);
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [expandOverrides]);
+    return restorePendingAnchor();
+  }, [expandOverrides, restorePendingAnchor]);
 
   async function copyMessage(text: string) {
     if (!text) return;
