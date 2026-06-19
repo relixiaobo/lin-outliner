@@ -29,6 +29,7 @@ export function renderAssistantBlocks(
   turnInterrupted: boolean,
   isChannel: boolean,
   workedForMs: number | null,
+  liveStartedAtMs: number,
   toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>,
 ) {
   const rendered: ReactNode[] = [];
@@ -146,6 +147,7 @@ export function renderAssistantBlocks(
           turnFailedWithoutProse={false}
           surfaceResultlessProcess={surfaceResultlessProcess}
           workedForMs={null}
+          liveStartedAtMs={liveStartedAtMs}
         />,
       );
       processGroup = [];
@@ -187,6 +189,7 @@ export function renderAssistantBlocks(
         turnFailedWithoutProse={turnFailedWithoutProse}
         surfaceResultlessProcess={surfaceResultlessProcess}
         workedForMs={workedForMs}
+        liveStartedAtMs={liveStartedAtMs}
       >
         {foldChildren}
       </AgentTurnProcessFold>,

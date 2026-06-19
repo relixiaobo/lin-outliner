@@ -35,9 +35,8 @@ export type AgentProcessSegmentBlock =
   };
 
 // Compact, locale-neutral wall-clock label for an agent run (e.g. "<1s", "5s",
-// "1m 3s", "1h 2m"). Shared by the collapsed "Worked for …" process header and
-// the child-run detail panel so the two never drift; seconds are dropped once
-// the duration reaches whole minutes to keep the label short.
+// "1m 3s", "1h 2m 4s", "2d 3h"). Shared by the collapsed "Worked for …"
+// process header and the child-run detail panel so the two never drift.
 export function formatRunDuration(ms: number): string {
   const elapsed = Number.isFinite(ms) ? Math.max(0, ms) : 0;
   if (elapsed < 1000) return '<1s';
@@ -48,7 +47,19 @@ export function formatRunDuration(ms: number): string {
   if (minutes < 60) return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   const minuteRest = minutes % 60;
-  return minuteRest > 0 ? `${hours}h ${minuteRest}m` : `${hours}h`;
+  if (hours < 24) {
+    return [
+      `${hours}h`,
+      minuteRest > 0 ? `${minuteRest}m` : null,
+      rest > 0 ? `${rest}s` : null,
+    ].filter(Boolean).join(' ');
+  }
+  const days = Math.floor(hours / 24);
+  return [
+    `${days}d`,
+    hours % 24 > 0 ? `${hours % 24}h` : null,
+    minuteRest > 0 ? `${minuteRest}m` : null,
+  ].filter(Boolean).join(' ');
 }
 
 export function firstLine(text: string): string | null {

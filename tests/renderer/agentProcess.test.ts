@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { ToolCall, ToolResultMessage } from '../../src/core/agentTypes';
 import { summarizeProcess } from '../../src/renderer/ui/agent/AgentProcessBlock';
+import { groupTimelineUnits } from '../../src/renderer/ui/agent/AgentProcessTimeline';
+import type { AgentProcessSegmentBlock } from '../../src/renderer/ui/agent/agentProcessTypes';
+import { formatRunDuration } from '../../src/renderer/ui/agent/agentProcessTypes';
+import { summarizeToolActivity } from '../../src/renderer/ui/agent/agentProcessSummary';
 import { getMessages } from '../../src/core/i18n';
 
 const { process, toolCall: toolCallLabels, thinking } = getMessages('en').agent;
@@ -18,6 +22,13 @@ const searchTool: ToolCall = {
   id: 'tool-search',
   name: 'node_search',
   arguments: { query: 'design system' },
+};
+
+const commandTool: ToolCall = {
+  type: 'toolCall',
+  id: 'tool-command',
+  name: 'bash',
+  arguments: { command: 'bun test' },
 };
 
 const readResult: ToolResultMessage = {
@@ -87,6 +98,46 @@ describe('agent process summary', () => {
     })).toBe('Let me map the outline structure first');
   });
 
+  test('live + collapsed header shows bare Working under one second', () => {
+    expect(summarizeProcess({
+      firstThinkingText: 'Let me map the outline structure first',
+      lastThinkingText: 'Let me map the outline structure first',
+      thinkingCount: 1,
+      pendingToolCallIds: new Set(),
+      results: new Map(),
+      toolCalls: [],
+      turnActive: true,
+      liveCollapsed: true,
+      turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
+      workedForMs: null,
+      liveElapsedMs: 900,
+      process,
+      toolCallLabels,
+      thinkingLabel,
+    })).toBe('Working');
+  });
+
+  test('live + collapsed header shows Working for elapsed time after one second', () => {
+    expect(summarizeProcess({
+      firstThinkingText: 'Let me map the outline structure first',
+      lastThinkingText: 'Let me map the outline structure first',
+      thinkingCount: 1,
+      pendingToolCallIds: new Set(),
+      results: new Map(),
+      toolCalls: [],
+      turnActive: true,
+      liveCollapsed: true,
+      turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
+      workedForMs: null,
+      liveElapsedMs: 2_100,
+      process,
+      toolCallLabels,
+      thinkingLabel,
+    })).toBe('Working for 2s');
+  });
+
   test('live + collapsed header falls back to the thinking label with no thought text yet', () => {
     expect(summarizeProcess({
       firstThinkingText: null,
@@ -122,7 +173,7 @@ describe('agent process summary', () => {
       process,
       toolCallLabels,
       thinkingLabel,
-    })).toBe('Thought · used 2 tools');
+    })).toBe('Thought · reading a node · searching');
   });
 
   test('summarizes mixed completed process as one collapsed process row', () => {
@@ -141,7 +192,7 @@ describe('agent process summary', () => {
       process,
       toolCallLabels,
       thinkingLabel,
-    })).toBe('Thought · used 2 tools');
+    })).toBe('Thought · read a node · searched');
   });
 
   test('summarizes solo completed tool by tool status', () => {
@@ -238,7 +289,7 @@ describe('agent process summary', () => {
       process,
       toolCallLabels,
       thinkingLabel,
-    })).toBe('Thought · used 2 tools');
+    })).toBe('Thought · reading a node · searching');
   });
 
   test('an interrupted turn keeps its interrupted label over the duration', () => {
@@ -283,5 +334,79 @@ describe('agent process summary', () => {
     };
     expect(summarizeProcess({ ...base, surfaceResultlessProcess: false })).toBe('Worked for 5s');
     expect(summarizeProcess({ ...base, surfaceResultlessProcess: true })).toBe('Read node "node-alpha"');
+  });
+});
+
+describe('agent tool activity summary', () => {
+  test('summarizes one kind with count and tense', () => {
+    expect(summarizeToolActivity([
+      { toolCall: commandTool, status: 'done' },
+      { toolCall: { ...commandTool, id: 'tool-command-2' }, status: 'done' },
+      { toolCall: { ...commandTool, id: 'tool-command-3' }, status: 'done' },
+    ], process)).toBe('Ran 3 commands');
+
+    expect(summarizeToolActivity([
+      { toolCall: commandTool, status: 'pending' },
+      { toolCall: { ...commandTool, id: 'tool-command-2' }, status: 'done' },
+    ], process)).toBe('Running 2 commands');
+  });
+
+  test('joins up to two activity kinds and falls back past that', () => {
+    expect(summarizeToolActivity([
+      { toolCall: readTool, status: 'done' },
+      { toolCall: { ...readTool, id: 'tool-read-2' }, status: 'done' },
+      { toolCall: searchTool, status: 'done' },
+    ], process)).toBe('Read 2 nodes · searched');
+
+    expect(summarizeToolActivity([
+      { toolCall: readTool, status: 'done' },
+      { toolCall: searchTool, status: 'done' },
+      { toolCall: commandTool, status: 'done' },
+    ], process)).toBe('Used 3 tools');
+  });
+});
+
+describe('agent process timeline grouping', () => {
+  const readBlock: Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }> = { kind: 'toolCall', toolCall: readTool };
+  const searchBlock: Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }> = { kind: 'toolCall', toolCall: searchTool };
+  const commandBlock: Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }> = { kind: 'toolCall', toolCall: commandTool };
+  const thinkingBlock: AgentProcessSegmentBlock = {
+    kind: 'thinking',
+    sourceIndex: 0,
+    streaming: false,
+    text: 'Think first',
+  };
+
+  test('groups consecutive non-child tool calls into one activity unit', () => {
+    expect(groupTimelineUnits([readBlock, searchBlock, commandBlock], () => false)).toEqual([{
+      kind: 'toolActivity',
+      id: `activity:${readTool.id}`,
+      members: [readBlock, searchBlock, commandBlock],
+    }]);
+  });
+
+  test('does not wrap lone tools and breaks groups at thinking or child runs', () => {
+    const grouped = groupTimelineUnits(
+      [readBlock, thinkingBlock, searchBlock, commandBlock],
+      (block) => block.toolCall.id === searchTool.id,
+    );
+    expect(grouped).toEqual([
+      { kind: 'block', block: readBlock },
+      { kind: 'block', block: thinkingBlock },
+      { kind: 'block', block: searchBlock },
+      { kind: 'block', block: commandBlock },
+    ]);
+  });
+});
+
+describe('agent process duration formatting', () => {
+  test('keeps non-zero units through hours and rolls up days', () => {
+    expect(formatRunDuration(59_000)).toBe('59s');
+    expect(formatRunDuration(60_000)).toBe('1m');
+    expect(formatRunDuration(90_000)).toBe('1m 30s');
+    expect(formatRunDuration(3_600_000)).toBe('1h');
+    expect(formatRunDuration(3_661_000)).toBe('1h 1m 1s');
+    expect(formatRunDuration(86_400_000)).toBe('1d');
+    expect(formatRunDuration(90_061_000)).toBe('1d 1h 1m');
   });
 });

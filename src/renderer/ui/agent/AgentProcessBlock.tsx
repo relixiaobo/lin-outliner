@@ -3,10 +3,9 @@ import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import type { MouseEvent, ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ChevronDownIcon,
-  ICON_SIZE,
-  LoaderIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
@@ -16,6 +15,8 @@ import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessT
 import { firstLine, formatRunDuration, previewText } from './agentProcessTypes';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
+import { AgentTextShimmer } from './AgentTextShimmer';
+import { sentenceFragment, summarizeToolActivity, type ToolActivitySummaryMember } from './agentProcessSummary';
 
 export type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
 
@@ -67,6 +68,8 @@ interface AgentProcessBlockProps {
   surfaceResultlessProcess: boolean;
   /** Wall-clock the run took; surfaced as "Worked for …" once sealed. Null when unknown. */
   workedForMs: number | null;
+  /** Assistant message creation time, used as the live "Working for …" ticker anchor. */
+  liveStartedAtMs?: number;
 }
 
 interface AgentTurnProcessFoldProps extends Omit<AgentProcessBlockProps, 'conversationId' | 'childRunsByParentToolCallId' | 'index' | 'onNodeReferenceOpen' | 'onOpenChildRunTranscript' | 'results'> {
@@ -125,6 +128,7 @@ export function summarizeProcess({
   process,
   toolCallLabels,
   thinkingLabel,
+  liveElapsedMs,
 }: {
   firstThinkingText: string | null;
   lastThinkingText: string | null;
@@ -139,6 +143,7 @@ export function summarizeProcess({
   turnFailedWithoutProse: boolean;
   surfaceResultlessProcess: boolean;
   workedForMs: number | null;
+  liveElapsedMs?: number | null;
   process: Messages['agent']['process'];
   toolCallLabels: Messages['agent']['toolCall'];
   thinkingLabel: string;
@@ -162,16 +167,23 @@ export function summarizeProcess({
       toolCallOutcomes?.get(toolCall.id),
     );
   };
+  const toolActivityMembers = (): ToolActivitySummaryMember[] =>
+    toolCalls.map((toolCall) => ({ status: toolStatus(toolCall), toolCall }));
 
   // While the turn is live AND the block is collapsed, the header doubles as a
   // live status line: whichever tool is currently running, else the latest
-  // streaming thought. Once expanded, control falls through to the static summary
-  // below and the running tool row inside the timeline carries the only spinner.
+  // elapsed clock. Once expanded, control falls through to the static summary
+  // below and the running tool row inside the timeline carries step-level status.
   if (liveCollapsed) {
     for (let i = toolCalls.length - 1; i >= 0; i -= 1) {
       const toolCall = toolCalls[i]!;
       const status = toolStatus(toolCall);
       if (status === 'pending') return summarizeToolCall(toolCall, status, toolCallLabels);
+    }
+    if (liveElapsedMs !== null && liveElapsedMs !== undefined) {
+      return liveElapsedMs >= 1000
+        ? process.workingFor({ duration: formatRunDuration(liveElapsedMs) })
+        : process.working;
     }
     if (lastThinkingText) return previewText(lastThinkingText, 80);
     if (thinkingCount > 0) return thinkingLabel;
@@ -203,7 +215,7 @@ export function summarizeProcess({
     return summarizeToolCall(toolCall, status, toolCallLabels);
   }
 
-  if (thinkingCount === 0 && toolCount >= 2) return process.usedTools({ count: toolCount });
+  if (thinkingCount === 0 && toolCount >= 2) return summarizeToolActivity(toolActivityMembers(), process);
 
   if (thinkingCount === 1 && toolCount === 0) {
     return firstThinkingText ? process.thoughtPreview({ preview: previewText(firstThinkingText, 80) }) : process.thought;
@@ -217,9 +229,26 @@ export function summarizeProcess({
     return process.thoughtAndTool({ tool: summarizeToolCall(toolCall, status, toolCallLabels) });
   }
 
-  if (thinkingCount > 0 && toolCount >= 2) return process.thoughtAndUsedTools({ count: toolCount });
+  if (thinkingCount > 0 && toolCount >= 2) {
+    return process.thoughtAndTool({ tool: sentenceFragment(summarizeToolActivity(toolActivityMembers(), process)) });
+  }
 
   return process.working;
+}
+
+function useElapsedTick(startedAtMs: number | undefined, active: boolean): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  const validStartedAt = typeof startedAtMs === 'number' && Number.isFinite(startedAtMs) ? startedAtMs : null;
+
+  useEffect(() => {
+    if (!active || validStartedAt === null) return undefined;
+    setNow(Date.now());
+    const intervalId = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [active, validStartedAt]);
+
+  if (!active || validStartedAt === null) return null;
+  return Math.max(0, now - validStartedAt);
 }
 
 export function AgentProcessBlock({
@@ -238,13 +267,15 @@ export function AgentProcessBlock({
   turnFailedWithoutProse,
   surfaceResultlessProcess,
   workedForMs,
+  liveStartedAtMs,
 }: AgentProcessBlockProps) {
   const t = useT();
   const facts = processSummaryFacts(blocks);
   const liveSegment = turnActive && !sealed;
+  const liveElapsedMs = useElapsedTick(liveStartedAtMs, liveSegment);
   // Live process rows now default collapsed; the collapsed header carries the
-  // active tool/thinking summary. Resultless/error surfacing still opens by
-  // default so context is not buried.
+  // active tool/elapsed summary. Resultless/error surfacing still opens by default
+  // so context is not buried.
   const defaultExpanded = surfaceResultlessProcess;
   const expanded = expandState.isExpanded(id, defaultExpanded);
   const liveCollapsed = liveSegment && !expanded;
@@ -261,30 +292,32 @@ export function AgentProcessBlock({
         onClick={toggle}
       >
         {/* The "Worked for …" header is icon-free (codex-style): the summary text
-            carries the state (it already reads "Worked for 13s" / "Thought · used N
-            tools" / an interrupted label) at the row's left edge, no leading glyph.
-            A single TRAILING slot holds the disclosure chevron, swapped for the live
-            spinner while the turn is actively working and collapsed — one slot, so
+            carries the state (it already reads "Worked for 13s" / "Thought · ran
+            3 commands" / an interrupted label) at the row's left edge, no leading glyph.
+            A single TRAILING slot holds the disclosure chevron, swapped for a live
+            spacer while the turn is actively working and collapsed — one slot, so
             the title never shifts across the loading→sealed transition (the
-            "labels don't move" rule). Once expanded the spinner moves to the
-            running tool row in the timeline. */}
+            "labels don't move" rule). */}
         <span className="agent-process-title">
-          {summarizeProcess({
-            ...facts,
-            pendingToolCallIds,
-            results,
-            turnActive,
-            liveCollapsed,
-            turnFailedWithoutProse,
-            surfaceResultlessProcess,
-            workedForMs,
-            process: t.agent.process,
-            toolCallLabels: t.agent.toolCall,
-            thinkingLabel: t.agent.thinking.thinking,
-          })}
+          <AgentTextShimmer active={liveCollapsed}>
+            {summarizeProcess({
+              ...facts,
+              pendingToolCallIds,
+              results,
+              turnActive,
+              liveCollapsed,
+              turnFailedWithoutProse,
+              surfaceResultlessProcess,
+              workedForMs,
+              liveElapsedMs,
+              process: t.agent.process,
+              toolCallLabels: t.agent.toolCall,
+              thinkingLabel: t.agent.thinking.thinking,
+            })}
+          </AgentTextShimmer>
         </span>
         {liveCollapsed ? (
-          <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
+          <span aria-hidden="true" className="agent-process-live-slot" />
         ) : (
           <ChevronDownIcon
             aria-hidden
@@ -324,9 +357,11 @@ export function AgentTurnProcessFold({
   turnFailedWithoutProse,
   surfaceResultlessProcess,
   workedForMs,
+  liveStartedAtMs,
 }: AgentTurnProcessFoldProps) {
   const t = useT();
   const liveSegment = turnActive && !sealed;
+  const liveElapsedMs = useElapsedTick(liveStartedAtMs, liveSegment);
   const defaultExpanded = surfaceResultlessProcess;
   const expanded = expandState.isExpanded(id, defaultExpanded);
   const liveCollapsed = liveSegment && !expanded;
@@ -340,6 +375,7 @@ export function AgentTurnProcessFold({
     turnFailedWithoutProse,
     surfaceResultlessProcess,
     workedForMs,
+    liveElapsedMs,
     process: t.agent.process,
     toolCallLabels: t.agent.toolCall,
     thinkingLabel: t.agent.thinking.thinking,
@@ -357,10 +393,10 @@ export function AgentTurnProcessFold({
         onClick={toggle}
       >
         <span className="agent-process-title">
-          {title}
+          <AgentTextShimmer active={liveCollapsed}>{title}</AgentTextShimmer>
         </span>
         {liveCollapsed ? (
-          <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
+          <span aria-hidden="true" className="agent-process-live-slot" />
         ) : (
           <ChevronDownIcon
             aria-hidden

@@ -136,7 +136,7 @@ test.describe('agent process disclosure', () => {
     const row = assistantRows.last();
     const liveProcess = row.locator('.agent-process-block').first();
     const liveProcessToggle = liveProcess.locator('.agent-process-toggle').first();
-    await expect(liveProcess.locator('.agent-process-title').first()).toHaveText('Working...');
+    await expect(liveProcess.locator('.agent-process-title').first()).toHaveText('Working');
     await expect(liveProcessToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(liveProcessToggle).not.toBeDisabled();
     const indicator = row.getByLabel('Assistant is responding');
@@ -159,7 +159,7 @@ test.describe('agent process disclosure', () => {
 
     await expect(assistantRows).toHaveCount(1);
     const streamedText = row.getByText('你好，我在。');
-    await expect(liveProcess.locator('.agent-process-title').first()).toHaveText('Working...');
+    await expect(liveProcess.locator('.agent-process-title').first()).toHaveText('Working');
     await expect(liveProcessToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(streamedText).toBeVisible();
     const textBox = await streamedText.boundingBox();
@@ -495,7 +495,7 @@ test.describe('agent process disclosure', () => {
 
     const process = page.locator('.agent-process-block').first();
     const processToggle = process.locator('.agent-process-toggle').first();
-    await expect(process.locator('.agent-process-title').first()).toHaveText('Thought · used 2 tools');
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Thought · read a node · searched');
     await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByText('Current outline focuses on design-system inventory')).toBeVisible();
 
@@ -514,6 +514,11 @@ test.describe('agent process disclosure', () => {
     await thinkingToggle.click();
     await expect(thinkingToggle).toContainText('Compare current Agent rules with the existing tag layout decision');
     await expectIconCenteredOnFirstLine(thinkingToggle, '.agent-thinking-icon', '.agent-thinking-text');
+
+    const activityToggle = process.locator('.agent-tool-activity-toggle').filter({ hasText: 'Read a node · searched' });
+    await expect(activityToggle).toHaveAttribute('aria-expanded', 'false');
+    await activityToggle.click();
+    await expect(activityToggle).toHaveAttribute('aria-expanded', 'true');
 
     const searchTool = page.locator('.agent-tool-call-toggle').filter({ hasText: 'Searched nodes "design system"' });
     await expect(searchTool).toHaveAttribute('aria-expanded', 'false');
@@ -623,7 +628,7 @@ test.describe('agent process disclosure', () => {
     const beforeBox = await processToggle.boundingBox();
     expect(beforeBox).toBeTruthy();
     await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
-    await expect(process.locator('.agent-process-title').first()).toHaveText('Checking the selected outline node.');
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Working');
 
     await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
@@ -692,13 +697,13 @@ test.describe('agent process disclosure', () => {
     const processToggle = process.locator('.agent-process-toggle').first();
     await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(processToggle).not.toBeDisabled();
-    await expect(process.locator('.agent-process-title').first()).toHaveText('Read the source node before answering.');
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Working');
     await expect(process.locator('.agent-process-flat .agent-process-title')).toHaveCount(0);
     await expect(page.getByText('The final answer is now streaming below the process.')).toBeVisible();
 
     await processToggle.click();
     await expect(processToggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(process.locator('.agent-process-flat .agent-process-title').first()).toHaveText('Read the source node before answering.');
+    await expect(process.locator('.agent-process-flat .agent-process-title').first()).toHaveText('Working');
 
     await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
@@ -749,7 +754,7 @@ test.describe('agent process disclosure', () => {
       errorMessage: null,
     });
 
-    await expect(page.locator('.agent-process-title').first()).toHaveText('Working...');
+    await expect(page.locator('.agent-process-title').first()).toHaveText('Working');
     await expect(page.locator('.agent-process-flat-narration')).toHaveCount(0);
     await expect(page.getByText('A direct answer is streaming without tools.')).toBeVisible();
 
@@ -907,6 +912,10 @@ test.describe('agent process disclosure', () => {
     const processGroupToggle = process.locator('.agent-process-flat .agent-process-toggle').first();
     await expect(process.locator('.agent-process-toggle').first()).toHaveAttribute('aria-expanded', 'true');
     await expect(processGroupToggle).toHaveAttribute('aria-expanded', 'true');
+    const activityToggle = process.locator('.agent-tool-activity-toggle').filter({ hasText: 'Used 2 skills' });
+    await expect(activityToggle).toHaveAttribute('aria-expanded', 'false');
+    await activityToggle.click();
+    await expect(activityToggle).toHaveAttribute('aria-expanded', 'true');
 
     const loadedCall = page.locator('.agent-tool-call').filter({ has: page.locator('.agent-loaded-skill') });
     const loaded = loadedCall.locator('.agent-loaded-skill');

@@ -942,15 +942,17 @@ Rules:
   mechanism with no per-mode forks and no single-tool inline special case.
 - **Codex-style live disclosure.** A turn's process block **stays collapsed while
   it is working** unless the user explicitly opens it. The collapsed header is the
-  live status line: it shows the currently pending tool when there is one, then
-  the latest non-empty thinking preview, then `Working...` as the fallback. The
-  row renders immediately for an active assistant turn, even before the first
-  thinking/tool block, so later tool events do not insert a new header above
-  already-streamed text. A tool-free live answer keeps its prose in the normal
-  answer position (not inside process narration), so the same markdown subtree
-  survives the live→sealed transition. The process **does not auto-expand while
-  live and does not auto-collapse on settle**; user expansion is sticky for that
-  process id.
+  live status line: it shows the currently pending tool when there is one;
+  otherwise it shows `Working` for the first sub-second tick and
+  `Working for {duration}` after that, using the assistant message `createdAt` as
+  the live ticker anchor. The row renders immediately for an active assistant
+  turn, even before the first thinking/tool block, so later tool events do not
+  insert a new header above already-streamed text. A tool-free live answer keeps
+  its prose in the normal answer position (not inside process narration), so the
+  same markdown subtree survives the live→sealed transition. The process **does
+  not auto-expand while live and does not auto-collapse on settle**; user
+  expansion is sticky for that process id. The active collapsed title uses the
+  neutral text shimmer cue; reduced-motion users get ordinary static text.
   - A **resultless** turn (last visible block is a thought/tool — no trailing
     answer prose) drives two SEPARATE decisions, decoupled so a cleanly-completed
     turn never mislabels:
@@ -976,9 +978,9 @@ Rules:
   - Every other steady state defaults collapsed. The **sticky override wins**: once
   a user toggles the block it keeps that choice through live→sealed; completion
   only updates the same disclosure row's header.
-- The live header carries the single activity spinner only while the process is
-  collapsed. When the user expands a live process, the spinner moves to the
-  running tool row inside the timeline and the top header uses the static process
+- The live header carries no separate header spinner; the active cue is the
+  shimmered status text, while per-step running tool rows keep their own spinner.
+  When the user expands a live process, the top header uses the static process
   summary. Once the turn **seals**, the collapsed header reads
   **"Worked for {duration}"** (codex-style; duration = the producing run's
   `updatedAt − startedAt`, threaded as `runDurationMs` on the message entity
@@ -986,7 +988,10 @@ Rules:
   running after a crash, has `updatedAt === startedAt` and so no meaningful
   wall-clock, and is left unknown rather than shown as "<1s"; a multi-run turn
   sums each run's wall-clock). When the duration is unknown the header falls back
-  to the static group summary (e.g. "Thought · used N tools"). A tool call's
+  to the static group summary. Consecutive non-child-run tool calls summarize by
+  kind/count/tense (for example, `Ran 3 commands`, `Read 2 nodes · searched`, or
+  `Thought · read 2 nodes · searched`), falling back to `Used N tools` only for
+  unknown tools or more than two distinct kinds. A tool call's
   **settled outcome** is authoritative for its status: replay stamps
   `outcome: 'completed' | 'failed'` onto the `toolCall` content part from the
   `tool_call.completed` / `tool_call.failed` events (independent of whether a
@@ -1004,6 +1009,13 @@ Rules:
   never a duration. A cleanly `completed` resultless turn never shows
   "Interrupted": it surfaces its process (per the result-first design) under the
   descriptive group summary rather than the "Worked for …" resting header.
+- Expanded process timelines fold each maximal sequence of adjacent regular tool
+  calls into one collapsed tool-activity group. Thinking, narration, and child-run
+  tool calls break the sequence; child-run rows stay standalone because their
+  inline transcript/result details should not be hidden behind a generic group.
+  A lone regular tool call also stays standalone to avoid a redundant wrapper.
+  Run duration labels keep all non-zero units through hours (`1h 5m 3s`) and roll
+  up by days (`2d 3h`).
 - **One assistant-turn renderer.** The conversation transcript and the child-run
   task detail timeline both render assistant content through the
   same assistant turn/process fold components. The task detail panel reads a raw

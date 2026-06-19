@@ -119,6 +119,26 @@
   white-space: nowrap;
 }
 
+.agent-text-shimmer {
+  position: relative;
+}
+
+.agent-text-shimmer.is-active {
+  background: linear-gradient(
+    90deg,
+    var(--text-secondary) 0%,
+    var(--text-primary) 50%,
+    var(--text-secondary) 100%
+  );
+  background-clip: text;
+  background-size: 200% 100%;
+  color: transparent;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: agent-text-shimmer-sweep 1s steps(48, end);
+  animation-iteration-count: 1;
+}
+
 /* Trailing disclosure chevron for the icon-free "Worked for …" header. Faint at
    rest (it is an affordance, not a focal mark), deepens on hover/focus of the
    toggle, and rotates when the process timeline is expanded. */
@@ -135,6 +155,12 @@
 .agent-process-toggle:hover .agent-process-chevron,
 .agent-process-toggle:focus-visible .agent-process-chevron {
   color: var(--text-soft);
+}
+
+.agent-process-live-slot {
+  width: 14px;
+  height: var(--line-meta);
+  flex: 0 0 14px;
 }
 
 .agent-thinking-icon {
@@ -353,6 +379,59 @@
   white-space: nowrap;
 }
 
+.agent-tool-activity-group {
+  max-width: 100%;
+  color: var(--text-soft);
+}
+
+.agent-tool-activity-toggle {
+  display: flex;
+  max-width: min(100%, 520px);
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  color: inherit;
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  padding: 0;
+  text-align: left;
+}
+
+.agent-tool-activity-toggle:hover,
+.agent-tool-activity-toggle:focus-visible {
+  color: var(--text-strong);
+}
+
+.agent-tool-activity-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-tool-activity-chevron {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  transition: transform var(--motion-fast), color var(--motion-fast);
+}
+
+.agent-tool-activity-chevron.is-expanded {
+  transform: rotate(180deg);
+}
+
+.agent-tool-activity-toggle:hover .agent-tool-activity-chevron,
+.agent-tool-activity-toggle:focus-visible .agent-tool-activity-chevron {
+  color: var(--text-soft);
+}
+
+.agent-tool-activity-members {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
 .agent-tool-call-icon-slot {
   color: var(--text-faint);
 }
@@ -390,9 +469,25 @@
   color: var(--text-faint);
 }
 
-.agent-tool-call-spinner,
-.agent-process-spinner {
+.agent-tool-call-spinner {
   animation: agent-spin 900ms linear infinite;
+}
+
+@keyframes agent-text-shimmer-sweep {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-text-shimmer.is-active {
+    animation: none;
+    color: var(--text-secondary);
+    -webkit-text-fill-color: currentColor;
+  }
 }
 
 .agent-tool-call-panel {

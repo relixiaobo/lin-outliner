@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentToolResultWithPayloads, ToolCall } from '../../src/core/agentTypes';
-import { getToolCallStatus, getToolIcon, summarizeToolCall } from '../../src/renderer/ui/agent/AgentToolCallBlock';
+import { getToolCallStatus, getToolIcon, summarizeToolCall, toolActivityKind } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import { BrainIcon, NodeCreateToolIcon } from '../../src/renderer/ui/icons';
 import { getMessages } from '../../src/core/i18n';
 
@@ -80,5 +80,22 @@ describe('agent tool call block', () => {
     expect(summarizeToolCall(call, 'pending', labels)).toBe('Writing file "reports/report.md"');
     expect(summarizeToolCall(call, 'done', labels)).toBe('Wrote file "reports/report.md"');
     expect(summarizeToolCall(call, 'error', labels)).toBe('Failed to write file "reports/report.md"');
+  });
+
+  test('maps tool names to Codex-style activity kinds', () => {
+    expect(toolActivityKind('bash')).toBe('command');
+    expect(toolActivityKind('file_write')).toBe('fileCreate');
+    expect(toolActivityKind('node_create')).toBe('fileCreate');
+    expect(toolActivityKind('file_edit')).toBe('fileEdit');
+    expect(toolActivityKind('node_edit')).toBe('fileEdit');
+    expect(toolActivityKind('node_delete')).toBe('fileDelete');
+    expect(toolActivityKind('node_read')).toBe('read');
+    expect(toolActivityKind('node_search')).toBe('search');
+    expect(toolActivityKind('web_search')).toBe('web');
+    expect(toolActivityKind('web_fetch')).toBe('web');
+    expect(toolActivityKind('recall')).toBe('memory');
+    expect(toolActivityKind('dream')).toBe('memory');
+    expect(toolActivityKind('skill')).toBe('skill');
+    expect(toolActivityKind('Agent')).toBe('other');
   });
 });

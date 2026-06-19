@@ -4,6 +4,7 @@ import type { DocumentIndex } from '../../state/document';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentMarkdown } from './AgentMarkdown';
 import { AgentThinkingBody, AgentThinkingRow } from './AgentThinkingBlock';
+import { AgentToolActivityGroup } from './AgentToolActivityGroup';
 import { AgentToolCallBlock } from './AgentToolCallBlock';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
 
@@ -19,6 +20,45 @@ interface AgentProcessTimelineProps {
   conversationId?: string | null;
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   turnActive: boolean;
+}
+
+type ToolCallBlock = Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }>;
+
+export type TimelineRenderUnit =
+  | { kind: 'block'; block: AgentProcessSegmentBlock }
+  | { kind: 'toolActivity'; id: string; members: ToolCallBlock[] };
+
+export function groupTimelineUnits(
+  blocks: AgentProcessSegmentBlock[],
+  isChildRun: (block: ToolCallBlock) => boolean,
+): TimelineRenderUnit[] {
+  const units: TimelineRenderUnit[] = [];
+  let pendingRun: ToolCallBlock[] = [];
+
+  function flushRun() {
+    if (pendingRun.length >= 2) {
+      units.push({
+        kind: 'toolActivity',
+        id: `activity:${pendingRun[0]!.toolCall.id}`,
+        members: pendingRun,
+      });
+    } else if (pendingRun.length === 1) {
+      units.push({ kind: 'block', block: pendingRun[0]! });
+    }
+    pendingRun = [];
+  }
+
+  for (const block of blocks) {
+    if (block.kind === 'toolCall' && !isChildRun(block)) {
+      pendingRun.push(block);
+      continue;
+    }
+    flushRun();
+    units.push({ kind: 'block', block });
+  }
+  flushRun();
+
+  return units;
 }
 
 export function AgentProcessTimeline({
@@ -54,13 +94,58 @@ export function AgentProcessTimeline({
     ))
     : undefined;
   const fallbackActiveToolCallId = fallbackActiveToolCall?.toolCall.id ?? null;
+  const isChildRun = (block: ToolCallBlock) =>
+    Boolean(block.childRun ?? childRunsByParentToolCallId?.get(block.toolCall.id));
+  const renderUnits = groupTimelineUnits(blocks, isChildRun);
+
+  function renderToolCallBlock(block: ToolCallBlock) {
+    const childRun = block.childRun ?? childRunsByParentToolCallId?.get(block.toolCall.id);
+    return (
+      <AgentToolCallBlock
+        expanded={expandState.isExpanded(`tool:${block.toolCall.id}`, false)}
+        index={index}
+        key={`tool-${block.toolCall.id}`}
+        onToggle={(anchorElement) => {
+          const toolId = `tool:${block.toolCall.id}`;
+          expandState.toggle(toolId, expandState.isExpanded(toolId, false), anchorElement);
+        }}
+        onNodeReferenceOpen={onNodeReferenceOpen}
+        onOpenChildRunTranscript={onOpenChildRunTranscript}
+        pendingToolCallIds={pendingToolCallIds}
+        result={results.get(block.toolCall.id)}
+        conversationId={conversationId}
+        childRun={childRun}
+        toolCall={block.toolCall}
+        outcome={block.outcome}
+        turnActive={pendingToolCallIds.has(block.toolCall.id) || fallbackActiveToolCallId === block.toolCall.id}
+      />
+    );
+  }
 
   return (
     <div className="agent-process-timeline">
       {soloThinkingBlock ? (
         <AgentThinkingBody streaming={soloThinkingBlock.streaming} text={soloThinkingBlock.text} />
       ) : (
-        blocks.map((block) => {
+        renderUnits.map((unit) => {
+          if (unit.kind === 'toolActivity') {
+            return (
+              <AgentToolActivityGroup
+                conversationId={conversationId}
+                expandState={expandState}
+                fallbackActiveToolCallId={fallbackActiveToolCallId}
+                id={`${id}:${unit.id}`}
+                index={index}
+                key={unit.id}
+                members={unit.members}
+                onNodeReferenceOpen={onNodeReferenceOpen}
+                onOpenChildRunTranscript={onOpenChildRunTranscript}
+                pendingToolCallIds={pendingToolCallIds}
+                results={results}
+              />
+            );
+          }
+          const { block } = unit;
           if (block.kind === 'thinking') {
             return (
               <AgentThinkingRow
@@ -85,27 +170,7 @@ export function AgentProcessTimeline({
               </div>
             );
           }
-          const childRun = block.childRun ?? childRunsByParentToolCallId?.get(block.toolCall.id);
-          return (
-            <AgentToolCallBlock
-              expanded={expandState.isExpanded(`tool:${block.toolCall.id}`, false)}
-              index={index}
-              key={`tool-${block.toolCall.id}`}
-              onToggle={(anchorElement) => {
-                const toolId = `tool:${block.toolCall.id}`;
-                expandState.toggle(toolId, expandState.isExpanded(toolId, false), anchorElement);
-              }}
-              onNodeReferenceOpen={onNodeReferenceOpen}
-              onOpenChildRunTranscript={onOpenChildRunTranscript}
-              pendingToolCallIds={pendingToolCallIds}
-              result={results.get(block.toolCall.id)}
-              conversationId={conversationId}
-              childRun={childRun}
-              toolCall={block.toolCall}
-              outcome={block.outcome}
-              turnActive={pendingToolCallIds.has(block.toolCall.id) || fallbackActiveToolCallId === block.toolCall.id}
-            />
-          );
+          return renderToolCallBlock(block);
         })
       )}
     </div>
