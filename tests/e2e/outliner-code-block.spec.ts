@@ -169,14 +169,18 @@ test.describe('code block editor', () => {
       const editor = ta.closest<HTMLElement>('.code-block-editor');
       const highlight = editor?.querySelector<HTMLElement>('.code-block-highlight');
       if (!editor || !highlight) return null;
-      ta.scrollTop = 180;
+      ta.scrollTop = ta.scrollHeight;
       ta.dispatchEvent(new Event('scroll', { bubbles: true }));
       const editorStyle = getComputedStyle(editor);
       const textareaStyle = getComputedStyle(ta);
       const parsedMaxHeight = Number.parseFloat(editorStyle.maxHeight);
+      const highlightRect = highlight.getBoundingClientRect();
+      const textareaRect = ta.getBoundingClientRect();
       return {
         editorHeight: Math.round(editor.getBoundingClientRect().height),
         highlightSynced: Math.abs(highlight.scrollTop - ta.scrollTop) <= 1,
+        viewportBottomAligned: Math.abs(highlightRect.bottom - textareaRect.bottom) <= 1,
+        viewportHeightAligned: Math.abs(highlightRect.height - textareaRect.height) <= 1,
         maxHeight: Number.isFinite(parsedMaxHeight) ? Math.round(parsedMaxHeight) : 420,
         textareaScrolls: ta.scrollHeight > ta.clientHeight,
         textareaOverflowY: textareaStyle.overflowY,
@@ -186,6 +190,8 @@ test.describe('code block editor', () => {
     expect(metrics!.editorHeight).toBeLessThanOrEqual(metrics!.maxHeight + 1);
     expect(metrics!.editorHeight).toBeGreaterThan(240);
     expect(metrics!.highlightSynced).toBe(true);
+    expect(metrics!.viewportBottomAligned).toBe(true);
+    expect(metrics!.viewportHeightAligned).toBe(true);
     expect(metrics!.textareaScrolls).toBe(true);
     expect(metrics!.textareaOverflowY).toBe('auto');
   });

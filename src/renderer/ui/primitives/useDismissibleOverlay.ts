@@ -1,5 +1,7 @@
 import { useEffect, type RefObject } from 'react';
 
+const EMPTY_IGNORE_REFS: Array<RefObject<HTMLElement | null>> = [];
+
 interface DismissibleOverlayOptions {
   disabled?: boolean;
   ignoreRefs?: Array<RefObject<HTMLElement | null>>;
@@ -15,7 +17,7 @@ export function useDismissibleOverlay(
   options: DismissibleOverlayOptions = {},
 ) {
   const escape = options.escape ?? true;
-  const ignoreRefs = options.ignoreRefs ?? [];
+  const ignoreRefs = options.ignoreRefs ?? EMPTY_IGNORE_REFS;
   useEffect(() => {
     if (options.disabled) return undefined;
     const closeOnOutsidePointerDown = (event: PointerEvent) => {

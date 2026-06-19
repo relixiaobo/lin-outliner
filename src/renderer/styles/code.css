@@ -253,7 +253,7 @@
 
 .code-block-highlight {
   position: absolute;
-  inset: var(--code-block-content-inset);
+  inset: var(--code-block-content-inset) var(--code-block-content-inset) var(--code-block-scrollbar-edge-inset);
   overflow: hidden;
   pointer-events: none;
 }
