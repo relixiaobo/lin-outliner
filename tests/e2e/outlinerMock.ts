@@ -2053,7 +2053,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(null) as T;
         }
         if (cmd === 'agent_child_run_transcript') {
-          return clone(String(args.runId) === 'child-run-1' ? { messages: childRunTranscriptMessages } : null) as T;
+          return clone(String(args.runId) === 'child-run-1'
+            || (String(args.runId) === 'child-run-source-e2e' && String(args.conversationId) === generalChannelId)
+            ? { messages: childRunTranscriptMessages }
+            : null) as T;
         }
         if (cmd === 'agent_child_run_status') {
           return clone({
@@ -3142,6 +3145,12 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
     ...(state.tasks ?? {}),
   };
   const taskIds = state.taskIds ?? Object.keys(tasks);
+  const sourceSeqs = (entry: any, message: any) => {
+    const values = entry.sourceSeqs ?? message.sourceSeqs;
+    if (Array.isArray(values)) return values;
+    const value = entry.sourceSeq ?? message.sourceSeq;
+    return typeof value === 'number' ? [value] : undefined;
+  };
 
   for (const entry of state.conversation ?? []) {
     if (entry.kind === 'compaction') {
@@ -3184,6 +3193,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       createdAt: message.timestamp,
       updatedAt: message.timestamp,
       sourceSeq: entry.sourceSeq ?? message.sourceSeq,
+      sourceSeqs: sourceSeqs(entry, message),
       branches: entry.branches ?? null,
       actor,
       addressedTo: entry.addressedTo ?? message.addressedTo,
@@ -3214,6 +3224,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       createdAt: streamingMessage.timestamp,
       updatedAt: streamingMessage.timestamp,
       sourceSeq: streamingMessage.sourceSeq,
+      sourceSeqs: sourceSeqs(streamingMessage, streamingMessage),
       branches: null,
       actor: streamingMessage.actor ?? { type: 'agent', agentId: 'built-in:tenon:assistant' },
       addressedByMessageId: streamingMessage.addressedByMessageId ?? null,
@@ -3248,6 +3259,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       createdAt: message.timestamp,
       updatedAt: message.timestamp,
       sourceSeq: message.sourceSeq,
+      sourceSeqs: sourceSeqs(message, message),
       branches: null,
       actor: message.actor ?? { type: 'tool', toolName: message.toolName, toolCallId: message.toolCallId },
       toolCallId: message.toolCallId,

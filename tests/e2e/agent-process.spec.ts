@@ -1058,10 +1058,90 @@ test.describe('agent process disclosure', () => {
 
     await rowEditor(page, ids.alpha).locator('[data-inline-ref-kind="chat-source"]').click();
 
-    await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'open');
     const sourceRow = page.locator('[data-agent-message-id="source-message-e2e-tail"]');
-    await expect(sourceRow).toContainText('This is the cited transcript source.');
-    await expect(sourceRow).toHaveClass(/is-highlighted/);
+    const sourceShell = sourceRow.locator('xpath=ancestor::*[@data-agent-transcript-row]');
+    await expect(sourceShell).toContainText('This is the cited transcript source.');
+    await expect(sourceShell).toHaveClass(/is-highlighted/);
+    await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'open');
+  });
+
+  test('opens a tool-derived child run panel from a run chat-source inline reference', async ({ page }) => {
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
+      conversationTitle: 'General',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [],
+      conversation: [{
+        nodeId: 'assistant-with-child-run',
+        sourceSeq: 5,
+        message: {
+          role: 'assistant',
+          content: [{
+            type: 'toolCall',
+            id: 'tool-agent-source-e2e',
+            name: 'Agent',
+            arguments: {
+              description: 'Inspect jump source run',
+              prompt: 'Inspect jump source run.',
+            },
+          }],
+          timestamp: 1_800_000_001_500,
+          stopReason: 'toolUse',
+        },
+        branches: null,
+      }],
+      childRuns: [{
+        id: 'child-run-source-e2e',
+        description: 'Inspect jump source run',
+        prompt: 'Inspect jump source run.',
+        agentType: 'explorer',
+        contextMode: 'fork',
+        status: 'running',
+        startedAt: 1_800_000_001_600,
+        updatedAt: 1_800_000_001_700,
+        parentToolCallId: 'tool-agent-source-e2e',
+      }],
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    });
+
+    await expect(page.locator('.agent-child-run-boundary')).toHaveCount(0);
+    await page.getByTitle('Collapse agent').click();
+    await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'collapsed');
+
+    const content = {
+      text: 'Open ',
+      marks: [],
+      inlineRefs: [e2eChatSourceInlineRef(5, {
+        kind: 'chat-source',
+        stream: 'run',
+        streamId: 'child-run-source-e2e',
+        range: { fromSeqExclusive: 0, throughSeq: 1, throughEventId: 'run-event-1' },
+      }, 'run source')],
+    };
+    await page.evaluate(async ({ content, nodeId }) => {
+      const win = window as Window & {
+        lin?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+      };
+      await win.lin?.invoke('apply_node_text_patch', {
+        nodeId,
+        patch: { ops: [{ type: 'replace_all', content }] },
+      });
+    }, { content, nodeId: ids.alpha });
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+
+    await rowEditor(page, ids.alpha).locator('[data-inline-ref-kind="chat-source"]').click();
+
+    const childRunPanel = page.locator('.agent-child-run-details-panel');
+    await expect(childRunPanel).toContainText('Inspect jump source run');
+    await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'open');
   });
 
   test('copies full persisted tool output from payload refs', async ({ page }) => {

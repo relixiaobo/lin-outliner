@@ -92,6 +92,11 @@ interface AgentChatPanelProps {
   onOpenDebugPanel?: (conversationId: string | null) => void;
 }
 
+interface PendingTranscriptReveal {
+  conversationId: string;
+  target: AgentChatSourceRevealTarget;
+}
+
 function shouldStickToBottom(element: HTMLDivElement): boolean {
   return element.scrollHeight - element.scrollTop - element.clientHeight <= 56;
 }
@@ -478,6 +483,7 @@ export function AgentChatPanel({
     pendingToolCallIds,
     regenerateMessage,
     reloadConversation,
+    revision,
     pendingApproval,
     pendingUserQuestion,
     retryMessage,
@@ -511,7 +517,7 @@ export function AgentChatPanel({
   const [rowActionMenu, setRowActionMenu] = useState<string | null>(null);
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
   const [selectedChildRunId, setSelectedChildRunId] = useState<string | null>(null);
-  const [pendingTranscriptTarget, setPendingTranscriptTarget] = useState<AgentChatSourceRevealTarget | null>(null);
+  const [pendingTranscriptReveal, setPendingTranscriptReveal] = useState<PendingTranscriptReveal | null>(null);
   const [highlightedTranscriptRowKey, setHighlightedTranscriptRowKey] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
@@ -804,13 +810,7 @@ export function AgentChatPanel({
     scheduleScrollToBottom();
   }, [conversationRows.length, runActive, scheduleScrollToBottom, virtualLayout.totalHeight]);
 
-  useLayoutEffect(() => {
-    if (!pendingTranscriptTarget) return;
-    if (pendingTranscriptTarget.stream === 'conversation' && conversationId !== pendingTranscriptTarget.streamId) return;
-    const rowIndex = conversationRows.findIndex((row) => conversationRowMatchesChatSource(row, pendingTranscriptTarget));
-    if (rowIndex < 0) return;
-
-    const row = conversationRows[rowIndex]!;
+  const revealTranscriptRow = useCallback((rowIndex: number, rowKey: string) => {
     stickToBottomRef.current = false;
     const element = scrollRef.current;
     if (element) {
@@ -819,25 +819,52 @@ export function AgentChatPanel({
         element.scrollTop = Math.max(0, item.top - Math.max(0, (element.clientHeight - item.height) / 2));
         updateScrollMetrics(element);
       } else {
-        element.querySelector<HTMLElement>(transcriptRowSelector(row.key))?.scrollIntoView({ block: 'center' });
+        element.querySelector<HTMLElement>(transcriptRowSelector(rowKey))?.scrollIntoView({ block: 'center' });
       }
     }
 
-    if (pendingTranscriptTarget.stream === 'run') setSelectedChildRunId(pendingTranscriptTarget.streamId);
-    setHighlightedTranscriptRowKey(row.key);
+    setHighlightedTranscriptRowKey(rowKey);
     if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current);
     highlightTimerRef.current = window.setTimeout(() => {
       highlightTimerRef.current = null;
-      setHighlightedTranscriptRowKey((current) => current === row.key ? null : current);
+      setHighlightedTranscriptRowKey((current) => current === rowKey ? null : current);
     }, TRANSCRIPT_JUMP_HIGHLIGHT_MS);
-    setPendingTranscriptTarget(null);
+  }, [shouldVirtualizeTranscript, updateScrollMetrics, virtualLayout.items]);
+
+  useLayoutEffect(() => {
+    if (!pendingTranscriptReveal || conversationId !== pendingTranscriptReveal.conversationId) return;
+    const target = pendingTranscriptReveal.target;
+    const rowIndex = conversationRows.findIndex((row) => conversationRowMatchesChatSource(row, target));
+    const blankProjection = revision === `${conversationId}-0-0-0-`;
+
+    if (target.stream === 'run') {
+      if (childRuns[target.streamId]) {
+        setTaskPanelOpen(false);
+        setSelectedChildRunId(target.streamId);
+        if (rowIndex >= 0) revealTranscriptRow(rowIndex, conversationRows[rowIndex]!.key);
+        setPendingTranscriptReveal(null);
+        return;
+      }
+      if (!blankProjection) setPendingTranscriptReveal(null);
+      return;
+    }
+
+    if (rowIndex >= 0) {
+      setTaskPanelOpen(false);
+      setSelectedChildRunId(null);
+      revealTranscriptRow(rowIndex, conversationRows[rowIndex]!.key);
+      setPendingTranscriptReveal(null);
+      return;
+    }
+
+    if (!blankProjection) setPendingTranscriptReveal(null);
   }, [
+    childRuns,
     conversationId,
     conversationRows,
-    pendingTranscriptTarget,
-    shouldVirtualizeTranscript,
-    updateScrollMetrics,
-    virtualLayout.items,
+    pendingTranscriptReveal,
+    revealTranscriptRow,
+    revision,
   ]);
 
   useEffect(() => {
@@ -892,11 +919,12 @@ export function AgentChatPanel({
   // A command Run reveals its delivery conversation and asks for the task panel —
   // the run is a parentless child run, so it surfaces there (the open task panel
   // persists across the conversation switch this same reveal triggers).
-  useEffect(() => onAgentRevealRequest((_conversationId, options) => {
+  useEffect(() => onAgentRevealRequest((targetConversationId, options) => {
     if (options.transcriptTarget) {
-      setPendingTranscriptTarget(options.transcriptTarget);
-      setTaskPanelOpen(false);
-      if (options.transcriptTarget.stream === 'conversation') setSelectedChildRunId(null);
+      setPendingTranscriptReveal({
+        conversationId: targetConversationId,
+        target: options.transcriptTarget,
+      });
     }
     if (!options.openTasks) return;
     setSelectedChildRunId(null);
@@ -1083,7 +1111,6 @@ export function AgentChatPanel({
         busy={anyRunActive}
         contentKey={row.contentKey}
         entry={row.entry}
-        highlighted={highlightedTranscriptRowKey === row.key}
         index={index}
         isLastInTurn={row.isLastInTurn}
         onCopy={copyAssistantTurn}

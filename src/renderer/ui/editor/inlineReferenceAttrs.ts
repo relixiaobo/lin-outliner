@@ -57,6 +57,10 @@ export function targetFromInlineReferenceAttrs(attrs: Record<string, unknown>): 
   return null;
 }
 
+function numberFromDatasetValue(value: string | undefined): number {
+  return value && value.trim() ? Number(value) : Number.NaN;
+}
+
 export function targetFromInlineReferenceElement(element: HTMLElement): ReferenceTarget | null {
   return targetFromInlineReferenceAttrs({
     targetKind: element.dataset.inlineRefKind ?? 'node',
@@ -65,8 +69,8 @@ export function targetFromInlineReferenceElement(element: HTMLElement): Referenc
     entryKind: element.dataset.inlineRefEntryKind ?? 'file',
     chatStream: element.dataset.inlineRefChatStream ?? '',
     chatStreamId: element.dataset.inlineRefChatStreamId ?? '',
-    chatFromSeqExclusive: Number(element.dataset.inlineRefChatFromSeqExclusive ?? Number.NaN),
-    chatThroughSeq: Number(element.dataset.inlineRefChatThroughSeq ?? Number.NaN),
+    chatFromSeqExclusive: numberFromDatasetValue(element.dataset.inlineRefChatFromSeqExclusive),
+    chatThroughSeq: numberFromDatasetValue(element.dataset.inlineRefChatThroughSeq),
     chatThroughEventId: element.dataset.inlineRefChatThroughEventId ?? '',
   });
 }

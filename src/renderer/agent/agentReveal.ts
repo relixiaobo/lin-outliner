@@ -47,7 +47,7 @@ export async function requestRevealChatSource(target: AgentChatSourceRevealTarge
 
   const conversations = await api.agentListConversations();
   for (const conversation of conversations) {
-    const transcript = await api.agentChildRunTranscript(conversation.id, target.streamId).catch(() => null);
+    const transcript = await api.agentChildRunTranscript(conversation.id, target.streamId);
     if (!transcript) continue;
     await requestRevealAgentConversation(conversation.id, { transcriptTarget: target });
     return;

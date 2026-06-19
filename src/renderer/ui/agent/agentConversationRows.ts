@@ -141,7 +141,7 @@ export function buildConversationRenderRows(
         entry: mergedEntry,
         endIndex,
         key: stableKey,
-        sourceSeqs: assistantEntries.flatMap((entry) => typeof entry.sourceSeq === 'number' ? [entry.sourceSeq] : []),
+        sourceSeqs: assistantEntries.flatMap((entry) => entry.sourceSeqs ?? (typeof entry.sourceSeq === 'number' ? [entry.sourceSeq] : [])),
         turnPhase,
         totalEntryCount: entries.length,
         nextEntry: entries[endIndex + 1],
@@ -155,7 +155,9 @@ export function buildConversationRenderRows(
       key: isBoundaryEntry(entry)
         ? entry.id
         : (entry as AgentMessageEntry).nodeId ?? `${entry.kind}-${getEntryTimestamp(entry)}-${index}`,
-      sourceSeqs: entry.kind === 'message' && typeof entry.sourceSeq === 'number' ? [entry.sourceSeq] : [],
+      sourceSeqs: entry.kind === 'message'
+        ? entry.sourceSeqs ?? (typeof entry.sourceSeq === 'number' ? [entry.sourceSeq] : [])
+        : [],
       turnPhase,
       totalEntryCount: entries.length,
       nextEntry: entries[index + 1],

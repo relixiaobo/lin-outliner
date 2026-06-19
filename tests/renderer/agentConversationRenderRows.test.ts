@@ -36,6 +36,8 @@ function assistantEntry(opts: {
   timestamp?: number;
   runId?: string | null;
   runDurationMs?: number | null;
+  sourceSeq?: number;
+  sourceSeqs?: number[];
 }): AgentMessageEntry {
   return {
     id: opts.id,
@@ -46,6 +48,8 @@ function assistantEntry(opts: {
     streaming: false,
     actor: opts.agentId ? { type: 'agent', agentId: opts.agentId } : null,
     runId: opts.runId !== undefined ? opts.runId : (opts.agentId ? `run-${opts.agentId}` : null),
+    sourceSeq: opts.sourceSeq,
+    sourceSeqs: opts.sourceSeqs,
     runDurationMs: opts.runDurationMs ?? null,
   };
 }
@@ -172,6 +176,21 @@ describe('buildConversationRenderRows — merged turn duration', () => {
       'idle',
     );
     expect(mergedAssistantRunDurationMs(rows)).toBe(null);
+  });
+});
+
+describe('buildConversationRenderRows — source evidence', () => {
+  test('merged assistant rows keep source seqs from every merged entry', () => {
+    const rows = buildConversationRenderRows(
+      [
+        assistantEntry({ id: 'a1', agentId: 'alpha', sourceSeqs: [5, 7] }),
+        assistantEntry({ id: 'a2', agentId: 'alpha', sourceSeq: 9 }),
+      ],
+      'idle',
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.sourceSeqs).toEqual([5, 7, 9]);
   });
 });
 
