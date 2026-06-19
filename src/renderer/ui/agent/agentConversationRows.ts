@@ -14,6 +14,7 @@ export interface AgentConversationRenderRow {
   entry: AgentConversationEntry;
   endIndex: number;
   isLastInTurn: boolean;
+  sourceSeqs: number[];
   streaming: boolean;
   /** Authoritative interrupted verdict for this assistant turn (from the run's real status). */
   turnInterrupted: boolean;
@@ -140,6 +141,7 @@ export function buildConversationRenderRows(
         entry: mergedEntry,
         endIndex,
         key: stableKey,
+        sourceSeqs: assistantEntries.flatMap((entry) => entry.sourceSeqs ?? (typeof entry.sourceSeq === 'number' ? [entry.sourceSeq] : [])),
         turnPhase,
         totalEntryCount: entries.length,
         nextEntry: entries[endIndex + 1],
@@ -153,6 +155,9 @@ export function buildConversationRenderRows(
       key: isBoundaryEntry(entry)
         ? entry.id
         : (entry as AgentMessageEntry).nodeId ?? `${entry.kind}-${getEntryTimestamp(entry)}-${index}`,
+      sourceSeqs: entry.kind === 'message'
+        ? entry.sourceSeqs ?? (typeof entry.sourceSeq === 'number' ? [entry.sourceSeq] : [])
+        : [],
       turnPhase,
       totalEntryCount: entries.length,
       nextEntry: entries[index + 1],
@@ -169,6 +174,7 @@ function buildConversationRenderRow({
   endIndex,
   key,
   nextEntry,
+  sourceSeqs,
   totalEntryCount,
   turnPhase,
 }: {
@@ -177,6 +183,7 @@ function buildConversationRenderRow({
   endIndex: number;
   key: string;
   nextEntry: AgentConversationEntry | undefined;
+  sourceSeqs: number[];
   totalEntryCount: number;
   turnPhase: AgentTurnPhase;
 }): AgentConversationRenderRow {
@@ -196,6 +203,7 @@ function buildConversationRenderRow({
     entry,
     endIndex,
     isLastInTurn: endIndex === totalEntryCount - 1 || !nextIsSameTurn,
+    sourceSeqs,
     streaming: isLastAssistantEntry && turnPhase === 'streaming_text',
     turnInterrupted: entry.kind === 'message' ? entry.turnInterrupted : false,
     turnPhase: isLastAssistantEntry ? turnPhase : 'idle',

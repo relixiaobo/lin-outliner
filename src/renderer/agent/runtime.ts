@@ -50,6 +50,10 @@ export interface AgentMessageEntry {
   actor: AgentActor | null;
   /** Run that produced this message, when known. */
   runId: string | null;
+  /** First event seq that represents this message as source evidence. */
+  sourceSeq?: number;
+  /** Every event seq that represents this message as source evidence. */
+  sourceSeqs?: number[];
   /** Wall-clock the producing run took, for the collapsed "Worked for …" header; null when unknown. */
   runDurationMs: number | null;
   /**
@@ -264,6 +268,8 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       streaming,
       actor: entity.actor,
       runId: entity.runId ?? null,
+      sourceSeq: entity.sourceSeq,
+      sourceSeqs: entity.sourceSeqs?.slice(),
       runDurationMs: entity.runDurationMs ?? null,
       turnInterrupted: entity.turnInterrupted ?? false,
     });

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { DOMOutputSpec } from 'prosemirror-model';
 import { pmSchema } from '../../src/renderer/ui/editor/pmSchema';
 import { inlineFileIconKind } from '../../src/renderer/ui/editor/inlineFileIcon';
+import { targetFromInlineReferenceElement } from '../../src/renderer/ui/editor/inlineReferenceAttrs';
 
 describe('inlineFileIconKind', () => {
   test('maps entry kind, mime type, and extension to the shared icon taxonomy', () => {
@@ -49,5 +50,21 @@ describe('outliner inlineReference toDOM', () => {
     // ['span', attrs, label] — no icon child
     expect(spec).toHaveLength(3);
     expect(spec[2]).toBe('Alpha');
+  });
+});
+
+describe('targetFromInlineReferenceElement', () => {
+  test('rejects empty chat source seq dataset values instead of widening them to zero', () => {
+    const element = {
+      dataset: {
+        inlineRefKind: 'chat-source',
+        inlineRefChatStream: 'conversation',
+        inlineRefChatStreamId: 'conversation-1',
+        inlineRefChatFromSeqExclusive: '',
+        inlineRefChatThroughSeq: '5',
+      },
+    } as unknown as HTMLElement;
+
+    expect(targetFromInlineReferenceElement(element)).toBeNull();
   });
 });

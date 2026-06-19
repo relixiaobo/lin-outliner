@@ -12,6 +12,7 @@ import {
 import { api } from '../api/client';
 import type { NodeId, RichText, RichTextPatch } from '../api/types';
 import { EMPTY_RICH_TEXT, nodeReferenceTarget, plainText } from '../api/types';
+import { requestRevealChatSource } from '../agent/agentReveal';
 import { TAG_DAY_ID } from '../../core/types';
 import { flattenVisibleRows, resolveReferenceTargetId, type DocumentIndex, type UiState } from '../state/document';
 import { RichTextEditor, type EditorSplitPayload } from './editor/RichTextEditor';
@@ -676,10 +677,16 @@ export function NodePanel(props: NodePanelProps) {
                   }}
                   onModEnter={(content) => void handleTitleModEnter(content)}
                   resolveInlineReferenceColor={(targetId) => inlineReferenceTextColor(targetId, props.index)}
-                  onInlineReferenceClick={(targetId, options) => props.onRoot(targetId, {
-                    focus: false,
-                    newPane: options?.newPane,
-                  })}
+                  onInlineReferenceClick={(target, options) => {
+                    if (target.kind === 'node') {
+                      props.onRoot(target.nodeId, {
+                        focus: false,
+                        newPane: options?.newPane,
+                      });
+                      return;
+                    }
+                    if (target.kind === 'chat-source') void requestRevealChatSource(target);
+                  }}
                   onEscape={() => {
                     replaceLocalTitleContent(rootNode?.content ?? EMPTY_RICH_TEXT);
                     setTitleTrigger(null);

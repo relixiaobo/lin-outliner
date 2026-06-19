@@ -1119,6 +1119,10 @@ export interface AgentEventMessageRecord {
   content: AgentPersistedContent[];
   createdAt: number;
   updatedAt: number;
+  /** First event seq that represents this message as source evidence. */
+  sourceSeq?: number;
+  /** Every event seq that represents this message as source evidence. */
+  sourceSeqs?: number[];
   status: AgentMessageStatus;
   runId?: string;
   providerId?: string;
@@ -1523,6 +1527,8 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         content: cloneContent(event.content),
         createdAt: event.createdAt,
         updatedAt: event.createdAt,
+        sourceSeq: event.seq,
+        sourceSeqs: [event.seq],
         status: 'completed',
         attachments: event.attachments?.slice(),
       });
@@ -1533,6 +1539,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       if (message.role !== 'user') throw new Error(`Cannot edit non-user agent message: ${event.messageId}`);
       message.content = cloneContent(event.content);
       message.updatedAt = event.createdAt;
+      recordMessageSourceSeq(message, event.seq);
       return;
     }
     case 'assistant_message.started':
@@ -1567,6 +1574,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       message.stopReason = event.stopReason;
       message.usage = event.usage;
       message.updatedAt = event.createdAt;
+      recordMessageSourceSeq(message, event.seq);
       return;
     }
     case 'assistant_message.failed': {
@@ -1575,6 +1583,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       message.status = 'failed';
       message.errorMessage = event.errorMessage;
       message.updatedAt = event.createdAt;
+      recordMessageSourceSeq(message, event.seq);
       return;
     }
     case 'tool_result.created':
@@ -1586,6 +1595,8 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         content: cloneContent(event.content),
         createdAt: event.createdAt,
         updatedAt: event.createdAt,
+        sourceSeq: event.seq,
+        sourceSeqs: [event.seq],
         status: 'completed',
         runId: event.runId ?? parentRunId(state, event.parentMessageId),
         toolCallId: event.toolCallId,
@@ -1603,6 +1614,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       }
       message.content = cloneContent(event.content);
       message.updatedAt = event.createdAt;
+      recordMessageSourceSeq(message, event.seq);
       message.outputSummary = event.outputSummary;
       message.runId = event.runId ?? message.runId;
       return;
@@ -1889,6 +1901,13 @@ function requireMessage(state: AgentEventReplayState, messageId: string): AgentE
   const message = state.messages[messageId];
   if (!message) throw new Error(`Missing agent message: ${messageId}`);
   return message;
+}
+
+function recordMessageSourceSeq(message: AgentEventMessageRecord, seq: number) {
+  const sourceSeqs = message.sourceSeqs ?? (message.sourceSeq !== undefined ? [message.sourceSeq] : []);
+  if (sourceSeqs.includes(seq)) return;
+  message.sourceSeqs = [...sourceSeqs, seq];
+  message.sourceSeq = message.sourceSeqs[0];
 }
 
 function parentRunId(state: AgentEventReplayState, parentMessageId: string | null): string | undefined {

@@ -32,7 +32,7 @@ import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import { builtInDefinitionToAuthoringInput } from './agentProfileInput';
 import { linAgentRuntimeStore, useLinAgentRuntime } from '../../agent/runtime';
-import { onAgentRevealRequest } from '../../agent/agentReveal';
+import { onAgentRevealRequest, type AgentChatSourceRevealTarget } from '../../agent/agentReveal';
 import type {
   AgentConversationEntry,
   AgentMessageEntry,
@@ -80,6 +80,7 @@ const TRANSCRIPT_ROW_GAP_PX = 14;
 const TRANSCRIPT_ROW_ESTIMATE_PX = 104;
 const TRANSCRIPT_VIRTUAL_MIN_ROWS = 40;
 const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
+const TRANSCRIPT_JUMP_HIGHLIGHT_MS = 2_200;
 const MESSAGE_TIME_SEPARATOR_GAP_MS = 60 * 60 * 1000;
 
 interface AgentChatPanelProps {
@@ -89,6 +90,11 @@ interface AgentChatPanelProps {
   userViewContext: AgentUserViewContext;
   onOpenNodeReference: AgentNodeReferenceOpenHandler;
   onOpenDebugPanel?: (conversationId: string | null) => void;
+}
+
+interface PendingTranscriptReveal {
+  conversationId: string;
+  target: AgentChatSourceRevealTarget;
 }
 
 function shouldStickToBottom(element: HTMLDivElement): boolean {
@@ -316,6 +322,22 @@ function visibleTranscriptRange(
   return { start, end: Math.max(end, start + 1) };
 }
 
+function seqInChatSourceRange(seq: number | undefined, target: AgentChatSourceRevealTarget): boolean {
+  return typeof seq === 'number'
+    && Number.isSafeInteger(seq)
+    && seq > target.range.fromSeqExclusive
+    && seq <= target.range.throughSeq;
+}
+
+function conversationRowMatchesChatSource(row: AgentConversationRenderRow, target: AgentChatSourceRevealTarget): boolean {
+  if (target.stream === 'run') return row.entry.kind === 'child-run' && row.entry.childRun.id === target.streamId;
+  return row.entry.kind === 'message' && row.sourceSeqs.some((seq) => seqInChatSourceRange(seq, target));
+}
+
+function transcriptRowSelector(rowKey: string): string {
+  return `[data-agent-transcript-row="${CSS.escape(rowKey)}"]`;
+}
+
 type PayloadTextPromiseCache = Map<string, Promise<string | null>>;
 
 function payloadCopyCacheKey(conversationId: string, payloadId: string): string {
@@ -400,12 +422,14 @@ async function buildAssistantTurnCopyText(
 
 function AgentTranscriptRowShell({
   children,
+  highlighted,
   onMeasure,
   rowKey,
   style,
   virtualized,
 }: {
   children: ReactNode;
+  highlighted?: boolean;
   onMeasure: (rowKey: string, height: number) => void;
   rowKey: string;
   style?: CSSProperties;
@@ -428,7 +452,7 @@ function AgentTranscriptRowShell({
 
   return (
     <div
-      className={virtualized ? 'agent-chat-virtual-row' : 'agent-chat-flow-row'}
+      className={`${virtualized ? 'agent-chat-virtual-row' : 'agent-chat-flow-row'}${highlighted ? ' is-highlighted' : ''}`}
       data-agent-transcript-row={rowKey}
       ref={rowRef}
       style={style}
@@ -459,6 +483,7 @@ export function AgentChatPanel({
     pendingToolCallIds,
     regenerateMessage,
     reloadConversation,
+    revision,
     pendingApproval,
     pendingUserQuestion,
     retryMessage,
@@ -492,6 +517,8 @@ export function AgentChatPanel({
   const [rowActionMenu, setRowActionMenu] = useState<string | null>(null);
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
   const [selectedChildRunId, setSelectedChildRunId] = useState<string | null>(null);
+  const [pendingTranscriptReveal, setPendingTranscriptReveal] = useState<PendingTranscriptReveal | null>(null);
+  const [highlightedTranscriptRowKey, setHighlightedTranscriptRowKey] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLElement>(null);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
@@ -504,6 +531,7 @@ export function AgentChatPanel({
   const agentDefinitionsRequestRef = useRef(0);
   const scrollFrameRef = useRef<number | null>(null);
   const bottomScrollFrameRef = useRef<number | null>(null);
+  const highlightTimerRef = useRef<number | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
   const copyPayloadTextCacheRef = useRef<PayloadTextPromiseCache>(new Map());
   const copyAssistantTurnSourceRef = useRef({ entries, toolResults, conversationId });
@@ -782,6 +810,63 @@ export function AgentChatPanel({
     scheduleScrollToBottom();
   }, [conversationRows.length, runActive, scheduleScrollToBottom, virtualLayout.totalHeight]);
 
+  const revealTranscriptRow = useCallback((rowIndex: number, rowKey: string) => {
+    stickToBottomRef.current = false;
+    const element = scrollRef.current;
+    if (element) {
+      const item = virtualLayout.items[rowIndex];
+      if (shouldVirtualizeTranscript && item) {
+        element.scrollTop = Math.max(0, item.top - Math.max(0, (element.clientHeight - item.height) / 2));
+        updateScrollMetrics(element);
+      } else {
+        element.querySelector<HTMLElement>(transcriptRowSelector(rowKey))?.scrollIntoView({ block: 'center' });
+      }
+    }
+
+    setHighlightedTranscriptRowKey(rowKey);
+    if (highlightTimerRef.current !== null) window.clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = window.setTimeout(() => {
+      highlightTimerRef.current = null;
+      setHighlightedTranscriptRowKey((current) => current === rowKey ? null : current);
+    }, TRANSCRIPT_JUMP_HIGHLIGHT_MS);
+  }, [shouldVirtualizeTranscript, updateScrollMetrics, virtualLayout.items]);
+
+  useLayoutEffect(() => {
+    if (!pendingTranscriptReveal || conversationId !== pendingTranscriptReveal.conversationId) return;
+    const target = pendingTranscriptReveal.target;
+    const rowIndex = conversationRows.findIndex((row) => conversationRowMatchesChatSource(row, target));
+    const blankProjection = revision === `${conversationId}-0-0-0-`;
+
+    if (target.stream === 'run') {
+      if (childRuns[target.streamId]) {
+        setTaskPanelOpen(false);
+        setSelectedChildRunId(target.streamId);
+        if (rowIndex >= 0) revealTranscriptRow(rowIndex, conversationRows[rowIndex]!.key);
+        setPendingTranscriptReveal(null);
+        return;
+      }
+      if (!blankProjection) setPendingTranscriptReveal(null);
+      return;
+    }
+
+    if (rowIndex >= 0) {
+      setTaskPanelOpen(false);
+      setSelectedChildRunId(null);
+      revealTranscriptRow(rowIndex, conversationRows[rowIndex]!.key);
+      setPendingTranscriptReveal(null);
+      return;
+    }
+
+    if (!blankProjection) setPendingTranscriptReveal(null);
+  }, [
+    childRuns,
+    conversationId,
+    conversationRows,
+    pendingTranscriptReveal,
+    revealTranscriptRow,
+    revision,
+  ]);
+
   useEffect(() => {
     rowHeightsRef.current.clear();
     copyPayloadTextCacheRef.current.clear();
@@ -797,6 +882,10 @@ export function AgentChatPanel({
     if (bottomScrollFrameRef.current !== null) {
       window.cancelAnimationFrame(bottomScrollFrameRef.current);
       bottomScrollFrameRef.current = null;
+    }
+    if (highlightTimerRef.current !== null) {
+      window.clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = null;
     }
   }, []);
 
@@ -830,7 +919,13 @@ export function AgentChatPanel({
   // A command Run reveals its delivery conversation and asks for the task panel —
   // the run is a parentless child run, so it surfaces there (the open task panel
   // persists across the conversation switch this same reveal triggers).
-  useEffect(() => onAgentRevealRequest((_conversationId, options) => {
+  useEffect(() => onAgentRevealRequest((targetConversationId, options) => {
+    if (options.transcriptTarget) {
+      setPendingTranscriptReveal({
+        conversationId: targetConversationId,
+        target: options.transcriptTarget,
+      });
+    }
     if (!options.openTasks) return;
     setSelectedChildRunId(null);
     setTaskPanelOpen(true);
@@ -1273,6 +1368,7 @@ export function AgentChatPanel({
                 : false;
               return (
                 <AgentTranscriptRowShell
+                  highlighted={highlightedTranscriptRowKey === row.key}
                   key={row.key}
                   onMeasure={measureConversationRow}
                   rowKey={row.key}

@@ -66,6 +66,8 @@ export interface AgentRenderMessageEntity {
   content: AgentPersistedContent[];
   createdAt: number;
   updatedAt: number;
+  sourceSeq?: number;
+  sourceSeqs?: number[];
   branches: AgentRenderBranchState | null;
   actor: AgentActor;
   apiId?: string;
@@ -640,6 +642,8 @@ function toRenderMessageEntity(
     content: cloneContent(message.content),
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,
+    sourceSeq: message.sourceSeq,
+    sourceSeqs: message.sourceSeqs?.slice(),
     branches: getAgentEventMessageBranches(state, message.id),
     actor: message.actor,
     apiId: message.apiId,

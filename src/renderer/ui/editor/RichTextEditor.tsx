@@ -3,7 +3,7 @@ import { toggleMark } from 'prosemirror-commands';
 import type { Node as PMNode } from 'prosemirror-model';
 import { EditorState, NodeSelection, TextSelection } from 'prosemirror-state';
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view';
-import { replaceAllRichTextPatch, type CreateNodeTree, type PasteRowMeta, type RichText, type RichTextPatch } from '../../api/types';
+import { replaceAllRichTextPatch, type CreateNodeTree, type PasteRowMeta, type ReferenceTarget, type RichText, type RichTextPatch } from '../../api/types';
 import type { FocusRequest, FocusTarget, PendingInputChar } from '../../state/document';
 import type { EditorTrigger, NavigateRootOptions } from '../shared';
 import { wantsNewPaneFromClick } from '../shared';
@@ -33,6 +33,7 @@ import { richTextPatchFromTransaction } from './editorTextPatch';
 import { createInlineMarkShortcutTransaction } from './inlineMarkShortcuts';
 import { moveInlineCodeCaretAcrossBoundary, setDomSelectionAtDocSide } from './inlineCodeBoundaryNavigation';
 import { pmSchema } from './pmSchema';
+import { targetFromInlineReferenceElement } from './inlineReferenceAttrs';
 import {
   applyCursorPlacement,
   selectionForPlacement,
@@ -122,7 +123,7 @@ interface RichTextEditorProps {
    * as plain text instead.
    */
   linkifyPastedUrl?: boolean;
-  onInlineReferenceClick?: (targetNodeId: string, options?: NavigateRootOptions) => void;
+  onInlineReferenceClick?: (target: ReferenceTarget, options?: NavigateRootOptions) => void;
   resolveInlineReferenceColor?: (targetNodeId: string) => string | undefined;
   focusTarget?: FocusTarget;
   focusRequest?: FocusRequest | null;
@@ -528,14 +529,14 @@ export function RichTextEditor(props: RichTextEditorProps) {
         },
         click(_viewInstance, event) {
           if (event.shiftKey) return false;
-          const target = event.target instanceof HTMLElement
-            ? event.target.closest<HTMLElement>('[data-inline-ref]')
+          const targetElement = event.target instanceof HTMLElement
+            ? event.target.closest<HTMLElement>('[data-inline-ref-kind]')
             : null;
-          const targetNodeId = target?.dataset.inlineRef;
-          if (!targetNodeId || !propsRef.current.onInlineReferenceClick) return false;
+          const target = targetElement ? targetFromInlineReferenceElement(targetElement) : null;
+          if (!target || target.kind === 'local-file' || !propsRef.current.onInlineReferenceClick) return false;
           event.preventDefault();
           event.stopPropagation();
-          propsRef.current.onInlineReferenceClick(targetNodeId, {
+          propsRef.current.onInlineReferenceClick(target, {
             newPane: wantsNewPaneFromClick(event),
           });
           return true;

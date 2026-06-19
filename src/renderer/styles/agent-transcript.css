@@ -33,6 +33,8 @@
 
 .agent-chat-flow-row {
   min-width: 0;
+  border-radius: var(--radius-md);
+  transition: background var(--motion-fast);
 }
 
 .agent-chat-virtual-row {
@@ -40,7 +42,14 @@
   right: 0;
   left: 0;
   min-width: 0;
+  border-radius: var(--radius-md);
+  transition: background var(--motion-fast);
   will-change: transform;
+}
+
+.agent-chat-flow-row.is-highlighted,
+.agent-chat-virtual-row.is-highlighted {
+  background: var(--fill-1);
 }
 
 .agent-empty-state {

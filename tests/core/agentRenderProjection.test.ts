@@ -59,6 +59,10 @@ describe('agent render projection', () => {
       { id: 'assistant:assistant-1', kind: 'message', messageId: 'assistant-1' },
     ]);
     expect(projection.transcriptRows).toEqual(projection.rows);
+    expect(projection.entities.messages['user-1']?.sourceSeq).toBe(2);
+    expect(projection.entities.messages['user-1']?.sourceSeqs).toEqual([2]);
+    expect(projection.entities.messages['assistant-1']?.sourceSeq).toBeUndefined();
+    expect(projection.entities.messages['assistant-1']?.sourceSeqs).toBeUndefined();
     expect(projection.entities.messages['assistant-1']?.status).toBe('streaming');
     expect(projection.streaming).toMatchObject({
       messageId: 'assistant-1',
@@ -99,7 +103,31 @@ describe('agent render projection', () => {
     const run = state.runs['run-1'];
     expect(run).toBeDefined();
     expect(run!.updatedAt - run!.startedAt).toBeGreaterThan(0);
+    expect(projection.entities.messages['assistant-1']?.sourceSeq).toBe(5);
+    expect(projection.entities.messages['assistant-1']?.sourceSeqs).toEqual([5]);
     expect(projection.entities.messages['assistant-1']?.runDurationMs).toBe(run!.updatedAt - run!.startedAt);
+  });
+
+  test('keeps every user message evidence seq so old chat-source refs survive edits', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Edited source' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-1',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Original question' }],
+      },
+      {
+        ...base(3, 'user_message.edited', userActor),
+        messageId: 'user-1',
+        content: [{ type: 'text', text: 'Edited question' }],
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+
+    expect(projection.entities.messages['user-1']?.sourceSeq).toBe(2);
+    expect(projection.entities.messages['user-1']?.sourceSeqs).toEqual([2, 3]);
   });
 
   test('leaves runDurationMs undefined while the producing run is still running', () => {
