@@ -27,6 +27,11 @@ import { ViewToolbar } from './ViewToolbar';
 import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 import { OutlinerEmptyState } from './OutlinerEmptyState';
 import { IndentGuide } from './IndentGuide';
+import {
+  captureDisclosureScrollAnchor,
+  nearestScrollContainer,
+  usePendingDisclosureAnchor,
+} from '../interactions/disclosureScrollAnchor';
 
 // The flat renderer is the default outliner path. The old recursive renderer is
 // retained as a reload-scoped diagnostic fallback while parity work settles.
@@ -339,15 +344,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   const scrollerRef = useRef<HTMLElement | null>(null);
   const resolveScroller = useCallback((): HTMLElement | null => {
     if (scrollerRef.current) return scrollerRef.current;
-    let el: HTMLElement | null = listRef.current?.parentElement ?? null;
-    while (el) {
-      const style = getComputedStyle(el);
-      if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
-        break;
-      }
-      el = el.parentElement;
-    }
-    scrollerRef.current = el ?? props.scrollParentRef.current;
+    scrollerRef.current = nearestScrollContainer(listRef.current, props.scrollParentRef.current);
     return scrollerRef.current;
   }, [props.scrollParentRef]);
 
@@ -366,6 +363,26 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
         : next
     ));
   }, [resolveScroller]);
+
+  const { capturePendingAnchor, restorePendingAnchor } = usePendingDisclosureAnchor(updateScrollMetrics);
+
+  const captureDisclosureAnchor = useCallback((anchorElement: HTMLElement | null) => {
+    const scroller = resolveScroller();
+    const guideAnchor = anchorElement?.classList.contains('indent-guide') ?? false;
+    const guideNodeId = anchorElement?.dataset.guideNodeId ?? null;
+    const rowId = guideNodeId
+      ?? anchorElement?.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId
+      ?? null;
+    const resolveElement = rowId && scroller
+      ? () => {
+        const chevron = scroller.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(rowId)}"] .row-chevron-button`);
+        if (!guideAnchor) return chevron;
+        return scroller.querySelector<HTMLElement>(`.indent-guide[data-guide-node-id="${CSS.escape(rowId)}"]`) ?? chevron;
+      }
+      : undefined;
+    const snapshot = captureDisclosureScrollAnchor(anchorElement, scroller, resolveElement);
+    capturePendingAnchor(snapshot);
+  }, [capturePendingAnchor, resolveScroller]);
 
   const scrollFrameRef = useRef<number | null>(null);
   const scheduleScrollMetrics = useCallback(() => {
@@ -435,6 +452,10 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     const delta = layout.items[idx]!.top - prevLayout.items[idx]!.top;
     if (delta !== 0) scroller.scrollTop += delta;
   }, [layout, rows, virtualize, resolveScroller]);
+
+  useLayoutEffect(() => {
+    return restorePendingAnchor();
+  }, [layout, restorePendingAnchor, rows]);
 
   // ── Window selection ──────────────────────────────────────────────────────
   // Force-mount rows that must accept focus even when scrolled out of view: the
@@ -533,11 +554,12 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     virtualize,
   ]);
 
-  const toggleDirectChildrenExpansion = useCallback((rowId: NodeId) => {
+  const toggleDirectChildrenExpansion = useCallback((rowId: NodeId, anchorElement?: HTMLElement | null) => {
     const childParentId = outlinerChildParentId(rowId, byId);
     const childParentNode = childParentId ? byId.get(childParentId) : undefined;
     const childIds = outlinerChildren(childParentNode, byId);
     if (childIds.length === 0) return;
+    captureDisclosureAnchor(anchorElement ?? null);
     props.setUi((prev) => {
       const expandedSet = new Set(prev.expanded);
       const anyChildExpanded = childIds.some((childId) => expandedSet.has(childId));
@@ -547,7 +569,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
       }
       return { ...prev, expanded: expandedSet };
     });
-  }, [byId, props.setUi]);
+  }, [byId, captureDisclosureAnchor, props.setUi]);
 
   const renderFlatGuides = () => (
     <div className="outliner-flat-guides" role="presentation" ref={guideOverlayRef}>
@@ -556,7 +578,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
           key={`guide>${guide.key}`}
           guideFor={guide.nodeId}
           flatMetrics={guide}
-          onToggleChildren={() => toggleDirectChildrenExpansion(guide.nodeId)}
+          onToggleChildren={(anchorElement) => toggleDirectChildrenExpansion(guide.nodeId, anchorElement)}
         />
       ))}
     </div>
@@ -686,6 +708,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
             draftAfterId={row.draft ? row.afterId ?? null : undefined}
             draftPlaceholder={row.draft && row.parentId === props.parentId ? props.draftPlaceholder : undefined}
             flat
+            onDisclosureToggleAnchor={captureDisclosureAnchor}
           />
         );
       default:

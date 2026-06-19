@@ -141,7 +141,7 @@ export function renderAssistantBlocks(
           childRunsByParentToolCallId={childRunsByParentToolCallId}
           turnActive={turnActive}
           turnFailedWithoutProse={false}
-          surfaceResultlessProcess={surfaceResultlessProcess || turnActive}
+          surfaceResultlessProcess={surfaceResultlessProcess}
           workedForMs={null}
         />,
       );

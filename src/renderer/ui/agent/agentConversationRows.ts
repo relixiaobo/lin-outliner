@@ -79,11 +79,38 @@ function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {
   };
 }
 
+function assistantActorKey(entry: AssistantEntry): string {
+  if (entry.actor?.type === 'agent') return `agent:${entry.actor.agentId}`;
+  if (entry.actor?.type === 'user') return `user:${entry.actor.userId}`;
+  if (entry.actor?.type === 'tool') return `tool:${entry.actor.toolCallId}`;
+  if (entry.actor?.type === 'system') return 'system';
+  return 'actor:none';
+}
+
+function assistantTurnStableKey(entries: readonly AssistantEntry[]): string {
+  const runId = entries.find((entry) => entry.runId)?.runId;
+  if (runId) return `assistant-turn-run:${runId}`;
+  const first = entries[0]!;
+  return `assistant-turn-${first.message.timestamp}:${assistantActorKey(first)}`;
+}
+
+function uniqueAssistantTurnStableKey(
+  baseKey: string,
+  firstEntry: AssistantEntry,
+  seenKeys: Map<string, number>,
+): string {
+  const count = seenKeys.get(baseKey) ?? 0;
+  seenKeys.set(baseKey, count + 1);
+  if (count === 0) return baseKey;
+  return `${baseKey}:${firstEntry.id}`;
+}
+
 export function buildConversationRenderRows(
   entries: AgentConversationEntry[],
   turnPhase: AgentTurnPhase,
 ): AgentConversationRenderRow[] {
   const rows: AgentConversationRenderRow[] = [];
+  const assistantTurnKeyCounts = new Map<string, number>();
 
   let index = 0;
   while (index < entries.length) {
@@ -99,7 +126,11 @@ export function buildConversationRenderRows(
         index += 1;
       }
 
-      const stableKey = `assistant-turn-${assistantEntries[0]!.id}`;
+      const stableKey = uniqueAssistantTurnStableKey(
+        assistantTurnStableKey(assistantEntries),
+        assistantEntries[0]!,
+        assistantTurnKeyCounts,
+      );
       const mergedEntry = assistantEntries.length >= 2
         ? mergeAssistantEntries(assistantEntries)
         : assistantEntries[0]!;

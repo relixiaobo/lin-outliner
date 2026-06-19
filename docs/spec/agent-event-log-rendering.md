@@ -921,16 +921,17 @@ Rules:
   into compact process groups with their own detail disclosure. A turn with no
   thinking/tools is a direct answer and renders without a fold. This is one
   mechanism with no per-mode forks and no single-tool inline special case.
-- **Codex-style live disclosure.** A turn's process block **auto-expands while
-  it is working** (thinking/tools/final prose streaming live, `liveSegment`) so the
-  process is visible while the final answer streams below it. While live, the
-  outer `Working...` row is locked open and non-interactive; a user can only
-  collapse/expand it after the turn settles. The live row renders immediately for
-  an active assistant turn, even before the first thinking/tool block, so later
-  tool events do not insert a new header above already-streamed text. A tool-free
-  live answer keeps its prose in the normal answer position (not inside process
-  narration), so the same markdown subtree survives the live→sealed transition.
-  The process **auto-collapses when the turn settles**.
+- **Codex-style live disclosure.** A turn's process block **stays collapsed while
+  it is working** unless the user explicitly opens it. The collapsed header is the
+  live status line: it shows the currently pending tool when there is one, then
+  the latest non-empty thinking preview, then `Working...` as the fallback. The
+  row renders immediately for an active assistant turn, even before the first
+  thinking/tool block, so later tool events do not insert a new header above
+  already-streamed text. A tool-free live answer keeps its prose in the normal
+  answer position (not inside process narration), so the same markdown subtree
+  survives the live→sealed transition. The process **does not auto-expand while
+  live and does not auto-collapse on settle**; user expansion is sticky for that
+  process id.
   - A **resultless** turn (last visible block is a thought/tool — no trailing
     answer prose) drives two SEPARATE decisions, decoupled so a cleanly-completed
     turn never mislabels:
@@ -954,31 +955,29 @@ Rules:
     text in the turn, still stops a surfaced resultless turn from burying interim
     narration behind a collapsed header.)
   - Every other steady state defaults collapsed. The **sticky override wins**: once
-  a user toggles the block it keeps that choice and never auto-collapses on seal.
-- The live header carries the single activity spinner. In a live turn, the
-  outer process fold stays expanded while final answer prose streams below it and
-  its top header stays the neutral **"Working..."** label; concrete thought/tool
-  summaries belong to the adjacent inner process groups. This row is a status row
-  while active, not a disclosure control. The process collapses only after the
-  turn settles. Once the turn **seals**, the
-  collapsed header reads **"Worked for {duration}"** (codex-style; duration =
-  the producing run's `updatedAt − startedAt`, threaded as `runDurationMs` on the
-  message entity **only once the run is sealed** — a still-`running` run, whether
-  live or left running after a crash, has `updatedAt === startedAt` and so no
-  meaningful wall-clock, and is left unknown rather than shown as "<1s"; a multi-run
-  turn sums each run's wall-clock). When the duration is unknown the header falls
-  back to the static group summary (e.g. "Thought · used N tools"). Expanding the
-  block moves the spinner to the running tool row inside the timeline. A tool row
-  is running only when its id is present in `pendingToolCallIds`; the renderer
-  may only use an active-turn fallback for the latest resultless tool when the
+  a user toggles the block it keeps that choice through live→sealed; completion
+  only updates the same disclosure row's header.
+- The live header carries the single activity spinner only while the process is
+  collapsed. When the user expands a live process, the spinner moves to the
+  running tool row inside the timeline and the top header uses the static process
+  summary. Once the turn **seals**, the collapsed header reads
+  **"Worked for {duration}"** (codex-style; duration = the producing run's
+  `updatedAt − startedAt`, threaded as `runDurationMs` on the message entity
+  **only once the run is sealed** — a still-`running` run, whether live or left
+  running after a crash, has `updatedAt === startedAt` and so no meaningful
+  wall-clock, and is left unknown rather than shown as "<1s"; a multi-run turn
+  sums each run's wall-clock). When the duration is unknown the header falls back
+  to the static group summary (e.g. "Thought · used N tools"). A tool row is
+  running only when its id is present in `pendingToolCallIds`; the renderer may
+  only use an active-turn fallback for the latest resultless tool when the
   projection currently reports no pending ids at all. It must not treat every
   resultless tool call in an active turn as pending, because later continuation
-  text can coexist with an earlier resultless/stale tool row. A
-  **genuinely interrupted** turn (run `failed`/`cancelled`/crash-orphaned —
+  text can coexist with an earlier resultless/stale tool row. A **genuinely
+  interrupted** turn (run `failed`/`cancelled`/crash-orphaned —
   `turnInterrupted` — with no trailing answer) keeps the "Interrupted…" label,
-  never a duration. A cleanly `completed` resultless turn never shows "Interrupted":
-  it surfaces its process (per the result-first design) under the descriptive group
-  summary rather than the "Worked for …" resting header.
+  never a duration. A cleanly `completed` resultless turn never shows
+  "Interrupted": it surfaces its process (per the result-first design) under the
+  descriptive group summary rather than the "Worked for …" resting header.
 - **One assistant-turn renderer.** The conversation transcript and the child-run
   task detail timeline both render assistant content through the
   same assistant turn/process fold components. The task detail panel reads a raw

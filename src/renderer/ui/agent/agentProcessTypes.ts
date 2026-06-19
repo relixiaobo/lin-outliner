@@ -3,7 +3,7 @@ import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProject
 
 export interface AgentExpandState {
   isExpanded: (id: string, defaultExpanded?: boolean) => boolean;
-  toggle: (id: string, currentlyExpanded: boolean) => void;
+  toggle: (id: string, currentlyExpanded: boolean, anchorElement?: HTMLElement | null) => void;
 }
 
 export type AgentProcessSegmentBlock =

@@ -1631,7 +1631,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         channelActivityEntries: [],
         activeCompaction: null,
         activeDream: null,
-        dmRunActive: false,
+        runActive: false,
         channelRunsActive: false,
         model: { id: 'gpt-5.4', provider: 'openai' },
         thinkingLevel: 'medium',
@@ -1642,6 +1642,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         taskIds: [],
         childRunIds: [],
         entities: { messages, childRuns: {}, compactions: {}, dreams: {}, tasks: {} },
+        streaming: null,
         dmStreaming: null,
       };
     };
@@ -3177,7 +3178,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       apiId: streamingMessage.api,
       providerId: streamingMessage.provider,
       modelId: streamingMessage.model,
-      runId: streamingMessage.runId ?? 'run-e2e',
+      runId: streamingMessage.runId,
       stopReason: streamingMessage.stopReason,
       usage: streamingMessage.usage,
       errorMessage: streamingMessage.errorMessage,
@@ -3306,10 +3307,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       channelActivityEntries: projectionChannelActivity,
       activeCompaction: state.activeCompaction ?? null,
       activeDream: state.activeDream ?? null,
-      // Mode-specific run state (mirrors the real projection split): DM
-      // streaming drives the composer; Channel work shows as activity entries,
-      // never the composer.
-      dmRunActive: state.dmRunActive ?? (!!state.isStreaming && !projectionChannel),
+      runActive: state.runActive ?? (!!state.isStreaming && !projectionChannel),
       channelRunsActive: state.channelRunsActive
         ?? (projectionChannelActivity.length > 0 || (!!state.isStreaming && projectionChannel)),
       model: state.model ?? {},
@@ -3321,6 +3319,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       taskIds,
       childRunIds,
       entities: { messages: entities, childRuns, compactions, tasks },
+      streaming: projectionChannel ? null : streaming,
       dmStreaming: projectionChannel ? null : streaming,
     },
     timestamp: Date.now(),

@@ -54,6 +54,11 @@ import {
 } from '../editor/inlineFilePreviewData';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { AgentIdentityAvatar } from './AgentIdentityAvatar';
+import {
+  captureDisclosureScrollAnchor,
+  nearestScrollContainer,
+  usePendingDisclosureAnchor,
+} from '../interactions/disclosureScrollAnchor';
 
 const USER_MESSAGE_COLLAPSED_LINES = 5;
 const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
@@ -485,15 +490,25 @@ function AgentMessageRowComponent({
   const [editDraft, setEditDraft] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [expandOverrides, setExpandOverrides] = useState<Record<string, boolean>>({});
+  const { capturePendingAnchor, restorePendingAnchor } = usePendingDisclosureAnchor();
   const expandState = useMemo<AgentExpandState>(() => ({
     isExpanded: (id, defaultExpanded = false) => expandOverrides[id] ?? defaultExpanded,
-    toggle: (id, currentlyExpanded) => {
+    toggle: (id, currentlyExpanded, anchorElement) => {
+      const scroller = nearestScrollContainer(anchorElement ?? null);
+      const resolveElement = scroller
+        ? () => scroller.querySelector<HTMLElement>(`[data-agent-process-id="${CSS.escape(id)}"]`)
+        : undefined;
+      capturePendingAnchor(captureDisclosureScrollAnchor(anchorElement ?? null, scroller, resolveElement));
       setExpandOverrides((current) => ({
         ...current,
         [id]: !currentlyExpanded,
       }));
     },
-  }), [expandOverrides]);
+  }), [capturePendingAnchor, expandOverrides]);
+
+  useLayoutEffect(() => {
+    return restorePendingAnchor();
+  }, [expandOverrides, restorePendingAnchor]);
 
   async function copyMessage(text: string) {
     if (!text) return;

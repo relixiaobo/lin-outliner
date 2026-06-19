@@ -21,7 +21,7 @@ interface RowLeadingProps {
   bulletColors?: string[];
   tagDefColor?: string;
   fileIconKind?: string;
-  onToggleExpand: () => void;
+  onToggleExpand: (anchorElement?: HTMLElement | null) => void;
   onDrillDown: () => void;
   draggable?: boolean;
   onDragStart?: (event: DragEvent<HTMLElement>) => void;
@@ -54,7 +54,9 @@ export function RowLeading({
         onMouseDown={(event) => {
           event.preventDefault();
         }}
-        onClick={onToggleExpand}
+        onClick={(event) => {
+          onToggleExpand(event.currentTarget);
+        }}
         onDoubleClick={(event) => {
           event.preventDefault();
           event.stopPropagation();

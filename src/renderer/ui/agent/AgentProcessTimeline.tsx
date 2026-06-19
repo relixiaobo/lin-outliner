@@ -85,9 +85,9 @@ export function AgentProcessTimeline({
               expanded={expandState.isExpanded(`tool:${block.toolCall.id}`, false)}
               index={index}
               key={`tool-${block.toolCall.id}`}
-              onToggle={() => {
+              onToggle={(anchorElement) => {
                 const toolId = `tool:${block.toolCall.id}`;
-                expandState.toggle(toolId, expandState.isExpanded(toolId, false));
+                expandState.toggle(toolId, expandState.isExpanded(toolId, false), anchorElement);
               }}
               onNodeReferenceOpen={onNodeReferenceOpen}
               onOpenChildRunTranscript={onOpenChildRunTranscript}

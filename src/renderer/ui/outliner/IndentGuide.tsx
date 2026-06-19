@@ -9,7 +9,7 @@ interface IndentGuideProps {
     top: number;
     height: number;
   };
-  onToggleChildren: () => void;
+  onToggleChildren: (anchorElement?: HTMLElement | null) => void;
 }
 
 export function IndentGuide({
@@ -41,7 +41,7 @@ export function IndentGuide({
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        onToggleChildren();
+        onToggleChildren(event.currentTarget);
       }}
     >
       <span className="indent-guide-line" />

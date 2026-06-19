@@ -43,7 +43,7 @@ interface AgentToolCallBlockProps {
   expanded?: boolean;
   index?: DocumentIndex;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onToggle?: () => void;
+  onToggle?: (anchorElement?: HTMLElement | null) => void;
   onOpenChildRunTranscript?: (childRunId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   result?: AgentToolResultWithPayloads;
@@ -830,9 +830,9 @@ export function AgentToolCallBlock({
   const hasOutputDetails = outputText.length > 0;
   const loadedSkillDetails = getLoadedSkillDetails(toolCall, result);
 
-  function toggle() {
+  function toggle(anchorElement?: HTMLElement | null) {
     if (onToggle) {
-      onToggle();
+      onToggle(anchorElement);
       return;
     }
     setInternalExpanded((current) => !current);

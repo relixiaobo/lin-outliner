@@ -58,7 +58,7 @@ export function AgentThinkingRow({
     <ButtonControl
       aria-expanded={expanded}
       className={`agent-thinking-row is-toggle ${expanded ? 'is-expanded' : ''}`}
-      onClick={() => expandState.toggle(id, expanded)}
+      onClick={(event) => expandState.toggle(id, expanded, event.currentTarget)}
     >
       <AgentDisclosureIndicator
         className="agent-thinking-icon"

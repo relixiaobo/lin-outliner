@@ -9,7 +9,7 @@ interface AgentToolCallDisclosureProps {
   expanded: boolean;
   hasDetails: boolean;
   images: ReactNode;
-  onToggle: () => void;
+  onToggle: (anchorElement?: HTMLElement | null) => void;
   status: 'pending' | 'done' | 'error';
   statusIcon: AppIcon;
   statusIconClassName?: string;
@@ -35,7 +35,7 @@ export function AgentToolCallDisclosure({
           aria-expanded={expanded}
           className="agent-tool-call-toggle"
           disabled={!hasDetails}
-          onClick={onToggle}
+          onClick={(event) => onToggle(event.currentTarget)}
         >
           <AgentDisclosureIndicator
             className="agent-tool-call-icon-slot"

@@ -94,10 +94,6 @@
   color: var(--text-soft);
 }
 
-.agent-process-toggle.is-locked {
-  color: var(--text-soft);
-}
-
 .agent-process-toggle:hover .agent-disclosure-indicator.is-interactive .agent-disclosure-status,
 .agent-process-toggle:focus-visible .agent-disclosure-indicator.is-interactive .agent-disclosure-status,
 .agent-thinking-row.is-toggle:hover .agent-disclosure-indicator.is-interactive .agent-disclosure-status,
