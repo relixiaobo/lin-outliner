@@ -185,7 +185,10 @@ function referenceCountKey(source: ReferenceSource): string {
     const mention = source.mention;
     return `${source.kind}:${source.sourceNodeId}:${mention?.field ?? ''}:${mention?.start ?? ''}:${mention?.end ?? ''}`;
   }
-  return `linked:${source.sourceNodeId}`;
+  if (source.kind === 'field') {
+    return `${source.kind}:${source.sourceNodeId}:${source.fieldEntryId ?? source.referenceNodeId}`;
+  }
+  return `${source.kind}:${source.sourceNodeId}`;
 }
 
 function addUnlinkedMentions(

@@ -749,9 +749,9 @@ Result behavior:
   matches, tag labels, field names, and field values through the same core
   relevance kernel used by saved search refresh.
 - Default relevance includes a capped document-derived reference-authority boost
-  from linked inbound reference count. A search node can also explicitly sort by
-  the References system field (`sys:refCount`), where the count is primary and
-  relevance is the tie-breaker.
+  from distinct linked inbound source nodes. A search node can also explicitly
+  sort by the References system field (`sys:refCount`), where the displayed
+  reference count is primary and relevance is the tie-breaker.
 - `node_search` is a transient lookup surface and may apply per-user personal
   access ranking after text relevance when no explicit sort rule is present. This
   ranking is off-document state; it is not a search-node rule and does not change

@@ -47,6 +47,7 @@ import {
 } from './textSearchIndex';
 import { analyzeTextSearchQuery, type TextSearchQueryAnalysis } from './textSearchAnalyzer';
 import { buildReferenceSummary, type ReferenceSummary } from './references';
+import { cappedMultiplier } from './ranking';
 import { nodeIsInSubtree } from './treeUtils';
 import {
   nodeAccessRankingMultiplier,
@@ -355,6 +356,9 @@ function compareSearchHitsBySortField(
     const rightDone = displayNode(rightNode, index.nodes).completedAt ? 1 : 0;
     return leftDone - rightDone;
   }
+  if (fieldId === REF_COUNT_FIELD) {
+    return referenceSortCount(left.nodeId, references) - referenceSortCount(right.nodeId, references);
+  }
 
   const fieldType = fieldTypeOf(index, fieldId);
   const leftValues = sortValuesForNode(index, leftNode, fieldId, references);
@@ -384,9 +388,25 @@ function rankingScore(
 }
 
 function referenceAuthorityMultiplier(nodeId: NodeId, references: ReferenceSummary): number {
-  const linkedCount = references.countsByTarget.get(nodeId)?.linked ?? 0;
-  const boost = Math.min(REFERENCE_AUTHORITY_CAP, Math.log1p(linkedCount) * REFERENCE_AUTHORITY_WEIGHT);
-  return 1 + boost;
+  return cappedMultiplier(
+    Math.log1p(referenceAuthoritySourceCount(nodeId, references)),
+    REFERENCE_AUTHORITY_WEIGHT,
+    REFERENCE_AUTHORITY_CAP,
+  );
+}
+
+function referenceAuthoritySourceCount(nodeId: NodeId, references: ReferenceSummary): number {
+  const sources = references.byTarget.get(nodeId) ?? [];
+  const sourceNodeIds = new Set<NodeId>();
+  for (const source of sources) {
+    if (source.kind === 'unlinked') continue;
+    sourceNodeIds.add(source.sourceNodeId);
+  }
+  return sourceNodeIds.size;
+}
+
+function referenceSortCount(nodeId: NodeId, references: ReferenceSummary): number {
+  return references.countsByTarget.get(nodeId)?.linked ?? 0;
 }
 
 function sortValuesForNode(index: SearchIndex, node: SearchNode, fieldId: string, references: ReferenceSummary): string[] {

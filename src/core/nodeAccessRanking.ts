@@ -1,3 +1,5 @@
+import { cappedMultiplier } from './ranking';
+
 export type NodeAccessSource = 'human' | 'agentRecall';
 
 export interface NodeAccessStats {
@@ -56,6 +58,5 @@ export function nodeAccessRankingMultiplier(
   now = Date.now(),
 ): number {
   const strength = computeNodeAccessStrength(stats, now);
-  const boost = Math.min(MAX_RANKING_BOOST, strength * RANKING_BOOST_PER_STRENGTH);
-  return 1 + boost;
+  return cappedMultiplier(strength, RANKING_BOOST_PER_STRENGTH, MAX_RANKING_BOOST);
 }

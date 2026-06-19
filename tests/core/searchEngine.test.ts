@@ -224,7 +224,7 @@ describe('core search engine', () => {
     expect(result.ok ? result.hits.map((hit) => hit.nodeId) : []).toEqual([referenced, empty]);
   });
 
-  test('reference count sort uses distinct visible linked sources only', () => {
+  test('reference count sort uses the shared visible reference count', () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const target = mustFocus(core.createNode(today, null, 'reference boundary needle'));
@@ -269,6 +269,51 @@ describe('core search engine', () => {
     const result = runSearchNode(state, searchId);
 
     expect(result.ok ? result.hits.map((hit) => hit.nodeId).slice(0, 2) : []).toEqual([target, competitor]);
+  });
+
+  test('reference authority boost counts distinct visible source nodes only', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(
+      today,
+      null,
+      'authority source boundary needle',
+      'node:00000000-0000-4000-8000-000000000001',
+    ));
+    const competitor = mustFocus(core.createNode(
+      today,
+      null,
+      'authority source boundary needle',
+      'node:00000000-0000-4000-8000-000000000002',
+    ));
+
+    const duplicateSource = mustFocus(core.createNode(today, null, 'Duplicate authority source'));
+    core.addReference(duplicateSource, target, null);
+    core.applyNodeTextPatch(duplicateSource, replaceAllRichTextPatch({
+      ...plainText('Duplicate authority source'),
+      inlineRefs: [{ offset: 0, target: nodeReferenceTarget(target), displayName: 'Target' }],
+    }));
+    const trashedSource = mustFocus(core.createNode(today, null, 'Trashed authority source'));
+    core.addReference(trashedSource, target, null);
+    core.trashNode(trashedSource);
+    const configSource = mustFocus(core.createNode(today, null, 'Config authority source'));
+    const configRef = mustFocus(core.addReference(configSource, target, null));
+
+    const competitorSourceA = mustFocus(core.createNode(today, null, 'Competitor authority source A'));
+    const competitorSourceB = mustFocus(core.createNode(today, null, 'Competitor authority source B'));
+    core.addReference(competitorSourceA, competitor, null);
+    core.addReference(competitorSourceB, competitor, null);
+
+    const state = core.state();
+    state.nodes[configRef]!.refRole = 'config';
+
+    const result = runSearchExpr(state, {
+      kind: 'rule',
+      op: 'STRING_MATCH',
+      text: 'authority source boundary needle',
+    });
+
+    expect(result.ok ? result.hits.map((hit) => hit.nodeId).slice(0, 2) : []).toEqual([competitor, target]);
   });
 
   test('folds capped reference authority into default relevance ranking', () => {
