@@ -506,7 +506,10 @@ user is actually looking at that task's conversation.
 Dream state lives in the believer-keyed memory side log (the single pool, on
 disk under the believer principal directory). Durable model-readable memory is
 ordinary timeline outline content; `dream.completed` projects the latest Dream
-watermark and audit summary. There is **one** Dream — a scheduled
+watermark and audit summary. The summary's change counts are derived from the
+private child run's successful `node_create` / `node_edit` writes; a zero-write
+child completion does not record `dream.completed` and does not advance the
+watermark. There is **one** Dream — a scheduled
 `memory-dream` skill run that consolidates the user's member conversations into
 `#d-memory`, `#d-episode`, and `#d-belief` nodes. The former agent-self /
 run-log Dream is cut (no run-evidence harvesting, no per-agent self-model dream).

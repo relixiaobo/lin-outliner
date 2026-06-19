@@ -76,12 +76,48 @@ async function loadRuntimeModule() {
 function hostFor(core: Core): OutlinerToolHost {
   return {
     getProjection: () => core.projection(),
+    getTextSearchIndex: () => undefined,
     transaction: async (_meta, fn) => fn(),
     operationHistory: async () => ({ entries: [], count: 0 }),
-    handle: async () => {
-      throw new Error('node tools are not used in this integration test');
+    handle: async (command, args = {}) => {
+      if (command === 'create_node') return core.createNode(String(args.parentId), nullableNumber(args.index), String(args.text ?? ''));
+      if (command === 'create_rich_text_node') return core.createRichTextContentNode(String(args.parentId), nullableNumber(args.index), args.content as any);
+      if (command === 'apply_node_text_patch') return core.applyNodeTextPatch(String(args.nodeId), args.patch as any);
+      if (command === 'update_node_description') return core.updateNodeDescription(String(args.nodeId), nullableString(args.description));
+      if (command === 'set_node_checkbox_visible') return core.setNodeCheckboxVisible(String(args.nodeId), Boolean(args.visible));
+      if (command === 'toggle_done') return core.toggleDone(String(args.nodeId));
+      if (command === 'create_tag') return core.createTag(String(args.name ?? ''));
+      if (command === 'apply_tag') return core.applyTag(String(args.nodeId), String(args.tagId));
+      if (command === 'remove_tag') return core.removeTag(String(args.nodeId), String(args.tagId));
+      if (command === 'create_inline_field') return core.createInlineField(String(args.parentId), nullableNumber(args.index), String(args.name), 'plain');
+      if (command === 'add_reference') return core.addReference(String(args.parentId), String(args.targetId), nullableNumber(args.index));
+      if (command === 'set_reference_target') return core.setReferenceTarget(String(args.referenceId), String(args.targetId));
+      if (command === 'trash_node') return core.trashNode(String(args.nodeId));
+      if (command === 'batch_trash_nodes') return core.batchTrashNodes(arrayArg(args.nodeIds));
+      if (command === 'move_node') return core.moveNode(String(args.nodeId), String(args.parentId), nullableNumber(args.index));
+      if (command === 'create_search_node') return core.createSearchNode(String(args.parentId), nullableNumber(args.index), args.config as any);
+      if (command === 'set_search_node') return core.setSearchNode(String(args.nodeId), args.config as any);
+      if (command === 'set_view_mode') return core.setViewMode(String(args.nodeId), String(args.mode) as any);
+      if (command === 'search_nodes') return core.searchNodes(String(args.query ?? ''));
+      if (command === 'backlinks') return core.backlinks(String(args.targetId ?? ''));
+      throw new Error(`unsupported test command: ${command}`);
     },
   };
+}
+
+function nullableString(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return String(value);
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function arrayArg(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
 }
 
 function createWindowSink() {
@@ -387,10 +423,18 @@ describe('agent runtime past chats integration', () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-data-'));
     roots.push(localRoot, dataRoot);
+    const core = Core.new();
+    const today = core.projection().todayId;
     const calls: Array<{ text: string; tools: string[] }> = [];
     const script = scriptedStream(
       [
         fauxAssistantMessage(fauxText('Captured enough evidence.')),
+        fauxAssistantMessage([
+          fauxToolCall('node_create', {
+            parent_id: today,
+            outline: '- Dream memory\n  - User prefers cobalt focus rings',
+          }, { id: 'tool-memory-dream-node-create' }),
+        ]),
         fauxAssistantMessage(fauxText('Memory Dream complete.')),
       ],
       (_model, context) => calls.push(contextSnapshot(context)),
@@ -400,7 +444,7 @@ describe('agent runtime past chats integration', () => {
     const sink = createWindowSink();
     const runtime = new AgentRuntime(
       () => sink.window as never,
-      hostFor(Core.new()),
+      hostFor(core),
       {
         agentDataRoot: dataRoot,
         localFileRoot: localRoot,
@@ -440,6 +484,51 @@ describe('agent runtime past chats integration', () => {
     expect(dreamCall?.text).toContain('[[chat:source-1^conversation:');
     expect(dreamState.lastCompleted?.trigger).toBe('schedule');
     expect(dreamState.lastCompleted?.processed.totalCharCount).toBeGreaterThan(1000);
+    expect(dreamState.lastCompleted?.changes.added).toBeGreaterThan(0);
     expect(dreamState.watermark.conversations[created.conversationId]?.seq).toBeGreaterThan(0);
+    expect((await runtime.listConversations()).map((entry) => entry.id)).not.toContain('lin-agent-memory-dream');
+  });
+
+  test('scheduled Dream does not advance the watermark when the child writes no memory nodes', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-empty-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-empty-data-'));
+    roots.push(localRoot, dataRoot);
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage(fauxText('Captured enough evidence.')),
+        fauxAssistantMessage(fauxText('Nothing durable to write.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => runtimeSettings(),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    const longEvidence = `Memory Dream should retry this evidence later. ${'memory-dream-empty '.repeat(80)}`;
+    await runtime.sendMessage(created.conversationId, longEvidence);
+    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00Z'));
+
+    const dreamState = await new AgentEventStore(dataRoot).readDreamState(BELIEVER_PRINCIPAL);
+    expect(script.pendingCount()).toBe(0);
+    expect(dreamState.lastCompleted).toBeNull();
+    expect(dreamState.watermark.conversations[created.conversationId]?.seq ?? 0).toBe(0);
+    expect((await runtime.listConversations()).map((entry) => entry.id)).not.toContain('lin-agent-memory-dream');
   });
 });

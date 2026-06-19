@@ -642,6 +642,98 @@ describe('agent node tools', () => {
     expect(visible.instructions).not.toContain('Edit applied');
   });
 
+  test('node_edit preserves rich text metadata on unchanged titles and field values', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const rootFile = { kind: 'local-file', path: '/tmp/brief.pdf', entryKind: 'file' } as const;
+    const valueFile = { kind: 'local-file', path: '/tmp/source.txt', entryKind: 'file' } as const;
+    const rootMarker = formatFileReferenceMarker('brief.pdf', rootFile.path);
+    const valueMarker = formatFileReferenceMarker('source.txt', valueFile.path);
+    const root = mustFocus(core.createRichTextContentNode(today, null, {
+      text: 'Task ',
+      marks: [{ start: 0, end: 4, type: 'bold' }],
+      inlineRefs: [{
+        offset: 5,
+        target: rootFile,
+        displayName: 'brief.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 321,
+      }],
+    }));
+    const fieldEntryId = mustFocus(core.createInlineField(root, null, 'Status', 'plain'));
+    const valueId = mustFocus(core.createRichTextContentNode(fieldEntryId, null, {
+      text: 'Open ',
+      marks: [{ start: 0, end: 4, type: 'italic' }],
+      inlineRefs: [{
+        offset: 5,
+        target: valueFile,
+        displayName: 'source.txt',
+        mimeType: 'text/plain',
+        sizeBytes: 12,
+      }],
+    }));
+
+    const envelope = await executeTool<{ status: 'updated' | 'unchanged' }>(core, 'node_edit', {
+      node_id: root,
+      old_string: '*',
+      new_string: [
+        `- %%node:${root}%% Task ${rootMarker}`,
+        `  - %%node:${fieldEntryId}%% Status::`,
+        `    - %%node:${valueId}%% Open ${valueMarker}`,
+        '  - New child',
+      ].join('\n'),
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.status).toBe('updated');
+    expect(core.state().nodes[root]!.content).toEqual({
+      text: 'Task ',
+      marks: [{ start: 0, end: 4, type: 'bold' }],
+      inlineRefs: [{
+        offset: 5,
+        target: rootFile,
+        displayName: 'brief.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 321,
+      }],
+    });
+    expect(core.state().nodes[valueId]!.content).toEqual({
+      text: 'Open ',
+      marks: [{ start: 0, end: 4, type: 'italic' }],
+      inlineRefs: [{
+        offset: 5,
+        target: valueFile,
+        displayName: 'source.txt',
+        mimeType: 'text/plain',
+        sizeBytes: 12,
+      }],
+    });
+  });
+
+  test('node_edit treats reference-like markers in descriptions and field names as plain text', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+    const staleMarker = formatChatSourceReferenceMarker('stale', {
+      kind: 'chat-source',
+      stream: 'conversation',
+      streamId: 'deleted-conversation',
+      range: { fromSeqExclusive: 1, throughSeq: 2, throughEventId: 'event-2' },
+    });
+
+    const envelope = await executeTool<{ status: 'updated' | 'unchanged' }>(core, 'node_edit', {
+      node_id: root,
+      old_string: '*',
+      new_string: `- %%node:${root}%% Task - See ${staleMarker}\n  - Review ${staleMarker}:: Plain`,
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(core.state().nodes[root]!.description).toBe(`See ${staleMarker}`);
+    const fieldEntryId = core.state().nodes[root]!.children[0]!;
+    const fieldDefId = core.state().nodes[fieldEntryId]!.fieldDefId!;
+    expect(core.state().nodes[fieldDefId]!.content.text).toBe(`Review ${staleMarker}`);
+  });
+
   test('node_edit rejects out-of-root local-file markers from agent outlines', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-root-'));
     const sourceRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-node-source-'));

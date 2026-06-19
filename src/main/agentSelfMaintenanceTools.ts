@@ -165,7 +165,7 @@ function selfMaintenanceResult<TData>(
   return agentToolResult(successEnvelope(tool, data, {
     ...(started !== undefined ? { metrics: { durationMs: Date.now() - started } } : {}),
     ...(instructions ? { instructions } : {}),
-  }), visibleSelfMaintenanceData(tool, data));
+  }), data);
 }
 
 function selfMaintenanceError<TData>(
@@ -179,11 +179,7 @@ function selfMaintenanceError<TData>(
     ...(data !== undefined ? { data } : {}),
     ...(started !== undefined ? { metrics: { durationMs: Date.now() - started } } : {}),
     instructions: 'Inspect the error and retry only if the requested runtime maintenance action is still relevant.',
-  }), data === undefined ? undefined : visibleSelfMaintenanceData(tool, data));
-}
-
-function visibleSelfMaintenanceData(tool: string, data: unknown): unknown {
-  return data;
+  }), data);
 }
 
 function requireBoolean(setting: string, value: unknown): boolean {

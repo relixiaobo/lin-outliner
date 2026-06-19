@@ -43,6 +43,7 @@ import {
   type AgentDebugRun,
   type AgentDebugRunSummary,
   type AgentMessage,
+  type AgentChildRunNodeChanges,
   type AgentRuntimeEvent,
   type AgentApprovalRequestView,
   type AgentApprovalResolutionScope,
@@ -1084,7 +1085,7 @@ export class AgentRuntime {
     // listed row is a goal-bearing channel (General sorts first); there are no
     // per-agent DM rows.
     const listed = entries
-      .filter((entry) => !!entry.goal)
+      .filter((entry) => !!entry.goal && !isInternalAgentConversationId(entry.id))
       .map((entry) => this.conversationListMetaFromIndexEntry(entry))
       .sort((left, right) => (
         (left.id === DEFAULT_GENERAL_CHANNEL_ID ? -1 : 0)
@@ -2304,9 +2305,6 @@ export class AgentRuntime {
         getParentMemoryOwnerAgentId: () => this.currentRuntimeConversation(conversationRef.current)?.activeRun?.executingAgentId ?? defaultAgentId,
         getActiveRunId: () => this.currentRuntimeConversation(conversationRef.current)?.activeRun?.id ?? null,
         getRuntimeSettings: () => this.getRuntimeSettings(),
-        buildMemoryReminder: (agentId) => (
-          this.buildMemoryReminder(agentId, conversationRef.current)
-        ),
         childRunStarted: (snapshot, seed) => {
           const current = this.currentRuntimeConversation(conversationRef.current);
           if (!current) return Promise.resolve();
@@ -3487,7 +3485,7 @@ export class AgentRuntime {
     const user = this.userPrincipal();
     const entries = await this.getEventStore().listConversationIndexEntries();
     return entries
-      .filter((entry) => entry.members.some((member) => samePrincipal(member, user)))
+      .filter((entry) => !isInternalAgentConversationId(entry.id) && entry.members.some((member) => samePrincipal(member, user)))
       .map((entry) => entry.id);
   }
 
@@ -3511,8 +3509,10 @@ export class AgentRuntime {
       await this.writeDreamRunMeta(task, 'running', model);
       const skill = await this.renderMemoryDreamSkill(task.runId);
       const prompt = buildMemoryDreamPrompt(task, skill.renderedContent);
-      await this.runMemoryDreamChildAgent(task, prompt, skill.allowedTools);
-      const changes = emptyDreamChanges();
+      const changes = dreamChangesFromChildNodeChanges(await this.runMemoryDreamChildAgent(task, prompt, skill.allowedTools));
+      if (!dreamChangesHaveCommittedWork(changes)) {
+        throw new Error('Memory Dream child completed without creating or editing memory nodes.');
+      }
       const completed = await this.getEventStore().appendDreamCompleted(task.principal, {
         runId: task.runId,
         trigger: task.trigger,
@@ -3528,7 +3528,6 @@ export class AgentRuntime {
         changes,
       });
       await this.writeDreamRunMeta(task, 'completed', model);
-      this.clearChildRunMemoryReminderCaches();
       return {
         agentId: this.agentIdentity.agentId,
         runId: task.runId,
@@ -3594,27 +3593,58 @@ export class AgentRuntime {
     task: AgentDreamMemoryExtractionTask,
     prompt: string,
     allowedTools: readonly string[],
-  ): Promise<void> {
-    const conversation = await this.ensureConversationWithId(MEMORY_DREAM_CONVERSATION_ID, 'Memory Dream');
-    await this.refreshRuntimeSettings(conversation);
-    let data = await conversation.delegationRuntime.invokeAgent({
-      description: 'Memory Dream',
-      prompt,
-      name: task.runId,
-      run_in_background: false,
-      unattended: true,
-      allowedTools: [...allowedTools],
-      preapprovedToolRules: [...allowedTools],
-    });
-    while (data.status === 'async_launched' || data.status === 'queued' || data.status === 'running') {
-      data = await conversation.delegationRuntime.status({
-        agent_id: data.agent_id,
-        wait: true,
-        timeout_ms: COMMAND_CHILD_RUN_WAIT_MS,
+  ): Promise<AgentChildRunNodeChanges> {
+    let conversation: AgentConversationState | null = null;
+    let childRunId: string | null = null;
+    try {
+      conversation = await this.ensureConversationWithId(MEMORY_DREAM_CONVERSATION_ID, 'Memory Dream');
+      await this.refreshRuntimeSettings(conversation);
+      let data = await conversation.delegationRuntime.invokeAgent({
+        description: 'Memory Dream',
+        prompt,
+        run_in_background: false,
+        unattended: true,
+        allowedTools: [...allowedTools],
+        preapprovedToolRules: [...allowedTools],
       });
+      childRunId = data.agent_id;
+      while (data.status === 'async_launched' || data.status === 'queued' || data.status === 'running') {
+        data = await conversation.delegationRuntime.status({
+          agent_id: data.agent_id,
+          wait: true,
+          timeout_ms: COMMAND_CHILD_RUN_WAIT_MS,
+        });
+      }
+      if (data.status === 'failed' || data.error) throw new Error(data.error || 'Memory Dream child run failed.');
+      if (data.status === 'cancelled') throw new Error('Memory Dream child run was stopped before completing.');
+      return data.node_changes ?? {};
+    } finally {
+      await this.cleanupMemoryDreamChildRun(conversation, childRunId);
     }
-    if (data.status === 'failed' || data.error) throw new Error(data.error || 'Memory Dream child run failed.');
-    if (data.status === 'cancelled') throw new Error('Memory Dream child run was stopped before completing.');
+  }
+
+  private async cleanupMemoryDreamChildRun(
+    conversation: AgentConversationState | null,
+    childRunId: string | null,
+  ): Promise<void> {
+    await Promise.allSettled(this.runLedger.pendingWrites());
+    if (childRunId) {
+      conversation?.delegationRuntime.forgetRun(childRunId);
+      this.runLedger.forgetRun(childRunId);
+    }
+    await this.deleteConversation(MEMORY_DREAM_CONVERSATION_ID).catch((error) => {
+      this.reportWarn(
+        'dream',
+        `Failed to clean up Memory Dream child conversation: ${error instanceof Error ? error.message : String(error)}`,
+        error,
+        {
+          conversationId: MEMORY_DREAM_CONVERSATION_ID,
+          ...(childRunId ? { runId: childRunId } : {}),
+          operation: 'cleanupMemoryDreamChildRun',
+        },
+        'memory-dream-cleanup-failed',
+      );
+    });
   }
 
   private async writeDreamRunMeta(
@@ -4625,19 +4655,6 @@ export class AgentRuntime {
 
   private dreamMemoryExtractionEnabled(): boolean {
     return this.options.dreamMemoryExtractionEnabled === true;
-  }
-
-  private async buildMemoryReminder(
-    _agentId: string,
-    _conversation: AgentConversationState | null,
-  ): Promise<string | null> {
-    return null;
-  }
-
-  private clearChildRunMemoryReminderCaches(): void {
-    for (const conversation of this.conversations.values()) {
-      conversation.delegationRuntime.clearMemoryReminderCache();
-    }
   }
 
   private getActiveProviderConfig() {
@@ -6007,7 +6024,6 @@ function buildUserPromptMessage(
   message: string,
   attachments: AgentMessageAttachmentInput[],
   context: {
-    memoryReminder?: string | null;
     outlinerContext?: string | null;
     userViewContextReminder?: string | null;
     referencedFilesReminder?: string | null;
@@ -6148,7 +6164,6 @@ function stripDataUrlPrefix(data: string): string {
 function buildTurnReminderBlocks(
   attachments: AgentMessageAttachmentInput[],
   context: {
-    memoryReminder?: string | null;
     outlinerContext?: string | null;
     userViewContextReminder?: string | null;
     referencedFilesReminder?: string | null;
@@ -6160,7 +6175,6 @@ function buildTurnReminderBlocks(
   const blocks: TextContent[] = [];
   const reminder = joinReminderParts([
     buildEnvironmentContextReminder(now),
-    context.memoryReminder,
     context.outlinerContext,
     context.userViewContextReminder,
     context.referencedFilesReminder,
@@ -7610,6 +7624,23 @@ function emptyDreamChanges(): AgentDreamCompletedChanges {
   return { added: 0, updated: 0, forgotten: 0, skipped: 0 };
 }
 
+function dreamChangesFromChildNodeChanges(nodeChanges: AgentChildRunNodeChanges): AgentDreamCompletedChanges {
+  return {
+    added: uniqueStrings(nodeChanges.createdNodeIds).length,
+    updated: uniqueStrings(nodeChanges.updatedNodeIds).length,
+    forgotten: uniqueStrings(nodeChanges.trashedNodeIds).length,
+    skipped: 0,
+  };
+}
+
+function dreamChangesHaveCommittedWork(changes: AgentDreamCompletedChanges): boolean {
+  return changes.added + changes.updated + changes.forgotten > 0;
+}
+
+function isInternalAgentConversationId(conversationId: string): boolean {
+  return conversationId === MEMORY_DREAM_CONVERSATION_ID;
+}
+
 function skippedDreamRunResult(
   agentId: string,
   trigger: AgentDreamTrigger,
@@ -7679,8 +7710,8 @@ function commandConversationTitle(brief: string): string {
   return firstLine.length > 60 ? `${firstLine.slice(0, 59)}…` : firstLine;
 }
 
-function uniqueStrings(values: readonly string[]): string[] {
-  return [...new Set(values)];
+function uniqueStrings(values: readonly string[] | undefined): string[] {
+  return [...new Set((values ?? []).filter((value) => typeof value === 'string' && value.length > 0))];
 }
 
 function clone<T>(value: T): T {

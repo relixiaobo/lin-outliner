@@ -7,7 +7,7 @@ import {
   coerceString,
   parsePositiveInteger,
 } from '../core/agentMarkdown';
-import type { AgentMessage, AgentChildRunActionResult } from '../core/agentTypes';
+import type { AgentMessage, AgentChildRunActionResult, AgentChildRunNodeChanges } from '../core/agentTypes';
 import { systemReminder } from '../core/agentAttachments';
 import type { AgentChildRunRecord, DelegationDetail, AgentPayloadRef } from '../core/agentEventLog';
 import type { ErrorReport } from '../core/errorObservability';
@@ -23,6 +23,7 @@ import {
 import {
   agentToolResult,
   errorEnvelope,
+  isToolEnvelope,
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
@@ -187,7 +188,6 @@ export interface AgentDelegationRuntimeHost {
   /** The parent run currently executing (the delegating side of the run tree). */
   getActiveRunId(): string | null;
   getRuntimeSettings(): Promise<AgentRuntimeSettings>;
-  buildMemoryReminder(agentId: string): Promise<string | null>;
   /**
    * A child run started: append the slim `child_run.started` conversation marker
    * and seed the child's OWN run ledger ([[agent-run-unification]] Design 1) —
@@ -280,11 +280,11 @@ interface DelegationRunState extends DelegationDetail {
   turnCount: number;
   preapprovedToolRules?: string[];
   toolResultBudgetState: ToolResultBudgetState;
+  nodeChanges: AgentChildRunNodeChanges;
   autoCompactConsecutiveFailures: number;
   autoCompactInProgress: boolean;
   skillRuntime?: AgentSkillRuntime;
   localWorkspace?: AgentLocalWorkspaceContext;
-  memoryReminderCache?: { key: string; text: string | null };
 }
 
 type RunningSlotReservation = () => void;
@@ -367,10 +367,12 @@ export class AgentDelegationRuntime {
     this.registry.reload();
   }
 
-  clearMemoryReminderCache(): void {
-    for (const run of this.runs.values()) {
-      run.memoryReminderCache = undefined;
-    }
+  forgetRun(runId: string): void {
+    const run = this.runs.get(runId);
+    if (!run) return;
+    run.agent?.abort();
+    this.runs.delete(runId);
+    if (run.name && this.names.get(run.name) === runId) this.names.delete(run.name);
   }
 
   async listAllAgentDefinitions(): Promise<AgentDefinition[]> {
@@ -446,6 +448,7 @@ export class AgentDelegationRuntime {
         terminalNotificationSent: true,
         turnCount: 0,
         toolResultBudgetState: createToolResultBudgetState(),
+        nodeChanges: {},
         autoCompactConsecutiveFailures: 0,
         autoCompactInProgress: false,
       };
@@ -661,6 +664,7 @@ export class AgentDelegationRuntime {
       preapprovedToolRules: params.preapprovedToolRules,
       unattended: params.unattended,
       toolResultBudgetState: createToolResultBudgetState(),
+      nodeChanges: {},
       autoCompactConsecutiveFailures: 0,
       autoCompactInProgress: false,
       skillRuntime,
@@ -911,8 +915,9 @@ export class AgentDelegationRuntime {
     toolCallId: string,
     toolName: string,
     result: unknown,
-    _isError: boolean,
+    isError: boolean,
   ): Promise<AfterToolCallResult | undefined> {
+    recordNodeToolChanges(run.nodeChanges, toolName, result, isError);
     if (!isPlainRecord(result) || !Array.isArray(result.content)) return undefined;
     const text = piToolResultTextContent(result.content as Array<TextContent | ImageContent>);
     if (!text || text.length <= DEFAULT_MAX_TOOL_RESULT_CHARS) return undefined;
@@ -935,14 +940,13 @@ export class AgentDelegationRuntime {
     const source = ((run.agent?.state.messages as unknown[]) ?? run.messages)
       .filter(isRecordableAgentMessage)
       .map(cloneAgentMessage);
-    const memoryReminder = await this.runMemoryReminder(run);
     throwIfAborted(signal);
     const selection = collectAgentMessageToolResultBudgetSelections(source, run.toolResultBudgetState, {
       limit: MAX_TOOL_RESULTS_PER_BATCH_CHARS,
       skipToolNames: CHILD_RUN_TOOL_RESULT_BUDGET_SKIP_TOOLS,
     });
     if (selection.toPersist.length === 0 && selection.alreadyReplaced.length === 0) {
-      return withMemoryReminder(await this.autoCompactRunIfNeeded(run, source, signal) ?? source, memoryReminder);
+      return await this.autoCompactRunIfNeeded(run, source, signal) ?? source;
     }
 
     const nextMessages = source.map(cloneAgentMessage);
@@ -979,21 +983,11 @@ export class AgentDelegationRuntime {
     }
 
     throwIfAborted(signal);
-    if (!changed) return withMemoryReminder(await this.autoCompactRunIfNeeded(run, source, signal) ?? source, memoryReminder);
+    if (!changed) return await this.autoCompactRunIfNeeded(run, source, signal) ?? source;
     run.messages = nextMessages.map(cloneAgentMessage);
     if (run.agent) run.agent.state.messages = nextMessages as never;
     run.updatedAt = Date.now();
-    return withMemoryReminder(await this.autoCompactRunIfNeeded(run, nextMessages, signal) ?? nextMessages, memoryReminder);
-  }
-
-  private async runMemoryReminder(run: DelegationRunState): Promise<string | null> {
-    // The briefing is resident (query-independent), so the cache key is just the memory owner —
-    // it stays warm across a long child run instead of thrashing on per-turn query text.
-    const key = run.memoryOwnerAgentId;
-    if (run.memoryReminderCache?.key === key) return run.memoryReminderCache.text;
-    const text = await this.host.buildMemoryReminder(run.memoryOwnerAgentId);
-    run.memoryReminderCache = { key, text };
-    return text;
+    return await this.autoCompactRunIfNeeded(run, nextMessages, signal) ?? nextMessages;
   }
 
   private async autoCompactRunIfNeeded(run: DelegationRunState, messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[] | null> {
@@ -1109,6 +1103,7 @@ export class AgentDelegationRuntime {
     run.agent = childAgent;
     run.skillRuntime = skillRuntime;
     run.localWorkspace = localWorkspace;
+    run.nodeChanges = {};
     this.subscribeToChild(run);
     this.installRunContextTransform(run);
   }
@@ -1130,7 +1125,6 @@ export class AgentDelegationRuntime {
       getParentSystemPrompt: () => getChildAgent()?.state.systemPrompt ?? this.host.getParentSystemPrompt(),
       getActiveRunId: () => getRunId(),
       getRuntimeSettings: () => this.host.getRuntimeSettings(),
-      buildMemoryReminder: (agentId) => this.host.buildMemoryReminder(agentId),
       childRunStarted: (snapshot, seed) => this.host.childRunStarted(snapshot, seed),
       childRunMessage: (snapshot, message) => this.host.childRunMessage(snapshot, message),
       childRunToolResultReplaced: (snapshot, toolCallId, text) => this.host.childRunToolResultReplaced(snapshot, toolCallId, text),
@@ -1432,7 +1426,60 @@ export function visibleChildRunResult(data: AgentDelegateToolData): unknown {
   return visible;
 }
 
+function recordNodeToolChanges(
+  changes: AgentChildRunNodeChanges,
+  toolName: string,
+  result: unknown,
+  isError: boolean,
+): void {
+  if (isError) return;
+  if (toolName !== 'node_create' && toolName !== 'node_edit') return;
+  const details = isPlainRecord(result) ? result.details : undefined;
+  if (!isToolEnvelope(details) || !details.ok || !isPlainRecord(details.data)) return;
+
+  const created = stringArray(details.data.createdNodeIds);
+  appendUniqueNodeIds(changes, 'createdNodeIds', created);
+
+  if (toolName !== 'node_edit') return;
+  if (details.data.status !== 'updated') return;
+  const trashed = stringArray(details.data.trashedNodeIds);
+  appendUniqueNodeIds(changes, 'trashedNodeIds', trashed);
+  const changedExisting = stringArray(details.data.affectedNodeIds)
+    .filter((nodeId) => !created.includes(nodeId) && !trashed.includes(nodeId));
+  appendUniqueNodeIds(changes, 'updatedNodeIds', changedExisting);
+}
+
+function compactNodeChanges(changes: AgentChildRunNodeChanges): AgentChildRunNodeChanges | undefined {
+  const compacted: AgentChildRunNodeChanges = {};
+  if (changes.createdNodeIds?.length) compacted.createdNodeIds = changes.createdNodeIds;
+  if (changes.updatedNodeIds?.length) compacted.updatedNodeIds = changes.updatedNodeIds;
+  if (changes.trashedNodeIds?.length) compacted.trashedNodeIds = changes.trashedNodeIds;
+  return Object.keys(compacted).length ? compacted : undefined;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.length > 0) : [];
+}
+
+function appendUniqueNodeIds(
+  changes: AgentChildRunNodeChanges,
+  key: keyof AgentChildRunNodeChanges,
+  nodeIds: readonly string[],
+): void {
+  if (nodeIds.length === 0) return;
+  const current = changes[key] ?? [];
+  const existing = new Set(current);
+  const next = [...current];
+  for (const nodeId of nodeIds) {
+    if (existing.has(nodeId)) continue;
+    existing.add(nodeId);
+    next.push(nodeId);
+  }
+  changes[key] = next;
+}
+
 function runToToolData(run: DelegationRunState): AgentDelegateToolData {
+  const nodeChanges = compactNodeChanges(run.nodeChanges);
   return {
     status: run.status,
     agent_id: run.id,
@@ -1450,6 +1497,7 @@ function runToToolData(run: DelegationRunState): AgentDelegateToolData {
     updated_at: run.updatedAt,
     completed_at: run.completedAt,
     transcript_message_count: run.messages.length,
+    ...(nodeChanges ? { node_changes: nodeChanges } : {}),
   };
 }
 
@@ -1495,11 +1543,6 @@ function createHiddenUserMessage(text: string): UserMessage {
     timestamp: Date.now(),
     content: [{ type: 'text', text: systemReminder(text) }],
   };
-}
-
-function withMemoryReminder(messages: AgentMessage[], memoryReminder: string | null): AgentMessage[] {
-  if (!memoryReminder) return messages;
-  return [createHiddenUserMessage(memoryReminder), ...messages.map(cloneAgentMessage)];
 }
 
 /**

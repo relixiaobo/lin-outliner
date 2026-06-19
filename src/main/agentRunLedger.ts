@@ -316,6 +316,10 @@ export class AgentRunLedgerWriter {
     return [...this.runs.values()].map((run) => run.queue);
   }
 
+  forgetRun(runId: string): void {
+    this.runs.delete(runId);
+  }
+
   private requireRun(runId: string): RunLedgerRunState {
     const run = this.runs.get(runId);
     if (!run) throw new Error(`Unknown child-run ledger: ${runId}`);

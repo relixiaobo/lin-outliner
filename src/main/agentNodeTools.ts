@@ -4,6 +4,7 @@ import { normalizeDateFieldValue } from '../core/dateFieldValue';
 import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
 import {
   plainText,
+  referenceTargetSortKey,
   replaceAllRichTextPatch,
   type NodeProjection,
   type ReferenceTarget,
@@ -103,7 +104,7 @@ import type {
   OutlinerToolHost,
   ProjectionIndex,
 } from './agentNodeToolTypes';
-import { parseReferenceMarkers, referenceMarkupToRichText, splitFileReferenceMarkers } from '../core/referenceMarkup';
+import { parseReferenceMarkers, referenceMarkupToRichText, richTextToReferenceMarkup, splitFileReferenceMarkers } from '../core/referenceMarkup';
 import { isPathInside } from './agentAttachmentMaterialization';
 
 export type { OutlinerToolHost } from './agentNodeToolTypes';
@@ -1271,9 +1272,8 @@ async function syncOutlineNodeInPlace(
   const current = requiredNode(currentIndex, nodeId);
   if (current.type === 'reference') throw new Error('Outline edit cannot update a reference node root; use replace_with_reference_to.');
   trackMatchedNode(tracker, nodeId);
-  const nextContent = richTextFromOutlineText(node.title);
-  if (!richTextEqual(current.content, nextContent)) {
-    await host.handle('apply_node_text_patch', { nodeId, patch: replaceAllRichTextPatch(nextContent) });
+  if (richTextOutlineText(current.content) !== node.title) {
+    await host.handle('apply_node_text_patch', { nodeId, patch: replaceAllRichTextPatch(richTextFromOutlineText(node.title)) });
   }
   if ((current.description ?? null) !== (node.description ?? null)) {
     await host.handle('update_node_description', { nodeId, description: node.description ?? null });
@@ -1368,11 +1368,10 @@ async function syncFieldValues(
       if (canUpdateValueInPlace(current, item.desired)) {
         trackMatchedNode(tracker, item.existing);
         await ensureAbsoluteChildIndex(host, item.existing, fieldEntryId, desiredIndex);
-        const nextContent = richTextFromOutlineText(item.desired.text);
-        if (!richTextEqual(current.content, nextContent)) {
+        if (richTextOutlineText(current.content) !== item.desired.text) {
           await host.handle('apply_node_text_patch', {
             nodeId: item.existing,
-            patch: replaceAllRichTextPatch(nextContent),
+            patch: replaceAllRichTextPatch(richTextFromOutlineText(item.desired.text)),
           });
         }
       } else {
@@ -2104,7 +2103,7 @@ async function validateOutlineReferenceTargets(
   );
   if (nodeValidation) return nodeValidation;
 
-  const chatSources = dedupeReferenceTargets(targets)
+  const chatSources = targets
     .filter((target): target is Extract<ReferenceTarget, { kind: 'chat-source' }> => target.kind === 'chat-source');
   if (chatSources.length === 0) return null;
   if (!options.chatSourceValidator) {
@@ -2137,7 +2136,7 @@ function dedupeReferenceTargets(targets: readonly ReferenceTarget[]): ReferenceT
   const seen = new Set<string>();
   const out: ReferenceTarget[] = [];
   for (const target of targets) {
-    const key = JSON.stringify(target);
+    const key = referenceTargetSortKey(target);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(target);
@@ -2266,9 +2265,7 @@ function descendantNodeIdSet(index: ProjectionIndex, rootNodeId: string, include
 function collectNodeReferenceTargets(node: OutlineNode, targets: ReferenceTarget[]) {
   if (node.referenceTargetId) targets.push({ kind: 'node', nodeId: node.referenceTargetId });
   collectTextReferenceTargets(node.title, targets);
-  if (node.description) collectTextReferenceTargets(node.description, targets);
   for (const field of node.fields) {
-    collectTextReferenceTargets(field.name, targets);
     for (const value of field.values) {
       if (value.targetId) targets.push({ kind: 'node', nodeId: value.targetId });
       collectTextReferenceTargets(value.text, targets);
@@ -2294,8 +2291,6 @@ function richTextFromOutlineText(text: string): RichText {
   return text.includes('[[') ? referenceMarkupToRichText(text) : plainText(text);
 }
 
-function richTextEqual(left: RichText, right: RichText): boolean {
-  return left.text === right.text
-    && JSON.stringify(left.marks ?? []) === JSON.stringify(right.marks ?? [])
-    && JSON.stringify(left.inlineRefs ?? []) === JSON.stringify(right.inlineRefs ?? []);
+function richTextOutlineText(content: RichText): string {
+  return content.inlineRefs.length > 0 ? richTextToReferenceMarkup(content) : content.text;
 }

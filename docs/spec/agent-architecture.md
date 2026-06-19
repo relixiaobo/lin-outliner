@@ -247,7 +247,8 @@ environment reminder is single-agent. The conversation noun
 
 - **Heterogeneous subjects in one pool.** The single believer pool mixes facts
   about the user with facts about the work/domain; self-contained subject-naming
-  (no elision) is what keeps a flat `<memory>` list legible.
+  (no elision) is what keeps timeline memory nodes legible without a resident
+  `<memory>` briefing.
 - **Authored vs dreamed.** Neva's persona/habits and skills are authored and are
   never produced by Dream; only conversation evidence is consolidated.
 - **Principal stays dual-use.** `principalKey` / `AgentPrincipal` remain in the

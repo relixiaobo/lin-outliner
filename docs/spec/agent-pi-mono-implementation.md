@@ -625,15 +625,14 @@ nodex tools:
 - `node_search`
 - `undo`
 - `browser`
-- conversation-history recall
 
 nodex is the closest outliner reference. Its important lesson is that document
 tools should be domain-specific, not generic file operations. The agent edits
 nodes through outliner verbs and each write is undoable as one AI operation.
 Tenon should keep nodex's compact `node_*` surface, but use Tenon's own final
 contracts from `agent-tool-design.md`: `node_create.outline`,
-`node_read(...)`, and
-`node_edit.old_string/new_string`. The parser is implemented in TypeScript rather than
+`node_read(...)`, `node_edit.old_string/new_string`, and `past_chats` for raw
+prior conversation spans. The parser is implemented in TypeScript rather than
 left as prompt-only behavior. Compatibility normalization belongs in the
 adapter/runtime layer and should not appear in the model-facing tool
 description. Tenon code should use neutral parser names such as
@@ -761,7 +760,7 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
 - `node_search` / `node_read` for durable timeline memory nodes.
 - `past_chats` for visible prior conversation history and exact raw source spans.
 - Runtime-owned Dream runs are scheduled private `memory-dream` skill runs. They
-  read raw conversation/run spans since the Dream watermark, write `#d-*` memory
+  read raw conversation spans since the Dream watermark, write `#d-*` memory
   nodes with `[[chat:...]]` provenance, record `dream.completed`, and write a
   reflective run meta entry. There is no `/dream` slash command and no
   foreground `dream` tool.
