@@ -42,9 +42,11 @@ floating toolbar (#301). Two design-review plan PRs were **ratified by the PM
 memory as ordinary timeline nodes + dream-as-an-editable-skill — a deliberate reversal of
 the just-shipped activation/briefing engine; **GO on the full direction, PR1 first**) and
 **#303** `node-search-access-ranking` (a recency/access-decay dimension for `node_search`
-— the generic ranking substrate #302's pull-only recall reuses; **GO, build-ready**). Both
-plans landed on `main` (#302/#303 merged). Next build dispatch: **#302 PR1** (re-provide
-`past_chats`, additive/safe) and **#303** can start immediately and in parallel; the four
+— the generic ranking substrate #302's pull-only recall reuses; **GO**, since **revised +
+re-reviewed via #304** into two build-ready PRs — PR A personal-access + PR B
+reference-authority, the latter ratified 2026-06-19). Both plans landed on `main`
+(#302/#303/#304 merged). Next build dispatch: **#302 PR1** (re-provide
+`past_chats`, additive/safe) and **#303 PR A** can start immediately and in parallel; the four
 disjoint lanes from the 2026-06-19 dispatch plan (agent/outliner disclosure stability ·
 command-surface one-pager · dark-mode-contrast-pass · anthropic-auth-clarity) remain open.
 
@@ -226,16 +228,26 @@ before any directional/security-sensitive build.
   generically by `node-search-access-ranking` (#303). PM postures ratified: pull-only
   regression · memory-in-exportable-document · single-writer abandoned. See
   [`docs/plans/agent-memory-on-timeline.md`](docs/plans/agent-memory-on-timeline.md).
-- **node-search-access-ranking** (P2, plan-track, **ratified 2026-06-19 — GO, build-ready**)
-  — give **all** node search a recency/access-decay dimension ("the node I keep coming back
-  to surfaces first"): a per-`NodeId` access-stats side store (off Loro — flat JSON, the
-  ratified substrate) + a decay multiplier (ported from `computeMemoryStrength`) folded into
-  the single ranking chokepoint `sortSearchHits` (`searchEngine.ts`). Signal = human
-  open/focus + a ratified low-weight agent-recall bump (so memory recall self-reinforces);
-  an explicit `sys:*` sort still overrides; stats-absent behaves exactly as today. Net-new
-  cross-process record lane (IPC + preload + main handler + debounced renderer emit). **One
-  PR** (M0–M4 are build-order within it); the `searchEngine.ts` change lands interface-first.
-  Independent of #302 (can land first/last/alone) but is the generic substrate
+- **node-search-access-ranking** (P2, plan-track — **revised + re-reviewed #304, 2026-06-19**)
+  — better node-search ranking, now **a set of two independent complete PRs** (the
+  reference-authority signal was split out from the personal-access work during the #304
+  review):
+  - **PR A — personal-access ranking** (ratified #303 scope, **build-ready**): a per-`NodeId`
+    **single weighted, time-decayed accumulator** `{s, tUpdate}` (off Loro, flat JSON;
+    `s = s·2^(-Δt/HALF_LIFE) + W[source]`, `W = {human:1, agentRecall:0.15}` — one half-life,
+    so a weak agent recall nudges weakly instead of overwriting recency) folded into
+    `sortSearchHits` only when a caller passes `personalAccess:true`. Transient surfaces opt
+    in (launcher/app search, agent `node_search`); **saved-search materialization stays
+    personal-free** (its order must be reproducible from document state); explicit `sys:*`
+    sort still overrides. Net-new cross-process record lane (IPC + preload + main handler +
+    debounced deliberate-landing emit).
+  - **PR B — reference-authority ranking** (scope expansion, **ratified 2026-06-19 — both
+    axes**, build-ready): an inbound-reference-count document-authority signal — a new
+    `sys:referenceCount` sort mode **and** a capped reference-authority boost folded into
+    **default** relevance (changes default order for all users → UI gate = light+dark/behavior
+    verify). Document-derived/reproducible, so safe for saved-search order.
+  PR A and PR B are independently shippable; the shared `searchEngine.ts` change lands
+  interface-first. Independent of #302, but PR A is the generic substrate
   `agent-memory-on-timeline`'s pull-only recall reuses for recency. See
   [`docs/plans/node-search-access-ranking.md`](docs/plans/node-search-access-ranking.md).
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +

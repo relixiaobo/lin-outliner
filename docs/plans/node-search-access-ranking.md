@@ -33,10 +33,10 @@ implementation PR:
 - **PR A — personal-access ranking (ratified #303 scope).** Off-Loro access telemetry,
   explicit `personalAccess` opt-in, transient-only ranking, and the cross-process
   recording lane.
-- **PR B — reference-authority ranking (scope expansion, pending PM ratification).**
-  A document-derived inbound-reference signal and optional `sys:referenceCount` sort
-  mode. This is useful and clean, but it changes default/document-derived search behavior
-  and was not ratified by #303. Do not build PR B until the PM explicitly ratifies it.
+- **PR B — reference-authority ranking.** A document-derived inbound-reference signal:
+  a `sys:referenceCount` sort mode **and** a capped reference-authority boost folded into
+  default relevance. A scope expansion beyond #303, ratified separately by the PM (both
+  axes) — see the board for status.
 
 This plan keeps both designs in one file because they touch the same search-ranking
 chokepoint and the boundary between them is the point of the revision. The build units
@@ -219,11 +219,11 @@ cross-process lane:
 
 The preload bridge remains the only renderer-to-main path (A2).
 
-## Design — PR B: reference-authority ranking (pending PM ratification)
+## Design — PR B: reference-authority ranking
 
-This is a scope expansion beyond ratified #303. It is documented here because it answers
-the same design question — "what ranking signals are clean?" — but it is not part of PR A
-unless the PM explicitly ratifies it.
+A scope expansion beyond #303, ratified separately by the PM. It answers the same design
+question — "what ranking signals are clean?" — but is a distinct, independently shippable
+feature from PR A.
 
 ### 1. Motivation
 
@@ -232,14 +232,14 @@ nodes reference is often more important than one with identical lexical relevanc
 references. Unlike personal access stats, reference count is collaborative document state
 and can safely affect saved search ordering.
 
-### 2. Possible behavior
+### 2. Behavior
 
-If ratified, PR B can add:
+PR B adds **both** axes:
 
 - **`sys:referenceCount`** as an explicit search-node sort mode for "most referenced" /
   "least referenced" saved searches.
-- A conservative, capped reference-authority boost in default relevance only if the PM
-  explicitly ratifies changing default order for all users.
+- A conservative, **capped** reference-authority boost folded into default relevance
+  (changes default order for all users — verify light+dark/behavior).
 
 Possible scoring shape:
 
@@ -283,8 +283,8 @@ ranking; source association belongs to the memory plan's source refs.
 - PR A constants: `HALF_LIFE_MS`, `PERSONAL_ACCESS_WEIGHT`, `PERSONAL_ACCESS_CAP`, and
   initial `agentRecall` weight.
 - PR A dwell/debounce window for "deliberate landing."
-- PR B scope: whether PM ratifies `sys:referenceCount`, default reference-authority boost,
-  both, or neither.
+- PR B constants: `REFERENCE_AUTHORITY_CAP` / `REFERENCE_AUTHORITY_WEIGHT` (kept
+  conservative so default order shifts mildly, never overriding strong lexical intent).
 - PR B UI exposure: whether `sys:referenceCount` should appear in the search-toolbar
   field picker in the same PR, or only be supported by engine/parser first.
 
@@ -309,12 +309,12 @@ ranking; source association belongs to the memory plan's source refs.
 - [ ] **A5:** fold PR A behavior into `docs/spec/search-query-grammar.md`,
       `docs/spec/launcher.md`, and the agent tool spec as appropriate (A6).
 
-### PR B — reference-authority ranking (pending PM ratification)
+### PR B — reference-authority ranking
 
-- [ ] **B0:** after explicit PM ratification, define inbound reference-count helpers and
-      tests for source boundaries.
-- [ ] **B1:** add explicit `sys:referenceCount` sort if ratified; preserve existing
+- [ ] **B0:** define inbound reference-count helpers and tests for source boundaries
+      (distinct sources, ignore trashed/metadata refs).
+- [ ] **B1:** add the explicit `sys:referenceCount` sort mode; preserve existing
       created/updated sort behavior.
-- [ ] **B2:** add default reference-authority boost only if separately ratified; tests
-      must prove it is capped and does not override strong lexical relevance.
-- [ ] **B3:** update specs and any UI/parser surfaces included in the ratified scope.
+- [ ] **B2:** add the capped default reference-authority boost; tests must prove it is
+      capped and does not override strong lexical relevance.
+- [ ] **B3:** update specs and the UI/parser surfaces for the new sort field (A6).
