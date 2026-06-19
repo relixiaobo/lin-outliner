@@ -12,6 +12,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Reference-authority ranking for node search — `node-search-access-ranking` PR B (PR #309, codex)** —
+  default node-search relevance now folds in a capped, **document-derived reference-authority** boost: a
+  node ranks higher the more **distinct linked inbound source nodes** point at it (tree references, inline
+  node references, and reference-field values; trashed/internal metadata references excluded). The boost is
+  `cappedMultiplier(log1p(distinctSources), 0.04, 0.25)` — at most +25%, so it reorders close/same-tier
+  matches without overriding strong lexical relevance (exact-title still wins). A search node can also
+  explicitly sort by the **References** system field (`sys:refCount`), which orders by the **same visible
+  linked count** the References field and backlinks badge display. The authority count is computed in the
+  search layer (`referenceAuthoritySourceCount`), leaving the shared `referenceCountKey` / `ReferenceCounts`
+  untouched — backlinks-panel and `sys:refCount` displays are unchanged. Because the signal is pure document
+  state it is reproducible, so it applies to **all** callers including saved-search materialization (unlike
+  PR A's personal-access boost). The capped-multiplier shape is extracted to `src/core/ranking.ts`, now
+  shared with PR A's personal-access multiplier. **Gate (main):** `/code-review high` caught a headline
+  regression in the first cut — it collapsed the shared `referenceCountKey`, which would have silently
+  changed `BacklinksSection` + `sys:refCount` counts and desynced the header badge from rendered rows —
+  fixed in `c2483504` by reverting `references.ts` and deriving the authority count separately, with 6 new
+  `searchEngine` tests. typecheck ✓ · `test:core` 1057 pass / 2 skip / 0 fail · `docs:check` ✓.
 - **Personal access ranking for node search — `node-search-access-ranking` PR A (PR #307, codex)** —
   transient node retrieval (launcher / app search / agent `node_search`) now boosts nodes the user
   recently and frequently lands on. A per-`NodeId` **single weighted, time-decayed accumulator**

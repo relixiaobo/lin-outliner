@@ -46,8 +46,9 @@ the just-shipped activation/briefing engine; **GO on the full direction, PR1 fir
 re-reviewed via #304** into two build-ready PRs — PR A personal-access + PR B
 reference-authority, the latter ratified 2026-06-19). Both plans landed on `main`
 (#302/#303/#304 merged). **#302 PR1 shipped (#305, 2026-06-19)** — `past_chats` re-provided.
-Next build dispatch: **#302 PR2** (atomic node-memory flip; gate `/code-review ultra`) and
-**#303 PR A** can start immediately and in parallel; of the four
+**#303 `node-search-access-ranking` fully shipped (2026-06-19)** — PR A personal-access (#307) +
+PR B reference-authority (#309); plan archived. Remaining build dispatch: **#302 PR2** (atomic
+node-memory flip; gate `/code-review ultra`); of the four
 disjoint lanes from the 2026-06-19 dispatch plan, **agent/outliner disclosure stability shipped
 (#306, codex-3)** — command-surface one-pager · dark-mode-contrast-pass · anthropic-auth-clarity
 remain open.
@@ -231,29 +232,6 @@ before any directional/security-sensitive build.
   generically by `node-search-access-ranking` (#303). PM postures ratified: pull-only
   regression · memory-in-exportable-document · single-writer abandoned. See
   [`docs/plans/agent-memory-on-timeline.md`](docs/plans/agent-memory-on-timeline.md).
-- **node-search-access-ranking** (P2, plan-track — **revised + re-reviewed #304, 2026-06-19**)
-  — better node-search ranking, now **a set of two independent complete PRs** (the
-  reference-authority signal was split out from the personal-access work during the #304
-  review):
-  - **PR A — personal-access ranking** (ratified #303 scope, **SHIPPED #307** — see Recently
-    completed): a per-`NodeId`
-    **single weighted, time-decayed accumulator** `{s, tUpdate}` (off Loro, flat JSON;
-    `s = s·2^(-Δt/HALF_LIFE) + W[source]`, `W = {human:1, agentRecall:0.15}` — one half-life,
-    so a weak agent recall nudges weakly instead of overwriting recency) folded into
-    `sortSearchHits` only when a caller passes `personalAccess:true`. Transient surfaces opt
-    in (launcher/app search, agent `node_search`); **saved-search materialization stays
-    personal-free** (its order must be reproducible from document state); explicit `sys:*`
-    sort still overrides. Net-new cross-process record lane (IPC + preload + main handler +
-    debounced deliberate-landing emit).
-  - **PR B — reference-authority ranking** (scope expansion, **ratified 2026-06-19 — both
-    axes**, build-ready): an inbound-reference-count document-authority signal — a new
-    `sys:referenceCount` sort mode **and** a capped reference-authority boost folded into
-    **default** relevance (changes default order for all users → UI gate = light+dark/behavior
-    verify). Document-derived/reproducible, so safe for saved-search order.
-  PR A and PR B are independently shippable; the shared `searchEngine.ts` change lands
-  interface-first. Independent of #302, but PR A is the generic substrate
-  `agent-memory-on-timeline`'s pull-only recall reuses for recency. See
-  [`docs/plans/node-search-access-ranking.md`](docs/plans/node-search-access-ranking.md).
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
@@ -498,6 +476,23 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   consensus (agent-open records human access) was **refuted** at verify (it is a human chat-link click).
   Re-verified on the rebased branch: typecheck ✓ · `test:core` 1051 pass / 2 skip / 0 fail ·
   `test:renderer` 548 pass / 0 fail · `docs:check` ✓. **Shape (b)** member — PR A of a two-PR set.
+- **node-search-access-ranking PR B — reference-authority ranking** (codex, PR #309) — folds a
+  capped, document-derived **reference-authority** signal into default node-search relevance: a node's
+  rank gets a `cappedMultiplier(log1p(distinctLinkedSources), 0.04, 0.25)` boost (max +25%), where the
+  signal counts **distinct linked inbound source nodes** (tree refs, inline node refs, reference-field
+  values; trashed/internal metadata excluded) — derived in the search layer (`referenceAuthoritySourceCount`),
+  so the shared visible reference count (`BacklinksSection` badge, `sys:refCount` field) is untouched.
+  Also adds a `sys:refCount` explicit sort that orders by that **same displayed** linked count. Because the
+  signal is pure document state it is safe for saved-search materialization (applies to all callers, not just
+  transient ones). Extracts the capped-multiplier shape into `src/core/ranking.ts`, now shared with PR A's
+  personal-access multiplier. **Gate (main):** `/code-review high` → 1 headline regression caught
+  (the first cut collapsed the shared `referenceCountKey`, silently changing `BacklinksSection` + `sys:refCount`
+  counts and desyncing the header badge from rendered rows) + 4 low items; all resolved in `c2483504` by
+  reverting `references.ts` to `main` and deriving the authority count separately, with 6 new searchEngine
+  tests (distinct-source count, shared-visible-count sort, cap-does-not-override-strong-lexical,
+  virtual-operand exclusion). Re-verified: typecheck ✓ · `test:core` 1057 pass / 2 skip / 0 fail ·
+  `docs:check` ✓. **Shape (b)** member — PR B of the two-PR set; completes `node-search-access-ranking`
+  (plan → `docs/plans/archive/`).
 - **stable-disclosure-anchor** (codex-3, PR #306) — settles two boarded lanes in one renderer-only
   PR: `agent-process-stable-disclosure` + `outliner-collapse-scroll-anchor`, sharing one disclosure
   scroll-anchor invariant (`src/renderer/ui/interactions/disclosureScrollAnchor.ts` +
