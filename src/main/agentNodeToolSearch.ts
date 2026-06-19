@@ -12,6 +12,7 @@ import { formatNodeReferenceMarker } from '../core/referenceMarkup';
 import {
   SEARCH_EXECUTABLE_QUERY_OPS,
   runSearchExpr,
+  type SearchRankingOptions,
   searchNodeHasRules,
   searchNodeQueryTerms,
   searchNodeToQueryExpr,
@@ -253,11 +254,14 @@ export function searchViewModeOf(index: ProjectionIndex, node: NodeProjection): 
 export function runSearch(index: ProjectionIndex, search: {
   searchNodeId?: string;
   query: SearchQueryExpr;
-}, options: { textIndex?: TextSearchIndex } = {}): string[] | NodeToolIssue {
+}, options: { textIndex?: TextSearchIndex; rankingOptions?: SearchRankingOptions } = {}): string[] | NodeToolIssue {
   const textIndex = options.textIndex;
   const result = textIndex
-    ? searchNodeQuery(index.projection, textIndex, search.query, { searchNodeId: search.searchNodeId })
-    : runSearchExprFallback(index, search);
+    ? searchNodeQuery(index.projection, textIndex, search.query, {
+      searchNodeId: search.searchNodeId,
+      ...options.rankingOptions,
+    })
+    : runSearchExprFallback(index, search, options.rankingOptions);
   if (!result.ok) {
     return {
       code: result.issue.code,
@@ -271,8 +275,11 @@ export function runSearch(index: ProjectionIndex, search: {
 function runSearchExprFallback(index: ProjectionIndex, search: {
   searchNodeId?: string;
   query: SearchQueryExpr;
-}) {
-  return runSearchExpr(index.projection, search.query, { searchNodeId: search.searchNodeId });
+}, rankingOptions: SearchRankingOptions = {}) {
+  return runSearchExpr(index.projection, search.query, {
+    searchNodeId: search.searchNodeId,
+    ...rankingOptions,
+  });
 }
 
 export function validateReferenceTargetIds(index: ProjectionIndex, targetIds: string[]): NodeToolIssue | null {

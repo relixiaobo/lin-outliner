@@ -1,10 +1,14 @@
 import type { DocumentCommand } from '../core/commands';
 import type { DocumentProjection, NodeProjection, SearchQueryExpr } from '../core/types';
 import type { TextSearchIndex } from '../core/textSearchIndex';
+import type { NodeAccessSource } from '../core/nodeAccessRanking';
+import type { SearchRankingOptions } from '../core/searchEngine';
 
 export interface OutlinerToolHost {
   getProjection(): DocumentProjection;
   getTextSearchIndex?(): TextSearchIndex;
+  getSearchRankingOptions?(): SearchRankingOptions;
+  recordNodeAccess?(nodeIds: readonly string[], source: NodeAccessSource): void | Promise<void>;
   handle(
     command: DocumentCommand,
     args?: Record<string, unknown>,

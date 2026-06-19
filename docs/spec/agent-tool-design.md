@@ -748,6 +748,12 @@ Result behavior:
 - Text relevance ranks exact title matches, title prefixes, phrases, all-term
   matches, tag labels, field names, and field values through the same core
   relevance kernel used by saved search refresh.
+- `node_search` is a transient lookup surface and may apply per-user personal
+  access ranking after text relevance. This ranking is off-document state; it is
+  not a search-node rule and does not change saved search materialization.
+- When `count` is false, only the returned page of `items` records weak
+  `agentRecall` access for those node ids. `count: true` records nothing, and
+  candidates beyond the returned page are never recorded.
 - Subtree restriction, parent restriction, backlink search, and relationship
   filters should be represented as search conditions in the outline, not as
   separate tool parameters.

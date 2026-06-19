@@ -48,6 +48,11 @@ import {
 import { analyzeTextSearchQuery, type TextSearchQueryAnalysis } from './textSearchAnalyzer';
 import { buildReferenceSummary, type ReferenceSummary } from './references';
 import { nodeIsInSubtree } from './treeUtils';
+import {
+  nodeAccessRankingMultiplier,
+  type NodeAccessStats,
+  type NodeAccessStatsById,
+} from './nodeAccessRanking';
 
 type SearchDocument = DocumentState | DocumentProjection;
 type SearchNode = Node | NodeProjection;
@@ -168,6 +173,18 @@ export type SearchRunResult =
   | { ok: true; hits: SearchHit[] }
   | { ok: false; issue: SearchConditionIssue };
 
+export interface SearchRankingOptions {
+  personalAccess?: boolean;
+  personalAccessStats?: NodeAccessStatsById;
+  now?: number;
+}
+
+export interface SearchRunOptions extends SearchRankingOptions {
+  limit?: number;
+  searchNodeId?: NodeId;
+  textIndex?: TextSearchIndex;
+}
+
 interface SearchIndex {
   rootId: NodeId;
   libraryId: NodeId;
@@ -210,7 +227,7 @@ interface OperandResolutionOptions {
 export function runSearchExpr(
   document: SearchDocument,
   query: SearchQueryExpr,
-  options: { limit?: number; searchNodeId?: NodeId; textIndex?: TextSearchIndex } = {},
+  options: SearchRunOptions = {},
 ): SearchRunResult {
   const baseIndex = indexSearchDocument(document);
   const searchNode = options.searchNodeId
@@ -247,11 +264,16 @@ export function runSearchExpr(
     if (evaluation.match) scored.push({ nodeId: node.id, score: evaluation.score });
   }
 
-  const sorted = sortSearchHits(scored, evalIndex, contextSearchNode);
+  const sorted = sortSearchHits(scored, evalIndex, contextSearchNode, options);
   return { ok: true, hits: typeof options.limit === 'number' ? sorted.slice(0, options.limit) : sorted };
 }
 
-function sortSearchHits(hits: SearchHit[], index: SearchIndex, searchNode: SearchNode): SearchHit[] {
+function sortSearchHits(
+  hits: SearchHit[],
+  index: SearchIndex,
+  searchNode: SearchNode,
+  rankingOptions: SearchRankingOptions,
+): SearchHit[] {
   const sortRule = searchNodeSortRule(index, searchNode);
   const nodes = index.nodes;
   const direction: SortDirection = sortRule?.direction === 'asc' ? 'asc' : 'desc';
@@ -268,7 +290,23 @@ function sortSearchHits(hits: SearchHit[], index: SearchIndex, searchNode: Searc
         || left.nodeId.localeCompare(right.nodeId);
     });
   }
-  return hits.sort((left, right) => right.score - left.score || left.nodeId.localeCompare(right.nodeId));
+  const now = rankingOptions.now ?? Date.now();
+  return hits.sort((left, right) =>
+    rankingScore(right, rankingOptions.personalAccessStats?.get(right.nodeId), now, rankingOptions)
+      - rankingScore(left, rankingOptions.personalAccessStats?.get(left.nodeId), now, rankingOptions)
+    || right.score - left.score
+    || left.nodeId.localeCompare(right.nodeId)
+  );
+}
+
+function rankingScore(
+  hit: SearchHit,
+  accessStats: NodeAccessStats | undefined,
+  now: number,
+  rankingOptions: SearchRankingOptions,
+): number {
+  if (!rankingOptions.personalAccess || !accessStats) return hit.score;
+  return hit.score * nodeAccessRankingMultiplier(accessStats, now);
 }
 
 function searchNodeSortRule(index: SearchIndex, searchNode: SearchNode): { field: string; direction: SortDirection } | null {
@@ -286,7 +324,7 @@ function searchNodeSortRule(index: SearchIndex, searchNode: SearchNode): { field
 export function runSearchNode(
   document: SearchDocument,
   searchNodeId: NodeId,
-  options: { limit?: number; textIndex?: TextSearchIndex } = {},
+  options: Omit<SearchRunOptions, 'searchNodeId'> = {},
 ): SearchRunResult {
   const resolved = searchNodeToQueryExpr(document, searchNodeId);
   if (!resolved.ok) return { ok: false, issue: resolved.issue };

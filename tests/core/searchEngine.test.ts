@@ -153,6 +153,50 @@ describe('core search engine', () => {
 
     const indexedAscending = runSearchNode(state, searchId, { textIndex: buildTextSearchIndex(state) });
     expect(indexedAscending.ok ? indexedAscending.hits.map((hit) => hit.nodeId) : []).toEqual([older, newer]);
+
+    const personalAscending = runSearchNode(state, searchId, {
+      personalAccess: true,
+      personalAccessStats: new Map([[newer, { s: 20, tUpdate: 1_000 }]]),
+      now: 1_000,
+    });
+    expect(personalAscending.ok ? personalAscending.hits.map((hit) => hit.nodeId) : []).toEqual([older, newer]);
+  });
+
+  test('can opt default relevance sorting into personal access ranking', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const baselineFirst = mustFocus(core.createNode(
+      today,
+      null,
+      'personal access ranking needle',
+      'node:00000000-0000-4000-8000-000000000001',
+    ));
+    const favored = mustFocus(core.createNode(
+      today,
+      null,
+      'personal access ranking needle',
+      'node:00000000-0000-4000-8000-000000000002',
+    ));
+    const query = { kind: 'rule' as const, op: 'STRING_MATCH' as const, text: 'personal access ranking needle' };
+    const now = 1_000;
+    const personalAccessStats = new Map([[favored, { s: 8, tUpdate: now }]]);
+
+    const baseline = runSearchExpr(core.state(), query);
+    expect(baseline.ok ? baseline.hits.map((hit) => hit.nodeId).slice(0, 2) : []).toEqual([baselineFirst, favored]);
+
+    const disabled = runSearchExpr(core.state(), query, {
+      personalAccess: false,
+      personalAccessStats,
+      now,
+    });
+    expect(disabled.ok ? disabled.hits.map((hit) => hit.nodeId).slice(0, 2) : []).toEqual([baselineFirst, favored]);
+
+    const ranked = runSearchExpr(core.state(), query, {
+      personalAccess: true,
+      personalAccessStats,
+      now,
+    });
+    expect(ranked.ok ? ranked.hits.map((hit) => hit.nodeId).slice(0, 2) : []).toEqual([favored, baselineFirst]);
   });
 
   test('uses text index relevance for loose multi-term string matches', () => {

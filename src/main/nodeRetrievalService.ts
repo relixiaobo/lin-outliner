@@ -1,4 +1,4 @@
-import { runSearchExpr, type SearchRunResult } from '../core/searchEngine';
+import { runSearchExpr, type SearchRankingOptions, type SearchRunResult } from '../core/searchEngine';
 import type { DocumentProjection, SearchHit, SearchQueryExpr } from '../core/types';
 import type { TextSearchIndex } from '../core/textSearchIndex';
 
@@ -7,7 +7,7 @@ export interface NodeRetrievalHost {
   getTextSearchIndex(): TextSearchIndex;
 }
 
-export interface NodeRetrievalOptions {
+export interface NodeRetrievalOptions extends SearchRankingOptions {
   limit?: number;
   searchNodeId?: string;
 }
@@ -35,6 +35,9 @@ export function searchNodeQuery(
     searchNodeId: options.searchNodeId,
     limit: options.limit,
     textIndex,
+    personalAccess: options.personalAccess,
+    personalAccessStats: options.personalAccessStats,
+    now: options.now,
   });
 }
 

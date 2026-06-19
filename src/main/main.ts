@@ -132,6 +132,8 @@ import {
   resolveAgentWorkdir,
 } from './agentLocalRoot';
 import { DiagnosticLogStore } from './diagnosticLog';
+import { NodeAccessStore } from './nodeAccessStore';
+import type { NodeAccessSource } from '../core/nodeAccessRanking';
 
 if (process.env.ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.ELECTRON_USER_DATA_DIR);
@@ -210,6 +212,7 @@ const APP_ICON_PNG_PATH = app.isPackaged
   : join(__dirname, '../../build/icon.png');
 app.setName(APP_NAME);
 const documentService = new DocumentService();
+const nodeAccessStore = new NodeAccessStore(join(app.getPath('userData'), 'node-access-stats.json'));
 const assetService = new AssetService(() => join(app.getPath('userData'), 'assets'));
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
@@ -278,6 +281,22 @@ const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
 documentService.onProjectionChanged((event) => {
   mainWindow?.webContents.send(LIN_DOCUMENT_EVENT_CHANNEL, event);
 });
+
+documentService.setSearchRankingOptionsProvider(() => ({
+  personalAccess: true,
+  personalAccessStats: nodeAccessStore.snapshot(),
+  now: Date.now(),
+}));
+documentService.setNodeAccessRecorder((nodeIds, source) => recordDocumentNodeAccess(nodeIds, source));
+
+async function recordDocumentNodeAccess(nodeIds: readonly string[], source: NodeAccessSource): Promise<void> {
+  const uniqueIds = [...new Set(nodeIds.filter((nodeId) => typeof nodeId === 'string' && nodeId.length > 0))];
+  if (uniqueIds.length === 0) return;
+  const existingIds = new Set(documentService.projectionNodesByIds(uniqueIds).map((node) => node.id));
+  const validIds = uniqueIds.filter((nodeId) => existingIds.has(nodeId));
+  if (validIds.length === 0) return;
+  await nodeAccessStore.recordMany(validIds, source);
+}
 
 // Opt-in OS notifications for off-floor task delivery. Default OFF; the durable
 // in-app delivery is unaffected. The preference is read synchronously at call time
@@ -1214,6 +1233,11 @@ function registerIpc() {
     const result = await dispatch();
     traceIpc(command, result, performance.now() - start);
     return result;
+  });
+
+  ipcMain.handle('lin:record-node-access', async (_event, raw: unknown): Promise<void> => {
+    if (typeof raw !== 'string' || !raw) return;
+    await recordDocumentNodeAccess([raw], 'human');
   });
 
   ipcMain.handle('lin:window', (_event, command: string) => {
@@ -2588,7 +2612,8 @@ if (!app.requestSingleInstanceLock()) {
     watchDevServer.unref();
   }
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    await nodeAccessStore.load();
     const icon = nativeImage.createFromPath(APP_ICON_PNG_PATH);
     if (process.platform === 'darwin' && !icon.isEmpty()) app.dock?.setIcon(icon);
     app.setAboutPanelOptions({
@@ -2673,6 +2698,7 @@ if (!app.requestSingleInstanceLock()) {
     void Promise.race([
       Promise.allSettled([
         documentService.flushPendingChanges(),
+        nodeAccessStore.flushNow(),
         agentRuntime.drainPendingWrites(),
       ]),
       new Promise((resolve) => setTimeout(resolve, 2500)),

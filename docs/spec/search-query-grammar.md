@@ -79,6 +79,16 @@ values are searchable, but they do not outrank exact primary text. If a saved
 search has an explicit created/updated sort, that sort remains primary and
 relevance is only a tie-breaker.
 
+Transient node lookup surfaces can opt into personal access ranking on top of
+the default relevance order. Personal access is stored outside the Loro document
+in per-user `userData` (`node-access-stats.json`) as one time-decayed accumulator
+per node, updated by deliberate human landings and weak agent recall from
+returned `node_search` pages. It is never encoded as a search-node rule, never
+written into saved search results, and never participates in saved-search
+materialization unless a caller explicitly opts into ranking. Explicit
+`sys:createdAt` / `sys:updatedAt` sorts remain authoritative and do not use
+personal access.
+
 Candidate pruning is conservative:
 
 - positive text-only and positive text `AND` branches may use index candidate

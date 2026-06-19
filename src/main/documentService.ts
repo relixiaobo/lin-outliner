@@ -10,10 +10,12 @@ import {
   buildTextSearchIndex,
   buildTextSearchRecordSnapshot,
   textSearchRecordForNodeMap,
+  type SearchRankingOptions,
 } from '../core/searchEngine';
 import { addToSetMap, removeFromSetMap } from '../core/setUtils';
 import { createTextSearchIndex, type MutableTextSearchIndex, type TextSearchIndex } from '../core/textSearchIndex';
 import { collectDescendantIds, nodeIsInSubtree } from '../core/treeUtils';
+import type { NodeAccessSource } from '../core/nodeAccessRanking';
 import { TRASH_ID } from '../core/types';
 import type {
   CommandResult,
@@ -91,6 +93,8 @@ export class DocumentService {
     fieldDefIds: string[];
     referencedNodeIds: string[];
   }>();
+  private searchRankingOptionsProvider?: () => SearchRankingOptions;
+  private nodeAccessRecorder?: (nodeIds: readonly string[], source: NodeAccessSource) => void | Promise<void>;
   private readonly nodeRetrieval = new NodeRetrievalService({
     getProjection: () => this.core.projection(),
     getTextSearchIndex: () => this.getTextSearchIndex(),
@@ -166,6 +170,22 @@ export class DocumentService {
   getTextSearchIndex(): TextSearchIndex {
     this.ensureTextSearchIndex();
     return this.textSearchIndex!;
+  }
+
+  getSearchRankingOptions(): SearchRankingOptions {
+    return this.searchRankingOptionsProvider?.() ?? {};
+  }
+
+  setSearchRankingOptionsProvider(provider: () => SearchRankingOptions): void {
+    this.searchRankingOptionsProvider = provider;
+  }
+
+  setNodeAccessRecorder(recorder: (nodeIds: readonly string[], source: NodeAccessSource) => void | Promise<void>): void {
+    this.nodeAccessRecorder = recorder;
+  }
+
+  recordNodeAccess(nodeIds: readonly string[], source: NodeAccessSource): void | Promise<void> {
+    return this.nodeAccessRecorder?.(nodeIds, source);
   }
 
   /** Project specific nodes by id without rebuilding the whole-document projection
@@ -668,7 +688,10 @@ export class DocumentService {
   }
 
   private searchNodes(query: string) {
-    return this.nodeRetrieval.searchText(query, { limit: 50 });
+    return this.nodeRetrieval.searchText(query, {
+      limit: 50,
+      ...this.getSearchRankingOptions(),
+    });
   }
 
   private textSearchIndexForCoreMutation(): TextSearchIndex | undefined {

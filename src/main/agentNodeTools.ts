@@ -126,6 +126,10 @@ function asAgentToolHost(host: OutlinerToolHost): OutlinerToolHost {
   return {
     getProjection: () => host.getProjection(),
     getTextSearchIndex: host.getTextSearchIndex ? () => host.getTextSearchIndex!() : undefined,
+    getSearchRankingOptions: host.getSearchRankingOptions ? () => host.getSearchRankingOptions!() : undefined,
+    recordNodeAccess: host.recordNodeAccess
+      ? (nodeIds, source) => host.recordNodeAccess!(nodeIds, source)
+      : undefined,
     // On the MUTATION paths, `origin: 'agent'` MUST come last so a caller-supplied
     // `meta` can never override the forced agent origin (the bright line trusts
     // `origin === 'user'`; a spread that let meta win would be a fail-open).
@@ -965,7 +969,10 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
         }));
       }
 
-      const resultIds = runSearch(index, search, { textIndex: host.getTextSearchIndex?.() });
+      const resultIds = runSearch(index, search, {
+        textIndex: host.getTextSearchIndex?.(),
+        rankingOptions: host.getSearchRankingOptions?.(),
+      });
       if ('error' in resultIds) {
         return nodeErrorResult(errorEnvelope('node_search', resultIds.code, resultIds.error, {
           instructions: resultIds.instructions,
@@ -975,6 +982,7 @@ function createNodeSearchTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
       const total = resultIds.length;
       const pageIds = resultIds.slice(offset, offset + limit);
       const items = params.count ? undefined : pageIds.map((nodeId) => buildSearchItem(index, nodeId, search.queryTerms));
+      if (!params.count) await host.recordNodeAccess?.(pageIds, 'agentRecall');
       const data: NodeSearchData = {
         source: search.source,
         title: search.title,
