@@ -544,8 +544,9 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   `1430f23a` with new coverage (tool-derived-run e2e, edit-survival + merged-row `sourceSeqs` unit tests,
   NaN-reject parse test). Re-verified: typecheck ✓ · `test:core` 1037/0 · `test:renderer` 554/0 ·
   `agent-process` e2e 15/15 · `docs:check` ✓. **Completes `agent-memory-on-timeline`** (PR1 #305 + PR2
-  #308 + PR3 #310); plan archived. Residual fast-track follow-up: the `run` source resolver still does an
-  O(N) sequential per-conversation scan (core has an O(1) `conversationIdOfRun` not yet renderer-exposed).
+  #308 + PR3 #310); plan archived. Post-merge follow-up (main, `538aca00`): replaced the `run` source's
+  O(N) per-conversation scan with an O(1) resolver — new read-only `agent_run_conversation_id` command
+  exposing `readRunMetaProjection` + `conversationIdOfRun`, so the reveal resolves the owner in one read.
 - **code-block-floating-toolbar** (codex, PR #301) — editable outliner code blocks + read-only agent
   markdown code blocks get a top-right floating toolbar (language selector + copy as separate
   hover/focus-revealed popover-material controls over an opaque code surface), an inset text viewport

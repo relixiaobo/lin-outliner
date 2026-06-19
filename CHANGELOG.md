@@ -29,7 +29,9 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   drifted past the cited range after an edit — all fixed in `1430f23a` with new tool-derived-run e2e,
   edit-survival + merged-row `sourceSeqs` unit tests, and a NaN-reject parse test. typecheck ✓ ·
   `test:core` 1037 pass / 2 skip / 0 fail · `test:renderer` 554 pass / 0 fail · `agent-process` e2e 15/15
-  · `docs:check` ✓. Completes `agent-memory-on-timeline` (PR1 #305 + PR2 #308 + PR3 #310).
+  · `docs:check` ✓. Completes `agent-memory-on-timeline` (PR1 #305 + PR2 #308 + PR3 #310). A post-merge
+  follow-up resolves a `run` chat-source reference's owning conversation in one read via a new read-only
+  `agent_run_conversation_id` command, instead of probing every conversation's run ledger.
 - **Node-based agent memory — `agent-memory-on-timeline` PR2 (PR #308, codex-2)** — durable agent
   memory moves onto the daily timeline as ordinary outline nodes. New **`chat-source`**
   `ReferenceTarget` variant (a `[[chat:…]]` inline reference into a conversation/run span, with
