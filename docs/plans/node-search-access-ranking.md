@@ -2,226 +2,294 @@
 
 ## Goal
 
-Make **frequently and recently used nodes rank higher in search** — for *all* nodes,
-not just memory — by giving node search the recency/access-decay dimension it lacks
-today. Concretely: a per-node **access-stats side store** + a **decay-based score
-multiplier** folded into the single search-ranking chokepoint (`sortSearchHits`).
+Improve node search ranking without mixing three different concepts:
 
-Two payoffs, either of which justifies the work:
+- **Query rules** decide which nodes match.
+- **Search-node sort modes** decide a saved search node's reproducible document order.
+- **Personal access ranking** is a per-user, off-document boost for transient retrieval.
 
-- **Everyday outline search gets better.** "The node I keep coming back to surfaces
-  first" is how people expect search to behave; pure lexical relevance doesn't do that.
-- **It is the generic mechanism the node-based memory plan needs.** When memory becomes
-  ordinary nodes (`agent-memory-on-timeline`), recall is `node_search`, which returns
-  *relevance order only*. The memory plan's pull-only reading therefore loses the
-  recency/access ranking that the (removed) memory activation engine provided. This
-  plan restores it **generically**, so memory-on-nodes inherits it for free — no
-  memory-specific ranking code.
+The user-facing outcome is still the same: nodes that are important in practice should
+surface earlier. The cleaned-up design is narrower:
 
-The decay model is **not invented here** — it is the proven retrieval-strength shape
-already shipping in `src/core/agentMemoryActivation.ts` (`computeMemoryStrength`),
-ported from a memory-only engine to a general per-node one.
+- Add a stable **document authority** signal based on inbound reference count. This is
+  derived from the document, so it is safe for saved search nodes and can be exposed as a
+  search-node sort mode.
+- Add a per-user **access-stats side store** for recent/frequent human openings and a
+  low-weight agent-recall channel. This is personal telemetry, so it is never written into
+  Loro and never appears as a search-node query rule or persisted sort field.
+- Fold both signals through the shared search-ranking path, with callers explicitly
+  choosing whether personal access ranking is allowed.
+
+The decay shape is not invented here. It ports the proven retrieval-strength idea already
+shipping in `src/core/agentMemoryActivation.ts` (`computeMemoryStrength`) from a
+memory-only engine to a general node-ranking signal.
 
 ## Shape
 
-**ONE complete feature in one PR.** Any "M0/M1/…" below are build-order *within* that
-single PR (foundation before consumers, A7), not separate releases. It is independently
-shippable and reviewable: it improves search on its own and does not depend on the
-memory plan (the two are siblings; this one can land first, last, or alone).
+**ONE complete feature in one PR.** Any "M0/M1/..." below are build-order within that
+single PR (foundation before consumers, A7), not separate releases. The PR is
+independently shippable: reference-aware search ranking improves ordinary search on its
+own, and personal access ranking improves launcher/agent retrieval without depending on
+the node-memory plan.
 
 **Lane: plan-track (significant), not fast-track.** It touches the shared ranking
-chokepoint (`searchEngine.ts` — protocol-adjacent), adds a **net-new cross-process
-recording lane** (IPC channel + preload + main handler + renderer emission, §5), and
-spans core + main + preload + renderer. None of that is a low-blast-radius drive-by; it
-goes through the full plan flow with this file as the contract.
+chokepoint (`searchEngine.ts`), extends search-node sort semantics, adds a per-user
+side store, and adds a cross-process access-recording lane across IPC, preload, main,
+and renderer. That is a coordinated core/main/preload/renderer change.
 
 ## Non-goals
 
-- **Not in Loro.** Access stats are per-user behavioral telemetry, not collaborative
-  document content. Putting them in the CRDT would bloat it and cause churn/conflict.
-  They live in a userData side store (substrate chosen in §2 — *not* the event-sourced
-  shape memory uses).
-- **No broad multi-signal blend in v1.** The primary signal is human **open/focus**,
-  plus an optional **low-weight agent-recall** signal (see Relationship) so memory recall
-  self-reinforces. Not a tuned blend of open/edit/bare-search-hit — edits and mere result
-  appearance stay excluded (Design §1).
-- **Not memory's source-association ranking.** That "co-cited memories boost each other"
-  behavior needs the source refs from the memory plan and stays out of scope here.
-- **No UI that surfaces access counts.** The stat is a ranking input, not a displayed
-  number — at least in v1.
-- **No change to explicit-sort behavior.** A search with an explicit
-  `sys:createdAt`/`sys:updatedAt` sort rule still overrides score (and therefore the
-  access multiplier), exactly as today.
+- **No access/frequency query rule.** Usage frequency is not a predicate and must not
+  appear in `SearchQueryExpr`, search-node outline rules, or agent `node_search` query
+  syntax.
+- **No persisted access sort mode.** Personal access stats are not collaborative document
+  content. They do not become `sortField: "sys:accessedAt"` or similar.
+- **No personal ranking in materialized saved-search children.** Saved search nodes write
+  reference children into Loro. Their materialized order must be reproducible from document
+  state alone, not from one user's private access history.
+- **No broad multi-signal blend in v1.** Edits and bare search-result appearances stay
+  excluded. Search-hit-without-open is especially excluded to avoid self-reinforcing
+  feedback loops.
+- **Not memory's source-association ranking.** Co-cited/source-associated memory ranking
+  needs source refs from `agent-memory-on-timeline` and stays out of scope here.
+- **No UI that surfaces access counts.** Counts are ranking inputs, not displayed numbers.
 - **No back-compat / migration.** Pre-release: the side store is new; a dev-data wipe
   just empties it. Stats are not exported.
 
-## Background — what exists today
+## Background - what exists today
 
-- **One ranking chokepoint.** All keyword search — the agent's `node_search`
-  (`agentNodeToolSearch.ts:253` → `runSearch`) **and** the app's own saved/search nodes
-  — funnels through `runSearchExpr` → `sortSearchHits` (`searchEngine.ts:254`).
-  `sortSearchHits` is a **pure** function over the `SearchIndex`: default order is by
-  BM25 `score` (`textSearchIndex.ts`), and an explicit `sys:createdAt/updatedAt` sort
-  rule overrides. It has **no clock and no access data** — so there is no recency or
-  frequency dimension anywhere in node search.
-- **Nodes carry no access tracking.** `NodeBase` has `createdAt`/`updatedAt` but no
-  notion of "opened N times, last at T." A repo-wide search finds per-node access state
-  *only* inside the memory activation engine (`agentMemoryActivation.ts`), nowhere on
-  nodes. So this is genuinely net-new, not a reuse.
-- **The decay model already exists (memory-only).** `computeMemoryStrength`
-  (`agentMemoryActivation.ts:127`) computes a `retrievalStrength` from
-  `decay(lastAccessedAt, now, halfLife) * (base + log1p(count))`, and `recall` already
-  multiplies BM25 by it (`agentMemoryRetrieval.ts:74` `lexicalScore * strengthMultiplier`).
-  This plan generalizes that one channel to all nodes. (Memory's model has *two*
-  channels — weak passive "briefing" + strong deliberate "recall"; general nodes have
-  no briefing, so we use a single channel.)
+- **One ranking chokepoint.** Keyword search funnels through `runSearchExpr` ->
+  `sortSearchHits` (`src/core/searchEngine.ts`). Default order is BM25-like score from
+  the text index; explicit `sys:createdAt` / `sys:updatedAt` sort overrides relevance.
+- **Search-node rules and sort are already separate.** `SearchQueryExpr` is the filter
+  tree. `sortRule` nodes carry `sortField` / `sortDirection`. This plan keeps that
+  separation: access is not a rule, and document-derived ranking can be a sort mode.
+- **Saved search materialization writes document content.** Search node refresh turns hits
+  into reference children. Therefore any ranking used there must be deterministic from
+  document state.
+- **Inbound references are document authority.** A node that many other nodes reference is
+  often more important than one with identical lexical relevance and no references. Unlike
+  personal access stats, reference count is collaborative document state and safe to use in
+  saved search order.
+- **Nodes carry no access tracking.** `NodeBase` has `createdAt` / `updatedAt` but no
+  "opened N times, last at T." Existing access tracking only exists in the memory engine,
+  and it is memory-specific.
 
 ## Design
 
-### 1. The "use" signal — open/focus only (v1)
+### 1. Ranking contract - rules, modes, and personalization
 
-A node counts as **used when it is opened/focused in a view**. Rationale for the
-single-signal choice:
+Keep the layers explicit:
 
-- **Open/focus = deliberate retrieval** — the clean analogue of memory's strong "recall"
-  channel. This is the signal we want.
-- **Edit ≠ retrieval.** Editing is authoring; a node you're writing isn't one you're
-  "finding." Excluded in v1 (it would reward churn, not relevance).
-- **Search-hit-without-open is too weak/noisy** (a node merely *appearing* in results
-  shouldn't inflate its own future rank — a feedback loop). Excluded in v1.
+- Query rules answer **"does this node match?"**
+- Search-node sort modes answer **"what reproducible order should this saved search use?"**
+- Personal access ranking answers **"should this transient retrieval be personalized for
+  this user right now?"**
 
-Record per `NodeId`: `{ accessCount, lastAccessedAt }`. **Open question (§ below):**
-whether the agent's own `node_read` counts as a use — default v1 is **no** (bulk agent
-reads would skew everyday ranking); revisit once the signal is observed.
+The search engine exposes one ranking path, but callers pass an explicit ranking context:
 
-### 2. Storage — a per-node access-stats side store (off Loro)
-
-Keyed by `NodeId`, in userData, persisted across restarts; emptied by a dev-data wipe;
-not exported. **The substrate is a real decision, and the memory analogy is misleading
-about it** — `AgentMemoryAccessStats` is *not* a flat map; it is a **projection over an
-`AppendOnlySeqLog`** (`agentEventStore.ts:329`, `memoryEventLog`/`memoryProjectionBy…`),
-i.e. memory access is event-sourced and the `{count, lastAt}` is derived. So this plan
-must **pick** (this is the heaviest single decision here):
-
-- **(a) Reuse the `AppendOnlySeqLog` primitive** — append access *events*, project to
-  `{count, lastAccessedAt}`. Pro: durable, ordered, crash-tolerant, consistent with how
-  the rest of agent data persists. Con: heavier; a high-churn event for a low-stakes
-  telemetry signal.
-- **(b) A simple flat JSON map** `NodeId → {count, lastAccessedAt}`, debounced-written.
-  Pro: trivial; matches the low stakes (a lost/garbled stat just degrades ranking,
-  never correctness). Con: must handle its own atomic write / corruption tolerance.
-
-**Recommendation: (b)** for v1 — node access ranking is best-effort telemetry that can
-tolerate loss and needs no ordered history, so the seq-log's durability machinery is
-overkill. (a) stays the fallback if we later want an auditable access history. Either
-way it is **off Loro**.
-
-**Dangling stats are harmless.** A deleted node's leftover stats are simply never read
-(ranking only consults stats for nodes that are search hits). Optional lazy prune; no
-hard coupling to deletion.
-
-### 3. Decay model — port the single-channel strength
-
-A pure function `computeNodeAccessStrength(stats, now)` ported from
-`computeMemoryStrength`, one channel:
-
-```
-strength = decay(lastAccessedAt, now, HALF_LIFE_DAYS) * (BASE + log1p(accessCount))
+```ts
+interface SearchRankingOptions {
+  now?: number;
+  personalAccessStats?: ReadonlyMap<NodeId, NodeAccessStats>;
+  personalAccess?: boolean;
+}
 ```
 
-Start from the memory **recall** channel's constants (half-life 45d) as a starting
-point and tune by feel (§ Open questions). The function is pure in `(stats, now)` —
-`now` is injected, never read ambiently — so it is deterministic and unit-testable, the
-same discipline the memory tests use.
+`personalAccess` defaults to false. Passing stats without opting in should not silently
+personalize a saved search.
 
-### 4. Integration — one multiplier at the chokepoint
+### 2. Search-node sort modes
 
-Thread an **optional** `accessStats` map + `now` through `runSearchExpr`'s options into
-`sortSearchHits` (`searchEngine.ts:254`). When present, multiply each hit's BM25 score:
+Search-node sort modes stay document-derived and reproducible:
 
+- **Default relevance**: lexical relevance plus a mild reference-authority boost.
+- **`sys:createdAt` / `sys:updatedAt`**: existing explicit time sorts. They stay primary,
+  with relevance as a tie-breaker.
+- **`sys:referenceCount`**: a new explicit sort mode for "most referenced" / "least
+  referenced" search nodes. This is the durable counterpart to the user's intuition that
+  inbound references may be more important than access frequency for saved searches.
+
+There is deliberately no `sys:accessCount`, `sys:lastAccessedAt`, or "frequently used"
+saved-search sort mode in v1.
+
+### 3. Document authority - inbound reference count
+
+Compute an inbound reference count per target node from the current search index:
+
+- Count user-visible references whose target is the candidate node: tree references,
+  inline node references, and reference field values.
+- Ignore trashed/deleted sources and hidden/system metadata references.
+- Count distinct source nodes, not repeated identical mentions in the same source node, so
+  one noisy node cannot dominate authority.
+
+Use a capped/log-shaped boost so authority improves ranking without overriding strong
+lexical intent:
+
+```ts
+authorityBoost = min(REFERENCE_AUTHORITY_CAP, log1p(inboundReferenceCount)) * REFERENCE_AUTHORITY_WEIGHT
+documentRankScore = lexicalScore * (1 + authorityBoost)
 ```
-rankScore = hit.score * (1 + min(CAP, computeNodeAccessStrength(stats[hit.nodeId], now)) * WEIGHT)
+
+For explicit `sys:referenceCount`, the count is primary and relevance is the tie-breaker.
+For default relevance, reference authority is a mild multiplier.
+
+### 4. Personal access signals
+
+Personal access is only for transient retrieval surfaces that explicitly opt in.
+
+Human access counts when the user deliberately lands on a node:
+
+- opening a launcher node result after the main renderer navigates/focuses it;
+- opening or switching a panel/root to a node;
+- explicit jump-to-node flows such as command palette/reference navigation.
+
+Do **not** count:
+
+- a node merely appearing in search results;
+- hover;
+- ordinary edit churn;
+- rapid keyboard selection/focus churn while moving through rows.
+
+Renderer emission must be debounced/dwell-filtered so rapid refocus of the same node
+coalesces into one access. The exact window is a PR constant, but the contract is:
+one deliberate landing on a node equals at most one human access.
+
+Agent recall is a separate low-weight channel:
+
+- Count only nodes actually returned to the model as `node_search` items.
+- Do not count `count: true` calls.
+- Do not count all candidates or all hits beyond the returned page.
+- Do not count `node_read` in v1; bulk reads would skew ranking.
+
+### 5. Storage - per-node access side store (off Loro)
+
+Use a flat JSON side store under `userData`, persisted across restarts and emptied by a
+dev-data wipe. It is best-effort telemetry: a lost/corrupt stat degrades ranking but never
+document correctness.
+
+Recommended v1 shape:
+
+```ts
+interface NodeAccessChannelStats {
+  count: number;
+  lastAccessedAt: number | null;
+}
+
+interface NodeAccessStats {
+  human?: NodeAccessChannelStats;
+  agentRecall?: NodeAccessChannelStats;
+}
 ```
 
-— exactly the shape `recall` already uses. Then:
+Keep human and agent channels separate. A low-weight agent recall must not refresh the
+same `lastAccessedAt` used for human retrieval strength; otherwise "low weight" becomes
+misleading because the recency component is still strong.
 
-- **Default sort** becomes `rankScore` desc (relevance × access strength).
-- **Explicit `sys:createdAt/updatedAt` sort still overrides** — unchanged; the
-  multiplier only reorders the relevance-sorted default.
-- **Stats absent (`undefined`)** → behaves exactly as today (pure relevance). This keeps
-  `sortSearchHits` pure and back-compatible, and lets call sites opt in.
+Use the existing atomic JSON helpers for writes, add debouncing in the store, and tolerate
+missing/garbled files by falling back to an empty map. Dangling stats for deleted nodes are
+harmless because ranking only consults stats for current hits; lazy prune is optional.
 
-### 5. Recording plumbing — net-new cross-process surface (not a mirror of anything)
+### 6. Personal decay model
 
-This is the part with no existing rail to copy, and the reason this plan is plan-track
-(see Shape). The renderer's open/focus signal does **not** reach main today: the only
-access-recorder, `recordMemoryAccess` (`agentEventStore.ts:999`), is **main-internal**
-— called by recall/briefing inside the backend, with **zero IPC/preload references**.
-So routing renderer open/focus → main is a **full new lane**, built end to end:
+Add a pure `computeNodeAccessStrength(stats, now)` with injected time:
 
-- a new **IPC channel** (`recordNodeAccess`) + its **preload bridge** (A2: the only
-  contextIsolation-safe path) + a **main handler** that writes the §2 store;
-- **renderer emission** on a node open/focus, **debounced** so rapid re-focus of the
-  same node coalesces to one access (idle focus churn must not inflate counts);
-- the exact UI event boundary (what counts as "open/focus") settled in the PR; the
-  contract is "one deliberate landing on a node = one access."
+```ts
+humanStrength =
+  decay(human.lastAccessedAt, now, HUMAN_HALF_LIFE_DAYS)
+  * (HUMAN_BASE + log1p(human.count) * HUMAN_COUNT_WEIGHT)
 
-### 6. Both search surfaces benefit
+agentRecallStrength =
+  decay(agentRecall.lastAccessedAt, now, AGENT_RECALL_HALF_LIFE_DAYS)
+  * (AGENT_RECALL_BASE + log1p(agentRecall.count) * AGENT_RECALL_COUNT_WEIGHT)
 
-Because the agent's `node_search` and the app's saved/search nodes share
-`sortSearchHits`, both inherit the ranking once the call sites pass `accessStats`+`now`.
-The PR wires both. (The agent path already constructs a `TextSearchIndex`; the stats map
-is an additional argument alongside it.)
+strength = humanStrength + agentRecallStrength
+```
 
-## Open questions
+Agent recall constants must stay well below human constants. Start from the memory recall
+half-life as a reference point, but tune by feel for everyday outline usage.
 
-- **Does agent `node_read` count as a use?** Default v1: **no** (avoid bulk-read skew).
-  Reconsider after observing real ranking behavior — agent retrieval *is* retrieval, so
-  a low weight may be right later.
-- **Constants** (`HALF_LIFE_DAYS`, `BASE`, `WEIGHT`, `CAP`): start from the memory recall
-  channel, tune by feel. No empirical fit attempted in v1.
-- **Throttle window** for repeated focus (e.g. coalesce within N seconds).
-- **Decay half-life vs. an outliner's access cadence** — memory's 45-day recall half-life
-  was tuned for sparse deliberate recalls; everyday node visits are more frequent, so the
-  half-life may want to be shorter. Tune.
+When personalization is enabled:
+
+```ts
+personalBoost = min(PERSONAL_ACCESS_CAP, computeNodeAccessStrength(stats, now)) * PERSONAL_ACCESS_WEIGHT
+rankScore = documentRankScore * (1 + personalBoost)
+```
+
+Stats absent, `personalAccess: false`, or no stat for a hit means the hit behaves exactly
+as document relevance would.
+
+### 7. Integration - one ranking chokepoint, explicit caller policy
+
+Thread optional ranking context through `runSearchExpr` -> `sortSearchHits`.
+
+Behavior matrix:
+
+| Surface | Reference authority | Personal access |
+|---|---:|---:|
+| Saved search node materialization | yes | no |
+| App/launcher transient node search | yes | yes |
+| Agent `node_search` result ordering | yes | yes |
+| Explicit `sys:createdAt` / `sys:updatedAt` sort | tie-break only | no |
+| Explicit `sys:referenceCount` sort | primary | no |
+
+This keeps the core simple: one pure ranking function, with deterministic document signals
+always available and personal signals included only by opt-in call sites.
+
+### 8. Recording plumbing
+
+The renderer's deliberate access signal does not reach main today, so this needs a new
+cross-process lane:
+
+- new IPC channel and preload bridge for `recordNodeAccess`;
+- main handler validates the node still exists and writes the side store;
+- renderer emits only after deliberate navigation/open boundaries, not on generic row
+  focus churn;
+- agent `node_search` records low-weight `agentRecall` after it knows which items were
+  actually returned to the model.
+
+The preload bridge remains the only renderer-to-main path (A2).
 
 ## Relationship to `agent-memory-on-timeline`
 
-Independent and complementary. The memory plan ships pull-only recall over nodes
-(relevance order only); this plan, whenever it lands, gives *all* node search — memory
-nodes included — the recency/access dimension. Neither blocks the other. What this plan
-does **not** restore is memory's source-association ranking (that lives in the memory
-plan's source refs).
+Independent and complementary. The memory-on-nodes plan uses `node_search` for pull-only
+recall. With this plan:
 
-**Coupling caveat — the v1 signal does not reinforce agent recall.** The §1 signal is
-**human open/focus**. But the memory plan's recall is a *pull* `node_search` (the agent
-queries; it does not open/focus the node), so a belief the **agent** keeps recalling is
-**not** strengthened by those recalls under the v1 signal — only beliefs the **human**
-visits are. So the memory plan's "recall inherits decay for free" holds for human-touched
-memory nodes, not agent-only ones. To close that gap, v1 **optionally records a
-low-weight agent-recall signal**: when a node is returned-and-used in an agent
-`node_search`/recall, bump its stat with a small weight (well below human open/focus, to
-avoid the search-hit feedback loop §1 warns about). Recommended to include, since it is
-the difference between memory recall self-reinforcing or not; `agent-memory-on-timeline`
-§4 carries the matching caveat. (This subsumes the "does agent `node_read` count" open
-question below for the *recall* path specifically.)
+- memory nodes inherit stable reference-aware relevance like every other node;
+- agent-returned memory search results can self-reinforce through the low-weight
+  `agentRecall` channel;
+- human-opened memory nodes reinforce through the stronger `human` channel.
 
-## Build order (within the one PR) — each milestone green first
+This still does not restore memory source-association ranking. Source association belongs
+to the memory plan's source refs, not this generic search-ranking layer.
 
-- [ ] **M0:** the access-stats side store on the §2-chosen substrate (per-`NodeId`
-      read/write in userData) + the pure `computeNodeAccessStrength(stats, now)` (ported
-      from `agentMemoryActivation`). (Tests: decay math with injected `now`; empty-stats
-      neutral; substrate round-trips + tolerates a torn/garbled record.)
-- [ ] **M1 (shared-surface, interface-first):** thread optional `accessStats`+`now`
-      through `runSearchExpr` → `sortSearchHits`; apply the multiplier; preserve the
-      explicit-sort override and the stats-absent default. (Tests: ranking shifts with
-      stats; `sys:createdAt` sort still wins; identical to today when stats absent;
-      deterministic with injected `now`.)
-- [ ] **M2 (net-new cross-process lane):** the `recordNodeAccess` IPC channel + preload
-      bridge + main handler (§5) + debounced renderer open/focus emission. (Tests: a focus
-      records one access; a burst coalesces to one; the preload surface is the only path.)
-- [ ] **M3:** pass `accessStats`+`now` at both call sites — agent `node_search` and the
-      app's search nodes; plus the optional **low-weight agent-recall** bump (Relationship
-      caveat). (Tests: both surfaces reflect access ranking; an agent recall bumps the
-      node's stat below a human open/focus.)
-- [ ] **M4:** fold the behavior into the relevant `docs/spec/` search doc (A6).
+## Open questions
+
+- Exact constants for reference authority weight/cap and personal access half-lives.
+- Exact dwell/debounce window for "deliberate landing".
+- Whether `sys:referenceCount` should be exposed in the search-toolbar field picker in the
+  same PR or only supported by the engine/parser first. The engine behavior is in scope;
+  the UI exposure should follow the existing sort-field UI surface if it already has one.
+- Exact definition of user-visible reference sources if existing reference-summary helpers
+  already include more than we want.
+
+## Build order (within the one PR) - each milestone green first
+
+- [ ] **M0:** pure ranking helpers: inbound reference count/authority scoring plus
+      channel-separated `computeNodeAccessStrength(stats, now)`. Tests cover empty stats,
+      human vs low-weight agent recall, cap/decay determinism, and reference-count
+      tie-breaks.
+- [ ] **M1:** thread ranking options through `runSearchExpr` -> `sortSearchHits`; add
+      default reference-authority relevance and explicit `sys:referenceCount` sort; prove
+      `sys:createdAt` / `sys:updatedAt` still override and stats-absent/personal-off
+      behavior is deterministic.
+- [ ] **M2:** implement the userData JSON access-stats store with debounced atomic writes,
+      channel-separated records, and corrupt/missing-file fallback to empty.
+- [ ] **M3:** add `recordNodeAccess` IPC + preload bridge + main handler and renderer
+      deliberate-landing emission. Tests cover one access per landing and burst
+      coalescing.
+- [ ] **M4:** opt in transient call sites: launcher/app node search and agent
+      `node_search`; keep saved-search materialization personal-access-free. Agent tests
+      cover returned-page-only `agentRecall` and no bump for `count: true`.
+- [ ] **M5:** fold the final behavior into `docs/spec/search-query-grammar.md`,
+      `docs/spec/launcher.md`, and the agent tool spec as appropriate (A6).
