@@ -8,6 +8,16 @@ export function inlineRefTargetAttrs(target: ReferenceTarget): Record<string, un
       targetNodeId: target.nodeId,
     };
   }
+  if (target.kind === 'chat-source') {
+    return {
+      targetKind: 'chat-source',
+      chatStream: target.stream,
+      chatStreamId: target.streamId,
+      chatFromSeqExclusive: target.range.fromSeqExclusive,
+      chatThroughSeq: target.range.throughSeq,
+      chatThroughEventId: target.range.throughEventId ?? '',
+    };
+  }
   return {
     targetKind: 'local-file',
     targetPath: target.path,
@@ -26,6 +36,24 @@ export function targetFromInlineReferenceAttrs(attrs: Record<string, unknown>): 
     const entryKind = attrs.entryKind === 'directory' ? 'directory' : 'file';
     return path ? { kind: 'local-file', path, entryKind } : null;
   }
+  if (targetKind === 'chat-source') {
+    const stream = attrs.chatStream === 'conversation' || attrs.chatStream === 'run' ? attrs.chatStream : null;
+    const streamId = String(attrs.chatStreamId ?? '');
+    const fromSeqExclusive = Number(attrs.chatFromSeqExclusive);
+    const throughSeq = Number(attrs.chatThroughSeq);
+    const throughEventId = String(attrs.chatThroughEventId ?? '');
+    if (!stream || !streamId || !Number.isSafeInteger(fromSeqExclusive) || !Number.isSafeInteger(throughSeq) || throughSeq <= fromSeqExclusive) return null;
+    return {
+      kind: 'chat-source',
+      stream,
+      streamId,
+      range: {
+        fromSeqExclusive,
+        throughSeq,
+        ...(throughEventId ? { throughEventId } : {}),
+      },
+    };
+  }
   return null;
 }
 
@@ -37,5 +65,6 @@ export function fallbackTextForInlineReferenceAttrs(attrs: Record<string, unknow
     const targetPath = String(attrs.targetPath ?? '');
     return basenameForPath(targetPath) || 'Referenced file';
   }
+  if (targetKind === 'chat-source') return 'Referenced chat';
   return 'Referenced node';
 }

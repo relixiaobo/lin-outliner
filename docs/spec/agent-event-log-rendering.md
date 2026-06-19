@@ -503,17 +503,15 @@ restores). The same dock-open + window-focus signal (reported to main as the *vi
 conversation*) governs OS-banner suppression: a banner is suppressed only when the
 user is actually looking at that task's conversation.
 
-Memory events live in the believer-keyed memory log (the single pool, on disk
-under the believer principal directory). `memory.entry_*` events project to
-editable durable memory entries; `dream.completed` projects the latest Dream
-watermark and audit summary. There is **one** Dream — a conversation-evidence
-Dream that consolidates the user's member conversations into the believer pool in
-a single first-person framing; the former agent-self / run-log Dream is cut (no
-run-evidence harvesting, no per-agent self-model dream). The believer-anchored
-Dream run meta is indexed and added to the render task projection as a read-only
-Dream task. A conversation-triggered Dream also writes a conversation-side
-`dream.finished` marker keyed to a hidden user-message anchor. That marker is for
-chat-stream placement only; the memory audit remains in the believer memory log.
+Dream state lives in the believer-keyed memory side log (the single pool, on
+disk under the believer principal directory). Durable model-readable memory is
+ordinary timeline outline content; `dream.completed` projects the latest Dream
+watermark and audit summary. There is **one** Dream — a scheduled
+`memory-dream` skill run that consolidates the user's member conversations into
+`#d-memory`, `#d-episode`, and `#d-belief` nodes. The former agent-self /
+run-log Dream is cut (no run-evidence harvesting, no per-agent self-model dream).
+The believer-anchored Dream run meta is indexed and added to the render task
+projection as a read-only Dream task.
 
 ## Message Model
 
@@ -881,15 +879,15 @@ Rules:
   `entities.compactions`.
 - The compact root user message remains available for pi-mono projection but is
   not rendered as a normal user bubble.
-- `dream.finished` events become dedicated Dream boundary rows keyed by their
-  hidden anchor message, with status, processed counts, and memory-change counts
-  in `entities.dreams`. Active manual `/dream` runs append a transient
-  `activeDream` row until the marker is written. (The Dream's durable history is
-  surfaced in Settings → Agent "Memory & activity" via the
-  `agent_list_dream_history` IPC; `buildAgentTaskEntries` filters Dream TASK
-  entities out of the in-conversation task panel, which keeps only child-run
+- Historical `dream.finished` events become dedicated Dream boundary rows keyed
+  by their hidden anchor message, with status, processed counts, and
+  memory-change counts in `entities.dreams`. Current runtime Dream runs do not
+  expose a manual slash-command boundary; durable Dream history is surfaced in
+  Settings → Agent "Memory & activity" via the `agent_list_dream_history` IPC;
+  `buildAgentTaskEntries` filters Dream TASK entities out of the
+  in-conversation task panel, which keeps only child-run
   tasks. `AgentRenderDreamTaskEntity.principal` remains a constant = the believer
-  and no longer labels separate pools.)
+  and no longer labels separate pools.
 - `child_run.*` events back `entities.childRuns` — the conversation's permanent
   record of a run, whose final result is an expandable summary with a "View full
   run" link into the full transcript. **Where** that record renders depends on
@@ -1127,8 +1125,9 @@ conversation's visible active branch, and verify the visible message text before
 returning a hit. It sorts verified hits by relevance first, then conversation
 recency, then message
 recency; recent-user-message lookup stays recency-only. The foreground model sees
-only `recall` over active durable memory entries; raw conversation lookup is
-reserved for runtime-owned evidence expansion, Dream consolidation, and diagnostics.
+`past_chats` for visible prior chat lookup and uses `node_search` / `node_read`
+for durable `#d-*` memory nodes; runtime-owned Dream consolidation uses the same
+raw source dereference path.
 
 ## Streaming Strategy
 

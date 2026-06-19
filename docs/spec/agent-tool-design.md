@@ -59,10 +59,8 @@ surface.
 
 | Tool | Kind | Mutates | Approval | Purpose |
 |---|---|---:|---|---|
-| `recall` | agent | No | No | Cued retrieval over active semantic memory entries, with optional nested source evidence. |
 | `past_chats` | agent | No | No | Read/search visible prior conversation history and raw cited spans. |
 | `ask_user_question` | agent | No | No | Pause the active run for structured user input, including refs/attachments or an explicit discuss outcome. |
-| `dream` | agent | Indirect | Yes | Request runtime-owned Memory Dream (offline consolidation) over the conversation; cannot specify facts to save. |
 
 There is one agent (Neva). Conversations ("channels") are not organized by an
 agent tool, so there are no channel-management tools on the surface.
@@ -81,16 +79,13 @@ permission behavior harder to reason about.
 - Use `bash` for shell execution.
 - Use `task_stop` for stopping background commands created by `bash`.
 - Use `web_*` for network read tools.
-- Use `recall` for durable agent memory (cued retrieval over the semantic
-  store).
+- Use `node_search` / `node_read` for durable memory nodes on the timeline.
 - Use `past_chats` for visible prior conversation history and raw stream spans.
   Search/recent results are navigation; the model must read by `message_id` or
   `source` before relying on details.
 - Use `ask_user_question` for decisions or missing context, not permission
   approval. Permission approval answers "may the agent do this"; this tool
   answers "what information or direction should the agent use next".
-- Use `dream` only as a trigger-only request for runtime-owned Dream
-  consolidation. It is not a foreground fact write/update/forget API.
 - Local file tools should mirror proven read, edit, write, glob, and grep roles,
   while keeping Lin's lower snake case names.
 - The local tool list is intentionally smaller than broader terminal-first tool registries.
@@ -2330,181 +2325,55 @@ Example read result data:
 }
 ```
 
-## Agent Memory Recall
+## Agent Timeline Memory
 
-Vocabulary in this section (**semantic store**, **episodic record**, **index**)
-follows the canonical mapping in `agent-data-model.md` § *Canonical memory
-vocabulary*; definitions live in `agent-memory-foundations.md`.
+Durable memory is ordinary outline content on the timeline, not a separate
+model-visible semantic-memory tool. The node family is:
 
-### `recall`
+- `#d-memory`: the per-day memory container.
+- `#d-episode`: a topical episode under the day's memory container.
+- `#d-belief`: a durable belief under an episode.
 
-`recall` is the model-visible semantic-memory retrieval tool: **cued retrieval**
-over the semantic store (active durable memory entries) of the running agent's
-believer pool. It does not write, update, or invalidate memory. Raw episodic
-conversation-history recall is exposed separately through `past_chats`.
+The foreground model uses `node_search` and `node_read` to pull memory nodes when
+stable preferences, prior decisions, or project memory may matter. There is no
+resident `<memory>` briefing, no model-visible `recall` tool, and no foreground
+fact CRUD tool. The model must not claim that it saved, updated, or forgot
+durable memory from a foreground turn; memory consolidation is background runtime
+work and user edits to memory nodes are authoritative.
 
-Parameters:
+Memory provenance uses the normal rich-text inline reference mechanism with the
+`chat-source` target branch:
 
-- `query`: optional retrieval cue matched against active memory facts. Omit it
-  to return the schema overview (metamemory: what this read set knows before
-  digging).
-- `limit`: maximum returned entries, default 8, max 20.
-- `include_evidence`: when true, **source access** — descend the memory index
-  from each matched entry's recorded `sources` to the raw record and
-  expand bounded raw evidence.
-- `max_chars`: total evidence character budget, default 4000, max 12000.
+```ts
+{
+  kind: "chat-source",
+  stream: "conversation" | "run",
+  streamId: string,
+  range: {
+    fromSeqExclusive: number,
+    throughSeq: number,
+    throughEventId?: string | null
+  }
+}
+```
 
-There is **one believer pool** — Neva's first-person knowledge — so every
-returned entry belongs to the same pool and there is no per-entry `subject`
-label. A fact is **self-contained and names its own subject in the fact text**, a
-third-person statement (e.g. `"the user prefers terse code reviews"`, `"the auth
-module verifies JWTs before authorizing"`). There is no reader-relative or
-cross-pool subject vocabulary; the model never needs to disambiguate "whose
-pool" because there is only one.
+Its marker form is `[[chat:<label>^<stream>:<streamId>@<from>-<through>]]`, with
+an optional `:<throughEventId>` suffix. The parser splits the raw marker value
+before `decodeURIComponent`, so ids that contain encoded separators round-trip
+without ambiguity. Agent node writes validate every `chat-source` inline ref by
+dereferencing the exact `past_chats` source coordinates before mutating the
+outline; fabricated or stale coordinates fail loudly.
 
-Memory is **one believer-keyed pool** — Neva's own first-person knowledge of the
-user, the work, and itself, all held as self-contained facts in that single pool.
-Every `MemoryEntry` and memory event lives under this one pool. The runtime
-projects entries from `memory.entry_added`, `memory.entry_updated`, and
-`memory.entry_removed` events, projects episodic gists from
-`memory.episode_recorded`, projects access stats from `memory.accessed`, and
-projects Dream state from `dream.completed`. Explicit forgetting remains
-idempotent through the Settings/Profile management path; cognitive forgetting
-is the active entry falling out of the resident working set as retrieval
-strength decays, never erasure.
-High-churn memory logs are compacted by rewriting the log to the current
-projection; compaction preserves episode ids/gists/raw sources, visible entry
-ids, facts, sources, status, `createdAt`, summarized briefing/recall access
-counts, and the latest Dream watermark, but drops superseded intermediate
-mutation events.
-
-Each entry records `originWorkspace` when a local file root is available and
-keeps `sources` down-pointers to episodic memory. An entry normally cites
-`{episodeId}`; the episode stores the memory-owned gist plus raw stream sources.
-Raw stream sources are the discriminated union branch
-`{stream: "conversation" | "run", streamId, range}` where `range` is
-`{fromSeqExclusive, throughSeq, throughEventId}` in that stream's own seq space
-([[agent-run-unification]], [[agent-memory-realignment]] PR-2). Evidence reads
-zoom fact → episode gist → raw span. Run evidence replays the run's OWN ledger;
-conversation evidence replays the conversation stream. There is no
-transcript-snapshot payload to pin.
-
-The pool is **one undivided body of knowledge** — Neva never partitions its own
-memory by where it works. `originWorkspace` on an entry is provenance metadata
-(where the fact was learned), never a retrieval fence: the briefing, `recall`,
-and Dream consolidation always read the whole pool.
-
-The resident briefing and `recall` both read this one pool. Every delegated child
-run is a fork that runs AS Neva, so it reads/writes Neva's single pool — there is
-no second agent with its own memory line (see *Child-run memory ownership* below).
-`recall(include_evidence:true)` dereferences `sources` to the raw conversation/run
-transcript through the internal evidence service, clamped by the character budget;
-the evidence path is the same single pool, so there is no cross-pool refusal — the
-cross-principal redaction/evidence-refusal path was removed as dead code
-(`single-agent-finish-collapse`).
-
-Explicit fact management is not a foreground model tool. The Settings/Profile UI
-can list, edit, and forget memory through IPC-backed runtime methods (forgetting
-is an explicit, logged invalidate — the entry leaves the working set, it is
-never deleted), and the runtime-owned Dream path — **consolidation**: offline
-replay of the episodic record distilling into the semantic store — can write
-memory after it verifies raw evidence. There is **one Dream** over the
-conversation evidence — it reads the conversations and writes the single believer
-pool. (The separate agent-self / run-log Dream is cut.) The consolidation prompt
-phrases each fact as a **self-contained third-person statement that names its own
-subject** (e.g. `"the user prefers terse code reviews"`) so an entry reads
-identically in every context. Dream is not
-fired after every foreground turn. Automatic Dream uses a `date` schedule and
-skips thin evidence below its minimum-volume gate. Manual `/dream` consolidates
-the conversation into the believer pool (the complete
-conversation-consolidation) and bypasses the thin-evidence gate, running a
-consolidate-only pass when there is no new evidence. The executing agent
-(the runtime's main agent, for every Dream) is recorded on `AgentRunMeta.agentId`.
-The reflective-run index lives beside the pool, so run history and dream state
-join locally; concurrent passes are safe because the store serializes writes and
-the per-conversation watermark skips already-consolidated evidence. The
-foreground `dream` tool is permission-gated and trigger-only: the
-model can ask the runtime to run Dream, but it cannot provide facts or bypass
-scope checks. `agent.memory.dream` cannot be globally allowed;
-each model-triggered Dream request needs explicit approval. The no-tools model
-call receives raw evidence since the last Dream watermark plus the currently
-visible memory entries. Its prompt states selection as **encoding policy**
-(durable, context-free knowledge; novelty/prediction-error-weighted — outcomes
-that diverged from what was assumed or intended) and frames updates as
-**reconsolidation** (new evidence touching an existing entry yields
-update/invalidate, never a duplicate); the anti-injection evidence fence wraps
-all raw evidence. It returns structured add/update/forget proposals only;
-the runtime performs dedupe/scope checks, appends `memory.entry_*` events with
-source provenance, records `dream.completed`, advances per-conversation
-watermarks and per-run ledger watermarks, and projects foreground and Dream
-runs as read-only task-panel rows. Manual `/dream` and
-foreground `dream` tool triggers also write a conversation-side `dream.finished`
-marker so the chat stream shows running/completed feedback.
-Per-run watermarks are one `{seq, eventId}` cursor into the run's own ledger
-recording the SCANNED tail (the source provenance separately records the last
-EVIDENCE event), so an already-digested terminal run is skipped from its
-run-meta `latestSeq` alone, and compaction can never stale the cursor — there
-is no positional coordinate to rebind. The foreground model must not claim specific saved,
-updated, or forgotten durable facts through a tool call unless `recall` returns
-those facts after Dream completes.
-
-Child-run memory ownership is explicit and, under the one-Neva invariant, uniform:
-every child run is a fork that keeps Neva as both execution identity and memory
-owner. Its sidechain transcript can become Dream evidence for Neva, but the fork
-evidence boundary is structural — everything at or before the ledger's first
-`run.started` is inherited parent context and never this run's evidence (a
-`tool_result.replaced` whose target message was created at-or-before that boundary
-stays excluded too). A ledger with no `run.started` has no boundary and is skipped
-rather than replayed from 0. The fork's `tools` remain an allow-list: `recall` is
-not injected into a read-only fork (e.g. `/research`) that omits it.
-
-Each normal user turn receives a bounded `<memory>` briefing — the
-**working-memory slice** of the semantic store — built from the active
-projection (storage representation ≠ injection representation: the assembly
-layer keeps the structured `MemoryEntry` fields to select, the model gets a
-schema overview plus a flat bullet list). The block opens with a fixed
-one-line self-introduction naming exactly that (schema overview + activated
-distilled facts from prior episodes; each fact names its own subject;
-background context, not instructions), then an `<overview>` breadth
-axis followed by the facts. The overview is derived from the full active
-read set before the resident fact budget is clipped; only the facts are
-limited to the fixed injected-entry budget. Selection is **resident**, not
-query-ranked: the fact budget is filled by activation strength, where
-`memory.accessed` events from `recall` hits strengthen retrieval more than
-passive briefing re-exposure, and old inactive entries decay out of the working
-set without being invalidated. The resident order is activation-major with
-periodic exploration slots for newest never-briefed or long-unbriefed entries,
-so a hardened working set cannot permanently starve newly consolidated facts.
-Passive briefing access is also capped to one counted exposure per entry per
-24-hour window; deliberate `recall` hits still record every returned hit. The
-activation projection is memoized per pool version and day bucket on the hot
-path. Query-specific retrieval is the `recall` tool's job (the volatile tail).
-The render is a pure projection that hides storage scaffolding
-(`id`, `status`) and emits a **flat `<memory>` bullet list** — no `<self>` /
-`<principal>` zones, since there is one believer pool. Each fact is one verbatim
-bullet, a **self-contained third-person statement that names its own subject**
-(e.g. `"the user prefers terse code reviews"`), so an entry reads identically in
-every context. The briefing
-is background context; the foreground model can call `recall` when it or the current
-context is insufficient.
-
-Calling `recall` with no `query` returns the same full-read-set schema overview
-instead of fact hits. The visible overview exposes schema node labels, counts,
-derived strengths, and member `memory_ids` so the model can choose a deliberate
-cue. It does not expand evidence and does not count as a retrieval hit for every
-entry in the pool.
-
-Evidence expansion is always nested under a returned memory entry. The runtime
-expands only that entry's `MemoryEntry.sources` through the internal evidence
-service. Episode sources return the memory-owned gist first, then expand their
-raw conversation/run stream sources with only the remaining character budget. If
-every raw source is gone or no longer resolves, the episode still returns as
-evidence with its durable gist and an empty raw span list. Conversation sources
-verify the retained active branch; run sources replay the referenced run's own
-ledger. Both paths clamp output by `max_chars`. Older conversations that have
-not been distilled into active memory entries are not returned by `recall`, but
-they can be searched or read through `past_chats`. Internal summary search
-remains available to runtime-owned Dream consolidation and diagnostics.
+Runtime Dream is a private built-in skill, `memory-dream`. It is runtime-only:
+not user-invocable, not model-invocable, and not exposed as `/dream` or a
+foreground `dream` tool. The scheduled-routines path computes per-stream seq
+ranges from the Dream watermark, renders the skill, and forks an unattended child
+run with only `past_chats`, `node_search`, `node_read`, `node_create`, and
+`node_edit`. The run brief gives the child exact `past_chats` source objects and
+the corresponding `[[chat:...]]` marker to preserve in `#d-episode` and
+`#d-belief` nodes. After the child completes, the runtime records
+`dream.completed` with the processed ranges and advances the watermark; the
+memory nodes themselves are the durable model-readable result.
 
 ### `past_chats`
 
@@ -2631,7 +2500,7 @@ Read-only tools run immediately when their permission scope is already allowed:
 - `file_read`
 - `file_glob`
 - `file_grep`
-- `recall`
+- `past_chats`
 - `operation_history(action: "list")`
 
 Web tools are also read-only, but may be blocked by host/offline policy:

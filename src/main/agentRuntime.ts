@@ -79,7 +79,6 @@ import {
   type AgentIdentityRecord,
   type AgentMemoryEntry,
   type AgentMemoryEvent,
-  type AgentMemorySource,
   type AgentNotificationKind,
   type AgentTaskSource,
   type AgentPayloadRef,
@@ -100,6 +99,7 @@ import {
   channelAgentMembers,
 } from '../core/agentChannel';
 import {
+  formatChatSourceReferenceMarker,
   rewriteFileReferenceMarkerPaths,
   richTextToReferenceMarkup,
   sanitizeFileReferenceRef,
@@ -136,13 +136,7 @@ import {
 } from './agentEventStore';
 import {
   buildConsolidateOnlyDreamMemoryExtractionSpan,
-  buildDreamMemoryExtractionRequest,
   buildDreamMemoryExtractionSpanFromEvents,
-  buildDreamSessionId,
-  memoryFactKey,
-  mergeMemorySources,
-  parseDreamMemoryExtractionResponse,
-  type DreamMemoryAction,
   type DreamMemoryExtractionSpan,
   type DreamMemoryExtractionSourceRange,
 } from './agentDreamExtraction';
@@ -186,16 +180,12 @@ import {
   type AgentChildAgentCreateInput,
   type AgentChildRunSnapshot,
 } from './agentDelegation';
-import { mergeMemoryOverviews, orderMemoryEntriesForBriefing } from '../core/agentMemoryActivation';
 import {
   agentDefinitionAgentId,
-  memoryWorkspaceIdForRoot,
 } from './agentDelegationIdentity';
 import { AgentRunLedgerWriter, fromPiAssistantContent } from './agentRunLedger';
 import type { AgentSkillWriteAudit } from './agentSkillAuthoring';
 import { executeAgentSkillShellCommand } from './agentSkillShell';
-import type { AgentRecallEvidence, AgentRecallRuntimeEntry, AgentRecallToolRuntime } from './agentRecallTool';
-import { renderAgentMemoryBriefing, MEMORY_BRIEFING_MAX_ENTRIES } from './agentMemoryBriefing';
 import {
   evaluateAgentToolPermission,
   type AgentPermissionAskDecision,
@@ -267,7 +257,6 @@ import {
   normalizeRuntimeSettingPatch,
   readRuntimeSetting,
   type AgentSelfMaintenanceRuntime,
-  type DreamToolData,
   type DoctorDiagnostic,
 } from './agentSelfMaintenanceTools';
 import {
@@ -343,6 +332,15 @@ const LOCAL_USER_ID = 'local-user';
 const COMPACT_SUMMARY_MAX_OUTPUT_TOKENS = 20_000;
 const DEFAULT_DREAM_SCHEDULE = '2026-01-01T03:00 RRULE:FREQ=DAILY';
 const DREAM_MIN_VOLUME_CHARS = 1_000;
+const MEMORY_DREAM_SKILL_NAME = 'memory-dream';
+const MEMORY_DREAM_CONVERSATION_ID = 'lin-agent-memory-dream';
+const MEMORY_DREAM_ALLOWED_TOOLS = [
+  'past_chats',
+  'node_search',
+  'node_read',
+  'node_create',
+  'node_edit',
+] as const;
 const CHILD_RUN_TRANSCRIPT_CACHE_LIMIT = 16;
 const DEBUG_RUN_CACHE_LIMIT = 64;
 
@@ -492,8 +490,8 @@ interface AgentToolFilter {
  * External file agents keep a strict allow-list: their `tools` field is the
  * complete capability set and is applied verbatim by `filterAgentTools`.
  *
- * The built-in assistant (Neva) is different: its core tools — `recall`,
- * `past_chats`, `dream`, `node_*`, `skill`, and self-maintenance — are never part of the
+ * The built-in assistant (Neva) is different: its core tools — `past_chats`,
+ * `node_*`, `skill`, and self-maintenance — are never part of the
  * editable catalog (`TOOL_CATALOG`), so a strict allow-list would silently
  * strip them. A catalog restriction is therefore expressed as a *disallow-list
  * over the unchecked catalog tools*, never as an allow-list; the core tools
@@ -552,7 +550,6 @@ interface AgentConversationState {
   eventState: AgentEventReplayState;
   activeCompaction: AgentRenderActiveCompaction | null;
   activeDream: AgentRenderActiveDream | null;
-  pendingDreamFinishedMarkers: AgentDreamRunResult[];
   pendingChildRunNotifications: string[];
   pendingEventAppend: Promise<void>;
   pendingProjectionLastEventType: string | null;
@@ -580,19 +577,7 @@ interface AgentDreamMemoryExtractionTask {
   startedAt: number;
   dueAt?: number;
   span: DreamMemoryExtractionSpan;
-  batches: AgentDreamMemoryExtractionBatch[];
   watermark: AgentDreamWatermark;
-}
-
-interface AgentDreamMemoryExtractionBatch {
-  span: DreamMemoryExtractionSpan;
-  /** Provenance only — the workspace the evidence came from; never a retrieval fence. */
-  originWorkspace?: string;
-}
-
-interface AgentDreamMemoryScope {
-  /** Provenance tag for new entries — where this runtime works; never a retrieval fence. */
-  originWorkspace?: string;
 }
 
 interface AgentDreamRunResult {
@@ -1191,16 +1176,6 @@ export class AgentRuntime {
       });
     }
 
-    if (this.dreamMemoryExtractionEnabled()) {
-      commands.push({
-        id: 'dream',
-        kind: 'runtime',
-        label: '/dream',
-        description: 'Run Dream memory consolidation now',
-        insertText: '/dream',
-      });
-    }
-
     if (runtimeSettings.slashSkillsEnabled) {
       const skills = await conversation.skillRuntime.listUserInvocableSkills();
       commands.push(...skills.map((skill): AgentSlashCommandView => ({
@@ -1584,7 +1559,7 @@ export class AgentRuntime {
    * skills) from the editable built-in overlay. Called at startup to pick up a
    * persisted overlay, and after each built-in edit. The system prompt is composed
    * in `main` mode — the same recipe as the code default — so customizing the persona
-   * never silently drops the main-agent capabilities (recall/past_chats/dream).
+   * never silently drops the main-agent capabilities (timeline memory/past_chats).
    */
   private async refreshPrimaryAgentIdentity(): Promise<void> {
     const definition = await this.materializeBuiltInAgentDefinition();
@@ -1832,10 +1807,6 @@ export class AgentRuntime {
         await this.compactConversation(conversationId, conversation, compactCommand.instructions);
         return;
       }
-      if (attachments.length === 0 && parseDreamSlashCommand(messageText) && this.dreamMemoryExtractionEnabled()) {
-        await this.runManualDreamFromConversation(conversationId);
-        return;
-      }
       conversation.skillRuntime.resetRunPermissionRules();
       const normalizedUserViewContext = normalizeAgentUserViewContext(userViewContextInput);
       const userViewContextReminder = this.userViewContextReminderTracker.prepare(
@@ -1845,10 +1816,8 @@ export class AgentRuntime {
       const userViewReminderText = userViewContextReminder.reminder;
       const now = new Date();
       const outlinerContext = buildOutlinerContextReminder(this.outlinerToolHost);
-      const memoryReminder = await this.buildMemoryReminder(conversation.defaultAgentId, conversation);
       const turnContextReminder = joinReminderParts([
         buildEnvironmentContextReminder(now),
-        memoryReminder,
         outlinerContext,
         userViewReminderText,
       ]);
@@ -1876,7 +1845,6 @@ export class AgentRuntime {
           composerInlineImages,
         );
         prompt = buildUserPromptMessage(messageText, [...attachments, ...referencedAssets.imageAttachments], {
-          memoryReminder,
           outlinerContext,
           userViewContextReminder: userViewReminderText,
           referencedFilesReminder: buildReferencedFilesReminder(referencedAssets.files),
@@ -2040,8 +2008,7 @@ export class AgentRuntime {
     const skillListingReservation = await this.reserveSkillListingReminder(conversation);
     conversation.queuedFollowUpSkillListingReservation = skillListingReservation;
     const userViewContextReminder = buildUserViewContextReminder(normalizeAgentUserViewContext(userViewContextInput));
-      conversation.agent.followUp(buildUserPromptMessage(text, [], {
-      memoryReminder: await this.buildMemoryReminder(conversation.defaultAgentId, conversation),
+    conversation.agent.followUp(buildUserPromptMessage(text, [], {
       outlinerContext: buildOutlinerContextReminder(this.outlinerToolHost),
       userViewContextReminder,
       skillListingReminder: skillListingReservation?.text ?? null,
@@ -2431,7 +2398,7 @@ export class AgentRuntime {
           skillToolEnabled: runtimeSettings.automaticSkillsEnabled,
           skillRuntime,
           delegationRuntime,
-          recall: this.createRecallToolRuntime(defaultAgentId, () => conversationId, () => conversationRef.current),
+          chatSourceValidator: this.createChatSourceValidator(),
           pastChats: this.createPastChatsToolRuntime(() => conversationId),
           askUserQuestion: this.createAskUserQuestionRuntime(() => conversationId, () => conversationRef.current),
           selfMaintenance: defaultAgentId === this.agentIdentity.agentId
@@ -2485,7 +2452,6 @@ export class AgentRuntime {
       eventState,
       activeCompaction: null,
       activeDream: null,
-      pendingDreamFinishedMarkers: [],
       pendingChildRunNotifications: [],
       pendingEventAppend: Promise.resolve(),
       pendingProjectionLastEventType: null,
@@ -2607,7 +2573,7 @@ export class AgentRuntime {
       skillRuntime: conversation.skillRuntime,
       skillToolEnabled: conversation.runtimeSettings.automaticSkillsEnabled,
       delegationRuntime: conversation.delegationRuntime,
-      recall: this.createRecallToolRuntime(this.agentIdentity.agentId, () => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
+      chatSourceValidator: this.createChatSourceValidator(),
       pastChats: this.createPastChatsToolRuntime(() => conversation.eventState.conversation?.id ?? 'unknown'),
       askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
       selfMaintenance: this.createSelfMaintenanceRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
@@ -2643,11 +2609,7 @@ export class AgentRuntime {
       skillToolEnabled: true,
       skillRuntime: input.skillRuntime,
       delegationRuntime: input.delegationRuntime,
-      recall: this.createRecallToolRuntime(
-        input.memoryOwnerAgentId,
-        () => input.conversationId,
-        () => parentConversationRef.current,
-      ),
+      chatSourceValidator: this.createChatSourceValidator(),
       pastChats: this.createPastChatsToolRuntime(() => input.conversationId),
       streamFn: this.options.streamFn,
       completeSimpleFn: this.options.completeSimpleFn,
@@ -3024,7 +2986,7 @@ export class AgentRuntime {
     const { systemPrompt, tools } = extractRunSnapshotFromPayload(payload);
     // In-memory dedupe key (re-emit only on a real change) — derived from the
     // content itself; the hash is never persisted on the event (no reader needs it).
-    const combined = createHash('sha256').update(systemPrompt).update(' ').update(JSON.stringify(tools)).digest('hex');
+    const combined = createHash('sha256').update(systemPrompt).update('\0').update(JSON.stringify(tools)).digest('hex');
     if (this.debugRunSnapshotHashByRun.get(runId) === combined) return;
     await this.appendConversationEvents(conversationId, conversation, [{
       type: 'debug.run_snapshot.created',
@@ -3043,7 +3005,6 @@ export class AgentRuntime {
     conversation: AgentConversationState,
     options: { flushChildRunNotifications?: boolean; emitGuard?: () => boolean } = {},
   ) {
-    await this.flushPendingDreamFinishedEvents(conversationId, conversation);
     conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
     // The detached idle watcher passes a guard: a teardown (reset/close/delete)
     // landing during the awaits above must abort the emit, or an `agent_idle`
@@ -3053,14 +3014,6 @@ export class AgentRuntime {
     this.emitProjection(conversationId, 'agent_idle');
     if (options.flushChildRunNotifications !== false) {
       await this.flushChildRunNotifications(conversationId, conversation);
-    }
-  }
-
-  private async flushPendingDreamFinishedEvents(conversationId: string, conversation: AgentConversationState): Promise<void> {
-    while (conversation.pendingDreamFinishedMarkers.length > 0) {
-      const result = conversation.pendingDreamFinishedMarkers.shift();
-      if (!result) continue;
-      await this.appendDreamFinishedEvent(conversationId, conversation, result);
     }
   }
 
@@ -3389,19 +3342,6 @@ export class AgentRuntime {
       .then(() => this.fireDream('schedule', now));
   }
 
-  private async runManualDreamFromConversation(conversationId: string) {
-    if (!this.dreamMemoryExtractionEnabled()) return;
-    const conversation = this.conversations.get(conversationId);
-    if (!conversation) return;
-    const activeDreamId = this.beginDream(conversationId, conversation);
-    const result = await this.fireManualDream(new Date());
-    try {
-      await this.appendDreamFinishedEvent(conversationId, conversation, result);
-    } finally {
-      this.finishDream(conversationId, conversation, activeDreamId, 'dream.finished');
-    }
-  }
-
   /**
    * One scheduled pass = the believer pool's Dream over the user's member conversations. Memory
    * collapsed to one believer-keyed pool, so the pass runs a single Dream. The per-pool try/catch
@@ -3458,9 +3398,6 @@ export class AgentRuntime {
         ? skippedDreamRunResult(this.agentIdentity.agentId, trigger, now, 'Dream is already running for this pool.')
         : null;
     }
-    // A scheduled Dream stuck failing backs off so it stops re-firing every tick (see
-    // dreamFailureBackoff); a manual /dream ignores the window — the user asked for it now, and
-    // its outcome still resets the backoff so a manual run can un-stick the schedule.
     if (trigger === 'schedule') {
       const backoff = this.dreamFailureBackoff.get(guardKey);
       if (backoff && now.getTime() < backoff.nextAttemptAt) return null;
@@ -3495,39 +3432,6 @@ export class AgentRuntime {
   }
 
   /**
-   * A manual /dream fires the believer pool's Dream: it consolidates the user's member
-   * conversations since the Dream watermark — in practice the current conversation's new turns
-   * — into Neva's durable knowledge. The run is folded into the Dream tail so a quit-time drain
-   * awaits an in-flight manual Dream instead of tearing the pool's trailing JSONL line — folded,
-   * not serialized behind it: concurrent Dreams on the same pool are the `dreamingPools` guard's
-   * job (a second /dream skips immediately rather than queueing).
-   */
-  private fireManualDream(now: Date): Promise<AgentDreamRunResult> {
-    const work = this.runManualDream(now);
-    this.dreamMemoryExtractionTail = Promise.all([
-      this.dreamMemoryExtractionTail.catch(() => undefined),
-      work.then(() => undefined, () => undefined),
-    ]).then(() => undefined);
-    return work;
-  }
-
-  private async runManualDream(now: Date): Promise<AgentDreamRunResult> {
-    try {
-      return await this.fireDreamForPool(this.agentPrincipal(), 'manual', now)
-        ?? skippedDreamRunResult(this.agentIdentity.agentId, 'manual', now, 'Dream is unavailable for the current memory/provider configuration.');
-    } catch (error) {
-      return {
-        agentId: this.agentIdentity.agentId,
-        trigger: 'manual',
-        status: 'failed',
-        startedAt: now.getTime(),
-        completedAt: Date.now(),
-        errorMessage: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-
-  /**
    * Build the believer pool's Dream task. Memory collapsed to one believer-keyed pool, and the
    * retained Dream reads CONVERSATION evidence (the user's member conversations) — communication,
    * both sides. The schedule gate, volume gate, batching, and watermark are the same machinery.
@@ -3540,7 +3444,6 @@ export class AgentRuntime {
     now: Date,
   ): Promise<AgentDreamMemoryExtractionTask | null> {
     if (!this.dreamMemoryExtractionEnabled()) return null;
-    const memoryScope = await this.dreamMemoryScope();
     if (!await this.getActiveProviderConfig()) return null;
 
     const dreamState = await this.getEventStore().readDreamState(principal);
@@ -3557,10 +3460,6 @@ export class AgentRuntime {
       ? buildConsolidateOnlyDreamMemoryExtractionSpan(runId)
       : null);
     if (!span) return null;
-    const batches = evidenceSpan
-      ? [{ span: evidenceSpan, originWorkspace: memoryScope.originWorkspace }]
-      : [{ span, originWorkspace: memoryScope.originWorkspace }];
-    if (batches.length === 0) return null;
 
     return {
       runId,
@@ -3569,7 +3468,6 @@ export class AgentRuntime {
       startedAt: Date.now(),
       dueAt: scheduleDecision.dueAt?.getTime(),
       span,
-      batches,
       watermark: dreamWatermarkFromSpan(dreamState.watermark, span.sourceRanges),
     };
   }
@@ -3608,62 +3506,13 @@ export class AgentRuntime {
           errorMessage: 'No enabled agent provider is configured.',
         };
       }
-      // Dream runs on the assistant's resolved model (handles custom endpoints).
       const model = (await this.resolveBuiltInAssistantModelEffort(providerConfig)).model;
       modelForRunMeta = model;
       await this.writeDreamRunMeta(task, 'running', model);
-      const apiKey = providerConfig.apiKey ?? await this.getProviderApiKey(providerConfig.providerId);
-      const runtimeSettings = await this.getRuntimeSettings();
+      const skill = await this.renderMemoryDreamSkill(task.runId);
+      const prompt = buildMemoryDreamPrompt(task, skill.renderedContent);
+      await this.runMemoryDreamChildAgent(task, prompt, skill.allowedTools);
       const changes = emptyDreamChanges();
-      for (const [index, batch] of task.batches.entries()) {
-        // Consolidation/dedup reads the WHOLE believer pool — memory is one undivided store;
-        // `originWorkspace` is provenance on each entry, never a retrieval fence. 200 is the
-        // store's query clamp max; the prompt's existing-memory list is bounded separately
-        // (DREAM_EXISTING_MEMORY_LIMIT) inside buildDreamMemoryExtractionRequest.
-        const existingMemories = await this.getEventStore().listMemoryEntries(task.principal, { limit: 200 });
-        const request = buildDreamMemoryExtractionRequest({
-          span: batch.span,
-          existingMemories,
-          originWorkspace: batch.originWorkspace,
-        });
-        const response = await (this.options.completeSimpleFn ?? completeSimple)(model, {
-          messages: [request],
-          tools: [],
-        }, {
-          ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
-          apiKey,
-          maxTokens: Math.min(model.maxTokens ?? 2_000, 2_000),
-          // pi-ai stream option (provider cache affinity) — the lib's own field name. Kept
-          // within the 64-char provider prompt_cache_key cap; see buildDreamSessionId.
-          sessionId: buildDreamSessionId(task.runId, index),
-        });
-        if (response.stopReason === 'error' || response.stopReason === 'aborted') {
-          throw new Error(response.errorMessage || 'Dream memory extraction failed.');
-        }
-        const parsed = parseDreamMemoryExtractionResponse(assistantMessageText(response));
-        let episodeSources: AgentMemorySource[] | null = null;
-        const sourcesForCommittedChange = async (): Promise<AgentMemorySource[]> => {
-          if (episodeSources) return episodeSources;
-          if (batch.span.sources.length === 0) {
-            episodeSources = [];
-            return episodeSources;
-          }
-          const episode = await this.getEventStore().recordMemoryEpisode(task.principal, {
-            gist: parsed.episodeGist ?? fallbackEpisodeGist(batch.span),
-            originWorkspace: batch.originWorkspace,
-            sources: batch.span.sources,
-          });
-          episodeSources = [{ episodeId: episode.id }];
-          return episodeSources;
-        };
-        // Crash-retry dedup window: applyDreamMemoryActions matches new facts against this
-        // list by fact key, so it must see as much of the pool as the store allows (200 =
-        // query clamp max) or a re-run after a crash re-saves entries past the window.
-        const currentMemories = await this.getEventStore().listMemoryEntries(task.principal, { limit: 200 });
-        addDreamChanges(changes, parsed.actions.length > 0
-          ? await this.applyDreamMemoryActions(task, batch, parsed.actions, currentMemories, sourcesForCommittedChange)
-          : emptyDreamChanges());
-      }
       const completed = await this.getEventStore().appendDreamCompleted(task.principal, {
         runId: task.runId,
         trigger: task.trigger,
@@ -3719,6 +3568,55 @@ export class AgentRuntime {
     }
   }
 
+  private async renderMemoryDreamSkill(runId: string): Promise<{
+    renderedContent: string;
+    allowedTools: string[];
+  }> {
+    const runtime = new AgentSkillRuntime({
+      localRoot: this.options.localFileRoot,
+      includeUserSkills: false,
+      conversationId: `memory-dream:${runId}`,
+    });
+    const invocation = await runtime.invokeSkill({
+      skill: MEMORY_DREAM_SKILL_NAME,
+      trigger: 'runtime',
+    });
+    if (!invocation.ok) throw new Error(invocation.message);
+    return {
+      renderedContent: invocation.renderedContent,
+      allowedTools: invocation.skill.allowedTools.length > 0
+        ? invocation.skill.allowedTools
+        : [...MEMORY_DREAM_ALLOWED_TOOLS],
+    };
+  }
+
+  private async runMemoryDreamChildAgent(
+    task: AgentDreamMemoryExtractionTask,
+    prompt: string,
+    allowedTools: readonly string[],
+  ): Promise<void> {
+    const conversation = await this.ensureConversationWithId(MEMORY_DREAM_CONVERSATION_ID, 'Memory Dream');
+    await this.refreshRuntimeSettings(conversation);
+    let data = await conversation.delegationRuntime.invokeAgent({
+      description: 'Memory Dream',
+      prompt,
+      name: task.runId,
+      run_in_background: false,
+      unattended: true,
+      allowedTools: [...allowedTools],
+      preapprovedToolRules: [...allowedTools],
+    });
+    while (data.status === 'async_launched' || data.status === 'queued' || data.status === 'running') {
+      data = await conversation.delegationRuntime.status({
+        agent_id: data.agent_id,
+        wait: true,
+        timeout_ms: COMMAND_CHILD_RUN_WAIT_MS,
+      });
+    }
+    if (data.status === 'failed' || data.error) throw new Error(data.error || 'Memory Dream child run failed.');
+    if (data.status === 'cancelled') throw new Error('Memory Dream child run was stopped before completing.');
+  }
+
   private async writeDreamRunMeta(
     task: AgentDreamMemoryExtractionTask,
     status: 'running' | 'completed' | 'failed',
@@ -3743,11 +3641,11 @@ export class AgentRuntime {
         // The Dream's prompt is the believer-pool extraction request — not the executing
         // agent's system prompt, which never reaches a Dream completion call.
         promptHash: hashJson({
-          dream: 'memory',
+          dream: MEMORY_DREAM_SKILL_NAME,
           principal: principalKey(task.principal),
         }),
-        toolSchemaHash: 'no-tools',
-        skillBindings: [],
+        toolSchemaHash: hashJson({ tools: MEMORY_DREAM_ALLOWED_TOOLS }),
+        skillBindings: [MEMORY_DREAM_SKILL_NAME],
         modelConfig: hashJson({
           model: model.id,
           provider: model.provider,
@@ -3793,84 +3691,6 @@ export class AgentRuntime {
     for (const conversationId of this.conversations.keys()) {
       this.emitProjection(conversationId, lastEventType, 'coalesce');
     }
-  }
-
-  private async applyDreamMemoryActions(
-    task: AgentDreamMemoryExtractionTask,
-    batch: AgentDreamMemoryExtractionBatch,
-    actions: readonly DreamMemoryAction[],
-    initialEntries: readonly AgentMemoryEntry[],
-    sourcesForCommittedChange: () => Promise<readonly AgentMemorySource[]>,
-  ): Promise<AgentDreamCompletedChanges> {
-    const changes = emptyDreamChanges();
-    const entriesById = new Map(initialEntries.map((entry) => [entry.id, entry]));
-    const activeFactKeys = new Set(initialEntries.map((entry) => memoryFactKey(entry.fact)));
-    for (const action of actions) {
-      if (action.type === 'add') {
-        const key = memoryFactKey(action.fact);
-        if (activeFactKeys.has(key)) {
-          changes.skipped += 1;
-          continue;
-        }
-        const sources = await sourcesForCommittedChange();
-        if (sources.length === 0) {
-          changes.skipped += 1;
-          continue;
-        }
-        const entry = await this.getEventStore().addMemoryEntry(task.principal, {
-          fact: action.fact,
-          originWorkspace: batch.originWorkspace,
-          sources: [...sources],
-        });
-        entriesById.set(entry.id, entry);
-        activeFactKeys.add(memoryFactKey(entry.fact));
-        changes.added += 1;
-        continue;
-      }
-
-      const current = entriesById.get(action.memoryId);
-      if (!current) {
-        changes.skipped += 1;
-        continue;
-      }
-      if (action.type === 'forget') {
-        await this.getEventStore().removeMemoryEntry(task.principal, current.id, action.reason ?? 'dream');
-        entriesById.delete(current.id);
-        activeFactKeys.delete(memoryFactKey(current.fact));
-        changes.forgotten += 1;
-        continue;
-      }
-
-      const currentFactKey = memoryFactKey(current.fact);
-      const nextFactKey = memoryFactKey(action.fact);
-      if (nextFactKey === currentFactKey) {
-        changes.skipped += 1;
-        continue;
-      }
-      if (activeFactKeys.has(nextFactKey)) {
-        changes.skipped += 1;
-        continue;
-      }
-      const sources = batch.span.consolidateOnly ? [] : await sourcesForCommittedChange();
-      if (!batch.span.consolidateOnly && sources.length === 0) {
-        changes.skipped += 1;
-        continue;
-      }
-      const updated = await this.getEventStore().updateMemoryEntry(task.principal, current.id, {
-        fact: action.fact,
-        originWorkspace: current.originWorkspace ?? batch.originWorkspace,
-        sources: mergeMemorySources(current.sources, sources),
-      });
-      if (!updated) {
-        changes.skipped += 1;
-        continue;
-      }
-      entriesById.set(updated.id, updated);
-      activeFactKeys.delete(currentFactKey);
-      activeFactKeys.add(memoryFactKey(updated.fact));
-      changes.updated += 1;
-    }
-    return changes;
   }
 
   private reserveConversationId(conversationId: string) {
@@ -4129,29 +3949,6 @@ export class AgentRuntime {
     this.emitProjection(conversationId, lastEventType);
   }
 
-  private beginDream(conversationId: string, conversation: AgentConversationState): string {
-    const activeDream = {
-      id: randomUUID(),
-      trigger: 'manual' as const,
-      startedAt: Date.now(),
-    };
-    conversation.activeDream = activeDream;
-    this.emitProjection(conversationId, 'dream.started');
-    return activeDream.id;
-  }
-
-  private finishDream(
-    conversationId: string,
-    conversation: AgentConversationState,
-    dreamId: string,
-    lastEventType: string,
-  ) {
-    if (conversation.activeDream?.id === dreamId) {
-      conversation.activeDream = null;
-    }
-    this.emitProjection(conversationId, lastEventType);
-  }
-
   private emitProjection(
     conversationId: string,
     lastEventType: string | null = null,
@@ -4370,137 +4167,28 @@ export class AgentRuntime {
     };
   }
 
-  private createRecallToolRuntime(
-    agentId: string,
-    _getConversationId: () => string,
-    _getConversation: () => AgentConversationState | null,
-  ): AgentRecallToolRuntime {
-    const reader: AgentPrincipal = { type: 'agent', agentId };
-    return {
-      recall: async (options) => {
-        const limit = clampRecallLimit(options.limit);
-        const query = options.query?.trim();
-        // One believer pool: the read hits the single memory pool, and the reader is that pool.
-        const readPrincipals = this.memoryReadPrincipals();
-        if (!query) {
-          const now = Date.now();
-          const activations = await Promise.all(readPrincipals.map((principal) => (
-            this.getEventStore().activateMemoryEntries(principal, { limit: 200, now })
-          )));
-          const totalEntries = activations.reduce((sum, activation) => sum + activation.totalEntries, 0);
-          return {
-            entries: [],
-            totalEntries,
-            overview: mergeMemoryOverviews(
-              activations.map((activation) => activation.overview),
-              {
-                generatedAt: now,
-                totalEntries,
-              },
-            ),
-          };
-        }
-        // One believer pool: search it. `originWorkspace` is provenance on entries, never a
-        // retrieval fence.
-        const queryResults = await Promise.all(readPrincipals.map((principal) => (
-          this.getEventStore().queryMemoryEntries(principal, { query, limit })
-        )));
-        const mergedEntries = interleaveMemoryEntryGroups(queryResults.map((result) => result.entries), limit);
-        // Total durable matches — reachable by raising `limit`, so it is an honest paging signal
-        // rather than an over-report of this single capped page.
-        const totalEntries = queryResults.reduce((sum, result) => sum + result.totalEntries, 0);
-
-        if (!options.includeEvidence) {
-          await this.recordMemoryAccessForEntries(mergedEntries, 'recall');
-          return {
-            entries: mergedEntries.map((entry) => ({ entry })),
-            totalEntries,
-          };
-        }
-
-        let remainingChars = Math.max(0, options.maxChars ?? 0);
-        const entries: AgentRecallRuntimeEntry[] = [];
-        // The one-Neva invariant: every memory read hits Neva's single pool and the
-        // reader is Neva, so `entry.principal === reader` always holds — there is no
-        // cross-principal entry to redact or refuse evidence for.
-        for (const entry of mergedEntries) {
-          const evidence: AgentRecallEvidence[] = [];
-          let evidenceTruncated = false;
-          for (const source of entry.sources) {
-            if (remainingChars <= 0) {
-              evidenceTruncated = true;
-              break;
-            }
-            const sourceEvidence = await this.getPastChatsService().readMemorySourceEvidence({
-              principal: entry.principal,
-              reader,
-              source,
-              maxChars: remainingChars,
-            });
-            if (sourceEvidence.mode !== 'evidence') continue;
-            evidenceTruncated ||= sourceEvidence.outputTruncated;
-            if (sourceEvidence.episode) {
-              const gist = clampEvidenceText(sourceEvidence.episode.gist, remainingChars);
-              evidence.push({
-                kind: 'episode_gist',
-                source,
-                episodeId: sourceEvidence.episode.id,
-                gist: gist.text,
-                createdAt: sourceEvidence.episode.createdAt,
-                rawSources: sourceEvidence.episode.sources,
-              });
-              evidenceTruncated ||= gist.truncated;
-              remainingChars = Math.max(0, remainingChars - gist.text.length);
-              if (remainingChars <= 0 || gist.truncated) {
-                evidenceTruncated = true;
-                break;
-              }
-            }
-            for (const message of sourceEvidence.messages) {
-              evidence.push({
-                kind: 'raw_span',
-                source,
-                rawSource: message.rawSource,
-                conversationId: message.conversationId,
-                messageId: message.messageId,
-                role: message.role,
-                createdAt: message.createdAt,
-                text: message.text,
-                toolName: message.toolName,
-                isError: message.isError,
-                messageTruncated: message.messageTruncated,
-              });
-              remainingChars = Math.max(0, remainingChars - message.text.length);
-              if (remainingChars <= 0) {
-                evidenceTruncated = true;
-                break;
-              }
-            }
-          }
-          entries.push({
-            entry,
-            evidence: evidence.length > 0 ? evidence : undefined,
-            evidenceTruncated,
-          });
-        }
-
-        await this.recordMemoryAccessForEntries(mergedEntries, 'recall');
-        return {
-          entries,
-          totalEntries,
-        };
-      },
+  private createChatSourceValidator(): AgentToolsOptions['chatSourceValidator'] {
+    return async (target) => {
+      const result = await this.getPastChatsService().readSource({
+        source: {
+          stream: target.stream,
+          streamId: target.streamId,
+          range: {
+            fromSeqExclusive: target.range.fromSeqExclusive,
+            throughSeq: target.range.throughSeq,
+            throughEventId: target.range.throughEventId ?? null,
+          },
+        },
+        maxChars: 1,
+      });
+      if (result.mode === 'source') return { ok: true };
+      return {
+        ok: false,
+        code: 'invalid_chat_source',
+        error: result.mode === 'error' ? result.message : 'Chat source could not be read by exact source coordinates.',
+        instructions: 'Use past_chats search/recent/read to get a current source object, then retry with that exact chat reference marker.',
+      };
     };
-  }
-
-  /**
-   * The single believer pool every memory read hits. Under the one-Neva invariant
-   * this only ever returns `[Neva]` — there is no second principal whose pool a
-   * reader could reach, so cross-principal redaction/evidence-refusal is removed as
-   * dead code (a test asserts this returns only Neva).
-   */
-  private memoryReadPrincipals(): AgentPrincipal[] {
-    return [this.agentPrincipal()];
   }
 
   private createAskUserQuestionRuntime(
@@ -4594,11 +4282,6 @@ export class AgentRuntime {
           ok: diagnostics.every((diagnostic) => diagnostic.severity !== 'error'),
           diagnostics,
         };
-      },
-      dream: async () => {
-        const result = await this.fireManualDream(new Date());
-        getConversation()?.pendingDreamFinishedMarkers.push(result);
-        return dreamToolDataFromRunResult(result);
       },
     };
   }
@@ -4944,98 +4627,17 @@ export class AgentRuntime {
     return this.options.dreamMemoryExtractionEnabled === true;
   }
 
-  private async dreamMemoryScope(): Promise<AgentDreamMemoryScope> {
-    // Memory is one undivided believer pool; `originWorkspace` only tags new entries
-    // with provenance, never fences retrieval.
-    return { originWorkspace: this.memoryOriginWorkspace() ?? undefined };
-  }
-
   private async buildMemoryReminder(
-    agentId: string,
-    conversation: AgentConversationState | null,
-  ): Promise<string | null> {
-    return this.deriveMemoryBriefing(agentId, conversation, {
-      recordAccess: true,
-      operation: 'buildMemoryReminder',
-      warningCode: 'agent-memory-reminder-failed',
-    });
-  }
-
-  private async deriveMemoryBriefing(
     _agentId: string,
     _conversation: AgentConversationState | null,
-    options: { recordAccess: boolean; operation: string; warningCode: string },
   ): Promise<string | null> {
-    try {
-      // Chronic activation: the briefing is the distilled-memory prefix, so it lists
-      // strength-selected active entries plus a schema overview rather than query-specific hits.
-      // Query-specific retrieval remains the `recall` tool's job ([5] tail).
-      //
-      // One believer pool: the briefing reads the single memory pool and renders a flat
-      // `<memory>` bullet list of its activated facts.
-      const now = Date.now();
-      const activations = await Promise.all(this.memoryReadPrincipals().map((principal) => (
-        this.getEventStore().activateMemoryEntries(principal, { limit: 200, now })
-      )));
-      const selected = interleaveMemoryEntryGroups(
-        activations.map((activation) => (
-          orderMemoryEntriesForBriefing(activation.entries, { now }).map((item) => item.entry)
-        )),
-        MEMORY_BRIEFING_MAX_ENTRIES,
-      );
-      if (options.recordAccess) await this.recordMemoryAccessForEntries(selected, 'briefing', now);
-      const totalEntries = activations.reduce((sum, activation) => sum + activation.totalEntries, 0);
-      const overview = mergeMemoryOverviews(
-        activations.map((activation) => activation.overview),
-        {
-          generatedAt: now,
-          totalEntries,
-        },
-      );
-      return renderAgentMemoryBriefing(selected, { overview });
-    } catch (error) {
-      this.reportWarn(
-        'persistence',
-        `Failed to build agent memory reminder: ${error instanceof Error ? error.message : String(error)}`,
-        error,
-        { operation: options.operation },
-        options.warningCode,
-      );
-      return null;
-    }
+    return null;
   }
 
   private clearChildRunMemoryReminderCaches(): void {
     for (const conversation of this.conversations.values()) {
       conversation.delegationRuntime.clearMemoryReminderCache();
     }
-  }
-
-  private async recordMemoryAccessForEntries(
-    entries: readonly AgentMemoryEntry[],
-    via: 'briefing' | 'recall',
-    createdAt?: number,
-  ): Promise<void> {
-    if (entries.length === 0) return;
-    const groups = new Map<string, { principal: AgentPrincipal; entryIds: string[] }>();
-    for (const entry of entries) {
-      const key = principalKey(entry.principal);
-      const group = groups.get(key) ?? { principal: entry.principal, entryIds: [] };
-      group.entryIds.push(entry.id);
-      groups.set(key, group);
-    }
-    await Promise.all([...groups.values()].map((group) => (
-      this.getEventStore().recordMemoryAccess(group.principal, {
-        via,
-        entryIds: group.entryIds,
-        ...(createdAt === undefined ? {} : { createdAt }),
-      })
-    )));
-  }
-
-  /** Provenance tag for new memory entries — where this runtime works; never a retrieval fence. */
-  private memoryOriginWorkspace(): string | undefined {
-    return memoryWorkspaceIdForRoot(this.options.localFileRoot);
   }
 
   private getActiveProviderConfig() {
@@ -5392,51 +4994,6 @@ export class AgentRuntime {
     );
 
     await this.appendConversationEvents(conversationId, conversation, inputs);
-  }
-
-  private async appendDreamFinishedEvent(
-    conversationId: string,
-    conversation: AgentConversationState,
-    result: AgentDreamRunResult,
-  ) {
-    const messageId = this.createMessageId('user');
-    const timestamp = result.completedAt;
-    const reminder = systemReminder([
-      `Memory Dream ${result.status}.`,
-      result.runId ? `Run id: ${result.runId}.` : null,
-      result.errorMessage ? `Error: ${result.errorMessage}` : null,
-    ].filter(Boolean).join('\n'));
-    await this.appendConversationEvents(conversationId, conversation, [
-      {
-        type: 'dream.finished',
-        actor: systemActor(),
-        createdAt: timestamp,
-        messageId,
-        agentId: result.agentId,
-        runId: result.runId,
-        trigger: result.trigger,
-        status: result.status,
-        startedAt: result.startedAt,
-        completedAt: result.completedAt,
-        processed: result.processed,
-        changes: result.changes,
-        errorMessage: result.errorMessage,
-      },
-      {
-        type: 'user_message.created',
-        actor: systemActor(),
-        createdAt: timestamp,
-        messageId,
-        parentMessageId: conversation.eventState.selectedLeafMessageId,
-        content: [{ type: 'text', text: reminder }],
-      },
-      {
-        type: 'branch.selected',
-        actor: systemActor(),
-        createdAt: timestamp,
-        leafMessageId: messageId,
-      },
-    ]);
   }
 
   private async buildPreservedMessageEvents(
@@ -7325,7 +6882,7 @@ function createConfiguredAgent(
     skillToolEnabled?: boolean;
     skillRuntime?: AgentSkillRuntime;
     delegationRuntime?: AgentDelegationRuntime;
-    recall?: AgentToolsOptions['recall'];
+    chatSourceValidator?: AgentToolsOptions['chatSourceValidator'];
     pastChats?: AgentToolsOptions['pastChats'];
     askUserQuestion?: AgentToolsOptions['askUserQuestion'];
     selfMaintenance?: AgentToolsOptions['selfMaintenance'];
@@ -7366,7 +6923,7 @@ function createConfiguredAgent(
         skillRuntime,
         skillToolEnabled: options.skillToolEnabled,
         delegationRuntime: options.delegationRuntime,
-        recall: options.recall,
+        chatSourceValidator: options.chatSourceValidator,
         pastChats: options.pastChats,
         askUserQuestion: options.askUserQuestion,
         selfMaintenance: options.selfMaintenance,
@@ -7758,12 +7315,6 @@ function isKnownProviderId(providerId: string): boolean {
   return knownProviderIdsCache.has(providerId);
 }
 
-function clampEvidenceText(text: string, maxChars: number): { text: string; truncated: boolean } {
-  if (text.length <= maxChars) return { text, truncated: false };
-  if (maxChars <= 0) return { text: '', truncated: true };
-  return { text: text.slice(0, maxChars), truncated: true };
-}
-
 function resolveSkillEffortOverride(
   effortInput: string,
   model: Model<Api>,
@@ -7893,8 +7444,53 @@ function createConfigurationErrorStreamFn(messageText: string): StreamFn {
   };
 }
 
-function parseDreamSlashCommand(message: string): boolean {
-  return /^\/dream\s*$/i.test(message.trim());
+function buildMemoryDreamPrompt(task: AgentDreamMemoryExtractionTask, skillContent: string): string {
+  const sources = task.span.sources.map((source, index) => {
+    const label = `source-${index + 1}`;
+    return {
+      label,
+      past_chats: {
+        source: {
+          stream: source.stream,
+          stream_id: source.streamId,
+          from_seq_exclusive: source.range.fromSeqExclusive,
+          through_seq: source.range.throughSeq,
+          through_event_id: source.range.throughEventId ?? null,
+        },
+        max_chars: 8000,
+      },
+      chat_marker: formatChatSourceReferenceMarker(label, {
+        kind: 'chat-source',
+        stream: source.stream,
+        streamId: source.streamId,
+        range: {
+          fromSeqExclusive: source.range.fromSeqExclusive,
+          throughSeq: source.range.throughSeq,
+          throughEventId: source.range.throughEventId ?? null,
+        },
+      }),
+    };
+  });
+  return [
+    skillContent.trim(),
+    '',
+    '<memory-dream-run>',
+    `run_id: ${task.runId}`,
+    `trigger: ${task.trigger}`,
+    `started_at: ${new Date(task.startedAt).toISOString()}`,
+    '',
+    'Read and consolidate only these sources. Use the provided chat_marker verbatim in episode and belief nodes that derive from that source.',
+    '',
+    JSON.stringify({
+      sources,
+      processed: {
+        total_message_count: task.span.totalMessageCount,
+        total_char_count: task.span.totalCharCount,
+        consolidate_only: task.span.consolidateOnly,
+      },
+    }, null, 2),
+    '</memory-dream-run>',
+  ].join('\n');
 }
 
 function dreamTaskFromRunMeta(
@@ -7924,15 +7520,6 @@ function dreamTaskTrigger(run: Pick<AgentRunMeta, 'trigger'>): AgentRenderDreamT
   if (run.trigger.type === 'schedule') return 'schedule';
   if (run.trigger.type === 'manual') return 'manual';
   return null;
-}
-
-function fallbackEpisodeGist(span: DreamMemoryExtractionSpan): string {
-  const normalized = span.transcript.trim().replace(/\s+/g, ' ');
-  if (!normalized) return 'Episode gist unavailable; see raw evidence pointers.';
-  const maxChars = 1_200;
-  return normalized.length <= maxChars
-    ? normalized
-    : `${normalized.slice(0, maxChars - 3).trimEnd()}...`;
 }
 
 function compareRenderTasks(left: AgentRenderTaskEntity, right: AgentRenderTaskEntity): number {
@@ -8019,51 +7606,8 @@ function dreamProcessedRuns(
   }));
 }
 
-function clampRecallLimit(limit: number | undefined): number {
-  if (limit === undefined || !Number.isFinite(limit)) return 50;
-  return Math.max(1, Math.min(200, Math.trunc(limit)));
-}
-
-/**
- * Round-robin merge of readable memory pools into one budget, reader-own pool first within each
- * round. A plain concatenation would let a full self-model starve co-member zones to nothing;
- * interleaving guarantees every readable pool a fair share of whatever budget remains. Each input
- * is already ordered for its surface (query-ranked for recall, resident activation + exploration
- * for briefing), and the merge preserves that order within each pool.
- */
-function interleaveMemoryEntryGroups(
-  groups: readonly (readonly AgentMemoryEntry[])[],
-  limit: number,
-): AgentMemoryEntry[] {
-  const merged: AgentMemoryEntry[] = [];
-  const seen = new Set<string>();
-  const push = (entry: AgentMemoryEntry | undefined): void => {
-    if (!entry || merged.length >= limit) return;
-    const key = `${principalKey(entry.principal)}\0${entry.id}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    merged.push(entry);
-  };
-  const rounds = Math.max(0, ...groups.map((group) => group.length));
-  for (let i = 0; i < rounds && merged.length < limit; i += 1) {
-    for (const group of groups) {
-      push(group[i]);
-      if (merged.length >= limit) break;
-    }
-  }
-  return merged;
-}
-
 function emptyDreamChanges(): AgentDreamCompletedChanges {
   return { added: 0, updated: 0, forgotten: 0, skipped: 0 };
-}
-
-function addDreamChanges(target: AgentDreamCompletedChanges, next: AgentDreamCompletedChanges): AgentDreamCompletedChanges {
-  target.added += next.added;
-  target.updated += next.updated;
-  target.forgotten += next.forgotten;
-  target.skipped += next.skipped;
-  return target;
 }
 
 function skippedDreamRunResult(
@@ -8079,22 +7623,6 @@ function skippedDreamRunResult(
     startedAt: startedAt.getTime(),
     completedAt: Date.now(),
     errorMessage,
-  };
-}
-
-function dreamToolDataFromRunResult(result: AgentDreamRunResult): DreamToolData {
-  return {
-    status: result.status,
-    runId: result.runId,
-    processed: result.processed
-      ? {
-          totalMessageCount: result.processed.totalMessageCount,
-          totalCharCount: result.processed.totalCharCount,
-          consolidateOnly: result.processed.consolidateOnly,
-        }
-      : undefined,
-    changes: result.changes,
-    errorMessage: result.errorMessage,
   };
 }
 

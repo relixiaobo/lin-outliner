@@ -23,6 +23,11 @@ export const pmSchema = new Schema({
         targetNodeId: { default: '' },
         targetPath: { default: '' },
         entryKind: { default: 'file' },
+        chatStream: { default: '' },
+        chatStreamId: { default: '' },
+        chatFromSeqExclusive: { default: null },
+        chatThroughSeq: { default: null },
+        chatThroughEventId: { default: '' },
         displayName: { default: '' },
         mimeType: { default: '' },
         sizeBytes: { default: null },
@@ -37,6 +42,11 @@ export const pmSchema = new Schema({
             targetNodeId: element.dataset.inlineRef ?? '',
             targetPath: element.dataset.inlineRefPath ?? '',
             entryKind: element.dataset.inlineRefEntryKind ?? 'file',
+            chatStream: element.dataset.inlineRefChatStream ?? '',
+            chatStreamId: element.dataset.inlineRefChatStreamId ?? '',
+            chatFromSeqExclusive: Number(element.dataset.inlineRefChatFromSeqExclusive ?? Number.NaN),
+            chatThroughSeq: Number(element.dataset.inlineRefChatThroughSeq ?? Number.NaN),
+            chatThroughEventId: element.dataset.inlineRefChatThroughEventId ?? '',
             displayName: element.textContent?.replace(/^@/, '').trim() ?? '',
             mimeType: element.dataset.inlineRefMimeType ?? '',
             sizeBytes: Number(element.dataset.inlineRefSizeBytes ?? Number.NaN),
@@ -56,6 +66,14 @@ export const pmSchema = new Schema({
           contenteditable: 'false',
         };
         if (targetKind === 'node') attrs['data-inline-ref'] = String(node.attrs.targetNodeId ?? '');
+        if (targetKind === 'chat-source') {
+          attrs['data-inline-ref-chat-stream'] = String(node.attrs.chatStream ?? '');
+          attrs['data-inline-ref-chat-stream-id'] = String(node.attrs.chatStreamId ?? '');
+          attrs['data-inline-ref-chat-from-seq-exclusive'] = String(node.attrs.chatFromSeqExclusive ?? '');
+          attrs['data-inline-ref-chat-through-seq'] = String(node.attrs.chatThroughSeq ?? '');
+          const eventId = String(node.attrs.chatThroughEventId ?? '');
+          if (eventId) attrs['data-inline-ref-chat-through-event-id'] = eventId;
+        }
         if (targetKind === 'local-file') {
           Object.assign(attrs, inlineFilePreviewAttrs({
             entryKind: node.attrs.entryKind === 'directory' ? 'directory' : 'file',

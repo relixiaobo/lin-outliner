@@ -202,7 +202,7 @@ permission at call time.
 Isolated skill results stay on the normal tool-call disclosure path because they
 carry a real child-run result or error for the parent turn.
 
-Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` and `/dream` are built-in runtime commands and are handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; it uses ordinary `file_write` / `file_edit` only after preview and confirmation, and the skills it writes are available immediately. Explicit natural-language save/update/fix skill requests are normalized to the same direct `/skillify` prompt path, so they work even when automatic skill listing is disabled, but only while slash skills are enabled. `/research` is also both user- and model-invocable; its `allowed-tools` are only child-run preapproval for expected reads, while read-only safety comes from catalog narrowing.
+Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` is a built-in runtime command and is handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; it uses ordinary `file_write` / `file_edit` only after preview and confirmation, and the skills it writes are available immediately. Explicit natural-language save/update/fix skill requests are normalized to the same direct `/skillify` prompt path, so they work even when automatic skill listing is disabled, but only while slash skills are enabled. `/research` is also both user- and model-invocable; its `allowed-tools` are only child-run preapproval for expected reads, while read-only safety comes from catalog narrowing.
 
 Path-conditional mutable skills remain hidden until a touched file matches
 `paths`. Directory patterns such as `src` match files under that directory,
@@ -403,23 +403,17 @@ The listed-skills state reminder is intentionally tiny. It prevents a restored c
 
 ## Memory Dream
 
-`/dream` is a built-in runtime command, handled before slash skill resolution. It
-requests the same runtime-owned no-tools Dream consolidation path (offline
-replay of the member conversations' recorded episodic evidence, distilled into
-Neva's single believer-keyed semantic pool) used by the schedule. Unlike
-`/compact`, it does not replace the model-context root. During a manual run, the
-renderer appends an active Dream boundary row; when the run finishes, the
-conversation log records a `dream.finished` marker on a hidden system-reminder
-anchor so the chat stream keeps a visible Dreamed/failed/skipped row after
-reload.
+`memory-dream` is a private built-in skill used only by the runtime's scheduled
+memory consolidation pass. It is not slash-invocable and not model-invocable.
+The runtime renders the skill with `trigger: "runtime"`, passes exact
+`past_chats` source ranges plus their `[[chat:...]]` markers, and runs an
+unattended child fork whose catalog is limited to `past_chats`, `node_search`,
+`node_read`, `node_create`, and `node_edit`.
 
-The model can also call the foreground `dream` tool when the user asks to run,
-test, refresh, or consolidate Memory Dream. This tool is trigger-only and
-permission-gated. It cannot supply memory facts or bypass the runtime-owned
-consolidation worker; it only requests the believer pool's Dream path and
-returns status/counts to the model. Tool-triggered Dreams record the same
-`dream.finished` marker after the tool turn settles, so the chat stream shows the
-same Dream boundary row as `/dream`.
+There is no `/dream` slash command and no foreground `dream` tool. Dream state is
+visible only through the runtime task/history projection backed by
+`dream.completed`; the durable model-readable result is ordinary `#d-memory`,
+`#d-episode`, and `#d-belief` outline nodes.
 
 ### Reference Alignment
 

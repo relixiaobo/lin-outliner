@@ -149,6 +149,9 @@ function referenceMarkdownNodes(text: string): MarkdownAstNode[] {
         url: localFileReferenceHref(segment.target.path, segment.target.entryKind),
       };
     }
+    if (segment.target.kind === 'chat-source') {
+      return { type: 'text', value: segment.label || segment.raw };
+    }
     return {
       children: [{ type: 'text', value: segment.label }],
       title: null,

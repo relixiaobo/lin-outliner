@@ -6,6 +6,8 @@ import {
   plainText,
   replaceAllRichTextPatch,
   type NodeProjection,
+  type ReferenceTarget,
+  type RichText,
 } from '../core/types';
 import { agentToolResult, errorEnvelope, successEnvelope, type ToolEnvelope } from './agentToolEnvelope';
 import {
@@ -101,14 +103,23 @@ import type {
   OutlinerToolHost,
   ProjectionIndex,
 } from './agentNodeToolTypes';
-import { splitFileReferenceMarkers } from '../core/referenceMarkup';
+import { parseReferenceMarkers, referenceMarkupToRichText, splitFileReferenceMarkers } from '../core/referenceMarkup';
 import { isPathInside } from './agentAttachmentMaterialization';
 
 export type { OutlinerToolHost } from './agentNodeToolTypes';
 
 export interface NodeToolsOptions {
+  chatSourceValidator?: ChatSourceValidator;
   localFileRoot?: string;
 }
+
+export type ChatSourceValidator = (
+  target: Extract<ReferenceTarget, { kind: 'chat-source' }>,
+) => Promise<ChatSourceValidationResult> | ChatSourceValidationResult;
+
+export type ChatSourceValidationResult =
+  | { ok: true }
+  | { ok: false; code?: string; error?: string; instructions?: string };
 
 export function createNodeTools(host: OutlinerToolHost, options: NodeToolsOptions = {}): AgentTool<any>[] {
   const agentHost = asAgentToolHost(host);
@@ -433,7 +444,7 @@ async function executeOutlineEdit(
       metrics: { durationMs: elapsed(started) },
     }));
   }
-  const referenceValidation = validateReferenceTargetIds(index, collectReferenceTargetIds(parsed.document));
+  const referenceValidation = await validateOutlineReferenceTargets(options, index, parsed.document);
   if (referenceValidation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', referenceValidation.code, referenceValidation.error, {
       instructions: referenceValidation.instructions,
@@ -809,7 +820,7 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
           metrics: { durationMs: elapsed(started) },
         }));
       }
-      const referenceValidation = validateReferenceTargetIds(initialIndex, collectReferenceTargetIds(parsed.document));
+      const referenceValidation = await validateOutlineReferenceTargets(options, initialIndex, parsed.document);
       if (referenceValidation) {
         return nodeErrorResult(errorEnvelope('node_create', referenceValidation.code, referenceValidation.error, {
           instructions: referenceValidation.instructions,
@@ -1260,8 +1271,9 @@ async function syncOutlineNodeInPlace(
   const current = requiredNode(currentIndex, nodeId);
   if (current.type === 'reference') throw new Error('Outline edit cannot update a reference node root; use replace_with_reference_to.');
   trackMatchedNode(tracker, nodeId);
-  if (current.content.text !== node.title) {
-    await host.handle('apply_node_text_patch', { nodeId, patch: replaceAllRichTextPatch(plainText(node.title)) });
+  const nextContent = richTextFromOutlineText(node.title);
+  if (!richTextEqual(current.content, nextContent)) {
+    await host.handle('apply_node_text_patch', { nodeId, patch: replaceAllRichTextPatch(nextContent) });
   }
   if ((current.description ?? null) !== (node.description ?? null)) {
     await host.handle('update_node_description', { nodeId, description: node.description ?? null });
@@ -1356,10 +1368,11 @@ async function syncFieldValues(
       if (canUpdateValueInPlace(current, item.desired)) {
         trackMatchedNode(tracker, item.existing);
         await ensureAbsoluteChildIndex(host, item.existing, fieldEntryId, desiredIndex);
-        if (current.content.text !== item.desired.text) {
+        const nextContent = richTextFromOutlineText(item.desired.text);
+        if (!richTextEqual(current.content, nextContent)) {
           await host.handle('apply_node_text_patch', {
             nodeId: item.existing,
-            patch: replaceAllRichTextPatch(plainText(item.desired.text)),
+            patch: replaceAllRichTextPatch(nextContent),
           });
         }
       } else {
@@ -1986,7 +1999,11 @@ async function createOutlineNode(
 }
 
 async function createPlainNode(host: OutlinerToolHost, parentId: string, index: number | null, text: string): Promise<string> {
-  return focusFromOutcome(await host.handle('create_node', { parentId, index, text }));
+  const content = richTextFromOutlineText(text);
+  if (content.inlineRefs.length === 0 && content.marks.length === 0) {
+    return focusFromOutcome(await host.handle('create_node', { parentId, index, text: content.text }));
+  }
+  return focusFromOutcome(await host.handle('create_rich_text_node', { parentId, index, content }));
 }
 
 async function addReference(host: OutlinerToolHost, parentId: string, targetId: string, index: number | null): Promise<string> {
@@ -2060,7 +2077,7 @@ async function createFieldValue(
   if (value.targetId) {
     return focusFromOutcome(await host.handle('add_reference', { parentId: fieldEntryId, targetId: value.targetId, index }));
   }
-  return focusFromOutcome(await host.handle('create_node', { parentId: fieldEntryId, index, text: value.text }));
+  return createPlainNode(host, fieldEntryId, index, value.text);
 }
 
 function duplicateOutline(index: ProjectionIndex, duplicateId: string): { ok: true; outline: string } | { ok: false; code: string; error: string; instructions: string } {
@@ -2073,10 +2090,59 @@ function duplicateOutline(index: ProjectionIndex, duplicateId: string): { ok: tr
   return { ok: true, outline: serializeOutline(index, duplicateId, 12, 0, 500, false) };
 }
 
-function collectReferenceTargetIds(document: OutlineDocument): string[] {
-  const ids: string[] = [];
-  for (const root of document.roots) collectNodeReferenceTargetIds(root, ids);
-  return unique(ids);
+async function validateOutlineReferenceTargets(
+  options: NodeToolsOptions,
+  index: ProjectionIndex,
+  document: OutlineDocument,
+): Promise<{ code: string; error: string; instructions: string } | null> {
+  const targets = collectReferenceTargets(document);
+  const nodeValidation = validateReferenceTargetIds(
+    index,
+    targets
+      .filter((target): target is Extract<ReferenceTarget, { kind: 'node' }> => target.kind === 'node')
+      .map((target) => target.nodeId),
+  );
+  if (nodeValidation) return nodeValidation;
+
+  const chatSources = dedupeReferenceTargets(targets)
+    .filter((target): target is Extract<ReferenceTarget, { kind: 'chat-source' }> => target.kind === 'chat-source');
+  if (chatSources.length === 0) return null;
+  if (!options.chatSourceValidator) {
+    return {
+      code: 'invalid_chat_source',
+      error: 'Chat source references cannot be validated in this runtime.',
+      instructions: 'Retry later after the agent conversation history service is available.',
+    };
+  }
+  for (const source of chatSources) {
+    const validation = await options.chatSourceValidator(source);
+    if (!validation.ok) {
+      return {
+        code: validation.code ?? 'invalid_chat_source',
+        error: validation.error ?? `Chat source reference not found: ${source.stream}:${source.streamId}`,
+        instructions: validation.instructions ?? 'Use past_chats search/recent/read to get a current source object, then retry with that exact chat reference marker.',
+      };
+    }
+  }
+  return null;
+}
+
+function collectReferenceTargets(document: OutlineDocument): ReferenceTarget[] {
+  const targets: ReferenceTarget[] = [];
+  for (const root of document.roots) collectNodeReferenceTargets(root, targets);
+  return dedupeReferenceTargets(targets);
+}
+
+function dedupeReferenceTargets(targets: readonly ReferenceTarget[]): ReferenceTarget[] {
+  const seen = new Set<string>();
+  const out: ReferenceTarget[] = [];
+  for (const target of targets) {
+    const key = JSON.stringify(target);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(target);
+  }
+  return out;
 }
 
 function validateLocalFileReferenceMarkers(
@@ -2197,14 +2263,23 @@ function descendantNodeIdSet(index: ProjectionIndex, rootNodeId: string, include
   return ids;
 }
 
-function collectNodeReferenceTargetIds(node: OutlineNode, ids: string[]) {
-  if (node.referenceTargetId) ids.push(node.referenceTargetId);
+function collectNodeReferenceTargets(node: OutlineNode, targets: ReferenceTarget[]) {
+  if (node.referenceTargetId) targets.push({ kind: 'node', nodeId: node.referenceTargetId });
+  collectTextReferenceTargets(node.title, targets);
+  if (node.description) collectTextReferenceTargets(node.description, targets);
   for (const field of node.fields) {
+    collectTextReferenceTargets(field.name, targets);
     for (const value of field.values) {
-      if (value.targetId) ids.push(value.targetId);
+      if (value.targetId) targets.push({ kind: 'node', nodeId: value.targetId });
+      collectTextReferenceTargets(value.text, targets);
     }
   }
-  for (const child of node.children) collectNodeReferenceTargetIds(child, ids);
+  for (const child of node.children) collectNodeReferenceTargets(child, targets);
+}
+
+function collectTextReferenceTargets(text: string, targets: ReferenceTarget[]) {
+  if (!text.includes('[[')) return;
+  for (const marker of parseReferenceMarkers(text)) targets.push(marker.target);
 }
 
 function focusFromOutcome(outcome: unknown): string {
@@ -2213,4 +2288,14 @@ function focusFromOutcome(outcome: unknown): string {
     : undefined;
   if (typeof focusNodeId !== 'string' || !focusNodeId) throw new Error('Mutation did not return a focus node id.');
   return focusNodeId;
+}
+
+function richTextFromOutlineText(text: string): RichText {
+  return text.includes('[[') ? referenceMarkupToRichText(text) : plainText(text);
+}
+
+function richTextEqual(left: RichText, right: RichText): boolean {
+  return left.text === right.text
+    && JSON.stringify(left.marks ?? []) === JSON.stringify(right.marks ?? [])
+    && JSON.stringify(left.inlineRefs ?? []) === JSON.stringify(right.inlineRefs ?? []);
 }

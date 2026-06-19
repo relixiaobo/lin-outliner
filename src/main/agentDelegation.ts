@@ -1548,14 +1548,27 @@ function normalizeAgentToolParams(raw: unknown): AgentToolParams {
   const prompt = coerceString(raw.prompt)?.trim();
   if (!description) throw new Error('Agent input requires description.');
   if (!prompt) throw new Error('Agent input requires prompt.');
+  const allowedTools = Array.isArray(raw.allowedTools)
+    ? normalizeAgentToolNames(raw.allowedTools) ?? []
+    : undefined;
   return {
     description,
     prompt,
     model: coerceString(raw.model),
     run_in_background: raw.run_in_background === true,
     name: coerceString(raw.name),
+    allowedTools,
+    preapprovedToolRules: coerceStringArray(raw.preapprovedToolRules),
     unattended: raw.unattended === true,
   };
+}
+
+function coerceStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function normalizeRunSelector(raw: unknown): { agent_id?: string; name?: string; wait?: boolean; timeout_ms?: number } {

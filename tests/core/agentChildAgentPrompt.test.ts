@@ -21,7 +21,8 @@ describe('composeAgentPrompt child mode', () => {
     expect(prompt).toContain('# Communication and safety');
     expect(prompt).toContain('# Memory');
     expect(prompt).toContain('<system-reminder>');
-    expect(prompt).toContain('Use recall for durable facts');
+    expect(prompt).toContain('Use node_search over the d- tag family');
+    expect(prompt).toContain('Use past_chats to read raw prior chat spans');
     expect(prompt).not.toContain('Use dream');
     expect(prompt).toContain('You are a Tenon child agent');
     expect(prompt).toContain('# Child run rules');
@@ -45,7 +46,7 @@ describe('composeAgentPrompt child mode', () => {
     expect(prompt.indexOf('# Child run rules')).toBeLessThan(prompt.indexOf('# Agent instructions'));
   });
 
-  test('omits the memory module when the child definition cannot use recall or dream', () => {
+  test('omits the memory module when the child definition cannot use node memory or past chats', () => {
     const prompt = composeAgentPrompt(def({ tools: ['web_search'] }), { mode: 'child' });
     expect(prompt).not.toContain('# Memory');
     expect(prompt).toContain('You are a Tenon child agent');

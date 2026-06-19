@@ -25,7 +25,7 @@ describe('agent system prompt composer', () => {
       mode: 'member',
       mention: 'reviewer',
       profileSkillSections: ['SKILL_BODY'],
-      capabilities: { recall: true, dream: false },
+      capabilities: { nodeMemory: true, pastChats: false },
     }).map((block) => block.id)).toEqual([
       'system-context',
       'communication-and-safety',
@@ -39,7 +39,9 @@ describe('agent system prompt composer', () => {
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('# System context');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('# Communication and safety');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('# Memory');
-    expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('Use dream');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('Use node_search over the d- tag family');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('Use past_chats to read raw prior chat spans');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).not.toContain('Use dream');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('You are Neva.');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('still water');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('agree in order to be agreeable');
@@ -69,7 +71,7 @@ describe('agent system prompt composer', () => {
     const prompt = composeAgentPrompt(def(), {
       mode: 'member',
       mention: 'reviewer',
-      capabilities: { recall: true, dream: false },
+      capabilities: { nodeMemory: true, pastChats: false },
     });
     expect(prompt).toContain('# System context');
     expect(prompt).toContain('# Communication and safety');
@@ -85,19 +87,21 @@ describe('agent system prompt composer', () => {
       mode: 'member',
     });
     expect(memoryPrompt).toContain('# Memory');
-    expect(memoryPrompt).toContain('Use recall for durable facts');
+    expect(memoryPrompt).toContain('Use node_search over the d- tag family');
+    expect(memoryPrompt).toContain('Use past_chats to read raw prior chat spans');
     expect(memoryPrompt).not.toContain('Use dream');
 
     const noMemoryPrompt = composeAgentPrompt(def({ tools: ['web_search'] }), {
       mode: 'member',
     });
     expect(noMemoryPrompt).not.toContain('# Memory');
-    expect(noMemoryPrompt).not.toContain('Use recall for durable facts');
+    expect(noMemoryPrompt).not.toContain('Use node_search over the d- tag family');
 
-    const normalizedRulePrompt = composeAgentPrompt(def({ tools: ['recall(query)'] }), {
+    const normalizedRulePrompt = composeAgentPrompt(def({ tools: ['node_search(query)', 'node_read', 'past_chats'] }), {
       mode: 'member',
     });
     expect(normalizedRulePrompt).toContain('# Memory');
-    expect(normalizedRulePrompt).toContain('Use recall for durable facts');
+    expect(normalizedRulePrompt).toContain('Use node_search over the d- tag family');
+    expect(normalizedRulePrompt).toContain('Use past_chats to read raw prior chat spans');
   });
 });

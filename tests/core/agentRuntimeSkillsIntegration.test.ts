@@ -990,7 +990,7 @@ describe('agent runtime skill integration', () => {
       'web_fetch',
       'node_read',
       'node_search',
-      'recall',
+      'past_chats',
     ].sort());
     expect(childTools).not.toContain('file_write');
     expect(childTools).not.toContain('file_edit');

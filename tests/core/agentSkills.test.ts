@@ -921,7 +921,14 @@ describe('agent skills', () => {
     expect(results[0]).toMatchObject({ status: 'fulfilled', value: { name: 'skillify', source: 'built-in' } });
     expect(results[1]).toMatchObject({ status: 'fulfilled', value: { name: 'research', source: 'built-in' } });
     const allSkills = results[2].status === 'fulfilled' ? results[2].value : [];
-    expect(allSkills.map((skill) => skill.name).sort()).toEqual(['data-analysis', 'document', 'presentation', 'research', 'skillify']);
+    expect(allSkills.map((skill) => skill.name).sort()).toEqual([
+      'data-analysis',
+      'document',
+      'memory-dream',
+      'presentation',
+      'research',
+      'skillify',
+    ]);
   });
 
   test('resolves bundled built-in resource roots for dev and packaged modes', () => {
@@ -969,7 +976,7 @@ describe('agent skills', () => {
       'file_grep',
       'web_search',
       'web_fetch',
-      'recall',
+      'past_chats',
     ]);
     expect(skill?.body).toContain('codebase research specialist');
     expect(skill?.body).toContain('READ-ONLY MODE - NO MODIFICATIONS');

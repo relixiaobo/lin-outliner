@@ -64,6 +64,7 @@ export function referenceTargetToResourceItem(
   meta: ReferenceTargetResourceMeta = {},
 ): AgentResourceItem | null {
   if (target.kind === 'node') return null;
+  if (target.kind === 'chat-source') return null;
   const name = meta.name?.trim() || basenameForPath(target.path) || target.path;
   const readPath = meta.readPath || target.path;
   return {

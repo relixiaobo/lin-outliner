@@ -168,17 +168,6 @@ describe('agent runtime conversations', () => {
     expect(definitions[0]).toMatchObject({ agentId: ASSISTANT_AGENT_ID, name: 'assistant', source: 'built-in' });
   });
 
-  test('memoryReadPrincipals returns only Neva — the single believer pool (one-Neva invariant)', async () => {
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
-    roots.push(dataRoot);
-    const { runtime } = await createRuntime(dataRoot);
-
-    // The defense-in-depth cross-principal redaction was removed as dead code; this is the
-    // invariant that makes it unreachable — recall only ever reads Neva's pool.
-    const principals = (runtime as unknown as { memoryReadPrincipals(): unknown[] }).memoryReadPrincipals();
-    expect(principals).toEqual([{ type: 'agent', agentId: ASSISTANT_AGENT_ID }]);
-  });
-
   test('editing the built-in assistant overlays display name + persona, keeping the stable id', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
     roots.push(dataRoot);
@@ -806,7 +795,7 @@ describe('agent runtime conversations', () => {
 });
 
 describe('resolveAgentToolFilter', () => {
-  const CORE_TOOLS = ['recall', 'dream', 'node_create', 'node_edit', 'node_read', 'skill'] as const;
+  const CORE_TOOLS = ['past_chats', 'node_create', 'node_edit', 'node_read', 'skill'] as const;
 
   test('external (file) agents keep a strict allow-list passthrough', async () => {
     const { resolveAgentToolFilter } = await loadRuntimeModule();

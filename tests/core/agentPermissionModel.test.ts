@@ -47,7 +47,7 @@ describe('agent permission model', () => {
       'node_search',
       'web_search',
       'web_fetch',
-      'recall',
+      'past_chats',
       'AgentStatus',
     ]));
     expect(tools).not.toContain('file_write');
@@ -57,6 +57,8 @@ describe('agent permission model', () => {
     expect(tools).not.toContain('bash');
     expect(tools).not.toContain('skill');
     expect(tools).not.toContain('Agent');
+    expect(tools).not.toContain('recall');
+    expect(tools).not.toContain('dream');
 
     expect(readOnlyAgentToolNames(['file_read', 'file_write', 'AgentStatus'])).toEqual([
       'file_read',

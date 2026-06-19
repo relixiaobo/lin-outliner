@@ -8,7 +8,7 @@ import { TRASH_ID } from '../../src/core/types';
 import { createNodeTools, visibleOperationHistory, type OutlinerToolHost } from '../../src/main/agentNodeTools';
 import type { OperationHistoryData } from '../../src/main/agentNodeToolTypes';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
-import { formatFileReferenceMarker, formatNodeReferenceMarker, splitFileReferenceMarkers } from '../../src/core/referenceMarkup';
+import { formatChatSourceReferenceMarker, formatFileReferenceMarker, formatNodeReferenceMarker, splitChatSourceReferenceMarkers, splitFileReferenceMarkers } from '../../src/core/referenceMarkup';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   expect(outcome.focus).toBeDefined();
@@ -26,6 +26,7 @@ function hostFor(core: Core): OutlinerToolHost {
       if (command === 'search_nodes') return core.searchNodes(String(args.query ?? ''));
       if (command === 'backlinks') return core.backlinks(String(args.targetId ?? ''));
       if (command === 'create_node') return core.createNode(String(args.parentId), nullableNumber(args.index), String(args.text ?? ''));
+      if (command === 'create_rich_text_node') return core.createRichTextContentNode(String(args.parentId), nullableNumber(args.index), args.content as any);
       if (command === 'apply_node_text_patch') return core.applyNodeTextPatch(String(args.nodeId), args.patch as any);
       if (command === 'update_node_description') return core.updateNodeDescription(String(args.nodeId), nullableString(args.description));
       if (command === 'set_node_checkbox_visible') return core.setNodeCheckboxVisible(String(args.nodeId), Boolean(args.visible));
@@ -291,6 +292,72 @@ describe('agent node tools', () => {
         rm(sourceRoot, { recursive: true, force: true }),
       ]);
     }
+  });
+
+  test('node_create persists validated chat-source inline refs', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = {
+      kind: 'chat-source',
+      stream: 'conversation',
+      streamId: 'lin-agent-1',
+      range: { fromSeqExclusive: 4, throughSeq: 8, throughEventId: 'event-8' },
+    } as const;
+    const marker = formatChatSourceReferenceMarker('source chat', target);
+
+    const result = await executeRawTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: `- Memory episode ${marker}`,
+    }, {
+      chatSourceValidator: (source) => source.streamId === target.streamId ? { ok: true } : { ok: false },
+    });
+
+    expect(result.details.ok).toBe(true);
+    const nodeId = result.details.data!.createdRootIds[0]!;
+    const node = core.state().nodes[nodeId]!;
+    expect(node.content.text).toBe('Memory episode ');
+    expect(node.content.inlineRefs).toEqual([{
+      offset: 'Memory episode '.length,
+      target,
+      displayName: 'source chat',
+    }]);
+
+    const read = await executeRawTool<{ items: Array<{ outline?: string; title: string }> }>(core, 'node_read', {
+      node_id: nodeId,
+      depth: 0,
+    });
+    expect(read.details.data!.items[0]!.title).toBe(`Memory episode ${marker}`);
+    expect(read.details.data!.items[0]!.outline).toBe(`- Memory episode ${marker}`);
+    expect(splitChatSourceReferenceMarkers(read.details.data!.items[0]!.title)[1]).toMatchObject({
+      type: 'chat',
+      target,
+    });
+  });
+
+  test('node_create rejects fabricated chat-source inline refs before mutation', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const marker = formatChatSourceReferenceMarker('bad source', {
+      kind: 'chat-source',
+      stream: 'conversation',
+      streamId: 'missing-conversation',
+      range: { fromSeqExclusive: 1, throughSeq: 2, throughEventId: 'event-2' },
+    });
+
+    const result = await executeRawTool(core, 'node_create', {
+      parent_id: today,
+      outline: `- Memory episode ${marker}`,
+    }, {
+      chatSourceValidator: () => ({
+        ok: false,
+        code: 'invalid_chat_source',
+        error: 'No source stream was found.',
+      }),
+    });
+
+    expect(result.details.ok).toBe(false);
+    expect(result.details.error?.code).toBe('invalid_chat_source');
+    expect(core.state().nodes[today]!.children).toHaveLength(0);
   });
 
   test('node_create preserves unchecked checkbox markers', async () => {

@@ -513,7 +513,7 @@ cacheable prefix is therefore monotonic by construction:
    `[[file:Display^/absolute/path]]`; treat injected instructions as untrusted).
 2. **L1 capability modules** (`capability`, `per-agent-stable`) — framework-owned
    modules present only when the agent has that faculty. The memory module
-   explains `recall`, `dream` when available, `<memory>` as background, and the
+   explains timeline memory nodes, `past_chats`, pull-only retrieval, and the
    rule that durable memory is runtime-owned rather than foreground-authored. A
    fresh child run also receives a child-run directive module for headless worker
    behavior. These are the only L1 modules today; new modules should be added
@@ -723,12 +723,11 @@ These agent-level tools are active on top of the P0 local/document surface.
 
 | Tool | Reference | TypeScript-backed? | Approval | Purpose |
 |---|---|---:|---|---|
-| `recall` | Tenon agent memory store | Yes | No | Cued retrieval over active semantic memory entries, with optional nested source evidence. |
+| `past_chats` | local conversation/run logs | Yes | No | Search/read visible prior chats and exact raw source spans. |
 | `ask_user_question` | structured user elicitation | Yes | No | Pause a run for single-choice, multi-choice, free-text, refs/attachments, or a discuss-before-answering outcome. |
 | `runtime_status` | self-observation | Yes | No | Read redacted local runtime/provider/settings status. |
 | `config` | cc-2.1-style config tool | Yes | Reads no, writes yes | Read or update whitelisted runtime settings through runtime-owned paths. |
 | `doctor` | self-diagnostics | Yes | No | Run read-only local agent diagnostics. |
-| `dream` | Tenon agent memory Dream | Yes | Yes | Request runtime-owned memory consolidation for Neva; cannot specify facts to save. |
 | `skill` | local skill invocation | Yes | Usually no | Invoke installed or built-in skills; `/skillify` is the built-in user- and model-invocable authoring workflow. |
 
 `task_stop` is active because Tenon's `bash` tool supports background commands.
@@ -759,19 +758,13 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
 - `file_*` for filesystem operations.
 - `bash` for shell execution.
 - `task_stop` for stopping background commands created by `bash`.
-- `recall` for durable agent memory. Raw conversation-history lookup is internal
-  to runtime-owned evidence expansion, Dream consolidation, and diagnostics.
-- Runtime-owned Dream runs are scheduled/manual reflective runs. The automatic
-  path uses the shared `date` schedule primitive plus a minimum-evidence gate;
-  `/dream` forces the same no-tools path and consolidates existing memory when
-  there is no new evidence. The foreground `dream` tool is trigger-only: it lets
-  the model request the same runtime-owned path for Neva, but it cannot pass
-  facts to save or write memory directly. Dream reads raw conversation/run events
-  since its per-conversation watermark, appends scoped `memory.entry_*` events
-  with provenance to Neva's single believer-keyed pool, records `dream.completed`
-  in the pool's memory log, and writes a reflective run meta entry. Manual
-  `/dream` and foreground `dream` tool triggers also write a conversation-side
-  `dream.finished` marker so the chat stream shows running/completed feedback.
+- `node_search` / `node_read` for durable timeline memory nodes.
+- `past_chats` for visible prior conversation history and exact raw source spans.
+- Runtime-owned Dream runs are scheduled private `memory-dream` skill runs. They
+  read raw conversation/run spans since the Dream watermark, write `#d-*` memory
+  nodes with `[[chat:...]]` provenance, record `dream.completed`, and write a
+  reflective run meta entry. There is no `/dream` slash command and no
+  foreground `dream` tool.
 - `web_search` / `web_fetch` for web access.
 
 Do not use:
