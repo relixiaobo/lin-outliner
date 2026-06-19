@@ -2176,7 +2176,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone({ source: null, error: 'missing' }) as T;
         }
         if (cmd === 'preview_read_text') {
-          const target = args.target as { kind?: string; path?: string; payloadId?: string; runId?: string } | undefined;
+          const target = args.target as {
+            assetId?: string;
+            kind?: string;
+            path?: string;
+            payloadId?: string;
+            runId?: string;
+          } | undefined;
           if (target?.kind === 'agent-payload') {
             if (target.payloadId === 'payload-full-output' && target.runId !== 'run-payload-output') {
               return clone({ text: null, error: 'missing' }) as T;
@@ -2184,6 +2190,36 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             return clone({ text: 'Full persisted tool output from payload' }) as T;
           }
           if (target?.kind === 'local-file') return clone({ text: `# ${target.path?.split('/').pop() ?? 'file'}\n\nMock preview text.` }) as T;
+          if (target?.kind === 'asset' && target.assetId) {
+            const asset = assets.get(target.assetId);
+            const mimeType = asset?.mimeType.toLowerCase() ?? '';
+            const filename = asset?.originalFilename.toLowerCase() ?? '';
+            if (mimeType === 'text/markdown' || filename.endsWith('.md')) {
+              return clone({
+                text: [
+                  '# Markdown edge preview',
+                  '',
+                  'Body text should sit inside the file preview frame.',
+                  '',
+                  '```ts',
+                  `const message = "${'long-code-segment.'.repeat(16)}";`,
+                  '```',
+                ].join('\n'),
+              }) as T;
+            }
+            if (mimeType === 'text/csv' || filename.endsWith('.csv')) {
+              const headers = Array.from({ length: 12 }, (_, index) => `column_${index + 1}`).join(',');
+              const values = Array.from({ length: 12 }, (_, index) => `value_${index + 1}`).join(',');
+              return clone({
+                text: `${headers}\n${values}`,
+              }) as T;
+            }
+            if (mimeType.startsWith('text/') || filename.endsWith('.txt')) {
+              return clone({
+                text: `Mock asset preview text ${'long-text-segment '.repeat(24)}`,
+              }) as T;
+            }
+          }
           return clone({ text: 'Mock asset preview text.' }) as T;
         }
         if (cmd === 'preview_read_bytes') {

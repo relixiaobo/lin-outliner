@@ -3,44 +3,92 @@
    read-only, bounded-height <pre>; the outliner row is an editable textarea
    layered over a Shiki highlight layer with a language <select>. */
 .agent-code-block {
+  position: relative;
   overflow: hidden;
   margin: var(--space-1) 0;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-soft);
+  --code-block-content-inset: var(--space-5);
+  --code-block-scrollbar-gutter: var(--space-4);
 }
 
 .code-block {
+  position: relative;
   overflow: hidden;
   margin: var(--space-1) 0;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-soft);
+  --code-block-editor-max-height: min(42vh, 420px);
+  --code-block-scrollbar-edge-inset: var(--space-1);
+  --code-block-content-inset: var(--space-5);
+  --code-block-scrollbar-gutter: var(--space-4);
 }
 
 .agent-code-header,
 .code-block-chrome {
+  position: absolute;
+  z-index: 2;
+  top: var(--space-3);
+  right: var(--space-3);
   display: flex;
-  height: var(--control-size-xl);
+  max-width: min(68%, 280px);
+  min-width: 0;
+  height: calc(var(--control-size-xl) + var(--space-2));
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  border-bottom: 1px solid var(--border-subtle);
-  padding: 0 var(--space-3) 0 var(--space-4);
+  gap: var(--space-2);
   color: var(--text-soft);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast);
+  user-select: none;
+}
+
+.agent-code-block:hover .agent-code-header,
+.agent-code-block:focus-within .agent-code-header,
+.code-block:hover .code-block-chrome,
+.code-block:focus-within .code-block-chrome,
+.code-block-chrome:has(.code-block-language[aria-expanded="true"]) {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.agent-code-header > span {
+  display: inline-flex;
+  height: calc(var(--control-size-xl) + var(--space-1));
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-pill);
+  background: var(--material-popover);
+  backdrop-filter: var(--material-backdrop);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--shadow);
+  padding: 0 var(--space-3) 0 var(--space-4);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-code-copy,
 .code-block-copy {
   display: inline-flex;
-  width: var(--control-size-md);
-  height: var(--control-size-md);
+  width: calc(var(--control-size-xl) - var(--space-1));
+  height: calc(var(--control-size-xl) - var(--space-1));
+  flex: 0 0 calc(var(--control-size-xl) - var(--space-1));
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-sm);
-  color: var(--text-faint);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-pill);
+  background: var(--material-popover);
+  backdrop-filter: var(--material-backdrop);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--shadow);
+  color: var(--text-soft);
+  transition: color var(--motion-fast), opacity var(--motion-fast);
 }
 
 /* Quiet icon button: hover deepens the icon color rather than adding a fill. */
@@ -59,15 +107,29 @@
    resting fill, so hover only deepens the text/icon color. */
 .code-block-language {
   display: inline-flex;
+  min-width: 0;
+  height: calc(var(--control-size-xl) - var(--space-1));
   align-items: center;
   gap: var(--space-1);
+  border: 1px solid var(--separator);
   font-family: var(--font-family-sans);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
   color: var(--text-soft);
-  background: transparent;
-  border: 0;
-  padding: var(--space-1) 0;
+  background: var(--material-popover);
+  backdrop-filter: var(--material-backdrop);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--shadow);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-3) 0 var(--space-4);
+  transition: color var(--motion-fast);
+}
+
+.code-block-language-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .code-block-language svg {
@@ -88,7 +150,9 @@
   z-index: var(--z-popover);
   min-width: 160px;
   border-radius: var(--radius-md);
-  background: var(--bg);
+  background: var(--material-popover);
+  backdrop-filter: var(--material-backdrop);
+  -webkit-backdrop-filter: var(--material-backdrop);
   box-shadow: var(--shadow);
   padding: var(--space-2);
   overflow-y: auto;
@@ -129,7 +193,7 @@
 .code-block-highlight pre.shiki,
 .code-block-textarea {
   margin: 0;
-  padding: var(--space-4) var(--space-5);
+  padding: 0;
   font-family: var(--font-family-mono);
   font-size: var(--font-code-block);
   line-height: var(--line-code-block);
@@ -159,16 +223,24 @@
 }
 
 /* Agent transcript code is read-only and scrolls within a bounded height. */
+.agent-code-body {
+  padding: var(--code-block-content-inset);
+}
+
 .agent-code-block pre {
   max-height: 280px;
   overflow: auto;
   color: var(--text-strong);
+  padding-bottom: var(--code-block-scrollbar-gutter);
 }
 
 /* Outliner code rows are editable: a transparent textarea over the highlight
    layer, sized by a hidden <pre> so the height stays exact while Shiki resolves. */
 .code-block-editor {
   position: relative;
+  max-height: var(--code-block-editor-max-height);
+  overflow: hidden;
+  padding: var(--code-block-content-inset);
 }
 
 .code-block-sizer {
@@ -176,11 +248,12 @@
   pointer-events: none;
   overflow: hidden;
   min-height: var(--line-code-block);
+  padding-bottom: var(--code-block-scrollbar-gutter);
 }
 
 .code-block-highlight {
   position: absolute;
-  inset: 0;
+  inset: var(--code-block-content-inset) var(--code-block-content-inset) var(--code-block-scrollbar-edge-inset);
   overflow: hidden;
   pointer-events: none;
 }
@@ -191,13 +264,13 @@
 
 .code-block-textarea {
   position: absolute;
-  inset: 0;
+  inset: var(--code-block-content-inset) var(--code-block-content-inset) var(--code-block-scrollbar-edge-inset);
   display: block;
-  width: 100%;
-  height: 100%;
+  width: auto;
+  height: auto;
   resize: none;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
   background: transparent;
   color: transparent;
   caret-color: var(--text-strong);

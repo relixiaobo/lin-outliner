@@ -418,6 +418,20 @@ Use these default desktop tokens before adding component-specific values:
 - Code blocks use `--font-family-mono`, `--font-code-block`, and
   `--line-code-block`. They should be compact but not meta-sized; reserve
   `--font-meta / --line-meta` for labels and tool summaries.
+- Code block chrome floats as top-right translucent controls over the opaque
+  code surface. The language selector and copy button are separate surfaces,
+  revealed on hover, keyboard focus, or while the language menu is open. Each
+  surface uses `--material-popover` + `--material-backdrop`, so
+  reduced-transparency and high-contrast fall back through the shared material
+  tokens. Language and copy controls stay neutral; the copy affordance is
+  circular, never a branded or square hover fill. The text viewport is inset
+  inside the outer frame like file/PDF previews; long-line scrolling must not let
+  text sit directly on the frame edge, and horizontal scrollbars sit in a
+  reserved bottom gutter below the text, close to the frame's bottom edge rather
+  than floating in the content field. Editable outliner code blocks grow
+  naturally until `min(42vh, 420px)`, then scroll internally; the syntax
+  highlight layer must stay synced to the textarea's horizontal and vertical
+  scroll offsets.
 - `--workspace-surface-radius` is the canonical outer radius for workspace
   structural surfaces. `--panel-radius` and `--agent-composer-radius` both map
   to it.

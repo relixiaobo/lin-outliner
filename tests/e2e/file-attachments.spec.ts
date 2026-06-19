@@ -75,6 +75,24 @@ async function pasteClipboardFile(page: Parameters<typeof trailingEditor>[0], fi
   }, file);
 }
 
+async function pasteClipboardFileAndOpenPreview(
+  page: Parameters<typeof trailingEditor>[0],
+  file: { name: string; mimeType: string; text: string },
+) {
+  const beforeChildren = await todayChildren(page);
+  await trailingEditor(page).click();
+  await pasteClipboardFile(page, file);
+  await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+  const pastedId = (await todayChildren(page)).at(-1);
+  if (!pastedId) throw new Error(`No pasted file node for ${file.name}`);
+  const pastedRow = row(page, pastedId);
+  await pastedRow.locator('> .row').first().hover();
+  await pastedRow.locator('.row-chevron-button').first().click();
+  const previewFrame = pastedRow.locator('.file-node-row-preview .file-node-preview.collapsed');
+  await expect(previewFrame).toBeVisible();
+  return previewFrame;
+}
+
 async function dispatchExternalFileDrag(
   page: Parameters<typeof trailingEditor>[0],
   targetId: string,
@@ -347,18 +365,22 @@ test.describe('file attachments', () => {
     await expect.poll(async () => inlinePreviewFrame.evaluate((element) => Math.round(element.getBoundingClientRect().height)))
       .toBeGreaterThanOrEqual(Math.round(beforeResizeHeight + 48));
 
-    // Expanding a childless file row must NOT create a phantom editable child draft:
-    // the attachment node stays childless and no new node materializes.
+    // Expanding a childless file row still exposes the normal child trailing draft
+    // below the inline preview, so users can annotate the file without drilling in.
+    await expect(trailingEditor(page, attachmentId!)).toBeVisible();
+    await expect.poll(async () => trailingEditor(page, attachmentId!).evaluate((editor, nodeId) => {
+      const preview = document.querySelector<HTMLElement>(`[data-node-id="${nodeId}"] .file-node-row-preview`);
+      if (!preview) return false;
+      return editor.getBoundingClientRect().top > preview.getBoundingClientRect().bottom;
+    }, attachmentId!)).toBe(true);
     await expect.poll(async () => {
       const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId);
       return node?.children.length ?? 0;
     }).toBe(0);
-    const childCountAfterExpand = (await todayChildren(page)).length;
-    expect(childCountAfterExpand).toBe(beforeChildren.length + 1);
 
     // The file-type bullet drills to the node page.
     await attachmentRowLine.hover();
-    await attachmentRow.locator('.row-bullet-button').first().click();
+    await attachmentRow.locator('> .row .row-bullet-button').first().click();
     const nodePage = page.locator('.outline-panel-surface.active-panel');
     await expect(nodePage.locator('.panel-title-file-heading')).toContainText(longFilename);
     await expect(nodePage.locator('.panel-title-file-heading')).not.toContainText('Untitled');
@@ -551,6 +573,39 @@ test.describe('file attachments', () => {
     expect(calls.some((call) => call.cmd === 'open_asset')).toBe(true);
     expect(calls.some((call) => call.cmd === 'reveal_asset')).toBe(true);
     expect(calls.some((call) => call.cmd === 'copy_asset_file')).toBe(true);
+  });
+
+  test('expanded childless file rows show an inline child trailing draft', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await page.keyboard.type('/attachment');
+    await expect(page.getByRole('option', { name: /Attachment/ })).toBeVisible();
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const attachmentId = (await todayChildren(page)).at(-1)!;
+    const attachmentRow = row(page, attachmentId);
+
+    await attachmentRow.locator('> .row').first().hover();
+    await attachmentRow.locator('> .row .row-chevron-button').first().click();
+    await expect(attachmentRow.locator('.file-node-row-preview .file-node-preview.collapsed')).toBeVisible();
+    const inlineDraft = trailingEditor(page, attachmentId);
+    await expect(inlineDraft).toBeVisible();
+    await expect.poll(async () => inlineDraft.evaluate((editor, nodeId) => {
+      const preview = document.querySelector<HTMLElement>(`[data-node-id="${nodeId}"] .file-node-row-preview`);
+      if (!preview) return false;
+      return editor.getBoundingClientRect().top > preview.getBoundingClientRect().bottom;
+    }, attachmentId)).toBe(true);
+
+    await inlineDraft.click();
+    await page.keyboard.type('inline note on this file');
+    await expect.poll(async () => {
+      const node = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId);
+      return node?.children.length ?? 0;
+    }).toBe(1);
+    const inlineChildId = (await e2eProjection(page)).nodes.find((entry) => entry.id === attachmentId)?.children[0];
+    expect(inlineChildId).toBeTruthy();
+    await expect(row(page, inlineChildId!)).toContainText('inline note on this file');
+    expect(await todayChildren(page)).toHaveLength(beforeChildren.length + 1);
   });
 
   test('file marker guides use the shared transparent marker slot geometry', async ({ page }) => {
@@ -756,6 +811,96 @@ test.describe('file attachments', () => {
     }));
   });
 
+  test('text-like file previews keep content and horizontal scrollbars inside the preview inset', async ({ page }) => {
+    const markdownPreview = await pasteClipboardFileAndOpenPreview(page, {
+      name: 'edge-notes.md',
+      mimeType: 'text/markdown',
+      text: '# Edge notes',
+    });
+    await expect(markdownPreview.locator('.file-preview-markdown pre code')).toBeVisible();
+    await expect.poll(async () => markdownPreview.evaluate((frame) => {
+      const markdown = frame.querySelector<HTMLElement>('.file-preview-markdown');
+      const codeFrame = frame.querySelector<HTMLElement>('.file-preview-markdown pre');
+      const codeScroll = frame.querySelector<HTMLElement>('.file-preview-markdown pre code');
+      if (!markdown || !codeFrame || !codeScroll) return null;
+      codeScroll.scrollLeft = Math.min(48, codeScroll.scrollWidth - codeScroll.clientWidth);
+      const frameRect = frame.getBoundingClientRect();
+      const markdownRect = markdown.getBoundingClientRect();
+      const codeFrameRect = codeFrame.getBoundingClientRect();
+      const codeScrollRect = codeScroll.getBoundingClientRect();
+      const codeStyle = getComputedStyle(codeScroll);
+      return {
+        codeFrameInset: codeFrameRect.left - frameRect.left >= 7,
+        codeScrollbarGutter: Number.parseFloat(codeStyle.paddingBottom) >= 7,
+        codeScrollInset: codeScrollRect.left - codeFrameRect.left >= 7,
+        codeScrollsHorizontally: codeScroll.scrollWidth > codeScroll.clientWidth,
+        markdownInset: markdownRect.left - frameRect.left >= 7,
+      };
+    })).toEqual({
+      codeFrameInset: true,
+      codeScrollbarGutter: true,
+      codeScrollInset: true,
+      codeScrollsHorizontally: true,
+      markdownInset: true,
+    });
+
+    const textPreview = await pasteClipboardFileAndOpenPreview(page, {
+      name: 'edge-log.txt',
+      mimeType: 'text/plain',
+      text: 'edge log',
+    });
+    await expect(textPreview.locator('.file-preview-code pre.shiki')).toBeVisible();
+    await expect.poll(async () => textPreview.evaluate((frame) => {
+      const codeFrame = frame.querySelector<HTMLElement>('.file-preview-code');
+      const codeScroll = frame.querySelector<HTMLElement>('.file-preview-code pre.shiki');
+      if (!codeFrame || !codeScroll) return null;
+      codeScroll.scrollLeft = Math.min(48, codeScroll.scrollWidth - codeScroll.clientWidth);
+      const frameRect = frame.getBoundingClientRect();
+      const codeFrameRect = codeFrame.getBoundingClientRect();
+      const codeScrollRect = codeScroll.getBoundingClientRect();
+      const codeStyle = getComputedStyle(codeScroll);
+      return {
+        codeFrameInset: codeFrameRect.left - frameRect.left >= 7,
+        codeScrollbarGutter: Number.parseFloat(codeStyle.paddingBottom) >= 7,
+        codeScrollInset: codeScrollRect.left - codeFrameRect.left >= 7,
+        codeScrollsHorizontally: codeScroll.scrollWidth > codeScroll.clientWidth,
+      };
+    })).toEqual({
+      codeFrameInset: true,
+      codeScrollbarGutter: true,
+      codeScrollInset: true,
+      codeScrollsHorizontally: true,
+    });
+
+    const tablePreview = await pasteClipboardFileAndOpenPreview(page, {
+      name: 'edge-table.csv',
+      mimeType: 'text/csv',
+      text: 'name,value',
+    });
+    await expect(tablePreview.locator('.file-preview-table-wrap .file-preview-table')).toBeVisible();
+    await expect.poll(async () => tablePreview.evaluate((frame) => {
+      const tableFrame = frame.querySelector<HTMLElement>('.file-preview-table-wrap');
+      const tableScroll = frame.querySelector<HTMLElement>('.file-preview-table-scroll');
+      if (!tableFrame || !tableScroll) return null;
+      tableScroll.scrollLeft = Math.min(48, tableScroll.scrollWidth - tableScroll.clientWidth);
+      const frameRect = frame.getBoundingClientRect();
+      const tableFrameRect = tableFrame.getBoundingClientRect();
+      const tableScrollRect = tableScroll.getBoundingClientRect();
+      const tableStyle = getComputedStyle(tableScroll);
+      return {
+        tableFrameInset: tableFrameRect.left - frameRect.left >= 7,
+        tableScrollbarGutter: Number.parseFloat(tableStyle.paddingBottom) >= 7,
+        tableScrollInset: tableScrollRect.left - tableFrameRect.left >= 7,
+        tableScrollsHorizontally: tableScroll.scrollWidth > tableScroll.clientWidth,
+      };
+    })).toEqual({
+      tableFrameInset: true,
+      tableScrollbarGutter: true,
+      tableScrollInset: true,
+      tableScrollsHorizontally: true,
+    });
+  });
+
   test('unsupported file previews keep the same bottom action location as previewable files', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
@@ -821,6 +966,31 @@ test.describe('file attachments', () => {
         compactWidth: frameRect.width <= 520,
       };
     })).toEqual({ bottomAction: true, centeredInFrame: true, compactWidth: true });
+  });
+
+  test('file preview action menus dismiss on outside clicks without a surface focus outline', async ({ page }) => {
+    const beforeChildren = await todayChildren(page);
+    await trailingEditor(page).click();
+    await pasteClipboardFile(page, {
+      name: 'dismiss-menu.zip',
+      mimeType: 'application/zip',
+      text: 'zip bytes',
+    });
+    await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+    const pastedId = (await todayChildren(page)).at(-1)!;
+    const attachmentRow = row(page, pastedId);
+    await attachmentRow.locator('> .row').first().hover();
+    await attachmentRow.locator('.row-chevron-button').first().click();
+    const metadataPreview = attachmentRow.locator('.file-node-row-preview .file-node-preview--metadata');
+    await expect(metadataPreview).toBeVisible();
+
+    await metadataPreview.locator('.file-preview-pill-more').click();
+    const menu = page.getByRole('menu', { name: 'Preview actions' });
+    await expect(menu).toBeVisible();
+    await expect.poll(async () => menu.evaluate((element) => getComputedStyle(element).outlineStyle)).toBe('none');
+
+    await row(page, ids.alpha).locator('> .row').click();
+    await expect(menu).toBeHidden();
   });
 
   test('a file row has a read-only caret surface: display-only name, but tag/Enter nav works', async ({ page }) => {

@@ -1,4 +1,4 @@
-import { useRef, useState, type RefObject } from 'react';
+import { useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../../i18n/I18nProvider';
 import { CopyIcon, FolderIcon, ICON_SIZE, MoreIcon, OpenIcon, ShowIcon } from '../icons';
@@ -39,6 +39,7 @@ export function FileNodeActionMenu({ node, primaryLabel, onPrimary }: FileNodeAc
   const assetId = node.assetId;
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const dismissIgnoreRefs = useMemo(() => [anchorRef], []);
 
   return (
     <>
@@ -68,6 +69,7 @@ export function FileNodeActionMenu({ node, primaryLabel, onPrimary }: FileNodeAc
           anchorRef={anchorRef}
           ariaLabel={ta.menuLabel}
           assetActions={assetId ? fileNodeAssetActions(assetId, ta) : []}
+          dismissIgnoreRefs={dismissIgnoreRefs}
           onClose={() => setOpen(false)}
           onPrimary={onPrimary}
           primaryLabel={primaryLabel}
@@ -81,6 +83,7 @@ function FloatingActionMenu({
   anchorRef,
   ariaLabel,
   assetActions,
+  dismissIgnoreRefs,
   onClose,
   onPrimary,
   primaryLabel,
@@ -88,6 +91,7 @@ function FloatingActionMenu({
   anchorRef: RefObject<HTMLElement | null>;
   ariaLabel: string;
   assetActions: FileNodeAssetAction[];
+  dismissIgnoreRefs: Array<RefObject<HTMLElement | null>>;
   onClose: () => void;
   onPrimary: () => void;
   primaryLabel: string;
@@ -99,9 +103,9 @@ function FloatingActionMenu({
     placement: 'bottom-end',
     width: 200,
   });
-  // Outside-mousedown + Escape dismissal (the trigger stops its own mousedown, so a
-  // click on it toggles rather than dismisses).
-  useDismissibleOverlay(menuRef, onClose);
+  // Capture-phase outside-pointer + Escape dismissal. The trigger is ignored so a
+  // repeat click toggles this menu instead of closing and immediately reopening it.
+  useDismissibleOverlay(menuRef, onClose, { ignoreRefs: dismissIgnoreRefs });
 
   return createPortal(
     <MenuSurface

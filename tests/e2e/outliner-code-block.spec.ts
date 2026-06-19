@@ -136,16 +136,64 @@ test.describe('code block editor', () => {
 
     const metrics = await textarea.evaluate((element) => {
       const ta = element as HTMLTextAreaElement;
+      const block = ta.closest('.code-block');
+      const sizer = block?.querySelector<HTMLElement>('.code-block-sizer');
+      const textareaRect = ta.getBoundingClientRect();
+      const blockRect = block?.getBoundingClientRect();
       return {
+        bottomInset: blockRect ? blockRect.bottom - textareaRect.bottom : Number.POSITIVE_INFINITY,
+        insetLeft: blockRect ? textareaRect.left - blockRect.left : 0,
         lines: ta.value.split('\n').length,
+        scrollbarGutter: sizer ? Number.parseFloat(getComputedStyle(sizer).paddingBottom) : 0,
         scrollWidth: ta.scrollWidth,
         clientWidth: ta.clientWidth,
         whiteSpace: getComputedStyle(ta).whiteSpace,
       };
     });
+    expect(metrics.bottomInset).toBeLessThanOrEqual(4);
+    expect(metrics.insetLeft).toBeGreaterThanOrEqual(8);
     expect(metrics.lines).toBe(1);
+    expect(metrics.scrollbarGutter).toBeGreaterThanOrEqual(7);
     expect(metrics.whiteSpace).toBe('pre');
     expect(metrics.scrollWidth).toBeGreaterThan(metrics.clientWidth);
+  });
+
+  test('tall code blocks cap height and scroll internally', async ({ page }) => {
+    const rowId = await createCodeBlockViaTrailing(page);
+    const textarea = row(page, rowId).locator('.code-block-textarea');
+    await textarea.click();
+    await textarea.fill(Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n'));
+
+    const metrics = await textarea.evaluate((element) => {
+      const ta = element as HTMLTextAreaElement;
+      const editor = ta.closest<HTMLElement>('.code-block-editor');
+      const highlight = editor?.querySelector<HTMLElement>('.code-block-highlight');
+      if (!editor || !highlight) return null;
+      ta.scrollTop = ta.scrollHeight;
+      ta.dispatchEvent(new Event('scroll', { bubbles: true }));
+      const editorStyle = getComputedStyle(editor);
+      const textareaStyle = getComputedStyle(ta);
+      const parsedMaxHeight = Number.parseFloat(editorStyle.maxHeight);
+      const highlightRect = highlight.getBoundingClientRect();
+      const textareaRect = ta.getBoundingClientRect();
+      return {
+        editorHeight: Math.round(editor.getBoundingClientRect().height),
+        highlightSynced: Math.abs(highlight.scrollTop - ta.scrollTop) <= 1,
+        viewportBottomAligned: Math.abs(highlightRect.bottom - textareaRect.bottom) <= 1,
+        viewportHeightAligned: Math.abs(highlightRect.height - textareaRect.height) <= 1,
+        maxHeight: Number.isFinite(parsedMaxHeight) ? Math.round(parsedMaxHeight) : 420,
+        textareaScrolls: ta.scrollHeight > ta.clientHeight,
+        textareaOverflowY: textareaStyle.overflowY,
+      };
+    });
+    expect(metrics).not.toBeNull();
+    expect(metrics!.editorHeight).toBeLessThanOrEqual(metrics!.maxHeight + 1);
+    expect(metrics!.editorHeight).toBeGreaterThan(240);
+    expect(metrics!.highlightSynced).toBe(true);
+    expect(metrics!.viewportBottomAligned).toBe(true);
+    expect(metrics!.viewportHeightAligned).toBe(true);
+    expect(metrics!.textareaScrolls).toBe(true);
+    expect(metrics!.textareaOverflowY).toBe('auto');
   });
 
   test('Shift+Arrow exits a code block into a cross-row block selection', async ({ page }) => {
