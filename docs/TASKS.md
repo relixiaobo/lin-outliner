@@ -461,6 +461,15 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **tool-call spinner-stuck fix** (main, `fix/tool-call-spinner-stuck`, merged 2026-06-19) — completed
+  tool steps (e.g. a finished `web_search` whose result message never lands in the projection) stopped
+  showing a perpetual spinner. Replay now stamps a per-call `outcome` (`completed`/`failed`) from the
+  `tool_call.completed`/`.failed` events; the render entry carries it and `getToolCallStatus` resolves a
+  settled-but-resultless call to done/error, so the active-turn fallback only bridges genuinely un-settled
+  calls. Render-only, reload-surviving. Spec synced (`agent-event-log-rendering.md`); the `outcome` signal
+  is also the prerequisite Part A of `codex-message-flow-fidelity` reuses. typecheck ✓ · test:core 1040 ·
+  test:renderer 555 · docs:check ✓.
+
 - **node-search-access-ranking PR A — personal-access ranking** (codex, PR #307) — gives transient
   node retrieval (launcher/app search + agent `node_search`) a per-user recency/access boost via a
   per-`NodeId` **single weighted, time-decayed accumulator** `{s, tUpdate}` in an off-Loro flat-JSON

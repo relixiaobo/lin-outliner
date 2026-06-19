@@ -1517,6 +1517,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Completed tool steps no longer spin forever (main, `fix/tool-call-spinner-stuck`)** — a finished
+  step (e.g. a `web_search` that returned) kept showing a spinner for the rest of the run. The
+  authoritative `tool_call.completed` / `tool_call.failed` events were replay no-ops, so the renderer
+  inferred "done" only from a later `tool_result.created` message; when that result never lands in the
+  projection (some built-in SDK tools complete without one) the row fell through to the active-turn
+  fallback and spun indefinitely. Replay now stamps a per-call **`outcome`** (`completed`/`failed`) onto
+  the toolCall content, the render entry carries it (the pi `AssistantMessage` drops it), and
+  `getToolCallStatus` resolves a settled call to done/error even with no result message — the active-turn
+  fallback now only bridges genuinely un-settled, resultless calls. Render-only (model context never sees
+  `outcome`) and survives reload via replay. Spec synced (`agent-event-log-rendering.md`); new core replay
+  test + renderer `getToolCallStatus` cases. typecheck ✓ · `test:core` 1040 pass / 2 skip / 0 fail ·
+  `test:renderer` 555 pass / 0 fail · `docs:check` ✓.
 - **Editing Neva's tool allow/deny list hot-swaps the live conversation (PR #299, main)** — a tools
   edit through the settings editor persisted to the built-in overlay but never re-resolved the open
   conversation's `agentToolFilter`, so a just-removed tool stayed callable until the conversation was
