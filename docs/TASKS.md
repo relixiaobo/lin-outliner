@@ -421,6 +421,21 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   real light+dark run to confirm static contrast risks + apply one-token
   `theme-dark.css` nudges.
 
+- **codex-message-flow-fidelity** (`draft`, **PM-ratified 2026-06-19**, build unassigned) —
+  raise the agent process/transcript render to match the OpenAI **Codex desktop client**
+  message flow, grounded in a read-only reverse-engineering of that client
+  (`tmp/research/codex-client/MESSAGE-FLOW-GAP.md`). **ONE complete feature, ONE PR, one
+  agent** — parts A–D are build-order within it (A7), not separate releases: **A**
+  consecutive-tool-activity grouping + counted, kind-named summary ("Ran 3 commands"/"Read
+  5 files", running/done tense) [High]; **B** live "Working for {t}" ticker + bare "Working"
+  under 1s [Med]; **C** "Thinking" text-shimmer active cue instead of a header spinner [Med,
+  biggest "feels like Codex"; falls back to spinner if it fails the visual/design-system
+  gate]; **D** duration day-rollup + an optional 4th not-started status icon [Low]. Plan
+  carries the implementation spec (i18n family + copy, tool→kind map, grouping algorithm,
+  shimmer CSS, ticker hook, file touch-points). Explicitly KEEPS our deliberate divergences
+  (no auto-collapse-on-answer-start; sticky user fold; richer "Thought · used N tools"
+  fallback). See `docs/plans/codex-message-flow-fidelity.md`.
+
 ### Performance
 
 - **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a three-way
