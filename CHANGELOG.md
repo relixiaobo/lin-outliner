@@ -12,6 +12,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Re-provide the `past_chats` agent tool — `agent-memory-on-timeline` PR1 (PR #305, codex-2)** —
+  the first PR of the #302 set re-exposes the model-visible, **read-only** `past_chats` tool over the
+  existing `AgentPastChatsService`: `recent` (recent visible user-message anchors), `search` (visible
+  prior-conversation text search), `read` by `message_id` (bounded window around an anchor), and `read`
+  by `source` (raw `{stream, stream_id, from_seq_exclusive, through_seq?}` conversation/run span).
+  Every `recent`/`search` result and every read message now carries its **source coordinates**
+  (`stream` / `streamId` / seq range / `eventId`) so a later writer can cite only spans it actually
+  read — the §6 contract that PR2's `chat-source` inline reference + validate-on-write builds on.
+  Raw-span reads reuse the same evidence-extraction path as memory evidence expansion (visible/runtime
+  transcript), so they introduce no new transcript store and don't bypass compaction; the current
+  conversation is excluded by default from `recent`/`search`/`message_id` (opt in via
+  `include_current_conversation` to recover compacted current-conversation context). Wired into Neva
+  and child/fork tool sets and classified `agent.memory.recall` (read-only, no approval, allowed in
+  restricted mode). Spec synced: `agent-tool-design.md`, `agent-progress.md` (A6). **Gate (main):**
+  typecheck + `test:core` (1038 pass / 0 fail) + `docs:check` green; manual correctness/security review
+  (source-coordinate round-trip, single-principal, no compaction bypass) — no blocking findings.
 - **Code-block floating toolbar + framed preview insets (PR #301, codex)** — editable outliner code
   blocks and read-only agent markdown code blocks gain a top-right floating toolbar: the language
   selector and copy button are separate hover/focus-revealed controls on the shared popover material

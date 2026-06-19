@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | shipped single-agent-collapse #294 + agent-dock-ui #296; authored plans #302/#303 — both **ratified 2026-06-19 + merged**, now boarded (build unassigned) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291; authored ratified plan agent-process-stable-disclosure #297) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305**; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -45,8 +45,9 @@ the just-shipped activation/briefing engine; **GO on the full direction, PR1 fir
 — the generic ranking substrate #302's pull-only recall reuses; **GO**, since **revised +
 re-reviewed via #304** into two build-ready PRs — PR A personal-access + PR B
 reference-authority, the latter ratified 2026-06-19). Both plans landed on `main`
-(#302/#303/#304 merged). Next build dispatch: **#302 PR1** (re-provide
-`past_chats`, additive/safe) and **#303 PR A** can start immediately and in parallel; the four
+(#302/#303/#304 merged). **#302 PR1 shipped (#305, 2026-06-19)** — `past_chats` re-provided.
+Next build dispatch: **#302 PR2** (atomic node-memory flip; gate `/code-review ultra`) and
+**#303 PR A** can start immediately and in parallel; the four
 disjoint lanes from the 2026-06-19 dispatch plan (agent/outliner disclosure stability ·
 command-surface one-pager · dark-mode-contrast-pass · anthropic-auth-clarity) remain open.
 
@@ -221,10 +222,11 @@ before any directional/security-sensitive build.
   accepted), and `agent-data-model` §0–§2's "memory never touches Loro" + single-writer
   axioms are consciously abandoned (concurrency/undo de-risked via whole-node replacement +
   origin-scoped undo). Protocol delta = **one** `ReferenceTarget` variant (`chat-source`),
-  interface-first. **Set of independent PRs:** **PR1** re-provide `past_chats` (additive/safe
-  — *next to build*); **PR2** the atomic node-memory flip (read+write flip together —
-  genuinely unsplittable pre-release; gate = `/code-review ultra`); **PR3** jump-to-source
-  UI. Reverses the **memory** item above; the recency/access ranking it loses is restored
+  interface-first. **Set of independent PRs:** **PR1** re-provide `past_chats` (**✓ shipped
+  #305, 2026-06-19** — read-only `recent`/`search`/`read`/`read-by-source` with source
+  coordinates for later inline citation); **PR2** the atomic node-memory flip (read+write flip
+  together — genuinely unsplittable pre-release; gate = `/code-review ultra`, *next to build*);
+  **PR3** jump-to-source UI. Reverses the **memory** item above; the recency/access ranking it loses is restored
   generically by `node-search-access-ranking` (#303). PM postures ratified: pull-only
   regression · memory-in-exportable-document · single-writer abandoned. See
   [`docs/plans/agent-memory-on-timeline.md`](docs/plans/agent-memory-on-timeline.md).
@@ -502,6 +504,17 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **agent-memory-on-timeline PR1 — re-provide `past_chats`** (codex-2, PR #305) — first of the
+  `agent-memory-on-timeline` (#302) PR set: re-exposes the model-visible **read-only** `past_chats`
+  tool over the existing `AgentPastChatsService` (`recent` / `search` / `read`-by-message /
+  `read`-by-`source`), now surfacing per-result **source coordinates** (`stream` / `streamId` / seq
+  range / `eventId`) so a later writer can cite only spans it actually read (the §6 contract that
+  enables the PR2 `chat-source` inline ref + validate-on-write). Raw-span reads reuse the existing
+  evidence-extraction path (visible/runtime transcript), so they don't bypass compaction. Wired into
+  Neva + child/fork tool sets, classified `agent.memory.recall` (read-only, no approval). Spec synced
+  (`agent-tool-design.md`, `agent-progress.md`, A6). **Gate (main):** typecheck + `test:core` 1038/0 +
+  docs:check green; manual correctness/security/permission review (source round-trip, single-principal,
+  no compaction bypass) — no blocking findings.
 - **code-block-floating-toolbar** (codex, PR #301) — editable outliner code blocks + read-only agent
   markdown code blocks get a top-right floating toolbar (language selector + copy as separate
   hover/focus-revealed popover-material controls over an opaque code surface), an inset text viewport
