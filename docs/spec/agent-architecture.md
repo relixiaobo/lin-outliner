@@ -199,8 +199,9 @@ Worked classification:
   machinery (timeline command nodes + `{type:'schedule'}` + anacron scheduler +
   at-most-once recovery + backoff + forward-only, **agent-barred** watermark +
   unattended permission model; see `commands.md` § scheduled routines). *Lifting
-  Dream's policy into a skill is a direction under review (#302), not current state
-  — Dream today is runtime code (`agentDreamExtraction.ts`).*
+  Dream's policy into a skill is a **PM-ratified direction (#302, 2026-06-19), not yet
+  implemented** — Dream today is still runtime code (`agentDreamExtraction.ts`); #302's
+  PR2 lands the policy as a skill and the broader memory-as-timeline-nodes reversal.*
 - **Compaction — the boundary marker; NOT skill-able.** Compaction is *substrate
   Neva runs on* (context management that lets a long run continue), not a faculty
   it owns. A skill is itself an agent run, so implementing compaction as a skill

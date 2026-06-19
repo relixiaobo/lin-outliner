@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
-| Claude Code 2 | `lin-outliner-cc-2/` | `cc-2/agent-memory-on-timeline`, `cc-2/node-search-access-ranking` | shipped single-agent-collapse #294 + agent-dock-ui #296; two **design-review plan PRs** open (#302, #303) awaiting PM ratification |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | shipped single-agent-collapse #294 + agent-dock-ui #296; authored plans #302/#303 — both **ratified 2026-06-19 + merged**, now boarded (build unassigned) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275) |
@@ -37,13 +37,16 @@ enforcement (#294 / #296 / #299 / #300), the web-search / web-fetch reliability 
 (#288 / #290 / #292), coordinator working-group channel tools (#289), the channel-activity
 + transcript-process UI unification (#284 / #291), the file-presentation and
 preview-interaction redesign (#285 / #295), native link blue (#293), and the code-block
-floating toolbar (#301). Two **design-review plan PRs** are open and awaiting PM
-ratification (not yet boarded — boarding = accepting): **#302** `agent-memory-on-timeline`
-(rebuild agent memory as ordinary timeline nodes + dream-as-an-editable-skill; would
-supersede parts of `agent-memory-foundations` / `agent-data-model`) and **#303**
-`node-search-access-ranking` (a recency/access-decay dimension for `node_search` — the
-generic ranking substrate #302's pull-only recall would reuse). Next *build* dispatch is
-from the Backlog.
+floating toolbar (#301). Two design-review plan PRs were **ratified by the PM
+(2026-06-19)** and boarded below: **#302** `agent-memory-on-timeline` (rebuild agent
+memory as ordinary timeline nodes + dream-as-an-editable-skill — a deliberate reversal of
+the just-shipped activation/briefing engine; **GO on the full direction, PR1 first**) and
+**#303** `node-search-access-ranking` (a recency/access-decay dimension for `node_search`
+— the generic ranking substrate #302's pull-only recall reuses; **GO, build-ready**). Both
+plans landed on `main` (#302/#303 merged). Next build dispatch: **#302 PR1** (re-provide
+`past_chats`, additive/safe) and **#303** can start immediately and in parallel; the four
+disjoint lanes from the 2026-06-19 dispatch plan (agent/outliner disclosure stability ·
+command-surface one-pager · dark-mode-contrast-pass · anthropic-auth-clarity) remain open.
 
 **The 2026-06-14/15 portfolio wave shipped** (all in Recently completed): the agent-permission
 redesign (#252 `decide(effect)` core + #266 folder-handoff / typed `file_convert`), unified
@@ -201,6 +204,40 @@ before any directional/security-sensitive build.
     accumulated retrieval events (≥50 deliberate `recall` hits) · PR-4 engine shipped (✓). The
     strength/usage signal must separate from pure recency before association is selection, not
     wholesale injection.
+  - **Being reversed by #302** — `agent-memory-on-timeline` (below, ratified 2026-06-19)
+    replaces this whole event-log memory subsystem with memory-as-timeline-nodes +
+    dream-as-skill + pull-only recall. Until PR2 lands, the academic-model authorities
+    above still describe **current** behavior (the `docs/spec/` rewrite is #302 M5). The
+    DEFERRED associative-retrieval faculty is **dropped** by #302 (pull-only; no passive
+    surfacing).
+- **agent-memory-on-timeline** (P1, **ratified 2026-06-19 — GO full direction, PR1 first**)
+  — rebuild agent memory as ordinary outliner nodes on the daily timeline
+  (`d-memory` / `d-episode` / `d-belief`), written/read via `node_*` + a re-provided
+  `past_chats` tool, with consolidation (dream) expressed as an **editable skill** on the
+  shipped scheduled-routines trigger. A deliberate **reversal** of the just-shipped
+  activation/briefing engine: reading is **pull-only** (no passive briefing; cold-start
+  accepted), and `agent-data-model` §0–§2's "memory never touches Loro" + single-writer
+  axioms are consciously abandoned (concurrency/undo de-risked via whole-node replacement +
+  origin-scoped undo). Protocol delta = **one** `ReferenceTarget` variant (`chat-source`),
+  interface-first. **Set of independent PRs:** **PR1** re-provide `past_chats` (additive/safe
+  — *next to build*); **PR2** the atomic node-memory flip (read+write flip together —
+  genuinely unsplittable pre-release; gate = `/code-review ultra`); **PR3** jump-to-source
+  UI. Reverses the **memory** item above; the recency/access ranking it loses is restored
+  generically by `node-search-access-ranking` (#303). PM postures ratified: pull-only
+  regression · memory-in-exportable-document · single-writer abandoned. See
+  [`docs/plans/agent-memory-on-timeline.md`](docs/plans/agent-memory-on-timeline.md).
+- **node-search-access-ranking** (P2, plan-track, **ratified 2026-06-19 — GO, build-ready**)
+  — give **all** node search a recency/access-decay dimension ("the node I keep coming back
+  to surfaces first"): a per-`NodeId` access-stats side store (off Loro — flat JSON, the
+  ratified substrate) + a decay multiplier (ported from `computeMemoryStrength`) folded into
+  the single ranking chokepoint `sortSearchHits` (`searchEngine.ts`). Signal = human
+  open/focus + a ratified low-weight agent-recall bump (so memory recall self-reinforces);
+  an explicit `sys:*` sort still overrides; stats-absent behaves exactly as today. Net-new
+  cross-process record lane (IPC + preload + main handler + debounced renderer emit). **One
+  PR** (M0–M4 are build-order within it); the `searchEngine.ts` change lands interface-first.
+  Independent of #302 (can land first/last/alone) but is the generic substrate
+  `agent-memory-on-timeline`'s pull-only recall reuses for recency. See
+  [`docs/plans/node-search-access-ranking.md`](docs/plans/node-search-access-ranking.md).
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
