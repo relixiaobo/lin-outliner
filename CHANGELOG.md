@@ -1674,7 +1674,7 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
-- **Composer model-control test: silence the act() warning (main, fast-track)** — the
+- **Composer model-control test: silence the act() warning (PR #298, main, fast-track)** — the
   `AgentComposerModelControl` test mounts the anchored-overlay flyout, which (lacking
   `requestAnimationFrame` under linkedom) deferred its reposition `setStyle` to a `setTimeout`
   that fired after the render's `act()` block ("An update … was not wrapped in act(...)"). The test

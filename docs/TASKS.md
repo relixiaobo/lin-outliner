@@ -19,11 +19,11 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Agent | Clone | Active branch | Current task |
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
-| Claude Code | `lin-outliner-cc/` | — | idle (shipped ungate-contact #236, channel async-bus #231) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped `agent-debug-run-grounded` #264; re-planned `conversational-agent-authoring`, built+shipped by codex #286) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped agent-context-architecture #263, bundled-built-in-skills #269, conversational-agent-authoring #286) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped file-preview-unification #262) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped permission folder-handoff + `file_convert` #266) |
+| Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
+| Claude Code 2 | `lin-outliner-cc-2/` | `cc-2/agent-memory-on-timeline`, `cc-2/node-search-access-ranking` | shipped single-agent-collapse #294 + agent-dock-ui #296; two **design-review plan PRs** open (#302, #303) awaiting PM ratification |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291; authored ratified plan agent-process-stable-disclosure #297) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,8 +31,19 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-06-16).** Nothing actively building — `conversational-agent-authoring`
-shipped (#286, see Recently completed); next dispatch is from the Backlog.
+**In flight (2026-06-19).** Nothing actively building code. The **2026-06-16…06-19 wave
+shipped** (all in Recently completed): the single-agent collapse + one-Neva-invariant
+enforcement (#294 / #296 / #299 / #300), the web-search / web-fetch reliability pass
+(#288 / #290 / #292), coordinator working-group channel tools (#289), the channel-activity
++ transcript-process UI unification (#284 / #291), the file-presentation and
+preview-interaction redesign (#285 / #295), native link blue (#293), and the code-block
+floating toolbar (#301). Two **design-review plan PRs** are open and awaiting PM
+ratification (not yet boarded — boarding = accepting): **#302** `agent-memory-on-timeline`
+(rebuild agent memory as ordinary timeline nodes + dream-as-an-editable-skill; would
+supersede parts of `agent-memory-foundations` / `agent-data-model`) and **#303**
+`node-search-access-ranking` (a recency/access-decay dimension for `node_search` — the
+generic ranking substrate #302's pull-only recall would reuse). Next *build* dispatch is
+from the Backlog.
 
 **The 2026-06-14/15 portfolio wave shipped** (all in Recently completed): the agent-permission
 redesign (#252 `decide(effect)` core + #266 folder-handoff / typed `file_convert`), unified
