@@ -148,12 +148,17 @@ document command and resolves the top hits (limit 8) into `LauncherNodeMatch`
 views (single-line title + parent text + emoji icon), since the locked-down
 launcher renderer can't read the document. Resolution looks up only the hit nodes
 (+ their parents) by id via `Core.projectionNodesByIds`, never materializing the
-whole-document projection per keystroke. `Enter` on a node calls
+whole-document projection per keystroke. `search_nodes` is a transient lookup
+surface and opts into per-user personal access ranking; this affects ordering
+only and never changes saved search rules or materialized saved-search results.
+`Enter` on a node calls
 `launcher:openNode` → `navigateMainToNode`, which brings up / creates the main
 window and sends `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL` so the main renderer runs
 `navigateRoot + focusNode` (the same jump the in-app command palette uses). A
 navigate that arrives before the main window's renderer has loaded is queued and
 flushed on each `did-finish-load` (re-armable, so it survives a renderer reload).
+Only the resulting main-window landing records human access after a short dwell;
+typing, hovering, selection movement, and raw search hits do not.
 
 ## Commands
 

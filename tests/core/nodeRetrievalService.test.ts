@@ -25,6 +25,37 @@ describe('NodeRetrievalService', () => {
     expect(service.searchText('launch plan', { limit: 1 }).map((hit) => hit.nodeId)).toEqual([exact]);
   });
 
+  test('passes personal access ranking into transient text search', () => {
+    const core = Core.new();
+    const parentId = core.projection().todayId;
+    const baselineFirst = mustFocus(core.createNode(
+      parentId,
+      null,
+      'retrieval ranking needle',
+      'node:00000000-0000-4000-8000-000000000011',
+    ));
+    const favored = mustFocus(core.createNode(
+      parentId,
+      null,
+      'retrieval ranking needle',
+      'node:00000000-0000-4000-8000-000000000012',
+    ));
+    const service = new NodeRetrievalService({
+      getProjection: () => core.projection(),
+      getTextSearchIndex: () => buildTextSearchIndex(core.projection()),
+    });
+    const now = 2_000;
+
+    expect(service.searchText('retrieval ranking needle').map((hit) => hit.nodeId).slice(0, 2))
+      .toEqual([baselineFirst, favored]);
+    expect(service.searchText('retrieval ranking needle', {
+      personalAccessRanking: {
+        getNodeAccessStats: (nodeId) => nodeId === favored ? { s: 8, tUpdate: now } : undefined,
+        now,
+      },
+    }).map((hit) => hit.nodeId).slice(0, 2)).toEqual([favored, baselineFirst]);
+  });
+
   test('keeps structured query verification authoritative', () => {
     const core = Core.new();
     const parentId = core.projection().todayId;

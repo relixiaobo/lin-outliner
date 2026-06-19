@@ -207,6 +207,8 @@ const api = {
   windowMaterial: windowMaterialKind(process.platform),
   invoke: <T>(command: string, args?: Record<string, unknown>) =>
     ipcRenderer.invoke('lin:invoke', command, args) as Promise<T>,
+  recordNodeAccess: (nodeId: string) =>
+    ipcRenderer.invoke('lin:record-node-access', nodeId) as Promise<void>,
   onAgentEvent: (listener: (event: AgentRuntimeEvent) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: AgentRuntimeEvent) => listener(payload);
     ipcRenderer.on(LIN_AGENT_EVENT_CHANNEL, handler);

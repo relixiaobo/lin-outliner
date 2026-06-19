@@ -61,8 +61,14 @@ function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
   return Promise.reject(new Error('Tenon desktop bridge is unavailable'));
 }
 
+function bridge<T>(fn: (lin: NonNullable<typeof window.lin>) => Promise<T>): Promise<T> {
+  if (window.lin) return fn(window.lin);
+  return Promise.reject(new Error('Tenon desktop bridge is unavailable'));
+}
+
 export const api = {
   initWorkspace: () => command<ProjectionSnapshot>('init_workspace'),
+  recordNodeAccess: (nodeId: string) => bridge((lin) => lin.recordNodeAccess(nodeId)),
   getProjection: () => command<ProjectionSnapshot>('get_projection'),
   createNode: (parentId: string, index: number | null, text: string, id?: string) =>
     command<CommandResult>('create_node', { parentId, index, text, id }),

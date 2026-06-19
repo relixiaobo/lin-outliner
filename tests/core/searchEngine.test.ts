@@ -4,6 +4,7 @@ import {
   buildTextSearchIndex,
   runSearchExpr,
   runSearchNode,
+  runTransientSearchExpr,
   SEARCH_EXECUTABLE_QUERY_OPS,
   SEARCH_UNSUPPORTED_QUERY_OPS,
   searchNodeToQueryExpr,
@@ -153,6 +154,89 @@ describe('core search engine', () => {
 
     const indexedAscending = runSearchNode(state, searchId, { textIndex: buildTextSearchIndex(state) });
     expect(indexedAscending.ok ? indexedAscending.hits.map((hit) => hit.nodeId) : []).toEqual([older, newer]);
+
+    const personalAscending = runTransientSearchExpr(state, {
+      kind: 'rule',
+      op: 'STRING_MATCH',
+      text: 'match',
+    }, {
+      searchNodeId: searchId,
+      personalAccessRanking: {
+        getNodeAccessStats: (nodeId) => nodeId === newer ? { s: 20, tUpdate: 1_000 } : undefined,
+        now: 1_000,
+      },
+    });
+    expect(personalAscending.ok ? personalAscending.hits.map((hit) => hit.nodeId) : []).toEqual([older, newer]);
+  });
+
+  test('keeps explicit custom field sort ahead of personal access ranking', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('task'));
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Priority', 'number'));
+    const priorityFieldDefId = core.state().nodes[templateEntryId]!.fieldDefId!;
+    const today = core.projection().todayId;
+    const high = mustFocus(core.createNode(today, null, 'sorted access needle'));
+    const low = mustFocus(core.createNode(today, null, 'sorted access needle'));
+    core.applyTag(high, tagId);
+    core.applyTag(low, tagId);
+    addFieldValue(core, high, priorityFieldDefId, '1');
+    addFieldValue(core, low, priorityFieldDefId, '9');
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Priority search',
+      query: { kind: 'rule', op: 'STRING_MATCH', text: 'sorted access needle' },
+    }));
+    core.addSortRule(searchId, priorityFieldDefId, 'asc');
+    const state = core.state();
+
+    const personalized = runTransientSearchExpr(state, {
+      kind: 'rule',
+      op: 'STRING_MATCH',
+      text: 'sorted access needle',
+    }, {
+      searchNodeId: searchId,
+      personalAccessRanking: {
+        getNodeAccessStats: (nodeId) => nodeId === low ? { s: 20, tUpdate: 1_000 } : undefined,
+        now: 1_000,
+      },
+    });
+
+    expect(personalized.ok ? personalized.hits.map((hit) => hit.nodeId) : []).toEqual([high, low]);
+  });
+
+  test('can opt default relevance sorting into personal access ranking', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const baselineFirst = mustFocus(core.createNode(
+      today,
+      null,
+      'personal access ranking needle',
+      'node:00000000-0000-4000-8000-000000000001',
+    ));
+    const favored = mustFocus(core.createNode(
+      today,
+      null,
+      'personal access ranking needle',
+      'node:00000000-0000-4000-8000-000000000002',
+    ));
+    const query = { kind: 'rule' as const, op: 'STRING_MATCH' as const, text: 'personal access ranking needle' };
+    const now = 1_000;
+    const personalAccessStats = new Map([[favored, { s: 8, tUpdate: now }]]);
+
+    const baseline = runSearchExpr(core.state(), query);
+    expect(baseline.ok ? baseline.hits.map((hit) => hit.nodeId).slice(0, 2) : []).toEqual([baselineFirst, favored]);
+
+    let lookups = 0;
+    const ranked = runTransientSearchExpr(core.state(), query, {
+      personalAccessRanking: {
+        getNodeAccessStats: (nodeId) => {
+          lookups += 1;
+          return personalAccessStats.get(nodeId);
+        },
+        now,
+      },
+    });
+    expect(ranked.ok ? ranked.hits.map((hit) => hit.nodeId).slice(0, 2) : []).toEqual([favored, baselineFirst]);
+    expect(lookups).toBe(2);
   });
 
   test('uses text index relevance for loose multi-term string matches', () => {

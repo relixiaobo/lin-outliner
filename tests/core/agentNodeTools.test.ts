@@ -15,8 +15,8 @@ function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   return outcome.focus!.nodeId;
 }
 
-function hostFor(core: Core): OutlinerToolHost {
-  return {
+function hostFor(core: Core, overrides: Partial<OutlinerToolHost> = {}): OutlinerToolHost {
+  const host: OutlinerToolHost = {
     getProjection: () => core.projection(),
     getTextSearchIndex: () => buildTextSearchIndex(core.projection()),
     transaction: async (meta, fn) => core.transaction(meta.origin ?? 'agent', fn, meta),
@@ -55,6 +55,7 @@ function hostFor(core: Core): OutlinerToolHost {
       return meta.origin ? core.withOrigin(meta.origin, run) : run();
     },
   };
+  return { ...host, ...overrides };
 }
 
 function nullableString(value: unknown): string | null {
@@ -86,11 +87,12 @@ async function executeRawTool<TData>(
   name: string,
   params: unknown,
   options?: Parameters<typeof createNodeTools>[1],
+  hostOverrides: Partial<OutlinerToolHost> = {},
 ): Promise<{
   contentText: string;
   details: ToolEnvelope<TData>;
 }> {
-  const tool = createNodeTools(hostFor(core), options).find((candidate) => candidate.name === name);
+  const tool = createNodeTools(hostFor(core, hostOverrides), options).find((candidate) => candidate.name === name);
   expect(tool).toBeDefined();
   const result = await (tool!.execute as any)('test-call', params);
   const contentText = result.content
@@ -1306,6 +1308,76 @@ describe('agent node tools', () => {
     expect(envelope.data!.items?.map((item) => item.nodeId)).toEqual([exact, loose]);
   });
 
+  test('node_search applies personal access ranking and records only the returned page', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const baselineFirst = mustFocus(core.createNode(
+      today,
+      null,
+      'agent access ranking needle',
+      'node:00000000-0000-4000-8000-000000000021',
+    ));
+    const favored = mustFocus(core.createNode(
+      today,
+      null,
+      'agent access ranking needle',
+      'node:00000000-0000-4000-8000-000000000022',
+    ));
+    const now = 4_000;
+    const recorded: Array<{ nodeIds: string[]; source: string }> = [];
+
+    const result = await executeRawTool<{
+      total: number;
+      items?: Array<{ nodeId: string; title: string }>;
+    }>(core, 'node_search', {
+      outline: '- %%search%% Agent ranking\n  - STRING_MATCH\n    - value:: agent access ranking needle',
+      limit: 1,
+    }, undefined, {
+      getTransientSearchOptions: () => ({
+        personalAccessRanking: {
+          getNodeAccessStats: (nodeId) => nodeId === favored ? { s: 8, tUpdate: now } : undefined,
+          now,
+        },
+      }),
+      recordNodeAccess: (nodeIds, source) => {
+        recorded.push({ nodeIds: [...nodeIds], source });
+      },
+    });
+
+    expect(result.details.ok).toBe(true);
+    expect(result.details.data!.items?.map((item) => item.nodeId)).toEqual([favored]);
+    expect(result.details.data!.items?.map((item) => item.nodeId)).not.toContain(baselineFirst);
+    expect(recorded).toEqual([{ nodeIds: [favored], source: 'agentRecall' }]);
+  });
+
+  test('node_search does not await asynchronous agent recall recording', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const chengdu = mustFocus(core.createNode(today, null, 'Async recall needle'));
+    let resolved = false;
+    let resolveRecord: (() => void) | null = null;
+
+    const result = await executeRawTool<{
+      total: number;
+      items?: Array<{ nodeId: string; title: string }>;
+    }>(core, 'node_search', {
+      outline: '- %%search%% Async recall\n  - STRING_MATCH\n    - value:: Async recall needle',
+      limit: 1,
+    }, undefined, {
+      recordNodeAccess: () => new Promise<void>((resolve) => {
+        resolveRecord = () => {
+          resolved = true;
+          resolve();
+        };
+      }),
+    });
+
+    expect(result.details.ok).toBe(true);
+    expect(result.details.data!.items?.map((item) => item.nodeId)).toEqual([chengdu]);
+    expect(resolved).toBe(false);
+    resolveRecord?.();
+  });
+
   test('node_search model-visible result returns one annotated outline', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -1377,6 +1449,26 @@ describe('agent node tools', () => {
     expect(visible.data!.total).toBe(1);
     expect(visible.data).not.toHaveProperty('outline');
     expect(visible.data).not.toHaveProperty('references');
+  });
+
+  test('node_search count mode does not record agent recall', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    mustFocus(core.createNode(today, null, 'Count-only access needle'));
+    const recorded: Array<{ nodeIds: string[]; source: string }> = [];
+
+    const result = await executeRawTool(core, 'node_search', {
+      outline: '- %%search%% Count only\n  - STRING_MATCH\n    - value:: Count-only access needle',
+      count: true,
+      limit: 10,
+    }, undefined, {
+      recordNodeAccess: (nodeIds, source) => {
+        recorded.push({ nodeIds: [...nodeIds], source });
+      },
+    });
+
+    expect(result.details.ok).toBe(true);
+    expect(recorded).toEqual([]);
   });
 
   test('node_search resolves tag conditions from temporary search outlines', async () => {

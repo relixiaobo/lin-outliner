@@ -1,4 +1,8 @@
-import { runSearchExpr, type SearchRunResult } from '../core/searchEngine';
+import {
+  runTransientSearchExpr,
+  type SearchRunResult,
+  type TransientSearchOptions,
+} from '../core/searchEngine';
 import type { DocumentProjection, SearchHit, SearchQueryExpr } from '../core/types';
 import type { TextSearchIndex } from '../core/textSearchIndex';
 
@@ -7,7 +11,7 @@ export interface NodeRetrievalHost {
   getTextSearchIndex(): TextSearchIndex;
 }
 
-export interface NodeRetrievalOptions {
+export interface NodeRetrievalOptions extends TransientSearchOptions {
   limit?: number;
   searchNodeId?: string;
 }
@@ -31,10 +35,11 @@ export function searchNodeQuery(
   query: SearchQueryExpr,
   options: NodeRetrievalOptions = {},
 ): SearchRunResult {
-  return runSearchExpr(projection, query, {
+  return runTransientSearchExpr(projection, query, {
     searchNodeId: options.searchNodeId,
     limit: options.limit,
     textIndex,
+    personalAccessRanking: options.personalAccessRanking,
   });
 }
 
