@@ -134,8 +134,10 @@ truth.
     subject-named in the **third person** and the pool is one undivided
     body of first-person knowledge — `originWorkspace` is provenance metadata,
     never a retrieval fence
-  - single model-visible `recall` tool over the active durable memory entries,
-    with optional nested evidence expansion through `MemoryEntry.sources`
+  - model-visible `recall` tool over the active durable memory entries, with
+    optional nested evidence expansion through `MemoryEntry.sources`, plus
+    read-only `past_chats` for visible prior conversation history and raw cited
+    spans
   - bounded `<memory>` turn briefing injection: derived schema overview +
     activation-ranked fact selection rendered as a **flat `<memory>` bullet
     list** of verbatim third-person facts (no `<self>`/`<principal>` zones;

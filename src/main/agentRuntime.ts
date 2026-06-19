@@ -493,7 +493,7 @@ interface AgentToolFilter {
  * complete capability set and is applied verbatim by `filterAgentTools`.
  *
  * The built-in assistant (Neva) is different: its core tools — `recall`,
- * `dream`, `node_*`, `skill`, and self-maintenance — are never part of the
+ * `past_chats`, `dream`, `node_*`, `skill`, and self-maintenance — are never part of the
  * editable catalog (`TOOL_CATALOG`), so a strict allow-list would silently
  * strip them. A catalog restriction is therefore expressed as a *disallow-list
  * over the unchecked catalog tools*, never as an allow-list; the core tools
@@ -1584,7 +1584,7 @@ export class AgentRuntime {
    * skills) from the editable built-in overlay. Called at startup to pick up a
    * persisted overlay, and after each built-in edit. The system prompt is composed
    * in `main` mode — the same recipe as the code default — so customizing the persona
-   * never silently drops the main-agent capabilities (recall/dream).
+   * never silently drops the main-agent capabilities (recall/past_chats/dream).
    */
   private async refreshPrimaryAgentIdentity(): Promise<void> {
     const definition = await this.materializeBuiltInAgentDefinition();
@@ -2432,6 +2432,7 @@ export class AgentRuntime {
           skillRuntime,
           delegationRuntime,
           recall: this.createRecallToolRuntime(defaultAgentId, () => conversationId, () => conversationRef.current),
+          pastChats: this.createPastChatsToolRuntime(() => conversationId),
           askUserQuestion: this.createAskUserQuestionRuntime(() => conversationId, () => conversationRef.current),
           selfMaintenance: defaultAgentId === this.agentIdentity.agentId
             ? this.createSelfMaintenanceRuntime(() => conversationId, () => conversationRef.current)
@@ -2607,6 +2608,7 @@ export class AgentRuntime {
       skillToolEnabled: conversation.runtimeSettings.automaticSkillsEnabled,
       delegationRuntime: conversation.delegationRuntime,
       recall: this.createRecallToolRuntime(this.agentIdentity.agentId, () => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
+      pastChats: this.createPastChatsToolRuntime(() => conversation.eventState.conversation?.id ?? 'unknown'),
       askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
       selfMaintenance: this.createSelfMaintenanceRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
       allowedTools: conversation.agentToolFilter.allowedTools,
@@ -2646,6 +2648,7 @@ export class AgentRuntime {
         () => input.conversationId,
         () => parentConversationRef.current,
       ),
+      pastChats: this.createPastChatsToolRuntime(() => input.conversationId),
       streamFn: this.options.streamFn,
       completeSimpleFn: this.options.completeSimpleFn,
       providerApiKeyLoader: this.options.providerApiKeyLoader,
@@ -4358,6 +4361,13 @@ export class AgentRuntime {
   private getPastChatsService() {
     this.pastChatsService ??= new AgentPastChatsService(this.getEventStore());
     return this.pastChatsService;
+  }
+
+  private createPastChatsToolRuntime(getConversationId: () => string): AgentToolsOptions['pastChats'] {
+    return {
+      service: this.getPastChatsService(),
+      currentConversationId: getConversationId,
+    };
   }
 
   private createRecallToolRuntime(
@@ -7316,6 +7326,7 @@ function createConfiguredAgent(
     skillRuntime?: AgentSkillRuntime;
     delegationRuntime?: AgentDelegationRuntime;
     recall?: AgentToolsOptions['recall'];
+    pastChats?: AgentToolsOptions['pastChats'];
     askUserQuestion?: AgentToolsOptions['askUserQuestion'];
     selfMaintenance?: AgentToolsOptions['selfMaintenance'];
     localWorkspace?: AgentLocalWorkspaceContext;
@@ -7356,6 +7367,7 @@ function createConfiguredAgent(
         skillToolEnabled: options.skillToolEnabled,
         delegationRuntime: options.delegationRuntime,
         recall: options.recall,
+        pastChats: options.pastChats,
         askUserQuestion: options.askUserQuestion,
         selfMaintenance: options.selfMaintenance,
         allowedTools: options.allowedTools,
