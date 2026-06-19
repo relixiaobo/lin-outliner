@@ -57,9 +57,13 @@ A **SET of independent, complete features**, ordered by dependency:
   + the scheduled-routines trigger + pull-only recall, replacing the event-log memory
   store, the activation/decay engine, the passive briefing, and the `recall`/`dream`
   tools. Pre-release, no migration — old memory is wiped, not converted.
-- **PR3 — Jump-to-source UI.** A pure addition on top of PR2: render the inline
-  `chat-source` ref as a clickable chip that opens the conversation transcript at that
-  position (the click route for the new `ReferenceTarget` variant).
+- **PR3 — Jump-to-source UI.** Additive on top of PR2, but **not a one-line addition**:
+  render the inline `chat-source` ref as a clickable chip that opens the conversation
+  transcript at that position. The renderer's inline-ref click route is hardcoded to
+  node ids today (`RichTextEditor.tsx:529-541` reads `data-inline-ref` → a `nodeId` and
+  calls `onInlineReferenceClick(nodeId)`), so this is a handful of coordinated edits — a
+  `kind` marker on the chip DOM, a click branch, a target-typed callback, and the
+  transcript-jump consumer — not a pure append.
 
 PR1 and PR3 are each shippable and reviewable alone; PR2 is the one large,
 genuinely-atomic change (memory cannot be half-migrated pre-release — read and write
@@ -182,6 +186,15 @@ shipped machinery and puts provenance *in the prose where the claim is*.
 `{episodeId}`, is moot here — in the node world an episode *is* a `d-episode` node, so
 citing one is an ordinary `[[node:…]]` ref.)
 
+**The trade (PM-owned, not "strictly better").** An inline ref is *more* exposed than a
+hidden typed field: a user editing belief prose can delete the chip and the belief loses
+its provenance — a typed field would survive a text edit. We accept this on purpose: the
+whole thesis is that memory is user-editable and an edit *is* a correction, so a user who
+removes a citation is exercising the same authority as one who rewrites the belief. The
+mitigation is the §1 change-history (the prior ref stays bound to its history entry, so
+deletion is visible/recoverable), not field opacity. This is a posture, not a claim that
+inline dominates typed on every axis.
+
 **Wire format (ratified).** Reuses the `[[<prefix>:<label>^<value>]]` grammar
 (`referenceMarkup.ts`), prefix `chat`:
 
@@ -190,10 +203,28 @@ citing one is an ordinary `[[node:…]]` ref.)
 [[chat:<label>^<stream>:<streamId>@<from>-<through>:<eventId>]]    // with tamper-check
 ```
 
-- `<stream>` = literal `conversation` | `run`; `<streamId>` percent-encoded (its uuid
-  hyphens must not collide with the seq-range `-`); `@<from>-<through>` are decimal seqs
+- `<stream>` = literal `conversation` | `run`; `@<from>-<through>` are decimal seqs
   (`fromSeqExclusive`-exclusive .. `throughSeq`-inclusive); `:<eventId>` optional
   (`throughEventId`, omitted when null). Excluded from BM25 scoring like other markers.
+
+**Parse sub-grammar (settled now — it IS the protocol, not an M0 detail).** The existing
+`parseReferenceInner` (`referenceMarkup.ts:245`) treats the post-`^` value as **one
+opaque blob** and `decodeURIComponent`s the whole thing (`node`/`file` never re-parse).
+The structured `chat:` value cannot ride that path — a single whole-value decode would
+turn an encoded `%40`/`%3A` back into `@`/`:` *before* splitting and corrupt the parse.
+So `chat:` gets a **dedicated branch** that splits on the literal structural delimiters
+*first*, then `decodeURIComponent`s each segment:
+  1. `stream` = up to the first `:`.
+  2. `streamId` = from there to the `@` (then decoded).
+  3. `from` / `through` = the decimal pair after `@`, split on the single `-`.
+  4. `eventId` = the optional segment after the `:` that follows `through` (then decoded).
+- **Disambiguation is structural, not encoding.** `@` (and the trailing `:`) separate the
+  fields; `from`/`through` are digits-only, so the range `-` can never be confused with a
+  hyphen elsewhere. Encoding the `streamId`/`eventId` segments only escapes a literal
+  `@`/`:`/`^`/`]` that might appear *inside* them — it does **not** touch hyphens
+  (`encodeURIComponent` leaves `-` as-is), so it plays no role in the range `-`. (The
+  earlier "encode to avoid hyphen collision" rationale was wrong; today's ULID/uuid
+  stream ids contain neither `@` nor `:`, so the encoding is belt-and-suspenders.)
 - The outer `REFERENCE_PATTERN` / splitter are untouched; only `parseReferenceInner`
   opens the `chat` prefix and `ReferenceTarget` gains the variant.
 
@@ -277,6 +308,12 @@ bottom is skill-able:
   ships pull-only-relevance-only now; when that plan lands, memory-on-nodes **inherits
   the decay for free**. (What it does *not* recover is memory's **source-association**
   ranking — that needs the §2 source refs and stays out of scope here.)
+- **Caveat on "for free."** That sibling plan's access signal is **human open/focus**.
+  Agent recall is a *pull* `node_search`, which does not open/focus a node, so an agent-
+  recalled belief is **not** strengthened by the recall unless the sibling plan also
+  records a (low-weight) agent-recall signal. So "inherits for free" holds cleanly for
+  **human-touched** memory nodes; agent-only reinforcement is an explicit dependency on
+  `node-search-access-ranking` carrying an agent signal (flagged there).
 - **A deliberate, PM-owned experience regression, not a free simplification:** a fresh
   conversation opens **cold** (knowing nothing until the agent searches), trading a
   deterministic injection for a behavioral bet + a tool round-trip at task start. No
