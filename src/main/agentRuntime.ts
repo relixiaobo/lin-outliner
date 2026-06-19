@@ -1472,6 +1472,14 @@ export class AgentRuntime {
     return { messages };
   }
 
+  /** Resolve the conversation that owns a (global) run id, or null if unknown — one
+   *  small run-meta read. The O(1) lookup behind chat-source `run` reveals, so the
+   *  renderer never has to probe every conversation's ledger to find the owner. */
+  async runConversationId(runId: string): Promise<string | null> {
+    const meta = await this.getEventStore().readRunMetaProjection(runId);
+    return meta ? conversationIdOfRun(meta) : null;
+  }
+
   async childRunStatus(
     conversationId: string,
     agentId: string,

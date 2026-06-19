@@ -331,6 +331,8 @@ export const api = {
     command<string | null>('agent_payload_text', { conversationId, payloadId }),
   agentChildRunTranscript: (conversationId: string, runId: string) =>
     command<{ messages: unknown[] } | null>('agent_child_run_transcript', { conversationId, runId }),
+  agentRunConversationId: (runId: string) =>
+    command<string | null>('agent_run_conversation_id', { runId }),
   agentChildRunStatus: (conversationId: string, agentId: string, options: { wait?: boolean; timeoutMs?: number } = {}) =>
     command<AgentChildRunActionResult>('agent_child_run_status', { conversationId, agentId, ...options }),
   agentChildRunSend: (conversationId: string, agentId: string, message: string) =>

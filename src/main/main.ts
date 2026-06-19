@@ -2486,6 +2486,9 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentRuntime.payloadText(conversationId(), String(args.payloadId));
     case 'agent_child_run_transcript':
       return agentRuntime.childRunTranscript(conversationId(), String(args.runId));
+    case 'agent_run_conversation_id':
+      // Run ids are global, so this resolver needs no conversation context.
+      return agentRuntime.runConversationId(String(args.runId));
     case 'agent_child_run_status':
       return agentRuntime.childRunStatus(conversationId(), String(args.agentId), {
         wait: args.wait === true,

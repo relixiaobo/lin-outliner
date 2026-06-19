@@ -45,13 +45,12 @@ export async function requestRevealChatSource(target: AgentChatSourceRevealTarge
     return;
   }
 
-  const conversations = await api.agentListConversations();
-  for (const conversation of conversations) {
-    const transcript = await api.agentChildRunTranscript(conversation.id, target.streamId);
-    if (!transcript) continue;
-    await requestRevealAgentConversation(conversation.id, { transcriptTarget: target });
-    return;
-  }
+  // Run ids are global; resolve the owning conversation in one read rather than
+  // probing every conversation's ledger. A null result means the run is unknown
+  // (evicted/never-seeded) — there is nothing to reveal, so leave the UI as-is.
+  const conversationId = await api.agentRunConversationId(target.streamId);
+  if (!conversationId) return;
+  await requestRevealAgentConversation(conversationId, { transcriptTarget: target });
 }
 
 /** Subscribe to reveal requests. Returns an unsubscribe. */

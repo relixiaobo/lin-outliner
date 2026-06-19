@@ -2058,6 +2058,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             ? { messages: childRunTranscriptMessages }
             : null) as T;
         }
+        if (cmd === 'agent_run_conversation_id') {
+          const runId = String(args.runId);
+          return clone(runId === 'child-run-1' || runId === 'child-run-source-e2e' ? generalChannelId : null) as T;
+        }
         if (cmd === 'agent_child_run_status') {
           return clone({
             status: 'running',
