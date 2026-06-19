@@ -1435,7 +1435,7 @@ function recordNodeToolChanges(
   if (isError) return;
   if (toolName !== 'node_create' && toolName !== 'node_edit') return;
   const details = isPlainRecord(result) ? result.details : undefined;
-  if (!isToolEnvelope(details) || !details.ok || !isPlainRecord(details.data)) return;
+  if (!isToolEnvelope(details) || !details.ok || details.status === 'unchanged' || !isPlainRecord(details.data)) return;
 
   const created = stringArray(details.data.createdNodeIds);
   appendUniqueNodeIds(changes, 'createdNodeIds', created);

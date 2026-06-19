@@ -531,4 +531,58 @@ describe('agent runtime past chats integration', () => {
     expect(dreamState.watermark.conversations[created.conversationId]?.seq ?? 0).toBe(0);
     expect((await runtime.listConversations()).map((entry) => entry.id)).not.toContain('lin-agent-memory-dream');
   });
+
+  test('scheduled Dream does not count preview-only node edits as committed work', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-preview-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-preview-data-'));
+    roots.push(localRoot, dataRoot);
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const previewTarget = core.createNode(today, null, 'Preview target').focus!.nodeId;
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage(fauxText('Captured enough evidence.')),
+        fauxAssistantMessage([
+          fauxToolCall('node_edit', {
+            node_id: previewTarget,
+            old_string: '*',
+            new_string: `- %%node:${previewTarget}%% Preview target\n  - Proposed child`,
+            preview_only: true,
+          }, { id: 'tool-memory-dream-preview-node-edit' }),
+        ]),
+        fauxAssistantMessage(fauxText('Preview looked fine, but nothing was committed.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(core),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => runtimeSettings(),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    const longEvidence = `Memory Dream should not count preview-only edits. ${'memory-dream-preview '.repeat(80)}`;
+    await runtime.sendMessage(created.conversationId, longEvidence);
+    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00Z'));
+
+    const dreamState = await new AgentEventStore(dataRoot).readDreamState(BELIEVER_PRINCIPAL);
+    expect(script.pendingCount()).toBe(0);
+    expect(core.state().nodes[previewTarget]!.children).toEqual([]);
+    expect(dreamState.lastCompleted).toBeNull();
+    expect(dreamState.watermark.conversations[created.conversationId]?.seq ?? 0).toBe(0);
+  });
 });
