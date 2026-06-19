@@ -348,6 +348,19 @@ archived `done` (see Recently completed). Remaining active work:
   the other boarded fast-tracks (outliner-indent-draft-fixes **merged as PR #182** —
   it touched the same Tab/draft paths, so rebase this branch on current `main`).
 
+- **outliner-collapse-scroll-anchor** (P2, *no plan file* — design = the shared
+  disclosure-anchor invariant in
+  [`agent-process-stable-disclosure.md`](docs/plans/agent-process-stable-disclosure.md)
+  §"Shared disclosure anchor invariant") — collapsing an outliner node whose expanded
+  body extends below the viewport moves the visible node/header, because descendant rows
+  are removed from the flat list and later rows reposition. The current `OutlinerFlatView`
+  (incl. post-#295) compensates height-only measurement corrections but **not** the
+  expand/collapse add/remove projection. Fix = the same **clicked-trigger anchor rule** the
+  agent transcript uses: on a user-initiated disclosure toggle, capture the clicked row's
+  viewport top *before* the state change, then after layout commit restore the scroll
+  container so that row stays put (fall back to first-visible-row top). One renderer-only
+  PR; share one invariant helper with `agent-process-stable-disclosure` rather than forking
+  a second anchoring path. Promoted from that plan's open question #327 (2026-06-19).
 - **agent-process-stable-disclosure** (P2, **draft** — PM-ratified design, ready to build) — make
   agent process rendering feel stable across working→worked. Live process rows default **collapsed**
   (reversing the current auto-expand-live / auto-collapse-on-settle default — a PM-approved behavior

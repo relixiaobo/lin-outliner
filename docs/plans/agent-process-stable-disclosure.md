@@ -324,8 +324,9 @@ Visual verification before marking ready:
   action summary such as `Read 3 files` when the tool summary is more informative?
 - Should a user-expanded live process remain expanded forever for that turn, or
   should there be an explicit "collapse on completion" preference later?
-- Should outliner node expand/collapse anchoring be planned as a separate PR
-  using the same clicked-trigger anchor rule?
+- Outliner node expand/collapse anchoring **is** planned as its own PR, using the
+  same clicked-trigger anchor rule and sharing one invariant helper with this plan.
+  Tracked on the board as `outliner-collapse-scroll-anchor` (no longer open).
 
 ## Build Checklist
 
