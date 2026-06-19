@@ -29,13 +29,22 @@ single PR (foundation before consumers, A7), not separate releases. It is indepe
 shippable and reviewable: it improves search on its own and does not depend on the
 memory plan (the two are siblings; this one can land first, last, or alone).
 
+**Lane: plan-track (significant), not fast-track.** It touches the shared ranking
+chokepoint (`searchEngine.ts` — protocol-adjacent), adds a **net-new cross-process
+recording lane** (IPC channel + preload + main handler + renderer emission, §5), and
+spans core + main + preload + renderer. None of that is a low-blast-radius drive-by; it
+goes through the full plan flow with this file as the contract.
+
 ## Non-goals
 
 - **Not in Loro.** Access stats are per-user behavioral telemetry, not collaborative
   document content. Putting them in the CRDT would bloat it and cause churn/conflict.
-  They live in a userData side store, like today's memory `AgentMemoryAccessStats`.
-- **No multi-signal weighting in v1.** A single "use" signal (node opened/focused), not
-  a tuned blend of open/edit/search-hit. (Design §1 says why.)
+  They live in a userData side store (substrate chosen in §2 — *not* the event-sourced
+  shape memory uses).
+- **No broad multi-signal blend in v1.** The primary signal is human **open/focus**,
+  plus an optional **low-weight agent-recall** signal (see Relationship) so memory recall
+  self-reinforces. Not a tuned blend of open/edit/bare-search-hit — edits and mere result
+  appearance stay excluded (Design §1).
 - **Not memory's source-association ranking.** That "co-cited memories boost each other"
   behavior needs the source refs from the memory plan and stays out of scope here.
 - **No UI that surfaces access counts.** The stat is a ranking input, not a displayed
@@ -87,12 +96,29 @@ reads would skew everyday ranking); revisit once the signal is observed.
 
 ### 2. Storage — a per-node access-stats side store (off Loro)
 
-- A side store keyed by `NodeId` in userData, structurally analogous to memory's
-  `AgentMemoryAccessStats` (`{ count, lastAccessedAt }` instead of the briefing/recall
-  split). Persisted across restarts; emptied by a dev-data wipe; not exported.
-- **Dangling stats are harmless.** A deleted node's leftover stats are simply never read
-  (ranking only consults stats for nodes that are search hits). Optional lazy prune; no
-  hard coupling to deletion.
+Keyed by `NodeId`, in userData, persisted across restarts; emptied by a dev-data wipe;
+not exported. **The substrate is a real decision, and the memory analogy is misleading
+about it** — `AgentMemoryAccessStats` is *not* a flat map; it is a **projection over an
+`AppendOnlySeqLog`** (`agentEventStore.ts:329`, `memoryEventLog`/`memoryProjectionBy…`),
+i.e. memory access is event-sourced and the `{count, lastAt}` is derived. So this plan
+must **pick** (this is the heaviest single decision here):
+
+- **(a) Reuse the `AppendOnlySeqLog` primitive** — append access *events*, project to
+  `{count, lastAccessedAt}`. Pro: durable, ordered, crash-tolerant, consistent with how
+  the rest of agent data persists. Con: heavier; a high-churn event for a low-stakes
+  telemetry signal.
+- **(b) A simple flat JSON map** `NodeId → {count, lastAccessedAt}`, debounced-written.
+  Pro: trivial; matches the low stakes (a lost/garbled stat just degrades ranking,
+  never correctness). Con: must handle its own atomic write / corruption tolerance.
+
+**Recommendation: (b)** for v1 — node access ranking is best-effort telemetry that can
+tolerate loss and needs no ordered history, so the seq-log's durability machinery is
+overkill. (a) stays the fallback if we later want an auditable access history. Either
+way it is **off Loro**.
+
+**Dangling stats are harmless.** A deleted node's leftover stats are simply never read
+(ranking only consults stats for nodes that are search hits). Optional lazy prune; no
+hard coupling to deletion.
 
 ### 3. Decay model — port the single-channel strength
 
@@ -125,14 +151,20 @@ rankScore = hit.score * (1 + min(CAP, computeNodeAccessStrength(stats[hit.nodeId
 - **Stats absent (`undefined`)** → behaves exactly as today (pure relevance). This keeps
   `sortSearchHits` pure and back-compatible, and lets call sites opt in.
 
-### 5. Recording plumbing
+### 5. Recording plumbing — net-new cross-process surface (not a mirror of anything)
 
-- The renderer observes a node **open/focus** event and sends an IPC/command to record
-  an access into the side store (backend-owned). **Debounced/throttled** so rapid
-  re-focus of the same node in a short window counts once — otherwise idle focus churn
-  inflates counts.
-- The exact event boundary (what UI interactions constitute "open/focus") is settled in
-  the PR; the contract is "one deliberate landing on a node = one access."
+This is the part with no existing rail to copy, and the reason this plan is plan-track
+(see Shape). The renderer's open/focus signal does **not** reach main today: the only
+access-recorder, `recordMemoryAccess` (`agentEventStore.ts:999`), is **main-internal**
+— called by recall/briefing inside the backend, with **zero IPC/preload references**.
+So routing renderer open/focus → main is a **full new lane**, built end to end:
+
+- a new **IPC channel** (`recordNodeAccess`) + its **preload bridge** (A2: the only
+  contextIsolation-safe path) + a **main handler** that writes the §2 store;
+- **renderer emission** on a node open/focus, **debounced** so rapid re-focus of the
+  same node coalesces to one access (idle focus churn must not inflate counts);
+- the exact UI event boundary (what counts as "open/focus") settled in the PR; the
+  contract is "one deliberate landing on a node = one access."
 
 ### 6. Both search surfaces benefit
 
@@ -161,18 +193,35 @@ nodes included — the recency/access dimension. Neither blocks the other. What 
 does **not** restore is memory's source-association ranking (that lives in the memory
 plan's source refs).
 
+**Coupling caveat — the v1 signal does not reinforce agent recall.** The §1 signal is
+**human open/focus**. But the memory plan's recall is a *pull* `node_search` (the agent
+queries; it does not open/focus the node), so a belief the **agent** keeps recalling is
+**not** strengthened by those recalls under the v1 signal — only beliefs the **human**
+visits are. So the memory plan's "recall inherits decay for free" holds for human-touched
+memory nodes, not agent-only ones. To close that gap, v1 **optionally records a
+low-weight agent-recall signal**: when a node is returned-and-used in an agent
+`node_search`/recall, bump its stat with a small weight (well below human open/focus, to
+avoid the search-hit feedback loop §1 warns about). Recommended to include, since it is
+the difference between memory recall self-reinforcing or not; `agent-memory-on-timeline`
+§4 carries the matching caveat. (This subsumes the "does agent `node_read` count" open
+question below for the *recall* path specifically.)
+
 ## Build order (within the one PR) — each milestone green first
 
-- [ ] **M0:** the access-stats side store (per-`NodeId` read/write in userData) + the
-      pure `computeNodeAccessStrength(stats, now)` (ported from `agentMemoryActivation`).
-      (Tests: decay math with injected `now`; empty-stats neutral.)
+- [ ] **M0:** the access-stats side store on the §2-chosen substrate (per-`NodeId`
+      read/write in userData) + the pure `computeNodeAccessStrength(stats, now)` (ported
+      from `agentMemoryActivation`). (Tests: decay math with injected `now`; empty-stats
+      neutral; substrate round-trips + tolerates a torn/garbled record.)
 - [ ] **M1 (shared-surface, interface-first):** thread optional `accessStats`+`now`
       through `runSearchExpr` → `sortSearchHits`; apply the multiplier; preserve the
       explicit-sort override and the stats-absent default. (Tests: ranking shifts with
       stats; `sys:createdAt` sort still wins; identical to today when stats absent;
       deterministic with injected `now`.)
-- [ ] **M2:** access-event IPC + renderer open/focus emission, debounced. (Tests: a
-      focus records one access; throttle coalesces a burst.)
+- [ ] **M2 (net-new cross-process lane):** the `recordNodeAccess` IPC channel + preload
+      bridge + main handler (§5) + debounced renderer open/focus emission. (Tests: a focus
+      records one access; a burst coalesces to one; the preload surface is the only path.)
 - [ ] **M3:** pass `accessStats`+`now` at both call sites — agent `node_search` and the
-      app's search nodes. (Tests: both surfaces reflect access ranking.)
+      app's search nodes; plus the optional **low-weight agent-recall** bump (Relationship
+      caveat). (Tests: both surfaces reflect access ranking; an agent recall bumps the
+      node's stat below a human open/focus.)
 - [ ] **M4:** fold the behavior into the relevant `docs/spec/` search doc (A6).
