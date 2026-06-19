@@ -19,6 +19,7 @@ import {
   type ImageNode,
   type QueryOp,
 } from '../../src/core/types';
+import { REF_COUNT_FIELD } from '../../src/core/systemFields';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   expect(outcome.focus).toBeDefined();
@@ -201,6 +202,138 @@ describe('core search engine', () => {
     });
 
     expect(personalized.ok ? personalized.hits.map((hit) => hit.nodeId) : []).toEqual([high, low]);
+  });
+
+  test('sorts saved search hits by explicit reference count', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const empty = mustFocus(core.createNode(today, null, 'reference count needle'));
+    const referenced = mustFocus(core.createNode(today, null, 'reference count needle'));
+    const sourceA = mustFocus(core.createNode(today, null, 'Source A'));
+    const sourceB = mustFocus(core.createNode(today, null, 'Source B'));
+    core.addReference(sourceA, referenced, null);
+    core.addReference(sourceB, referenced, null);
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Most referenced',
+      query: { kind: 'rule', op: 'STRING_MATCH', text: 'reference count needle' },
+    }));
+    core.addSortRule(searchId, REF_COUNT_FIELD, 'desc');
+
+    const result = runSearchNode(core.state(), searchId);
+
+    expect(result.ok ? result.hits.map((hit) => hit.nodeId) : []).toEqual([referenced, empty]);
+  });
+
+  test('reference count sort uses distinct visible linked sources only', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const target = mustFocus(core.createNode(today, null, 'reference boundary needle'));
+    const competitor = mustFocus(core.createNode(today, null, 'reference boundary needle'));
+
+    const duplicateSource = mustFocus(core.createNode(today, null, 'Duplicate source'));
+    core.addReference(duplicateSource, target, null);
+    core.applyNodeTextPatch(duplicateSource, replaceAllRichTextPatch({
+      ...plainText('Duplicate source'),
+      inlineRefs: [{ offset: 0, target: nodeReferenceTarget(target), displayName: 'Target' }],
+    }));
+    const inlineSource = mustFocus(core.createNode(today, null, 'Inline source'));
+    core.applyNodeTextPatch(inlineSource, replaceAllRichTextPatch({
+      ...plainText('Inline target'),
+      inlineRefs: [{ offset: 0, target: nodeReferenceTarget(target), displayName: 'Target' }],
+    }));
+    const fieldSource = mustFocus(core.createNode(today, null, 'Field source'));
+    const fieldEntry = mustFocus(core.createInlineField(fieldSource, null, 'Related', 'reference'));
+    core.addFieldReference(fieldEntry, target);
+
+    const competitorSourceA = mustFocus(core.createNode(today, null, 'Competitor source A'));
+    const competitorSourceB = mustFocus(core.createNode(today, null, 'Competitor source B'));
+    core.addReference(competitorSourceA, competitor, null);
+    core.addReference(competitorSourceB, competitor, null);
+    const trashedSource = mustFocus(core.createNode(today, null, 'Trashed competitor source'));
+    core.addReference(trashedSource, competitor, null);
+    core.trashNode(trashedSource);
+    const configSource = mustFocus(core.createNode(today, null, 'Config source'));
+    const configRef = mustFocus(core.addReference(configSource, competitor, null));
+    const searchResultSource = mustFocus(core.createNode(today, null, 'Search result source'));
+    const searchResultRef = mustFocus(core.addReference(searchResultSource, competitor, null));
+
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Reference boundary',
+      query: { kind: 'rule', op: 'STRING_MATCH', text: 'reference boundary needle' },
+    }));
+    core.addSortRule(searchId, REF_COUNT_FIELD, 'desc');
+    const state = core.state();
+    state.nodes[configRef]!.refRole = 'config';
+    state.nodes[searchResultRef]!.refRole = 'searchResult';
+
+    const result = runSearchNode(state, searchId);
+
+    expect(result.ok ? result.hits.map((hit) => hit.nodeId).slice(0, 2) : []).toEqual([target, competitor]);
+  });
+
+  test('folds capped reference authority into default relevance ranking', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const baselineFirst = mustFocus(core.createNode(
+      today,
+      null,
+      'reference authority needle',
+      'node:00000000-0000-4000-8000-000000000001',
+    ));
+    const referenced = mustFocus(core.createNode(
+      today,
+      null,
+      'reference authority needle',
+      'node:00000000-0000-4000-8000-000000000002',
+    ));
+    const source = mustFocus(core.createNode(today, null, 'Authority source'));
+    core.addReference(source, referenced, null);
+    const query = { kind: 'rule' as const, op: 'STRING_MATCH' as const, text: 'reference authority needle' };
+
+    const result = runSearchExpr(core.state(), query);
+
+    expect(result.ok ? result.hits.map((hit) => hit.nodeId).slice(0, 2) : []).toEqual([referenced, baselineFirst]);
+  });
+
+  test('caps reference authority so it does not override strong lexical relevance', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const exact = mustFocus(core.createNode(today, null, 'authority exact'));
+    const weakerReferenced = mustFocus(core.createNode(today, null, 'authority exact trailing'));
+    for (let index = 0; index < 80; index += 1) {
+      const source = mustFocus(core.createNode(today, null, `Authority source ${index}`));
+      core.addReference(source, weakerReferenced, null);
+    }
+
+    const result = runSearchExpr(core.state(), { kind: 'rule', op: 'STRING_MATCH', text: 'authority exact' });
+
+    expect(result.ok ? result.hits.map((hit) => hit.nodeId).slice(0, 2) : []).toEqual([exact, weakerReferenced]);
+  });
+
+  test('does not count virtual query operand references as reference authority', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const baselineFirst = mustFocus(core.createNode(
+      today,
+      null,
+      'virtual authority needle',
+      'node:00000000-0000-4000-8000-000000000001',
+    ));
+    const operandTarget = mustFocus(core.createNode(
+      today,
+      null,
+      'virtual authority needle',
+      'node:00000000-0000-4000-8000-000000000002',
+    ));
+
+    const result = runSearchExpr(core.state(), {
+      kind: 'rule',
+      op: 'STRING_MATCH',
+      text: 'virtual authority needle',
+      operands: [{ targetId: operandTarget, text: 'Operand target' }],
+    });
+
+    expect(result.ok ? result.hits.map((hit) => hit.nodeId).slice(0, 2) : []).toEqual([baselineFirst, operandTarget]);
   });
 
   test('can opt default relevance sorting into personal access ranking', () => {

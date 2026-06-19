@@ -95,6 +95,9 @@ const SYSTEM_IDS = new Set([
   TAG_YEAR_ID,
 ]);
 
+const REFERENCE_AUTHORITY_WEIGHT = 0.04;
+const REFERENCE_AUTHORITY_CAP = 0.25;
+
 const QUERY_TEXT_CONTENT_OPS = new Set<QueryOp>([
   'STRING_MATCH',
   'FIELD_IS',
@@ -269,6 +272,7 @@ function runSearchExprInternal(
   if (options.searchNodeId && !searchNode) return { ok: false, issue: invalidSearchNode(options.searchNodeId) };
 
   const contextSearchNode = searchNode ?? virtualSearchNode();
+  const references = referenceSummaryForSearchIndex(baseIndex);
   const evalIndex: SearchIndex = {
     ...baseIndex,
     nodes: new Map(baseIndex.nodes),
@@ -284,7 +288,6 @@ function runSearchExprInternal(
 
   const scored: SearchHit[] = [];
   const textAnalysisByQuery = options.textIndex ? new Map<string, TextSearchQueryAnalysis>() : undefined;
-  const references = referenceSummaryForSearchIndex(evalIndex);
   for (const node of candidateNodes) {
     if ((searchNode && node.id === searchNode.id) || !isSearchCandidate(evalIndex, node.id)) continue;
     const evaluation = evaluateCondition(evalIndex, node, virtualTree.root, {
@@ -297,7 +300,7 @@ function runSearchExprInternal(
     if (evaluation.match) scored.push({ nodeId: node.id, score: evaluation.score });
   }
 
-  const sorted = sortSearchHits(scored, evalIndex, contextSearchNode, personalAccessRanking);
+  const sorted = sortSearchHits(scored, evalIndex, contextSearchNode, references, personalAccessRanking);
   return { ok: true, hits: typeof options.limit === 'number' ? sorted.slice(0, options.limit) : sorted };
 }
 
@@ -305,16 +308,14 @@ function sortSearchHits(
   hits: SearchHit[],
   index: SearchIndex,
   searchNode: SearchNode,
+  references: ReferenceSummary,
   personalAccessRanking?: SearchPersonalAccessRanking,
 ): SearchHit[] {
   const sortRule = searchNodeSortRule(index, searchNode);
-  if (sortRule) return sortSearchHitsByExplicitRule(hits, index, sortRule);
-  if (!personalAccessRanking) {
-    return hits.sort((left, right) => right.score - left.score || left.nodeId.localeCompare(right.nodeId));
-  }
+  if (sortRule) return sortSearchHitsByExplicitRule(hits, index, references, sortRule);
   const ranked = hits.map((hit) => ({
     hit,
-    rankingScore: rankingScore(hit, personalAccessRanking),
+    rankingScore: rankingScore(hit, references, personalAccessRanking),
   }));
   ranked.sort((left, right) =>
     right.rankingScore - left.rankingScore
@@ -327,11 +328,12 @@ function sortSearchHits(
 function sortSearchHitsByExplicitRule(
   hits: SearchHit[],
   index: SearchIndex,
+  references: ReferenceSummary,
   sortRule: { field: string; direction: SortDirection },
 ): SearchHit[] {
   const factor = sortRule.direction === 'asc' ? 1 : -1;
   return hits.sort((left, right) => {
-    const result = compareSearchHitsBySortField(left, right, index, sortRule.field);
+    const result = compareSearchHitsBySortField(left, right, index, references, sortRule.field);
     return result * factor
       || right.score - left.score
       || left.nodeId.localeCompare(right.nodeId);
@@ -342,6 +344,7 @@ function compareSearchHitsBySortField(
   left: SearchHit,
   right: SearchHit,
   index: SearchIndex,
+  references: ReferenceSummary,
   fieldId: string,
 ): number {
   const leftNode = index.nodes.get(left.nodeId);
@@ -354,8 +357,8 @@ function compareSearchHitsBySortField(
   }
 
   const fieldType = fieldTypeOf(index, fieldId);
-  const leftValues = sortValuesForNode(index, leftNode, fieldId);
-  const rightValues = sortValuesForNode(index, rightNode, fieldId);
+  const leftValues = sortValuesForNode(index, leftNode, fieldId, references);
+  const rightValues = sortValuesForNode(index, rightNode, fieldId, references);
   if (isNumericSortField(fieldId, fieldType)) {
     return numericSortValue(leftValues, fieldType) - numericSortValue(rightValues, fieldType);
   }
@@ -365,17 +368,32 @@ function compareSearchHitsBySortField(
   return leftText.localeCompare(rightText, undefined, { numeric: true, sensitivity: 'base' });
 }
 
-function rankingScore(hit: SearchHit, personalAccessRanking: SearchPersonalAccessRanking): number {
-  const accessStats = personalAccessRanking.getNodeAccessStats(hit.nodeId);
-  if (!accessStats) return hit.score;
-  return hit.score * nodeAccessRankingMultiplier(accessStats, personalAccessRanking.now ?? Date.now());
+function rankingScore(
+  hit: SearchHit,
+  references: ReferenceSummary,
+  personalAccessRanking?: SearchPersonalAccessRanking,
+): number {
+  let score = hit.score * referenceAuthorityMultiplier(hit.nodeId, references);
+  if (personalAccessRanking) {
+    score *= nodeAccessRankingMultiplier(
+      personalAccessRanking.getNodeAccessStats(hit.nodeId),
+      personalAccessRanking.now ?? Date.now(),
+    );
+  }
+  return score;
 }
 
-function sortValuesForNode(index: SearchIndex, node: SearchNode, fieldId: string): string[] {
+function referenceAuthorityMultiplier(nodeId: NodeId, references: ReferenceSummary): number {
+  const linkedCount = references.countsByTarget.get(nodeId)?.linked ?? 0;
+  const boost = Math.min(REFERENCE_AUTHORITY_CAP, Math.log1p(linkedCount) * REFERENCE_AUTHORITY_WEIGHT);
+  return 1 + boost;
+}
+
+function sortValuesForNode(index: SearchIndex, node: SearchNode, fieldId: string, references: ReferenceSummary): string[] {
   const displayed = displaySearchNode(index, node);
   if (fieldId === NAME_FIELD) return [nodeTreeText(index, displayed)].filter(Boolean);
   if (isSystemFieldId(fieldId)) {
-    return systemFieldValues(displayed, fieldId, index.nodes);
+    return systemFieldValues(displayed, fieldId, index.nodes, { referenceSummary: references });
   }
 
   const fieldEntry = fieldEntryNodes(index, displayed).find((entry) => entry.fieldDefId === fieldId);
