@@ -80,6 +80,14 @@ function runDurationMsForMessage(childRun: AgentRenderChildRunEntity | undefined
   return Math.max(0, childRun.completedAt - childRun.startedAt);
 }
 
+// Child run's start for the live "Working for {t}" ticker — only while it is the
+// active last turn AND has not completed, so a sealed/failed run never keeps
+// ticking.
+function runStartedAtMsForMessage(childRun: AgentRenderChildRunEntity | undefined, lastAssistant: boolean): number | null {
+  if (!childRun || !lastAssistant || childRun.completedAt !== undefined) return null;
+  return childRun.startedAt;
+}
+
 function turnInterruptedForMessage(childRun: AgentRenderChildRunEntity | undefined, lastAssistant: boolean): boolean {
   return !!childRun && lastAssistant && (childRun.status === 'failed' || childRun.status === 'stopped');
 }
@@ -107,6 +115,7 @@ function entryFromMessage(
       actor: null,
       runId: null,
       runDurationMs: runDurationMsForMessage(childRun, lastAssistant),
+      runStartedAtMs: runStartedAtMsForMessage(childRun, lastAssistant),
       turnInterrupted: turnInterruptedForMessage(childRun, lastAssistant),
     },
     turnPhase: turnPhaseForMessage(message, active, pendingToolCallIds),

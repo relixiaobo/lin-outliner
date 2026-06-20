@@ -3028,7 +3028,7 @@ test.describe('agent composer controls', () => {
     await expect(details.getByText('Inspect the current UI.')).toBeVisible();
     const thoughtToggles = details.getByRole('button', { name: 'Thought · Read node "today"' });
     await expect(thoughtToggles.first()).toBeVisible();
-    await expect(details.getByRole('button', { name: 'Working...' })).toHaveCount(0);
+    await expect(details.getByRole('button', { name: 'Working', exact: true })).toHaveCount(0);
 
     await details.locator('.agent-tool-call-toggle').first().click();
     await expect(details.getByText('Daily note content from child run.')).toBeVisible();

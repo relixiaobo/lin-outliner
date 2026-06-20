@@ -612,7 +612,10 @@ export function InsertIntoOutlinerButton({ path }: { path: string }) {
   );
 }
 
-function getLoadedSkillDetails(
+// A "loaded" skill renders as a compact glanceable chip (LoadedSkillAffordance),
+// not an expandable tool row — so it must NEVER fold into a counted tool-activity
+// group (which would bury the chip). Exported for the timeline's grouping break.
+export function getLoadedSkillDetails(
   toolCall: ToolCall,
   result: AgentToolResultWithPayloads | undefined,
 ): LoadedSkillDetails | null {

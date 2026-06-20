@@ -1010,7 +1010,10 @@ commandPalette: {
     },
     // The collapsible thinking/tool process block + compaction boundary.
     process: {
-      working: 'Working...',
+      // The live divider while the turn is active: bare "Working" under 1s (no
+      // number so it never flickers a "0s"), then the ticking "Working for {t}".
+      working: 'Working',
+      workingFor: ({ duration }: { duration: string }) => `Working for ${duration}`,
       interrupted: 'Interrupted',
       interruptedAfterThinking: 'Interrupted after thinking',
       thoughtInterrupted: 'Thought (interrupted)',
@@ -1018,7 +1021,6 @@ commandPalette: {
       thoughtPreview: ({ preview }: { preview: string }) => `Thought · ${preview}`,
       thoughtAndTool: ({ tool }: { tool: string }) => `Thought · ${tool}`,
       usedTools: ({ count }: { count: number }) => `Used ${count} tools`,
-      thoughtAndUsedTools: ({ count }: { count: number }) => `Thought · used ${count} tools`,
       // Counted, kind-named tool-activity summary (Codex's "Ran 3 commands ·
       // read 2 files"). Each kind has a done + running ("…Run") form; the
       // composer lowercases non-leading fragments. `thoughtAndActivity` prefixes

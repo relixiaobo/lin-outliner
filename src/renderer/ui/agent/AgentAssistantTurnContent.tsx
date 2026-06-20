@@ -5,7 +5,6 @@ import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProject
 import type { DocumentIndex } from '../../state/document';
 import {
   AgentProcessBlock,
-  AgentTurnProcessFold,
   type AgentExpandState,
   type AgentProcessSegmentBlock,
 } from './AgentProcessBlock';
@@ -29,6 +28,7 @@ export function renderAssistantBlocks(
   turnInterrupted: boolean,
   isChannel: boolean,
   workedForMs: number | null,
+  runStartedAtMs: number | null,
   toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>,
 ) {
   const rendered: ReactNode[] = [];
@@ -96,19 +96,12 @@ export function renderAssistantBlocks(
 
   if (lastProcessIndex >= 0 || turnActive) {
     const processEntryEnd = Math.max(0, lastProcessIndex + 1);
-    const processEntries = visibleBlocks
-      .slice(0, processEntryEnd)
-      .map((block, sourceIndex) => ({ block, sourceIndex }));
     const segmentId = `process:${contentKey}`;
-    const turnSegmentBlocks: AgentProcessSegmentBlock[] = [];
-    const foldChildren: ReactNode[] = [];
-    let processGroup: AgentProcessSegmentBlock[] = [];
-    let processGroupStart = 0;
 
-    function segmentFromBlock(
+    const segmentFromBlock = (
       candidate: (typeof visibleBlocks)[number],
       sourceIndex: number,
-    ): AgentProcessSegmentBlock {
+    ): AgentProcessSegmentBlock => {
       const hasLater = sourceIndex < visibleBlocks.length - 1;
       if (candidate.type === 'thinking') {
         return { kind: 'thinking', sourceIndex, streaming: streaming && !hasLater, text: candidate.thinking };
@@ -122,74 +115,40 @@ export function renderAssistantBlocks(
         };
       }
       return { kind: 'narration', sourceIndex, streaming: streaming && !hasLater, text: candidate.text };
-    }
+    };
 
-    function flushProcessGroup() {
-      if (processGroup.length === 0) return;
-      const groupId = `${segmentId}:group:${processGroupStart}`;
-      const groupBlocks = processGroup;
-      foldChildren.push(
-        <AgentProcessBlock
-          blocks={groupBlocks}
-          expandState={expandState}
-          id={groupId}
-          index={documentIndex}
-          key={groupId}
-          onNodeReferenceOpen={onNodeReferenceOpen}
-          onOpenChildRunTranscript={onOpenChildRunTranscript}
-          pendingToolCallIds={pendingToolCallIds}
-          results={toolResults}
-          sealed={!turnActive}
-          conversationId={conversationId}
-          childRunsByParentToolCallId={childRunsByParentToolCallId}
-          turnActive={turnActive}
-          turnFailedWithoutProse={false}
-          surfaceResultlessProcess={surfaceResultlessProcess}
-          workedForMs={null}
-        />,
-      );
-      processGroup = [];
-    }
+    const turnSegmentBlocks: AgentProcessSegmentBlock[] = visibleBlocks
+      .slice(0, processEntryEnd)
+      .map((block, sourceIndex) => segmentFromBlock(block, sourceIndex));
 
-    for (const { block, sourceIndex } of processEntries) {
-      const segment = segmentFromBlock(block, sourceIndex);
-      turnSegmentBlocks.push(segment);
-      if (segment.kind === 'thinking' || segment.kind === 'toolCall') {
-        if (processGroup.length === 0) processGroupStart = sourceIndex;
-        processGroup.push(segment);
-        continue;
-      }
-      flushProcessGroup();
-      foldChildren.push(
-        <div className="agent-process-flat-narration" key={`${segmentId}:narration:${sourceIndex}`}>
-          <AgentMarkdown
-            index={documentIndex}
-            keyPrefix={`${segmentId}-narration-${sourceIndex}`}
-            onNodeReferenceOpen={onNodeReferenceOpen}
-            streaming={segment.streaming}
-            text={segment.text}
-          />
-        </div>,
-      );
-    }
-    flushProcessGroup();
-
+    // ONE turn-level process fold (Codex machine C). It renders the whole
+    // pre-answer body — reasoning, interim narration, and the grouped
+    // tool-activity — through AgentProcessTimeline (the inner per-group collapse
+    // is machine B). While the turn is still WORKING it shows the body expanded
+    // with a live "Working for {t}" header; the moment the final answer starts
+    // (`answerStarted`) it auto-collapses to the "Worked for {t}" divider with the
+    // answer streaming below.
     rendered.push(
-      <AgentTurnProcessFold
+      <AgentProcessBlock
+        answerStarted={finalIsProse}
         blocks={turnSegmentBlocks}
+        childRunsByParentToolCallId={childRunsByParentToolCallId}
+        conversationId={conversationId}
         expandState={expandState}
         id={segmentId}
+        index={documentIndex}
         key={segmentId}
+        liveStartedAtMs={runStartedAtMs}
+        onNodeReferenceOpen={onNodeReferenceOpen}
+        onOpenChildRunTranscript={onOpenChildRunTranscript}
         pendingToolCallIds={pendingToolCallIds}
         results={toolResults}
         sealed={processSettled}
+        surfaceResultlessProcess={surfaceResultlessProcess}
         turnActive={turnActive}
         turnFailedWithoutProse={turnFailedWithoutProse}
-        surfaceResultlessProcess={surfaceResultlessProcess}
         workedForMs={workedForMs}
-      >
-        {foldChildren}
-      </AgentTurnProcessFold>,
+      />,
     );
   }
 

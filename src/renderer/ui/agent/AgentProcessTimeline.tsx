@@ -5,7 +5,7 @@ import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentMarkdown } from './AgentMarkdown';
 import { AgentThinkingBody, AgentThinkingRow } from './AgentThinkingBlock';
 import { AgentToolActivityGroup } from './AgentToolActivityGroup';
-import { AgentToolCallBlock } from './AgentToolCallBlock';
+import { AgentToolCallBlock, getLoadedSkillDetails } from './AgentToolCallBlock';
 import { splitTimelineIntoGroups } from './agentRenderGroups';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
 
@@ -59,9 +59,12 @@ export function AgentProcessTimeline({
 
   // Fold runs of consecutive (non-child-run) tool calls into one counted
   // activity group; thinking / narration / child-run tools break the run and
-  // render standalone (Codex's render-group split).
+  // render standalone (Codex's render-group split). A loaded-skill chip also
+  // breaks the run — it is a compact glanceable affordance, not an expandable
+  // tool row, so grouping it would bury it.
   const groups = splitTimelineIntoGroups(blocks, (block) => (
     Boolean(block.childRun ?? childRunsByParentToolCallId?.get(block.toolCall.id))
+    || getLoadedSkillDetails(block.toolCall, results.get(block.toolCall.id)) !== null
   ));
 
   const renderBlock = (block: AgentProcessSegmentBlock) => {

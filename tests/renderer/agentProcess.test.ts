@@ -30,64 +30,33 @@ const readResult: ToolResultMessage = {
 };
 
 describe('agent process summary', () => {
-  test('live + collapsed header shows the currently running tool', () => {
-    expect(summarizeProcess({
+  // The live divider is the PERSISTENT "Working for {t}" clock (Codex machine C):
+  // once the run clock is known it is the header whether the body is collapsed or
+  // expanded — the "常驻" behavior. The running-tool / thought-preview fallbacks
+  // below only fire for clock-less (legacy) live entries while collapsed.
+  test('live header shows the persistent "Working for {t}" clock once the run clock is known', () => {
+    const live = {
       firstThinkingText: 'Identify relevant outline nodes',
       lastThinkingText: 'Identify relevant outline nodes',
       thinkingCount: 1,
       pendingToolCallIds: new Set([readTool.id]),
       results: new Map(),
-      toolCalls: [readTool],
-      turnActive: true,
-      liveCollapsed: true,
-      turnFailedWithoutProse: false,
-      surfaceResultlessProcess: false,
-      workedForMs: null,
-      process,
-      toolCallLabels,
-      thinkingLabel,
-    })).toBe('Reading node "node-alpha"');
-  });
-
-  test('live + collapsed header ignores resultless tool calls that are no longer pending', () => {
-    expect(summarizeProcess({
-      firstThinkingText: 'Identify relevant outline nodes',
-      lastThinkingText: 'Now search the design system',
-      thinkingCount: 2,
-      pendingToolCallIds: new Set([searchTool.id]),
-      results: new Map(),
       toolCalls: [readTool, searchTool],
       turnActive: true,
-      liveCollapsed: true,
+      liveElapsedMs: 5_000,
       turnFailedWithoutProse: false,
       surfaceResultlessProcess: false,
       workedForMs: null,
       process,
       toolCallLabels,
       thinkingLabel,
-    })).toBe('Searching nodes "design system"');
+    };
+    // Persistent: same clock collapsed AND expanded.
+    expect(summarizeProcess({ ...live, liveCollapsed: true })).toBe('Working for 5s');
+    expect(summarizeProcess({ ...live, liveCollapsed: false })).toBe('Working for 5s');
   });
 
-  test('live + collapsed header previews the latest thought while still thinking', () => {
-    expect(summarizeProcess({
-      firstThinkingText: 'Let me map the outline structure first',
-      lastThinkingText: 'Let me map the outline structure first',
-      thinkingCount: 1,
-      pendingToolCallIds: new Set(),
-      results: new Map(),
-      toolCalls: [],
-      turnActive: true,
-      liveCollapsed: true,
-      turnFailedWithoutProse: false,
-      surfaceResultlessProcess: false,
-      workedForMs: null,
-      process,
-      toolCallLabels,
-      thinkingLabel,
-    })).toBe('Let me map the outline structure first');
-  });
-
-  test('live + collapsed header falls back to the thinking label with no thought text yet', () => {
+  test('live header shows bare "Working" under one second (no flickering "0s")', () => {
     expect(summarizeProcess({
       firstThinkingText: null,
       lastThinkingText: null,
@@ -96,17 +65,20 @@ describe('agent process summary', () => {
       results: new Map(),
       toolCalls: [],
       turnActive: true,
-      liveCollapsed: true,
+      liveCollapsed: false,
+      liveElapsedMs: 400,
       turnFailedWithoutProse: false,
       surfaceResultlessProcess: false,
       workedForMs: null,
       process,
       toolCallLabels,
       thinkingLabel,
-    })).toBe(thinkingLabel);
+    })).toBe('Working');
   });
 
-  test('live + expanded header shows the static group summary, not the live tool', () => {
+  test('the live clock wins over a partial wall-clock duration', () => {
+    // A still-running turn never shows the (partial) workedFor duration; the live
+    // clock is the header — distinct values prove which one is used.
     expect(summarizeProcess({
       firstThinkingText: 'Identify relevant outline nodes',
       lastThinkingText: 'Identify relevant outline nodes',
@@ -116,6 +88,111 @@ describe('agent process summary', () => {
       toolCalls: [readTool, searchTool],
       turnActive: true,
       liveCollapsed: false,
+      liveElapsedMs: 3_000,
+      turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
+      workedForMs: 9_000,
+      process,
+      toolCallLabels,
+      thinkingLabel,
+    })).toBe('Working for 3s');
+  });
+
+  // Clock-less (legacy) live fallbacks — only while collapsed, when liveElapsedMs
+  // is null (no run timing recorded).
+  test('clock-less live + collapsed header shows the currently running tool', () => {
+    expect(summarizeProcess({
+      firstThinkingText: 'Identify relevant outline nodes',
+      lastThinkingText: 'Identify relevant outline nodes',
+      thinkingCount: 1,
+      pendingToolCallIds: new Set([readTool.id]),
+      results: new Map(),
+      toolCalls: [readTool],
+      turnActive: true,
+      liveCollapsed: true,
+      liveElapsedMs: null,
+      turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
+      workedForMs: null,
+      process,
+      toolCallLabels,
+      thinkingLabel,
+    })).toBe('Reading node "node-alpha"');
+  });
+
+  test('clock-less live + collapsed header ignores resultless tool calls that are no longer pending', () => {
+    expect(summarizeProcess({
+      firstThinkingText: 'Identify relevant outline nodes',
+      lastThinkingText: 'Now search the design system',
+      thinkingCount: 2,
+      pendingToolCallIds: new Set([searchTool.id]),
+      results: new Map(),
+      toolCalls: [readTool, searchTool],
+      turnActive: true,
+      liveCollapsed: true,
+      liveElapsedMs: null,
+      turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
+      workedForMs: null,
+      process,
+      toolCallLabels,
+      thinkingLabel,
+    })).toBe('Searching nodes "design system"');
+  });
+
+  test('clock-less live + collapsed header previews the latest thought while still thinking', () => {
+    expect(summarizeProcess({
+      firstThinkingText: 'Let me map the outline structure first',
+      lastThinkingText: 'Let me map the outline structure first',
+      thinkingCount: 1,
+      pendingToolCallIds: new Set(),
+      results: new Map(),
+      toolCalls: [],
+      turnActive: true,
+      liveCollapsed: true,
+      liveElapsedMs: null,
+      turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
+      workedForMs: null,
+      process,
+      toolCallLabels,
+      thinkingLabel,
+    })).toBe('Let me map the outline structure first');
+  });
+
+  test('clock-less live + collapsed header falls back to the thinking label with no thought text yet', () => {
+    expect(summarizeProcess({
+      firstThinkingText: null,
+      lastThinkingText: null,
+      thinkingCount: 1,
+      pendingToolCallIds: new Set(),
+      results: new Map(),
+      toolCalls: [],
+      turnActive: true,
+      liveCollapsed: true,
+      liveElapsedMs: null,
+      turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
+      workedForMs: null,
+      process,
+      toolCallLabels,
+      thinkingLabel,
+    })).toBe(thinkingLabel);
+  });
+
+  test('clock-less live + expanded header falls through to the descriptive group summary', () => {
+    // No run clock and expanded → neither the live clock nor the collapsed
+    // fallbacks apply, so the descriptive summary (live tense) stands.
+    expect(summarizeProcess({
+      firstThinkingText: 'Identify relevant outline nodes',
+      lastThinkingText: 'Identify relevant outline nodes',
+      thinkingCount: 1,
+      pendingToolCallIds: new Set(),
+      results: new Map([[readTool.id, readResult]]),
+      toolCalls: [readTool, searchTool],
+      turnActive: true,
+      liveCollapsed: false,
+      liveElapsedMs: null,
       turnFailedWithoutProse: false,
       surfaceResultlessProcess: false,
       workedForMs: null,
@@ -135,6 +212,7 @@ describe('agent process summary', () => {
       toolCalls: [readTool, searchTool],
       turnActive: false,
       liveCollapsed: false,
+      liveElapsedMs: null,
       turnFailedWithoutProse: false,
       surfaceResultlessProcess: false,
       workedForMs: null,
@@ -154,6 +232,7 @@ describe('agent process summary', () => {
       toolCalls: [readTool],
       turnActive: false,
       liveCollapsed: false,
+      liveElapsedMs: null,
       turnFailedWithoutProse: false,
       surfaceResultlessProcess: false,
       workedForMs: null,
@@ -173,6 +252,7 @@ describe('agent process summary', () => {
       toolCalls: [readTool],
       turnActive: false,
       liveCollapsed: false,
+      liveElapsedMs: null,
       turnFailedWithoutProse: true,
       surfaceResultlessProcess: true,
       workedForMs: null,
@@ -192,6 +272,7 @@ describe('agent process summary', () => {
       toolCalls: [readTool, searchTool],
       turnActive: false,
       liveCollapsed: false,
+      liveElapsedMs: null,
       turnFailedWithoutProse: false,
       surfaceResultlessProcess: false,
       workedForMs: 63_000,
@@ -201,47 +282,8 @@ describe('agent process summary', () => {
     })).toBe('Worked for 1m 3s');
   });
 
-  test('a known duration never overrides the live status line while collapsed and running', () => {
-    expect(summarizeProcess({
-      firstThinkingText: 'Identify relevant outline nodes',
-      lastThinkingText: 'Identify relevant outline nodes',
-      thinkingCount: 1,
-      pendingToolCallIds: new Set([readTool.id]),
-      results: new Map(),
-      toolCalls: [readTool],
-      turnActive: true,
-      liveCollapsed: true,
-      turnFailedWithoutProse: false,
-      surfaceResultlessProcess: false,
-      workedForMs: 5_000,
-      process,
-      toolCallLabels,
-      thinkingLabel,
-    })).toBe('Reading node "node-alpha"');
-  });
-
-  test('an expanded, still-running turn shows the descriptive summary, never a partial duration', () => {
-    // turnActive gates the workedFor branch INSIDE summarizeProcess, so even with a
-    // non-null (partial) duration a live turn keeps its descriptive header.
-    expect(summarizeProcess({
-      firstThinkingText: 'Identify relevant outline nodes',
-      lastThinkingText: 'Identify relevant outline nodes',
-      thinkingCount: 1,
-      pendingToolCallIds: new Set(),
-      results: new Map([[readTool.id, readResult]]),
-      toolCalls: [readTool, searchTool],
-      turnActive: true,
-      liveCollapsed: false,
-      turnFailedWithoutProse: false,
-      surfaceResultlessProcess: false,
-      workedForMs: 5_000,
-      process,
-      toolCallLabels,
-      thinkingLabel,
-    })).toBe('Thought · read a node · searching');
-  });
-
-  test('an interrupted turn keeps its interrupted label over the duration', () => {
+  test('interrupted (RED) wins over the live clock', () => {
+    // A failed/cancelled turn is never a "Working" divider even with a live clock.
     expect(summarizeProcess({
       firstThinkingText: 'Identify relevant outline nodes',
       lastThinkingText: 'Identify relevant outline nodes',
@@ -251,6 +293,7 @@ describe('agent process summary', () => {
       toolCalls: [readTool],
       turnActive: false,
       liveCollapsed: false,
+      liveElapsedMs: 8_000,
       turnFailedWithoutProse: true,
       surfaceResultlessProcess: true,
       workedForMs: 8_000,
@@ -275,6 +318,7 @@ describe('agent process summary', () => {
       toolCalls: [readTool],
       turnActive: false,
       liveCollapsed: false,
+      liveElapsedMs: null,
       turnFailedWithoutProse: false,
       workedForMs: 5_000,
       process,

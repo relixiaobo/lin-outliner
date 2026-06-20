@@ -931,26 +931,32 @@ Rules:
     once it seals it expands to the result (or error) and the full-run link.
     Boundary rows live only in `transcriptRows`, never in the active `rows` path.
 - Long output rows are collapsed by default.
-- **Result-first turn fold.** Every assistant turn renders
+- **Result-first turn fold (one flat level).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last
-  thinking/tool block and shows as prose. A turn-level **"Worked for …"** fold sits
-  above that final answer and collapses/expands every earlier block. When expanded,
-  earlier content stays in original order: interim narration text ("let me check X
-  first") renders as normal prose, while adjacent thinking/tool blocks collapse
-  into compact process groups with their own detail disclosure. A turn with no
-  thinking/tools is a direct answer and renders without a fold. This is one
+  thinking/tool block and shows as prose. **One** turn-level process fold
+  (`AgentProcessBlock`, Codex's per-turn collapse — *machine C*) sits above that
+  final answer and collapses/expands every earlier block. The fold renders the
+  whole pre-answer body through a single `AgentProcessTimeline`: interim narration
+  text ("let me check X first") is a row inside that timeline, reasoning renders as
+  thinking rows, and adjacent tool calls fold into counted tool-activity groups
+  (*machine B*, below). There is **no second per-narration "process group" nesting**
+  — the turn fold is the only collapse level above the activity groups. A turn with
+  no thinking/tools is a direct answer and renders without a fold. This is one
   mechanism with no per-mode forks and no single-tool inline special case.
-- **Codex-style live disclosure.** A turn's process block **stays collapsed while
-  it is working** unless the user explicitly opens it. The collapsed header is the
-  live status line: it shows the currently pending tool when there is one, then
-  the latest non-empty thinking preview, then `Working...` as the fallback. The
-  row renders immediately for an active assistant turn, even before the first
-  thinking/tool block, so later tool events do not insert a new header above
+- **Codex-style auto-collapse + persistent divider.** The turn fold mirrors
+  Codex's *machine C*: while the turn is **working and has not started its answer**
+  the body shows **expanded** (the user watches reasoning + tool activity stream
+  1:1); the moment the **final answer starts** (`answerStarted` — trailing prose
+  appears) the body **auto-collapses** to the divider with the answer streaming
+  below. The header is a **persistent** divider that stays put through expand and
+  auto-collapse — the live "Working" / "Working for {t}" clock while active, the
+  "Worked for {t}" resting line once sealed — so it never disappears when the body
+  opens. The fold renders immediately for an active assistant turn, even before the
+  first thinking/tool block, so later tool events do not insert a new header above
   already-streamed text. A tool-free live answer keeps its prose in the normal
   answer position (not inside process narration), so the same markdown subtree
-  survives the live→sealed transition. The process **does not auto-expand while
-  live and does not auto-collapse on settle**; user expansion is sticky for that
-  process id.
+  survives the live→sealed transition. A **user toggle is sticky** for that process
+  id and overrides the auto default through the live→sealed transition.
   - A **resultless** turn (last visible block is a thought/tool — no trailing
     answer prose) drives two SEPARATE decisions, decoupled so a cleanly-completed
     turn never mislabels:
@@ -973,13 +979,22 @@ Rules:
     of outcome. Keying the result-first *split* off the *trailing* answer, not *any*
     text in the turn, still stops a surfaced resultless turn from burying interim
     narration behind a collapsed header.)
-  - Every other steady state defaults collapsed. The **sticky override wins**: once
-  a user toggles the block it keeps that choice through live→sealed; completion
-  only updates the same disclosure row's header.
-- The live header carries the single activity spinner only while the process is
-  collapsed. When the user expands a live process, the spinner moves to the
-  running tool row inside the timeline and the top header uses the static process
-  summary. Once the turn **seals**, the collapsed header reads
+  - **Default-open states:** a working turn with no answer yet (auto-expand, above)
+    and a surfaced resultless turn. Every other steady state — answer streaming, or
+    sealed — defaults collapsed. The **sticky override wins**: once a user toggles
+    the block it keeps that choice through live→sealed; completion only updates the
+    same disclosure row's header.
+- **Persistent live divider.** While the turn is active the header is the ticking
+  clock — bare **"Working"** under one second (no number, so it never flickers a
+  "0s"), then **"Working for {t}"** once a whole second elapses. The clock is
+  driven by `runStartedAtMs` (the producing run's `startedAt`, threaded onto the
+  message entity **only while the run is running**; a `useElapsedTick` hook
+  re-renders once a second and is gated on the live segment, so a sealed/crashed
+  run never keeps ticking). The divider is the header **whether the body is
+  collapsed or expanded** — it stays put through the auto-collapse. The single
+  activity spinner rides the trailing slot only while the process is **collapsed
+  AND working**; once the body expands the spinner moves to the running tool row in
+  the timeline. Once the turn **seals**, the header reads
   **"Worked for {duration}"** (codex-style; duration = the producing run's
   `updatedAt − startedAt`, threaded as `runDurationMs` on the message entity
   **only once the run is sealed** — a still-`running` run, whether live or left
@@ -1011,9 +1026,10 @@ Rules:
   `agentRenderGroups.ts`). Inside the expanded process timeline, a maximal run of
   ≥2 adjacent **non-child-run** tool calls collapses into a single
   `AgentToolActivityGroup` disclosure whose header is the counted summary,
-  expandable to the member rows. A thinking or narration block — and a child-run
-  tool call (rich inline content) — **breaks the run** (reasoning is a hard
-  boundary); a lone tool call renders standalone, never wrapped. The summary
+  expandable to the member rows. A thinking or narration block — a child-run
+  tool call (rich inline content), and a **loaded-skill chip** (a compact
+  glanceable affordance, not an expandable row) — **breaks the run** (reasoning is
+  a hard boundary); a lone tool call renders standalone, never wrapped. The summary
   buckets members by activity kind (`toolActivityKind`), dedupes file kinds by
   subject path (editing the same node twice reads "Edited a file"), and uses the
   **per-kind** running/done tense so a finished command beside a still-running

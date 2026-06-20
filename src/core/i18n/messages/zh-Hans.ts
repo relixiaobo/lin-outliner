@@ -925,7 +925,10 @@ commandPalette: {
       timeSeparatorToday: ({ time }) => `今天 ${time}`,
     },
     process: {
-      working: '处理中……',
+      // Live divider while the turn is active: bare "处理中" under 1s, then the
+      // ticking "处理中 {t}".
+      working: '处理中',
+      workingFor: ({ duration }) => `处理中 ${duration}`,
       interrupted: '已中断',
       interruptedAfterThinking: '思考后中断',
       thoughtInterrupted: '已思考（中断）',
@@ -933,7 +936,6 @@ commandPalette: {
       thoughtPreview: ({ preview }) => `已思考 · ${preview}`,
       thoughtAndTool: ({ tool }) => `已思考 · ${tool}`,
       usedTools: ({ count }) => `使用了 ${count} 个工具`,
-      thoughtAndUsedTools: ({ count }) => `已思考 · 使用了 ${count} 个工具`,
       toolActivity: {
         command: ({ count }) => `运行了 ${count} 个命令`,
         commandRun: ({ count }) => `正在运行 ${count} 个命令`,

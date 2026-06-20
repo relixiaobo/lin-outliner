@@ -2,7 +2,8 @@ import type { AgentToolResultWithPayloads, ToolCall } from '../../../core/agentT
 import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
-import type { MouseEvent, ReactNode } from 'react';
+import type { MouseEvent } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ChevronDownIcon,
   ICON_SIZE,
@@ -68,11 +69,15 @@ interface AgentProcessBlockProps {
   surfaceResultlessProcess: boolean;
   /** Wall-clock the run took; surfaced as "Worked for …" once sealed. Null when unknown. */
   workedForMs: number | null;
-}
-
-interface AgentTurnProcessFoldProps extends Omit<AgentProcessBlockProps, 'conversationId' | 'childRunsByParentToolCallId' | 'index' | 'onNodeReferenceOpen' | 'onOpenChildRunTranscript' | 'results'> {
-  children: ReactNode;
-  results: Map<string, AgentToolResultWithPayloads>;
+  /**
+   * The final answer has started streaming. Drives Codex's auto-collapse: the
+   * body shows expanded while still WORKING (no answer yet) and folds to the
+   * "Worked for {t}" divider the moment the answer begins. A user toggle (sticky
+   * via expandState) overrides.
+   */
+  answerStarted: boolean;
+  /** Producing run's start, for the live "Working for {t}" ticker; null unless running. */
+  liveStartedAtMs: number | null;
 }
 
 interface ProcessSummaryFacts {
@@ -120,6 +125,7 @@ export function summarizeProcess({
   toolCalls,
   turnActive,
   liveCollapsed,
+  liveElapsedMs,
   turnFailedWithoutProse,
   surfaceResultlessProcess,
   workedForMs,
@@ -136,6 +142,8 @@ export function summarizeProcess({
   toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>;
   toolCalls: ToolCall[];
   liveCollapsed: boolean;
+  /** Live wall-clock since the run started, for the "Working for {t}" ticker; null when unknown. */
+  liveElapsedMs: number | null;
   turnActive: boolean;
   turnFailedWithoutProse: boolean;
   surfaceResultlessProcess: boolean;
@@ -164,25 +172,38 @@ export function summarizeProcess({
     );
   };
 
-  // While the turn is live AND the block is collapsed, the header doubles as a
-  // live status line: whichever tool is currently running, else the latest
-  // streaming thought. Once expanded, control falls through to the static summary
-  // below and the running tool row inside the timeline carries the only spinner.
-  if (liveCollapsed) {
-    for (let i = toolCalls.length - 1; i >= 0; i -= 1) {
-      const toolCall = toolCalls[i]!;
-      const status = toolStatus(toolCall);
-      if (status === 'pending') return summarizeToolCall(toolCall, status, toolCallLabels);
-    }
-    if (lastThinkingText) return previewText(lastThinkingText, 80);
-    if (thinkingCount > 0) return thinkingLabel;
-    return process.working;
-  }
-
+  // Interrupted (RED) wins over any clock — a failed/cancelled/crashed turn is
+  // never a "Working"/"Worked" divider.
   if (turnFailedWithoutProse) {
     if (thinkingCount > 0 && toolCount > 0) return process.interruptedAfterThinking;
     if (thinkingCount > 0) return process.thoughtInterrupted;
     return process.interrupted;
+  }
+
+  // Live divider — PERSISTENT (expanded OR collapsed), Codex-style and the
+  // "常驻" the user asked for: while the turn is active the header is the ticking
+  // clock — "Working for {t}" (≥1s) / bare "Working" (<1s, no number so it never
+  // flickers a "0s"). It stays put when the body is expanded (the work shows in
+  // the timeline below) and when it auto-collapses on answer start. Without a run
+  // clock (legacy entries) a collapsed live turn falls back to the running tool /
+  // latest thought; an expanded clock-less live turn falls through to the
+  // descriptive summary.
+  if (turnActive) {
+    if (liveElapsedMs !== null) {
+      return liveElapsedMs >= 1000
+        ? process.workingFor({ duration: formatRunDuration(liveElapsedMs) })
+        : process.working;
+    }
+    if (liveCollapsed) {
+      for (let i = toolCalls.length - 1; i >= 0; i -= 1) {
+        const toolCall = toolCalls[i]!;
+        const status = toolStatus(toolCall);
+        if (status === 'pending') return summarizeToolCall(toolCall, status, toolCallLabels);
+      }
+      if (lastThinkingText) return previewText(lastThinkingText, 80);
+      if (thinkingCount > 0) return thinkingLabel;
+      return process.working;
+    }
   }
 
   // Result-first resting state: a SEALED turn (not active) collapses to
@@ -232,6 +253,24 @@ export function summarizeProcess({
   return process.working;
 }
 
+// Tick a live elapsed clock (ms since `startedAtMs`) while `active`, re-rendering
+// once a second so the "Working for {t}" header advances. Returns null when the
+// segment isn't live or has no start (the header then falls back to a static
+// label) — and the interval is gated on `active`, so a crashed/sealed run never
+// keeps ticking (the "2d" runaway-clock bug). At most one live turn is on screen,
+// so this is one interval at a time.
+function useElapsedTick(startedAtMs: number | null, active: boolean): number | null {
+  const [now, setNow] = useState(() => startedAtMs ?? 0);
+  useEffect(() => {
+    if (!active || startedAtMs === null) return;
+    setNow(Date.now());
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [active, startedAtMs]);
+  if (!active || startedAtMs === null) return null;
+  return Math.max(0, now - startedAtMs);
+}
+
 export function AgentProcessBlock({
   blocks,
   expandState,
@@ -248,16 +287,21 @@ export function AgentProcessBlock({
   turnFailedWithoutProse,
   surfaceResultlessProcess,
   workedForMs,
+  answerStarted,
+  liveStartedAtMs,
 }: AgentProcessBlockProps) {
   const t = useT();
   const facts = processSummaryFacts(blocks);
   const liveSegment = turnActive && !sealed;
-  // Live process rows now default collapsed; the collapsed header carries the
-  // active tool/thinking summary. Resultless/error surfacing still opens by
-  // default so context is not buried.
-  const defaultExpanded = surfaceResultlessProcess;
+  // Codex auto-collapse (machine C): the body shows EXPANDED while still working
+  // (no answer yet) so the user watches the reasoning + tool activity 1:1, then
+  // folds to the "Worked for {t}" divider the moment the final answer begins
+  // (`answerStarted`). A surfaced resultless/interrupted turn always opens. A user
+  // toggle (sticky via expandState) overrides either default.
+  const defaultExpanded = surfaceResultlessProcess || (liveSegment && !answerStarted);
   const expanded = expandState.isExpanded(id, defaultExpanded);
   const liveCollapsed = liveSegment && !expanded;
+  const liveElapsedMs = useElapsedTick(liveStartedAtMs, liveSegment);
   const toggle = (event: MouseEvent<HTMLElement>) => {
     expandState.toggle(id, expanded, event.currentTarget);
   };
@@ -270,14 +314,14 @@ export function AgentProcessBlock({
         data-agent-process-id={id}
         onClick={toggle}
       >
-        {/* The "Worked for …" header is icon-free (codex-style): the summary text
-            carries the state (it already reads "Worked for 13s" / "Thought · used N
-            tools" / an interrupted label) at the row's left edge, no leading glyph.
-            A single TRAILING slot holds the disclosure chevron, swapped for the live
-            spinner while the turn is actively working and collapsed — one slot, so
-            the title never shifts across the loading→sealed transition (the
-            "labels don't move" rule). Once expanded the spinner moves to the
-            running tool row in the timeline. */}
+        {/* The header is icon-free (codex-style): the summary text carries the
+            state — the persistent "Working for {t}" / "Worked for {t}" divider, or
+            an interrupted label — at the row's left edge, no leading glyph. A single
+            TRAILING slot holds the disclosure chevron, swapped for the live spinner
+            only while working AND collapsed — one slot, so the title never shifts
+            across the loading→sealed transition (the "labels don't move" rule).
+            While expanded the spinner moves to the running tool row in the
+            timeline. */}
         <span className="agent-process-title">
           {summarizeProcess({
             ...facts,
@@ -285,6 +329,7 @@ export function AgentProcessBlock({
             results,
             turnActive,
             liveCollapsed,
+            liveElapsedMs,
             turnFailedWithoutProse,
             surfaceResultlessProcess,
             workedForMs,
@@ -317,72 +362,6 @@ export function AgentProcessBlock({
           childRunsByParentToolCallId={childRunsByParentToolCallId}
           turnActive={turnActive}
         />
-      ) : null}
-    </div>
-  );
-}
-
-export function AgentTurnProcessFold({
-  blocks,
-  children,
-  expandState,
-  id,
-  pendingToolCallIds,
-  results,
-  sealed,
-  turnActive,
-  turnFailedWithoutProse,
-  surfaceResultlessProcess,
-  workedForMs,
-}: AgentTurnProcessFoldProps) {
-  const t = useT();
-  const liveSegment = turnActive && !sealed;
-  const defaultExpanded = surfaceResultlessProcess;
-  const expanded = expandState.isExpanded(id, defaultExpanded);
-  const liveCollapsed = liveSegment && !expanded;
-  const facts = processSummaryFacts(blocks);
-  const title = summarizeProcess({
-    ...facts,
-    pendingToolCallIds,
-    results,
-    turnActive,
-    liveCollapsed,
-    turnFailedWithoutProse,
-    surfaceResultlessProcess,
-    workedForMs,
-    process: t.agent.process,
-    toolCallLabels: t.agent.toolCall,
-    thinkingLabel: t.agent.thinking.thinking,
-  });
-  const toggle = (event: MouseEvent<HTMLElement>) => {
-    expandState.toggle(id, expanded, event.currentTarget);
-  };
-
-  return (
-    <div className={`agent-process-block ${turnFailedWithoutProse ? 'is-error' : ''}`}>
-      <ButtonControl
-        aria-expanded={expanded}
-        className="agent-process-toggle"
-        data-agent-process-id={id}
-        onClick={toggle}
-      >
-        <span className="agent-process-title">
-          {title}
-        </span>
-        {liveCollapsed ? (
-          <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
-        ) : (
-          <ChevronDownIcon
-            aria-hidden
-            className={`agent-process-chevron${expanded ? ' is-expanded' : ''}`}
-            size={14}
-          />
-        )}
-      </ButtonControl>
-      {expanded ? (
-        <div className="agent-process-flat">
-          {children}
-        </div>
       ) : null}
     </div>
   );
