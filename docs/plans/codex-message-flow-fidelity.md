@@ -1,332 +1,312 @@
 # Codex message-flow fidelity
 
-Raise our agent process/transcript render to match the **OpenAI Codex desktop
-client**'s message-flow interaction. Grounded in a read-only reverse-engineering of
-that client (Electron/Vite/CSS-Modules), captured in
-`tmp/research/codex-client/MESSAGE-FLOW-GAP.md` (the gap doc; every claim there
-cites the exact Codex token/class/i18n string). Read that first — this plan is the
-build design; the gap doc is the evidence.
+Raise our agent transcript to a **1:1 reproduction of the OpenAI Codex desktop
+client's message-flow interaction**. Grounded in a read-only reverse-engineering
+of that client, captured in `tmp/research/codex-client/MESSAGE-FLOW-GAP.md` (the
+gap doc — the corrected, authoritative state machine; every claim cites the exact
+Codex minified symbol / token / i18n string). **Read the gap doc first**; this
+plan is the build design, the gap doc is the evidence.
+
+## Why this supersedes the previous 4-gap design
+
+The first version of this plan closed four *cosmetic* gaps (counted summary, live
+ticker, "Thinking" shimmer, duration units) while listing the structurally
+load-bearing behaviors as **Non-goals**. Testing showed the result is not 1:1 —
+because the spine was the Non-goals, not the leaves. The corrected gap doc (§8)
+shows Codex's flow is **one `typed-item stream → render-group splitter → three
+independent collapse state machines`, with the `worked-for` item as the
+structural fold line.** PR #311 built the leaves onto our legacy per-message block
+renderer, without that substrate; the leaves can't read right without the trunk.
+This plan rebuilds the trunk.
 
 ## Goal
 
-Close the four highest-impact fidelity gaps so the message flow reads like Codex's:
-tool activity folds into **counted, kind-named summaries**, the live header **ticks
-"Working for {t}"**, the active cue is a **"Thinking" text shimmer** (not a bare
-spinner), and durations/statuses match Codex's vocabulary.
+Render an assistant turn the way Codex does:
 
-## Non-goals (deliberate divergences to KEEP — do not "fix")
+- a turn is a **flat typed render-unit stream** run through a **render-group
+  splitter** (the 6 groupable unit types; `assistant-message` is a hard boundary;
+  `reasoning` breaks a tool run; single `mcp`/`exec` units don't fold);
+- consecutive tool activity folds into ONE **counted, kind-named, tense-aware,
+  Set-deduped** summary group (gap doc §3);
+- the **turn body auto-collapses to a one-line `worked-for` divider the moment the
+  final answer starts streaming**, expandable + persisted (gap doc §4);
+- per-item state is faithful: **4-state steps** (running / done-green /
+  failed-red / pending-dim), **reasoning "Thinking" → "Thought for {elapsed}"**,
+  the **default active cue is a static label** (the shimmer is a Codex A/B
+  experiment, not the default), durations roll up to days (gap doc §2, §5, §6, §7).
 
-- **No auto-collapse-on-answer-start.** Codex auto-collapses the agent body the
-  moment the final answer streams (`IO`); we keep our sticky behavior — the process
-  stays as the user left it through live→sealed, per the shipped
-  `agent-process-stable-disclosure` (#297) and `agent-event-log-rendering.md`. All
-  work below is independent of the collapse default.
-- Keep our richer collapsed fallback "Thought · used N tools" over Codex's "{N}
-  previous messages".
-- No steering/hook-feedback "pinned-through-collapse" rows (we have no steering
-  entity).
-- No `STEPS_PROSE`/`STEPS_COMMANDS` user detail-mode toggle — a single default
-  grouping is enough for parity.
+## Non-goals
+
+- **Codex's visual *design language*** (its exact colors, type scale, blob
+  gradients). We match the *interaction logic and states*; the skin stays our
+  ratified design system (B-rules). 1:1 here = behavioral, not pixel.
+- **`STEPS_PROSE` / `STEPS_COMMANDS` user detail-mode toggle** (gap doc §3d) — ship
+  a single default mode (≈ `STEPS_COMMANDS`); revisit only if the PM wants the
+  setting. Low fidelity cost.
+- **Measured-line long-text fold** (`use-measured-text-collapse`, gap doc §9) —
+  nice-to-have; not in this set unless a PR comes in cheap.
+- **Steering / hook-feedback "pinned-through-collapse" rows** — we have no steering
+  entity; the `persistentEntries` bucket is just the final answer for us.
+- **No new `src/core` document commands or stored conversation kinds.** The
+  render-unit stream and grouping are **renderer-side view-model derivation** from
+  the existing agent event-replay state; per-turn collapse is renderer UI state.
+  (If timing/`worked-for` needs a core signal, that is an isolated protocol PR
+  decided first — see Open questions.)
 
 ## Shape
 
-**ONE complete feature, ONE PR, ONE agent.** The four parts A–D below are
-**build-order within that single PR** (A7 foundation-before-consumers), NOT separate
-releases. Build leaf utilities first (D-duration, i18n family, kind map), then the
-core grouping/summary (A), then the header ticker (B) and shimmer (C), then the 4th
-status (D-status). The PR is reviewable as one coherent "match Codex message flow"
-change. Branch: one topic branch; mark ready when typecheck + test:core +
-test:renderer + visual (light+dark) all pass.
+**A SET of independent, complete features — ordered ONLY by genuine dependency**,
+each its own PR, each shippable and reviewable alone (no "scaffold now, useful
+later" slices). Foundation first (A7). PR-1 is the substrate + the first visible
+capability; PR-2 and PR-3 consume it.
+
+```
+PR-1  render-group substrate + counted tool-activity group   (foundation + visible)
+PR-2  per-turn auto-collapse + worked-for divider entity      (depends on PR-1 stream)
+PR-3  per-item state fidelity: reasoning lifecycle, active cue,
+      4-state step, duration/anchor                            (depends on PR-1 unit model)
+```
+
+#311's i18n tense family, `toolActivityKind` map, and `formatRunDuration` rollup
+are **salvageable inputs** to PR-1/PR-3 — see "Disposition of #311".
 
 ---
 
-## Part A — Tool-activity grouping + counted, kind-named summary (High)
+## PR-1 — Render-group substrate + counted tool-activity group
 
-Today a run of tool calls renders as N discrete `AgentToolCallBlock` rows, and the
-collapsed header summarizes everything as a generic "Used N tools". Codex folds a
-run of **consecutive** tool/command items into ONE `collapsed-tool-activity`
-disclosure whose summary names the **kind, count, and tense** ("Ran 3 commands",
-"Read 5 files", "Searching the web"), expandable to the individual rows.
+The foundation: replace the ad-hoc "consecutive `toolCall`" grouping with a real
+typed-unit stream + splitter, and render a faithful counted summary group.
 
-### A1. Tool-name → activity-kind map (new helper)
+### 1a. Render-unit model (renderer view-model)
 
-Add to `AgentToolCallBlock.tsx` (next to `getToolIcon`/`summarizeToolCall`, which
-already switch on `toolCall.name`), exported for reuse:
+In the renderer projection layer (`src/renderer/agent/runtime.ts` /
+`agentRenderProjection.ts`), derive per assistant turn a normalized unit list
+(gap doc §1, `Re`):
 
 ```ts
-export type ToolActivityKind =
-  | 'command' | 'fileCreate' | 'fileEdit' | 'fileDelete'
-  | 'read' | 'search' | 'web' | 'memory' | 'skill' | 'other';
+type RenderUnitKind =
+  | 'exploration' | 'patch' | 'exec' | 'mcpToolCall'
+  | 'approvalReview' | 'webSearch' | 'assistantMessage' | 'other';
+// 'other' = reasoning, todo, plan, generated-image, worked-for, notices, …
+```
 
-export function toolActivityKind(name: string): ToolActivityKind {
-  switch (name) {
-    case 'bash': return 'command';
-    case 'file_write': case 'node_create': return 'fileCreate';
-    case 'file_edit': case 'node_edit': return 'fileEdit';
-    case 'node_delete': return 'fileDelete';
-    case 'node_read': return 'read';
-    case 'node_search': return 'search';
-    case 'web_search': case 'web_fetch': return 'web';
-    case 'recall': case 'dream': return 'memory';
-    case 'skill': return 'skill';
-    default: return 'other'; // Agent/AgentStatus/AgentSend/AgentStop never reach here (child-run rows, not grouped)
-  }
+`exec` units carry a parsed sub-kind `{ read | search | listFiles | unknown }`
+derived from the tool call (gap doc §1) so a shell/read call can summarize as
+"Read N files" / "Searched code" / "Listed files", not "Ran N commands".
+
+### 1b. Splitter (pure, unit-tested) — mirror `split-items-into-render-groups`
+
+```ts
+type RenderGroup =
+  | { kind: 'unit'; unit: RenderUnit }
+  | { kind: 'toolActivity'; id: string; members: RenderUnit[]; summary: ToolActivitySummary };
+
+export function splitIntoRenderGroups(units: RenderUnit[], mode: DetailMode): RenderGroup[];
+```
+
+Rules (gap doc §3a):
+- A tool-activity run = maximal consecutive units in
+  `{exploration, patch, exec, mcpToolCall, approvalReview, webSearch}`.
+- `assistantMessage` and `other` (incl. **reasoning**) **break** the run.
+- A lone `mcpToolCall`, or (non-prose) a non-current lone `exec`, passes through
+  as its own `unit` group (no redundant wrapper).
+- Each run ≥ the fold threshold becomes one `toolActivity` group with a `summary`.
+
+### 1c. Counted summary accumulator (pure, unit-tested) — mirror `Ft`/`It`/`Lt`
+
+```ts
+interface ToolActivitySummary {
+  commandCount: number; createdFileCount: number; editedFileCount: number;
+  deletedFileCount: number; exploredFileCount: number; loadedToolCount: number;
+  searchCount: number; listCount: number; mcpToolCallCount: number;
+  webSearchCount: number; deniedRequestCount: number; timedOutRequestCount: number;
+  changedLineCount: number;
+  mcpToolCallSources: Array<{ name: string; count: number }>;
+  running: boolean;           // any member still running → present-continuous tense
 }
 ```
 
-### A2. Grouping (new synthetic block + render)
+- Counts use **`Set<string>` over paths** so duplicate file paths dedupe (gap doc
+  §3b) — not a naive length.
+- `running` is **per-member** (`getToolCallStatus(..., outcome)` — reuse the
+  `outcome` signal from the merged `fix/tool-call-spinner-stuck`), so a
+  settled-but-resultless member counts done. This kills the current
+  `agentProcessSummary.ts:39` group-global "Running…" mislabel.
 
-Group consecutive `toolCall` segments in `AgentProcessTimeline.tsx` **before**
-`blocks.map`. Rules:
+### 1d. Summary copy — the full tense matrix (i18n)
 
-- A run = maximal sequence of adjacent `kind:'toolCall'` blocks **that are not child
-  runs** (`!block.childRun && !childRunsByParentToolCallId?.get(block.toolCall.id)`).
-  A child-run tool call breaks the run and renders standalone (it has rich inline
-  content we must not hide). Thinking/narration also break the run.
-- A run of length **≥ 2** renders as ONE `AgentToolActivityGroup` disclosure
-  (collapsed by default) whose body is the existing `AgentToolCallBlock` rows
-  verbatim. A run of length 1 renders as today (a lone `AgentToolCallBlock`) — no
-  redundant wrapper.
-- The group's own collapse state uses the existing `expandState` keyed by a stable
-  id, e.g. `activity:${firstToolCallId}`.
+Add under `agent.process.toolActivity` in `en.ts` + `zh-Hans.ts` + `types.ts`.
+Each kind needs **running + done** forms, pluralized; leading (Title) vs joined
+(lowercase) handled by the composer, not duplicated keys (gap doc §3c):
 
-Helper (pure, unit-testable):
+```
+command:   Ran # commands     / Running # commands
+fileCreate Created # files    / Creating # files
+fileEdit   Edited # files     / Editing # files
+fileDelete Deleted # files    / Deleting # files
+read       Read # files       / Reading # files
+search     Searched code      / Searching code
+list       Listed files       / Listing files
+web        Searched the web   / Searching the web
+mcp        Called # tools     / Calling # tools     (+ per-source "Used {name}")
+loaded     Loaded # tools     / Loading # tools
+denied     Denied # requests
+timedOut   # requests timed out
+```
+
+Compose: single-kind run → that phrase; mixed → per-kind fragments joined by
+" · " (first capitalized, rest `toLowerCase()`); `changedLineCount>0` appends
+" • N lines" for patch runs. **Drop** the `other`-collapses-whole-group behavior
+(current `agentProcessSummary.ts:34`) — an unmapped tool contributes a generic
+"called a tool" fragment, it does not blank the whole summary.
+
+### 1e. Group component
+
+`AgentToolActivityGroup.tsx`: a disclosure (reuse the existing toggle affordance /
+`ButtonControl` + chevron, B6/B10) whose header is the composed summary (running
+tense while any member runs) and whose expanded body renders the member rows via
+the existing `AgentToolCallBlock`. Collapse state keyed by `activity:${firstId}`
+(machine B, gap doc §3) — independent of the turn-body collapse (machine C, PR-2).
+
+**Complete on its own:** PR-1 changes tool activity to render as faithful counted
+groups with correct tense and dedup, expandable to rows. Reviewable without PR-2/3.
+
+---
+
+## PR-2 — Per-turn auto-collapse + `worked-for` divider entity
+
+The spine. Reverses the two former Non-goals (auto-collapse-on-answer-start; the
+divider entity) — **PM-ratified 2026-06-20** (full rebuild to 1:1).
+
+### 2a. Per-turn collapse state (machine C, gap doc §4a)
+
+A renderer-side per-turn collapse store keyed by turn id (persist across reloads —
+mirror Codex `collapsedTurnsById`; decide store: existing renderer persisted UI
+state, NOT core document state):
 
 ```ts
-type TimelineRenderUnit =
-  | { kind: 'block'; block: AgentProcessSegmentBlock }
-  | { kind: 'toolActivity'; id: string; members: Array<Extract<AgentProcessSegmentBlock,{kind:'toolCall'}>> };
-
-export function groupTimelineUnits(
-  blocks: AgentProcessSegmentBlock[],
-  isChildRun: (b: Extract<AgentProcessSegmentBlock,{kind:'toolCall'}>) => boolean,
-): TimelineRenderUnit[];
+shouldAllowCollapse = hasFinalAssistantStarted && !turnCancelled && hasRenderableActivity
+isCollapsed = persistedChoice ?? !preventAutoCollapse   // default collapsed once answer starts
 ```
 
-### A3. Counted summary copy (new i18n family)
+`hasFinalAssistantStarted` = the turn's first `assistantMessage` unit has begun
+streaming. `preventAutoCollapse` = a live tool still running (our analog of
+Codex's active-MCP guard). A user toggle writes `persistedChoice` and always wins.
+Cancelled/interrupted turns never auto-collapse.
 
-Add a `toolActivity` sub-family under `agent.process` in BOTH
-`src/core/i18n/messages/en.ts` and `src/core/i18n/messages/zh-Hans.ts` (the
-`process:` block — en at en.ts:1012, zh at zh-Hans.ts:927). Each kind has a
-**running** and **done** form; counts pluralize. The group summary, when all members
-share a kind, is that kind's phrase; when mixed, compose the per-kind sub-phrases
-joined by " · " (capitalize the first), falling back to the existing
-`usedTools({count})` only when > 2 distinct kinds.
+### 2b. The `worked-for` divider unit (gap doc §4b–c)
 
-Exact `en` copy to add (mirror in `zh-Hans`):
+Synthesize a `worked-for` render unit at the **end of the activity, immediately
+before the final answer** (partition analog of Codex `LO`/`BO`:
+`{collapsibleEntries, persistentEntries, workedForItem}`). It carries
+`{ status: 'working'|'sealed', startedAtMs, completedAtMs }` from the turn's run
+timing.
 
-```ts
-toolActivity: {
-  // done / running, count-pluralized. Leading=sentence-initial (capitalized).
-  command:     ({ count }) => `Ran ${count === 1 ? 'a command' : `${count} commands`}`,
-  commandRun:  ({ count }) => `Running ${count === 1 ? 'a command' : `${count} commands`}`,
-  fileCreate:    ({ count }) => `Created ${count === 1 ? 'a file' : `${count} files`}`,
-  fileCreateRun: ({ count }) => `Creating ${count === 1 ? 'a file' : `${count} files`}`,
-  fileEdit:    ({ count }) => `Edited ${count === 1 ? 'a file' : `${count} files`}`,
-  fileEditRun: ({ count }) => `Editing ${count === 1 ? 'a file' : `${count} files`}`,
-  fileDelete:    ({ count }) => `Deleted ${count === 1 ? 'a file' : `${count} files`}`,
-  fileDeleteRun: ({ count }) => `Deleting ${count === 1 ? 'a file' : `${count} files`}`,
-  read:    ({ count }) => `Read ${count === 1 ? 'a node' : `${count} nodes`}`,
-  readRun: ({ count }) => `Reading ${count === 1 ? 'a node' : `${count} nodes`}`,
-  search:    () => 'Searched',
-  searchRun: () => 'Searching',
-  web:    () => 'Searched the web',
-  webRun: () => 'Searching the web',
-  memory:    () => 'Recalled memory',
-  memoryRun: () => 'Recalling memory',
-  skill:    ({ count }) => `Used ${count === 1 ? 'a skill' : `${count} skills`}`,
-  skillRun: ({ count }) => `Using ${count === 1 ? 'a skill' : `${count} skills`}`,
-  // mixed-kind joiner uses these as lowercase non-leading fragments via toLowerCase()
-},
+Three live states, ticking 1s while working (`elapsedMs = (completedAtMs ?? now) -
+startedAtMs` — **anchored on run start, NOT `message.timestamp`**, fixing the
+current "2d" bug):
+
+```
+working & <1s   → "Working"            (bare, no number)
+working & ≥1s   → "Working for {time}" (live tick)
+sealed          → "Worked for {time}"
 ```
 
-`zh-Hans` copy (same keys): `command: ({count}) => \`运行了 ${count} 个命令\``,
-`commandRun: 运行 ${count} 个命令`, `read: 读取了 ${count} 个节点`, `web: 搜索了网页` /
-`webRun: 正在搜索网页`, `memory: 检索了记忆`, `skill: 使用了 ${count} 个技能`, etc.
-(Per AGENTS.md the repo copy is English; the user-facing zh strings are the product's
-localization and live in `zh-Hans.ts`.)
+### 2c. Collapsed header = the divider, 3-way fallback (gap doc §4c)
 
-### A4. Summary composition + group component
+When the turn body is collapsed, the header IS a toggle button (chevron 0°↔90°)
+rendering, in priority:
 
-- `AgentToolActivityGroup.tsx` (new): a disclosure row (reuse `ButtonControl` +
-  chevron, same affordance as `AgentProcessBlock`'s toggle, B6/B10) whose header text
-  is `summarizeToolActivity(members, anyPending)` and whose expanded body maps members
-  to `AgentToolCallBlock`. While any member is pending the header uses the *running*
-  i18n form; the spinner/active treatment follows Part C.
-- `summarizeToolActivity(members, running)` (new, in `AgentProcessBlock.tsx` or a
-  shared `agentProcessSummary.ts`): bucket members by `toolActivityKind`, pick the
-  i18n form per bucket (running vs done), compose. Member done/error/pending derives
-  from `getToolCallStatus(... , outcome)` — **reuse the `outcome` signal added by
-  the `fix/tool-call-spinner-stuck` branch** so a settled-but-resultless member
-  counts done, not pending.
-- `summarizeProcess` (`AgentProcessBlock.tsx`): the collapsed header keeps composing
-  "Thought · …", but the tool portion now uses `summarizeToolActivity` of the turn's
-  tool calls instead of the single `usedTools({count})` line.
+```
+worked-for unit present → "Working for …" / "Worked for {time}"
+else static duration     → "Worked for {time}"
+else                     → "{N} previous messages"  (N = collapsed unit count)
+```
+
+Clicking toggles + persists; expanding reveals `collapsibleEntries`. New i18n:
+`workingFor`, `working`, `workedFor`, `previousMessagesSummary`.
+
+**Complete on its own:** the turn collapses to one divider line on answer-start,
+expandable. This is the single most visible Codex gesture.
 
 ---
 
-## Part B — Live "Working for {t}" ticker + bare "Working" under 1s (Med)
+## PR-3 — Per-item state fidelity
 
-Codex's live header ticks `Working for {time}` (≥1s) / bare `Working` (<1s, no
-number — avoids a "0s" flicker), settling to `Worked for {time}` on seal. We only
-show the static sealed header; live we show the running tool / thinking preview but
-no elapsed clock, and sub-1s prints "<1s".
+Per-item visual/textual states. May split into 3a/3b at review if large; each part
+is independently complete.
 
-### B1. Live elapsed source + ticker hook
+### 3a. Reasoning lifecycle + active-cue correction (gap doc §5, §6)
 
-`AgentProcessBlock` already receives `turnActive` and `workedForMs` (sealed). For
-the LIVE clock it needs the producing run's start. Thread it down:
+- Reasoning: active → **"Thinking"** (static); sealed →
+  **"Thought for {elapsed}"** / "Thought". Strip a leading `**gist**` line.
+- **Correct the active cue:** the default is a **static label**, not a shimmer.
+  The thinking phase shows **"Thinking"**, never "Working for 3s" (fixes the
+  #311 live-collapsed divergence). Keep the shimmer ONLY behind an off-by-default
+  flag (it is a Codex A/B experiment); the per-running-step spinner stays.
 
-- Source: the producing run's start time. The simplest existing anchor is the
-  assistant message `createdAt` (≈ run start) — thread it as a new optional prop
-  `liveStartedAtMs?: number` from `AgentMessageRow` (it has `entry.message.timestamp`
-  / the entity `createdAt`) → `AgentTurnProcessFold`/`AgentProcessBlock`. If a more
-  precise run `startedAt` is readily available on the entry, prefer it (note it in
-  the PR).
-- New hook `useElapsedTick(startedAtMs, active)` (small, colocated): when `active`,
-  `setInterval(…, 1000)` bumps a state counter; cleared on inactive/unmount. Returns
-  `Date.now() - startedAtMs`. One interval per live process block is fine (there is
-  at most one live turn).
+### 3b. 4-state step model + duration/anchor (gap doc §2, §7)
 
-### B2. Header copy
-
-- In `summarizeProcess`'s `liveCollapsed` branch: when there is **no currently
-  pending tool to name** (the existing running-tool path stays — it is more
-  informative), show the live clock: `elapsedMs >= 1000 ? process.workingFor({
-  duration: formatRunDuration(elapsedMs) }) : process.working`.
-- Add i18n `workingFor: ({ duration }) => \`Working for ${duration}\`` (en) /
-  `用时 ${duration}…` or `处理中 ${duration}` (zh) next to `working`/`workedFor`.
-- Drop the `"<1s"` literal from the LIVE path (bare "Working"); `formatRunDuration`'s
-  own "<1s" stays for any non-live caller, but with Part D it only returns "<1s" for
-  sealed sub-1s which is acceptable. (If desired, change `formatRunDuration` to never
-  emit "<1s" and let callers decide — keep that minimal.)
+- `getToolCallStatus` gains a **4th `pending` (declared-but-not-started)** state
+  ONLY if the projection cheaply distinguishes it from `running`; else defer and
+  note in the PR (don't add core events for an icon). Visual: running ring / done
+  **green** ring+check / failed **red** ring+✕ / pending **dim hollow** ring
+  (mirror `progress-step-row`).
+- `formatRunDuration`: roll up to **days**, keep all non-zero units
+  (`1h 5m 3s`, `2d 3h`); unit-test boundaries (59s/60s/90s/3600s/3661s/86400s).
 
 ---
 
-## Part C — "Thinking" text shimmer as the active cue (Med — biggest "feels like Codex")
+## Disposition of #311
 
-Codex's primary "alive" cue is a **cadenced text shimmer** sweeping the "Thinking"
-label (mask-gradient sweep, `steps(48,end)`, re-arms ~every 4s), NOT a spinner;
-reduced-motion turns it off (CSS `@media` + JS `matchMedia` guard). We use a
-`LoaderIcon` in the collapsed header (`AgentProcessBlock.tsx:286`).
+#311 implements the superseded 4-gap design on the legacy substrate, with known
+bugs (group-global tense `agentProcessSummary.ts:39`; `other` collapses the whole
+group `:34`; `message.timestamp` anchor; shimmer-as-default; thinking phase shows
+"Working for 3s"). **Recommendation: close #311 without merging**, salvaging its
+i18n tense family, `toolActivityKind` map, and `formatRunDuration` rollup into
+PR-1/PR-3. Merging it first would ship the wrong substrate and then immediately
+rework it. (PM decision — see Open questions.)
 
-### C1. Shimmer component + CSS (token-driven, achromatic)
+## Files (indicative)
 
-- `AgentTextShimmer.tsx` (new): wraps label text in a `<span>` with a class that
-  applies a sweeping mask. Achromatic only (B3/B4): base color `var(--text-secondary)`,
-  highlight `var(--text-primary)` (NO brand/accent). Our styles are global token CSS
-  (NOT CSS Modules) — add to the agent CSS file (where `agent-process-spinner` lives).
-
-```css
-.agent-text-shimmer { position: relative; }
-.agent-text-shimmer.is-active {
-  background: linear-gradient(90deg, var(--text-secondary) 0%, var(--text-primary) 50%, var(--text-secondary) 100%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text; background-clip: text; color: transparent;
-  animation: agent-text-shimmer-sweep 1s steps(48, end);
-  animation-iteration-count: 1;
-}
-/* JS re-arms the .is-active class ~every 4s (initial 600ms delay, 1s sweep). */
-@keyframes agent-text-shimmer-sweep { from { background-position: 200% 0; } to { background-position: -200% 0; } }
-@media (prefers-reduced-motion: reduce) { .agent-text-shimmer.is-active { animation: none; color: var(--text-secondary); -webkit-text-fill-color: currentColor; } }
-```
-
-- JS cadence + reduced-motion guard: reuse the project's reduced-motion hook if one
-  exists (grep `prefers-reduced-motion` / `useReducedMotion` in `src/renderer`); else
-  a `matchMedia('(prefers-reduced-motion: reduce)')` guard. When reduced, never add
-  `is-active`. Cadence: `is-active` for 1s, off, re-arm every ~4s while the turn is
-  active.
-
-### C2. Wiring
-
-- Replace the collapsed-header `LoaderIcon` slot with `AgentTextShimmer` on the
-  active label ("Working"/"Working for …"/"Thinking"), preserving the single
-  trailing slot (B7 "labels don't move"; the slot still swaps shimmer↔chevron on
-  collapse/seal). Keep the per-running-tool-row spinner (`agent-tool-call-spinner`)
-  as-is — Codex also keeps a per-step ring.
-- **Gate decision at the visual review:** if the shimmer reads off-brand in
-  light+dark or trips a design-system guard (B11), fall back to keeping the spinner.
-  The gap doc marks this part "optional/taste" — do not block A/B/D on it.
-
----
-
-## Part D — Duration day-rollup + a 4th "not-started" status (Low)
-
-### D1. `formatRunDuration` (agentProcessTypes.ts:36)
-
-Extend the current function (which tops out at hours and drops seconds in the hour
-form) to roll up to **days** and keep all non-zero units, matching Codex's `qd`
-(`1h 5m 3s`, `2d 3h`):
-
-```ts
-// after: if (minutes < 60) return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`;
-const hours = Math.floor(minutes / 60);
-if (hours < 24) return [ `${hours}h`, minutes % 60 && `${minutes % 60}m`, rest && `${rest}s` ].filter(Boolean).join(' ');
-const days = Math.floor(hours / 24);
-return [ `${days}d`, hours % 24 && `${hours % 24}h`, minutes % 60 && `${minutes % 60}m` ].filter(Boolean).join(' ');
-```
-
-Unit-test the boundaries (59s, 60s, 90s, 3600s, 3661s, 86400s, 90061s).
-
-### D2. Fourth status icon (conditional — defer if not cheap)
-
-Codex's `progress-step-row` has four states: running (ring) / done (check-circle) /
-failed (x-circle) / **not-started (hollow circle)**. Our `getToolCallStatus` is
-three-state (pending=running, done, error). Add a `'queued'`/'not-started' state ONLY
-if the projection cheaply distinguishes "tool call declared but `tool_execution_start`
-not yet fired" from "executing". If that signal is not readily available without new
-plumbing, **defer this half** and note it in the PR (the other three parts stand
-alone). Do not add new core events just for an icon.
-
----
-
-## i18n keys — summary of additions
-
-`agent.process` (en.ts + zh-Hans.ts):
-- `workingFor({ duration })`
-- `toolActivity.{command,commandRun,fileCreate,fileCreateRun,fileEdit,fileEditRun,
-  fileDelete,fileDeleteRun,read,readRun,search,searchRun,web,webRun,memory,memoryRun,
-  skill,skillRun}`
-
-The `i18n/types.ts` message-shape type must be updated to include these (typecheck
-enforces both locales stay in sync).
-
-## Files touched
-
-- `src/core/i18n/messages/en.ts`, `src/core/i18n/messages/zh-Hans.ts`,
-  `src/core/i18n/types.ts` — new keys.
-- `src/renderer/ui/agent/AgentToolCallBlock.tsx` — `toolActivityKind` + export;
-  optional 4th status in `getToolCallStatus`.
-- `src/renderer/ui/agent/AgentToolActivityGroup.tsx` (new) — the group disclosure.
-- `src/renderer/ui/agent/AgentProcessTimeline.tsx` — `groupTimelineUnits` + render
-  groups.
-- `src/renderer/ui/agent/AgentProcessBlock.tsx` — `summarizeToolActivity`,
-  `summarizeProcess` tool portion, live ticker in `liveCollapsed`.
-- `src/renderer/ui/agent/AgentAssistantTurnContent.tsx` /
-  `AgentMessageRow.tsx` — thread `liveStartedAtMs`.
-- `src/renderer/ui/agent/AgentTextShimmer.tsx` (new) + the agent CSS file — shimmer.
-- `src/renderer/ui/agent/agentProcessTypes.ts` — `formatRunDuration` day-rollup.
-- Tests: `tests/renderer/agentProcess.test.ts` (grouping, summary per kind, duration
-  boundaries, ticker threshold), `tests/renderer/agentToolCallBlock.test.ts`
-  (`toolActivityKind`).
+- `src/renderer/agent/runtime.ts` / `agentRenderProjection.ts` — render-unit
+  stream, splitter, summary accumulator, worked-for synthesis, per-turn collapse
+  derivation (PR-1, PR-2).
+- `src/renderer/ui/agent/AgentToolActivityGroup.tsx` (new) — counted group (PR-1).
+- `src/renderer/ui/agent/AgentProcessTimeline.tsx` / `AgentProcessBlock.tsx` /
+  `AgentAssistantTurnContent.tsx` — consume groups, render the divider/collapse
+  (PR-1, PR-2).
+- `src/renderer/ui/agent/agentProcessSummary.ts` — rewrite per 1c/1d.
+- `src/renderer/ui/agent/AgentToolCallBlock.tsx` — `toolActivityKind`, 4-state
+  status, exec sub-kind (PR-1, PR-3).
+- `src/renderer/ui/agent/agentProcessTypes.ts` — `formatRunDuration` rollup (PR-3).
+- `src/core/i18n/messages/{en,zh-Hans}.ts` + `types.ts` — tense family, divider,
+  reasoning copy.
+- Tests: splitter + summary accumulator (dedup, tense, boundaries), collapse
+  decision, duration boundaries, divider 3-way fallback.
 
 ## Test plan
 
-`bun run typecheck` · `bun run test:renderer` (new cases above) · `bun run test:core`
-(no core change expected; run to be safe) · `bun run docs:check`. **Visual light +
-dark** is the deciding gate for Part C (shimmer) and for the grouped disclosure
-look — use the headless light+dark technique (throwaway Playwright spec +
-`emulateMedia(colorScheme)`).
+Per PR: `bun run typecheck` · `bun run test:renderer` (new pure-function suites:
+splitter, summary, collapse decision, duration) · `bun run test:core` (no core
+change expected) · `bun run docs:check`. **Visual light + dark** is the deciding
+gate for every PR (grouped disclosure, divider line, collapse animation, 4-state
+icons) — headless light+dark technique (`emulateMedia(colorScheme)`).
 
-## Open questions
+## Decisions (ratified) + open build-time questions
 
-- A2: group runs of length ≥ 2 (lone tool calls render as today) — confirm at build,
-  tune if a single grouped row reads better.
-- A4: mixed-kind summary composition vs falling back to "used N tools" past 2 kinds —
-  pick the most legible; settle with the copy review.
-- B1: use assistant-message `createdAt` as the live-elapsed anchor, or a more precise
-  run `startedAt` if cheaply on the entry?
-- C2: does the text shimmer survive the design-system guard + light/dark, or keep the
-  spinner? Decided at the visual gate.
-- D2: can we cheaply distinguish "not-started" from "executing" for the 4th status,
-  or defer that half?
+**Ratified 2026-06-20 (PM):**
+- **Full rebuild to 1:1** — reverse the two former spine Non-goals
+  (auto-collapse-on-answer-start + `worked-for` divider entity); build the 3-PR SET.
+- **#311: close and salvage** — do not merge the legacy-substrate version; lift its
+  i18n tense family, `toolActivityKind` map, and `formatRunDuration` rollup into
+  PR-1/PR-3.
+- **Detail mode: single default** (≈ `STEPS_COMMANDS`); no user toggle this round.
+
+**Open at build time (decide in the PR, not blocking):**
+1. **Persisted collapse store:** renderer-only persisted UI state is the default
+   (no core change). If run-start timing for the `worked-for` divider isn't already
+   on the entry, PR-2 may need a tiny isolated projection addition — flag in the PR,
+   not a protocol change.
+2. **Fold threshold:** group runs of length ≥ 2 (lone tool renders as today); tune
+   if a single grouped row reads better.
