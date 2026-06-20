@@ -59,6 +59,7 @@ export function formatRunDuration(ms: number): string {
     `${days}d`,
     hours % 24 > 0 ? `${hours % 24}h` : null,
     minuteRest > 0 ? `${minuteRest}m` : null,
+    rest > 0 ? `${rest}s` : null,
   ].filter(Boolean).join(' ');
 }
 

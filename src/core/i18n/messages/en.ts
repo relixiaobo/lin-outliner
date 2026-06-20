@@ -1011,6 +1011,7 @@ commandPalette: {
     // The collapsible thinking/tool process block + compaction boundary.
     process: {
       working: 'Working',
+      thinking: 'Thinking',
       interrupted: 'Interrupted',
       interruptedAfterThinking: 'Interrupted after thinking',
       thoughtInterrupted: 'Thought (interrupted)',
@@ -1018,7 +1019,6 @@ commandPalette: {
       thoughtPreview: ({ preview }: { preview: string }) => `Thought · ${preview}`,
       thoughtAndTool: ({ tool }: { tool: string }) => `Thought · ${tool}`,
       usedTools: ({ count }: { count: number }) => `Used ${count} tools`,
-      thoughtAndUsedTools: ({ count }: { count: number }) => `Thought · used ${count} tools`,
       workedFor: ({ duration }: { duration: string }) => `Worked for ${duration}`,
       workingFor: ({ duration }: { duration: string }) => `Working for ${duration}`,
       toolActivity: {

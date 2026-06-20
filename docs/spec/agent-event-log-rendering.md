@@ -943,16 +943,20 @@ Rules:
 - **Codex-style live disclosure.** A turn's process block **stays collapsed while
   it is working** unless the user explicitly opens it. The collapsed header is the
   live status line: it shows the currently pending tool when there is one;
-  otherwise it shows `Working` for the first sub-second tick and
-  `Working for {duration}` after that, using the assistant message `createdAt` as
-  the live ticker anchor. The row renders immediately for an active assistant
+  otherwise it shows `Thinking` while any thinking block is present; only a
+  no-tool/no-thinking wait falls back to `Working` for the first sub-second tick
+  and `Working for {duration}` after that, using the assistant message
+  `createdAt` as the live ticker anchor. Implausibly stale live elapsed values
+  are capped back to bare `Working` so an orphaned/restored old active row never
+  reads as "Working for 2d". The row renders immediately for an active assistant
   turn, even before the first thinking/tool block, so later tool events do not
   insert a new header above already-streamed text. A tool-free live answer keeps
   its prose in the normal answer position (not inside process narration), so the
   same markdown subtree survives the live→sealed transition. The process **does
   not auto-expand while live and does not auto-collapse on settle**; user
-  expansion is sticky for that process id. The active collapsed title uses the
-  neutral text shimmer cue; reduced-motion users get ordinary static text.
+  expansion is sticky for that process id. The active collapsed title uses a
+  CSS-driven neutral text shimmer cue with a JS reduced-motion guard; reduced-
+  motion users get ordinary static text.
   - A **resultless** turn (last visible block is a thought/tool — no trailing
     answer prose) drives two SEPARATE decisions, decoupled so a cleanly-completed
     turn never mislabels:
@@ -1015,7 +1019,7 @@ Rules:
   inline transcript/result details should not be hidden behind a generic group.
   A lone regular tool call also stays standalone to avoid a redundant wrapper.
   Run duration labels keep all non-zero units through hours (`1h 5m 3s`) and roll
-  up by days (`2d 3h`).
+  up by days (`2d 3h 4m 5s`).
 - **One assistant-turn renderer.** The conversation transcript and the child-run
   task detail timeline both render assistant content through the
   same assistant turn/process fold components. The task detail panel reads a raw

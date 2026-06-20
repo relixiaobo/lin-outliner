@@ -20,17 +20,7 @@ import { sentenceFragment, summarizeToolActivity, type ToolActivitySummaryMember
 
 export type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
 
-// The latest thinking block that has streamed any text — drives the live status
-// line during the thinking phase (before/between tool calls).
-function lastNonEmptyThinking(
-  thinkingBlocks: Extract<AgentProcessSegmentBlock, { kind: 'thinking' }>[],
-): string | null {
-  for (let i = thinkingBlocks.length - 1; i >= 0; i -= 1) {
-    const text = thinkingBlocks[i]!.text.trim();
-    if (text) return text;
-  }
-  return null;
-}
+const MAX_LIVE_ELAPSED_MS = 12 * 60 * 60 * 1000;
 
 function childRunMapFromToolSegments(blocks: AgentProcessSegmentBlock[]): ReadonlyMap<string, AgentRenderChildRunEntity> | undefined {
   let map: Map<string, AgentRenderChildRunEntity> | undefined;
@@ -81,7 +71,6 @@ interface ProcessSummaryFacts {
   childRunsByToolCallId?: ReadonlyMap<string, AgentRenderChildRunEntity>;
   toolCallOutcomes: ReadonlyMap<string, AgentToolCallOutcome>;
   firstThinkingText: string | null;
-  lastThinkingText: string | null;
   thinkingCount: number;
   toolCalls: ToolCall[];
 }
@@ -105,7 +94,6 @@ function processSummaryFacts(blocks: AgentProcessSegmentBlock[]): ProcessSummary
     childRunsByToolCallId: childRunMapFromToolSegments(blocks),
     toolCallOutcomes: toolCallOutcomeMap(blocks),
     firstThinkingText: firstLine(thinkingBlocks[0]?.text ?? ''),
-    lastThinkingText: lastNonEmptyThinking(thinkingBlocks),
     thinkingCount: thinkingBlocks.length,
     toolCalls,
   };
@@ -113,7 +101,6 @@ function processSummaryFacts(blocks: AgentProcessSegmentBlock[]): ProcessSummary
 
 export function summarizeProcess({
   firstThinkingText,
-  lastThinkingText,
   thinkingCount,
   pendingToolCallIds,
   results,
@@ -131,7 +118,6 @@ export function summarizeProcess({
   liveElapsedMs,
 }: {
   firstThinkingText: string | null;
-  lastThinkingText: string | null;
   thinkingCount: number;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
@@ -171,22 +157,22 @@ export function summarizeProcess({
     toolCalls.map((toolCall) => ({ status: toolStatus(toolCall), toolCall }));
 
   // While the turn is live AND the block is collapsed, the header doubles as a
-  // live status line: whichever tool is currently running, else the latest
-  // elapsed clock. Once expanded, control falls through to the static summary
-  // below and the running tool row inside the timeline carries step-level status.
+  // live status line: whichever tool is currently running, else the thinking
+  // label, else the elapsed clock. Once expanded, control falls through to the
+  // static summary below and the running tool row inside the timeline carries
+  // step-level status.
   if (liveCollapsed) {
     for (let i = toolCalls.length - 1; i >= 0; i -= 1) {
       const toolCall = toolCalls[i]!;
       const status = toolStatus(toolCall);
       if (status === 'pending') return summarizeToolCall(toolCall, status, toolCallLabels);
     }
+    if (thinkingCount > 0) return thinkingLabel;
     if (liveElapsedMs !== null && liveElapsedMs !== undefined) {
-      return liveElapsedMs >= 1000
+      return liveElapsedMs >= 1000 && liveElapsedMs <= MAX_LIVE_ELAPSED_MS
         ? process.workingFor({ duration: formatRunDuration(liveElapsedMs) })
         : process.working;
     }
-    if (lastThinkingText) return previewText(lastThinkingText, 80);
-    if (thinkingCount > 0) return thinkingLabel;
     return process.working;
   }
 
@@ -312,7 +298,7 @@ export function AgentProcessBlock({
               liveElapsedMs,
               process: t.agent.process,
               toolCallLabels: t.agent.toolCall,
-              thinkingLabel: t.agent.thinking.thinking,
+              thinkingLabel: t.agent.process.thinking,
             })}
           </AgentTextShimmer>
         </span>
@@ -378,7 +364,7 @@ export function AgentTurnProcessFold({
     liveElapsedMs,
     process: t.agent.process,
     toolCallLabels: t.agent.toolCall,
-    thinkingLabel: t.agent.thinking.thinking,
+    thinkingLabel: t.agent.process.thinking,
   });
   const toggle = (event: MouseEvent<HTMLElement>) => {
     expandState.toggle(id, expanded, event.currentTarget);

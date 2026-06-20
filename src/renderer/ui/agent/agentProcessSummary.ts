@@ -25,21 +25,25 @@ export function summarizeToolActivity(
 ): string {
   if (members.length === 0) return process.usedTools({ count: 0 });
 
-  const counts = new Map<ToolActivityKind, number>();
+  const buckets = new Map<ToolActivityKind, { count: number; running: boolean }>();
   for (const member of members) {
     const kind = toolActivityKind(member.toolCall.name);
-    counts.set(kind, (counts.get(kind) ?? 0) + 1);
+    const current = buckets.get(kind) ?? { count: 0, running: false };
+    buckets.set(kind, {
+      count: current.count + 1,
+      running: current.running || member.status === 'pending',
+    });
   }
 
-  if (counts.has('other')) return process.usedTools({ count: members.length });
+  if (buckets.has('other')) return process.usedTools({ count: members.length });
 
-  const kinds = ACTIVITY_KIND_ORDER.filter((kind) => counts.has(kind));
+  const kinds = ACTIVITY_KIND_ORDER.filter((kind) => buckets.has(kind));
   if (kinds.length === 0 || kinds.length > 2) return process.usedTools({ count: members.length });
 
-  const running = members.some((member) => member.status === 'pending');
   return kinds
     .map((kind, index) => {
-      const phrase = toolActivityPhrase(kind, counts.get(kind) ?? 0, running, process.toolActivity);
+      const bucket = buckets.get(kind) ?? { count: 0, running: false };
+      const phrase = toolActivityPhrase(kind, bucket.count, bucket.running, process.toolActivity);
       return index === 0 ? phrase : phrase.toLowerCase();
     })
     .join(' · ');

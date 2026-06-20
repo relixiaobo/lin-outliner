@@ -628,7 +628,7 @@ test.describe('agent process disclosure', () => {
     const beforeBox = await processToggle.boundingBox();
     expect(beforeBox).toBeTruthy();
     await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
-    await expect(process.locator('.agent-process-title').first()).toHaveText('Working');
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Thinking');
 
     await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
@@ -697,13 +697,13 @@ test.describe('agent process disclosure', () => {
     const processToggle = process.locator('.agent-process-toggle').first();
     await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(processToggle).not.toBeDisabled();
-    await expect(process.locator('.agent-process-title').first()).toHaveText('Working');
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Thinking');
     await expect(process.locator('.agent-process-flat .agent-process-title')).toHaveCount(0);
     await expect(page.getByText('The final answer is now streaming below the process.')).toBeVisible();
 
     await processToggle.click();
     await expect(processToggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(process.locator('.agent-process-flat .agent-process-title').first()).toHaveText('Working');
+    await expect(process.locator('.agent-process-flat .agent-process-title').first()).toHaveText('Thinking');
 
     await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',

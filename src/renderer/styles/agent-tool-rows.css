@@ -135,8 +135,7 @@
   color: transparent;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: agent-text-shimmer-sweep 1s steps(48, end);
-  animation-iteration-count: 1;
+  animation: agent-text-shimmer-cadence 4s steps(48, end) infinite;
 }
 
 /* Trailing disclosure chevron for the icon-free "Worked for …" header. Faint at
@@ -473,11 +472,13 @@
   animation: agent-spin 900ms linear infinite;
 }
 
-@keyframes agent-text-shimmer-sweep {
-  from {
+@keyframes agent-text-shimmer-cadence {
+  0%,
+  15% {
     background-position: 200% 0;
   }
-  to {
+  40%,
+  100% {
     background-position: -200% 0;
   }
 }

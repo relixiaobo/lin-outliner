@@ -7,8 +7,8 @@ import { formatRunDuration } from '../../src/renderer/ui/agent/agentProcessTypes
 import { summarizeToolActivity } from '../../src/renderer/ui/agent/agentProcessSummary';
 import { getMessages } from '../../src/core/i18n';
 
-const { process, toolCall: toolCallLabels, thinking } = getMessages('en').agent;
-const thinkingLabel = thinking.thinking;
+const { process, toolCall: toolCallLabels } = getMessages('en').agent;
+const thinkingLabel = process.thinking;
 
 const readTool: ToolCall = {
   type: 'toolCall',
@@ -44,7 +44,6 @@ describe('agent process summary', () => {
   test('live + collapsed header shows the currently running tool', () => {
     expect(summarizeProcess({
       firstThinkingText: 'Identify relevant outline nodes',
-      lastThinkingText: 'Identify relevant outline nodes',
       thinkingCount: 1,
       pendingToolCallIds: new Set([readTool.id]),
       results: new Map(),
@@ -63,7 +62,6 @@ describe('agent process summary', () => {
   test('live + collapsed header ignores resultless tool calls that are no longer pending', () => {
     expect(summarizeProcess({
       firstThinkingText: 'Identify relevant outline nodes',
-      lastThinkingText: 'Now search the design system',
       thinkingCount: 2,
       pendingToolCallIds: new Set([searchTool.id]),
       results: new Map(),
@@ -79,10 +77,9 @@ describe('agent process summary', () => {
     })).toBe('Searching nodes "design system"');
   });
 
-  test('live + collapsed header previews the latest thought while still thinking', () => {
+  test('live + collapsed header shows Thinking while still thinking', () => {
     expect(summarizeProcess({
       firstThinkingText: 'Let me map the outline structure first',
-      lastThinkingText: 'Let me map the outline structure first',
       thinkingCount: 1,
       pendingToolCallIds: new Set(),
       results: new Map(),
@@ -95,14 +92,13 @@ describe('agent process summary', () => {
       process,
       toolCallLabels,
       thinkingLabel,
-    })).toBe('Let me map the outline structure first');
+    })).toBe('Thinking');
   });
 
   test('live + collapsed header shows bare Working under one second', () => {
     expect(summarizeProcess({
-      firstThinkingText: 'Let me map the outline structure first',
-      lastThinkingText: 'Let me map the outline structure first',
-      thinkingCount: 1,
+      firstThinkingText: null,
+      thinkingCount: 0,
       pendingToolCallIds: new Set(),
       results: new Map(),
       toolCalls: [],
@@ -120,9 +116,8 @@ describe('agent process summary', () => {
 
   test('live + collapsed header shows Working for elapsed time after one second', () => {
     expect(summarizeProcess({
-      firstThinkingText: 'Let me map the outline structure first',
-      lastThinkingText: 'Let me map the outline structure first',
-      thinkingCount: 1,
+      firstThinkingText: null,
+      thinkingCount: 0,
       pendingToolCallIds: new Set(),
       results: new Map(),
       toolCalls: [],
@@ -138,10 +133,28 @@ describe('agent process summary', () => {
     })).toBe('Working for 2s');
   });
 
+  test('live + collapsed header does not show implausibly stale elapsed time', () => {
+    expect(summarizeProcess({
+      firstThinkingText: null,
+      thinkingCount: 0,
+      pendingToolCallIds: new Set(),
+      results: new Map(),
+      toolCalls: [],
+      turnActive: true,
+      liveCollapsed: true,
+      turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
+      workedForMs: null,
+      liveElapsedMs: 2 * 24 * 60 * 60 * 1000,
+      process,
+      toolCallLabels,
+      thinkingLabel,
+    })).toBe('Working');
+  });
+
   test('live + collapsed header falls back to the thinking label with no thought text yet', () => {
     expect(summarizeProcess({
       firstThinkingText: null,
-      lastThinkingText: null,
       thinkingCount: 1,
       pendingToolCallIds: new Set(),
       results: new Map(),
@@ -160,7 +173,6 @@ describe('agent process summary', () => {
   test('live + expanded header shows the static group summary, not the live tool', () => {
     expect(summarizeProcess({
       firstThinkingText: 'Identify relevant outline nodes',
-      lastThinkingText: 'Identify relevant outline nodes',
       thinkingCount: 1,
       pendingToolCallIds: new Set(),
       results: new Map([[readTool.id, readResult]]),
@@ -173,13 +185,12 @@ describe('agent process summary', () => {
       process,
       toolCallLabels,
       thinkingLabel,
-    })).toBe('Thought · reading a node · searching');
+    })).toBe('Thought · read a node · searching');
   });
 
   test('summarizes mixed completed process as one collapsed process row', () => {
     expect(summarizeProcess({
       firstThinkingText: 'Identify relevant outline nodes',
-      lastThinkingText: 'Identify relevant outline nodes',
       thinkingCount: 1,
       pendingToolCallIds: new Set(),
       results: new Map([[readTool.id, readResult]]),
@@ -198,7 +209,6 @@ describe('agent process summary', () => {
   test('summarizes solo completed tool by tool status', () => {
     expect(summarizeProcess({
       firstThinkingText: null,
-      lastThinkingText: null,
       thinkingCount: 0,
       pendingToolCallIds: new Set(),
       results: new Map([[readTool.id, readResult]]),
@@ -217,7 +227,6 @@ describe('agent process summary', () => {
   test('keeps interrupted process distinct from completed prose', () => {
     expect(summarizeProcess({
       firstThinkingText: 'Identify relevant outline nodes',
-      lastThinkingText: 'Identify relevant outline nodes',
       thinkingCount: 1,
       pendingToolCallIds: new Set(),
       results: new Map(),
@@ -236,7 +245,6 @@ describe('agent process summary', () => {
   test('sealed turn collapses to "Worked for {duration}" when the run wall-clock is known', () => {
     expect(summarizeProcess({
       firstThinkingText: 'Identify relevant outline nodes',
-      lastThinkingText: 'Identify relevant outline nodes',
       thinkingCount: 1,
       pendingToolCallIds: new Set(),
       results: new Map([[readTool.id, readResult]]),
@@ -255,7 +263,6 @@ describe('agent process summary', () => {
   test('a known duration never overrides the live status line while collapsed and running', () => {
     expect(summarizeProcess({
       firstThinkingText: 'Identify relevant outline nodes',
-      lastThinkingText: 'Identify relevant outline nodes',
       thinkingCount: 1,
       pendingToolCallIds: new Set([readTool.id]),
       results: new Map(),
@@ -276,7 +283,6 @@ describe('agent process summary', () => {
     // non-null (partial) duration a live turn keeps its descriptive header.
     expect(summarizeProcess({
       firstThinkingText: 'Identify relevant outline nodes',
-      lastThinkingText: 'Identify relevant outline nodes',
       thinkingCount: 1,
       pendingToolCallIds: new Set(),
       results: new Map([[readTool.id, readResult]]),
@@ -289,13 +295,12 @@ describe('agent process summary', () => {
       process,
       toolCallLabels,
       thinkingLabel,
-    })).toBe('Thought · reading a node · searching');
+    })).toBe('Thought · read a node · searching');
   });
 
   test('an interrupted turn keeps its interrupted label over the duration', () => {
     expect(summarizeProcess({
       firstThinkingText: 'Identify relevant outline nodes',
-      lastThinkingText: 'Identify relevant outline nodes',
       thinkingCount: 1,
       pendingToolCallIds: new Set(),
       results: new Map(),
@@ -319,7 +324,6 @@ describe('agent process summary', () => {
     // that so the duration never reads as a clean unit of work with no answer.
     const base = {
       firstThinkingText: null,
-      lastThinkingText: null,
       thinkingCount: 0,
       pendingToolCallIds: new Set<string>(),
       results: new Map([[readTool.id, readResult]]),
@@ -349,6 +353,13 @@ describe('agent tool activity summary', () => {
       { toolCall: commandTool, status: 'pending' },
       { toolCall: { ...commandTool, id: 'tool-command-2' }, status: 'done' },
     ], process)).toBe('Running 2 commands');
+  });
+
+  test('uses running tense only for the activity kind that is still pending', () => {
+    expect(summarizeToolActivity([
+      { toolCall: commandTool, status: 'done' },
+      { toolCall: searchTool, status: 'pending' },
+    ], process)).toBe('Ran a command · searching');
   });
 
   test('joins up to two activity kinds and falls back past that', () => {
@@ -407,6 +418,6 @@ describe('agent process duration formatting', () => {
     expect(formatRunDuration(3_600_000)).toBe('1h');
     expect(formatRunDuration(3_661_000)).toBe('1h 1m 1s');
     expect(formatRunDuration(86_400_000)).toBe('1d');
-    expect(formatRunDuration(90_061_000)).toBe('1d 1h 1m');
+    expect(formatRunDuration(90_061_000)).toBe('1d 1h 1m 1s');
   });
 });

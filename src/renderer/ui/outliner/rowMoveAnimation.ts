@@ -1,4 +1,5 @@
 import type { NodeId } from '../../api/types';
+import { prefersReducedMotion } from '../prefersReducedMotion';
 
 const ROW_MOVE_SELECTOR = '[data-node-id][data-parent-id] > .row';
 const ROW_MOVE_ANCHOR_SELECTOR = '.row-leading';
@@ -19,10 +20,6 @@ interface RowMove {
 }
 
 const activeAnimations = new WeakMap<HTMLElement, Animation>();
-
-function prefersReducedMotion(): boolean {
-  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-}
 
 function activeOutlinerScope(): ParentNode {
   return document.querySelector('.outline-panel-surface.active-panel.is-outliner') ?? document;

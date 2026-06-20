@@ -926,6 +926,7 @@ commandPalette: {
     },
     process: {
       working: '处理中',
+      thinking: '思考中',
       interrupted: '已中断',
       interruptedAfterThinking: '思考后中断',
       thoughtInterrupted: '已思考（中断）',
@@ -933,7 +934,6 @@ commandPalette: {
       thoughtPreview: ({ preview }) => `已思考 · ${preview}`,
       thoughtAndTool: ({ tool }) => `已思考 · ${tool}`,
       usedTools: ({ count }) => `使用了 ${count} 个工具`,
-      thoughtAndUsedTools: ({ count }) => `已思考 · 使用了 ${count} 个工具`,
       workedFor: ({ duration }) => `用时 ${duration}`,
       workingFor: ({ duration }) => `处理中 ${duration}`,
       toolActivity: {

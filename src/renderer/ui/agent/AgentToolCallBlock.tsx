@@ -25,6 +25,7 @@ import {
   TrashIcon,
   UrlIcon,
   WarningIcon,
+  type AppIcon,
 } from '../icons';
 import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -82,6 +83,28 @@ interface LoadedSkillDetails {
   skill: string;
 }
 
+const TOOL_PRESENTATION_BY_NAME: Readonly<
+  Record<string, { activityKind: ToolActivityKind; icon: AppIcon }>
+> = {
+  Agent: { activityKind: 'other', icon: AgentIcon },
+  AgentStatus: { activityKind: 'other', icon: AgentIcon },
+  AgentSend: { activityKind: 'other', icon: AgentIcon },
+  AgentStop: { activityKind: 'other', icon: AgentIcon },
+  bash: { activityKind: 'command', icon: TerminalIcon },
+  dream: { activityKind: 'memory', icon: BrainIcon },
+  file_edit: { activityKind: 'fileEdit', icon: NodeEditToolIcon },
+  file_write: { activityKind: 'fileCreate', icon: NodeCreateToolIcon },
+  node_create: { activityKind: 'fileCreate', icon: NodeCreateToolIcon },
+  node_delete: { activityKind: 'fileDelete', icon: TrashIcon },
+  node_edit: { activityKind: 'fileEdit', icon: NodeEditToolIcon },
+  node_read: { activityKind: 'read', icon: FileTextIcon },
+  node_search: { activityKind: 'search', icon: SearchIcon },
+  recall: { activityKind: 'memory', icon: BrainIcon },
+  skill: { activityKind: 'skill', icon: SkillIcon },
+  web_fetch: { activityKind: 'web', icon: UrlIcon },
+  web_search: { activityKind: 'web', icon: SearchIcon },
+};
+
 export function getToolCallStatus(
   toolCallId: string,
   result: AgentToolResultWithPayloads | undefined,
@@ -98,55 +121,14 @@ export function getToolCallStatus(
 }
 
 export function toolActivityKind(name: string): ToolActivityKind {
-  switch (name) {
-    case 'bash':
-      return 'command';
-    case 'file_write':
-    case 'node_create':
-      return 'fileCreate';
-    case 'file_edit':
-    case 'node_edit':
-      return 'fileEdit';
-    case 'node_delete':
-      return 'fileDelete';
-    case 'node_read':
-      return 'read';
-    case 'node_search':
-      return 'search';
-    case 'web_search':
-    case 'web_fetch':
-      return 'web';
-    case 'recall':
-    case 'dream':
-      return 'memory';
-    case 'skill':
-      return 'skill';
-    default:
-      return 'other';
-  }
+  return TOOL_PRESENTATION_BY_NAME[name]?.activityKind ?? 'other';
 }
 
 export function getToolIcon(toolCall: ToolCall) {
-  if (
-    toolCall.name === 'Agent'
-    || toolCall.name === 'AgentStatus'
-    || toolCall.name === 'AgentSend'
-    || toolCall.name === 'AgentStop'
-  ) return AgentIcon;
-  if (toolCall.name === 'node_create') return NodeCreateToolIcon;
-  if (toolCall.name === 'node_read') return FileTextIcon;
-  if (toolCall.name === 'node_edit') return NodeEditToolIcon;
-  if (toolCall.name === 'recall') return BrainIcon;
-  if (toolCall.name === 'dream') return BrainIcon;
-  if (toolCall.name === 'node_search' || toolCall.name === 'web_search') return SearchIcon;
   if (toolCall.name === 'node_delete') {
     return toolCall.arguments.restore === true ? RestoreIcon : TrashIcon;
   }
-  if (toolCall.name === 'web_fetch') return UrlIcon;
-  if (toolCall.name === 'bash') return TerminalIcon;
-  if (toolCall.name === 'file_edit') return NodeEditToolIcon;
-  if (toolCall.name === 'file_write') return NodeCreateToolIcon;
-  return WarningIcon;
+  return TOOL_PRESENTATION_BY_NAME[toolCall.name]?.icon ?? WarningIcon;
 }
 
 function pickSubject(args: Record<string, unknown>, ...keys: string[]): string | null {
