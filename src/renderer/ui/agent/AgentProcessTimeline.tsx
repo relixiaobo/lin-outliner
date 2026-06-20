@@ -71,6 +71,8 @@ export function AgentProcessTimeline({
     if (block.kind === 'thinking') {
       return (
         <AgentThinkingRow
+          expandState={expandState}
+          id={`${id}:thinking:${block.sourceIndex}`}
           index={index}
           keyPrefix={`${id}-thinking-${block.sourceIndex}`}
           key={`thinking-${block.sourceIndex}`}
@@ -120,6 +122,8 @@ export function AgentProcessTimeline({
     <div className="agent-process-timeline">
       {soloThinkingBlock ? (
         <AgentThinkingBody
+          expandState={expandState}
+          id={`${id}:thinking:${soloThinkingBlock.sourceIndex}`}
           index={index}
           keyPrefix={`${id}-thinking-${soloThinkingBlock.sourceIndex}`}
           onNodeReferenceOpen={onNodeReferenceOpen}

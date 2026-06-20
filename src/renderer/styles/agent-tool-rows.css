@@ -181,6 +181,63 @@
   color: var(--text-faint);
 }
 
+/* Reasoning folds like a tool step (Codex `reasoning`): a one-line summary row
+   with a trailing disclosure chevron; the full thinking is tucked inside and
+   revealed on click — NOT shown as open body prose. */
+.agent-reasoning-toggle {
+  display: flex;
+  max-width: min(100%, 520px);
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  transition: color var(--motion-fast);
+}
+
+.agent-reasoning-toggle:hover:not(:disabled),
+.agent-reasoning-toggle:focus-visible:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.agent-reasoning-toggle:disabled {
+  cursor: default;
+}
+
+.agent-reasoning-headline {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A leading `**bold**` gist headline keeps Codex's emphasis. */
+.agent-reasoning-headline.is-gist {
+  font-weight: 600;
+}
+
+.agent-reasoning-chevron {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  transition: transform var(--motion-fast), color var(--motion-fast);
+}
+
+.agent-reasoning-chevron.is-expanded {
+  transform: rotate(180deg);
+}
+
+.agent-reasoning-toggle:hover .agent-reasoning-chevron,
+.agent-reasoning-toggle:focus-visible .agent-reasoning-chevron {
+  color: var(--text-soft);
+}
+
+.agent-reasoning-body {
+  margin-top: var(--space-2);
+  color: var(--text-soft);
+}
+
 .agent-stream-caret {
   display: inline-block;
   width: 6px;

@@ -1049,29 +1049,27 @@ Rules:
   does not cheaply distinguish it from `running`, and we will not add core events
   for an icon. The ring fades out with the status glyph when the disclosure chevron
   reveals on hover.
-- **Process is collapsible body, not a special register.** Codex's process IS the
-  same body prose as the final answer — just the part collapsed behind the
-  "Worked for {t}" fold (machine C). So reasoning AND interim narration render at
-  **content register** (full markdown, answer-sized type) — **no dim meta gist row,
-  no lightbulb, and no per-block reasoning toggle**. When the turn process is
-  expanded, each reasoning block shows in **full**, and a `**bold**` gist headline
-  renders as a real markdown heading (we no longer strip it). The turn-level fold is
-  the only collapse above the tool steps — the user sees the whole working process
-  as body prose, or collapses it to the divider. Tool steps stay thin status rows
-  interspersed in that prose.
-- **Two body colors, split exactly the way Codex does** (foreground tokens, not a
-  meta downgrade):
+- **Reasoning folds like a tool step; narration is body prose.** Inside the
+  expanded turn (machine C) the three kinds of block render at three different
+  weights, matching Codex's typed items — they are NOT one uniform body:
   - **Interim narration** is the assistant's own SPEECH (Codex `assistant-message`,
-    `text-primary` = full foreground) → the same bright `--text-strong` as the final
-    answer (`.agent-process-narration`). The running commentary reads continuous
-    with the answer below it; only the tool steps and the "Worked for {t}" divider
-    separate them.
-  - **Reasoning** is the model's THINKING (Codex `reasoning`, `text-secondary` ≈
-    foreground 65%) → one step soft (`.agent-process-reasoning` → `--text-soft`), so
-    it reads as the dimmer thinking layer, distinct from the assistant's own words.
-  This is why a Codex turn's expanded process can look "all one brightness": that
-  body is interim narration (primary), not reasoning. Reasoning is genuinely dimmer
-  in Codex too.
+    `text-primary` = full foreground) → shown in **full** at the same bright
+    `--text-strong` as the final answer (`.agent-process-narration`). The running
+    commentary reads continuous with the answer below it; only the tool steps and
+    the "Worked for {t}" divider separate them.
+  - **Reasoning** is the model's THINKING (Codex `reasoning`) → it **collapses like
+    a tool step**: a one-line summary row (`.agent-reasoning-toggle`) with a trailing
+    disclosure chevron, the full thinking **tucked inside** and revealed on click —
+    NOT shown as open body prose. The summary is a leading `**bold**` gist headline
+    (markers stripped, kept emphasized) or, failing that, the first line; the rest is
+    the body. A single-line thought is a plain, non-expandable label. The expanded
+    body is soft (`--text-soft` ≈ Codex `text-secondary`), the dimmer thinking layer
+    distinct from the assistant's own words. A lone-thought turn opens its body by
+    default (nothing else to read).
+  This is the fix for "reasoning shows fully expanded": only narration (assistant
+  speech) is open body prose; reasoning, like every tool, folds to a summary the
+  user expands on demand. There is no lightbulb and no meta typography — the fold is
+  a clean chevron row at content register.
 - **Reasoning active cue.** While a reasoning block is streaming with no text yet,
   the cue is a **static "Thinking"** label — no ellipsis and **no shimmer** (the
   cadenced shimmer is a Codex Statsig A/B experiment, not the default; the live
