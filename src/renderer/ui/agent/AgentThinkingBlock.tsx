@@ -1,98 +1,52 @@
-import { ThinkingIcon, ICON_SIZE } from '../icons';
-import { ButtonControl } from '../primitives/ButtonControl';
-import { AgentDisclosureIndicator } from './AgentDisclosureIndicator';
-import type { AgentExpandState } from './agentProcessTypes';
-import { firstLine, previewText } from './agentProcessTypes';
+import type { DocumentIndex } from '../../state/document';
+import { AgentMarkdown } from './AgentMarkdown';
+import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { useT } from '../../i18n/I18nProvider';
 
-interface AgentThinkingRowProps {
-  expandState: AgentExpandState;
-  id: string;
+interface AgentReasoningProps {
+  index?: DocumentIndex;
+  keyPrefix: string;
+  onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   streaming: boolean;
   text: string;
 }
 
-// Codex reasoning items often lead with a `**bold**` one-line gist headline (`Xw`
-// strips the markers). Drop the surrounding `**` so the gist reads as the clean
-// preview line, keeping the rest of the reasoning as the body.
-function reasoningText(text: string): string {
-  const lines = text.split('\n');
-  const firstIdx = lines.findIndex((line) => line.trim().length > 0);
-  if (firstIdx >= 0) {
-    const match = /^\*\*(.+)\*\*$/.exec(lines[firstIdx]!.trim());
-    if (match) {
-      lines[firstIdx] = lines[firstIdx]!.replace(/^(\s*)\*\*(.+)\*\*(\s*)$/, `$1${match[1]!.trim()}$3`);
-    }
-  }
-  return lines.join('\n').trim();
-}
-
+// Codex renders reasoning as the SAME body prose as the final answer — it is just
+// the part of the turn collapsed behind the "Worked for {t}" fold (machine C). So
+// reasoning is full body-register markdown here, NOT a dim meta gist row: no
+// lightbulb, no per-block toggle, shown in full whenever the turn process is
+// expanded. A `**bold**` gist headline therefore renders as a real markdown
+// heading rather than being stripped. The only special state is an empty live
+// reasoning stream, which shows a static "Thinking" cue (no shimmer — the
+// cadenced shimmer is a Codex A/B experiment we do not ship).
 export function AgentThinkingRow({
-  expandState,
-  id,
+  index,
+  keyPrefix,
+  onNodeReferenceOpen,
   streaming,
   text,
-}: AgentThinkingRowProps) {
+}: AgentReasoningProps) {
   const t = useT();
-  const trimmed = reasoningText(text);
+  const trimmed = text.trim();
   if (!trimmed) {
     if (!streaming) return null;
-    return (
-      <div className="agent-thinking-row">
-        <AgentDisclosureIndicator
-          className="agent-thinking-icon"
-          expanded={false}
-          icon={<ThinkingIcon size={ICON_SIZE.rowGlyph} />}
-          interactive={false}
-        />
-        {/* Reasoning lifecycle (Codex `Xw`): a STATIC "Thinking" cue (no ellipsis,
-            no shimmer — the shimmer is a Codex A/B experiment). */}
-        <span className="agent-thinking-text">{t.agent.thinking.thinking}</span>
-      </div>
-    );
+    return <div className="agent-process-reasoning is-thinking">{t.agent.thinking.thinking}</div>;
   }
-
-  const previewMax = 96;
-  const preview = previewText(trimmed, previewMax);
-  const isLong = trimmed.includes('\n') || (firstLine(trimmed)?.length ?? 0) > previewMax;
-  const expanded = expandState.isExpanded(id, false);
-
-  if (!isLong) {
-    return (
-      <div className="agent-thinking-row">
-        <AgentDisclosureIndicator
-          className="agent-thinking-icon"
-          expanded={false}
-          icon={<ThinkingIcon size={ICON_SIZE.rowGlyph} />}
-          interactive={false}
-        />
-        <span className="agent-thinking-text">{trimmed}</span>
-      </div>
-    );
-  }
-
   return (
-    <ButtonControl
-      aria-expanded={expanded}
-      className={`agent-thinking-row is-toggle ${expanded ? 'is-expanded' : ''}`}
-      onClick={(event) => expandState.toggle(id, expanded, event.currentTarget)}
-    >
-      <AgentDisclosureIndicator
-        className="agent-thinking-icon"
-        expanded={expanded}
-        icon={<ThinkingIcon size={ICON_SIZE.rowGlyph} />}
+    <div className="agent-process-reasoning">
+      <AgentMarkdown
+        index={index}
+        keyPrefix={keyPrefix}
+        onNodeReferenceOpen={onNodeReferenceOpen}
+        streaming={streaming}
+        text={trimmed}
       />
-      <span className="agent-thinking-text">{expanded ? trimmed : preview}</span>
-    </ButtonControl>
+    </div>
   );
 }
 
-export function AgentThinkingBody({ streaming, text }: { streaming: boolean; text: string }) {
-  const t = useT();
-  const trimmed = reasoningText(text);
-  if (!trimmed && streaming) {
-    return <span className="agent-thinking-placeholder">{t.agent.thinking.thinking}</span>;
-  }
-  if (!trimmed) return null;
-  return <pre className="agent-thinking-body">{trimmed}</pre>;
+// A lone thought (the whole turn process is a single reasoning block) renders the
+// same body prose, always open — one register, no special-casing.
+export function AgentThinkingBody(props: AgentReasoningProps) {
+  return <AgentThinkingRow {...props} />;
 }

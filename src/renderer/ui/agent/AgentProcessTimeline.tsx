@@ -71,9 +71,10 @@ export function AgentProcessTimeline({
     if (block.kind === 'thinking') {
       return (
         <AgentThinkingRow
-          expandState={expandState}
-          id={`${id}:thinking:${block.sourceIndex}`}
+          index={index}
+          keyPrefix={`${id}-thinking-${block.sourceIndex}`}
           key={`thinking-${block.sourceIndex}`}
+          onNodeReferenceOpen={onNodeReferenceOpen}
           streaming={block.streaming}
           text={block.text}
         />
@@ -118,7 +119,13 @@ export function AgentProcessTimeline({
   return (
     <div className="agent-process-timeline">
       {soloThinkingBlock ? (
-        <AgentThinkingBody streaming={soloThinkingBlock.streaming} text={soloThinkingBlock.text} />
+        <AgentThinkingBody
+          index={index}
+          keyPrefix={`${id}-thinking-${soloThinkingBlock.sourceIndex}`}
+          onNodeReferenceOpen={onNodeReferenceOpen}
+          streaming={soloThinkingBlock.streaming}
+          text={soloThinkingBlock.text}
+        />
       ) : (
         groups.map((group) => {
           if (group.kind === 'toolActivity') {

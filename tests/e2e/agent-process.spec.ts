@@ -512,13 +512,11 @@ test.describe('agent process disclosure', () => {
     await activityToggle.click();
     await expect(activityToggle).toHaveAttribute('aria-expanded', 'true');
 
-    const thinkingToggle = page.locator('.agent-thinking-row.is-toggle').first();
-    await expect(thinkingToggle).toContainText('Identify relevant outline nodes and tag patterns.');
-    await expect(thinkingToggle).not.toContainText('Compare current Agent rules');
-
-    await thinkingToggle.click();
-    await expect(thinkingToggle).toContainText('Compare current Agent rules with the existing tag layout decision');
-    await expectIconCenteredOnFirstLine(thinkingToggle, '.agent-thinking-icon', '.agent-thinking-text');
+    // Reasoning renders as full body prose (Codex machine C) — no per-block toggle,
+    // so both the gist line and its continuation are visible once the turn is open.
+    const reasoning = process.locator('.agent-process-reasoning').first();
+    await expect(reasoning).toContainText('Identify relevant outline nodes and tag patterns.');
+    await expect(reasoning).toContainText('Compare current Agent rules with the existing tag layout decision');
 
     const searchTool = page.locator('.agent-tool-call-toggle').filter({ hasText: 'Searched nodes "design system"' });
     await expect(searchTool).toHaveAttribute('aria-expanded', 'false');
@@ -706,7 +704,7 @@ test.describe('agent process disclosure', () => {
     await expect(processToggle).toHaveAttribute('aria-expanded', 'true');
     // Expanded: the flattened timeline shows the reasoning row inline.
     await expect(process.locator('.agent-process-timeline')).toHaveCount(1);
-    await expect(process.locator('.agent-thinking-row')).toContainText('Read the source node before answering.');
+    await expect(process.locator('.agent-process-reasoning')).toContainText('Read the source node before answering.');
 
     await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',

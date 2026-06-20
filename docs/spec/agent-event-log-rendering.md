@@ -1049,15 +1049,24 @@ Rules:
   does not cheaply distinguish it from `running`, and we will not add core events
   for an icon. The ring fades out with the status glyph when the disclosure chevron
   reveals on hover.
-- **Reasoning lifecycle + active cue.** The active reasoning cue is a **static
-  "Thinking"** label — no ellipsis and **no shimmer** (the cadenced shimmer is a
-  Codex Statsig A/B experiment, not the default; the live surfaces are the static
-  label + the per-step spinner). A reasoning block that leads with a `**bold**`
-  one-line gist headline drops the `**` markers so the gist reads as a clean
-  preview line. (The sealed "Thought for {elapsed}" / "Thought" reasoning label is
-  not yet adopted: it needs per-reasoning-item timing we do not track, and folding
-  the reasoning text behind a bare label hides content the user watches stream — a
-  visual-gate call, deferred.)
+- **Process is collapsible body, not a special register.** Codex's process IS the
+  same body prose as the final answer — just the part collapsed behind the
+  "Worked for {t}" fold (machine C). So reasoning AND interim narration render at
+  **content register** (full markdown, answer-sized type), one step soft of the
+  answer's `--text-strong` (`.agent-process-reasoning` / `.agent-process-narration`
+  → `--text-soft`). There is **no dim meta gist row, no lightbulb, and no per-block
+  reasoning toggle**: when the turn process is expanded, each reasoning block shows
+  in **full**, and a `**bold**` gist headline renders as a real markdown heading
+  (we no longer strip it). The turn-level fold is the only collapse above the tool
+  steps — the user sees the whole working process as body prose, or collapses it to
+  the divider. Tool steps stay thin status rows interspersed in that prose.
+- **Reasoning active cue.** While a reasoning block is streaming with no text yet,
+  the cue is a **static "Thinking"** label — no ellipsis and **no shimmer** (the
+  cadenced shimmer is a Codex Statsig A/B experiment, not the default; the live
+  surfaces are the static label + the per-step spinner). (The sealed "Thought for
+  {elapsed}" / "Thought" reasoning label is not adopted: it needs per-reasoning-item
+  timing we do not track, and folding reasoning behind a bare label hides content
+  the user watches stream.)
 - **One assistant-turn renderer.** The conversation transcript and the child-run
   task detail timeline both render assistant content through the
   same assistant turn/process fold components. The task detail panel reads a raw
