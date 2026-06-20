@@ -91,8 +91,16 @@ export function renderAssistantBlocks(
   );
   const finalIsProse = finalProseBlocks.some((block) => block.text.trim().length > 0);
   const processSettled = finalIsProse && !turnActive;
-  const turnFailedWithoutProse = turnInterrupted && !finalIsProse;
-  const surfaceResultlessProcess = !finalIsProse && (turnInterrupted || (!isChannel && !turnActive));
+  // An interruption is a property of a SETTLED turn. `turnInterrupted` is derived
+  // per-message from one run's status, but a turn is active (`turnActive`) when the
+  // CONVERSATION has a live run — so a failed/cancelled run still on the path while
+  // a newer run is already recovering it (retry / reactive-compaction) would
+  // otherwise paint the live, working turn RED ("Interrupted after thinking") even
+  // as its stop button and streaming process are on screen. A turn that is still
+  // running is never interrupted: gate the verdict on `!turnActive`.
+  const turnInterruptedAndSettled = turnInterrupted && !turnActive;
+  const turnFailedWithoutProse = turnInterruptedAndSettled && !finalIsProse;
+  const surfaceResultlessProcess = !finalIsProse && (turnInterruptedAndSettled || (!isChannel && !turnActive));
 
   if (lastProcessIndex >= 0 || turnActive) {
     const processEntryEnd = Math.max(0, lastProcessIndex + 1);

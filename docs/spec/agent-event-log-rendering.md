@@ -969,7 +969,14 @@ Rules:
       was left `running` by a crash. This is the authoritative **`turnInterrupted`**,
       stamped on the message entity by the core projection from the run's *real*
       status, NEVER inferred from block structure. A cleanly `completed` resultless
-      turn is **never** red.
+      turn is **never** red. **Interruption is a property of a SETTLED turn:** the
+      verdict is additionally gated on `!turnActive`, so a turn that is still
+      working never reads as interrupted. `turnInterrupted` is per-message (one
+      run's status) while `turnActive` is per-turn (the conversation has a live
+      run), so a failed/cancelled run still on the path while a newer run is
+      already recovering it — **retry / reactive-compaction** — would otherwise
+      paint the live, streaming turn RED ("Interrupted after thinking") even as
+      its stop button and streaming process are on screen.
     - **Surfacing the process** (auto-expand so its interim work / error context
       isn't buried — `surfaceResultlessProcess`) fires for a genuine interruption
       AND — per the result-first design — for a sealed resultless turn the user

@@ -15,6 +15,8 @@ import type { DocumentIndex } from '../../src/renderer/state/document';
 import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import { AgentChildRunDetailsPanel } from '../../src/renderer/ui/agent/AgentChildRunDetailsPanel';
 import { AgentTaskPanel } from '../../src/renderer/ui/agent/AgentTaskPanel';
+import { renderAssistantBlocks } from '../../src/renderer/ui/agent/AgentAssistantTurnContent';
+import type { AgentExpandState } from '../../src/renderer/ui/agent/agentProcessTypes';
 
 interface RenderedComponent {
   cleanup: () => void;
@@ -25,6 +27,12 @@ interface RenderedComponent {
 }
 
 const mounted: RenderedComponent[] = [];
+// Honours the caller's default so a live process opens expanded (no user toggle
+// is recorded in these tests).
+const NOOP_EXPAND_STATE: AgentExpandState = {
+  isExpanded: (_id, defaultExpanded = false) => defaultExpanded,
+  toggle: () => {},
+};
 const TEST_INDEX = {
   projection: { nodes: [], libraryId: 'library', trashId: 'trash' },
   byId: new Map(),
@@ -521,6 +529,62 @@ describe('agent child run UI', () => {
     expect(rendered.container.textContent).toContain('Inspect child run UI');
   });
 });
+
+describe('assistant turn interrupted verdict', () => {
+  // A thinking-only turn whose run is flagged interrupted but is STILL active
+  // (a failed/cancelled run on the path being recovered by a newer live run —
+  // retry / reactive-compaction). The live turn must never render the RED
+  // "Interrupted after thinking" header nor the error styling: an active turn is
+  // working, not interrupted.
+  test('an active turn is never labelled interrupted', () => {
+    const rendered = renderComponent(
+      <AssistantTurn turnActive turnInterrupted />,
+    );
+    // `.is-error` is the RED verdict styling (exactly `turnFailedWithoutProse`).
+    expect(rendered.container.querySelector('.agent-process-block.is-error')).toBeNull();
+    expect(rendered.container.textContent?.toLowerCase()).not.toContain('interrupted');
+  });
+
+  // The settled-failure case is unchanged: a turn whose run ended
+  // interrupted (no live run) keeps the RED label + error styling.
+  test('a settled interrupted turn keeps the interrupted label', () => {
+    const rendered = renderComponent(
+      <AssistantTurn turnActive={false} turnInterrupted />,
+    );
+    expect(rendered.container.querySelector('.agent-process-block.is-error')).not.toBeNull();
+    expect(rendered.container.textContent?.toLowerCase()).toContain('interrupted');
+  });
+});
+
+function AssistantTurn({ turnActive, turnInterrupted }: { turnActive: boolean; turnInterrupted: boolean }) {
+  const message = {
+    role: 'assistant',
+    content: [{ type: 'thinking', thinking: '**Preparing PPT in Chinese**' }],
+    stopReason: null,
+  } as unknown as Parameters<typeof renderAssistantBlocks>[0];
+  return (
+    <>
+      {renderAssistantBlocks(
+        message,
+        'turn-1',
+        TEST_INDEX,
+        NOOP_EXPAND_STATE,
+        undefined,
+        undefined,
+        new Set(),
+        'conversation-1',
+        turnActive,
+        undefined,
+        new Map(),
+        turnActive,
+        turnInterrupted,
+        false,
+        null,
+        null,
+      )}
+    </>
+  );
+}
 
 function renderComponent(
   element: ReactNode,
