@@ -353,6 +353,61 @@
   white-space: nowrap;
 }
 
+/* A folded run of consecutive tool calls: a counted-summary disclosure
+   ("Ran 3 commands · read 2 files") that expands to the member tool rows. */
+.agent-tool-activity-group {
+  max-width: 100%;
+  color: var(--text-soft);
+}
+
+.agent-tool-activity-toggle {
+  display: flex;
+  max-width: min(100%, 520px);
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0;
+  color: inherit;
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  text-align: left;
+}
+
+.agent-tool-activity-toggle:hover,
+.agent-tool-activity-toggle:focus-visible {
+  color: var(--text-strong);
+}
+
+.agent-tool-activity-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-tool-activity-chevron {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  transition: transform var(--motion-fast), color var(--motion-fast);
+}
+
+.agent-tool-activity-chevron.is-expanded {
+  transform: rotate(180deg);
+}
+
+.agent-tool-activity-toggle:hover .agent-tool-activity-chevron,
+.agent-tool-activity-toggle:focus-visible .agent-tool-activity-chevron {
+  color: var(--text-soft);
+}
+
+.agent-tool-activity-members {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
 .agent-tool-call-icon-slot {
   color: var(--text-faint);
 }

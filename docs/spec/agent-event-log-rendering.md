@@ -986,7 +986,9 @@ Rules:
   running after a crash, has `updatedAt === startedAt` and so no meaningful
   wall-clock, and is left unknown rather than shown as "<1s"; a multi-run turn
   sums each run's wall-clock). When the duration is unknown the header falls back
-  to the static group summary (e.g. "Thought · used N tools"). A tool call's
+  to the static group summary — a **counted, kind-named, tense-aware** activity
+  line ("Ran 3 commands · read 2 nodes", "Thought · searching the web"), not a
+  generic "used N tools". A tool call's
   **settled outcome** is authoritative for its status: replay stamps
   `outcome: 'completed' | 'failed'` onto the `toolCall` content part from the
   `tool_call.completed` / `tool_call.failed` events (independent of whether a
@@ -1004,6 +1006,20 @@ Rules:
   never a duration. A cleanly `completed` resultless turn never shows
   "Interrupted": it surfaces its process (per the result-first design) under the
   descriptive group summary rather than the "Worked for …" resting header.
+- **Consecutive tool calls fold into one counted activity group** (Codex's
+  render-group split, `splitTimelineIntoGroups`/`summarizeToolActivity` in
+  `agentRenderGroups.ts`). Inside the expanded process timeline, a maximal run of
+  ≥2 adjacent **non-child-run** tool calls collapses into a single
+  `AgentToolActivityGroup` disclosure whose header is the counted summary,
+  expandable to the member rows. A thinking or narration block — and a child-run
+  tool call (rich inline content) — **breaks the run** (reasoning is a hard
+  boundary); a lone tool call renders standalone, never wrapped. The summary
+  buckets members by activity kind (`toolActivityKind`), dedupes file kinds by
+  subject path (editing the same node twice reads "Edited a file"), and uses the
+  **per-kind** running/done tense so a finished command beside a still-running
+  search reads "Ran a command · searching" — never a group-global mislabel. This
+  is Codex's per-tool-activity-group collapse (machine B) nested inside the
+  per-turn process fold.
 - **One assistant-turn renderer.** The conversation transcript and the child-run
   task detail timeline both render assistant content through the
   same assistant turn/process fold components. The task detail panel reads a raw

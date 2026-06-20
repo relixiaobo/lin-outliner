@@ -12,6 +12,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentProcessTimeline } from './AgentProcessTimeline';
 import { childRunToolStatus, getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
+import { sentenceFragment, summarizeToolActivity } from './agentRenderGroups';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
 import { firstLine, formatRunDuration, previewText } from './agentProcessTypes';
 import { useT } from '../../i18n/I18nProvider';
@@ -197,13 +198,20 @@ export function summarizeProcess({
     return process.workedFor({ duration: formatRunDuration(workedForMs) });
   }
 
+  // Counted, kind-named tool-activity summary for a multi-tool turn (Codex's
+  // "Ran 3 commands · read 2 files"), replacing the generic "Used N tools".
+  const toolActivitySummary = () => summarizeToolActivity(
+    toolCalls.map((toolCall) => ({ status: toolStatus(toolCall), toolCall })),
+    process,
+  );
+
   if (thinkingCount === 0 && toolCount === 1) {
     const toolCall = toolCalls[0]!;
     const status = toolStatus(toolCall);
     return summarizeToolCall(toolCall, status, toolCallLabels);
   }
 
-  if (thinkingCount === 0 && toolCount >= 2) return process.usedTools({ count: toolCount });
+  if (thinkingCount === 0 && toolCount >= 2) return toolActivitySummary();
 
   if (thinkingCount === 1 && toolCount === 0) {
     return firstThinkingText ? process.thoughtPreview({ preview: previewText(firstThinkingText, 80) }) : process.thought;
@@ -217,7 +225,9 @@ export function summarizeProcess({
     return process.thoughtAndTool({ tool: summarizeToolCall(toolCall, status, toolCallLabels) });
   }
 
-  if (thinkingCount > 0 && toolCount >= 2) return process.thoughtAndUsedTools({ count: toolCount });
+  if (thinkingCount > 0 && toolCount >= 2) {
+    return process.thoughtAndActivity({ activity: sentenceFragment(toolActivitySummary()) });
+  }
 
   return process.working;
 }

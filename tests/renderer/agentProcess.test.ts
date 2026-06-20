@@ -122,7 +122,7 @@ describe('agent process summary', () => {
       process,
       toolCallLabels,
       thinkingLabel,
-    })).toBe('Thought · used 2 tools');
+    })).toBe('Thought · read a node · searching');
   });
 
   test('summarizes mixed completed process as one collapsed process row', () => {
@@ -141,7 +141,7 @@ describe('agent process summary', () => {
       process,
       toolCallLabels,
       thinkingLabel,
-    })).toBe('Thought · used 2 tools');
+    })).toBe('Thought · read a node · searched');
   });
 
   test('summarizes solo completed tool by tool status', () => {
@@ -238,7 +238,7 @@ describe('agent process summary', () => {
       process,
       toolCallLabels,
       thinkingLabel,
-    })).toBe('Thought · used 2 tools');
+    })).toBe('Thought · read a node · searching');
   });
 
   test('an interrupted turn keeps its interrupted label over the duration', () => {

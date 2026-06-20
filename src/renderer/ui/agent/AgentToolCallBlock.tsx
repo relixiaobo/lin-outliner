@@ -57,6 +57,22 @@ interface AgentToolCallBlockProps {
 
 export type ToolStatus = 'pending' | 'done' | 'error';
 
+// Activity bucket for the counted tool-activity summary (Codex's
+// "Ran 3 commands · read 2 files"). Maps our tool names onto Codex's verb
+// families; `other` is the catch-all (unknown tools contribute a generic
+// "used a tool" fragment, they never blank the whole summary).
+export type ToolActivityKind =
+  | 'command'
+  | 'fileCreate'
+  | 'fileEdit'
+  | 'fileDelete'
+  | 'read'
+  | 'search'
+  | 'web'
+  | 'memory'
+  | 'skill'
+  | 'other';
+
 type ResultPart =
   | { type: 'imagePlaceholder' }
   | { type: 'persistedOutput'; payloadRef: AgentToolResultPayloadPart; text: string }
@@ -83,6 +99,37 @@ export function getToolCallStatus(
   // the spinner rather than waiting on a result that may never arrive.
   if (outcome) return outcome === 'failed' ? 'error' : 'done';
   return pendingToolCallIds.has(toolCallId) || toolActive ? 'pending' : 'error';
+}
+
+// The `Agent*` family are child-run tools (rich inline content); they are never
+// folded into a tool-activity group, so they do not need a bucket here.
+export function toolActivityKind(name: string): ToolActivityKind {
+  switch (name) {
+    case 'bash':
+      return 'command';
+    case 'file_write':
+    case 'node_create':
+      return 'fileCreate';
+    case 'file_edit':
+    case 'node_edit':
+      return 'fileEdit';
+    case 'node_delete':
+      return 'fileDelete';
+    case 'node_read':
+      return 'read';
+    case 'node_search':
+      return 'search';
+    case 'web_search':
+    case 'web_fetch':
+      return 'web';
+    case 'recall':
+    case 'dream':
+      return 'memory';
+    case 'skill':
+      return 'skill';
+    default:
+      return 'other';
+  }
 }
 
 export function getToolIcon(toolCall: ToolCall) {
