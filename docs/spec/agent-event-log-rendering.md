@@ -1052,14 +1052,26 @@ Rules:
 - **Process is collapsible body, not a special register.** Codex's process IS the
   same body prose as the final answer — just the part collapsed behind the
   "Worked for {t}" fold (machine C). So reasoning AND interim narration render at
-  **content register** (full markdown, answer-sized type), one step soft of the
-  answer's `--text-strong` (`.agent-process-reasoning` / `.agent-process-narration`
-  → `--text-soft`). There is **no dim meta gist row, no lightbulb, and no per-block
-  reasoning toggle**: when the turn process is expanded, each reasoning block shows
-  in **full**, and a `**bold**` gist headline renders as a real markdown heading
-  (we no longer strip it). The turn-level fold is the only collapse above the tool
-  steps — the user sees the whole working process as body prose, or collapses it to
-  the divider. Tool steps stay thin status rows interspersed in that prose.
+  **content register** (full markdown, answer-sized type) — **no dim meta gist row,
+  no lightbulb, and no per-block reasoning toggle**. When the turn process is
+  expanded, each reasoning block shows in **full**, and a `**bold**` gist headline
+  renders as a real markdown heading (we no longer strip it). The turn-level fold is
+  the only collapse above the tool steps — the user sees the whole working process
+  as body prose, or collapses it to the divider. Tool steps stay thin status rows
+  interspersed in that prose.
+- **Two body colors, split exactly the way Codex does** (foreground tokens, not a
+  meta downgrade):
+  - **Interim narration** is the assistant's own SPEECH (Codex `assistant-message`,
+    `text-primary` = full foreground) → the same bright `--text-strong` as the final
+    answer (`.agent-process-narration`). The running commentary reads continuous
+    with the answer below it; only the tool steps and the "Worked for {t}" divider
+    separate them.
+  - **Reasoning** is the model's THINKING (Codex `reasoning`, `text-secondary` ≈
+    foreground 65%) → one step soft (`.agent-process-reasoning` → `--text-soft`), so
+    it reads as the dimmer thinking layer, distinct from the assistant's own words.
+  This is why a Codex turn's expanded process can look "all one brightness": that
+  body is interim narration (primary), not reasoning. Reasoning is genuinely dimmer
+  in Codex too.
 - **Reasoning active cue.** While a reasoning block is streaming with no text yet,
   the cue is a **static "Thinking"** label — no ellipsis and **no shimmer** (the
   cadenced shimmer is a Codex Statsig A/B experiment, not the default; the live

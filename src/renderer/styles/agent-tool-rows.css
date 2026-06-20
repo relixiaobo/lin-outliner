@@ -148,18 +148,31 @@
 /* Reasoning + interim narration inside the flattened turn timeline. Codex renders
    the process as the SAME body prose as the final answer — just the part collapsed
    behind the "Worked for {t}" fold (machine C) — so both render at CONTENT register
-   (full markdown, answer-sized type), NOT as dim meta rows. They sit one step soft
-   of the answer's `--text-strong` so "this is the process, the answer is below"
-   still reads, without downgrading to a separate meta typography. The nested
+   (full markdown, answer-sized type), NOT as dim meta rows. The nested
    `.agent-markdown` trims its own leading/trailing block margins, so no
-   first/last-child reset is needed here. */
+   first/last-child reset is needed here.
+
+   Color splits the SAME way Codex does (foreground tokens):
+   - Narration is interim assistant SPEECH (Codex `assistant-message`, `text-primary`)
+     — the same bright `--text-strong` as the final answer, so the running
+     commentary reads continuous with the answer below.
+   - Reasoning is the model's THINKING (Codex `reasoning`, `text-secondary` ≈
+     foreground 65%) — one step soft (`--text-soft`) so it reads as the dimmer
+     thinking layer, distinct from the assistant's own words. */
 .agent-process-reasoning,
 .agent-process-narration {
   min-width: 0;
   overflow-wrap: anywhere;
-  color: var(--text-soft);
   font-size: var(--font-content);
   line-height: var(--line-content);
+}
+
+.agent-process-narration {
+  color: var(--text-strong);
+}
+
+.agent-process-reasoning {
+  color: var(--text-soft);
 }
 
 /* Empty live reasoning stream: a static "Thinking" cue (no ellipsis, no shimmer —
