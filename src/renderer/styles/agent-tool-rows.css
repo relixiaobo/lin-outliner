@@ -147,13 +147,10 @@
   flex-direction: column;
   gap: var(--space-3);
   margin-top: var(--space-2);
-  /* Center the 1px rail under the 14px disclosure-indicator column above it
-     (chevron center = 7px), so the rail reads as descending from the toggle.
-     7px − half the 1px border = 6.5px. Row content stays indent-right via
-     padding-left. */
-  margin-left: 6.5px;
-  border-left: 1px solid var(--border-subtle);
-  padding-left: var(--space-5);
+  /* No left rail or indent (Codex machine C): the process body left-aligns with
+     the "Working / Worked for {t}" divider text above it — each row's leading
+     icon column starts at the same edge as the header text, so the reasoning and
+     tool rows read as a flat list under the divider, not an indented sub-tree. */
 }
 
 /* Interim narration text (assistant prose between tool calls / thinking) inside
@@ -315,11 +312,24 @@
 /* Per-step status ring (Codex machine A, `progress-step-row`): a subtle
    success/danger ring around the check / ✕ glyph at rest. Status colors carry
    status meaning only (B4); the running spinner keeps the plain slot, and the
-   hover-reveal chevron fades the ring out with the status glyph. */
+   hover-reveal chevron fades the ring out with the status glyph.
+   The slot is 14px wide × line-meta tall, so a bare border-radius:50% would draw
+   an ELLIPSE — pin the ring to a centered 14×14 square and shrink the glyph so it
+   sits inside as a true circle. */
 .agent-tool-call.is-done .agent-disclosure-status,
 .agent-tool-call.is-error .agent-disclosure-status {
+  top: 50%;
+  bottom: auto;
+  height: 14px;
+  transform: translateY(-50%);
   border-radius: 50%;
   border: 1px solid transparent;
+}
+
+.agent-tool-call.is-done .agent-disclosure-status svg,
+.agent-tool-call.is-error .agent-disclosure-status svg {
+  width: 9px;
+  height: 9px;
 }
 
 .agent-tool-call.is-done .agent-disclosure-status {
