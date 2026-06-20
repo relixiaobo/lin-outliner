@@ -1114,7 +1114,8 @@ commandPalette: {
       },
     },
     thinking: {
-      thinking: '思考中……',
+      // Reasoning lifecycle: a static "思考中" cue while active (no shimmer).
+      thinking: '思考中',
     },
     markdown: {
       copyCode: '复制代码',

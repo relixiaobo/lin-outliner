@@ -12,6 +12,21 @@ interface AgentThinkingRowProps {
   text: string;
 }
 
+// Codex reasoning items often lead with a `**bold**` one-line gist headline (`Xw`
+// strips the markers). Drop the surrounding `**` so the gist reads as the clean
+// preview line, keeping the rest of the reasoning as the body.
+function reasoningText(text: string): string {
+  const lines = text.split('\n');
+  const firstIdx = lines.findIndex((line) => line.trim().length > 0);
+  if (firstIdx >= 0) {
+    const match = /^\*\*(.+)\*\*$/.exec(lines[firstIdx]!.trim());
+    if (match) {
+      lines[firstIdx] = lines[firstIdx]!.replace(/^(\s*)\*\*(.+)\*\*(\s*)$/, `$1${match[1]!.trim()}$3`);
+    }
+  }
+  return lines.join('\n').trim();
+}
+
 export function AgentThinkingRow({
   expandState,
   id,
@@ -19,7 +34,7 @@ export function AgentThinkingRow({
   text,
 }: AgentThinkingRowProps) {
   const t = useT();
-  const trimmed = text.trim();
+  const trimmed = reasoningText(text);
   if (!trimmed) {
     if (!streaming) return null;
     return (
@@ -30,6 +45,8 @@ export function AgentThinkingRow({
           icon={<ThinkingIcon size={ICON_SIZE.rowGlyph} />}
           interactive={false}
         />
+        {/* Reasoning lifecycle (Codex `Xw`): a STATIC "Thinking" cue (no ellipsis,
+            no shimmer — the shimmer is a Codex A/B experiment). */}
         <span className="agent-thinking-text">{t.agent.thinking.thinking}</span>
       </div>
     );
@@ -72,7 +89,7 @@ export function AgentThinkingRow({
 
 export function AgentThinkingBody({ streaming, text }: { streaming: boolean; text: string }) {
   const t = useT();
-  const trimmed = text.trim();
+  const trimmed = reasoningText(text);
   if (!trimmed && streaming) {
     return <span className="agent-thinking-placeholder">{t.agent.thinking.thinking}</span>;
   }

@@ -1036,6 +1036,24 @@ Rules:
   search reads "Ran a command · searching" — never a group-global mislabel. This
   is Codex's per-tool-activity-group collapse (machine B) nested inside the
   per-turn process fold.
+- **Per-step status glyph** (Codex machine A, `progress-step-row`). Each tool row
+  leads with a **status glyph, not the tool-type icon** — the row's verb already
+  carries the type. Running shows the spinning ring; **done** a green check inside
+  a subtle success ring (`--status-success` at /40 border, /15 fill); **failed** a
+  red ✕ inside a danger ring + red row text. The fourth Codex state — `pending`
+  (declared-but-not-started, a dim hollow ring) — is **deferred**: our projection
+  does not cheaply distinguish it from `running`, and we will not add core events
+  for an icon. The ring fades out with the status glyph when the disclosure chevron
+  reveals on hover.
+- **Reasoning lifecycle + active cue.** The active reasoning cue is a **static
+  "Thinking"** label — no ellipsis and **no shimmer** (the cadenced shimmer is a
+  Codex Statsig A/B experiment, not the default; the live surfaces are the static
+  label + the per-step spinner). A reasoning block that leads with a `**bold**`
+  one-line gist headline drops the `**` markers so the gist reads as a clean
+  preview line. (The sealed "Thought for {elapsed}" / "Thought" reasoning label is
+  not yet adopted: it needs per-reasoning-item timing we do not track, and folding
+  the reasoning text behind a bare label hides content the user watches stream — a
+  visual-gate call, deferred.)
 - **One assistant-turn renderer.** The conversation transcript and the child-run
   task detail timeline both render assistant content through the
   same assistant turn/process fold components. The task detail panel reads a raw

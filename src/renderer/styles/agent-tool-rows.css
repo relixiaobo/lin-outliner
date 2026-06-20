@@ -312,6 +312,28 @@
   color: var(--danger);
 }
 
+/* Per-step status ring (Codex machine A, `progress-step-row`): a subtle
+   success/danger ring around the check / ✕ glyph at rest. Status colors carry
+   status meaning only (B4); the running spinner keeps the plain slot, and the
+   hover-reveal chevron fades the ring out with the status glyph. */
+.agent-tool-call.is-done .agent-disclosure-status,
+.agent-tool-call.is-error .agent-disclosure-status {
+  border-radius: 50%;
+  border: 1px solid transparent;
+}
+
+.agent-tool-call.is-done .agent-disclosure-status {
+  color: var(--status-success);
+  border-color: color-mix(in srgb, var(--status-success) 40%, transparent);
+  background: color-mix(in srgb, var(--status-success) 15%, transparent);
+}
+
+.agent-tool-call.is-error .agent-disclosure-status {
+  color: var(--status-danger);
+  border-color: color-mix(in srgb, var(--status-danger) 40%, transparent);
+  background: color-mix(in srgb, var(--status-danger) 15%, transparent);
+}
+
 .agent-tool-call-row {
   display: flex;
   align-items: center;

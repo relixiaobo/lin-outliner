@@ -1209,7 +1209,9 @@ commandPalette: {
       },
     },
     thinking: {
-      thinking: 'Thinking...',
+      // Reasoning lifecycle (Codex `Xw`): a STATIC "Thinking" cue while active —
+      // no ellipsis, no shimmer (the shimmer is a Codex A/B experiment).
+      thinking: 'Thinking',
     },
     markdown: {
       copyCode: 'Copy code',

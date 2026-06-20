@@ -12,6 +12,7 @@ import {
   AddChildIcon,
   BrainIcon,
   CheckIcon,
+  CloseIcon,
   CopyIcon,
   FileTextIcon,
   ICON_SIZE,
@@ -863,8 +864,10 @@ export function AgentToolCallBlock({
   const t = useT();
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
   const status = childRun ? childRunToolStatus(childRun) : getToolCallStatus(toolCall.id, result, pendingToolCallIds, turnActive, outcome);
-  const Icon = getToolIcon(toolCall);
-  const StatusIcon = status === 'pending' ? LoaderIcon : Icon;
+  // Codex's per-step status glyph (machine A): a running spinner, a green check
+  // on done, a red ✕ on failed — NOT the tool-type icon (the row's verb already
+  // carries the type). The ring color comes from the `is-{status}` CSS.
+  const StatusIcon = status === 'done' ? CheckIcon : status === 'error' ? CloseIcon : LoaderIcon;
   const isExpanded = expanded ?? internalExpanded;
   const inputText = useMemo(() => jsonText(toolCall.arguments), [toolCall.arguments]);
   const outputText = useMemo(() => resultText(result), [result]);
