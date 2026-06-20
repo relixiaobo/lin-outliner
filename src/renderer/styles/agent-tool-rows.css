@@ -152,26 +152,27 @@
    `.agent-markdown` trims its own leading/trailing block margins, so no
    first/last-child reset is needed here.
 
-   Color splits the SAME way Codex does (foreground tokens):
+   Codex splits these by type, so they get different size AND color:
    - Narration is interim assistant SPEECH (Codex `assistant-message`, `text-primary`)
-     — the same bright `--text-strong` as the final answer, so the running
-     commentary reads continuous with the answer below.
-   - Reasoning is the model's THINKING (Codex `reasoning`, `text-secondary` ≈
-     foreground 65%) — one step soft (`--text-soft`) so it reads as the dimmer
+     → CONTENT register at the bright `--text-strong`, the same as the final answer,
+     so the running commentary reads continuous with the answer below.
+   - Reasoning is the model's THINKING (Codex `reasoning`, `text-secondary`) → a
+     compact, foldable STEP at the SAME `--font-meta` size as the tool rows it sits
+     among (NOT a size larger), soft (`--text-soft`) so it reads as the dimmer
      thinking layer, distinct from the assistant's own words. */
-.agent-process-reasoning,
 .agent-process-narration {
   min-width: 0;
   overflow-wrap: anywhere;
   font-size: var(--font-content);
   line-height: var(--line-content);
-}
-
-.agent-process-narration {
   color: var(--text-strong);
 }
 
 .agent-process-reasoning {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
   color: var(--text-soft);
 }
 
