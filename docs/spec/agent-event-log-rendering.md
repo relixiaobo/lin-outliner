@@ -942,7 +942,11 @@ Rules:
   (*machine B*, below). There is **no second per-narration "process group" nesting**
   — the turn fold is the only collapse level above the activity groups. A turn with
   no thinking/tools is a direct answer and renders without a fold. This is one
-  mechanism with no per-mode forks and no single-tool inline special case.
+  mechanism with no per-mode forks and no single-tool inline special case. The
+  timeline body has **no left rail or indent**: every row's leading icon column
+  left-aligns with the divider text above it, so the pre-answer body reads as a
+  flat list under the "Working / Worked for {t}" header, not an indented sub-tree
+  (Codex's layout).
 - **Codex-style auto-collapse + persistent divider.** The turn fold mirrors
   Codex's *machine C*: while the turn is **working and has not started its answer**
   the body shows **expanded** (the user watches reasoning + tool activity stream
