@@ -167,25 +167,15 @@ export function summarizeProcess({
   // the ticking clock — "Working for {t}" (≥1s) / bare "Working" (<1s, no number so it never
   // flickers a "0s"). It stays put when the body is expanded (the work shows in
   // the timeline below) and when it auto-collapses on answer start. Without a run
-  // clock (legacy entries) a collapsed live turn falls back to the running tool /
-  // latest thought; an expanded clock-less live turn falls through to the
-  // descriptive summary.
+  // clock, stay on bare "Working"; the expanded body already carries the detailed
+  // thought/tool timeline.
   if (turnActive) {
     if (liveElapsedMs !== null) {
       return liveElapsedMs >= 1000
         ? process.workingFor({ duration: formatRunDuration(liveElapsedMs) })
         : process.working;
     }
-    if (liveCollapsed) {
-      for (let i = toolCalls.length - 1; i >= 0; i -= 1) {
-        const toolCall = toolCalls[i]!;
-        const status = toolStatus(toolCall);
-        if (status === 'pending') return summarizeToolCall(toolCall, status, toolCallLabels);
-      }
-      if (lastThinkingText) return previewText(lastThinkingText, 80);
-      if (thinkingCount > 0) return thinkingLabel;
-      return process.working;
-    }
+    return process.working;
   }
 
   // Result-first resting state: a SEALED turn (not active) collapses to
