@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AssistantMessage, ToolCall } from '../../src/core/agentTypes';
+import type { AgentRenderChildRunEntity } from '../../src/core/agentRenderProjection';
 import { projectAssistantTurn } from '../../src/renderer/ui/agent/agentTurnProjection';
 
 function assistant(content: AssistantMessage['content'], extra: Partial<AssistantMessage> = {}): AssistantMessage {
@@ -17,6 +18,22 @@ function toolCall(id = 'tool-a'): ToolCall {
     id,
     name: 'web_search',
     type: 'toolCall',
+  };
+}
+
+function childRun(id = 'child-run'): AgentRenderChildRunEntity {
+  return {
+    agentType: 'default',
+    contextMode: 'fork',
+    description: 'Child run',
+    executingAgentId: 'agent-a',
+    id,
+    memoryOwnerAgentId: 'agent-a',
+    parentAgentId: 'agent-a',
+    prompt: 'Check this',
+    startedAt: 0,
+    status: 'running',
+    updatedAt: 0,
   };
 }
 
@@ -143,7 +160,7 @@ describe('projectAssistantTurn', () => {
       toolCall('child-tool'),
       { type: 'text', text: 'Follow-up answer' },
     ]), {
-      childRunsByParentToolCallId: new Map([['child-tool', { id: 'child-run' } as never]]),
+      childRunsByParentToolCallId: new Map([['child-tool', childRun()]]),
       isChannel: true,
     });
 

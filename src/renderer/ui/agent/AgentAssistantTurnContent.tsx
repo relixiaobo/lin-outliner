@@ -71,11 +71,11 @@ export function renderAssistantBlocks(
 
   // Trailing answer prose. The projection owns the result-first split; rendering
   // here is just the final assistant-message items.
-  turn.finalMessages.forEach((block, i) => {
+  turn.finalMessages.forEach((block) => {
     rendered.push(
       <AgentMarkdown
         index={documentIndex}
-        key={`text-${i}`}
+        key={block.id}
         keyPrefix={block.id}
         onNodeReferenceOpen={onNodeReferenceOpen}
         streaming={block.streaming}
