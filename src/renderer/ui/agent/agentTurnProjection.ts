@@ -10,19 +10,11 @@ type AssistantToolCallBlock = Extract<AssistantContentBlock, { type: 'toolCall' 
 export type AgentTurnProcessItem =
   | {
     id: string;
-    sourceIndex: number;
     streaming: boolean;
     text: string;
     type: 'reasoning';
   }
-  | {
-    id: string;
-    phase: 'process';
-    sourceIndex: number;
-    streaming: boolean;
-    text: string;
-    type: 'agentMessage';
-  }
+  | AgentTurnMessageItem
   | {
     childRun?: AgentRenderChildRunEntity;
     id: string;
@@ -33,10 +25,8 @@ export type AgentTurnProcessItem =
 
 export type AgentTurnToolCallItem = Extract<AgentTurnProcessItem, { type: 'toolCall' }>;
 
-export interface AgentTurnFinalMessageItem {
+export interface AgentTurnMessageItem {
   id: string;
-  phase: 'final';
-  sourceIndex: number;
   streaming: boolean;
   text: string;
   type: 'agentMessage';
@@ -54,7 +44,7 @@ export interface AgentTurnProcessProjection {
 }
 
 export interface AgentTurnProjection {
-  finalMessages: AgentTurnFinalMessageItem[];
+  finalMessages: AgentTurnMessageItem[];
   process: AgentTurnProcessProjection | null;
 }
 
@@ -129,7 +119,6 @@ function processItemFromIndexedBlock({
     case 'thinking':
       return {
         id: `${processId}:reasoning:${indexed.sourceIndex}`,
-        sourceIndex: indexed.sourceIndex,
         streaming: streaming && !hasLater,
         text: indexed.block.thinking,
         type: 'reasoning',
@@ -145,8 +134,6 @@ function processItemFromIndexedBlock({
     case 'text':
       return {
         id: `${processId}:agent-message:${indexed.sourceIndex}`,
-        phase: 'process',
-        sourceIndex: indexed.sourceIndex,
         streaming: streaming && !hasLater,
         text: indexed.block.text,
         type: 'agentMessage',
@@ -195,12 +182,10 @@ export function projectAssistantTurn({
   const turnFailedWithoutProse = turnInterruptedAndSettled && !finalIsProse;
   const surfaceResultlessProcess = !finalIsProse && (turnInterruptedAndSettled || (!isChannel && !turnActive));
 
-  const finalMessages: AgentTurnFinalMessageItem[] = finalTextBlocks.map(({ block, sourceIndex }, index) => {
+  const finalMessages: AgentTurnMessageItem[] = finalTextBlocks.map(({ block, sourceIndex }, index) => {
     const hasLaterText = finalTextBlocks.slice(index + 1).some((candidate) => candidate.block.text.trim().length > 0);
     return {
       id: `${processId}:final:${sourceIndex}`,
-      phase: 'final',
-      sourceIndex,
       streaming: streaming && !hasLaterText,
       text: block.text,
       type: 'agentMessage',

@@ -37,8 +37,8 @@ message row plus its turn runtime metadata into a compact render model:
 
 ```ts
 type AgentTurnRenderItem =
-  | { type: 'reasoning'; id: string; sourceIndex: number; text: string; streaming: boolean }
-  | { type: 'agentMessage'; id: string; sourceIndex: number; phase: 'process' | 'final'; text: string; streaming: boolean }
+  | { type: 'reasoning'; id: string; text: string; streaming: boolean }
+  | { type: 'agentMessage'; id: string; text: string; streaming: boolean }
   | { type: 'toolCall'; id: string; toolCall: ToolCall; childRun?: AgentRenderChildRunEntity; outcome?: AgentToolCallOutcome };
 
 type AgentTurnProcessProjection = {

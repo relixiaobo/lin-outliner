@@ -59,8 +59,6 @@ describe('projectAssistantTurn', () => {
     expect(turn.finalMessages).toEqual([
       {
         id: 'process:message-a:final:0',
-        phase: 'final',
-        sourceIndex: 0,
         streaming: false,
         text: 'Final answer',
         type: 'agentMessage',
@@ -99,8 +97,6 @@ describe('projectAssistantTurn', () => {
 
     expect(turn.process?.items.map((item) => item.type)).toEqual(['agentMessage', 'toolCall']);
     expect(turn.process?.items[0]).toMatchObject({
-      phase: 'process',
-      sourceIndex: 0,
       text: 'I will check first.',
       type: 'agentMessage',
     });

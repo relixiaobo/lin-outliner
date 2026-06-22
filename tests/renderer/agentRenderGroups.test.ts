@@ -23,7 +23,6 @@ function toolItem(id: string, name: string, args: Record<string, unknown> = {}):
 function reasoningItem(sourceIndex: number): AgentTurnProcessItem {
   return {
     id: `process:test:reasoning:${sourceIndex}`,
-    sourceIndex,
     streaming: false,
     text: 'reasoning',
     type: 'reasoning',
