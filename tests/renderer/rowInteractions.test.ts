@@ -1517,6 +1517,47 @@ describe('row interaction resolvers', () => {
     }));
   });
 
+  test('reference candidates include file nodes by their display filename', () => {
+    const nodes = [
+      makeNode('root', 'Root', { children: ['today'] }),
+      makeNode('today', 'Today', { parentId: 'root', children: ['current', 'pdf'] }),
+      makeNode('current', 'Current', { parentId: 'today' }),
+      makeNode('pdf', '', {
+        parentId: 'today',
+        type: 'attachment',
+        assetId: 'asset-pdf',
+        mimeType: 'application/pdf',
+        originalFilename: '微信背后的产品观.pdf',
+      }),
+    ];
+    const projection = {
+      workspaceId: 'root',
+      rootId: 'root',
+      libraryId: 'root',
+      dailyNotesId: 'today',
+      schemaId: 'schema',
+      searchesId: 'searches',
+      recentsId: 'recents',
+      trashId: 'trash',
+      settingsId: 'settings',
+      todayId: 'today',
+      nodes,
+    };
+
+    const candidates = buildReferenceCandidates({
+      index: { projection, byId: new Map(nodes.map((node) => [node.id, node])) } as any,
+      currentNodeId: 'current',
+      query: '产品观',
+      excludeCurrentNode: false,
+    });
+
+    expect(candidates).toContainEqual(expect.objectContaining({
+      id: 'pdf',
+      label: '微信背后的产品观.pdf',
+      type: 'node',
+    }));
+  });
+
   test('excludeCurrentNode controls whether the current node is mentionable', () => {
     const nodes = [
       makeNode('root', 'Root', { children: ['today'] }),

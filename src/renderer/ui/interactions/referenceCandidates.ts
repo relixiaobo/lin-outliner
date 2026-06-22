@@ -5,6 +5,7 @@ import { isContentNode, textOf } from '../shared';
 import { textMatchRank } from './candidateRanking';
 import { isNodeInTrash } from './nodeLocation';
 import { getTreeReferenceBlockMessage, getTreeReferenceBlockReason } from './referenceRules';
+import { fileNodeTitle, isFileNode } from '../preview/fileNode';
 
 // Localized strings the candidate builder needs (it is a pure helper outside React).
 // Callers thread these from useT(); they default to the canonical English tree so
@@ -137,11 +138,11 @@ function nodeCandidates(
   const currentNode = currentNodeId ? index.byId.get(currentNodeId) : undefined;
   const currentAncestors = ancestorIds(currentNode, index.byId);
   const candidates = index.projection.nodes
-    .filter((node) => isContentNode(node)
+    .filter((node) => isReferenceCandidateNode(node)
       && !(excludeCurrentNode && node.id === currentNodeId)
       && !isNodeInTrash(index, node.id))
     .map((node) => {
-      const label = textOf(node) || labels.untitled;
+      const label = referenceCandidateNodeLabel(node, labels.untitled);
       const rawText = node.content.text.trim();
       const reason = treeReferenceParentId
         ? getTreeReferenceBlockReason({
@@ -187,6 +188,15 @@ function nodeCandidates(
       disabledReason: candidate.disabledReason,
     };
   });
+}
+
+function isReferenceCandidateNode(node: NodeProjection | undefined): boolean {
+  return isContentNode(node) || isFileNode(node);
+}
+
+function referenceCandidateNodeLabel(node: NodeProjection, untitled: string): string {
+  if (isFileNode(node)) return fileNodeTitle(node) || untitled;
+  return textOf(node) || untitled;
 }
 
 export function buildReferenceCandidates(params: {
