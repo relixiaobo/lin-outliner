@@ -654,6 +654,16 @@ renderer uses to settle a tool row's status (see the live-header/tool-status rul
 under Rendering). It is render-only metadata: the model context derivation never
 includes `outcome`.
 
+A run is a **linear spine**: every execution segment (an assistant continuation or
+a tool result) sets `parentMessageId` to the run's own tail — the previous segment
+— not to the addressing assistant message. This is load-bearing for **parallel
+tool calls**: when one assistant emits N calls, their results chain `assistant →
+result₁ → result₂ → … → resultₙ` instead of fanning out as N siblings of the
+assistant. The visible transcript is the single-leaf active path (one child per
+node), so sibling results would leave all but one off-path — invisible, and
+rendered as resultless "Failed" rows. Results re-associate to their calls by
+`toolCallId`, so spine order never affects which call shows which output.
+
 The pi-mono projection reconstructs pi-ai messages as:
 
 ```txt
@@ -950,7 +960,13 @@ Rules:
   answer position (not inside process narration), so the same markdown subtree
   survives the live→sealed transition. The process **does not auto-expand while
   live and does not auto-collapse on settle**; user expansion is sticky for that
-  process id.
+  process id. In the **expanded** timeline the spinner is per row: while the turn is
+  live, **every un-settled tool row** (no result, no `outcome`, no child run) spins,
+  not just the most recent one — so when an assistant fans out a parallel tool batch,
+  the earlier calls never flash red in the frame before the runtime populates
+  `pendingToolCallIds`. A call settles (and stops spinning) the instant it gains a
+  result, an `outcome`, or a child run; once the turn ends, an un-settled call falls
+  through to its real error/incomplete state rather than spinning forever.
   - A **resultless** turn (last visible block is a thought/tool — no trailing
     answer prose) drives two SEPARATE decisions, decoupled so a cleanly-completed
     turn never mislabels:
