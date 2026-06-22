@@ -1541,6 +1541,70 @@ test.describe('agent composer controls', () => {
     await expect(userBubble).not.toContainText('[[node:Alpha^node-alpha]]');
   });
 
+  test('inserts file nodes from node mention suggestions by display filename', async ({ page }) => {
+    const projection = await e2eProjection(page);
+    const today = projection.nodes.find((node) => node.id === ids.today);
+    expect(today).toBeTruthy();
+    const fileNode = {
+      id: 'node-file-pdf',
+      parentId: ids.today,
+      children: [],
+      content: { text: '', marks: [], inlineRefs: [] },
+      tags: [],
+      createdAt: 1_800_000_000_000,
+      updatedAt: 1_800_000_000_000,
+      locked: false,
+      autoCollected: false,
+      type: 'attachment',
+      assetId: 'asset-file-pdf',
+      mimeType: 'application/pdf',
+      originalFilename: '微信背后的产品观.pdf',
+      fileSize: 4096,
+    };
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: {
+        ...projection,
+        nodes: projection.nodes
+          .map((node) => node.id === ids.today
+            ? { ...node, children: [...node.children, fileNode.id] }
+            : node)
+          .concat(fileNode),
+      },
+      timestamp: Date.now(),
+    });
+
+    const input = page.getByLabel('Agent message');
+    await input.click();
+    await page.keyboard.type('@产品观');
+
+    const menu = page.getByRole('listbox', { name: 'Agent mention suggestions' });
+    await expect(menu).toBeVisible();
+    await expect(menu.locator('.agent-composer-mention-section', { hasText: 'Nodes' })).toBeVisible();
+    const fileNodeOption = menu.getByRole('option', { name: /微信背后的产品观\.pdf/ });
+    await expect(fileNodeOption).toBeVisible();
+    await fileNodeOption.click();
+
+    await expect(page.locator('[data-agent-node-ref="node-file-pdf"]')).toHaveText('微信背后的产品观.pdf');
+    await page.getByRole('button', { name: 'Send message' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.find((call) => (
+        call.cmd === 'agent_send_message'
+        && call.args.userViewContext
+        && typeof call.args.userViewContext === 'object'
+        && 'referencedNodes' in call.args.userViewContext
+      ))?.args;
+    }).toMatchObject({
+      message: '[[node:微信背后的产品观.pdf^node-file-pdf]]',
+      userViewContext: {
+        referencedNodes: [{ nodeId: 'node-file-pdf', title: '微信背后的产品观.pdf' }],
+      },
+    });
+  });
+
   test('excludes trashed nodes from node mention suggestions', async ({ page }) => {
     await invokeDocumentCommand(page, 'create_node', {
       parentId: 'library',

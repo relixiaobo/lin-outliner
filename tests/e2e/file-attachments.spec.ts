@@ -394,6 +394,7 @@ test.describe('file attachments', () => {
     const previewStage = nodePage.locator('.file-node-body .file-node-preview');
     await expect(previewStage).toHaveClass(/collapsed/);
     await expect(nodePage.locator('.file-node-preview.collapsed .file-preview-pdf--summary .file-preview-pdf-canvas')).toHaveCount(3);
+    await expect(nodePage.locator('.file-node-preview.collapsed .file-preview-pdf-text-layer')).toHaveCount(0);
 
     // A summary PDF page is itself an expand target: clicking page 2 switches to the
     // full reader and scrolls that internally-scrolling preview to page 2.
@@ -459,6 +460,42 @@ test.describe('file attachments', () => {
         usLetterAspect: Math.abs(aspect - 792 / 612) < 0.02,
       };
     })).toEqual({ hasInk: true, rendered: true, usLetterAspect: true });
+    const pageTwoTextLayer = nodePage.locator(
+      '.file-node-preview.expanded .file-preview-pdf--full [data-pdf-page-number="2"] .file-preview-pdf-text-layer.ready',
+    ).first();
+    await expect(pageTwoTextLayer).toHaveAttribute('data-preserve-selection', 'true');
+    await expect.poll(async () => pageTwoTextLayer.evaluate((layer) => (
+      Array.from(layer.querySelectorAll('span')).some((span) =>
+        span.textContent?.includes('Preview PDF Page 2'))
+    ))).toBe(true);
+    const pageTwoTextRect = await pageTwoTextLayer.evaluate((layer) => {
+      const span = Array.from(layer.querySelectorAll<HTMLElement>('span'))
+        .find((candidate) => candidate.textContent?.includes('Preview PDF Page 2'));
+      if (!span) return null;
+      const rect = span.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    });
+    if (!pageTwoTextRect) throw new Error('Missing page 2 text layer span');
+    await expect.poll(async () => pageTwoTextLayer.evaluate((layer) => {
+      const span = Array.from(layer.querySelectorAll<HTMLElement>('span'))
+        .find((candidate) => candidate.textContent?.includes('Preview PDF Page 2'));
+      if (!span) return false;
+      const background = getComputedStyle(span, '::selection').backgroundColor;
+      return Boolean(background && background !== 'transparent' && background !== 'rgba(0, 0, 0, 0)');
+    })).toBe(true);
+    await page.mouse.move(pageTwoTextRect.x + 2, pageTwoTextRect.y + pageTwoTextRect.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(
+      pageTwoTextRect.x + Math.max(4, pageTwoTextRect.width - 2),
+      pageTwoTextRect.y + pageTwoTextRect.height / 2,
+      { steps: 8 },
+    );
+    await page.mouse.up();
+    await expect.poll(async () => page.evaluate(() => window.getSelection()?.toString() ?? ''))
+      .toContain('Preview PDF Page 2');
+    await expect.poll(async () => page.evaluate(() => document.body.classList.contains('drag-selecting')))
+      .toBe(false);
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
     await expect.poll(async () => previewStage.evaluate((element) => {
       const fullReader = element.querySelector<HTMLElement>('.file-preview-pdf--full');
       const page = element.querySelector<HTMLElement>('.file-preview-pdf--full .file-preview-pdf-page');
@@ -495,8 +532,23 @@ test.describe('file attachments', () => {
     });
     await previewStage.evaluate((element) => {
       const fullReader = element.querySelector<HTMLElement>('.file-preview-pdf--full');
-      if (fullReader) fullReader.scrollTop = fullReader.scrollHeight;
+      if (fullReader) {
+        fullReader.scrollTop = fullReader.scrollHeight;
+        fullReader.dispatchEvent(new Event('scroll', { bubbles: true }));
+      }
     });
+    await expect.poll(async () => page.evaluate(() => {
+      const raw = window.localStorage.getItem('lin-outliner:pdf-reading-position:v1');
+      if (!raw) return false;
+      const parsed = JSON.parse(raw) as {
+        positions?: Record<string, { pageNumber?: number; pageOffsetRatio?: number }>;
+      };
+      return Object.values(parsed.positions ?? {}).some((position) => (
+        typeof position.pageNumber === 'number'
+        && position.pageNumber >= 2
+        && typeof position.pageOffsetRatio === 'number'
+      ));
+    })).toBe(true);
     await page.setViewportSize({ width: 1360, height: 820 });
     await expect.poll(async () => previewStage.evaluate((element) => {
       const fullReader = element.querySelector<HTMLElement>('.file-preview-pdf--full');
@@ -507,6 +559,17 @@ test.describe('file attachments', () => {
       return Math.round(Math.abs(pageRect.top - readerRect.top));
     })).toBeGreaterThan(40);
 
+    await pill.locator('.file-preview-pill-primary').click();
+    await expect(previewStage).toHaveClass(/collapsed/);
+    await expect(pill.locator('.file-preview-pill-primary')).toHaveText('Expand');
+    await pill.locator('.file-preview-pill-primary').click();
+    await expect(previewStage).toHaveClass(/expanded/);
+    await expect(pill.locator('.file-preview-pill-primary')).toHaveText('Collapse');
+    await expect.poll(async () => previewStage.evaluate((element) => {
+      const fullReader = element.querySelector<HTMLElement>('.file-preview-pdf--full');
+      if (!fullReader) return false;
+      return fullReader.scrollTop > Math.max(120, fullReader.clientHeight * 0.5);
+    })).toBe(true);
     await pill.locator('.file-preview-pill-primary').click();
     await expect(previewStage).toHaveClass(/collapsed/);
     await expect(pill.locator('.file-preview-pill-primary')).toHaveText('Expand');
@@ -818,6 +881,19 @@ test.describe('file attachments', () => {
       text: '# Edge notes',
     });
     await expect(markdownPreview.locator('.file-preview-markdown pre code')).toBeVisible();
+    const markdownHeading = markdownPreview.locator('.file-preview-markdown h1');
+    await expect(markdownHeading).toBeVisible();
+    const headingBox = await markdownHeading.boundingBox();
+    if (!headingBox) throw new Error('Missing markdown heading bounds');
+    await page.mouse.move(headingBox.x + 2, headingBox.y + headingBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(headingBox.x + Math.max(4, headingBox.width - 2), headingBox.y + headingBox.height / 2, { steps: 6 });
+    await page.mouse.up();
+    await expect.poll(async () => page.evaluate(() => window.getSelection()?.toString() ?? ''))
+      .toContain('Markdown edge preview');
+    await expect.poll(async () => page.evaluate(() => document.body.classList.contains('drag-selecting')))
+      .toBe(false);
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
     await expect.poll(async () => markdownPreview.evaluate((frame) => {
       const markdown = frame.querySelector<HTMLElement>('.file-preview-markdown');
       const codeFrame = frame.querySelector<HTMLElement>('.file-preview-markdown pre');
@@ -829,12 +905,16 @@ test.describe('file attachments', () => {
       const codeFrameRect = codeFrame.getBoundingClientRect();
       const codeScrollRect = codeScroll.getBoundingClientRect();
       const codeStyle = getComputedStyle(codeScroll);
+      const markdownStyle = getComputedStyle(markdown);
       return {
-        codeFrameInset: codeFrameRect.left - frameRect.left >= 7,
-        codeScrollbarGutter: Number.parseFloat(codeStyle.paddingBottom) >= 7,
-        codeScrollInset: codeScrollRect.left - codeFrameRect.left >= 7,
+        codeFrameInset: codeFrameRect.left - frameRect.left >= 15,
+        codeScrollbarGutter: Number.parseFloat(codeStyle.paddingBottom) >= 15,
+        codeScrollInset: codeScrollRect.left - codeFrameRect.left >= 15,
         codeScrollsHorizontally: codeScroll.scrollWidth > codeScroll.clientWidth,
-        markdownInset: markdownRect.left - frameRect.left >= 7,
+        markdownInset: markdownRect.left - frameRect.left >= 15,
+        markdownPreservesSelection: markdown.hasAttribute('data-preserve-selection'),
+        markdownSelectable: markdownStyle.userSelect === 'text',
+        markdownTextPreview: markdown.hasAttribute('data-preview-text'),
       };
     })).toEqual({
       codeFrameInset: true,
@@ -842,6 +922,9 @@ test.describe('file attachments', () => {
       codeScrollInset: true,
       codeScrollsHorizontally: true,
       markdownInset: true,
+      markdownPreservesSelection: true,
+      markdownSelectable: true,
+      markdownTextPreview: true,
     });
 
     const textPreview = await pasteClipboardFileAndOpenPreview(page, {
@@ -859,14 +942,21 @@ test.describe('file attachments', () => {
       const codeFrameRect = codeFrame.getBoundingClientRect();
       const codeScrollRect = codeScroll.getBoundingClientRect();
       const codeStyle = getComputedStyle(codeScroll);
+      const codeFrameStyle = getComputedStyle(codeFrame);
       return {
-        codeFrameInset: codeFrameRect.left - frameRect.left >= 7,
-        codeScrollbarGutter: Number.parseFloat(codeStyle.paddingBottom) >= 7,
-        codeScrollInset: codeScrollRect.left - codeFrameRect.left >= 7,
+        codeFrameInset: codeFrameRect.left - frameRect.left >= 15,
+        codeFramePreservesSelection: codeFrame.hasAttribute('data-preserve-selection'),
+        codeFrameSelectable: codeFrameStyle.userSelect === 'text',
+        codeFrameTextPreview: codeFrame.hasAttribute('data-preview-text'),
+        codeScrollbarGutter: Number.parseFloat(codeStyle.paddingBottom) >= 15,
+        codeScrollInset: codeScrollRect.left - frameRect.left >= 15,
         codeScrollsHorizontally: codeScroll.scrollWidth > codeScroll.clientWidth,
       };
     })).toEqual({
       codeFrameInset: true,
+      codeFramePreservesSelection: true,
+      codeFrameSelectable: true,
+      codeFrameTextPreview: true,
       codeScrollbarGutter: true,
       codeScrollInset: true,
       codeScrollsHorizontally: true,
@@ -887,14 +977,21 @@ test.describe('file attachments', () => {
       const tableFrameRect = tableFrame.getBoundingClientRect();
       const tableScrollRect = tableScroll.getBoundingClientRect();
       const tableStyle = getComputedStyle(tableScroll);
+      const tableFrameStyle = getComputedStyle(tableFrame);
       return {
-        tableFrameInset: tableFrameRect.left - frameRect.left >= 7,
-        tableScrollbarGutter: Number.parseFloat(tableStyle.paddingBottom) >= 7,
-        tableScrollInset: tableScrollRect.left - tableFrameRect.left >= 7,
+        tableFrameInset: tableFrameRect.left - frameRect.left >= 15,
+        tableFramePreservesSelection: tableFrame.hasAttribute('data-preserve-selection'),
+        tableFrameSelectable: tableFrameStyle.userSelect === 'text',
+        tableFrameTextPreview: tableFrame.hasAttribute('data-preview-text'),
+        tableScrollbarGutter: Number.parseFloat(tableStyle.paddingBottom) >= 15,
+        tableScrollInset: tableScrollRect.left - frameRect.left >= 15,
         tableScrollsHorizontally: tableScroll.scrollWidth > tableScroll.clientWidth,
       };
     })).toEqual({
       tableFrameInset: true,
+      tableFramePreservesSelection: true,
+      tableFrameSelectable: true,
+      tableFrameTextPreview: true,
       tableScrollbarGutter: true,
       tableScrollInset: true,
       tableScrollsHorizontally: true,
@@ -1018,7 +1115,7 @@ test.describe('file attachments', () => {
     });
     expect(focused).toBe(true);
     await expect.poll(async () => attachmentRow.locator('.file-node-row-main').evaluate((element) =>
-      getComputedStyle(element).boxShadow)).not.toBe('none');
+      getComputedStyle(element).boxShadow)).toBe('none');
 
     // The name is display-only: ordinary typing on the focused file title never
     // renames it or fires slash commands.

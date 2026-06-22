@@ -1459,6 +1459,7 @@ function referenceMenuItems(index: DocumentIndex, currentNodeId: NodeId | null, 
     index,
     query,
     excludeCurrentNode: false,
+    includeFileNodes: true,
     labels,
   }).flatMap((item) => {
     if (item.type !== 'node' || item.disabledReason) return [];

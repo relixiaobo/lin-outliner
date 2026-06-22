@@ -130,6 +130,7 @@
   max-width: var(--panel-content-max);
   color: var(--text-primary);
   overflow-wrap: anywhere;
+  user-select: text;
 }
 
 .file-preview-markdown > * + * {
@@ -197,10 +198,8 @@
 
 .file-preview-code {
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--fill-1);
-  padding: var(--file-preview-content-inset, var(--space-4));
+  background: transparent;
+  user-select: text;
 }
 
 .file-preview-code pre.shiki {
@@ -258,6 +257,7 @@
 .file-preview-pdf-stage {
   display: grid;
   place-items: start center;
+  position: relative;
 }
 
 .file-preview-pdf--summary .file-preview-pdf-stage {
@@ -277,16 +277,56 @@
   box-shadow: var(--shadow-thumb);
 }
 
+.file-preview-pdf-text-layer {
+  position: absolute;
+  inset: 1px;
+  z-index: 1;
+  overflow: clip;
+  border-radius: var(--file-preview-page-radius);
+  color: transparent;
+  forced-color-adjust: none;
+  line-height: 1;
+  opacity: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  transform-origin: 0 0;
+  user-select: text;
+}
+
+.file-preview-pdf-text-layer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  cursor: text;
+  transform-origin: 0 0;
+  user-select: text;
+  white-space: pre;
+}
+
+.file-preview-pdf-text-layer ::selection {
+  background: var(--document-selection-bg);
+}
+
+.file-preview-pdf-text-layer br::selection {
+  background: transparent;
+}
+
+.file-preview-pdf-text-layer .markedContent {
+  display: contents;
+}
+
+.file-preview-pdf-text-layer span[role="img"] {
+  cursor: default;
+  user-select: none;
+}
+
 .file-preview-pdf-page[role='button']:focus-visible .file-preview-pdf-canvas {
   box-shadow: var(--focus-ring-shadow), var(--shadow-thumb);
 }
 
 .file-preview-table-wrap {
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--fill-1);
-  padding: var(--file-preview-content-inset, var(--space-4));
+  background: transparent;
+  user-select: text;
 }
 
 .file-preview-table-scroll {
@@ -343,6 +383,19 @@
   margin-top: 0;
 }
 
+.file-preview-unavailable-metadata {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.file-preview-unavailable-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
 /* File-node body — the preview content with a single bottom-center floating pill,
    shared by loose previews and ingested file-node previews; the unified surface
    provides the horizontal inset. The body is the positioning context for the pill. */
@@ -374,6 +427,14 @@
   background: var(--surface-soft);
   box-shadow: var(--outline-subtle);
   padding: var(--file-preview-frame-padding-block) var(--file-preview-frame-padding-inline);
+}
+
+.file-node-preview:has(> [data-preview-text]) {
+  /* Text-like previews do not carry the natural paper margin that PDF canvases do,
+     so give their content a roomier page-like inset inside the shared preview frame. */
+  --file-preview-content-inset: var(--space-8);
+  --file-preview-scrollbar-gutter: var(--space-8);
+  padding: var(--space-8);
 }
 
 .file-node-preview.collapsed {
@@ -561,7 +622,7 @@
   line-height: var(--line-content);
 }
 
-.row.file-node-row:focus-within .file-node-row-main {
+.row.file-node-row:focus-within .file-node-row-main[data-keyboard-focus='true'] {
   box-shadow: var(--focus-ring-shadow);
 }
 

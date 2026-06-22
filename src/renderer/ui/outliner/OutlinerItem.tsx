@@ -5,6 +5,7 @@ import {
   useState,
   type Dispatch,
   type DragEvent,
+  type FocusEvent,
   type KeyboardEvent,
   type MouseEvent,
   type MutableRefObject,
@@ -318,6 +319,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     ? focusTarget(props.parentId, props.parentId, props.panelId, 'trailing')
     : editorFocusTarget;
   const descriptionFocusTarget = focusTarget(props.nodeId, props.parentId, props.panelId, 'description');
+  const fileTitlePointerFocusRef = useRef(false);
+  const [fileTitleKeyboardFocusVisible, setFileTitleKeyboardFocusVisible] = useState(false);
   const requestRowFocus = (
     nodeId: NodeId,
     placement: CursorPlacement = cursorEnd(),
@@ -1346,6 +1349,18 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     }
   };
 
+  const handleFileTitlePointerDownCapture = () => {
+    fileTitlePointerFocusRef.current = true;
+    setFileTitleKeyboardFocusVisible(false);
+  };
+
+  const handleFileTitleBlurCapture = (event: FocusEvent<HTMLElement>) => {
+    const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null;
+    if (!nextTarget || !event.currentTarget.contains(nextTarget)) {
+      setFileTitleKeyboardFocusVisible(false);
+    }
+  };
+
   // Append an existing pool option as a reference (the additive options overlay),
   // then return to the trailing draft for the next value. The typed query is
   // discarded — the user picked an option rather than creating from the text.
@@ -2061,7 +2076,13 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       contentRevision={textRenderRevision(nonImageFileTitle)}
       readOnly
       readOnlyCaret
-      onFocus={row.updateSelection}
+      onFocus={() => {
+        const programmaticFocus = Boolean(props.ui.focusRequest)
+          && focusTargetMatches(props.ui.focusRequest!.target, editorRequestTarget);
+        setFileTitleKeyboardFocusVisible(programmaticFocus && !fileTitlePointerFocusRef.current);
+        fileTitlePointerFocusRef.current = false;
+        row.updateSelection();
+      }}
       onChange={() => undefined}
       onPatch={() => undefined}
       onCommit={() => undefined}
@@ -2185,11 +2206,16 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               {imageFileRow ? (
                 <FileNodeImage node={imageFileRow} onMaximize={() => props.onRoot(drillDownId)} />
               ) : nonImageFileRow ? (
-                <div className="file-node-row-main">
+                <div
+                  className="file-node-row-main"
+                  data-keyboard-focus={fileTitleKeyboardFocusVisible ? 'true' : undefined}
+                >
                   <div
                     className="file-node-row-labels"
                     title={nonImageFileTitle}
+                    onBlurCapture={handleFileTitleBlurCapture}
                     onKeyDownCapture={handleFileTitleKeyDownCapture}
+                    onPointerDownCapture={handleFileTitlePointerDownCapture}
                   >
                     {fileTitleEditorElement}
                     {hasTags && (
