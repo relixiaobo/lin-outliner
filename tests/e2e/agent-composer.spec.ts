@@ -1585,7 +1585,7 @@ test.describe('agent composer controls', () => {
           stopReason: 'toolUse',
           content: [
             { type: 'text', text: 'Review [[node:Alpha^node-alpha]] and [[node:^node-alpha]] before [[node:^node-missing]].' },
-            { type: 'toolCall', id: 'tool-ref-output', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+            { type: 'toolCall', id: 'tool-ref-output', name: 'node_read', arguments: { node_id: 'node-alpha' } },
           ],
         },
         branches: null,
@@ -1751,7 +1751,7 @@ test.describe('agent composer controls', () => {
             stopReason: 'stop',
             content: [
               { type: 'text', text: 'Previous assistant response before compact.' },
-              { type: 'toolCall', id: 'compact-archive-tool-1', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+              { type: 'toolCall', id: 'compact-archive-tool-1', name: 'node_read', arguments: { node_id: 'node-alpha' } },
             ],
           },
         },
@@ -1934,7 +1934,7 @@ test.describe('agent composer controls', () => {
         model: 'gpt-5.4',
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
         stopReason: 'toolUse',
-        content: [{ type: 'toolCall', id: 'tool-alpha', name: 'node_read', arguments: { nodeId: 'node-alpha' } }],
+        content: [{ type: 'toolCall', id: 'tool-alpha', name: 'node_read', arguments: { node_id: 'node-alpha' } }],
       },
       pendingToolCallIds: ['tool-alpha'],
       activityEntries: [
@@ -3028,7 +3028,7 @@ test.describe('agent composer controls', () => {
     await expect(details.getByText('Inspect the current UI.')).toBeVisible();
     const thoughtToggles = details.getByRole('button', { name: 'Thought · Read node "today"' });
     await expect(thoughtToggles.first()).toBeVisible();
-    await expect(details.getByRole('button', { name: 'Working...' })).toHaveCount(0);
+    await expect(details.getByRole('button', { name: 'Working', exact: true })).toHaveCount(0);
 
     await details.locator('.agent-tool-call-toggle').first().click();
     await expect(details.getByText('Daily note content from child run.')).toBeVisible();

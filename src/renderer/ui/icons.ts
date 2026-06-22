@@ -37,7 +37,6 @@ export {
   CornerDownRight as ReferenceIcon,
   ExternalLink as OpenIcon,
   Database as DatabaseIcon,
-  Lightbulb as ThinkingIcon,
   FileArchive as FileArchiveIcon,
   FileAudio as FileAudioIcon,
   FileCode2 as FileCodeIcon,

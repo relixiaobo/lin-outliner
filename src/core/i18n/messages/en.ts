@@ -1010,7 +1010,10 @@ commandPalette: {
     },
     // The collapsible thinking/tool process block + compaction boundary.
     process: {
-      working: 'Working...',
+      // The live divider while the turn is active: bare "Working" under 1s (no
+      // number so it never flickers a "0s"), then the ticking "Working for {t}".
+      working: 'Working',
+      workingFor: ({ duration }: { duration: string }) => `Working for ${duration}`,
       interrupted: 'Interrupted',
       interruptedAfterThinking: 'Interrupted after thinking',
       thoughtInterrupted: 'Thought (interrupted)',
@@ -1018,7 +1021,33 @@ commandPalette: {
       thoughtPreview: ({ preview }: { preview: string }) => `Thought · ${preview}`,
       thoughtAndTool: ({ tool }: { tool: string }) => `Thought · ${tool}`,
       usedTools: ({ count }: { count: number }) => `Used ${count} tools`,
-      thoughtAndUsedTools: ({ count }: { count: number }) => `Thought · used ${count} tools`,
+      // Counted, kind-named tool-activity summary (Codex's "Ran 3 commands ·
+      // read 2 files"). Each kind has a done + running ("…Run") form; the
+      // composer lowercases non-leading fragments. `thoughtAndActivity` prefixes
+      // a composed activity with "Thought · " for a turn that also reasoned.
+      toolActivity: {
+        command: ({ count }: { count: number }) => `Ran ${count === 1 ? 'a command' : `${count} commands`}`,
+        commandRun: ({ count }: { count: number }) => `Running ${count === 1 ? 'a command' : `${count} commands`}`,
+        fileCreate: ({ count }: { count: number }) => `Created ${count === 1 ? 'a file' : `${count} files`}`,
+        fileCreateRun: ({ count }: { count: number }) => `Creating ${count === 1 ? 'a file' : `${count} files`}`,
+        fileEdit: ({ count }: { count: number }) => `Edited ${count === 1 ? 'a file' : `${count} files`}`,
+        fileEditRun: ({ count }: { count: number }) => `Editing ${count === 1 ? 'a file' : `${count} files`}`,
+        fileDelete: ({ count }: { count: number }) => `Deleted ${count === 1 ? 'a file' : `${count} files`}`,
+        fileDeleteRun: ({ count }: { count: number }) => `Deleting ${count === 1 ? 'a file' : `${count} files`}`,
+        read: ({ count }: { count: number }) => `Read ${count === 1 ? 'a node' : `${count} nodes`}`,
+        readRun: ({ count }: { count: number }) => `Reading ${count === 1 ? 'a node' : `${count} nodes`}`,
+        search: () => 'Searched',
+        searchRun: () => 'Searching',
+        web: () => 'Searched the web',
+        webRun: () => 'Searching the web',
+        memory: () => 'Recalled memory',
+        memoryRun: () => 'Recalling memory',
+        skill: ({ count }: { count: number }) => `Used ${count === 1 ? 'a skill' : `${count} skills`}`,
+        skillRun: ({ count }: { count: number }) => `Using ${count === 1 ? 'a skill' : `${count} skills`}`,
+        other: ({ count }: { count: number }) => `Used ${count === 1 ? 'a tool' : `${count} tools`}`,
+        otherRun: ({ count }: { count: number }) => `Using ${count === 1 ? 'a tool' : `${count} tools`}`,
+      },
+      thoughtAndActivity: ({ activity }: { activity: string }) => `Thought · ${activity}`,
       workedFor: ({ duration }: { duration: string }) => `Worked for ${duration}`,
       compactingConversation: 'Compacting conversation',
       conversationCompacted: 'Conversation compacted',
@@ -1180,7 +1209,13 @@ commandPalette: {
       },
     },
     thinking: {
-      thinking: 'Thinking...',
+      // Reasoning lifecycle (Codex `Xw`): a STATIC "Thinking" cue while active —
+      // no ellipsis, no shimmer (the shimmer is a Codex A/B experiment) — that
+      // seals to a plain "Thought" once the turn settles. The full reasoning is
+      // the foldable body; the headline is this fixed lifecycle label (the
+      // ratified 折中 — no per-item "Thought for {t}" timing).
+      thinking: 'Thinking',
+      thought: 'Thought',
     },
     markdown: {
       copyCode: 'Copy code',

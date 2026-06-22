@@ -83,6 +83,15 @@ export interface AgentRenderMessageEntity {
   /** Wall-clock the producing run took (run `updatedAt − startedAt`), for the "Worked for …" process header. */
   runDurationMs?: number;
   /**
+   * Producing run's `startedAt`, exposed while the run still has `running` status
+   * so the live header can tick a "Working for {t}" elapsed clock. Mutually
+   * exclusive with `runDurationMs` (a sealed run has the duration; a running run
+   * has the start). The projection can't tell a genuinely-live run from one left
+   * `running` after a crash, so the renderer gates the ticker on `turnActive` —
+   * a crashed run is never `turnActive`, so its stale start never renders.
+   */
+  runStartedAtMs?: number;
+  /**
    * Authoritative "this turn was interrupted" verdict, derived from the
    * producing run's REAL terminal status — never from whether the visible
    * blocks end on answer prose. A cleanly `completed` run is never interrupted
@@ -663,6 +672,7 @@ function toRenderMessageEntity(
     // the header falls back to its descriptive summary instead of faking 0ms.
     runDurationMs:
       run && !isRunRunning(run) ? Math.max(0, run.updatedAt - run.startedAt) : undefined,
+    runStartedAtMs: run && isRunRunning(run) ? run.startedAt : undefined,
   };
 }
 

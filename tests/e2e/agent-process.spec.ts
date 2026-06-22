@@ -136,8 +136,10 @@ test.describe('agent process disclosure', () => {
     const row = assistantRows.last();
     const liveProcess = row.locator('.agent-process-block').first();
     const liveProcessToggle = liveProcess.locator('.agent-process-toggle').first();
-    await expect(liveProcess.locator('.agent-process-title').first()).toHaveText('Working...');
-    await expect(liveProcessToggle).toHaveAttribute('aria-expanded', 'false');
+    // No answer yet → the body auto-expands (Codex machine C) under the persistent
+    // "Working" divider.
+    await expect(liveProcess.locator('.agent-process-title').first()).toHaveText('Working');
+    await expect(liveProcessToggle).toHaveAttribute('aria-expanded', 'true');
     await expect(liveProcessToggle).not.toBeDisabled();
     const indicator = row.getByLabel('Assistant is responding');
     await expect(indicator).toBeVisible();
@@ -159,7 +161,8 @@ test.describe('agent process disclosure', () => {
 
     await expect(assistantRows).toHaveCount(1);
     const streamedText = row.getByText('你好，我在。');
-    await expect(liveProcess.locator('.agent-process-title').first()).toHaveText('Working...');
+    // Answer streaming → auto-collapsed back to the "Working" divider.
+    await expect(liveProcess.locator('.agent-process-title').first()).toHaveText('Working');
     await expect(liveProcessToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(streamedText).toBeVisible();
     const textBox = await streamedText.boundingBox();
@@ -443,13 +446,13 @@ test.describe('agent process disclosure', () => {
           type: 'toolCall',
           id: 'tool-read',
           name: 'node_read',
-          arguments: { nodeId: 'node-alpha' },
+          arguments: { node_id: 'node-alpha' },
         },
         {
           type: 'toolCall',
           id: 'tool-search',
           name: 'node_search',
-          arguments: { query: 'design system', limit: 10 },
+          arguments: { outline: 'design system', limit: 10 },
         },
         {
           type: 'text',
@@ -495,25 +498,31 @@ test.describe('agent process disclosure', () => {
 
     const process = page.locator('.agent-process-block').first();
     const processToggle = process.locator('.agent-process-toggle').first();
-    await expect(process.locator('.agent-process-title').first()).toHaveText('Thought · used 2 tools');
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Thought · read a node · searched');
     await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByText('Current outline focuses on design-system inventory')).toBeVisible();
 
     await processToggle.click();
     await expect(processToggle).toHaveAttribute('aria-expanded', 'true');
 
-    const processGroupToggle = process.locator('.agent-process-flat .agent-process-toggle').first();
-    await expect(processGroupToggle).toHaveAttribute('aria-expanded', 'false');
-    await processGroupToggle.click();
-    await expect(processGroupToggle).toHaveAttribute('aria-expanded', 'true');
+    // The two consecutive tools fold into ONE counted tool-activity group inside
+    // the flattened timeline; expand it to reach the individual tool rows.
+    const activityToggle = process.locator('.agent-tool-activity-toggle').first();
+    await expect(activityToggle).toHaveAttribute('aria-expanded', 'false');
+    await activityToggle.click();
+    await expect(activityToggle).toHaveAttribute('aria-expanded', 'true');
 
-    const thinkingToggle = page.locator('.agent-thinking-row.is-toggle').first();
-    await expect(thinkingToggle).toContainText('Identify relevant outline nodes and tag patterns.');
-    await expect(thinkingToggle).not.toContainText('Compare current Agent rules');
+    // Reasoning folds like a tool step (Codex `reasoning`): the leading label is the
+    // fixed lifecycle word ("Thought" once sealed) with a dim one-line gist of the
+    // first line beside it; the rest of the thinking is tucked inside until expanded.
+    const reasoning = process.locator('.agent-process-reasoning').first();
+    const reasoningToggle = reasoning.locator('.agent-reasoning-toggle');
+    await expect(reasoning.locator('.agent-reasoning-headline')).toHaveText('Thought');
+    await expect(reasoning.locator('.agent-reasoning-gist')).toContainText('Identify relevant outline nodes and tag patterns.');
+    await expect(reasoning).not.toContainText('Compare current Agent rules');
 
-    await thinkingToggle.click();
-    await expect(thinkingToggle).toContainText('Compare current Agent rules with the existing tag layout decision');
-    await expectIconCenteredOnFirstLine(thinkingToggle, '.agent-thinking-icon', '.agent-thinking-text');
+    await reasoningToggle.click();
+    await expect(reasoning).toContainText('Compare current Agent rules with the existing tag layout decision');
 
     const searchTool = page.locator('.agent-tool-call-toggle').filter({ hasText: 'Searched nodes "design system"' });
     await expect(searchTool).toHaveAttribute('aria-expanded', 'false');
@@ -525,7 +534,7 @@ test.describe('agent process disclosure', () => {
     await expectSingleDisclosureSlot(searchTool, '.agent-tool-call-icon-slot', '.agent-tool-call-summary');
     await expect(page.locator('.agent-tool-call-section-title').filter({ hasText: 'Input' })).toBeVisible();
     await expect(page.locator('.agent-tool-call-section-title').filter({ hasText: 'Output' })).toBeVisible();
-    await expect(page.getByText('"query": "design system"')).toBeVisible();
+    await expect(page.getByText('"outline": "design system"')).toBeVisible();
     await expect(page.getByText('3 matches: Agent System')).toBeVisible();
   });
 
@@ -540,7 +549,7 @@ test.describe('agent process disclosure', () => {
       timestamp: 1_800_000_001_000,
       content: [
         { type: 'thinking', thinking: 'Plan the outline edits.' },
-        { type: 'toolCall', id: 'tool-read-dur', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+        { type: 'toolCall', id: 'tool-read-dur', name: 'node_read', arguments: { node_id: 'node-alpha' } },
         { type: 'text', text: 'Done — the outline is updated.' },
       ],
     };
@@ -592,7 +601,7 @@ test.describe('agent process disclosure', () => {
       timestamp: 1_800_000_001_050,
       content: [
         { type: 'thinking', thinking: 'Checking the selected outline node.' },
-        { type: 'toolCall', id: 'tool-read-live-collapsed', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+        { type: 'toolCall', id: 'tool-read-live-collapsed', name: 'node_read', arguments: { node_id: 'node-alpha' } },
         { type: 'text', text: 'The answer stays outside the process fold.' },
       ],
     };
@@ -662,7 +671,7 @@ test.describe('agent process disclosure', () => {
       timestamp: 1_800_000_001_100,
       content: [
         { type: 'thinking', thinking: 'Read the source node before answering.' },
-        { type: 'toolCall', id: 'tool-read-live', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+        { type: 'toolCall', id: 'tool-read-live', name: 'node_read', arguments: { node_id: 'node-alpha' } },
         { type: 'text', text: 'The final answer is now streaming below the process.' },
       ],
     };
@@ -693,12 +702,15 @@ test.describe('agent process disclosure', () => {
     await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(processToggle).not.toBeDisabled();
     await expect(process.locator('.agent-process-title').first()).toHaveText('Read the source node before answering.');
-    await expect(process.locator('.agent-process-flat .agent-process-title')).toHaveCount(0);
+    // Collapsed: no timeline body rendered.
+    await expect(process.locator('.agent-process-timeline')).toHaveCount(0);
     await expect(page.getByText('The final answer is now streaming below the process.')).toBeVisible();
 
     await processToggle.click();
     await expect(processToggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(process.locator('.agent-process-flat .agent-process-title').first()).toHaveText('Read the source node before answering.');
+    // Expanded: the flattened timeline shows the reasoning row inline.
+    await expect(process.locator('.agent-process-timeline')).toHaveCount(1);
+    await expect(process.locator('.agent-process-reasoning')).toContainText('Read the source node before answering.');
 
     await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
@@ -749,8 +761,8 @@ test.describe('agent process disclosure', () => {
       errorMessage: null,
     });
 
-    await expect(page.locator('.agent-process-title').first()).toHaveText('Working...');
-    await expect(page.locator('.agent-process-flat-narration')).toHaveCount(0);
+    await expect(page.locator('.agent-process-title').first()).toHaveText('Working');
+    await expect(page.locator('.agent-process-narration')).toHaveCount(0);
     await expect(page.getByText('A direct answer is streaming without tools.')).toBeVisible();
 
     await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
@@ -790,7 +802,7 @@ test.describe('agent process disclosure', () => {
       timestamp: 1_800_000_002_000,
       content: [
         { type: 'text', text: 'Let me read the alpha node before answering.' },
-        { type: 'toolCall', id: 'tool-read-nofinal', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+        { type: 'toolCall', id: 'tool-read-nofinal', name: 'node_read', arguments: { node_id: 'node-alpha' } },
       ],
     };
 
@@ -904,9 +916,9 @@ test.describe('agent process disclosure', () => {
     });
 
     const process = page.locator('.agent-process-block').first();
-    const processGroupToggle = process.locator('.agent-process-flat .agent-process-toggle').first();
+    // Resultless DM turn → auto-expanded; the lone skill tool renders directly in
+    // the flattened timeline (no nested process group).
     await expect(process.locator('.agent-process-toggle').first()).toHaveAttribute('aria-expanded', 'true');
-    await expect(processGroupToggle).toHaveAttribute('aria-expanded', 'true');
 
     const loadedCall = page.locator('.agent-tool-call').filter({ has: page.locator('.agent-loaded-skill') });
     const loaded = loadedCall.locator('.agent-loaded-skill');
@@ -1216,10 +1228,10 @@ test.describe('agent process disclosure', () => {
     await expect.poll(() => clipboardText(page)).toContain('Full persisted tool output from payload');
     expect(await clipboardText(page)).not.toContain('Preview only');
 
-    // The lone tool call now folds into the result-first process block; open the
-    // turn fold, then the adjacent tool group, then the tool row inside it.
+    // The lone tool call folds into the result-first process block. This turn has a
+    // trailing answer, so it rests collapsed — open the turn fold, then the lone tool
+    // row inside the flattened timeline (no nested process group anymore).
     await row.locator('.agent-process-toggle').first().click();
-    await row.locator('.agent-process-flat .agent-process-toggle').first().click();
     await row.locator('.agent-tool-call-toggle').click();
     await row.getByRole('button', { name: 'Preview output' }).click();
     const panel = page.locator('.outline-panel-surface.active-panel.is-file-preview');

@@ -10,7 +10,7 @@ interface AgentToolCallDisclosureProps {
   hasDetails: boolean;
   images: ReactNode;
   onToggle: (anchorElement?: HTMLElement | null) => void;
-  status: 'pending' | 'done' | 'error';
+  status: 'pending' | 'done' | 'error' | 'incomplete';
   statusIcon: AppIcon;
   statusIconClassName?: string;
   summary: string;

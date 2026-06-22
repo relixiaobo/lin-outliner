@@ -925,7 +925,10 @@ commandPalette: {
       timeSeparatorToday: ({ time }) => `今天 ${time}`,
     },
     process: {
-      working: '处理中……',
+      // Live divider while the turn is active: bare "处理中" under 1s, then the
+      // ticking "处理中 {t}".
+      working: '处理中',
+      workingFor: ({ duration }) => `处理中 ${duration}`,
       interrupted: '已中断',
       interruptedAfterThinking: '思考后中断',
       thoughtInterrupted: '已思考（中断）',
@@ -933,7 +936,29 @@ commandPalette: {
       thoughtPreview: ({ preview }) => `已思考 · ${preview}`,
       thoughtAndTool: ({ tool }) => `已思考 · ${tool}`,
       usedTools: ({ count }) => `使用了 ${count} 个工具`,
-      thoughtAndUsedTools: ({ count }) => `已思考 · 使用了 ${count} 个工具`,
+      toolActivity: {
+        command: ({ count }) => `运行了 ${count} 个命令`,
+        commandRun: ({ count }) => `正在运行 ${count} 个命令`,
+        fileCreate: ({ count }) => `创建了 ${count} 个文件`,
+        fileCreateRun: ({ count }) => `正在创建 ${count} 个文件`,
+        fileEdit: ({ count }) => `编辑了 ${count} 个文件`,
+        fileEditRun: ({ count }) => `正在编辑 ${count} 个文件`,
+        fileDelete: ({ count }) => `删除了 ${count} 个文件`,
+        fileDeleteRun: ({ count }) => `正在删除 ${count} 个文件`,
+        read: ({ count }) => `读取了 ${count} 个节点`,
+        readRun: ({ count }) => `正在读取 ${count} 个节点`,
+        search: () => '已搜索',
+        searchRun: () => '正在搜索',
+        web: () => '已搜索网页',
+        webRun: () => '正在搜索网页',
+        memory: () => '已检索记忆',
+        memoryRun: () => '正在检索记忆',
+        skill: ({ count }) => `使用了 ${count} 个技能`,
+        skillRun: ({ count }) => `正在使用 ${count} 个技能`,
+        other: ({ count }) => `使用了 ${count} 个工具`,
+        otherRun: ({ count }) => `正在使用 ${count} 个工具`,
+      },
+      thoughtAndActivity: ({ activity }) => `已思考 · ${activity}`,
       workedFor: ({ duration }) => `用时 ${duration}`,
       compactingConversation: '正在压缩对话',
       conversationCompacted: '对话已压缩',
@@ -1089,7 +1114,11 @@ commandPalette: {
       },
     },
     thinking: {
-      thinking: '思考中……',
+      // Reasoning lifecycle: a static "思考中" cue while active (no shimmer) that
+      // seals to "已思考" once the turn settles; the full reasoning is the foldable
+      // body (the ratified 折中 — no per-item timing).
+      thinking: '思考中',
+      thought: '已思考',
     },
     markdown: {
       copyCode: '复制代码',

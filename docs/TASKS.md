@@ -430,20 +430,24 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   real light+dark run to confirm static contrast risks + apply one-token
   `theme-dark.css` nudges.
 
-- **codex-message-flow-fidelity** (`draft`, **PM-ratified 2026-06-19**, build unassigned) —
-  raise the agent process/transcript render to match the OpenAI **Codex desktop client**
-  message flow, grounded in a read-only reverse-engineering of that client
-  (`tmp/research/codex-client/MESSAGE-FLOW-GAP.md`). **ONE complete feature, ONE PR, one
-  agent** — parts A–D are build-order within it (A7), not separate releases: **A**
-  consecutive-tool-activity grouping + counted, kind-named summary ("Ran 3 commands"/"Read
-  5 files", running/done tense) [High]; **B** live "Working for {t}" ticker + bare "Working"
-  under 1s [Med]; **C** "Thinking" text-shimmer active cue instead of a header spinner [Med,
-  biggest "feels like Codex"; falls back to spinner if it fails the visual/design-system
-  gate]; **D** duration day-rollup + an optional 4th not-started status icon [Low]. Plan
-  carries the implementation spec (i18n family + copy, tool→kind map, grouping algorithm,
-  shimmer CSS, ticker hook, file touch-points). Explicitly KEEPS our deliberate divergences
-  (no auto-collapse-on-answer-start; sticky user fold; richer "Thought · used N tools"
-  fallback). See `docs/plans/codex-message-flow-fidelity.md`.
+- **codex-message-flow-fidelity** (`draft`, **PM-ratified full rebuild 2026-06-20**, build unassigned —
+  PR-1 ready to dispatch) — raise the agent transcript to a **1:1 reproduction of
+  the OpenAI Codex desktop client** message flow, grounded in a corrected read-only RE of that
+  client (`tmp/research/codex-client/MESSAGE-FLOW-GAP.md`, rewritten 2026-06-20). **The original
+  4-gap design (#311) was NOT 1:1** — testing showed the gap is structural: Codex's flow is one
+  `typed-item stream → render-group splitter → three independent collapse state machines` with the
+  `worked-for` item as the fold line, and the 4-gap plan listed that spine as Non-goals while
+  building cosmetic leaves on our legacy per-message renderer. Plan now a **SET of 3 dependency-
+  ordered complete PRs** (A7 foundation-first): **PR-1** render-group substrate + faithful counted
+  tool-activity group (Set-dedup, full running/done × leading/joined tense matrix, exec sub-kind
+  "Read/Searched/Listed"); **PR-2** per-turn **auto-collapse-on-answer-start** + real `worked-for`
+  **divider entity** (3-way header: "Working for {t}"/"Worked for {t}"/"{N} previous messages",
+  expand+persist) — reverses the two former Non-goals (**PM-ratified**); **PR-3** per-item state:
+  reasoning "Thinking"→"Thought for {elapsed}", **active cue is a static label** (Codex's shimmer
+  is an A/B experiment, not the default), 4-state step (green done / dim pending), duration day-
+  rollup + run-start anchor. **#311: close and salvage** (PM-ratified — lift its i18n family/kind
+  map/duration rollup into PR-1/PR-3, don't merge the legacy substrate). Detail mode = single
+  default (no toggle). See `docs/plans/codex-message-flow-fidelity.md`.
 
 ### Performance
 

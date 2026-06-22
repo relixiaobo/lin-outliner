@@ -63,6 +63,8 @@ export interface AgentMessageEntry {
   toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>;
   /** Wall-clock the producing run took, for the collapsed "Worked for …" header; null when unknown. */
   runDurationMs: number | null;
+  /** Producing run's start, for the live "Working for {t}" ticker; null unless the run is still running. */
+  runStartedAtMs: number | null;
   /**
    * Authoritative interrupted verdict from the producing run's real status (core
    * stamps it). Drives the "Interrupted" process header; a cleanly `completed`
@@ -297,6 +299,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       sourceSeqs: entity.sourceSeqs?.slice(),
       toolCallOutcomes: toolCallOutcomesFromEntity(entity),
       runDurationMs: entity.runDurationMs ?? null,
+      runStartedAtMs: entity.runStartedAtMs ?? null,
       turnInterrupted: entity.turnInterrupted ?? false,
     });
   }
@@ -358,6 +361,10 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       actor: null,
       runId: null,
       runDurationMs: null,
+      // No assistant entity yet → no run record; anchor the live "Working for {t}"
+      // ticker to the turn-start timestamp (last user message) until the real
+      // assistant entity (with its run `startedAt`) takes over.
+      runStartedAtMs: activeAssistantAnchorTimestamp(entries, projection),
       turnInterrupted: false,
     });
   }

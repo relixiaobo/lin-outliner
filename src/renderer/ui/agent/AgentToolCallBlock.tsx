@@ -12,6 +12,7 @@ import {
   AddChildIcon,
   BrainIcon,
   CheckIcon,
+  CloseIcon,
   CopyIcon,
   FileTextIcon,
   ICON_SIZE,
@@ -55,7 +56,27 @@ interface AgentToolCallBlockProps {
   turnActive?: boolean;
 }
 
-export type ToolStatus = 'pending' | 'done' | 'error';
+// `incomplete` = declared-but-never-settled (no result, no outcome, not running,
+// turn over) — e.g. the tail of an interrupted/cancelled tool batch. It is NOT a
+// failure: `error` is reserved for a confirmed failure (an error result or a
+// failed outcome), so a never-run tool renders neutral, not an alarming red ✕.
+export type ToolStatus = 'pending' | 'done' | 'error' | 'incomplete';
+
+// Activity bucket for the counted tool-activity summary (Codex's
+// "Ran 3 commands · read 2 files"). Maps our tool names onto Codex's verb
+// families; `other` is the catch-all (unknown tools contribute a generic
+// "used a tool" fragment, they never blank the whole summary).
+export type ToolActivityKind =
+  | 'command'
+  | 'fileCreate'
+  | 'fileEdit'
+  | 'fileDelete'
+  | 'read'
+  | 'search'
+  | 'web'
+  | 'memory'
+  | 'skill'
+  | 'other';
 
 type ResultPart =
   | { type: 'imagePlaceholder' }
@@ -82,7 +103,41 @@ export function getToolCallStatus(
   // tools complete without emitting a `tool_result.created`, so trust it to stop
   // the spinner rather than waiting on a result that may never arrive.
   if (outcome) return outcome === 'failed' ? 'error' : 'done';
-  return pendingToolCallIds.has(toolCallId) || toolActive ? 'pending' : 'error';
+  // Still in the live pending set / the active-turn bridge → running. Otherwise a
+  // settled turn left this call with no result and no outcome: it never completed,
+  // but that is `incomplete` (neutral), not a failure.
+  return pendingToolCallIds.has(toolCallId) || toolActive ? 'pending' : 'incomplete';
+}
+
+// The `Agent*` family are child-run tools (rich inline content); they are never
+// folded into a tool-activity group, so they do not need a bucket here.
+export function toolActivityKind(name: string): ToolActivityKind {
+  switch (name) {
+    case 'bash':
+      return 'command';
+    case 'file_write':
+    case 'node_create':
+      return 'fileCreate';
+    case 'file_edit':
+    case 'node_edit':
+      return 'fileEdit';
+    case 'node_delete':
+      return 'fileDelete';
+    case 'node_read':
+      return 'read';
+    case 'node_search':
+      return 'search';
+    case 'web_search':
+    case 'web_fetch':
+      return 'web';
+    case 'recall':
+    case 'dream':
+      return 'memory';
+    case 'skill':
+      return 'skill';
+    default:
+      return 'other';
+  }
 }
 
 export function getToolIcon(toolCall: ToolCall) {
@@ -134,7 +189,9 @@ function quoteSubject(subject: string, labels: ToolCallLabels): string {
 
 function verbByStatus(forms: ToolVerbForms, status: ToolStatus, labels: ToolCallLabels): string {
   if (status === 'pending') return forms.pending;
-  if (status === 'done') return forms.done;
+  // `incomplete` reads in the neutral past tense, not "Failed to …" — it never
+  // ran, it did not fail.
+  if (status === 'done' || status === 'incomplete') return forms.done;
   return labels.failed({ verb: forms.base });
 }
 
@@ -159,24 +216,24 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
     return verbByStatus(verbs.dreamMemory, status, labels);
   }
   if (toolCall.name === 'node_create') {
-    const subject = pickSubject(args, 'parentId', 'afterId');
+    const subject = pickSubject(args, 'parent_id', 'after_id');
     const verb = verbByStatus(verbs.createNode, status, labels);
     return subject ? labels.under({ verb, subject: quoteSubject(subject, labels) }) : verb;
   }
   if (toolCall.name === 'node_read') {
-    const subject = pickSubject(args, 'nodeId');
+    const subject = pickSubject(args, 'node_id');
     return withSubject(verbByStatus(verbs.readNode, status, labels), subject, labels);
   }
   if (toolCall.name === 'node_edit') {
-    const subject = pickSubject(args, 'nodeId');
+    const subject = pickSubject(args, 'node_id');
     return withSubject(verbByStatus(verbs.editNode, status, labels), subject, labels);
   }
   if (toolCall.name === 'node_delete') {
-    const subject = pickSubject(args, 'nodeId');
+    const subject = pickSubject(args, 'node_id');
     return withSubject(verbByStatus(verbs.deleteNode, status, labels), subject, labels);
   }
   if (toolCall.name === 'node_search') {
-    const subject = pickSubject(args, 'query', 'rules');
+    const subject = pickSubject(args, 'outline', 'search_node_id');
     return withSubject(verbByStatus(verbs.searchNodes, status, labels), subject, labels);
   }
   if (toolCall.name === 'web_search') {
@@ -565,7 +622,10 @@ export function InsertIntoOutlinerButton({ path }: { path: string }) {
   );
 }
 
-function getLoadedSkillDetails(
+// A "loaded" skill renders as a compact glanceable chip (LoadedSkillAffordance),
+// not an expandable tool row — so it must NEVER fold into a counted tool-activity
+// group (which would bury the chip). Exported for the timeline's grouping break.
+export function getLoadedSkillDetails(
   toolCall: ToolCall,
   result: AgentToolResultWithPayloads | undefined,
 ): LoadedSkillDetails | null {
@@ -813,8 +873,17 @@ export function AgentToolCallBlock({
   const t = useT();
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
   const status = childRun ? childRunToolStatus(childRun) : getToolCallStatus(toolCall.id, result, pendingToolCallIds, turnActive, outcome);
-  const Icon = getToolIcon(toolCall);
-  const StatusIcon = status === 'pending' ? LoaderIcon : Icon;
+  // Per-step glyph by exception (Codex machine A): a running spinner, a red ✕ on a
+  // confirmed failure, otherwise the plain tool-type icon. A successful `done` step
+  // gets NO green check — the past-tense verb ("Fetched web …") already reads as
+  // success, so a success badge is just noise. `done` and the never-settled
+  // `incomplete` both show the neutral tool icon; only a real failure stands out
+  // (red ✕ in a danger ring, via the `is-error` CSS).
+  const StatusIcon = status === 'error'
+    ? CloseIcon
+    : status === 'pending'
+      ? LoaderIcon
+      : getToolIcon(toolCall);
   const isExpanded = expanded ?? internalExpanded;
   const inputText = useMemo(() => jsonText(toolCall.arguments), [toolCall.arguments]);
   const outputText = useMemo(() => resultText(result), [result]);

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react';
 import type { AgentMessageEntry, AgentTurnPhase } from '../../agent/runtime';
 import type {
   AssistantMessage,
@@ -53,6 +53,7 @@ import {
   localFileReferenceHref,
 } from '../editor/inlineFilePreviewData';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { disclosureSnapshot, setDisclosureOverride, subscribeDisclosure } from './agentDisclosureStore';
 import { AgentIdentityAvatar } from './AgentIdentityAvatar';
 import {
   captureDisclosureScrollAnchor,
@@ -63,6 +64,8 @@ import {
 const USER_MESSAGE_COLLAPSED_LINES = 5;
 const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
 const EMPTY_CHILD_RUN_MAP: ReadonlyMap<string, AgentRenderChildRunEntity> = new Map();
+const EMPTY_OVERRIDES: Readonly<Record<string, boolean>> = Object.freeze({});
+const NOOP_UNSUBSCRIBE = () => {};
 
 interface AgentMessageRowProps {
   /** Speaker name for Channel attribution; null/undefined renders no badge (DM, user, coordinator). */
@@ -489,7 +492,21 @@ function AgentMessageRowComponent({
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [expandOverrides, setExpandOverrides] = useState<Record<string, boolean>>({});
+  // Disclosure (process fold + inner tool/reasoning) expand state. A row in a
+  // conversation reads from the persisted per-conversation store so a user's
+  // expand/collapse survives reload, conversation switch, and the streaming→sealed
+  // remount; a detached preview row (no conversationId) keeps ephemeral local state.
+  const [localOverrides, setLocalOverrides] = useState<Record<string, boolean>>({});
+  const subscribe = useCallback(
+    (onChange: () => void) => (conversationId ? subscribeDisclosure(conversationId, onChange) : NOOP_UNSUBSCRIBE),
+    [conversationId],
+  );
+  const getSnapshot = useCallback(
+    () => (conversationId ? disclosureSnapshot(conversationId) : EMPTY_OVERRIDES),
+    [conversationId],
+  );
+  const persistedOverrides = useSyncExternalStore(subscribe, getSnapshot);
+  const expandOverrides = conversationId ? persistedOverrides : localOverrides;
   const { capturePendingAnchor, restorePendingAnchor } = usePendingDisclosureAnchor();
   const expandState = useMemo<AgentExpandState>(() => ({
     isExpanded: (id, defaultExpanded = false) => expandOverrides[id] ?? defaultExpanded,
@@ -499,12 +516,11 @@ function AgentMessageRowComponent({
         ? () => scroller.querySelector<HTMLElement>(`[data-agent-process-id="${CSS.escape(id)}"]`)
         : undefined;
       capturePendingAnchor(captureDisclosureScrollAnchor(anchorElement ?? null, scroller, resolveElement));
-      setExpandOverrides((current) => ({
-        ...current,
-        [id]: !currentlyExpanded,
-      }));
+      const next = !currentlyExpanded;
+      if (conversationId) setDisclosureOverride(conversationId, id, next);
+      else setLocalOverrides((current) => ({ ...current, [id]: next }));
     },
-  }), [capturePendingAnchor, expandOverrides]);
+  }), [capturePendingAnchor, conversationId, expandOverrides]);
 
   useLayoutEffect(() => {
     return restorePendingAnchor();
@@ -713,6 +729,7 @@ function AgentMessageRowComponent({
     entry.turnInterrupted,
     isChannel,
     entry.runDurationMs,
+    entry.runStartedAtMs,
     entry.toolCallOutcomes,
   );
   const showToolbar = nodeId !== null && !turnActive && isLastInTurn;
@@ -825,6 +842,7 @@ function sameMessageEntry(left: AgentMessageEntry, right: AgentMessageEntry): bo
     && left.actor === right.actor
     && left.runId === right.runId
     && left.runDurationMs === right.runDurationMs
+    && left.runStartedAtMs === right.runStartedAtMs
     && left.turnInterrupted === right.turnInterrupted
   );
 }
