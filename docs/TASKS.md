@@ -55,12 +55,14 @@ disjoint lanes from the 2026-06-19 dispatch plan, **agent/outliner disclosure st
 (#306, codex-3)** — command-surface one-pager · dark-mode-contrast-pass · anthropic-auth-clarity
 remain open.
 
-**In flight (2026-06-22).** **agent-context-slim-decouple** (`in-progress`, branch
-`agent-slim-decouple`) — de-couple tool-output context slimming from the canonical
-transcript so the UI/search keep the full output while only the model copy is slimmed
-(aligns with Claude Code 2.1; a `tool_result.replaced` now writes a separate
-`modelSlimmedContent` instead of overwriting `content`). Fixes the "many tools show
-input-only / no output" rows. See `docs/plans/agent-context-slim-decouple.md`.
+**agent-context-slim-decouple shipped (#313, 2026-06-22).** De-coupled tool-output context
+slimming from the canonical transcript: a `tool_result.replaced` now writes a separate
+`modelSlimmedContent` instead of overwriting `content`, so the UI/search keep the full output
+while only the model copy is slimmed (Claude Code 2.1 stance). Model-context derivation
+substitutes `modelFacingContent` (`modelSlimmedContent ?? content`) — runtime pi-messages, the
+per-batch sizing, and Dream extraction. Fixes the "many tools show input-only / no output" rows.
+Merge folded the `/code-review xhigh` findings (model-facing sizing, search-index never-index-slim,
+Dream model-facing, reducer `updatedAt`) with regression tests + adversarial verify. Plan archived.
 
 **The 2026-06-14/15 portfolio wave shipped** (all in Recently completed): the agent-permission
 redesign (#252 `decide(effect)` core + #266 folder-handoff / typed `file_convert`), unified
