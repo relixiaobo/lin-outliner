@@ -1517,6 +1517,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Parallel tool calls render every result, no mid-turn red flash (PR #314, main)** — one assistant
+  turn that fans out parallel tool calls (e.g. several `web_search`/`web_fetch`) had two rendering
+  defects. (1) **Persistence:** each tool result's `parentMessageId` was the assistant message, so N
+  parallel results were stored as *siblings*; the transcript's single-leaf active path keeps one child per
+  node, so N-1 results fell off-path → invisible → rendered as resultless "Failed" rows (≈half of all
+  parallel-tool results). Results now chain onto the run's tail `lastMessageId` (`assistant → result₁ →
+  result₂ → …`), honoring the documented "run is a linear spine" contract, so every result stays on the
+  active path. (2) **Live status:** the per-row spinner was granted to only the single most-recent
+  un-settled tool (and only while `pendingToolCallIds` was empty), so in the frame after a parallel batch
+  is emitted but before the runtime marks the calls in-flight, every tool but the last flashed red
+  ("red → running → success"). A new pure `isToolCallRowActive` predicate treats every un-settled tool
+  (no result, no `outcome`, no child run) as pending while the turn is live. Extends the
+  `fix/tool-call-spinner-stuck` `outcome` work below. Both regression tests mutation-verified; two
+  independent adversarial reviews clean. Spec synced (`agent-event-log-rendering.md`). typecheck ✓ ·
+  `test:core` 1041 / 0 fail · `test:renderer` 560 / 0 fail · `docs:check` ✓.
 - **Completed tool steps no longer spin forever (main, `fix/tool-call-spinner-stuck`)** — a finished
   step (e.g. a `web_search` that returned) kept showing a spinner for the rest of the run. The
   authoritative `tool_call.completed` / `tool_call.failed` events were replay no-ops, so the renderer

@@ -461,6 +461,16 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **parallel-tool-call-rendering fix** (main, `fix/parallel-tool-call-rendering`, PR #314, merged
+  2026-06-22) — one assistant turn with parallel tool calls had two rendering defects, both fixed at root
+  cause: (1) tool results were stored as siblings of the assistant and fell off the single-leaf active
+  path (rendered as resultless "Failed" rows) — now chained onto the run's tail `lastMessageId` so every
+  result stays on-path; (2) the live per-row spinner was granted to only the most-recent un-settled tool,
+  so a parallel batch flashed the others red mid-turn — now every un-settled tool spins via the pure
+  `isToolCallRowActive` predicate. Extends `fix/tool-call-spinner-stuck`. Spec synced; both regression
+  tests mutation-verified; two independent adversarial reviews clean. typecheck ✓ · test:core 1041 ·
+  test:renderer 560 · docs:check ✓.
+
 - **tool-call spinner-stuck fix** (main, `fix/tool-call-spinner-stuck`, merged 2026-06-19) — completed
   tool steps (e.g. a finished `web_search` whose result message never lands in the projection) stopped
   showing a perpetual spinner. Replay now stamps a per-call `outcome` (`completed`/`failed`) from the
