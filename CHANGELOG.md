@@ -878,6 +878,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Agent transcript rebuilt to 1:1 Codex desktop-client message flow (PR #312, `message-flow-rebuild`)** —
+  the agent process rendering is rebuilt as one typed-stream → render-group splitter → nested collapse model,
+  matching the OpenAI Codex desktop client. The per-turn body is a **flat timeline** (no left rail/indent) under
+  a **persistent divider** — the live "Working / Working for {t}" clock while active, "Worked for {t}" once
+  sealed — that stays put through expand and auto-collapse. The turn fold **auto-expands while working and
+  auto-collapses the moment the final answer starts** (Codex machine C), **reversing #306's default-collapsed
+  live process** (PM-ratified). Consecutive tool calls fold into one **counted activity group** ("Ran 3
+  commands · read 2 files", machine B) expandable to the individual rows; reasoning folds like a tool step with
+  a fixed "Thinking"/"Thought" label + a dim one-line gist. A user expand/collapse is **sticky and persisted per
+  conversation** (`agentDisclosureStore`, the renderer analog of Codex's `collapsedTurnsById`), surviving reload
+  and conversation switch. New `agentRenderGroups` splitter + `AgentToolActivityGroup` + `formatRunDuration`
+  with full unit/e2e coverage; supersedes the #311 4-gap design. **Gate (main):** reconciled with #314 — every
+  un-settled tool spins while the turn is live (`isToolCallRowActive`) across the standalone row, the activity
+  group (counts + member spinners), and the header summary, so a parallel batch never flashes red or miscounts
+  as failed mid-turn; the live clock no longer runs away to ~20000d when the turn-start anchor is unknown.
+  typecheck ✓ · `test:core` 1043 · `test:renderer` 587 · e2e `agent-process` 15/15 · `docs:check` ✓ ·
+  adversarial reconciliation review clean · visual verification light+dark.
 - **Stabilize disclosure scroll anchoring — live agent process + outliner collapse (PR #306, codex-3)** —
   live agent process rows now default **collapsed** (reversing the previous auto-expand-while-working /
   auto-collapse-on-settle): the collapsed header is the live status line — the pending tool, then the

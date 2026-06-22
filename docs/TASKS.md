@@ -55,14 +55,13 @@ disjoint lanes from the 2026-06-19 dispatch plan, **agent/outliner disclosure st
 (#306, codex-3)** — command-surface one-pager · dark-mode-contrast-pass · anthropic-auth-clarity
 remain open.
 
-**agent-context-slim-decouple shipped (#313, 2026-06-22).** De-coupled tool-output context
-slimming from the canonical transcript: a `tool_result.replaced` now writes a separate
-`modelSlimmedContent` instead of overwriting `content`, so the UI/search keep the full output
-while only the model copy is slimmed (Claude Code 2.1 stance). Model-context derivation
-substitutes `modelFacingContent` (`modelSlimmedContent ?? content`) — runtime pi-messages, the
-per-batch sizing, and Dream extraction. Fixes the "many tools show input-only / no output" rows.
-Merge folded the `/code-review xhigh` findings (model-facing sizing, search-index never-index-slim,
-Dream model-facing, reducer `updatedAt`) with regression tests + adversarial verify. Plan archived.
+**The 2026-06-22 agent-transcript wave shipped** (full entries in Recently completed):
+**codex-message-flow-fidelity** (#312) — the 1:1 Codex desktop-client transcript rebuild (flat
+per-turn timeline, counted tool-activity groups, auto-collapse-on-answer + persistent worked-for
+divider, reasoning "Thought" gist, per-conversation sticky disclosure); **agent-context-slim-decouple**
+(#313) — tool-output slimming de-coupled from the canonical transcript via a separate
+`modelSlimmedContent`. Both plans archived. Earlier the same day: the parallel-tool-call rendering
+fix (#314) + the tool-call spinner-stuck fix.
 
 **The 2026-06-14/15 portfolio wave shipped** (all in Recently completed): the agent-permission
 redesign (#252 `decide(effect)` core + #266 folder-handoff / typed `file_convert`), unified
@@ -430,24 +429,6 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   real light+dark run to confirm static contrast risks + apply one-token
   `theme-dark.css` nudges.
 
-- **codex-message-flow-fidelity** (`draft`, **PM-ratified full rebuild 2026-06-20**, build unassigned —
-  PR-1 ready to dispatch) — raise the agent transcript to a **1:1 reproduction of
-  the OpenAI Codex desktop client** message flow, grounded in a corrected read-only RE of that
-  client (`tmp/research/codex-client/MESSAGE-FLOW-GAP.md`, rewritten 2026-06-20). **The original
-  4-gap design (#311) was NOT 1:1** — testing showed the gap is structural: Codex's flow is one
-  `typed-item stream → render-group splitter → three independent collapse state machines` with the
-  `worked-for` item as the fold line, and the 4-gap plan listed that spine as Non-goals while
-  building cosmetic leaves on our legacy per-message renderer. Plan now a **SET of 3 dependency-
-  ordered complete PRs** (A7 foundation-first): **PR-1** render-group substrate + faithful counted
-  tool-activity group (Set-dedup, full running/done × leading/joined tense matrix, exec sub-kind
-  "Read/Searched/Listed"); **PR-2** per-turn **auto-collapse-on-answer-start** + real `worked-for`
-  **divider entity** (3-way header: "Working for {t}"/"Worked for {t}"/"{N} previous messages",
-  expand+persist) — reverses the two former Non-goals (**PM-ratified**); **PR-3** per-item state:
-  reasoning "Thinking"→"Thought for {elapsed}", **active cue is a static label** (Codex's shimmer
-  is an A/B experiment, not the default), 4-state step (green done / dim pending), duration day-
-  rollup + run-start anchor. **#311: close and salvage** (PM-ratified — lift its i18n family/kind
-  map/duration rollup into PR-1/PR-3, don't merge the legacy substrate). Detail mode = single
-  default (no toggle). See `docs/plans/codex-message-flow-fidelity.md`.
 
 ### Performance
 
@@ -473,6 +454,34 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   no collision with #179/#180.
 
 ## Recently completed
+
+- **codex-message-flow-fidelity — 1:1 Codex transcript rebuild** (`message-flow-rebuild`, PR #312, merged
+  2026-06-22) — raised the agent transcript to a 1:1 reproduction of the OpenAI Codex desktop client: a flat
+  per-turn process timeline (no left rail/indent) under a persistent "Working / Worked for {t}" divider, with
+  Codex's nested folds — the per-turn process fold auto-expands while working and auto-collapses the moment the
+  final answer starts (machine C), and consecutive tool calls fold into one counted activity group ("Ran 3
+  commands · read 2 files", machine B) expandable to the rows. Reasoning folds like a tool step (fixed
+  "Thinking"/"Thought" label + dim one-line gist); a user toggle is sticky and persisted per conversation
+  (`agentDisclosureStore`). The 3-PR plan (render-group substrate / auto-collapse + worked-for divider /
+  per-item state) shipped as one rebuild. **Gate (main):** reconciled #314's `isToolCallRowActive` (every
+  un-settled tool spins while live — applied across the standalone row, the activity-group counts + member
+  spinners, and the header summary) and fixed the runaway-clock anchor (`useElapsedTick` treats a non-positive
+  anchor as unknown); both were the `/code-review xhigh` findings. typecheck ✓ · test:core 1043 · test:renderer
+  587 · e2e `agent-process` 15/15 · docs:check ✓ · adversarial reconciliation review clean · visual
+  verification light+dark. Plan archived; supersedes the #311 4-gap design.
+
+- **agent-context-slim-decouple** (`agent-slim-decouple`, PR #313, merged 2026-06-22) — de-coupled tool-output
+  context slimming from the canonical transcript. The per-batch budget offload and time-based microcompact used
+  to overwrite a tool result's `content` with a slim preview, so on reload an old `web_search`/`web_fetch`
+  decayed into an input-only / no-output row. `tool_result.replaced` now writes a separate `modelSlimmedContent`
+  and leaves `content` full forever; model-context derivation substitutes `modelFacingContent`
+  (`modelSlimmedContent ?? content`) — runtime pi-messages, the per-batch sizing, and Dream extraction — while
+  the UI transcript and search index keep the full `content`. The replaced event is the durable, monotonic
+  slim-decision journal (cache-stable, never re-emits). **Gate (main):** folded the `/code-review xhigh`
+  findings (model-facing sizing, search-index never-index-slim, Dream model-facing, reducer `updatedAt`) with
+  regression tests + adversarial verify of the fix delta (all CONFIRMED-CORRECT). typecheck ✓ · test:core 1043 ·
+  test:renderer 560 · docs:check ✓. Plan archived. **Behavior note:** Dream now digests the slim copy (what the
+  agent saw), matching pre-decouple behavior.
 
 - **parallel-tool-call-rendering fix** (main, `fix/parallel-tool-call-rendering`, PR #314, merged
   2026-06-22) — one assistant turn with parallel tool calls had two rendering defects, both fixed at root
