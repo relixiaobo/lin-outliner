@@ -31,7 +31,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-06-19).** Nothing actively building code. The **2026-06-16…06-19 wave
+**In flight (2026-06-22).** Nothing actively building code; no open PRs. The **2026-06-16…06-19 wave
 shipped** (all in Recently completed): the single-agent collapse + one-Neva-invariant
 enforcement (#294 / #296 / #299 / #300), the web-search / web-fetch reliability pass
 (#288 / #290 / #292), coordinator working-group channel tools (#289), the channel-activity
@@ -60,7 +60,10 @@ remain open.
 per-turn timeline, counted tool-activity groups, auto-collapse-on-answer + persistent worked-for
 divider, reasoning "Thought" gist, per-conversation sticky disclosure); **agent-context-slim-decouple**
 (#313) — tool-output slimming de-coupled from the canonical transcript via a separate
-`modelSlimmedContent`. Both plans archived. Earlier the same day: the parallel-tool-call rendering
+`modelSlimmedContent`; **Dream consolidation + distinguishable inline references** (#315) — Memory Dream
+as a runtime-only consolidation skill (manual `agent_run_dream_now`, PM-authorized unscoped `node_delete`)
++ chat/file/node refs visually distinguishable. #312/#313 plans archived (#315 extends shipped
+`agent-memory-on-timeline`, no separate plan). Earlier the same day: the parallel-tool-call rendering
 fix (#314) + the tool-call spinner-stuck fix.
 
 **The 2026-06-14/15 portfolio wave shipped** (all in Recently completed): the agent-permission
