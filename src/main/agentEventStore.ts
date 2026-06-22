@@ -2067,11 +2067,28 @@ function applyAgentEventToSearchIndex(index: AgentEventSearchIndex, event: Agent
   if (event.type === 'tool_result.created' || event.type === 'tool_result.replaced') {
     const key = searchIndexKey(event.conversationId, event.messageId);
     const current = index.messages[key];
+    const outputPayloadIds = event.outputRef ? [event.outputRef.id] : [];
+    if (event.type === 'tool_result.replaced') {
+      // A replace is a model-context-only slim; NEVER index the slim bytes. The
+      // canonical full output was indexed by tool_result.created and stays
+      // searchable — preserve it, only advancing the seq and registering the
+      // offload payload so the full bytes remain retrievable. If the creation
+      // entry is somehow absent (a stray or partial replay), skip rather than fall
+      // through and index the slim `event.content` as if it were the full output.
+      if (current) {
+        index.messages[key] = {
+          ...current,
+          updatedAt: event.createdAt,
+          latestSeq: event.seq,
+          payloadIds: uniqueStrings([...current.payloadIds, ...outputPayloadIds]),
+        };
+      }
+      return;
+    }
     const content = indexDetailsFromContent([
       ...event.content,
       { type: 'text', text: event.outputSummary },
     ]);
-    const outputPayloadIds = event.outputRef ? [event.outputRef.id] : [];
     index.messages[key] = {
       conversationId: event.conversationId,
       messageId: event.messageId,

@@ -11,7 +11,7 @@ import {
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
-import { AgentProcessTimeline } from './AgentProcessTimeline';
+import { AgentProcessTimeline, isToolCallRowActive } from './AgentProcessTimeline';
 import { childRunToolStatus, getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
 import { sentenceFragment, summarizeToolActivity } from './agentRenderGroups';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
@@ -153,21 +153,25 @@ export function summarizeProcess({
   thinkingLabel: string;
 }): string {
   const toolCount = toolCalls.length;
-  const fallbackActiveToolCallId = turnActive && pendingToolCallIds.size === 0
-    ? [...toolCalls].reverse().find((toolCall) => (
-      !toolCallOutcomes?.has(toolCall.id)
-      && !results.has(toolCall.id)
-      && !childRunsByToolCallId?.has(toolCall.id)
-    ))?.id ?? null
-    : null;
   const toolStatus = (toolCall: ToolCall) => {
     const childRun = childRunsByToolCallId?.get(toolCall.id);
     if (childRun) return childRunToolStatus(childRun);
+    // Same rule as the per-row spinner (isToolCallRowActive): while the turn is
+    // live every un-settled call is active, not just the most recent — else a
+    // parallel batch's other calls would count as 'error' in the summary during
+    // the frame before the runtime marks them in-flight.
+    const active = isToolCallRowActive(
+      { kind: 'toolCall', toolCall, outcome: toolCallOutcomes?.get(toolCall.id) },
+      pendingToolCallIds,
+      results,
+      undefined,
+      turnActive,
+    );
     return getToolCallStatus(
       toolCall.id,
       results.get(toolCall.id),
       pendingToolCallIds,
-      fallbackActiveToolCallId === toolCall.id,
+      active,
       toolCallOutcomes?.get(toolCall.id),
     );
   };
@@ -265,14 +269,18 @@ function useElapsedTick(startedAtMs: number | null, active: boolean): number | n
   // elapsed on the first paint instead of a one-frame bare "Working" (now -
   // startedAtMs === 0).
   const [now, setNow] = useState(() => Date.now());
+  // A non-positive anchor is "turn-start unknown", not the Unix epoch: the live
+  // anchor falls back to 0 when no user message is found, and `now - 0` would
+  // render the entire epoch as "Working for 20000d+". Treat `<= 0` like null.
+  const knownStart = startedAtMs !== null && startedAtMs > 0 ? startedAtMs : null;
   useEffect(() => {
-    if (!active || startedAtMs === null) return;
+    if (!active || knownStart === null) return;
     setNow(Date.now());
     const interval = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(interval);
-  }, [active, startedAtMs]);
-  if (!active || startedAtMs === null) return null;
-  return Math.max(0, now - startedAtMs);
+  }, [active, knownStart]);
+  if (!active || knownStart === null) return null;
+  return Math.max(0, now - knownStart);
 }
 
 export function AgentProcessBlock({

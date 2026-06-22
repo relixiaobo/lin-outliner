@@ -5534,7 +5534,13 @@ export class AgentRuntime {
         actor,
         runId: this.activeRunId(conversation) ?? undefined,
         messageId: toolResultMessageId,
-        parentMessageId: activeRun.toolCallMessageIds.get(message.toolCallId)
+        // Chain onto the run's tail, not the assistant: when one assistant emits
+        // parallel tool calls, parenting every result to the assistant makes them
+        // siblings, and the single-leaf active path keeps only one — the rest fall
+        // off-path and render as resultless "Failed" rows. Threading through
+        // `lastMessageId` (assistant → result₁ → result₂ → …) keeps the run a
+        // linear spine so every result stays on the active path.
+        parentMessageId: activeRun.lastMessageId
           ?? latestAssistantMessageIdForRun(conversation.eventState, activeRun.id),
         toolCallId: message.toolCallId,
         toolName: message.toolName,
@@ -5697,7 +5703,9 @@ export class AgentRuntime {
       role: 'toolResult',
       toolCallId: message.toolCallId ?? message.id,
       toolName: message.toolName ?? 'unknown',
-      content: await this.runtimeUserContent(conversationId, message.content),
+      // The model sees the slimmed copy when one exists; the canonical full
+      // `content` is reserved for the UI/search (see `modelSlimmedContent`).
+      content: await this.runtimeUserContent(conversationId, message.modelSlimmedContent ?? message.content),
       isError: !!message.isError,
       timestamp: message.createdAt,
     } satisfies ToolResultMessage;

@@ -654,6 +654,16 @@ renderer uses to settle a tool row's status (see the live-header/tool-status rul
 under Rendering). It is render-only metadata: the model context derivation never
 includes `outcome`.
 
+A run is a **linear spine**: every execution segment (an assistant continuation or
+a tool result) sets `parentMessageId` to the run's own tail — the previous segment
+— not to the addressing assistant message. This is load-bearing for **parallel
+tool calls**: when one assistant emits N calls, their results chain `assistant →
+result₁ → result₂ → … → resultₙ` instead of fanning out as N siblings of the
+assistant. The visible transcript is the single-leaf active path (one child per
+node), so sibling results would leave all but one off-path — invisible, and
+rendered as resultless "Failed" rows. Results re-associate to their calls by
+`toolCallId`, so spine order never affects which call shows which output.
+
 The pi-mono projection reconstructs pi-ai messages as:
 
 ```txt
@@ -966,6 +976,16 @@ Rules:
   `collapsedTurnsById`), so an explicit expand/collapse survives reload, conversation
   switch, and the row remount; absence of a stored choice means the auto default
   applies. (A detached preview row with no conversationId keeps ephemeral state.)
+  In the **expanded** timeline the spinner is per row: while the turn is
+  live, **every un-settled tool row** (no result, no `outcome`, no child run) spins,
+  not just the most recent one — so when an assistant fans out a parallel tool batch,
+  the earlier calls never flash red in the frame before the runtime populates
+  `pendingToolCallIds`. The same un-settled rule drives the collapsed activity-group
+  summary and the process header's counted "Ran N commands" status, so a parallel
+  batch is never miscounted as failed mid-turn. A call settles (and stops spinning)
+  the instant it gains a result, an `outcome`, or a child run; once the turn ends, an
+  un-settled call falls through to its real error/incomplete state rather than
+  spinning forever.
   - A **resultless** turn (last visible block is a thought/tool — no trailing
     answer prose) drives two SEPARATE decisions, decoupled so a cleanly-completed
     turn never mislabels:
@@ -1128,6 +1148,14 @@ Rules:
   markdown. This keeps the differences at the data-adapter boundary instead of
   forking presentation behavior.
 - Large details are refs, not row payloads.
+- **Context slimming is invisible to the transcript.** Budget offload and
+  time-based microcompact shrink only the *model's* copy of a tool result: a
+  `tool_result.replaced` writes a separate `modelSlimmedContent`, leaving the
+  reduced record's `content` full. So `toRenderMessageEntity` (and the
+  `buildToolResultMap` it feeds) always render the full output — an old
+  `web_search` / `web_fetch` row never decays into input-only / no-output. Only
+  the debug projection above, a model-context inspector, surfaces the slimmed
+  copy. (Slimming authority: [[agent-pi-mono-implementation]].)
 - A run/provider failure rides on the terminal assistant message: the run marks
   it `assistant_message.failed` (error stop reason + `errorMessage`), so it
   renders inline as a failed turn with a retry action — not as a separate

@@ -408,6 +408,81 @@ describe('agent event store', () => {
     });
   });
 
+  test('keeps the full tool output searchable after a model-context slim', async () => {
+    await withStore(async (store, root) => {
+      const conversationId = 'conversation-1';
+      const payload = {
+        kind: 'payload_ref' as const,
+        id: 'tool-output-tool-1',
+        storage: 'file' as const,
+        mimeType: 'text/plain',
+        byteLength: 90_000,
+        sha256: 'sha',
+        role: 'tool_output' as const,
+        summary: 'web output',
+        truncated: true,
+      };
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
+        {
+          ...base(conversationId, 2, 'assistant_message.started'),
+          runId: 'run-1',
+          messageId: 'assistant-1',
+          parentMessageId: null,
+          providerId: 'test',
+          modelId: 'test',
+        },
+        {
+          ...base(conversationId, 3, 'assistant_message.completed'),
+          messageId: 'assistant-1',
+          stopReason: 'toolUse',
+          content: [{ type: 'toolCall', id: 'tool-1', name: 'web_fetch', arguments: {} }],
+        },
+        {
+          ...base(conversationId, 4, 'tool_result.created', { type: 'tool', toolName: 'web_fetch', toolCallId: 'tool-1' }),
+          messageId: 'tool-result-1',
+          parentMessageId: 'assistant-1',
+          toolCallId: 'tool-1',
+          toolName: 'web_fetch',
+          isError: false,
+          content: [{ type: 'text', text: 'the rare needle phrase lives in this fetched output' }],
+          outputSummary: 'web output',
+        },
+        { ...base(conversationId, 5, 'payload.created'), payload },
+        // The slim replaces only the model copy; the canonical text stays indexed.
+        {
+          ...base(conversationId, 6, 'tool_result.replaced'),
+          runId: 'run-1',
+          messageId: 'tool-result-1',
+          toolCallId: 'tool-1',
+          content: [{ type: 'payload_ref', payload, label: '<persisted-output>\nPreview\n</persisted-output>' }],
+          outputSummary: 'web output',
+          outputRef: payload,
+        },
+      ]);
+
+      const results = await store.searchMessages('needle', { conversationId });
+      expect(results.map((entry) => entry.messageId)).toContain('tool-result-1');
+
+      // The replace preserves the creation entry's full text and only advances the
+      // seq + merges the offload payload id — it must never overwrite the indexed
+      // text with the slim preview, nor drop the canonical payload registration.
+      const index = JSON.parse(
+        await readFile(path.join(root, 'indexes', 'search-index.json'), 'utf8'),
+      ) as {
+        messages: Record<
+          string,
+          { messageId: string; latestSeq: number; payloadIds: string[]; normalizedText: string }
+        >;
+      };
+      const entry = Object.values(index.messages).find((message) => message.messageId === 'tool-result-1');
+      expect(entry?.payloadIds).toContain('tool-output-tool-1');
+      expect(entry?.latestSeq).toBe(6);
+      expect(entry?.normalizedText).toContain('needle');
+      expect(entry?.normalizedText).not.toContain('persisted-output');
+    });
+  });
+
   test('updates the derived user-message index after edits', async () => {
     await withStore(async (store) => {
       const conversationId = 'conversation-1';

@@ -10,6 +10,31 @@ import { AgentToolCallBlock, getLoadedSkillDetails } from './AgentToolCallBlock'
 import { splitTimelineIntoGroups } from './agentRenderGroups';
 import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
 
+type ToolCallBlock = Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }>;
+
+/**
+ * Whether a tool-call row should show as active (spinner) rather than settle.
+ *
+ * While the turn is live, EVERY un-settled tool call counts as active, not just the
+ * most recent one. The runtime `pendingToolCallIds` set lags a freshly-dispatched
+ * batch, and when one assistant fans out parallel tool calls there is a frame where
+ * none is in-flight yet — narrowing the spinner to a single call flashed the rest red.
+ * A call with a settled `outcome` (or a result, or a child run) is NOT un-settled, so
+ * a completed step never spins forever even if its result message never arrives; once
+ * the turn settles `turnActive` goes false and a genuinely-unanswered call resolves to
+ * its real error/incomplete state.
+ */
+export function isToolCallRowActive(
+  block: ToolCallBlock,
+  pendingToolCallIds: ReadonlySet<string>,
+  results: ReadonlyMap<string, AgentToolResultWithPayloads>,
+  childRun: AgentRenderChildRunEntity | undefined,
+  turnActive: boolean,
+): boolean {
+  if (pendingToolCallIds.has(block.toolCall.id)) return true;
+  return turnActive && !block.outcome && !results.has(block.toolCall.id) && !childRun;
+}
+
 interface AgentProcessTimelineProps {
   blocks: AgentProcessSegmentBlock[];
   expandState: AgentExpandState;
@@ -53,20 +78,6 @@ export function AgentProcessTimeline({
   // captures the solo case without three throwaway classification passes.
   const onlyBlock = visibleBlocks.length === 1 ? visibleBlocks[0]! : null;
   const soloThinkingBlock = onlyBlock?.kind === 'thinking' ? onlyBlock : null;
-  // The runtime `pendingToolCallIds` set can momentarily lag a freshly-started
-  // tool call, so an active turn keeps the most recent un-settled tool call
-  // spinning as a bridge. A call with a settled `outcome` (or a result, or a
-  // child run) is NOT un-settled — excluding those is what stops a completed
-  // step from spinning forever when its result message never arrives.
-  const fallbackActiveToolCall = turnActive && pendingToolCallIds.size === 0
-    ? [...visibleBlocks].reverse().find((block): block is Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }> => (
-      block.kind === 'toolCall'
-      && !block.outcome
-      && !results.has(block.toolCall.id)
-      && !(block.childRun ?? childRunsByParentToolCallId?.get(block.toolCall.id))
-    ))
-    : undefined;
-  const fallbackActiveToolCallId = fallbackActiveToolCall?.toolCall.id ?? null;
 
   // Fold runs of consecutive (non-child-run) tool calls into one counted
   // activity group; thinking / narration / child-run tools break the run and
@@ -129,7 +140,7 @@ export function AgentProcessTimeline({
         childRun={childRun}
         toolCall={block.toolCall}
         outcome={block.outcome}
-        turnActive={pendingToolCallIds.has(block.toolCall.id) || fallbackActiveToolCallId === block.toolCall.id}
+        turnActive={isToolCallRowActive(block, pendingToolCallIds, results, childRun, turnActive)}
       />
     );
   };
@@ -153,7 +164,7 @@ export function AgentProcessTimeline({
               <AgentToolActivityGroup
                 conversationId={conversationId}
                 expandState={expandState}
-                fallbackActiveToolCallId={fallbackActiveToolCallId}
+                turnActive={turnActive}
                 id={`${id}:${group.id}`}
                 index={index}
                 key={group.id}

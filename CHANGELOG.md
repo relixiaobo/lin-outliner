@@ -1517,6 +1517,41 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Tool-output context slimming de-coupled from the canonical transcript (PR #313, cc-2)** — the
+  per-batch budget offload and the time-based microcompact used to overwrite a tool result's `content`
+  with a slim preview/`payload_ref` to shrink the model's per-request copy. That mutated the *canonical*
+  record, so on reload an old `web_search`/`web_fetch` decayed into an input-only / no-output row. A
+  `tool_result.replaced` now writes a separate **`modelSlimmedContent`** field and leaves `content` full
+  forever (the Claude Code 2.1 stance: slim the model's copy, keep the persisted transcript whole).
+  Model-context derivation substitutes **`modelFacingContent`** (`modelSlimmedContent ?? content`) — the
+  consumers are runtime pi-message derivation, the per-batch sizing in `collectToolResultBatches`, and
+  Dream memory extraction — while the UI transcript and search index keep reading the full `content`. The
+  replaced event is the durable, monotonic slim-decision journal: replay never shrinks the canonical
+  content (so a result is never un-slimmed → cache-stable) and slim-decision logic reads the model-facing
+  copy so an already-offloaded/cleared result is never re-emitted (no prompt-cache churn). The search
+  index's `tool_result.replaced` branch preserves the full creation-entry text, advances the seq, and
+  merges the offload payload id — it never indexes the slim bytes. **Behavior note:** Dream now digests
+  what the agent actually saw (the slim copy), matching pre-decouple behavior, rather than the
+  re-expanded full output. **Gate (main):** the merge folded the `/code-review xhigh` findings (model-facing
+  sizing, search-index never-index-slim, Dream model-facing, reducer `updatedAt`) with regression tests
+  and an adversarial verify of the fix delta (all four CONFIRMED-CORRECT, no new bug, no layering
+  violation). Spec synced (`agent-pi-mono-implementation.md`). typecheck ✓ · `test:core` 1043 / 0 fail ·
+  `test:renderer` 560 / 0 fail · `docs:check` ✓.
+- **Parallel tool calls render every result, no mid-turn red flash (PR #314, main)** — one assistant
+  turn that fans out parallel tool calls (e.g. several `web_search`/`web_fetch`) had two rendering
+  defects. (1) **Persistence:** each tool result's `parentMessageId` was the assistant message, so N
+  parallel results were stored as *siblings*; the transcript's single-leaf active path keeps one child per
+  node, so N-1 results fell off-path → invisible → rendered as resultless "Failed" rows (≈half of all
+  parallel-tool results). Results now chain onto the run's tail `lastMessageId` (`assistant → result₁ →
+  result₂ → …`), honoring the documented "run is a linear spine" contract, so every result stays on the
+  active path. (2) **Live status:** the per-row spinner was granted to only the single most-recent
+  un-settled tool (and only while `pendingToolCallIds` was empty), so in the frame after a parallel batch
+  is emitted but before the runtime marks the calls in-flight, every tool but the last flashed red
+  ("red → running → success"). A new pure `isToolCallRowActive` predicate treats every un-settled tool
+  (no result, no `outcome`, no child run) as pending while the turn is live. Extends the
+  `fix/tool-call-spinner-stuck` `outcome` work below. Both regression tests mutation-verified; two
+  independent adversarial reviews clean. Spec synced (`agent-event-log-rendering.md`). typecheck ✓ ·
+  `test:core` 1041 / 0 fail · `test:renderer` 560 / 0 fail · `docs:check` ✓.
 - **Completed tool steps no longer spin forever (main, `fix/tool-call-spinner-stuck`)** — a finished
   step (e.g. a `web_search` that returned) kept showing a spinner for the rest of the run. The
   authoritative `tool_call.completed` / `tool_call.failed` events were replay no-ops, so the renderer
