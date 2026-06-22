@@ -57,9 +57,6 @@ export function App() {
   // open/collapsed in React; the chip is a pure :hover affordance in CSS.
   const [agentOpen, setAgentOpen] = useState(true);
   const agentRailState: AgentRailState = agentOpen ? 'open' : 'collapsed';
-  // A content row (e.g. a command node's Run button) can ask to surface the agent
-  // panel on its delivery conversation; open the rail so the run is visible.
-  useEffect(() => onAgentRevealRequest(() => setAgentOpen(true)), []);
   const [sidebarExpandedIds, setSidebarExpandedIds] = useState<Set<NodeId>>(() => new Set());
   const [pendingFocus, setPendingFocus] = useState<FocusHint | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -189,6 +186,7 @@ export function App() {
     beginSidebarResize,
     canvasRef,
     panelCountFitsCapacity,
+    prepareAgentOpen,
     reflowRailsForPanelCount,
     resetAgentWidth,
     resetPanelPair,
@@ -206,6 +204,19 @@ export function App() {
   panelCountFitsRef.current = panelCountFitsCapacity;
   reflowPanelCountRef.current = reflowRailsForPanelCount;
   const { isNodePinned, pinNodeAtIndex, pinnedNodeIds, togglePin } = useWorkspacePinnedNodes(index?.byId ?? null);
+
+  const openAgentRail = useCallback(() => {
+    if (!agentOpen) prepareAgentOpen();
+    setAgentOpen(true);
+  }, [agentOpen, prepareAgentOpen]);
+  const toggleAgentRail = useCallback(() => {
+    if (!agentOpen) prepareAgentOpen();
+    setAgentOpen((open) => !open);
+  }, [agentOpen, prepareAgentOpen]);
+  // A content row (e.g. a command node's Run button) can ask to surface the agent
+  // panel on its delivery conversation; preflow the rail width before opening so
+  // the floating sidebar and canvas do not visibly jump through an oversized frame.
+  useEffect(() => onAgentRevealRequest(() => openAgentRail()), [openAgentRail]);
 
   useDragSelection({ rootId, index, ui, setUi });
 
@@ -609,7 +620,7 @@ export function App() {
       <WindowChrome
         agentOpen={agentOpen}
         sidebarOpen={sidebarOpen}
-        onToggleAgent={() => setAgentOpen((open) => !open)}
+        onToggleAgent={toggleAgentRail}
         onToggleSidebar={() => setSidebarOpen((open) => !open)}
       />
 

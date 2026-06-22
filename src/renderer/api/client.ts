@@ -319,6 +319,8 @@ export const api = {
     command<AgentMemoryEntryView[]>('agent_list_memory', options),
   agentListDreamHistory: (options: { limit?: number } = {}) =>
     command<AgentRenderDreamTaskEntity[]>('agent_list_dream_history', options),
+  agentRunDreamNow: (options: { limit?: number } = {}) =>
+    command<AgentRenderDreamTaskEntity[]>('agent_run_dream_now', options),
   agentUpdateMemory: (memoryId: string, fact: string) =>
     command<AgentMemoryEntryView | null>('agent_update_memory', { memoryId, fact }),
   agentForgetMemory: (memoryId: string) =>

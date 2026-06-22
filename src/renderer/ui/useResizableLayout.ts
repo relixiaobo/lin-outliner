@@ -22,6 +22,7 @@ const KEYBOARD_RESIZE_STEP = 16;
 const KEYBOARD_RESIZE_LARGE_STEP = 40;
 
 type RailKind = 'sidebar' | 'agent';
+type RailOpenOverrides = Partial<Pick<ResponsiveRailState, 'agentOpen' | 'sidebarOpen'>>;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -91,10 +92,10 @@ export function useResizableLayout({
   railOpenRef.current = { sidebarOpen, agentOpen };
   panelCountRef.current = panelCount;
 
-  const railStateFrom = useCallback((widths: RailWidths): ResponsiveRailState => ({
+  const railStateFrom = useCallback((widths: RailWidths, overrides: RailOpenOverrides = {}): ResponsiveRailState => ({
     ...widths,
-    sidebarOpen: railOpenRef.current.sidebarOpen,
-    agentOpen: railOpenRef.current.agentOpen,
+    sidebarOpen: overrides.sidebarOpen ?? railOpenRef.current.sidebarOpen,
+    agentOpen: overrides.agentOpen ?? railOpenRef.current.agentOpen,
   }), []);
 
   const renderedRailState = useCallback(() => railStateFrom(renderedRailsRef.current), [railStateFrom]);
@@ -115,13 +116,14 @@ export function useResizableLayout({
     preference: RailWidths,
     nextPanelCount: number,
     metrics?: WorkspaceLayoutMetrics,
+    railOpenOverrides?: RailOpenOverrides,
   ) => {
     const canvas = canvasRef.current;
     const resolvedMetrics = metrics ?? (canvas ? workspaceLayoutMetricsFromCanvas(canvas) : null);
     if (!resolvedMetrics) return clampRailWidthsToLimits(preference);
     return clampRailWidthsForPanelFloor(
       resolvedMetrics,
-      railStateFrom(preference),
+      railStateFrom(preference, railOpenOverrides),
       Math.max(1, nextPanelCount),
     );
   }, [railStateFrom]);
@@ -148,18 +150,25 @@ export function useResizableLayout({
     );
   }, [railStateFrom]);
 
-  const reflowRailsForPanelCount = useCallback((nextPanelCount = panelCountRef.current) => {
+  const reflowRailsForPanelCount = useCallback((
+    nextPanelCount = panelCountRef.current,
+    railOpenOverrides: RailOpenOverrides = {},
+  ) => {
     const canvas = canvasRef.current;
     if (!canvas) {
       commitRenderedRails(preferredRailsRef.current);
       return true;
     }
     const metrics = workspaceLayoutMetricsFromCanvas(canvas);
-    const rails = railStateFrom(preferredRailsRef.current);
+    const rails = railStateFrom(preferredRailsRef.current, railOpenOverrides);
     const clampedPanelCount = Math.max(1, nextPanelCount);
     commitRenderedRails(clampRailWidthsForPanelFloor(metrics, rails, clampedPanelCount));
     return panelCountFitsAtMinimumRails(metrics, rails, clampedPanelCount);
   }, [commitRenderedRails, railStateFrom]);
+
+  const prepareAgentOpen = useCallback(() => {
+    reflowRailsForPanelCount(panelCountRef.current, { agentOpen: true });
+  }, [reflowRailsForPanelCount]);
 
   useLayoutEffect(() => {
     let frame = 0;
@@ -363,6 +372,7 @@ export function useResizableLayout({
     beginSidebarResize,
     canvasRef,
     panelCountFitsCapacity,
+    prepareAgentOpen,
     reflowRailsForPanelCount,
     resetAgentWidth,
     resetPanelPair,

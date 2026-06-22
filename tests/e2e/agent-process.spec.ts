@@ -1005,9 +1005,9 @@ test.describe('agent process disclosure', () => {
     await expect.poll(() => page.locator('.agent-message-row').count()).toBeLessThan(80);
   });
 
-  test('opens and highlights a transcript row from a chat-source inline reference', async ({ page }) => {
+  test('opens and highlights the transcript message body from a chat-source inline reference', async ({ page }) => {
     const sourceMessage = {
-      role: 'assistant',
+      role: 'user',
       content: [{ type: 'text', text: 'This is the cited transcript source.' }],
       timestamp: 1_800_000_001_500,
     };
@@ -1070,11 +1070,74 @@ test.describe('agent process disclosure', () => {
 
     await rowEditor(page, ids.alpha).locator('[data-inline-ref-kind="chat-source"]').click();
 
-    const sourceRow = page.locator('[data-agent-message-id="source-message-e2e-tail"]');
+    const sourceRow = page.locator('[data-agent-message-id="source-message-e2e"]');
     const sourceShell = sourceRow.locator('xpath=ancestor::*[@data-agent-transcript-row]');
+    const sourceBody = sourceRow.locator('.agent-user-content-shell');
     await expect(sourceShell).toContainText('This is the cited transcript source.');
     await expect(sourceShell).toHaveClass(/is-highlighted/);
+    await expect.poll(() => sourceShell.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
+    await expect(sourceRow).not.toHaveClass(/is-highlighted/);
+    await expect(sourceBody).toHaveClass(/is-highlighted/);
     await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'open');
+  });
+
+  test('falls back to the transcript row highlight when a chat-source target has no message body', async ({ page }) => {
+    const emptySourceMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: '' }],
+      timestamp: 1_800_000_001_500,
+    };
+
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
+      conversationTitle: 'General',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [],
+      conversation: [{
+        nodeId: 'empty-source-message-e2e',
+        sourceSeq: 5,
+        message: emptySourceMessage,
+        branches: null,
+      }],
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    });
+
+    const content = {
+      text: 'Open ',
+      marks: [],
+      inlineRefs: [e2eChatSourceInlineRef(5, {
+        kind: 'chat-source',
+        stream: 'conversation',
+        streamId: DEFAULT_GENERAL_CHANNEL_ID,
+        range: { fromSeqExclusive: 4, throughSeq: 5, throughEventId: 'event-5' },
+      }, 'empty source')],
+    };
+    await page.evaluate(async ({ content, nodeId }) => {
+      const win = window as Window & {
+        lin?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+      };
+      await win.lin?.invoke('apply_node_text_patch', {
+        nodeId,
+        patch: { ops: [{ type: 'replace_all', content }] },
+      });
+    }, { content, nodeId: ids.alpha });
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+
+    await rowEditor(page, ids.alpha).locator('[data-inline-ref-kind="chat-source"]').click();
+
+    const sourceRow = page.locator('[data-agent-message-id="empty-source-message-e2e"]');
+    const sourceShell = sourceRow.locator('xpath=ancestor::*[@data-agent-transcript-row]');
+    await expect(sourceRow.locator('.agent-user-content-shell')).toHaveCount(0);
+    await expect(sourceShell).toHaveClass(/is-highlighted/);
+    await expect.poll(() => sourceShell.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
   });
 
   test('opens a tool-derived child run panel from a run chat-source inline reference', async ({ page }) => {

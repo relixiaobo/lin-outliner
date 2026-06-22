@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
+import { formatChatSourceReferenceMarker } from '../../src/core/referenceMarkup';
+import { AgentInlineReferenceText } from '../../src/renderer/ui/agent/AgentInlineReferenceText';
 import { AgentAssistantContent } from '../../src/renderer/ui/agent/AgentMessageFrame';
 import { AgentMarkdown } from '../../src/renderer/ui/agent/AgentMarkdown';
 
@@ -63,6 +65,40 @@ describe('transcript file-chip location marker', () => {
     );
     expect(rendered.document.querySelectorAll('[data-agent-transcript-chips]')).toHaveLength(0);
     expect(rendered.document.querySelector('.agent-markdown')).not.toBeNull();
+  });
+
+  test('AgentMarkdown renders chat-source markers with the shared chat icon and label spans', () => {
+    const marker = formatChatSourceReferenceMarker('when the user asked in Chinese', {
+      kind: 'chat-source',
+      stream: 'conversation',
+      streamId: 'general',
+      range: { fromSeqExclusive: 1, throughSeq: 2 },
+    });
+    const rendered = render(
+      <AgentMarkdown index={0} keyPrefix="probe" text={`Remember ${marker}.`} />,
+    );
+    const ref = rendered.document.querySelector('[data-inline-ref-kind="chat-source"]');
+
+    expect(ref).not.toBeNull();
+    expect(ref?.querySelector('.inline-ref-chat-icon')).not.toBeNull();
+    expect(ref?.querySelector('.inline-ref-chat-label')?.textContent).toBe('when the user asked in Chinese');
+  });
+
+  test('AgentInlineReferenceText renders chat-source markers with the shared chat icon and label spans', () => {
+    const marker = formatChatSourceReferenceMarker('in the weather chat', {
+      kind: 'chat-source',
+      stream: 'conversation',
+      streamId: 'general',
+      range: { fromSeqExclusive: 1, throughSeq: 2 },
+    });
+    const rendered = render(
+      <AgentInlineReferenceText index={0} text={`Remember ${marker}.`} />,
+    );
+    const ref = rendered.document.querySelector('[data-inline-ref-kind="chat-source"]');
+
+    expect(ref).not.toBeNull();
+    expect(ref?.querySelector('.inline-ref-chat-icon')).not.toBeNull();
+    expect(ref?.querySelector('.inline-ref-chat-label')?.textContent).toBe('in the weather chat');
   });
 });
 

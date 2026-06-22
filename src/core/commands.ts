@@ -101,6 +101,7 @@ export const AGENT_COMMANDS = [
   'agent_delete_conversation',
   'agent_list_memory',
   'agent_list_dream_history',
+  'agent_run_dream_now',
   'agent_update_memory',
   'agent_forget_memory',
   'agent_debug_view',

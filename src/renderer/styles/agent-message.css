@@ -36,6 +36,14 @@
      box. --space-4/--space-5 (8/10) keeps the bubble compact while staying on the
      radius-md ladder shared with the composer + suggestion chips. */
   padding: var(--space-4) var(--space-5);
+  transition:
+    background var(--motion-slow),
+    box-shadow var(--motion-slow);
+}
+
+.agent-user-content-shell.is-highlighted {
+  background: var(--fill-4);
+  box-shadow: 0 0 0 1px var(--border-emphasis);
 }
 
 .agent-user-content-body {
@@ -296,6 +304,14 @@
   border-radius: var(--radius-md);
   background: var(--material-popover);
   padding: var(--space-5);
+  transition:
+    background var(--motion-slow),
+    box-shadow var(--motion-slow);
+}
+
+.agent-user-edit-card.is-highlighted {
+  background: var(--fill-2);
+  box-shadow: 0 0 0 1px var(--border-emphasis);
 }
 
 .agent-user-edit-input {
@@ -326,6 +342,15 @@
   color: var(--text-strong);
   font-size: var(--font-content);
   line-height: var(--line-content);
+  border-radius: var(--radius-md);
+  transition:
+    background var(--motion-slow),
+    box-shadow var(--motion-slow);
+}
+
+.agent-assistant-content.is-highlighted {
+  background: var(--fill-1);
+  box-shadow: 0 0 0 1px var(--fill-3);
 }
 
 .agent-assistant-text {

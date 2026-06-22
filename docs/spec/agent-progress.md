@@ -130,7 +130,9 @@ truth.
     and session resource cleanup via pi-ai
 - [x] Agent memory foundation (one believer-keyed first-person pool):
   - durable memory is ordinary timeline outline content: per-day `#d-memory`
-    containers, `#d-episode` source episodes, and `#d-belief` durable beliefs
+    containers with generated daily headlines, `#d-episode` source episodes, and
+    `#d-belief` durable beliefs, with optional `#d-question` unresolved tensions
+    and `#d-guidance` future handling notes when useful
   - model memory is pull-only through `node_search` / `node_read`; the old
     resident `<memory>` briefing and model-visible `recall` tool are removed
   - read-only `past_chats` exposes visible prior conversation history and raw
@@ -138,10 +140,17 @@ truth.
     conversation/run seq ranges
   - write-time validation dereferences every `chat-source` marker before
     mutating nodes, so fabricated or stale raw-source coordinates fail loudly
-  - runtime-owned Dream write-back is a scheduled private `memory-dream` skill
-    run with only `past_chats` and `node_*` memory tools; it reads sources since
-    the Dream watermark, writes `#d-episode` / `#d-belief` nodes, records
-    `dream.completed`, and advances the watermark
+  - runtime-owned Dream write-back is a private `memory-dream` skill run with
+    only `past_chats` and `node_*` memory tools; scheduled runs are at most once
+    per daily due, while Settings can trigger a manual run; both paths read
+    sources since the Dream watermark when sources exist, gather relevant prior
+    memory/workspace context with `node_search` / `node_read`, apply the
+    human-dream cycle and valuable-memory filter, update today's single
+    `#d-memory` container, write optional `#d-episode` / `#d-belief` /
+    `#d-question` / `#d-guidance` nodes, may delete obsolete nodes with
+    `node_delete`, record `dream.completed`, and advance the watermark; manual
+    consolidate-only runs can reconcile outline/prior Dream context without new
+    chat spans
   - `/dream` and the foreground `dream` tool are removed; Dream history remains
     a runtime task/history projection, not a model command surface
   - permission classification keeps `past_chats` as read-only

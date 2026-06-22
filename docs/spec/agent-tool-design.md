@@ -2341,9 +2341,16 @@ Example read result data:
 Durable memory is ordinary outline content on the timeline, not a separate
 model-visible semantic-memory tool. The node family is:
 
-- `#d-memory`: the per-day memory container.
-- `#d-episode`: a topical episode under the day's memory container.
-- `#d-belief`: a durable belief under an episode.
+- `#d-memory`: the single per-day memory container under that day's journal node.
+  Its title is a generated daily memory headline, not a fixed label.
+- `#d-episode`: a replayed episode or observed pattern under the day's memory
+  container.
+- `#d-belief`: a stable model update under an episode.
+- `#d-question`: an unresolved tension, uncertainty, or follow-up to test.
+- `#d-guidance`: a future handling note that should improve later help.
+
+The child tags are optional. Dream does not force every episode to contain a
+belief, question, and guidance line; it writes each only when useful.
 
 The foreground model uses `node_search` and `node_read` to pull memory nodes when
 stable preferences, prior decisions, or project memory may matter. There is no
@@ -2353,7 +2360,11 @@ durable memory from a foreground turn; memory consolidation is background runtim
 work and user edits to memory nodes are authoritative.
 
 Memory provenance uses the normal rich-text inline reference mechanism with the
-`chat-source` target branch:
+`chat-source` target branch. Provenance is selective, not a mandatory suffix on
+every memory line: a citation is shown when it clarifies a specific claim,
+correction, conflict, or source cluster. An episode-level citation may cover child
+beliefs derived from the same evidence, and repeated child citations should be
+avoided when they add visual noise.
 
 ```ts
 {
@@ -2376,15 +2387,37 @@ dereferencing the exact `past_chats` source coordinates before mutating the
 outline; fabricated or stale coordinates fail loudly.
 
 Runtime Dream is a private built-in skill, `memory-dream`. It is runtime-only:
-not user-invocable, not model-invocable, and not exposed as `/dream` or a
-foreground `dream` tool. The scheduled-routines path computes per-stream seq
-ranges from the Dream watermark, renders the skill, and forks an unattended child
-run with only `past_chats`, `node_search`, `node_read`, `node_create`, and
-`node_edit`. The run brief gives the child exact `past_chats` source objects and
-the corresponding `[[chat:...]]` marker to preserve in `#d-episode` and
-`#d-belief` nodes. After the child completes, the runtime records
-`dream.completed` with the processed ranges and advances the watermark; the
-memory nodes themselves are the durable model-readable result.
+not model-invocable, and not exposed as `/dream` or a foreground `dream` tool.
+The scheduled-routines path is at-most-once per daily due occurrence; Settings
+also exposes a manual run button that uses the same restricted child path and is
+not blocked by the scheduled due gate. A run computes per-stream seq ranges from
+the Dream watermark, renders the skill, and forks an unattended child run with
+only `past_chats`, `node_search`, `node_read`, `node_create`, `node_edit`, and
+`node_delete`.
+The child first reads today's journal node, creates or reuses exactly one direct
+`#d-memory` container under it, and updates that container's generated daily
+memory headline in place. It uses `node_search` / `node_read` to gather relevant
+prior `#d-memory` / `#d-episode` / `#d-belief` / `#d-question` / `#d-guidance`
+nodes and user-authored outline context for the topics extracted from the raw
+chat spans. Manual `consolidate_only` runs may have no new chat sources; then the
+child consolidates from today's outline, prior Dream memory, and relevant
+user-authored outline context. Prior Dream results are treated as current
+beliefs, tensions, and guidance to reconcile, not as evidence that can reinforce
+itself. User-authored outline nodes may be cited with normal `[[node:...]]`
+references when they materially inform the memory. The child may update, merge,
+move, or delete ordinary outline nodes when consolidation warrants it; `node_delete`
+moves nodes to Trash. The child follows a single
+human-dream cycle: replay salient fragments, associate them with outline context,
+reconcile prior memory, abstract stable patterns, expose unresolved tensions as
+optional `#d-question`, simulate future behavior as optional `#d-guidance`, and
+downselect weak evidence. The run brief gives the child exact `past_chats` source
+objects and the corresponding `[[chat:...]]` marker templates. The child applies
+the valuable-memory filter, keeps the target coordinates intact, and replaces the
+visible marker label with a short phrase that reads as part of the memory
+sentence when a visible citation is useful. It does not cite every line
+mechanically. After the child completes, the runtime records `dream.completed`
+with the processed ranges and advances the watermark; the memory nodes themselves
+are the durable model-readable result.
 
 ### `past_chats`
 

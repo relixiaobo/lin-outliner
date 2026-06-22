@@ -2457,7 +2457,9 @@ test.describe('agent composer controls', () => {
     await expect(anchor).toContainText('"Original question with enough detail');
 
     await anchor.click();
-    await expect(page.locator('[data-agent-message-id="user-anchor-original"]')).toHaveClass(/is-highlighted/);
+    const sourceMessage = page.locator('[data-agent-message-id="user-anchor-original"]');
+    await expect(sourceMessage).not.toHaveClass(/is-highlighted/);
+    await expect(sourceMessage.locator('.agent-user-content-shell')).toHaveClass(/is-highlighted/);
     await expect(page.locator('.agent-message-row.assistant', { hasText: 'Adjacent answer has no anchor.' }).locator('.agent-reply-anchor')).toHaveCount(0);
   });
 

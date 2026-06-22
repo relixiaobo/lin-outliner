@@ -341,6 +341,7 @@ const MEMORY_DREAM_ALLOWED_TOOLS = [
   'node_read',
   'node_create',
   'node_edit',
+  'node_delete',
 ] as const;
 const CHILD_RUN_TRANSCRIPT_CACHE_LIMIT = 16;
 const DEBUG_RUN_CACHE_LIMIT = 64;
@@ -3455,6 +3456,13 @@ export class AgentRuntime {
     const dreamState = await this.getEventStore().readDreamState(principal);
     const scheduleDecision = shouldFireDateSchedule(DEFAULT_DREAM_SCHEDULE, now, dreamState.lastSuccessAt);
     if (trigger === 'schedule' && !scheduleDecision.shouldFire) return null;
+    if (
+      trigger === 'schedule'
+      && scheduleDecision.dueAt
+      // A scheduled due gets one unattended attempt. Failed/running attempts still
+      // count; the Settings manual Dream is the recovery path for that day.
+      && await this.hasScheduledDreamAttemptForDue(principal, scheduleDecision.dueAt.getTime())
+    ) return null;
 
     const runId = `dream-run-${randomUUID()}`;
     const conversations = await this.collectDreamConversationInputs(dreamState);
@@ -3476,6 +3484,16 @@ export class AgentRuntime {
       span,
       watermark: dreamWatermarkFromSpan(dreamState.watermark, span.sourceRanges),
     };
+  }
+
+  private async hasScheduledDreamAttemptForDue(principal: AgentPrincipal, dueAt: number): Promise<boolean> {
+    const runs = await this.getEventStore().listPrincipalRunMetaProjections(principal, { limit: 100 });
+    return runs.some((run) =>
+      run.kind === 'reflective'
+      && run.anchor.type === 'principal'
+      && run.trigger.type === 'schedule'
+      && run.trigger.schedule === DEFAULT_DREAM_SCHEDULE
+      && run.trigger.dueAt === dueAt);
   }
 
   /** Conversation evidence for the Dream: new events in the user's member conversations. */
@@ -3723,6 +3741,12 @@ export class AgentRuntime {
 
   async listDreamHistory(options: { limit?: number } = {}): Promise<AgentRenderDreamTaskEntity[]> {
     return this.collectDreamTasks(options.limit ?? 50);
+  }
+
+  async runDreamNow(): Promise<AgentDreamRunResult | null> {
+    if (!this.dreamMemoryExtractionEnabled()) throw new Error('Memory Dream is disabled.');
+    if (!await this.getActiveProviderConfig()) throw new Error('No enabled agent provider is configured.');
+    return this.fireDreamForPool(this.agentPrincipal(), 'manual', new Date());
   }
 
   private emitAgentTaskProjection(lastEventType: string) {
@@ -7476,9 +7500,9 @@ function createConfigurationErrorStreamFn(messageText: string): StreamFn {
 
 function buildMemoryDreamPrompt(task: AgentDreamMemoryExtractionTask, skillContent: string): string {
   const sources = task.span.sources.map((source, index) => {
-    const label = `source-${index + 1}`;
+    const sourceId = `source-${index + 1}`;
     return {
-      label,
+      id: sourceId,
       past_chats: {
         source: {
           stream: source.stream,
@@ -7489,7 +7513,7 @@ function buildMemoryDreamPrompt(task: AgentDreamMemoryExtractionTask, skillConte
         },
         max_chars: 8000,
       },
-      chat_marker: formatChatSourceReferenceMarker(label, {
+      chat_marker_template: formatChatSourceReferenceMarker('natural source phrase', {
         kind: 'chat-source',
         stream: source.stream,
         streamId: source.streamId,
@@ -7509,7 +7533,13 @@ function buildMemoryDreamPrompt(task: AgentDreamMemoryExtractionTask, skillConte
     `trigger: ${task.trigger}`,
     `started_at: ${new Date(task.startedAt).toISOString()}`,
     '',
-    'Read and consolidate only these sources. Use the provided chat_marker verbatim in episode and belief nodes that derive from that source.',
+    'Before writing, read today\'s journal node. Maintain exactly one direct child #d-memory container for today across scheduled and manual Dream runs. The #d-memory title must be a concise generated daily memory headline, not the fixed word "Memory"; update the existing container title in place when today already has one.',
+    'Apply the human-dream cycle from the skill instructions: replay salient fragments, associate them with outline context, reconcile prior memory, abstract stable patterns, expose unresolved tensions as #d-question only when needed, and write future handling notes as #d-guidance only when useful. When processed.consolidate_only is true and sources is empty, replay and consolidate outline context plus prior Dream memory instead of raw chat.',
+    'Apply the Valuable Memory Filter from the skill instructions before writing. Prefer skipping thin or transient evidence over creating low-value memory. Durable #d-belief nodes should be reserved for future-relevant preferences, decisions, project facts, corrections, or recurring patterns.',
+    'Use node_search and node_read to gather relevant outline context before writing: prior #d-memory/#d-episode/#d-belief/#d-question/#d-guidance nodes for these topics and user-authored outline nodes that clarify projects, tasks, decisions, tools, or workflow. Treat prior Dream results as current beliefs, tensions, and guidance to reconcile, not as primary evidence. Matching memory nodes and related outline nodes may be edited, moved, merged, or deleted when consolidation warrants it.',
+    'When sources are present, read and consolidate only these chat sources. When processed.consolidate_only is true and sources is empty, do not call past_chats; consolidate using node_read/node_search over outline context and prior Dream memory. When a visible citation is useful, copy that source\'s chat_marker_template and replace only "natural source phrase" with a concise label that reads as part of the sentence you write. Do not cite every line mechanically; one episode-level citation can cover child nodes that use the same evidence.',
+    'Do not use bookkeeping labels such as source-1, source-2, source, citation, evidence, or link as the visible marker label.',
+    'Good labels are short natural fragments like "in the Chengdu weather chat" or "when the user asked in Chinese"; write the surrounding sentence so the marker label is grammatically connected to it.',
     '',
     JSON.stringify({
       sources,

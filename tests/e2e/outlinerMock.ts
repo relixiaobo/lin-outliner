@@ -2124,6 +2124,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_queue_follow_up') return clone({ queued: true }) as T;
         if (cmd === 'agent_steer_conversation') return clone({ queued: true }) as T;
         if (cmd === 'agent_list_dream_history') return clone([]) as T;
+        if (cmd === 'agent_run_dream_now') return clone([]) as T;
         if (cmd.startsWith('agent_')) return clone(undefined) as T;
         if (cmd === 'init_workspace' || cmd === 'get_projection') return clone(projectionSnapshot());
         if (cmd === 'ingest_asset') {

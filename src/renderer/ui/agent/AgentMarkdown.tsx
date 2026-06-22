@@ -26,11 +26,14 @@ import {
 } from '../editor/inlineFilePreviewData';
 import {
   NODE_REFERENCE_LINK_PREFIX,
+  chatSourceFromReferenceHref,
+  chatSourceReferenceHref,
   nodeReferenceDisplayLabel,
   nodeReferenceOpenOptionsFromClick,
   nodeReferenceStyle,
   type AgentNodeReferenceOpenHandler,
 } from './AgentInlineReferenceText';
+import { AgentChatSourceReference } from './AgentChatSourceReference';
 
 interface AgentMarkdownProps {
   index?: DocumentIndex;
@@ -150,7 +153,12 @@ function referenceMarkdownNodes(text: string): MarkdownAstNode[] {
       };
     }
     if (segment.target.kind === 'chat-source') {
-      return { type: 'text', value: segment.label || segment.raw };
+      return {
+        children: [{ type: 'text', value: segment.label || segment.raw }],
+        title: null,
+        type: 'link',
+        url: chatSourceReferenceHref(segment.raw),
+      };
     }
     return {
       children: [{ type: 'text', value: segment.label }],
@@ -201,6 +209,14 @@ function useMarkdownComponents(
               ref: label,
             }}
           />
+        );
+      }
+
+      const chatSource = chatSourceFromReferenceHref(href);
+      if (chatSource) {
+        const label = reactNodeText(children) || 'Referenced chat';
+        return (
+          <AgentChatSourceReference href={href ?? ''} label={label} target={chatSource} />
         );
       }
 

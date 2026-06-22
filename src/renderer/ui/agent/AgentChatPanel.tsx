@@ -1060,7 +1060,7 @@ export function AgentChatPanel({
     await selectConversation(targetConversationId);
   }
 
-  function renderConversationRow(row: AgentConversationRenderRow): ReactNode {
+  function renderConversationRow(row: AgentConversationRenderRow, highlighted = false): ReactNode {
     if (row.entry.kind === 'compaction') {
       return <AgentCompactionBoundary entry={row.entry} />;
     }
@@ -1122,6 +1122,7 @@ export function AgentChatPanel({
         onSwitchBranch={switchBranch}
         pendingToolCallIds={pendingToolCallIds}
         conversationId={conversationId}
+        highlighted={highlighted}
         streaming={row.streaming}
         childRunsByParentToolCallId={childRunsByParentToolCallId}
         toolResults={toolResults}
@@ -1363,12 +1364,14 @@ export function AgentChatPanel({
               const rowIndex = virtualRange.start + offset;
               const item = virtualLayout.items[rowIndex];
               const previousRow = rowIndex > 0 ? conversationRows[rowIndex - 1] : undefined;
+              const rowHighlighted = highlightedTranscriptRowKey === row.key;
+              const renderedRow = renderConversationRow(row, rowHighlighted);
               const showTimeSeparator = previousRow
                 ? getEntryTimestamp(row.entry) - getEntryTimestamp(previousRow.entry) > MESSAGE_TIME_SEPARATOR_GAP_MS
                 : false;
               return (
                 <AgentTranscriptRowShell
-                  highlighted={highlightedTranscriptRowKey === row.key}
+                  highlighted={rowHighlighted}
                   key={row.key}
                   onMeasure={measureConversationRow}
                   rowKey={row.key}
@@ -1382,7 +1385,7 @@ export function AgentChatPanel({
                       <span>{formatMessageTimeSeparator(getEntryTimestamp(row.entry), locale, t.agent.message.timeSeparatorToday)}</span>
                     </div>
                   ) : null}
-                  {renderConversationRow(row)}
+                  {renderedRow}
                 </AgentTranscriptRowShell>
               );
             })}

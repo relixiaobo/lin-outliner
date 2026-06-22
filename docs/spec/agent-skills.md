@@ -404,16 +404,53 @@ The listed-skills state reminder is intentionally tiny. It prevents a restored c
 ## Memory Dream
 
 `memory-dream` is a private built-in skill used only by the runtime's scheduled
-memory consolidation pass. It is not slash-invocable and not model-invocable.
+and manual memory consolidation paths. It is not slash-invocable and not
+model-invocable.
 The runtime renders the skill with `trigger: "runtime"`, passes exact
-`past_chats` source ranges plus their `[[chat:...]]` markers, and runs an
-unattended child fork whose catalog is limited to `past_chats`, `node_search`,
-`node_read`, `node_create`, and `node_edit`.
+`past_chats` source ranges plus `[[chat:...]]` marker templates whose targets are
+fixed and whose visible labels must be replaced with natural sentence fragments,
+and runs an unattended child fork whose catalog is limited to `past_chats`,
+`node_search`, `node_read`, `node_create`, `node_edit`, and `node_delete`.
+
+The scheduled Dream gate is daily and at-most-once per due occurrence: a
+successful or failed scheduled Dream run meta for that due time prevents another
+scheduled attempt until the next daily due. A user may still trigger a manual
+Dream from Settings; manual runs use the same child path but are not blocked by
+the scheduled due gate. Scheduled and manual runs both maintain exactly one
+direct `#d-memory` container under today's journal node. Its title is a generated
+daily memory headline and may be updated in place on that day's run; it is not the
+fixed word `Memory`.
+
+The skill applies a high-signal memory filter before writing: keep explicit or
+repeated user preferences, durable project/work facts, decisions, corrections to
+existing assumptions, and recurring collaboration patterns. Skip greetings,
+routine transcript texture, temporary status/weather, one-off operational steps,
+duplicates, and low-confidence guesses. It also uses `node_search` / `node_read`
+to pull relevant outline context before writing: prior `#d-*` memory nodes are
+the current belief graph to reconcile, and user-authored outline nodes provide
+workspace context for projects, tasks, decisions, tools, and workflows. Prior
+Dream output is never self-confirming evidence by itself. Manual
+`consolidate_only` runs may have no new chat sources; in that case Dream
+consolidates from today's outline, prior Dream memory, and relevant user-authored
+outline context.
+
+Dream writes ordinary tagged outline nodes with a human-dream cycle:
+`Replay → Associate → Reconcile → Abstract → Expose tension → Simulate future →
+Downselect`. `#d-episode` captures a replayed episode or observed pattern,
+`#d-belief` captures a stable model update, `#d-question` captures unresolved
+tension or uncertainty, and `#d-guidance` captures a future handling note. The
+child tags are optional: an episode does not need all three, and a `#d-question`
+or `#d-guidance` is written only when it improves future behavior. Citations are
+selective: an episode-level `[[chat:...]]` marker can cover child nodes that use
+the same evidence, and child beliefs/questions/guidance add their own marker only
+when a specific claim needs auditability or disambiguation. Dream may update,
+merge, move, or delete any ordinary outline node when consolidation warrants it;
+deleted nodes are moved to Trash through `node_delete`, not permanently removed.
 
 There is no `/dream` slash command and no foreground `dream` tool. Dream state is
 visible only through the runtime task/history projection backed by
 `dream.completed`; the durable model-readable result is ordinary `#d-memory`,
-`#d-episode`, and `#d-belief` outline nodes.
+`#d-episode`, `#d-belief`, `#d-question`, and `#d-guidance` outline nodes.
 
 ### Reference Alignment
 
