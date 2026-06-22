@@ -61,6 +61,7 @@ export function AgentToolActivityGroup({
       <ButtonControl
         aria-expanded={expanded}
         className="agent-tool-activity-toggle"
+        data-agent-disclosure-id={id}
         onClick={(event) => {
           expandState.toggle(id, expanded, event.currentTarget);
         }}

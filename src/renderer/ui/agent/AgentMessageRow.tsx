@@ -84,6 +84,7 @@ interface AgentMessageRowProps {
   onRetry?: (nodeId: string) => void | Promise<void>;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onOpenChildRunTranscript?: (childRunId: string) => void;
+  onDisclosureToggle?: () => void;
   onSwitchBranch?: (nodeId: string) => void | Promise<void>;
   pendingToolCallIds: ReadonlySet<string>;
   conversationId?: string | null;
@@ -477,6 +478,7 @@ function AgentMessageRowComponent({
   onRetry,
   onNodeReferenceOpen,
   onOpenChildRunTranscript,
+  onDisclosureToggle,
   onSwitchBranch,
   pendingToolCallIds,
   conversationId,
@@ -515,14 +517,16 @@ function AgentMessageRowComponent({
     toggle: (id, currentlyExpanded, anchorElement) => {
       const scroller = nearestScrollContainer(anchorElement ?? null);
       const resolveElement = scroller
-        ? () => scroller.querySelector<HTMLElement>(`[data-agent-process-id="${CSS.escape(id)}"]`)
+        ? () => scroller.querySelector<HTMLElement>(`[data-agent-disclosure-id="${CSS.escape(id)}"]`)
+          ?? scroller.querySelector<HTMLElement>(`[data-agent-process-id="${CSS.escape(id)}"]`)
         : undefined;
       capturePendingAnchor(captureDisclosureScrollAnchor(anchorElement ?? null, scroller, resolveElement));
+      onDisclosureToggle?.();
       const next = !currentlyExpanded;
       if (conversationId) setDisclosureOverride(conversationId, id, next);
       else setLocalOverrides((current) => ({ ...current, [id]: next }));
     },
-  }), [capturePendingAnchor, conversationId, expandOverrides]);
+  }), [capturePendingAnchor, conversationId, expandOverrides, onDisclosureToggle]);
 
   useLayoutEffect(() => {
     return restorePendingAnchor();

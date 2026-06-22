@@ -692,6 +692,16 @@ export function AgentChatPanel({
     });
   }, [updateScrollMetrics]);
 
+  const pauseStickToBottomForDisclosure = useCallback(() => {
+    stickToBottomRef.current = false;
+    if (bottomScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(bottomScrollFrameRef.current);
+      bottomScrollFrameRef.current = null;
+    }
+    const element = scrollRef.current;
+    if (element) updateScrollMetrics(element);
+  }, [updateScrollMetrics]);
+
   const measureConversationRow = useCallback((rowKey: string, height: number) => {
     const current = rowHeightsRef.current.get(rowKey);
     if (current !== undefined && Math.abs(current - height) < 1) return;
@@ -1114,6 +1124,7 @@ export function AgentChatPanel({
         index={index}
         isLastInTurn={row.isLastInTurn}
         onCopy={copyAssistantTurn}
+        onDisclosureToggle={pauseStickToBottomForDisclosure}
         onEdit={editMessage}
         onNodeReferenceOpen={onOpenNodeReference}
         onOpenChildRunTranscript={setSelectedChildRunId}

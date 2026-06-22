@@ -297,6 +297,7 @@ export function AgentProcessBlock({
       <ButtonControl
         aria-expanded={expanded}
         className="agent-process-toggle"
+        data-agent-disclosure-id={id}
         data-agent-process-id={id}
         onClick={toggle}
       >
