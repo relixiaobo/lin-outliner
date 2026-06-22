@@ -14,6 +14,7 @@ import {
 import type { UserMessage } from '../core/agentTypes';
 import { compactedSpanEvidenceText } from './agentCompaction';
 import { MAX_AGENT_MEMORY_FACT_CHARS } from './agentEventStore';
+import { modelFacingContent } from './agentToolOutputSlimming';
 
 const DREAM_TRANSCRIPT_CHAR_BUDGET = 60_000;
 const DREAM_MESSAGE_CONTENT_CHAR_BUDGET = 12_000;
@@ -439,7 +440,11 @@ function renderDreamTranscript(messages: readonly AgentEventMessageRecord[]): st
 
 function renderDreamMessage(message: AgentEventMessageRecord, index: number): string {
   const header = `### ${index}. ${message.role} message ${message.id}${message.runId ? ` (run ${message.runId})` : ''}`;
-  const content = renderPersistedContent(message.content);
+  // Dream digests what the agent actually saw, so a slimmed tool result feeds its
+  // model-facing copy (modelSlimmedContent), not the full canonical bytes. Before
+  // #313's decouple `tool_result.replaced` overwrote `content`, so Dream already
+  // saw the slim copy; reading modelFacingContent preserves that behavior.
+  const content = renderPersistedContent(modelFacingContent(message));
   const details: string[] = [];
   if (message.role === 'toolResult' && message.toolName) details.push(`tool: ${message.toolName}`);
   if (message.outputSummary) details.push(`summary: ${message.outputSummary}`);

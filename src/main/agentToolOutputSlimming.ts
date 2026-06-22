@@ -65,7 +65,7 @@ export function createToolResultBudgetState(): ToolResultBudgetState {
  * slimmed?" tests must read this — else a slimmed result looks fresh every turn
  * and re-emits `tool_result.replaced` forever.
  */
-function modelFacingContent(message: AgentEventMessageRecord): readonly AgentPersistedContent[] {
+export function modelFacingContent(message: AgentEventMessageRecord): readonly AgentPersistedContent[] {
   return message.modelSlimmedContent ?? message.content;
 }
 
@@ -294,7 +294,13 @@ function collectToolResultBatches(
       continue;
     }
     if (message.role === 'toolResult' && current && message.toolCallId && message.toolName) {
-      const contentText = persistedContentModelText(message.content);
+      // Size by the MODEL-facing copy, not canonical `content`. Since the slim
+      // decouple keeps `content` full forever, an already-slimmed result (offloaded
+      // payload_ref or microcompact-cleared) must contribute its slim size here —
+      // otherwise its full size inflates `frozenSize` and forces fresh results to be
+      // offloaded earlier than the real model-facing budget warrants (cache churn).
+      // Mirrors collectMicrocompactCandidates / restoreToolResultBudgetStateFromMessages.
+      const contentText = persistedContentModelText(modelFacingContent(message));
       current.push({
         messageId: message.id,
         toolCallId: message.toolCallId,

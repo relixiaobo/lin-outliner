@@ -409,7 +409,7 @@ describe('agent event store', () => {
   });
 
   test('keeps the full tool output searchable after a model-context slim', async () => {
-    await withStore(async (store) => {
+    await withStore(async (store, root) => {
       const conversationId = 'conversation-1';
       const payload = {
         kind: 'payload_ref' as const,
@@ -463,6 +463,23 @@ describe('agent event store', () => {
 
       const results = await store.searchMessages('needle', { conversationId });
       expect(results.map((entry) => entry.messageId)).toContain('tool-result-1');
+
+      // The replace preserves the creation entry's full text and only advances the
+      // seq + merges the offload payload id — it must never overwrite the indexed
+      // text with the slim preview, nor drop the canonical payload registration.
+      const index = JSON.parse(
+        await readFile(path.join(root, 'indexes', 'search-index.json'), 'utf8'),
+      ) as {
+        messages: Record<
+          string,
+          { messageId: string; latestSeq: number; payloadIds: string[]; normalizedText: string }
+        >;
+      };
+      const entry = Object.values(index.messages).find((message) => message.messageId === 'tool-result-1');
+      expect(entry?.payloadIds).toContain('tool-output-tool-1');
+      expect(entry?.latestSeq).toBe(6);
+      expect(entry?.normalizedText).toContain('needle');
+      expect(entry?.normalizedText).not.toContain('persisted-output');
     });
   });
 

@@ -985,7 +985,9 @@ Runtime strategy:
 offload (2) and the time-based microcompact (4) emit `tool_result.replaced`, but that
 event writes a separate `modelSlimmedContent` on the tool-result record instead of
 overwriting `content`. Model-context derivation (`runtimePiMessageFromRecord`,
-`agentEventMessageToPiMessage`) substitutes `modelSlimmedContent` when present; the UI
+`agentEventMessageToPiMessage`, the per-batch sizing in `collectToolResultBatches`,
+and Dream memory extraction — every consumer reading via `modelFacingContent`)
+substitutes `modelSlimmedContent` when present; the UI
 transcript and the search index keep reading the full `content`, so an old
 `web_search` / `web_fetch` result never decays into an input-only / no-output row. The
 `tool_result.replaced` event remains the durable, monotonic slim-decision journal —

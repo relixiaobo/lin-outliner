@@ -225,6 +225,31 @@ describe('agent tool output slimming', () => {
     expect(state.replacements.has('tool-2')).toBe(false);
   });
 
+  // Batch sizing reads the model-facing copy: a frozen (already-slimmed) result
+  // contributes only its slim size to frozenSize, so it must not inflate the budget
+  // and force a fresh sibling to be offloaded earlier than the model-facing budget
+  // warrants. Sizing by full canonical `content` (the pre-decouple bug) would.
+  test('sizes a frozen slimmed result by its slim copy, not its full canonical content', () => {
+    const state = createToolResultBudgetState();
+    state.seenIds.add('tool-1');
+    const messages = [
+      assistant('assistant-1', ['tool-1', 'tool-2']),
+      // Already slimmed: huge canonical content, tiny model-facing cleared marker.
+      {
+        ...toolResult('result-1', 'tool-1', 'x'.repeat(500)),
+        modelSlimmedContent: [{ type: 'text' as const, text: OLD_TOOL_RESULT_CLEARED_MESSAGE }],
+      },
+      // Fresh, comfortably under budget once tool-1 is sized by its slim copy.
+      toolResult('result-2', 'tool-2', 'y'.repeat(40)),
+    ];
+
+    const selection = collectToolResultBudgetSelections(messages, state, { limit: 100 });
+
+    // frozenSize (33) + freshSize (40) = 73 <= 100 → nothing offloaded. Sizing tool-1
+    // by its 500-char canonical content would push the batch to 540 and offload tool-2.
+    expect(selection.toPersist).toEqual([]);
+  });
+
   // The infinite-re-emit guard: an already-cleared result keeps its full
   // canonical content, so the "already cleared?" skip must read the slim copy —
   // else microcompact re-selects it every turn and re-emits `tool_result.replaced`

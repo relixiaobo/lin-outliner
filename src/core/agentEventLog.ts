@@ -1635,6 +1635,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       // event itself is the durable, monotonic slim-decision journal — replaying
       // it never shrinks the canonical content, so a result is never un-slimmed.
       message.modelSlimmedContent = cloneContent(event.content);
+      message.updatedAt = event.createdAt;
       recordMessageSourceSeq(message, event.seq);
       message.runId = event.runId ?? message.runId;
       return;
