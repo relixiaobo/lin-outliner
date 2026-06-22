@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
   collectAgentMessageToolResultBudgetSelections,
+  collectMicrocompactCandidates,
   collectToolResultBudgetSelections,
   createToolResultBudgetState,
+  OLD_TOOL_RESULT_CLEARED_MESSAGE,
   restoreToolResultBudgetStateFromAgentMessages,
   restoreToolResultBudgetStateFromMessages,
 } from '../../src/main/agentToolOutputSlimming';
@@ -186,5 +188,85 @@ describe('agent tool output slimming', () => {
 
     expect(selection.alreadyReplaced.map((candidate) => candidate.toolCallId)).toEqual(['tool-1']);
     expect(selection.toPersist.map((candidate) => candidate.toolCallId)).toEqual(['tool-2']);
+  });
+
+  // 方案 B production shape: the slim copy lives in `modelSlimmedContent`, the
+  // canonical `content` stays the full original. Slim-decision logic reads the
+  // model-facing copy, so detection must follow it there — not the now-full
+  // `content`.
+  test('detects the persisted-output replacement from the model-slimmed copy, not the full content', () => {
+    const payload: AgentPayloadRef = {
+      kind: 'payload_ref',
+      id: 'tool-output-tool-1',
+      storage: 'file',
+      mimeType: 'text/plain',
+      byteLength: 100_000,
+      sha256: 'sha',
+      role: 'tool_output',
+      summary: 'bash output',
+      truncated: true,
+    };
+    const state = restoreToolResultBudgetStateFromMessages([
+      assistant('assistant-1', ['tool-1', 'tool-2']),
+      // Offloaded: canonical content full, slim copy is the persisted-output ref.
+      {
+        ...toolResult('result-1', 'tool-1', 'the full original output, retained for the UI'),
+        modelSlimmedContent: [{
+          type: 'payload_ref',
+          payload,
+          label: '<persisted-output>\nPreview\n</persisted-output>',
+        }],
+      },
+      // Never slimmed: full content only, no slim copy → not a replacement.
+      toolResult('result-2', 'tool-2', 'a plain full result'),
+    ]);
+
+    expect(state.replacements.get('tool-1')).toContain('<persisted-output>');
+    expect(state.replacements.has('tool-2')).toBe(false);
+  });
+
+  // Batch sizing reads the model-facing copy: a frozen (already-slimmed) result
+  // contributes only its slim size to frozenSize, so it must not inflate the budget
+  // and force a fresh sibling to be offloaded earlier than the model-facing budget
+  // warrants. Sizing by full canonical `content` (the pre-decouple bug) would.
+  test('sizes a frozen slimmed result by its slim copy, not its full canonical content', () => {
+    const state = createToolResultBudgetState();
+    state.seenIds.add('tool-1');
+    const messages = [
+      assistant('assistant-1', ['tool-1', 'tool-2']),
+      // Already slimmed: huge canonical content, tiny model-facing cleared marker.
+      {
+        ...toolResult('result-1', 'tool-1', 'x'.repeat(500)),
+        modelSlimmedContent: [{ type: 'text' as const, text: OLD_TOOL_RESULT_CLEARED_MESSAGE }],
+      },
+      // Fresh, comfortably under budget once tool-1 is sized by its slim copy.
+      toolResult('result-2', 'tool-2', 'y'.repeat(40)),
+    ];
+
+    const selection = collectToolResultBudgetSelections(messages, state, { limit: 100 });
+
+    // frozenSize (33) + freshSize (40) = 73 <= 100 → nothing offloaded. Sizing tool-1
+    // by its 500-char canonical content would push the batch to 540 and offload tool-2.
+    expect(selection.toPersist).toEqual([]);
+  });
+
+  // The infinite-re-emit guard: an already-cleared result keeps its full
+  // canonical content, so the "already cleared?" skip must read the slim copy —
+  // else microcompact re-selects it every turn and re-emits `tool_result.replaced`
+  // forever.
+  test('microcompact skips an already-cleared result but still clears a full one', () => {
+    const candidates = collectMicrocompactCandidates([
+      assistant('assistant-1', ['tool-1']),
+      {
+        ...toolResult('result-1', 'tool-1', 'still-full canonical output'),
+        modelSlimmedContent: [{ type: 'text', text: OLD_TOOL_RESULT_CLEARED_MESSAGE }],
+      },
+      assistant('assistant-2', ['tool-2']),
+      toolResult('result-2', 'tool-2', 'a fresh full result to clear'),
+      assistant('assistant-3', ['tool-3']),
+      toolResult('result-3', 'tool-3', 'the most recent result, kept'),
+    ], 1);
+
+    expect(candidates.map((candidate) => candidate.toolCallId)).toEqual(['tool-2']);
   });
 });

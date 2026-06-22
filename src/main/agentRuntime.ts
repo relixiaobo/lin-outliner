@@ -5703,7 +5703,9 @@ export class AgentRuntime {
       role: 'toolResult',
       toolCallId: message.toolCallId ?? message.id,
       toolName: message.toolName ?? 'unknown',
-      content: await this.runtimeUserContent(conversationId, message.content),
+      // The model sees the slimmed copy when one exists; the canonical full
+      // `content` is reserved for the UI/search (see `modelSlimmedContent`).
+      content: await this.runtimeUserContent(conversationId, message.modelSlimmedContent ?? message.content),
       isError: !!message.isError,
       timestamp: message.createdAt,
     } satisfies ToolResultMessage;

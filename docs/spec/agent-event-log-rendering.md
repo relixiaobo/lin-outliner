@@ -1033,6 +1033,14 @@ Rules:
   markdown. This keeps the differences at the data-adapter boundary instead of
   forking presentation behavior.
 - Large details are refs, not row payloads.
+- **Context slimming is invisible to the transcript.** Budget offload and
+  time-based microcompact shrink only the *model's* copy of a tool result: a
+  `tool_result.replaced` writes a separate `modelSlimmedContent`, leaving the
+  reduced record's `content` full. So `toRenderMessageEntity` (and the
+  `buildToolResultMap` it feeds) always render the full output — an old
+  `web_search` / `web_fetch` row never decays into input-only / no-output. Only
+  the debug projection above, a model-context inspector, surfaces the slimmed
+  copy. (Slimming authority: [[agent-pi-mono-implementation]].)
 - A run/provider failure rides on the terminal assistant message: the run marks
   it `assistant_message.failed` (error stop reason + `errorMessage`), so it
   renders inline as a failed turn with a retry action — not as a separate
