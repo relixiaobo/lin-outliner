@@ -458,6 +458,19 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **live-process-header + disclosure-scroll fix** (`codex-2/agent-working-header-fix`, PR #317, codex-2,
+  merged 2026-06-22) — fast-track fix for two Codex-style live-process defects. The active turn header is now
+  persistent: `Working for {t}` when the run clock is known, bare `Working` when it is not, whether the body
+  is collapsed or expanded (the expanded timeline carries the detail) — replacing the old clock-less
+  collapsed running-tool / latest-thought fallback and the expanded descriptive summary. And a user
+  disclosure toggle now pauses stick-to-bottom while every agent disclosure (process row / folded
+  tool-activity group / individual tool row) exposes a stable `data-agent-disclosure-id`, so an expand/
+  collapse re-anchors the clicked row instead of letting stick-to-bottom pull it. **Gate (main):**
+  `/code-review high` — the three substantive candidates traced to design-intended/non-reachable; the one
+  surviving cleanup finding (dead `summarizeProcess` params) folded by the author. typecheck ✓ ·
+  `agentProcess` 10/0 (main) · author `test:renderer` 593/0 · `docs:check` ✓. Fast-track, no plan (extends
+  shipped `codex-message-flow-fidelity` #312 / `stable-disclosure-anchor` #306).
+
 - **agent-turn-render-projection** (`codex-2/agent-turn-render-projection`, PR #316, codex-2, merged
   2026-06-22) — behavior-preserving refactor that extracts the turn-level message-flow semantics out of
   `AgentAssistantTurnContent` into a new pure `agentTurnProjection` module (`projectAssistantTurn`): the

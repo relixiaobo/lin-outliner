@@ -1553,6 +1553,24 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Live process header stays on the `Working` divider + stable disclosure scroll (PR #317, codex-2)** —
+  two live-process presentation defects from the Codex-style transcript. (1) **Header:** an active turn
+  without a run clock used to replace the persistent header with a summary of the work below — the
+  running-tool / latest-thought line while collapsed, and the descriptive group summary while expanded. The
+  active header is now persistent: `Working for {t}` once the run clock is known, and bare `Working` when it
+  is not, whether the body is collapsed or expanded (the expanded timeline already carries the
+  thought/tool detail). The dead clock-less fallback in `summarizeProcess` (and its `lastThinkingText` /
+  `liveCollapsed` / `thinkingLabel` inputs + the orphaned `lastNonEmptyThinking` helper) is removed. (2)
+  **Disclosure scroll:** a user expand/collapse changes transcript row height, and the chat panel's
+  stick-to-bottom could then pull the scroller after the disclosure anchor had restored, so the clicked row
+  felt like it jumped. A user disclosure toggle now pauses stick-to-bottom, and every agent disclosure
+  (process row, folded tool-activity group, individual tool row) exposes a stable `data-agent-disclosure-id`
+  so the same row is re-anchored after render. **Gate (main):** `/code-review high` (8 finder angles →
+  verify) — the substantive candidates (anchor restore re-arming stick near the bottom; the pause being
+  "permanent"; clock-less `Working` losing detail) were each traced to design-intended or non-reachable on
+  the real path; the one surviving finding (dead `summarizeProcess` params) was folded by the author before
+  merge. typecheck ✓ · `agentProcess` test 10/0 (re-run by main) · author suite `test:renderer` 593/0 ·
+  `docs:check` ✓.
 - **Tool-output context slimming de-coupled from the canonical transcript (PR #313, cc-2)** — the
   per-batch budget offload and the time-based microcompact used to overwrite a tool result's `content`
   with a slim preview/`payload_ref` to shrink the model's per-request copy. That mutated the *canonical*
