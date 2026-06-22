@@ -13,13 +13,13 @@ import {
   type Usage,
 } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
 import { AgentEventStore } from '../../src/main/agentEventStore';
-import type { AgentEvent } from '../../src/core/agentEventLog';
+import { getAgentEventActivePath, type AgentEvent } from '../../src/core/agentEventLog';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 const EMPTY_USAGE: Usage = {
@@ -1464,6 +1464,89 @@ describe('agent runtime childRuns', () => {
     expect((after as { result?: string }).result).toBeUndefined();
 
     releaseResume();
+  });
+});
+
+describe('agent runtime parallel tool results', () => {
+  let roots: string[] = [];
+
+  beforeEach(() => {
+    roots = [];
+  });
+
+  afterEach(async () => {
+    await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  test('parallel tool results from one turn all stay on the active path', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-parallel-tools-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-parallel-tools-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const names = ['a', 'b', 'c'];
+    await Promise.all(names.map((name) => writeFile(path.join(localRoot, `${name}.md`), `content of ${name}`)));
+
+    const script = scriptedStream(
+      [
+        // One assistant turn fans out three parallel file_read calls.
+        fauxAssistantMessage(
+          names.map((name) => fauxToolCall(
+            'file_read',
+            { file_path: path.join(localRoot, `${name}.md`) },
+            { id: `tool-${name}` },
+          )),
+          { stopReason: 'toolUse' },
+        ),
+        fauxAssistantMessage(fauxText('Read all three.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Read a, b and c.', sink);
+    expect(script.pendingCount()).toBe(0);
+
+    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
+    const activePath = getAgentEventActivePath(replay);
+    const resultsOnPath = activePath.filter((message) => message.role === 'toolResult');
+
+    // Every parallel result survives on the single-leaf active path. Before the fix
+    // they parented to the assistant as siblings, so the linear path kept only one
+    // and the rest rendered as resultless "Failed" rows.
+    expect(resultsOnPath.map((message) => message.toolCallId).sort()).toEqual(['tool-a', 'tool-b', 'tool-c']);
+
+    // The run is a linear spine: each result parents onto the run's tail (the
+    // assistant for the first, then the previous result), never all onto the
+    // assistant. So exactly one result chains directly off the assistant, and every
+    // result's parent precedes it on the path.
+    const assistant = activePath.find((message) => (
+      message.role === 'assistant' && message.content.some((block) => block.type === 'toolCall')
+    ));
+    expect(assistant).toBeDefined();
+    const orderById = activePath.map((message) => message.id);
+    for (const result of resultsOnPath) {
+      const parentIndex = orderById.indexOf(result.parentMessageId ?? '');
+      expect(parentIndex).toBeGreaterThanOrEqual(0);
+      expect(parentIndex).toBeLessThan(orderById.indexOf(result.id));
+    }
+    expect(resultsOnPath.filter((result) => result.parentMessageId === assistant!.id)).toHaveLength(1);
   });
 });
 
