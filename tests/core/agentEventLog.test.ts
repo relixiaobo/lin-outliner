@@ -841,8 +841,13 @@ describe('agent event log', () => {
     ];
 
     const state = replayAgentEvents(events);
-    expect(state.messages['tool-result-1']?.outputSummary).toBe('bash output');
+    // A replace is a model-context-only slim: the canonical record keeps the full
+    // output + original summary (for the UI/search); the slimmed copy lives apart.
+    expect(state.messages['tool-result-1']?.content).toEqual([{ type: 'text', text: 'large original output' }]);
+    expect(state.messages['tool-result-1']?.outputSummary).toBe('large original output');
+    expect(state.messages['tool-result-1']?.modelSlimmedContent).toEqual([{ type: 'payload_ref', payload, label: replacement }]);
     expect(state.messages['tool-result-1']?.runId).toBe('run-1');
+    // The model context, however, sees the slim.
     const toolResult = deriveAgentPiMessages(state)[1];
     expect(toolResult?.role).toBe('toolResult');
     if (toolResult?.role !== 'toolResult') throw new Error('Expected tool result');

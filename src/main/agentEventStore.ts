@@ -2067,11 +2067,23 @@ function applyAgentEventToSearchIndex(index: AgentEventSearchIndex, event: Agent
   if (event.type === 'tool_result.created' || event.type === 'tool_result.replaced') {
     const key = searchIndexKey(event.conversationId, event.messageId);
     const current = index.messages[key];
+    const outputPayloadIds = event.outputRef ? [event.outputRef.id] : [];
+    if (event.type === 'tool_result.replaced' && current) {
+      // A replace is a model-context-only slim; the canonical full output stays
+      // searchable. Keep the text indexed at creation, only advance the seq and
+      // register the offload payload so the full bytes remain retrievable.
+      index.messages[key] = {
+        ...current,
+        updatedAt: event.createdAt,
+        latestSeq: event.seq,
+        payloadIds: uniqueStrings([...current.payloadIds, ...outputPayloadIds]),
+      };
+      return;
+    }
     const content = indexDetailsFromContent([
       ...event.content,
       { type: 'text', text: event.outputSummary },
     ]);
-    const outputPayloadIds = event.outputRef ? [event.outputRef.id] : [];
     index.messages[key] = {
       conversationId: event.conversationId,
       messageId: event.messageId,

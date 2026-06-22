@@ -1142,6 +1142,13 @@ export interface AgentEventMessageRecord {
   toolName?: string;
   isError?: boolean;
   outputSummary?: string;
+  /**
+   * Model-context-only substitution for a slimmed tool result (budget offload or
+   * time-based microcompact). When set, model-context derivation sends this in
+   * place of {@link content}; the UI and search index keep reading the full
+   * {@link content}. Absent until a `tool_result.replaced` event slims the result.
+   */
+  modelSlimmedContent?: AgentPersistedContent[];
   attachments?: AgentPayloadRef[];
 }
 
@@ -1455,7 +1462,9 @@ export function agentEventMessageToPiMessage(message: AgentEventMessageRecord): 
     role: 'toolResult',
     toolCallId: message.toolCallId ?? message.id,
     toolName: message.toolName ?? 'unknown',
-    content: toPiContentParts(message.content),
+    // A pi message is the model's view, so it carries the slimmed copy when one
+    // exists; the canonical full `content` is reserved for the UI/search.
+    content: toPiContentParts(message.modelSlimmedContent ?? message.content),
     isError: !!message.isError,
     timestamp: message.createdAt,
   } satisfies ToolResultMessage;
@@ -1619,10 +1628,14 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       if (message.toolCallId !== event.toolCallId) {
         throw new Error(`Tool result replacement id mismatch: ${event.toolCallId}`);
       }
-      message.content = cloneContent(event.content);
-      message.updatedAt = event.createdAt;
+      // A `tool_result.replaced` is a model-context-only slim (budget offload or
+      // time-based microcompact), not an edit to the record. Keep the canonical
+      // `content`/`outputSummary` (what the UI renders and search indexes) full;
+      // stash the slimmed copy that model-context derivation substitutes. The
+      // event itself is the durable, monotonic slim-decision journal — replaying
+      // it never shrinks the canonical content, so a result is never un-slimmed.
+      message.modelSlimmedContent = cloneContent(event.content);
       recordMessageSourceSeq(message, event.seq);
-      message.outputSummary = event.outputSummary;
       message.runId = event.runId ?? message.runId;
       return;
     }

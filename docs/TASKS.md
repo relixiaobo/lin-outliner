@@ -55,6 +55,13 @@ disjoint lanes from the 2026-06-19 dispatch plan, **agent/outliner disclosure st
 (#306, codex-3)** — command-surface one-pager · dark-mode-contrast-pass · anthropic-auth-clarity
 remain open.
 
+**In flight (2026-06-22).** **agent-context-slim-decouple** (`in-progress`, branch
+`agent-slim-decouple`) — de-couple tool-output context slimming from the canonical
+transcript so the UI/search keep the full output while only the model copy is slimmed
+(aligns with Claude Code 2.1; a `tool_result.replaced` now writes a separate
+`modelSlimmedContent` instead of overwriting `content`). Fixes the "many tools show
+input-only / no output" rows. See `docs/plans/agent-context-slim-decouple.md`.
+
 **The 2026-06-14/15 portfolio wave shipped** (all in Recently completed): the agent-permission
 redesign (#252 `decide(effect)` core + #266 folder-handoff / typed `file_convert`), unified
 prompt composition + Anthropic L0 cache breakpoints (#263), unified file preview (#262),

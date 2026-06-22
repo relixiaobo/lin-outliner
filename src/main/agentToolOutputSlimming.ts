@@ -58,6 +58,17 @@ export function createToolResultBudgetState(): ToolResultBudgetState {
   };
 }
 
+/**
+ * The content a tool result currently presents to the *model*: its slimmed copy
+ * once one exists, else the full canonical content. Slim-decision logic reasons
+ * about the model's view (the canonical `content` stays full), so "already
+ * slimmed?" tests must read this — else a slimmed result looks fresh every turn
+ * and re-emits `tool_result.replaced` forever.
+ */
+function modelFacingContent(message: AgentEventMessageRecord): readonly AgentPersistedContent[] {
+  return message.modelSlimmedContent ?? message.content;
+}
+
 export function restoreToolResultBudgetStateFromMessages(
   messages: readonly AgentEventMessageRecord[],
 ): ToolResultBudgetState {
@@ -65,7 +76,7 @@ export function restoreToolResultBudgetStateFromMessages(
   for (const message of messages) {
     if (message.role !== 'toolResult' || !message.toolCallId) continue;
     state.seenIds.add(message.toolCallId);
-    const replacement = persistedToolOutputReplacement(message.content);
+    const replacement = persistedToolOutputReplacement(modelFacingContent(message));
     if (replacement) state.replacements.set(message.toolCallId, replacement);
   }
   return state;
@@ -246,10 +257,10 @@ export function collectMicrocompactCandidates(
       && typeof message.toolCallId === 'string'
       && typeof message.toolName === 'string'
       && isCompactableTool(message.toolName)
-      && persistedContentModelText(message.content) !== OLD_TOOL_RESULT_CLEARED_MESSAGE
+      && persistedContentModelText(modelFacingContent(message)) !== OLD_TOOL_RESULT_CLEARED_MESSAGE
     ))
     .map((message): ToolResultBudgetCandidate => {
-      const contentText = persistedContentModelText(message.content);
+      const contentText = persistedContentModelText(modelFacingContent(message));
       return {
         messageId: message.id,
         toolCallId: message.toolCallId,

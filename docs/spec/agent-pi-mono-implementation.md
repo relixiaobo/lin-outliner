@@ -981,6 +981,22 @@ Runtime strategy:
 8. After compacting, restore recently read full text files within a bounded budget and reset file-edit freshness to only those restored files.
 9. When deduplicating restored files against the preserved reactive tail, treat `file_unchanged` results as stubs, not as visible file content.
 
+**Slimming targets the model copy, not the canonical record.** The per-batch budget
+offload (2) and the time-based microcompact (4) emit `tool_result.replaced`, but that
+event writes a separate `modelSlimmedContent` on the tool-result record instead of
+overwriting `content`. Model-context derivation (`runtimePiMessageFromRecord`,
+`agentEventMessageToPiMessage`) substitutes `modelSlimmedContent` when present; the UI
+transcript and the search index keep reading the full `content`, so an old
+`web_search` / `web_fetch` result never decays into an input-only / no-output row. The
+`tool_result.replaced` event remains the durable, monotonic slim-decision journal —
+replaying it never shrinks the canonical content, so a result is never un-slimmed
+(cache-stable) and slim-decision logic reads the model-facing copy
+(`modelSlimmedContent ?? content`) so an offloaded/cleared result is never re-emitted.
+This is the Claude Code 2.1 stance: slim the model's per-request copy, keep the
+persisted transcript full. The >50K immediate persist in (1) is the exception — it
+records the preview ref in the record at creation, before any full content ever
+entered the transcript.
+
 Large persisted tool outputs should follow the stable agent-runtime pattern: keep the full
 output outside the transcript, record a fixed preview/reference string in the
 message, and never re-decide or silently expand that payload during resume.
