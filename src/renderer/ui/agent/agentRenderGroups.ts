@@ -1,45 +1,43 @@
 import type { ToolCall } from '../../../core/agentTypes';
 import type { Messages } from '../../../core/i18n';
-import type { AgentProcessSegmentBlock } from './agentProcessTypes';
 import { toolActivityKind, type ToolActivityKind, type ToolStatus } from './AgentToolCallBlock';
+import type { AgentTurnProcessItem, AgentTurnToolCallItem } from './agentTurnProjection';
 
 // Render-group splitting for the agent process timeline, mirroring Codex's
-// `split-items-into-render-groups`. A run of CONSECUTIVE tool-call blocks folds
-// into one counted "tool activity" group; a thinking or narration block (Codex:
+// `split-items-into-render-groups`. A run of CONSECUTIVE tool-call items folds
+// into one counted "tool activity" group; a reasoning or narration item (Codex:
 // reasoning / assistant-message are hard boundaries) breaks the run, as does a
 // child-run tool call (it carries rich inline content we must not hide). Lone
 // runs stay un-grouped — Codex does not wrap a single tool in a summary.
 
-type ToolCallBlock = Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }>;
-
 export type TimelineRenderGroup =
-  | { kind: 'block'; block: AgentProcessSegmentBlock }
-  | { kind: 'toolActivity'; id: string; members: ToolCallBlock[] };
+  | { kind: 'item'; item: AgentTurnProcessItem }
+  | { kind: 'toolActivity'; id: string; members: AgentTurnToolCallItem[] };
 
 export function splitTimelineIntoGroups(
-  blocks: readonly AgentProcessSegmentBlock[],
-  isChildRun: (block: ToolCallBlock) => boolean,
+  items: readonly AgentTurnProcessItem[],
+  isChildRun: (item: AgentTurnToolCallItem) => boolean,
 ): TimelineRenderGroup[] {
   const groups: TimelineRenderGroup[] = [];
-  let run: ToolCallBlock[] = [];
+  let run: AgentTurnToolCallItem[] = [];
 
   const flush = () => {
     if (run.length === 0) return;
     if (run.length === 1) {
-      groups.push({ kind: 'block', block: run[0]! });
+      groups.push({ kind: 'item', item: run[0]! });
     } else {
       groups.push({ kind: 'toolActivity', id: `activity:${run[0]!.toolCall.id}`, members: run });
     }
     run = [];
   };
 
-  for (const block of blocks) {
-    if (block.kind === 'toolCall' && !isChildRun(block)) {
-      run.push(block);
+  for (const item of items) {
+    if (item.type === 'toolCall' && !isChildRun(item)) {
+      run.push(item);
       continue;
     }
     flush();
-    groups.push({ kind: 'block', block });
+    groups.push({ kind: 'item', item });
   }
   flush();
   return groups;

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { ToolCall } from '../../src/core/agentTypes';
 import { getMessages } from '../../src/core/i18n';
-import type { AgentProcessSegmentBlock } from '../../src/renderer/ui/agent/agentProcessTypes';
+import type { AgentTurnProcessItem } from '../../src/renderer/ui/agent/agentTurnProjection';
 import type { ToolStatus } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import {
   sentenceFragment,
@@ -16,12 +16,17 @@ function toolCall(id: string, name: string, args: Record<string, unknown> = {}):
   return { type: 'toolCall', id, name, arguments: args };
 }
 
-function toolBlock(id: string, name: string, args: Record<string, unknown> = {}): AgentProcessSegmentBlock {
-  return { kind: 'toolCall', toolCall: toolCall(id, name, args) };
+function toolItem(id: string, name: string, args: Record<string, unknown> = {}): AgentTurnProcessItem {
+  return { id: `tool:${id}`, type: 'toolCall', toolCall: toolCall(id, name, args) };
 }
 
-function thinkingBlock(sourceIndex: number): AgentProcessSegmentBlock {
-  return { kind: 'thinking', sourceIndex, streaming: false, text: 'reasoning' };
+function reasoningItem(sourceIndex: number): AgentTurnProcessItem {
+  return {
+    id: `process:test:reasoning:${sourceIndex}`,
+    streaming: false,
+    text: 'reasoning',
+    type: 'reasoning',
+  };
 }
 
 const noChildRuns = () => false;
@@ -33,7 +38,7 @@ function member(name: string, status: ToolStatus, args: Record<string, unknown> 
 describe('splitTimelineIntoGroups', () => {
   test('folds a run of >= 2 consecutive tool calls into one activity group', () => {
     const groups = splitTimelineIntoGroups(
-      [toolBlock('a', 'bash'), toolBlock('b', 'bash'), toolBlock('c', 'node_read')],
+      [toolItem('a', 'bash'), toolItem('b', 'bash'), toolItem('c', 'node_read')],
       noChildRuns,
     );
     expect(groups).toHaveLength(1);
@@ -44,28 +49,28 @@ describe('splitTimelineIntoGroups', () => {
     }
   });
 
-  test('a lone tool call is NOT grouped (renders as its own block)', () => {
-    const groups = splitTimelineIntoGroups([toolBlock('a', 'bash')], noChildRuns);
+  test('a lone tool call is NOT grouped (renders as its own item)', () => {
+    const groups = splitTimelineIntoGroups([toolItem('a', 'bash')], noChildRuns);
     expect(groups).toHaveLength(1);
-    expect(groups[0]!.kind).toBe('block');
+    expect(groups[0]!.kind).toBe('item');
   });
 
-  test('a thinking block breaks the run (reasoning is a hard boundary)', () => {
+  test('a reasoning item breaks the run (reasoning is a hard boundary)', () => {
     const groups = splitTimelineIntoGroups(
-      [toolBlock('a', 'bash'), toolBlock('b', 'bash'), thinkingBlock(0), toolBlock('c', 'bash'), toolBlock('d', 'bash')],
+      [toolItem('a', 'bash'), toolItem('b', 'bash'), reasoningItem(0), toolItem('c', 'bash'), toolItem('d', 'bash')],
       noChildRuns,
     );
-    expect(groups.map((g) => g.kind)).toEqual(['toolActivity', 'block', 'toolActivity']);
+    expect(groups.map((g) => g.kind)).toEqual(['toolActivity', 'item', 'toolActivity']);
   });
 
   test('a child-run tool call breaks the run and renders standalone', () => {
-    const childBlock = toolBlock('child', 'Agent');
+    const childItem = toolItem('child', 'Agent');
     const groups = splitTimelineIntoGroups(
-      [toolBlock('a', 'bash'), childBlock, toolBlock('b', 'bash')],
-      (block) => block.toolCall.id === 'child',
+      [toolItem('a', 'bash'), childItem, toolItem('b', 'bash')],
+      (item) => item.toolCall.id === 'child',
     );
-    // a, [child standalone], b — none of the runs reach length 2, so all blocks.
-    expect(groups.map((g) => g.kind)).toEqual(['block', 'block', 'block']);
+    // a, [child standalone], b — none of the runs reach length 2, so all items.
+    expect(groups.map((g) => g.kind)).toEqual(['item', 'item', 'item']);
   });
 });
 

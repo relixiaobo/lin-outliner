@@ -1,38 +1,7 @@
-import type { ToolCall } from '../../../core/agentTypes';
-import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
-import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
-
 export interface AgentExpandState {
   isExpanded: (id: string, defaultExpanded?: boolean) => boolean;
   toggle: (id: string, currentlyExpanded: boolean, anchorElement?: HTMLElement | null) => void;
 }
-
-export type AgentProcessSegmentBlock =
-  | {
-    kind: 'thinking';
-    sourceIndex: number;
-    streaming: boolean;
-    text: string;
-  }
-  | {
-    kind: 'toolCall';
-    childRun?: AgentRenderChildRunEntity;
-    toolCall: ToolCall;
-    // Settled state from `tool_call.completed` / `.failed`; undefined while the
-    // call is still executing. Authoritative over the (possibly-absent) result
-    // message for deciding whether the spinner should stop.
-    outcome?: AgentToolCallOutcome;
-  }
-  // Interim narration: assistant text emitted before the turn's final answer
-  // (e.g. "let me check the weather first"). It is part of the working process,
-  // not the result, so it folds into the disclosure rather than rendering as
-  // prose. The final answer text stays outside the fold.
-  | {
-    kind: 'narration';
-    sourceIndex: number;
-    streaming: boolean;
-    text: string;
-  };
 
 // Compact, locale-neutral wall-clock label for an agent run (e.g. "<1s", "5s",
 // "1m 3s", "1h 2m"). Shared by the collapsed "Worked for …" process header and
