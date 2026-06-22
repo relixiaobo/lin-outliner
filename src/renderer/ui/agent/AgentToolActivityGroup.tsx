@@ -1,6 +1,6 @@
 import type { AgentToolResultWithPayloads } from '../../../core/agentTypes';
 import type { DocumentIndex } from '../../state/document';
-import { ChevronDownIcon } from '../icons';
+import { ChevronRightIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { useT } from '../../i18n/I18nProvider';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
@@ -63,7 +63,7 @@ export function AgentToolActivityGroup({
         }}
       >
         <span className="agent-tool-activity-summary">{summary}</span>
-        <ChevronDownIcon
+        <ChevronRightIcon
           aria-hidden
           className={`agent-tool-activity-chevron${expanded ? ' is-expanded' : ''}`}
           size={14}

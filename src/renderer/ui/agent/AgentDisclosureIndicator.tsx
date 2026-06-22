@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ChevronDownIcon } from '../icons';
+import { ChevronRightIcon } from '../icons';
 
 interface AgentDisclosureIndicatorProps {
   chevronSize?: number;
@@ -31,7 +31,7 @@ export function AgentDisclosureIndicator({
       <span className="agent-disclosure-status">{icon}</span>
       {interactive ? (
         <span className="agent-disclosure-chevron">
-          <ChevronDownIcon
+          <ChevronRightIcon
             className={expanded ? 'is-expanded' : ''}
             size={chevronSize}
           />

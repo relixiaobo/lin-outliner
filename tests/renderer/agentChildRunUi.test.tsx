@@ -132,7 +132,9 @@ describe('agent child run UI', () => {
     expect(rendered.container.textContent).toContain('Thought · Read node "today"');
     expect(rendered.container.textContent).toContain('The UI path is ready.');
     expect(rendered.container.textContent).not.toContain('Daily note content.');
-    expect(rendered.container.textContent).toContain('Find relevant node context.');
+    // The thinking text is folded behind the "Thought" reasoning headline until its
+    // row is expanded (Codex `reasoning`), so it is not shown in the resting panel.
+    expect(rendered.container.textContent).not.toContain('Find relevant node context.');
     expect(rendered.container.textContent).toContain('Read node "today"');
 
     await click(rendered, firstToolCallToggle(rendered));

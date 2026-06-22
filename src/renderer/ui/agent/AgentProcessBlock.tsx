@@ -5,7 +5,7 @@ import type { DocumentIndex } from '../../state/document';
 import type { MouseEvent } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ChevronDownIcon,
+  ChevronRightIcon,
   ICON_SIZE,
   LoaderIcon,
 } from '../icons';
@@ -348,13 +348,20 @@ export function AgentProcessBlock({
         {liveCollapsed ? (
           <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
         ) : (
-          <ChevronDownIcon
+          <ChevronRightIcon
             aria-hidden
             className={`agent-process-chevron${expanded ? ' is-expanded' : ''}`}
             size={14}
           />
         )}
       </ButtonControl>
+      {/* The full-width hairline of Codex's "Worked for" divider: a faint rule
+          under the resting fold line, just above the answer. Only in the resting
+          (collapsed) Working/Worked state — an interrupted turn is a RED label, not
+          a divider, and an expanded body provides its own structure. */}
+      {!expanded && !turnFailedWithoutProse ? (
+        <div aria-hidden className="agent-process-rule" />
+      ) : null}
       {expanded ? (
         <AgentProcessTimeline
           blocks={blocks}

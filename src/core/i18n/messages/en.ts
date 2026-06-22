@@ -1210,8 +1210,12 @@ commandPalette: {
     },
     thinking: {
       // Reasoning lifecycle (Codex `Xw`): a STATIC "Thinking" cue while active —
-      // no ellipsis, no shimmer (the shimmer is a Codex A/B experiment).
+      // no ellipsis, no shimmer (the shimmer is a Codex A/B experiment) — that
+      // seals to a plain "Thought" once the turn settles. The full reasoning is
+      // the foldable body; the headline is this fixed lifecycle label (the
+      // ratified 折中 — no per-item "Thought for {t}" timing).
       thinking: 'Thinking',
+      thought: 'Thought',
     },
     markdown: {
       copyCode: 'Copy code',

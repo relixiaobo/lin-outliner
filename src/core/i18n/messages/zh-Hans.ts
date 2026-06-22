@@ -1114,8 +1114,11 @@ commandPalette: {
       },
     },
     thinking: {
-      // Reasoning lifecycle: a static "思考中" cue while active (no shimmer).
+      // Reasoning lifecycle: a static "思考中" cue while active (no shimmer) that
+      // seals to "已思考" once the turn settles; the full reasoning is the foldable
+      // body (the ratified 折中 — no per-item timing).
       thinking: '思考中',
+      thought: '已思考',
     },
     markdown: {
       copyCode: '复制代码',
