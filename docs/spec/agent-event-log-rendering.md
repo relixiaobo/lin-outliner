@@ -1041,10 +1041,14 @@ Rules:
   tool call (rich inline content), and a **loaded-skill chip** (a compact
   glanceable affordance, not an expandable row) — **breaks the run** (reasoning is
   a hard boundary); a lone tool call renders standalone, never wrapped. The summary
-  buckets members by activity kind (`toolActivityKind`), dedupes file kinds by
-  subject path (editing the same node twice reads "Edited a file"), and uses the
-  **per-kind** running/done tense so a finished command beside a still-running
-  search reads "Ran a command · searching" — never a group-global mislabel. This
+  buckets members by activity kind (`toolActivityKind`), dedupes file/read kinds by
+  subject (editing the same node twice reads "Edited a file") keyed on the model's
+  **raw snake_case wire args** (`node_id`, `file_path`), expanding a `node_ids`
+  batch to one subject per id so a 5-node read counts as 5. Node *creation* is not
+  deduped — a new node has no pre-execution id, so N creations under one parent are
+  N distinct files. The summary uses the **per-kind** running/done tense so a
+  finished command beside a still-running search reads "Ran a command · searching"
+  — never a group-global mislabel. This
   is Codex's per-tool-activity-group collapse (machine B) nested inside the
   per-turn process fold.
 - **Per-step status glyph** (Codex machine A, `progress-step-row`). Each tool row
@@ -1068,8 +1072,11 @@ Rules:
     a tool step**: a one-line summary row (`.agent-reasoning-toggle`) with a trailing
     disclosure chevron, the full thinking **tucked inside** and revealed on click —
     NOT shown as open body prose. The summary is a leading `**bold**` gist headline
-    (markers stripped, kept emphasized) or, failing that, the first line; the rest is
-    the body. A single-line thought is a plain, non-expandable label. The expanded
+    (markers stripped, kept emphasized — matched even with text after it on the line,
+    so no literal `**` leaks) or, failing that, the first line; the rest is
+    the body. A SHORT single-line thought has no body and renders as inert read-only
+    text (not a disabled button); a LONG single line keeps itself as the body so the
+    full text stays expandable instead of clipped behind an ellipsis. The expanded
     body is soft (`--text-soft` ≈ Codex `text-secondary`), the dimmer thinking layer
     distinct from the assistant's own words. A lone-thought turn opens its body by
     default (nothing else to read).

@@ -32,7 +32,7 @@ const readResult: ToolResultMessage = {
 describe('agent process summary', () => {
   // The live divider is the PERSISTENT "Working for {t}" clock (Codex machine C):
   // once the run clock is known it is the header whether the body is collapsed or
-  // expanded — the "常驻" behavior. The running-tool / thought-preview fallbacks
+  // expanded — the always-on behavior. The running-tool / thought-preview fallbacks
   // below only fire for clock-less (legacy) live entries while collapsed.
   test('live header shows the persistent "Working for {t}" clock once the run clock is known', () => {
     const live = {

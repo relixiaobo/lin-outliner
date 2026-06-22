@@ -94,7 +94,7 @@ describe('summarizeToolActivity', () => {
 
   test('composes mixed kinds, lowercasing non-leading fragments', () => {
     const summary = summarizeToolActivity(
-      [member('bash', 'done', {}, 'a'), member('node_read', 'done', { nodeId: 'n1' }, 'b')],
+      [member('bash', 'done', {}, 'a'), member('node_read', 'done', { node_id: 'n1' }, 'b')],
       process,
     );
     expect(summary).toBe('Ran a command · read a node');
@@ -109,10 +109,12 @@ describe('summarizeToolActivity', () => {
   });
 
   test('dedupes file kinds by subject path (Set.size, not raw calls)', () => {
+    // The model's wire args are snake_case (`node_id`), so the dedup keys must be
+    // too — reading the same node twice is one distinct subject.
     const summary = summarizeToolActivity(
       [
-        member('node_read', 'done', { nodeId: 'n1' }, 'a'),
-        member('node_read', 'done', { nodeId: 'n1' }, 'b'),
+        member('node_read', 'done', { node_id: 'n1' }, 'a'),
+        member('node_read', 'done', { node_id: 'n1' }, 'b'),
       ],
       process,
     );
@@ -122,12 +124,31 @@ describe('summarizeToolActivity', () => {
   test('counts distinct subjects separately', () => {
     const summary = summarizeToolActivity(
       [
-        member('node_read', 'done', { nodeId: 'n1' }, 'a'),
-        member('node_read', 'done', { nodeId: 'n2' }, 'b'),
+        member('node_read', 'done', { node_id: 'n1' }, 'a'),
+        member('node_read', 'done', { node_id: 'n2' }, 'b'),
       ],
       process,
     );
     expect(summary).toBe('Read 2 nodes');
+  });
+
+  test('a node_ids batch counts each distinct id (one call, N subjects)', () => {
+    const summary = summarizeToolActivity(
+      [member('node_read', 'done', { node_ids: ['n1', 'n2', 'n3'] }, 'a')],
+      process,
+    );
+    expect(summary).toBe('Read 3 nodes');
+  });
+
+  test('node_create counts every call — siblings under one parent are distinct creations', () => {
+    const summary = summarizeToolActivity(
+      [
+        member('node_create', 'done', { parent_id: 'p1' }, 'a'),
+        member('node_create', 'done', { parent_id: 'p1' }, 'b'),
+      ],
+      process,
+    );
+    expect(summary).toBe('Created 2 files');
   });
 });
 

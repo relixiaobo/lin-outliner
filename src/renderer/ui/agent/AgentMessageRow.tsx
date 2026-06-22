@@ -826,6 +826,7 @@ function sameMessageEntry(left: AgentMessageEntry, right: AgentMessageEntry): bo
     && left.actor === right.actor
     && left.runId === right.runId
     && left.runDurationMs === right.runDurationMs
+    && left.runStartedAtMs === right.runStartedAtMs
     && left.turnInterrupted === right.turnInterrupted
   );
 }

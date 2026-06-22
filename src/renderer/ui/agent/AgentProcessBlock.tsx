@@ -3,7 +3,7 @@ import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import type { MouseEvent } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ChevronDownIcon,
   ICON_SIZE,
@@ -181,8 +181,8 @@ export function summarizeProcess({
   }
 
   // Live divider — PERSISTENT (expanded OR collapsed), Codex-style and the
-  // "常驻" the user asked for: while the turn is active the header is the ticking
-  // clock — "Working for {t}" (≥1s) / bare "Working" (<1s, no number so it never
+  // always-on header the user asked for: while the turn is active the header is
+  // the ticking clock — "Working for {t}" (≥1s) / bare "Working" (<1s, no number so it never
   // flickers a "0s"). It stays put when the body is expanded (the work shows in
   // the timeline below) and when it auto-collapses on answer start. Without a run
   // clock (legacy entries) a collapsed live turn falls back to the running tool /
@@ -260,7 +260,11 @@ export function summarizeProcess({
 // keeps ticking (the "2d" runaway-clock bug). At most one live turn is on screen,
 // so this is one interval at a time.
 function useElapsedTick(startedAtMs: number | null, active: boolean): number | null {
-  const [now, setNow] = useState(() => startedAtMs ?? 0);
+  // Seed from the wall clock, not `startedAtMs`, so a run that began before this
+  // mounted (e.g. reopening a conversation with an in-flight turn) shows its true
+  // elapsed on the first paint instead of a one-frame bare "Working" (now -
+  // startedAtMs === 0).
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active || startedAtMs === null) return;
     setNow(Date.now());
@@ -291,7 +295,10 @@ export function AgentProcessBlock({
   liveStartedAtMs,
 }: AgentProcessBlockProps) {
   const t = useT();
-  const facts = processSummaryFacts(blocks);
+  // Memoized: the live "Working for {t}" ticker re-renders this block every second,
+  // and streaming re-renders it per token — without this the fact set (several
+  // array scans over every block) is rebuilt on each, just to advance a digit.
+  const facts = useMemo(() => processSummaryFacts(blocks), [blocks]);
   const liveSegment = turnActive && !sealed;
   // Codex auto-collapse (machine C): the body shows EXPANDED while still working
   // (no answer yet) so the user watches the reasoning + tool activity 1:1, then

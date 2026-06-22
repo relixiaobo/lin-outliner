@@ -207,6 +207,16 @@
   cursor: default;
 }
 
+/* A single-line thought with nothing to reveal is inert read-only text (a div,
+   not a button), so it neither shows a pointer nor deepens on hover. */
+.agent-reasoning-toggle.is-static {
+  cursor: default;
+}
+
+.agent-reasoning-toggle.is-static:hover {
+  color: inherit;
+}
+
 .agent-reasoning-headline {
   min-width: 0;
   overflow: hidden;

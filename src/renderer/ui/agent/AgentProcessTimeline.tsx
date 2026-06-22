@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import type { AgentToolResultWithPayloads } from '../../../core/agentTypes';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
@@ -36,11 +37,21 @@ export function AgentProcessTimeline({
   childRunsByParentToolCallId,
   turnActive,
 }: AgentProcessTimelineProps) {
+  // A sealed thinking block that streamed to empty text carries nothing to show
+  // (and would otherwise break a tool-activity run in two and leave a phantom gap
+  // where it renders null). Drop it before splitting; an empty LIVE thinking block
+  // stays — it renders the "Thinking" cue.
+  const visibleBlocks = useMemo(
+    () => blocks.filter(
+      (block) => !(block.kind === 'thinking' && !block.streaming && block.text.trim() === ''),
+    ),
+    [blocks],
+  );
   // A lone thought (no tools, no narration) renders as an always-open body; any
   // richer process renders the per-block timeline below. The block union is
   // exactly thinking|toolCall|narration, so "one block and it's a thought"
   // captures the solo case without three throwaway classification passes.
-  const onlyBlock = blocks.length === 1 ? blocks[0]! : null;
+  const onlyBlock = visibleBlocks.length === 1 ? visibleBlocks[0]! : null;
   const soloThinkingBlock = onlyBlock?.kind === 'thinking' ? onlyBlock : null;
   // The runtime `pendingToolCallIds` set can momentarily lag a freshly-started
   // tool call, so an active turn keeps the most recent un-settled tool call
@@ -48,7 +59,7 @@ export function AgentProcessTimeline({
   // child run) is NOT un-settled — excluding those is what stops a completed
   // step from spinning forever when its result message never arrives.
   const fallbackActiveToolCall = turnActive && pendingToolCallIds.size === 0
-    ? [...blocks].reverse().find((block): block is Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }> => (
+    ? [...visibleBlocks].reverse().find((block): block is Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }> => (
       block.kind === 'toolCall'
       && !block.outcome
       && !results.has(block.toolCall.id)
@@ -61,11 +72,16 @@ export function AgentProcessTimeline({
   // activity group; thinking / narration / child-run tools break the run and
   // render standalone (Codex's render-group split). A loaded-skill chip also
   // breaks the run — it is a compact glanceable affordance, not an expandable
-  // tool row, so grouping it would bury it.
-  const groups = splitTimelineIntoGroups(blocks, (block) => (
-    Boolean(block.childRun ?? childRunsByParentToolCallId?.get(block.toolCall.id))
-    || getLoadedSkillDetails(block.toolCall, results.get(block.toolCall.id)) !== null
-  ));
+  // tool row, so grouping it would bury it. Memoized: this re-runs the splitter
+  // (and getLoadedSkillDetails per block) on every render, including each 1s
+  // ticker tick and streaming token, unless pinned to its real inputs.
+  const groups = useMemo(
+    () => splitTimelineIntoGroups(visibleBlocks, (block) => (
+      Boolean(block.childRun ?? childRunsByParentToolCallId?.get(block.toolCall.id))
+      || getLoadedSkillDetails(block.toolCall, results.get(block.toolCall.id)) !== null
+    )),
+    [visibleBlocks, childRunsByParentToolCallId, results],
+  );
 
   const renderBlock = (block: AgentProcessSegmentBlock) => {
     if (block.kind === 'thinking') {
