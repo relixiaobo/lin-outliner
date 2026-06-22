@@ -873,18 +873,17 @@ export function AgentToolCallBlock({
   const t = useT();
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
   const status = childRun ? childRunToolStatus(childRun) : getToolCallStatus(toolCall.id, result, pendingToolCallIds, turnActive, outcome);
-  // Codex's per-step status glyph (machine A): a running spinner, a green check
-  // on done, a red ✕ on a confirmed failure. A never-settled `incomplete` step is
-  // neutral — it falls back to the tool-type icon (what origin showed for every
-  // settled call), so a cancelled-batch tail never reads as a failure. The ring
-  // color comes from the `is-{status}` CSS.
-  const StatusIcon = status === 'done'
-    ? CheckIcon
-    : status === 'error'
-      ? CloseIcon
-      : status === 'incomplete'
-        ? getToolIcon(toolCall)
-        : LoaderIcon;
+  // Per-step glyph by exception (Codex machine A): a running spinner, a red ✕ on a
+  // confirmed failure, otherwise the plain tool-type icon. A successful `done` step
+  // gets NO green check — the past-tense verb ("Fetched web …") already reads as
+  // success, so a success badge is just noise. `done` and the never-settled
+  // `incomplete` both show the neutral tool icon; only a real failure stands out
+  // (red ✕ in a danger ring, via the `is-error` CSS).
+  const StatusIcon = status === 'error'
+    ? CloseIcon
+    : status === 'pending'
+      ? LoaderIcon
+      : getToolIcon(toolCall);
   const isExpanded = expanded ?? internalExpanded;
   const inputText = useMemo(() => jsonText(toolCall.arguments), [toolCall.arguments]);
   const outputText = useMemo(() => resultText(result), [result]);

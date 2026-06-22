@@ -352,39 +352,28 @@
   color: var(--text-faint);
 }
 
-/* Per-step status ring (Codex machine A, `progress-step-row`): a subtle
-   success/danger ring around the check / ✕ glyph at rest. Status colors carry
-   status meaning only (B4); the running spinner keeps the plain slot, and the
-   hover-reveal chevron fades the ring out with the status glyph.
-   The slot is 14px wide × line-meta tall, so a bare border-radius:50% would draw
-   an ELLIPSE — pin the ring to a centered 14×14 square and shrink the glyph so it
-   sits inside as a true circle. */
-.agent-tool-call.is-done .agent-disclosure-status,
+/* Per-step FAILURE ring (Codex machine A, `progress-step-row`): a red ✕ in a subtle
+   danger ring at rest — the ONLY status that carries a badge. Success needs none: a
+   `done` step shows its plain tool icon (the past-tense verb already reads as
+   success), so only a confirmed failure is marked. Status color carries status
+   meaning only (B4); the hover-reveal chevron fades the ring out with the glyph.
+   The slot is 14px wide × line-meta tall, so a bare border-radius:50% would draw an
+   ELLIPSE — pin the ring to a centered 14×14 square and shrink the glyph so it sits
+   inside as a true circle. */
 .agent-tool-call.is-error .agent-disclosure-status {
   top: 50%;
   bottom: auto;
   height: 14px;
   transform: translateY(-50%);
   border-radius: 50%;
-  border: 1px solid transparent;
+  border: 1px solid color-mix(in srgb, var(--status-danger) 40%, transparent);
+  background: color-mix(in srgb, var(--status-danger) 15%, transparent);
+  color: var(--status-danger);
 }
 
-.agent-tool-call.is-done .agent-disclosure-status svg,
 .agent-tool-call.is-error .agent-disclosure-status svg {
   width: 9px;
   height: 9px;
-}
-
-.agent-tool-call.is-done .agent-disclosure-status {
-  color: var(--status-success);
-  border-color: color-mix(in srgb, var(--status-success) 40%, transparent);
-  background: color-mix(in srgb, var(--status-success) 15%, transparent);
-}
-
-.agent-tool-call.is-error .agent-disclosure-status {
-  color: var(--status-danger);
-  border-color: color-mix(in srgb, var(--status-danger) 40%, transparent);
-  background: color-mix(in srgb, var(--status-danger) 15%, transparent);
 }
 
 .agent-tool-call-row {

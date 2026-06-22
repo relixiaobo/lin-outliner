@@ -1063,19 +1063,20 @@ Rules:
   — never a group-global mislabel. This
   is Codex's per-tool-activity-group collapse (machine B) nested inside the
   per-turn process fold.
-- **Per-step status glyph** (Codex machine A, `progress-step-row`). Each tool row
-  leads with a **status glyph, not the tool-type icon** — the row's verb already
-  carries the type. Running shows the spinning ring; **done** a green check inside
-  a subtle success ring (`--status-success` at /40 border, /15 fill); **failed** a
-  red ✕ inside a danger ring + red row text. A red ✕ is reserved for a **confirmed
-  failure** (an error result or a failed outcome): a tool that simply never settled
-  — no result, no outcome, not running, turn over (e.g. the tail of an interrupted
-  batch) — is **`incomplete`**, a neutral/dimmed state that falls back to the
-  tool-type icon with no status ring, so a never-run step never reads as a failure.
-  Codex's other fourth state — `pending` (declared-but-not-*started*, a dim hollow
-  ring) — remains **deferred**: our projection does not cheaply distinguish it from
-  `running`, and we will not add core events for an icon. The ring fades out with the
-  status glyph when the disclosure chevron reveals on hover.
+- **Per-step glyph by exception** (Codex machine A, `progress-step-row`). A tool row
+  leads with its **tool-type icon by default — success carries NO badge**. The
+  past-tense verb ("Fetched web …", "Read a node") already reads as success, so a
+  green success check is redundant noise; a **done** step shows its plain tool icon.
+  Only states that need attention get a glyph: **running** the spinning ring;
+  **failed** a red ✕ inside a subtle danger ring (`--status-danger` /40 border, /15
+  fill) + red row text — the only badged state, reserved for a **confirmed failure**
+  (an error result or a failed outcome). A tool that simply never settled — no
+  result, no outcome, not running, turn over (e.g. the tail of an interrupted batch)
+  — is **`incomplete`** and likewise shows the neutral tool icon; **done and
+  incomplete are not visually distinguished** (neither needs a badge — only a failure
+  stands out). Codex's `pending` (declared-but-not-*started*, a dim hollow ring)
+  remains **deferred**: our projection does not cheaply distinguish it from `running`.
+  The ✕ ring fades out with the glyph when the disclosure chevron reveals on hover.
 - **Reasoning folds like a tool step; narration is body prose.** Inside the
   expanded turn (machine C) the three kinds of block render at three different
   weights, matching Codex's typed items — they are NOT one uniform body:
