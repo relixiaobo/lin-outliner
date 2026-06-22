@@ -1517,7 +1517,7 @@ describe('row interaction resolvers', () => {
     }));
   });
 
-  test('reference candidates include file nodes by their display filename', () => {
+  test('reference candidates include file nodes by their display filename only when requested', () => {
     const nodes = [
       makeNode('root', 'Root', { children: ['today'] }),
       makeNode('today', 'Today', { parentId: 'root', children: ['current', 'pdf'] }),
@@ -1544,14 +1544,23 @@ describe('row interaction resolvers', () => {
       nodes,
     };
 
-    const candidates = buildReferenceCandidates({
+    const defaultCandidates = buildReferenceCandidates({
       index: { projection, byId: new Map(nodes.map((node) => [node.id, node])) } as any,
       currentNodeId: 'current',
       query: '产品观',
       excludeCurrentNode: false,
     });
+    expect(defaultCandidates.some((candidate) => candidate.type === 'node' && candidate.id === 'pdf')).toBe(false);
 
-    expect(candidates).toContainEqual(expect.objectContaining({
+    const composerCandidates = buildReferenceCandidates({
+      index: { projection, byId: new Map(nodes.map((node) => [node.id, node])) } as any,
+      currentNodeId: 'current',
+      query: '产品观',
+      excludeCurrentNode: false,
+      includeFileNodes: true,
+    });
+
+    expect(composerCandidates).toContainEqual(expect.objectContaining({
       id: 'pdf',
       label: '微信背后的产品观.pdf',
       type: 'node',

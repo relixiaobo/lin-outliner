@@ -132,18 +132,18 @@ function nodeCandidates(
   query: string,
   treeReferenceParentId: NodeId | null,
   excludeCurrentNode: boolean,
+  includeFileNodes: boolean,
   labels: ReferenceCandidateLabels,
 ): ReferenceCandidate[] {
   const normalized = query.trim().toLowerCase();
   const currentNode = currentNodeId ? index.byId.get(currentNodeId) : undefined;
   const currentAncestors = ancestorIds(currentNode, index.byId);
   const candidates = index.projection.nodes
-    .filter((node) => isReferenceCandidateNode(node)
+    .filter((node) => isReferenceCandidateNode(node, includeFileNodes)
       && !(excludeCurrentNode && node.id === currentNodeId)
       && !isNodeInTrash(index, node.id))
     .map((node) => {
       const label = referenceCandidateNodeLabel(node, labels.untitled);
-      const rawText = node.content.text.trim();
       const reason = treeReferenceParentId
         ? getTreeReferenceBlockReason({
           parentId: treeReferenceParentId,
@@ -156,7 +156,7 @@ function nodeCandidates(
         label,
         normalizedLabel: label.toLowerCase(),
         disabledReason: reason === 'already_in_parent' ? null : getTreeReferenceBlockMessage(reason),
-        isUntitled: rawText.length === 0,
+        isUntitled: label === labels.untitled,
         contextRank: contextRank(node, currentNode, currentAncestors),
       };
     })
@@ -190,8 +190,8 @@ function nodeCandidates(
   });
 }
 
-function isReferenceCandidateNode(node: NodeProjection | undefined): boolean {
-  return isContentNode(node) || isFileNode(node);
+function isReferenceCandidateNode(node: NodeProjection | undefined, includeFileNodes: boolean): boolean {
+  return isContentNode(node) || (includeFileNodes && isFileNode(node));
 }
 
 function referenceCandidateNodeLabel(node: NodeProjection, untitled: string): string {
@@ -210,6 +210,9 @@ export function buildReferenceCandidates(params: {
   // and has no "self" — it passes false so the focused/context node stays
   // mentionable. Defaults to true to preserve the outliner contract.
   excludeCurrentNode?: boolean;
+  // File nodes are only mentionable from the agent composer. The outliner @ picker
+  // creates tree references, and file nodes are not content-reference targets there.
+  includeFileNodes?: boolean;
   // Localized labels; defaults to English so tests/non-localized callers still work.
   labels?: ReferenceCandidateLabels;
 }): ReferenceCandidate[] {
@@ -220,12 +223,13 @@ export function buildReferenceCandidates(params: {
     treeReferenceParentId = null,
     allowCreate = true,
     excludeCurrentNode = true,
+    includeFileNodes = false,
     labels = DEFAULT_REFERENCE_LABELS,
   } = params;
   const normalized = query.trim();
   return [
     ...matchDateShortcuts(normalized, labels),
-    ...nodeCandidates(index, currentNodeId, normalized, treeReferenceParentId, excludeCurrentNode, labels),
+    ...nodeCandidates(index, currentNodeId, normalized, treeReferenceParentId, excludeCurrentNode, includeFileNodes, labels),
     ...(normalized && allowCreate ? [{ type: 'create' as const, label: normalized }] : []),
   ];
 }

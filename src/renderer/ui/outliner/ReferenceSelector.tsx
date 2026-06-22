@@ -27,6 +27,7 @@ export function referenceItems(params: {
   currentNodeId: NodeId | null;
   treeReferenceParentId?: NodeId | null;
   excludeCurrentNode?: boolean;
+  includeFileNodes?: boolean;
   labels?: ReferenceCandidateLabels;
 }): ReferenceCandidate[] {
   return buildReferenceCandidates({
@@ -35,6 +36,7 @@ export function referenceItems(params: {
     query: params.query,
     treeReferenceParentId: params.treeReferenceParentId,
     excludeCurrentNode: params.excludeCurrentNode,
+    includeFileNodes: params.includeFileNodes,
     labels: params.labels,
   });
 }

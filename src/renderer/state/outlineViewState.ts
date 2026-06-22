@@ -1,4 +1,10 @@
 import type { NodeId, NodeProjection } from '../api/types';
+import {
+  localStorageOrNull,
+  pruneLocalStorageEntries,
+  readLocalStorageKeyedStore,
+  writeLocalStorageKeyedStore,
+} from './localStorageStore';
 import { hiddenFieldKey } from './outlinerRows';
 import { isRecord } from './persistence';
 
@@ -130,61 +136,43 @@ function collectOutlineScope(
 }
 
 function readStore(storage: Storage): PersistedOutlineViewStateStore {
-  try {
-    const raw = storage.getItem(STORAGE_KEY);
-    if (!raw) return emptyStore();
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isRecord(parsed) || parsed.version !== STORE_VERSION || !isRecord(parsed.byRootNodeId)) {
-      return emptyStore();
-    }
-
-    const byRootNodeId: Record<NodeId, PersistedOutlineRootState> = {};
-    for (const [rootNodeId, value] of Object.entries(parsed.byRootNodeId)) {
-      if (!isRecord(value)) continue;
-      byRootNodeId[rootNodeId] = {
-        expandedNodeIds: stringArray(value.expandedNodeIds),
-        expandedHiddenFieldKeys: stringArray(value.expandedHiddenFieldKeys),
-        updatedAt: typeof value.updatedAt === 'number' && Number.isFinite(value.updatedAt)
-          ? value.updatedAt
-          : 0,
-      };
-    }
-    return { version: STORE_VERSION, byRootNodeId };
-  } catch {
-    return emptyStore();
-  }
+  const byRootNodeId = readLocalStorageKeyedStore({
+    storage,
+    storageKey: STORAGE_KEY,
+    version: STORE_VERSION,
+    entriesKey: 'byRootNodeId',
+    decodeEntry: decodeOutlineRootState,
+  });
+  return { version: STORE_VERSION, byRootNodeId };
 }
 
 function writeStore(storage: Storage, store: PersistedOutlineViewStateStore): void {
-  try {
-    storage.setItem(STORAGE_KEY, JSON.stringify(store));
-  } catch {
-    // Best-effort renderer-local view state.
-  }
+  writeLocalStorageKeyedStore({
+    storage,
+    storageKey: STORAGE_KEY,
+    version: STORE_VERSION,
+    entriesKey: 'byRootNodeId',
+    entries: store.byRootNodeId,
+  });
 }
 
 function pruneStore(store: PersistedOutlineViewStateStore): void {
-  const entries = Object.entries(store.byRootNodeId)
-    .sort(([, left], [, right]) => right.updatedAt - left.updatedAt)
-    .slice(0, MAX_ROOT_STATES);
-  store.byRootNodeId = Object.fromEntries(entries);
+  pruneLocalStorageEntries(store.byRootNodeId, MAX_ROOT_STATES, (entry) => entry.updatedAt);
 }
 
-function emptyStore(): PersistedOutlineViewStateStore {
-  return { version: STORE_VERSION, byRootNodeId: {} };
+function decodeOutlineRootState(value: unknown): PersistedOutlineRootState | null {
+  if (!isRecord(value)) return null;
+  return {
+    expandedNodeIds: stringArray(value.expandedNodeIds),
+    expandedHiddenFieldKeys: stringArray(value.expandedHiddenFieldKeys),
+    updatedAt: typeof value.updatedAt === 'number' && Number.isFinite(value.updatedAt)
+      ? value.updatedAt
+      : 0,
+  };
 }
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
     : [];
-}
-
-function localStorageOrNull(): Storage | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
 }

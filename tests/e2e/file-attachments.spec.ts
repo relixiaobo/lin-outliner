@@ -914,6 +914,7 @@ test.describe('file attachments', () => {
         markdownInset: markdownRect.left - frameRect.left >= 15,
         markdownPreservesSelection: markdown.hasAttribute('data-preserve-selection'),
         markdownSelectable: markdownStyle.userSelect === 'text',
+        markdownTextPreview: markdown.hasAttribute('data-preview-text'),
       };
     })).toEqual({
       codeFrameInset: true,
@@ -923,6 +924,7 @@ test.describe('file attachments', () => {
       markdownInset: true,
       markdownPreservesSelection: true,
       markdownSelectable: true,
+      markdownTextPreview: true,
     });
 
     const textPreview = await pasteClipboardFileAndOpenPreview(page, {
@@ -945,6 +947,7 @@ test.describe('file attachments', () => {
         codeFrameInset: codeFrameRect.left - frameRect.left >= 15,
         codeFramePreservesSelection: codeFrame.hasAttribute('data-preserve-selection'),
         codeFrameSelectable: codeFrameStyle.userSelect === 'text',
+        codeFrameTextPreview: codeFrame.hasAttribute('data-preview-text'),
         codeScrollbarGutter: Number.parseFloat(codeStyle.paddingBottom) >= 15,
         codeScrollInset: codeScrollRect.left - frameRect.left >= 15,
         codeScrollsHorizontally: codeScroll.scrollWidth > codeScroll.clientWidth,
@@ -953,6 +956,7 @@ test.describe('file attachments', () => {
       codeFrameInset: true,
       codeFramePreservesSelection: true,
       codeFrameSelectable: true,
+      codeFrameTextPreview: true,
       codeScrollbarGutter: true,
       codeScrollInset: true,
       codeScrollsHorizontally: true,
@@ -978,6 +982,7 @@ test.describe('file attachments', () => {
         tableFrameInset: tableFrameRect.left - frameRect.left >= 15,
         tableFramePreservesSelection: tableFrame.hasAttribute('data-preserve-selection'),
         tableFrameSelectable: tableFrameStyle.userSelect === 'text',
+        tableFrameTextPreview: tableFrame.hasAttribute('data-preview-text'),
         tableScrollbarGutter: Number.parseFloat(tableStyle.paddingBottom) >= 15,
         tableScrollInset: tableScrollRect.left - frameRect.left >= 15,
         tableScrollsHorizontally: tableScroll.scrollWidth > tableScroll.clientWidth,
@@ -986,6 +991,7 @@ test.describe('file attachments', () => {
       tableFrameInset: true,
       tableFramePreservesSelection: true,
       tableFrameSelectable: true,
+      tableFrameTextPreview: true,
       tableScrollbarGutter: true,
       tableScrollInset: true,
       tableScrollsHorizontally: true,

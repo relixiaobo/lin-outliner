@@ -108,6 +108,10 @@
   --focus-ring: rgb(var(--ink) / 0.45);
   --focus-ring-shadow: 0 0 0 2px rgb(var(--ink) / 0.22);
   --text-selection-bg: rgb(var(--ink) / 0.14); /* neutral ::selection */
+  /* PDF canvases render their own document pixels, so alpha-on-ink can disappear
+     over white pages in dark mode. Keep document text selection fixed-neutral and
+     separate from app selection/link/accent semantics. */
+  --document-selection-bg: rgba(0, 0, 0, 0.30);
   --drop-line: var(--focus-ring);               /* neutral drag insertion line */
 
   /* accent = brand rose, used SPARSELY (caret, brand marks, status badges) */

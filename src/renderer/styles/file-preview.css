@@ -303,7 +303,7 @@
 }
 
 .file-preview-pdf-text-layer ::selection {
-  background: color-mix(in srgb, var(--link) 55%, transparent);
+  background: var(--document-selection-bg);
 }
 
 .file-preview-pdf-text-layer br::selection {
@@ -383,6 +383,19 @@
   margin-top: 0;
 }
 
+.file-preview-unavailable-metadata {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3);
+}
+
+.file-preview-unavailable-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+}
+
 /* File-node body — the preview content with a single bottom-center floating pill,
    shared by loose previews and ingested file-node previews; the unified surface
    provides the horizontal inset. The body is the positioning context for the pill. */
@@ -416,7 +429,7 @@
   padding: var(--file-preview-frame-padding-block) var(--file-preview-frame-padding-inline);
 }
 
-.file-node-preview:has(> :is(.file-preview-markdown, .file-preview-code, .file-preview-table-wrap)) {
+.file-node-preview:has(> [data-preview-text]) {
   /* Text-like previews do not carry the natural paper margin that PDF canvases do,
      so give their content a roomier page-like inset inside the shared preview frame. */
   --file-preview-content-inset: var(--space-8);
@@ -607,6 +620,10 @@
   border-radius: var(--radius-sm);
   font-size: var(--font-content);
   line-height: var(--line-content);
+}
+
+.row.file-node-row:focus-within .file-node-row-main[data-keyboard-focus='true'] {
+  box-shadow: var(--focus-ring-shadow);
 }
 
 .file-node-row-labels {
