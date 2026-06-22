@@ -6,6 +6,7 @@ import { AgentDisclosureIndicator } from './AgentDisclosureIndicator';
 interface AgentToolCallDisclosureProps {
   attachments?: ReactNode;
   children: ReactNode;
+  disclosureId?: string;
   expanded: boolean;
   hasDetails: boolean;
   images: ReactNode;
@@ -19,6 +20,7 @@ interface AgentToolCallDisclosureProps {
 export function AgentToolCallDisclosure({
   attachments,
   children,
+  disclosureId,
   expanded,
   hasDetails,
   images,
@@ -34,6 +36,7 @@ export function AgentToolCallDisclosure({
         <ButtonControl
           aria-expanded={expanded}
           className="agent-tool-call-toggle"
+          data-agent-disclosure-id={disclosureId}
           disabled={!hasDetails}
           onClick={(event) => onToggle(event.currentTarget)}
         >

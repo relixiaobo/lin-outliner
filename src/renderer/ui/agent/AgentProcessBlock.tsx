@@ -22,18 +22,6 @@ import type { Messages } from '../../../core/i18n';
 
 export type { AgentExpandState } from './agentProcessTypes';
 
-// The latest reasoning item that has streamed any text — drives the live status
-// line during the thinking phase (before/between tool calls).
-function lastNonEmptyThinking(
-  thinkingBlocks: Extract<AgentTurnProcessItem, { type: 'reasoning' }>[],
-): string | null {
-  for (let i = thinkingBlocks.length - 1; i >= 0; i -= 1) {
-    const text = thinkingBlocks[i]!.text.trim();
-    if (text) return text;
-  }
-  return null;
-}
-
 function childRunMapFromToolItems(items: AgentTurnProcessItem[]): ReadonlyMap<string, AgentRenderChildRunEntity> | undefined {
   let map: Map<string, AgentRenderChildRunEntity> | undefined;
   for (const item of items) {
@@ -62,7 +50,6 @@ interface ProcessSummaryFacts {
   childRunsByToolCallId?: ReadonlyMap<string, AgentRenderChildRunEntity>;
   toolCallOutcomes: ReadonlyMap<string, AgentToolCallOutcome>;
   firstThinkingText: string | null;
-  lastThinkingText: string | null;
   thinkingCount: number;
   toolCalls: ToolCall[];
 }
@@ -86,7 +73,6 @@ function processSummaryFacts(items: AgentTurnProcessItem[]): ProcessSummaryFacts
     childRunsByToolCallId: childRunMapFromToolItems(items),
     toolCallOutcomes: toolCallOutcomeMap(items),
     firstThinkingText: firstLine(thinkingBlocks[0]?.text ?? ''),
-    lastThinkingText: lastNonEmptyThinking(thinkingBlocks),
     thinkingCount: thinkingBlocks.length,
     toolCalls,
   };
@@ -94,7 +80,6 @@ function processSummaryFacts(items: AgentTurnProcessItem[]): ProcessSummaryFacts
 
 export function summarizeProcess({
   firstThinkingText,
-  lastThinkingText,
   thinkingCount,
   pendingToolCallIds,
   results,
@@ -102,24 +87,20 @@ export function summarizeProcess({
   toolCallOutcomes,
   toolCalls,
   turnActive,
-  liveCollapsed,
   liveElapsedMs,
   turnFailedWithoutProse,
   surfaceResultlessProcess,
   workedForMs,
   process,
   toolCallLabels,
-  thinkingLabel,
 }: {
   firstThinkingText: string | null;
-  lastThinkingText: string | null;
   thinkingCount: number;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
   childRunsByToolCallId?: ReadonlyMap<string, AgentRenderChildRunEntity>;
   toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>;
   toolCalls: ToolCall[];
-  liveCollapsed: boolean;
   /** Live wall-clock since the run started, for the "Working for {t}" ticker; null when unknown. */
   liveElapsedMs: number | null;
   turnActive: boolean;
@@ -128,7 +109,6 @@ export function summarizeProcess({
   workedForMs: number | null;
   process: Messages['agent']['process'];
   toolCallLabels: Messages['agent']['toolCall'];
-  thinkingLabel: string;
 }): string {
   const toolCount = toolCalls.length;
   const toolStatus = (toolCall: ToolCall) => {
@@ -167,25 +147,15 @@ export function summarizeProcess({
   // the ticking clock — "Working for {t}" (≥1s) / bare "Working" (<1s, no number so it never
   // flickers a "0s"). It stays put when the body is expanded (the work shows in
   // the timeline below) and when it auto-collapses on answer start. Without a run
-  // clock (legacy entries) a collapsed live turn falls back to the running tool /
-  // latest thought; an expanded clock-less live turn falls through to the
-  // descriptive summary.
+  // clock, stay on bare "Working"; the expanded body already carries the detailed
+  // thought/tool timeline.
   if (turnActive) {
     if (liveElapsedMs !== null) {
       return liveElapsedMs >= 1000
         ? process.workingFor({ duration: formatRunDuration(liveElapsedMs) })
         : process.working;
     }
-    if (liveCollapsed) {
-      for (let i = toolCalls.length - 1; i >= 0; i -= 1) {
-        const toolCall = toolCalls[i]!;
-        const status = toolStatus(toolCall);
-        if (status === 'pending') return summarizeToolCall(toolCall, status, toolCallLabels);
-      }
-      if (lastThinkingText) return previewText(lastThinkingText, 80);
-      if (thinkingCount > 0) return thinkingLabel;
-      return process.working;
-    }
+    return process.working;
   }
 
   // Result-first resting state: a SEALED turn (not active) collapses to
@@ -307,6 +277,7 @@ export function AgentProcessBlock({
       <ButtonControl
         aria-expanded={expanded}
         className="agent-process-toggle"
+        data-agent-disclosure-id={id}
         data-agent-process-id={id}
         onClick={toggle}
       >
@@ -324,14 +295,12 @@ export function AgentProcessBlock({
             pendingToolCallIds,
             results,
             turnActive,
-            liveCollapsed,
             liveElapsedMs,
             turnFailedWithoutProse,
             surfaceResultlessProcess,
             workedForMs,
             process: t.agent.process,
             toolCallLabels: t.agent.toolCall,
-            thinkingLabel: t.agent.thinking.thinking,
           })}
         </span>
         {liveCollapsed ? (

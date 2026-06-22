@@ -920,6 +920,7 @@ export function AgentToolCallBlock({
   return (
     <AgentToolCallDisclosure
       attachments={fileOutput ? <ToolResultFileChip output={fileOutput} /> : null}
+      disclosureId={`tool:${toolCall.id}`}
       expanded={isExpanded}
       hasDetails={hasDetails}
       images={<ToolResultImages images={images} />}
