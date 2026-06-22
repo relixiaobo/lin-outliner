@@ -297,6 +297,16 @@ test.describe('agent settings window', () => {
     await expect(settings.getByText('Active', { exact: true })).toBeVisible();
     await expect(settings.getByText('Inactive', { exact: true })).toBeVisible();
 
+    const dreamControls = settings.getByRole('list', { name: 'Dream controls' });
+    await expect(dreamControls).toBeVisible();
+    await expect(dreamControls).toContainText('Run Dream now');
+    await dreamControls.getByRole('button', { name: 'Run' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_run_dream_now')?.args;
+    }).toMatchObject({ limit: 50 });
+    await expect(settings.getByText('Dream completed')).toBeVisible();
+
     await settings.getByRole('button', { name: 'Edit memory' }).click();
     const editor = settings.getByLabel('Memory fact');
     await expect(editor).toBeVisible();

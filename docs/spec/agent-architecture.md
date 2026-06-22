@@ -65,7 +65,7 @@ only in id scheme, writer, retention, and vocabulary.
 |---|---|---|---|
 | **Conversation** | `conversationId` | communication: user message + final assistant reply + membership | ~2 events/turn |
 | **Run** | `runId` (anchored to a conversation) | all execution: assistant deltas, `tool_call ↔ tool_result`, thinking, permission, ask/widget | 10–50+/turn, self-cleans |
-| **Memory** | timeline outline nodes (`#d-memory`, `#d-episode`, `#d-belief`) plus Dream watermark/run metadata side stores | user-editable durable memory nodes + runtime Dream progress | sub-linear |
+| **Memory** | timeline outline nodes (`#d-memory`, `#d-episode`, `#d-belief`, `#d-question`, `#d-guidance`) plus Dream watermark/run metadata side stores | user-editable durable memory nodes + runtime Dream progress | sub-linear |
 
 The legacy event-store memory projection remains a pre-release management store,
 but model-readable memory is now ordinary outline content on the timeline.
@@ -135,9 +135,12 @@ removed — memory is always one writable pool.
   facts to episodic evidence, bidirectionally (`MemoryEntry.sources[]` fact →
   episode, plus the episode→facts reverse lookup). It points, never copies,
   never holds content — gist is episodic content, not index.
-- **Processes:** consolidation (runtime-only Dream skill — offline replay of
-  visible conversation spans into `#d-episode` / `#d-belief` nodes with
-  `[[chat:...]]` provenance) · retrieval (foreground pull through
+- **Processes:** consolidation (runtime-only Dream skill — scheduled
+  at-most-once daily, plus user-triggered manual runs from Settings — replays
+  visible conversation spans into today's generated-headline `#d-memory`
+  container, optional `#d-episode` / `#d-belief` / `#d-question` /
+  `#d-guidance` nodes, and selective `[[chat:...]]` provenance after a
+  high-signal memory filter) · retrieval (foreground pull through
   `node_search` / `node_read`, plus `past_chats` for raw prior chat spans) ·
   forgetting/supersession as ordinary node edits.
 
@@ -149,12 +152,22 @@ Definitions + the memory tool surface: `agent-tool-design.md` § *Memory*.
 
 ## Dream (one consolidation process)
 
-There is **one Dream**: the scheduled `memory-dream` skill that reads visible
-conversation spans via `past_chats` and writes timeline memory nodes. Neva's own
-persona/habits are **authored**, never dreamed; skills are **authored**
-procedural memory, never dreamed. The former agent-self / run-log Dream,
-run-evidence harvesting, manual `/dream`, and the foreground `dream` tool are
-cut.
+There is **one Dream**: the runtime-only `memory-dream` skill that reads visible
+conversation spans via `past_chats`, gathers relevant outline context with
+`node_search` / `node_read`, and writes timeline memory nodes. Scheduled attempts
+are at most once per daily due; a user may also trigger a manual Dream from
+Settings, and that manual run is not blocked by the scheduled due gate. Each run
+applies the valuable-memory filter, reconciles prior `#d-*` memories as the
+current belief graph, then updates today's single `#d-memory` container, whose
+title is a generated daily memory headline. It may write `#d-question` for
+unresolved tension and `#d-guidance` for future handling, but these are optional
+ordinary tags, not required children. Manual consolidate-only Dream can reconcile
+prior Dream results and outline context without new chat spans, and Dream may
+edit, move, merge, or delete ordinary outline nodes when consolidation warrants
+it. Neva's own persona/habits are **authored**,
+never dreamed; skills are **authored** procedural memory, never dreamed. The
+former agent-self / run-log Dream, run-evidence harvesting, manual `/dream`, and
+the foreground `dream` tool are cut.
 
 **Dream/run surfacing is relocated.** Dream history lives in Settings → Agent
 "Memory & activity" panel (alongside memory inspect/correct/forget), fetched via
@@ -188,10 +201,10 @@ Worked classification:
   Dream-specific scheduler**: it is a special case of the shipped scheduled-routines
   machinery (timeline command nodes + `{type:'schedule'}` + anacron scheduler +
   at-most-once recovery + backoff + forward-only, **agent-barred** watermark +
-  unattended permission model; see `commands.md` § scheduled routines). *Lifting
-  Dream's policy into a skill is a **PM-ratified direction (#302, 2026-06-19), not yet
-  implemented** — Dream today is still runtime code (`agentDreamExtraction.ts`); #302's
-  PR2 lands the policy as a skill and the broader memory-as-timeline-nodes reversal.*
+  unattended permission model; see `commands.md` § scheduled routines). The
+  policy now lives in the private built-in `memory-dream` skill; runtime code
+  still owns triggering, evidence batching, watermarking, restricted tool access,
+  and reflective run metadata.
 - **Compaction — the boundary marker; NOT skill-able.** Compaction is *substrate
   Neva runs on* (context management that lets a long run continue), not a faculty
   it owns. A skill is itself an agent run, so implementing compaction as a skill
@@ -238,8 +251,8 @@ environment reminder is single-agent. The conversation noun
 | Channels-only conversations (no DM) | ✅ built | every conversation is single-agent + inline-streaming + steerable; one conversation list (no two sections / two "+" buttons), no nav-lock, "General" default landing; `canonicalDmAgentId` / `lin-agent-dm-` prefix / DM-vs-Channel branching removed |
 | Run→conversation anchor + per-conversation run index | ✅ built | `runs WHERE conversationId=X` is enumerable |
 | Delegation / child-run runtime (#164) | ✅ built | sub-agents spawned for a TASK (NOT peers/members); ordinary Runs with their own `runs/<runId>/` ledger, joined by `parentRunId`/`parentToolCallId`; surfaced in the conversation task panel (child-run tasks only) |
-| Timeline memory nodes | ✅ built | durable memory lives in `#d-memory`, `#d-episode`, and `#d-belief` outline nodes; foreground retrieval is pull-only through `node_search` / `node_read` |
-| One Dream (conversation-evidence) | ✅ built | scheduled `memory-dream` child run reads member conversations through `past_chats` and writes memory nodes; agent-self / run-log Dream, manual `/dream`, and foreground `dream` are cut |
+| Timeline memory nodes | ✅ built | durable memory lives in per-day generated-headline `#d-memory` plus optional `#d-episode`, `#d-belief`, `#d-question`, and `#d-guidance` outline nodes; foreground retrieval is pull-only through `node_search` / `node_read` |
+| One Dream (conversation + outline context) | ✅ built | scheduled at-most-once-daily and Settings-manual `memory-dream` child runs read member conversations through `past_chats` when sources exist, gather relevant prior memory/workspace context through `node_search` / `node_read`, may delete obsolete nodes with `node_delete`, and update today's memory nodes through the human-dream cycle; manual consolidate-only can reconcile outline/prior Dream context without new chat spans; agent-self / run-log Dream, manual `/dream`, and foreground `dream` are cut |
 | Chat source binding under compaction (#302) | ✅ built | `chat-source` inline refs encode `{stream, streamId, range}` raw sources over the ledgers; node writes validate the exact source before mutation |
 | Permission gate | ✅ built | ask / allow / deny over the hard A3 floor |
 
@@ -250,7 +263,10 @@ environment reminder is single-agent. The conversation noun
   (no elision) is what keeps timeline memory nodes legible without a resident
   `<memory>` briefing.
 - **Authored vs dreamed.** Neva's persona/habits and skills are authored and are
-  never produced by Dream; only conversation evidence is consolidated.
+  never produced by Dream. Dream consolidates runtime-provided conversation
+  evidence plus relevant user-authored outline context; prior Dream memories are
+  reconciled as current beliefs, tensions, and guidance, not treated as
+  independent facts.
 - **Principal stays dual-use.** `principalKey` / `AgentPrincipal` remain in the
   event store for conversation MEMBERSHIP (members are still `{user, Neva}`), even
   though MEMORY is now a single believer pool.

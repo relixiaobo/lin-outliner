@@ -1,5 +1,6 @@
 import { Schema } from 'prosemirror-model';
 import { basenameForPath } from '../../../core/referenceMarkup';
+import { inlineChatSourceDomChildren } from './inlineChatSourceIcon';
 import { inlineFileIconKind, inlineFileMentionDomChildren } from './inlineFileIcon';
 import { inlineFilePreviewAttrs } from './inlineFilePreviewData';
 
@@ -94,6 +95,9 @@ export const pmSchema = new Schema({
             name: displayName || basenameForPath(targetPath),
           });
           return ['span', attrs, ...inlineFileMentionDomChildren(iconKind, label)];
+        }
+        if (targetKind === 'chat-source') {
+          return ['span', attrs, ...inlineChatSourceDomChildren(label)];
         }
         return ['span', attrs, label];
       },

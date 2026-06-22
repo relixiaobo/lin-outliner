@@ -399,9 +399,11 @@ function AgentMessageDetailsPopover({
 
 function AgentUserCollapsibleContent({
   children,
+  highlighted = false,
   measureKey,
 }: {
   children: ReactNode;
+  highlighted?: boolean;
   measureKey: string;
 }) {
   const t = useT();
@@ -435,7 +437,7 @@ function AgentUserCollapsibleContent({
   const collapsed = canCollapse && !expanded;
 
   return (
-    <div className="agent-user-content-shell">
+    <div className={`agent-user-content-shell${highlighted ? ' is-highlighted' : ''}`}>
       <div
         ref={contentRef}
         className={collapsed ? 'agent-user-content-body is-collapsed' : 'agent-user-content-body'}
@@ -590,8 +592,8 @@ function AgentMessageRowComponent({
     const CopyStateIcon = copied ? CheckIcon : CopyIcon;
     if (editing && nodeId) {
       return (
-        <AgentMessageFrame highlighted={highlighted} messageId={nodeId} role="user">
-          <div className="agent-user-edit-card">
+        <AgentMessageFrame messageId={nodeId} role="user">
+          <div className={`agent-user-edit-card${highlighted ? ' is-highlighted' : ''}`}>
             <textarea
               autoFocus
               className="agent-user-edit-input"
@@ -627,10 +629,10 @@ function AgentMessageRowComponent({
       );
     }
     return (
-      <AgentMessageFrame highlighted={highlighted} messageId={nodeId} role="user" onContextMenu={handleContextMenu}>
+      <AgentMessageFrame messageId={nodeId} role="user" onContextMenu={handleContextMenu}>
         <div className="agent-user-content">
           {hasVisibleContent ? (
-            <AgentUserCollapsibleContent measureKey={contentMeasureKey}>
+            <AgentUserCollapsibleContent highlighted={highlighted} measureKey={contentMeasureKey}>
               {listedAttachments.length > 0 ? (
                 <div className="agent-user-file-list">
                   {listedAttachments.map((attachment, index) => (
@@ -740,7 +742,7 @@ function AgentMessageRowComponent({
   if (assistantBlocks.length === 0 && !hasError && !turnActive && !stopped) return null;
 
   return (
-    <AgentMessageFrame highlighted={highlighted} messageId={nodeId} role="assistant" onContextMenu={handleContextMenu}>
+    <AgentMessageFrame messageId={nodeId} role="assistant" onContextMenu={handleContextMenu}>
       {actorLabel ? (
         // Channel attribution header: avatar + speaker name on ONE line. The body
         // below spans the full row width (aligned to the avatar's left edge) rather
@@ -761,7 +763,7 @@ function AgentMessageRowComponent({
           </div>
         </div>
       ) : null}
-      <AgentAssistantContent>
+      <AgentAssistantContent highlighted={highlighted}>
         {hasError ? <AgentMessageError message={displayError} /> : null}
         {assistantBlocks}
         {stopped && !turnActive ? (

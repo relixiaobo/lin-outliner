@@ -1433,6 +1433,13 @@ function recordNodeToolChanges(
   isError: boolean,
 ): void {
   if (isError) return;
+  if (toolName === 'node_delete') {
+    const details = isPlainRecord(result) ? result.details : undefined;
+    if (!isToolEnvelope(details) || !details.ok || details.status === 'unchanged' || !isPlainRecord(details.data)) return;
+    appendUniqueNodeIds(changes, 'trashedNodeIds', stringArray(details.data.deletedNodeIds));
+    appendUniqueNodeIds(changes, 'updatedNodeIds', stringArray(details.data.restoredNodeIds));
+    return;
+  }
   if (toolName !== 'node_create' && toolName !== 'node_edit') return;
   const details = isPlainRecord(result) ? result.details : undefined;
   if (!isToolEnvelope(details) || !details.ok || details.status === 'unchanged' || !isPlainRecord(details.data)) return;

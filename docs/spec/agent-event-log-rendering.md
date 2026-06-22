@@ -509,12 +509,28 @@ ordinary timeline outline content; `dream.completed` projects the latest Dream
 watermark and audit summary. The summary's change counts are derived from the
 private child run's successful `node_create` / `node_edit` writes; a zero-write
 child completion does not record `dream.completed` and does not advance the
-watermark. There is **one** Dream — a scheduled
-`memory-dream` skill run that consolidates the user's member conversations into
-`#d-memory`, `#d-episode`, and `#d-belief` nodes. The former agent-self /
-run-log Dream is cut (no run-evidence harvesting, no per-agent self-model dream).
-The believer-anchored Dream run meta is indexed and added to the render task
-projection as a read-only Dream task.
+watermark. There is **one** Dream — a runtime-only `memory-dream` skill run that
+consolidates the user's member conversations into `#d-memory`, `#d-episode`,
+`#d-belief`, optional `#d-question`, and optional `#d-guidance` nodes. Scheduled
+Dream attempts are at-most-once per daily due
+occurrence: a failed attempt leaves the watermark unchanged but still prevents
+another scheduled attempt for that same due time. A user may still trigger a
+manual Dream from Settings; manual runs use the same child path and same-day
+memory node but bypass the scheduled due gate. Manual consolidate-only runs may
+have no new chat sources and can reconcile outline/prior Dream context directly.
+The child applies the valuable-memory filter, uses `node_search` / `node_read` to
+reconcile relevant prior `#d-*` memory and user-authored outline context,
+maintains one direct
+`#d-memory` container under today's journal node, and updates that container's
+generated daily memory headline in place instead of creating multiple same-day
+memory containers. The child may write optional `#d-question` nodes for unresolved
+tension and optional `#d-guidance` nodes for future handling, and may delete
+obsolete nodes through `node_delete`; an episode does not need all child tags.
+Prior Dream output is a belief graph to update, not self-confirming evidence. The
+former agent-self / run-log Dream is cut (no
+run-evidence harvesting, no per-agent self-model dream). The believer-anchored
+Dream run meta is indexed and added to the render task projection as a read-only
+Dream task.
 
 ## Message Model
 
@@ -700,13 +716,22 @@ are for — see `docs/plans/agent-file-artifact-model.md`.)
 
 `chat-source` inline references use the same chip renderer but navigate to agent
 history instead of files. A click on a `conversation` source opens the agent dock,
-selects that conversation, and scrolls/highlights the first visible transcript row
-with any projected message `sourceSeqs` entry inside the cited `(fromSeqExclusive,
-throughSeq]` range. A click on a `run` source opens the owning conversation and the
-matching child-run transcript panel when the run ledger can be resolved; if that
-run also has a visible parentless boundary row, the row is highlighted too. The
-renderer never guesses by timestamp or text content; `sourceSeqs` are projected
-from the replayed events that `past_chats` also exposes as source evidence.
+selects that conversation, and scrolls to the first visible transcript row with
+any projected message `sourceSeqs` entry inside the cited `(fromSeqExclusive,
+throughSeq]` range. The short flash highlight is scoped to the cited message's
+content body (for user turns, the user bubble), not the full transcript row. A
+click on a `run` source opens the owning conversation and the matching child-run
+transcript panel when the run ledger can be resolved; if that run also has a
+visible parentless boundary row, the row is highlighted too. The renderer never
+guesses by timestamp or text content; `sourceSeqs` are projected from the replayed
+events that `past_chats` also exposes as source evidence. The marker renders as a
+chat glyph plus the marker label, distinguishing it from node references (text
+only) and local-file references (file glyph plus filename). Runtime Dream provides
+a `chat_marker_template` with the target fixed and instructs the model to replace
+only the label with a natural sentence fragment when a visible citation is useful,
+so memory text reads continuously rather than surfacing bookkeeping labels such
+as `source-1`. Dream avoids mechanically citing every line; one episode-level
+reference may cover child nodes that rely on the same source.
 
 ## Conversation vs Runtime Transcript Projections
 
@@ -913,9 +938,10 @@ Rules:
 - Historical `dream.finished` events become dedicated Dream boundary rows keyed
   by their hidden anchor message, with status, processed counts, and
   memory-change counts in `entities.dreams`. Current runtime Dream runs do not
-  expose a manual slash-command boundary; durable Dream history is surfaced in
-  Settings → Agent "Memory & activity" via the `agent_list_dream_history` IPC;
-  `buildAgentTaskEntries` filters Dream TASK entities out of the
+  expose a manual slash-command boundary; users can trigger a manual run only
+  from Settings, and durable Dream history is surfaced in Settings → Agent
+  "Memory & activity" via the `agent_list_dream_history` IPC. `buildAgentTaskEntries`
+  filters Dream TASK entities out of the
   in-conversation task panel, which keeps only child-run
   tasks. `AgentRenderDreamTaskEntity.principal` remains a constant = the believer
   and no longer labels separate pools.

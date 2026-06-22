@@ -232,6 +232,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   const [loadingMemory, setLoadingMemory] = useState(false);
   const [dreamHistory, setDreamHistory] = useState<AgentRenderDreamTaskEntity[]>([]);
   const [loadingDreams, setLoadingDreams] = useState(false);
+  const [dreamRunBusy, setDreamRunBusy] = useState(false);
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [memoryDraftFact, setMemoryDraftFact] = useState('');
   const [memorySavingId, setMemorySavingId] = useState<string | null>(null);
@@ -777,6 +778,27 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     }
   }
 
+  async function runDreamNow() {
+    const requestId = beginRequest('mutation');
+    setDreamRunBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const [dreams, memories] = await Promise.all([
+        api.agentRunDreamNow({ limit: 50 }),
+        api.agentListMemory({ includeInvalidated: true, limit: 200 }),
+      ]);
+      if (!isCurrentRequest('mutation', requestId)) return;
+      setDreamHistory(dreams);
+      setMemoryEntries(memories);
+      setNotice(t.settings.memory.dreamRunNotice);
+    } catch (caught) {
+      if (isCurrentRequest('mutation', requestId)) setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      if (isCurrentRequest('mutation', requestId)) setDreamRunBusy(false);
+    }
+  }
+
   // Open the per-provider config in its OWN native window (a modal child of
   // settings — the macOS idiom), not an in-renderer overlay. Clicking a row or
   // "Configure…" asks the main process to open it; the window commits via IPC and
@@ -1181,6 +1203,19 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                     })}
                   </InsetGroup>
                 )}
+                <InsetGroup ariaLabel={t.settings.memory.dreamControlsAriaLabel} label={t.settings.memory.dreamControlsGroup}>
+                  <InsetRow
+                    label={t.settings.memory.dreamRunNowLabel}
+                    sublabel={t.settings.memory.dreamRunNowSublabel}
+                    trailing={(
+                      <Button disabled={dreamRunBusy} onClick={() => void runDreamNow()} size="sm" variant="secondary">
+                        {dreamRunBusy ? <LoaderIcon size={ICON_SIZE.menu} /> : <BrainIcon size={ICON_SIZE.menu} />}
+                        <span>{dreamRunBusy ? t.settings.memory.dreamRunNowBusy : t.settings.memory.dreamRunNowButton}</span>
+                      </Button>
+                    )}
+                    wrap
+                  />
+                </InsetGroup>
                 <DreamHistoryGroup
                   entries={dreamHistory}
                   formatDate={formatSettingsDate}

@@ -1005,9 +1005,9 @@ test.describe('agent process disclosure', () => {
     await expect.poll(() => page.locator('.agent-message-row').count()).toBeLessThan(80);
   });
 
-  test('opens and highlights a transcript row from a chat-source inline reference', async ({ page }) => {
+  test('opens and highlights the transcript message body from a chat-source inline reference', async ({ page }) => {
     const sourceMessage = {
-      role: 'assistant',
+      role: 'user',
       content: [{ type: 'text', text: 'This is the cited transcript source.' }],
       timestamp: 1_800_000_001_500,
     };
@@ -1070,10 +1070,13 @@ test.describe('agent process disclosure', () => {
 
     await rowEditor(page, ids.alpha).locator('[data-inline-ref-kind="chat-source"]').click();
 
-    const sourceRow = page.locator('[data-agent-message-id="source-message-e2e-tail"]');
+    const sourceRow = page.locator('[data-agent-message-id="source-message-e2e"]');
     const sourceShell = sourceRow.locator('xpath=ancestor::*[@data-agent-transcript-row]');
+    const sourceBody = sourceRow.locator('.agent-user-content-shell');
     await expect(sourceShell).toContainText('This is the cited transcript source.');
-    await expect(sourceShell).toHaveClass(/is-highlighted/);
+    await expect(sourceShell).not.toHaveClass(/is-highlighted/);
+    await expect(sourceRow).not.toHaveClass(/is-highlighted/);
+    await expect(sourceBody).toHaveClass(/is-highlighted/);
     await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'open');
   });
 

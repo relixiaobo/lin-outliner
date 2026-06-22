@@ -51,6 +51,28 @@ describe('outliner inlineReference toDOM', () => {
     expect(spec).toHaveLength(3);
     expect(spec[2]).toBe('Alpha');
   });
+
+  test('a chat-source reference prepends the shared chat icon, label in its own span', () => {
+    const spec = render({
+      targetKind: 'chat-source',
+      chatStream: 'conversation',
+      chatStreamId: 'general',
+      chatFromSeqExclusive: 1,
+      chatThroughSeq: 2,
+      displayName: 'when the user asked in Chinese',
+    });
+    const [, attrs, iconSpec, labelSpec] = spec as [
+      string,
+      Record<string, string>,
+      [string, Record<string, string>],
+      [string, Record<string, string>, string],
+    ];
+
+    expect(attrs['data-inline-ref-kind']).toBe('chat-source');
+    expect(iconSpec[1].class).toBe('inline-ref-chat-icon');
+    expect(labelSpec[1].class).toBe('inline-ref-chat-label');
+    expect(labelSpec[2]).toBe('when the user asked in Chinese');
+  });
 });
 
 describe('targetFromInlineReferenceElement', () => {

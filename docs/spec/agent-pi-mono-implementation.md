@@ -759,11 +759,18 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
 - `task_stop` for stopping background commands created by `bash`.
 - `node_search` / `node_read` for durable timeline memory nodes.
 - `past_chats` for visible prior conversation history and exact raw source spans.
-- Runtime-owned Dream runs are scheduled private `memory-dream` skill runs. They
-  read raw conversation spans since the Dream watermark, write `#d-*` memory
-  nodes with `[[chat:...]]` provenance, record `dream.completed`, and write a
-  reflective run meta entry. There is no `/dream` slash command and no
-  foreground `dream` tool.
+- Runtime-owned Dream runs are private `memory-dream` skill runs. Scheduled
+  Dream is at most once per daily due, and Settings can trigger a manual run that
+  uses the same same-day `#d-memory` container. They read raw conversation spans
+  since the Dream watermark when sources exist; manual consolidate-only runs can
+  reconcile outline/prior Dream context without new chat spans. They gather
+  relevant prior memory/workspace context via `node_search` / `node_read`, apply
+  the human-dream cycle and valuable-memory filter, write `#d-*` memory nodes
+  (`#d-episode`, `#d-belief`, optional `#d-question`, optional `#d-guidance`) with
+  selective `[[chat:...]]` provenance when citation improves auditability or
+  disambiguation, may delete obsolete nodes with `node_delete`, record
+  `dream.completed`, and write a reflective run meta entry. There is no `/dream`
+  slash command and no foreground `dream` tool.
 - `web_search` / `web_fetch` for web access.
 
 Do not use:

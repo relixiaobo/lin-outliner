@@ -1,8 +1,13 @@
 import { useMemo, type CSSProperties } from 'react';
-import { splitFileReferenceMarkers, splitNodeReferenceMarkers } from '../../../core/referenceMarkup';
+import { basenameForPath, splitFileReferenceMarkers, splitReferenceMarkers } from '../../../core/referenceMarkup';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
+import { requestRevealChatSource, type AgentChatSourceRevealTarget } from '../../agent/agentReveal';
 import { InlineFileReference } from '../editor/InlineFileReference';
+import {
+  INLINE_CHAT_SOURCE_ICON_CLASS,
+  INLINE_CHAT_SOURCE_LABEL_CLASS,
+} from '../editor/inlineChatSourceIcon';
 import { wantsNewPaneFromClick } from '../shared';
 import { inlineReferenceTextColor } from '../tags/tagColors';
 import { useT } from '../../i18n/I18nProvider';
@@ -54,7 +59,8 @@ export function AgentInlineReferenceText({
   text,
 }: AgentInlineReferenceTextProps) {
   const t = useT();
-  const segments = useMemo(() => splitNodeReferenceMarkers(text), [text]);
+  const segments = useMemo(() => splitReferenceMarkers(text), [text]);
+  const attachmentsByRef = useMemo(() => attachmentMapByRef(fileAttachments), [fileAttachments]);
 
   return (
     <>
@@ -73,14 +79,60 @@ export function AgentInlineReferenceText({
               );
             });
         }
-        const style = nodeReferenceStyle(segment.nodeId, index);
-        const label = nodeReferenceDisplayLabel(segment.label, segment.nodeId, index, t.agent.message.referencedNode);
-        const key = `${segment.raw}-${segment.nodeId}-${segmentIndex}`;
+
+        if (segment.target.kind === 'local-file') {
+          const ref = segment.label || basenameForPath(segment.target.path) || segment.target.path;
+          return (
+            <InlineFileReference
+              className="agent-message-inline-ref"
+              extraAttrs={{ 'data-agent-message-file-ref': ref }}
+              file={fileWithMarkerFallback(attachmentsByRef.get(ref), {
+                entryKind: segment.target.entryKind,
+                label: segment.label,
+                path: segment.target.path,
+                ref,
+              })}
+              key={`${segment.raw}-${segment.target.path}-${segmentIndex}`}
+            />
+          );
+        }
+
+        if (segment.target.kind === 'chat-source') {
+          const target = segment.target;
+          const label = segment.label || 'Referenced chat';
+          return (
+            <a
+              className="inline-ref agent-message-inline-ref"
+              data-inline-ref-kind="chat-source"
+              data-inline-ref-chat-stream={target.stream}
+              data-inline-ref-chat-stream-id={target.streamId}
+              data-inline-ref-chat-from-seq-exclusive={target.range.fromSeqExclusive}
+              data-inline-ref-chat-through-seq={target.range.throughSeq}
+              data-inline-ref-chat-through-event-id={target.range.throughEventId ?? undefined}
+              href={chatSourceReferenceHref(segment.raw)}
+              key={`${segment.raw}-${target.streamId}-${segmentIndex}`}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                void requestRevealChatSource(target);
+              }}
+            >
+              <span aria-hidden="true" className={INLINE_CHAT_SOURCE_ICON_CLASS} />
+              <span className={INLINE_CHAT_SOURCE_LABEL_CLASS}>{label}</span>
+            </a>
+          );
+        }
+
+        if (segment.target.kind !== 'node') return segment.raw;
+        const target = segment.target;
+        const style = nodeReferenceStyle(target.nodeId, index);
+        const label = nodeReferenceDisplayLabel(segment.label, target.nodeId, index, t.agent.message.referencedNode);
+        const key = `${segment.raw}-${target.nodeId}-${segmentIndex}`;
         if (!onNodeReferenceOpen) {
           return (
             <span
               className="inline-ref agent-message-inline-ref"
-              data-inline-ref={segment.nodeId}
+              data-inline-ref={target.nodeId}
               key={key}
               style={style}
               title={label}
@@ -92,13 +144,13 @@ export function AgentInlineReferenceText({
         return (
           <a
             className="inline-ref agent-message-inline-ref"
-            data-inline-ref={segment.nodeId}
-            href={nodeReferenceHref(segment.nodeId)}
+            data-inline-ref={target.nodeId}
+            href={nodeReferenceHref(target.nodeId)}
             key={key}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              onNodeReferenceOpen(segment.nodeId, nodeReferenceOpenOptionsFromClick(event));
+              onNodeReferenceOpen(target.nodeId, nodeReferenceOpenOptionsFromClick(event));
             }}
             style={style}
             title={label}
@@ -114,6 +166,13 @@ export function AgentInlineReferenceText({
 type FileReferenceTextSegment =
   | { type: 'text'; text: string }
   | { type: 'file'; file: AgentInlineFileReference };
+
+interface FileReferenceMarkerLike {
+  entryKind: 'file' | 'directory';
+  label: string;
+  path: string;
+  ref: string;
+}
 
 function splitFileReferenceMentions(
   text: string,
@@ -187,7 +246,7 @@ function attachmentMapByRef(
 
 function fileWithMarkerFallback(
   attachment: AgentInlineFileReference | undefined,
-  marker: Extract<ReturnType<typeof splitFileReferenceMarkers>[number], { type: 'file' }>,
+  marker: FileReferenceMarkerLike,
 ): AgentInlineFileReference {
   if (!attachment) return fallbackInlineFile(marker);
   return {
@@ -198,7 +257,7 @@ function fileWithMarkerFallback(
 }
 
 function fallbackInlineFile(
-  marker: Extract<ReturnType<typeof splitFileReferenceMarkers>[number], { type: 'file' }>,
+  marker: FileReferenceMarkerLike,
 ): AgentInlineFileReference {
   return {
     entryKind: marker.entryKind,
@@ -234,9 +293,29 @@ function mergeAdjacentTextSegments(segments: FileReferenceTextSegment[]): FileRe
 // an atomic `<button>` that orphans onto its own line. The markdown link
 // transform in AgentMarkdown emits the same scheme.
 export const NODE_REFERENCE_LINK_PREFIX = 'lin-node:';
+export const CHAT_SOURCE_REFERENCE_LINK_PREFIX = 'lin-chat-source:';
 
 export function nodeReferenceHref(nodeId: NodeId): string {
   return `#${NODE_REFERENCE_LINK_PREFIX}${encodeURIComponent(nodeId)}`;
+}
+
+export function chatSourceReferenceHref(rawMarker: string): string {
+  return `#${CHAT_SOURCE_REFERENCE_LINK_PREFIX}${encodeURIComponent(rawMarker)}`;
+}
+
+export function chatSourceFromReferenceHref(href: string | undefined): AgentChatSourceRevealTarget | null {
+  const normalizedHref = href?.startsWith('#') ? href.slice(1) : href;
+  if (!normalizedHref?.startsWith(CHAT_SOURCE_REFERENCE_LINK_PREFIX)) return null;
+  const encodedMarker = normalizedHref.slice(CHAT_SOURCE_REFERENCE_LINK_PREFIX.length);
+  let marker = '';
+  try {
+    marker = decodeURIComponent(encodedMarker);
+  } catch {
+    return null;
+  }
+  const segment = splitReferenceMarkers(marker).find((item) =>
+    item.type === 'reference' && item.target.kind === 'chat-source');
+  return segment?.type === 'reference' && segment.target.kind === 'chat-source' ? segment.target : null;
 }
 
 export function nodeReferenceStyle(nodeId: NodeId, index: DocumentIndex | undefined): CSSProperties | undefined {
