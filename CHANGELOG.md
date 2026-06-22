@@ -1867,6 +1867,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Internal
 
+- **agent turn render projection — extract message-flow semantics (PR #316, codex-2)** —
+  behavior-preserving refactor of the agent transcript renderer. A new pure `agentTurnProjection`
+  module (`projectAssistantTurn` → `AgentTurnProcessProjection`) sits between the
+  `AgentRenderProjection` message and the React components and owns the turn-level semantics that
+  used to live inside `AgentAssistantTurnContent`: the result-first process-vs-final partition, the
+  synthetic Working/Worked-for process item, default fold-state inputs, stable disclosure ids, and
+  tool-activity grouping boundaries. `AgentProcessBlock` now consumes one `process` object instead of
+  ~7 separate props, and the render-item union `AgentProcessSegmentBlock` (`kind: thinking|toolCall|
+  narration`) becomes `AgentTurnProcessItem` (`type: reasoning|toolCall|agentMessage`). No functional
+  or visual change — reasoning/tool detail rows are untouched; the partition heuristic (final answer =
+  trailing text after the last thinking/tool block) is preserved exactly, and disclosure ids are now
+  more stable across streaming (original content index vs the prior filtered index). **Gate (main):**
+  `/code-review xhigh` — zero correctness findings (every formula traced byte-equivalent to the deleted
+  inline version across line-by-line / removed-behavior / cross-file angles); three type-model cleanup
+  findings (dead `phase` and `sourceIndex` fields, duplicate final-message shape) fixed by the author
+  before merge. typecheck ✓ · `test:renderer` 597 pass / 0 fail · `docs:check` ✓. Design folded into
+  `docs/spec/agent-event-log-rendering.md`; plan archived to `docs/plans/archive/`.
 - **Composer model-control test: silence the act() warning (PR #298, main, fast-track)** — the
   `AgentComposerModelControl` test mounts the anchored-overlay flyout, which (lacking
   `requestAnimationFrame` under linkedom) deferred its reposition `setStyle` to a `setTimeout`

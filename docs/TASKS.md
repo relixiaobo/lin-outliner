@@ -458,6 +458,19 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **agent-turn-render-projection** (`codex-2/agent-turn-render-projection`, PR #316, codex-2, merged
+  2026-06-22) — behavior-preserving refactor that extracts the turn-level message-flow semantics out of
+  `AgentAssistantTurnContent` into a new pure `agentTurnProjection` module (`projectAssistantTurn`): the
+  result-first process/final partition, the synthetic Working/Worked-for process item, default fold-state
+  inputs, stable disclosure ids, and tool-activity grouping boundaries. `AgentProcessBlock` now takes one
+  `process: AgentTurnProcessProjection` object instead of ~7 props; the render-item union
+  `AgentProcessSegmentBlock` (`kind`) becomes `AgentTurnProcessItem` (`type`). No visual change to
+  reasoning/tool rows. **Gate (main):** `/code-review xhigh` — zero correctness findings across line-by-line,
+  removed-behavior, and cross-file angles (every formula traced byte-equivalent to the deleted version);
+  three type-model cleanup findings (dead `phase`/`sourceIndex`, duplicate message shape) fixed by the author
+  before merge. typecheck ✓ · test:renderer 597/0 · docs:check ✓. Design folded into
+  `docs/spec/agent-event-log-rendering.md`; plan archived.
+
 - **Dream consolidation + distinguishable inline references** (`codex/chat-source-highlight-layout-fix`,
   PR #315, codex, merged 2026-06-22) — Memory Dream becomes a runtime-only human-sleep-style consolidation
   skill (consolidates into `#d-memory`/`#d-episode`/`#d-belief` + optional `#d-question`/`#d-guidance`,

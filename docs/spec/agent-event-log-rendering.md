@@ -979,6 +979,12 @@ Rules:
   — the turn fold is the only collapse level above the activity groups. A turn with
   no thinking/tools is a direct answer and renders without a fold. This is one
   mechanism with no per-mode forks and no single-tool inline special case. The
+  turn partition (process vs final answer), the synthetic Working/Worked-for
+  process item, and the stable disclosure ids are computed by a pure
+  `agentTurnProjection` module (`projectAssistantTurn` → `AgentTurnProcessProjection`)
+  that sits between the `AgentRenderProjection` message and the React components,
+  so `AgentProcessBlock` / `AgentProcessTimeline` consume a ready projection
+  rather than re-deriving message-flow semantics. The
   timeline body has **no left rail or indent**: every row's leading icon column
   left-aligns with the divider text above it, so the pre-answer body reads as a
   flat list under the "Working / Worked for {t}" header, not an indented sub-tree
