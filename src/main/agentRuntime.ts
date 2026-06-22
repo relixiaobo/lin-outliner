@@ -3459,6 +3459,8 @@ export class AgentRuntime {
     if (
       trigger === 'schedule'
       && scheduleDecision.dueAt
+      // A scheduled due gets one unattended attempt. Failed/running attempts still
+      // count; the Settings manual Dream is the recovery path for that day.
       && await this.hasScheduledDreamAttemptForDue(principal, scheduleDecision.dueAt.getTime())
     ) return null;
 

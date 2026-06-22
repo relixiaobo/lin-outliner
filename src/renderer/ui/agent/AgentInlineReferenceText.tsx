@@ -2,15 +2,12 @@ import { useMemo, type CSSProperties } from 'react';
 import { basenameForPath, splitFileReferenceMarkers, splitReferenceMarkers } from '../../../core/referenceMarkup';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
-import { requestRevealChatSource, type AgentChatSourceRevealTarget } from '../../agent/agentReveal';
+import type { AgentChatSourceRevealTarget } from '../../agent/agentReveal';
 import { InlineFileReference } from '../editor/InlineFileReference';
-import {
-  INLINE_CHAT_SOURCE_ICON_CLASS,
-  INLINE_CHAT_SOURCE_LABEL_CLASS,
-} from '../editor/inlineChatSourceIcon';
 import { wantsNewPaneFromClick } from '../shared';
 import { inlineReferenceTextColor } from '../tags/tagColors';
 import { useT } from '../../i18n/I18nProvider';
+import { AgentChatSourceReference } from './AgentChatSourceReference';
 
 export interface AgentNodeReferenceOpenOptions {
   newPane?: boolean;
@@ -101,25 +98,12 @@ export function AgentInlineReferenceText({
           const target = segment.target;
           const label = segment.label || 'Referenced chat';
           return (
-            <a
-              className="inline-ref agent-message-inline-ref"
-              data-inline-ref-kind="chat-source"
-              data-inline-ref-chat-stream={target.stream}
-              data-inline-ref-chat-stream-id={target.streamId}
-              data-inline-ref-chat-from-seq-exclusive={target.range.fromSeqExclusive}
-              data-inline-ref-chat-through-seq={target.range.throughSeq}
-              data-inline-ref-chat-through-event-id={target.range.throughEventId ?? undefined}
+            <AgentChatSourceReference
               href={chatSourceReferenceHref(segment.raw)}
               key={`${segment.raw}-${target.streamId}-${segmentIndex}`}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                void requestRevealChatSource(target);
-              }}
-            >
-              <span aria-hidden="true" className={INLINE_CHAT_SOURCE_ICON_CLASS} />
-              <span className={INLINE_CHAT_SOURCE_LABEL_CLASS}>{label}</span>
-            </a>
+              label={label}
+              target={target}
+            />
           );
         }
 

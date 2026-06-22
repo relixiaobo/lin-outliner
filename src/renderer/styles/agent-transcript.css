@@ -52,6 +52,11 @@
   background: var(--fill-1);
 }
 
+.agent-chat-flow-row.is-highlighted:has(.agent-assistant-content.is-highlighted, .agent-user-content-shell.is-highlighted, .agent-user-edit-card.is-highlighted),
+.agent-chat-virtual-row.is-highlighted:has(.agent-assistant-content.is-highlighted, .agent-user-content-shell.is-highlighted, .agent-user-edit-card.is-highlighted) {
+  background: transparent;
+}
+
 .agent-empty-state {
   display: flex;
   min-height: 100%;
@@ -84,10 +89,6 @@
   gap: var(--space-3);
   border-radius: var(--radius-md);
   transition: background var(--motion-slow);
-}
-
-.agent-message-row.is-highlighted {
-  background: var(--fill-1);
 }
 
 .agent-message-row.user {

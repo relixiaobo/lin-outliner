@@ -1365,13 +1365,13 @@ export function AgentChatPanel({
               const item = virtualLayout.items[rowIndex];
               const previousRow = rowIndex > 0 ? conversationRows[rowIndex - 1] : undefined;
               const rowHighlighted = highlightedTranscriptRowKey === row.key;
-              const rowUsesMessageFrame = row.entry.kind === 'message' && !systemLineText(row.entry);
+              const renderedRow = renderConversationRow(row, rowHighlighted);
               const showTimeSeparator = previousRow
                 ? getEntryTimestamp(row.entry) - getEntryTimestamp(previousRow.entry) > MESSAGE_TIME_SEPARATOR_GAP_MS
                 : false;
               return (
                 <AgentTranscriptRowShell
-                  highlighted={rowHighlighted && !rowUsesMessageFrame}
+                  highlighted={rowHighlighted}
                   key={row.key}
                   onMeasure={measureConversationRow}
                   rowKey={row.key}
@@ -1385,7 +1385,7 @@ export function AgentChatPanel({
                       <span>{formatMessageTimeSeparator(getEntryTimestamp(row.entry), locale, t.agent.message.timeSeparatorToday)}</span>
                     </div>
                   ) : null}
-                  {renderConversationRow(row, rowHighlighted && rowUsesMessageFrame)}
+                  {renderedRow}
                 </AgentTranscriptRowShell>
               );
             })}

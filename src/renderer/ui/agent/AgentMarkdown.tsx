@@ -18,11 +18,6 @@ import type { DocumentIndex } from '../../state/document';
 import { CheckIcon, CopyIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { useT } from '../../i18n/I18nProvider';
-import { requestRevealChatSource } from '../../agent/agentReveal';
-import {
-  INLINE_CHAT_SOURCE_ICON_CLASS,
-  INLINE_CHAT_SOURCE_LABEL_CLASS,
-} from '../editor/inlineChatSourceIcon';
 import { highlightCode, plainCodeHtml } from '../editor/shikiHighlighter';
 import { InlineFileReference } from '../editor/InlineFileReference';
 import {
@@ -38,6 +33,7 @@ import {
   nodeReferenceStyle,
   type AgentNodeReferenceOpenHandler,
 } from './AgentInlineReferenceText';
+import { AgentChatSourceReference } from './AgentChatSourceReference';
 
 interface AgentMarkdownProps {
   index?: DocumentIndex;
@@ -220,24 +216,7 @@ function useMarkdownComponents(
       if (chatSource) {
         const label = reactNodeText(children) || 'Referenced chat';
         return (
-          <a
-            className="inline-ref agent-message-inline-ref"
-            data-inline-ref-kind="chat-source"
-            data-inline-ref-chat-stream={chatSource.stream}
-            data-inline-ref-chat-stream-id={chatSource.streamId}
-            data-inline-ref-chat-from-seq-exclusive={chatSource.range.fromSeqExclusive}
-            data-inline-ref-chat-through-seq={chatSource.range.throughSeq}
-            data-inline-ref-chat-through-event-id={chatSource.range.throughEventId ?? undefined}
-            href={href}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              void requestRevealChatSource(chatSource);
-            }}
-          >
-            <span aria-hidden="true" className={INLINE_CHAT_SOURCE_ICON_CLASS} />
-            <span className={INLINE_CHAT_SOURCE_LABEL_CLASS}>{label}</span>
-          </a>
+          <AgentChatSourceReference href={href ?? ''} label={label} target={chatSource} />
         );
       }
 
