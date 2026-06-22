@@ -455,6 +455,18 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ## Recently completed
 
+- **Dream consolidation + distinguishable inline references** (`codex/chat-source-highlight-layout-fix`,
+  PR #315, codex, merged 2026-06-22) — Memory Dream becomes a runtime-only human-sleep-style consolidation
+  skill (consolidates into `#d-memory`/`#d-episode`/`#d-belief` + optional `#d-question`/`#d-guidance`,
+  reconciles prior `#d-*` + outline context, one dated container with a generated headline, prior output is
+  a belief graph to update). At-most-once-per-daily-due scheduling + new manual `agent_run_dream_now`
+  command (Settings). **Dream granted unscoped `node_delete` — PM-authorized** (prompt-guarded, accepted
+  posture). Inline refs now distinguishable (chat glyph+label / file glyph+filename / node text-only);
+  chat-source jump highlights only the cited message body; rail preflows to avoid a layout jump. **Gate
+  (main):** author rebased onto current main (#312/#313/#314); typecheck ✓ · test:core 1045 · test:renderer
+  590 · e2e `agent-process`+`agent-settings` 49/0 · docs:check ✓ · spec coherence checked · visual light+dark.
+  No separate plan (extends shipped `agent-memory-on-timeline`; behavior folded into `docs/spec/*`).
+
 - **codex-message-flow-fidelity — 1:1 Codex transcript rebuild** (`message-flow-rebuild`, PR #312, merged
   2026-06-22) — raised the agent transcript to a 1:1 reproduction of the OpenAI Codex desktop client: a flat
   per-turn process timeline (no left rail/indent) under a persistent "Working / Worked for {t}" divider, with

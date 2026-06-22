@@ -12,6 +12,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Dream consolidation + distinguishable inline references (PR #315, codex)** — Memory Dream becomes a
+  runtime-only human-sleep-style consolidation skill: it consolidates member conversations into
+  `#d-memory` / `#d-episode` / `#d-belief` plus optional `#d-question` (unresolved tension) and
+  `#d-guidance` (future handling) nodes, reconciles prior `#d-*` memory and user-authored outline context
+  via `node_search`/`node_read`, maintains one dated `#d-memory` container with a generated headline, and
+  treats prior Dream output as a belief graph to update rather than self-confirming evidence. Scheduled
+  runs are at-most-once per daily due (a failed attempt still consumes the slot); a new
+  **`agent_run_dream_now`** command (Settings → Agent button) is the same-day recovery path and bypasses
+  the due gate. **Security:** Dream is granted the unscoped **`node_delete`** capability so it can prune
+  obsolete/forgotten/contradictory nodes — a deliberate **PM-authorized** product posture (the destructive
+  grant on an unattended skill is guarded by the skill prompt, not a capability scope). Inline references
+  are now visually distinguishable — chat-source = chat glyph + label, local-file = file glyph + filename,
+  node = text-only — and a chat-source jump highlights only the cited message content body (empty-body
+  fallback to the transcript row); the agent rail preflows before opening from a closed state to avoid a
+  layout jump. Extends the shipped `agent-memory-on-timeline` work. **Gate (main):** rebased onto current
+  `main` (#312/#313/#314) by the author; integration verified — typecheck ✓ · `test:core` 1045 ·
+  `test:renderer` 590 · e2e `agent-process` + `agent-settings` 49/0 · `docs:check` ✓ · spec coherence
+  checked · visual verification light+dark of the distinguishable refs. The earlier `/code-review xhigh`
+  findings were folded by the author (315-1 node_delete authorized; 315-5/6 fixed).
 - **Jump-to-source UI — `agent-memory-on-timeline` PR3 (PR #310, codex)** — the `[[chat:…]]` citations
   agent memory writes are now clickable navigation back into the transcript. Core projects a per-message
   **`sourceSeq` / `sourceSeqs[]`** (every event-log seq that represents a message as source evidence)
