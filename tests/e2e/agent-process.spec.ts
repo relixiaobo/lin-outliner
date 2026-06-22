@@ -446,13 +446,13 @@ test.describe('agent process disclosure', () => {
           type: 'toolCall',
           id: 'tool-read',
           name: 'node_read',
-          arguments: { nodeId: 'node-alpha' },
+          arguments: { node_id: 'node-alpha' },
         },
         {
           type: 'toolCall',
           id: 'tool-search',
           name: 'node_search',
-          arguments: { query: 'design system', limit: 10 },
+          arguments: { outline: 'design system', limit: 10 },
         },
         {
           type: 'text',
@@ -532,7 +532,7 @@ test.describe('agent process disclosure', () => {
     await expectSingleDisclosureSlot(searchTool, '.agent-tool-call-icon-slot', '.agent-tool-call-summary');
     await expect(page.locator('.agent-tool-call-section-title').filter({ hasText: 'Input' })).toBeVisible();
     await expect(page.locator('.agent-tool-call-section-title').filter({ hasText: 'Output' })).toBeVisible();
-    await expect(page.getByText('"query": "design system"')).toBeVisible();
+    await expect(page.getByText('"outline": "design system"')).toBeVisible();
     await expect(page.getByText('3 matches: Agent System')).toBeVisible();
   });
 
@@ -547,7 +547,7 @@ test.describe('agent process disclosure', () => {
       timestamp: 1_800_000_001_000,
       content: [
         { type: 'thinking', thinking: 'Plan the outline edits.' },
-        { type: 'toolCall', id: 'tool-read-dur', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+        { type: 'toolCall', id: 'tool-read-dur', name: 'node_read', arguments: { node_id: 'node-alpha' } },
         { type: 'text', text: 'Done — the outline is updated.' },
       ],
     };
@@ -599,7 +599,7 @@ test.describe('agent process disclosure', () => {
       timestamp: 1_800_000_001_050,
       content: [
         { type: 'thinking', thinking: 'Checking the selected outline node.' },
-        { type: 'toolCall', id: 'tool-read-live-collapsed', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+        { type: 'toolCall', id: 'tool-read-live-collapsed', name: 'node_read', arguments: { node_id: 'node-alpha' } },
         { type: 'text', text: 'The answer stays outside the process fold.' },
       ],
     };
@@ -669,7 +669,7 @@ test.describe('agent process disclosure', () => {
       timestamp: 1_800_000_001_100,
       content: [
         { type: 'thinking', thinking: 'Read the source node before answering.' },
-        { type: 'toolCall', id: 'tool-read-live', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+        { type: 'toolCall', id: 'tool-read-live', name: 'node_read', arguments: { node_id: 'node-alpha' } },
         { type: 'text', text: 'The final answer is now streaming below the process.' },
       ],
     };
@@ -800,7 +800,7 @@ test.describe('agent process disclosure', () => {
       timestamp: 1_800_000_002_000,
       content: [
         { type: 'text', text: 'Let me read the alpha node before answering.' },
-        { type: 'toolCall', id: 'tool-read-nofinal', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+        { type: 'toolCall', id: 'tool-read-nofinal', name: 'node_read', arguments: { node_id: 'node-alpha' } },
       ],
     };
 

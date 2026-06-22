@@ -336,6 +336,12 @@
   color: var(--danger);
 }
 
+/* A never-settled (declared-but-not-completed) step is neutral and dimmed — the
+   tool-type icon, no status ring, no danger color (gap doc §2 hollow/dim state). */
+.agent-tool-call.is-incomplete {
+  color: var(--text-faint);
+}
+
 /* Per-step status ring (Codex machine A, `progress-step-row`): a subtle
    success/danger ring around the check / ✕ glyph at rest. Status colors carry
    status meaning only (B4); the running spinner keeps the plain slot, and the

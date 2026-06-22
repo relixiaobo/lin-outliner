@@ -549,7 +549,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           stopReason: 'toolUse',
           content: [
             { type: 'thinking', thinking: 'Read the visible outline before summarizing.', redacted: false },
-            { type: 'toolCall', id: 'child-run-tool-read-1', name: 'node_read', arguments: { nodeId: 'today' } },
+            { type: 'toolCall', id: 'child-run-tool-read-1', name: 'node_read', arguments: { node_id: 'today' } },
           ],
         },
         {

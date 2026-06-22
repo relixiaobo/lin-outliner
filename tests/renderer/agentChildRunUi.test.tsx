@@ -93,7 +93,7 @@ describe('agent child run UI', () => {
           stopReason: 'toolUse',
           content: [
             { type: 'thinking', thinking: 'Find relevant node context.', redacted: false },
-            { type: 'toolCall', id: 'tool-read-1', name: 'node_read', arguments: { nodeId: 'today' } },
+            { type: 'toolCall', id: 'tool-read-1', name: 'node_read', arguments: { node_id: 'today' } },
           ],
         },
         {
@@ -225,7 +225,7 @@ describe('agent child run UI', () => {
                 stopReason: 'stop',
                 content: [
                   { type: 'thinking', thinking: 'Inspect the relevant node.', redacted: false },
-                  { type: 'toolCall', id: 'tool-read-duration', name: 'node_read', arguments: { nodeId: 'today' } },
+                  { type: 'toolCall', id: 'tool-read-duration', name: 'node_read', arguments: { node_id: 'today' } },
                   { type: 'text', text: 'The UI path is ready.' },
                 ],
               },
@@ -275,7 +275,7 @@ describe('agent child run UI', () => {
               stopReason: 'toolUse',
               content: [
                 { type: 'thinking', thinking: 'Inspect the relevant node.', redacted: false },
-                { type: 'toolCall', id: 'tool-read-failed', name: 'node_read', arguments: { nodeId: 'today' } },
+                { type: 'toolCall', id: 'tool-read-failed', name: 'node_read', arguments: { node_id: 'today' } },
               ],
             }],
           }),

@@ -34,11 +34,13 @@ function fileWriteToolCall(args: Record<string, unknown>): ToolCall {
 }
 
 describe('agent tool call block', () => {
-  test('marks only runtime-reported tool ids as pending while a turn is active', () => {
+  test('marks only runtime-reported tool ids as pending; a never-settled call is incomplete, not error', () => {
     expect(getToolCallStatus('tool-running', undefined, new Set(['tool-running']), true)).toBe('pending');
-    expect(getToolCallStatus('tool-stale', undefined, new Set(['tool-running']), false)).toBe('error');
+    // Not in the pending set and the turn is no longer bridging it: it never
+    // settled, but that is `incomplete` (neutral), not a failure.
+    expect(getToolCallStatus('tool-stale', undefined, new Set(['tool-running']), false)).toBe('incomplete');
     expect(getToolCallStatus('tool-finishing', undefined, new Set(), true)).toBe('pending');
-    expect(getToolCallStatus('tool-idle', undefined, new Set(), false)).toBe('error');
+    expect(getToolCallStatus('tool-idle', undefined, new Set(), false)).toBe('incomplete');
   });
 
   test('a settled outcome stops the spinner even with no result message', () => {

@@ -10,14 +10,14 @@ const readTool: ToolCall = {
   type: 'toolCall',
   id: 'tool-read',
   name: 'node_read',
-  arguments: { nodeId: 'node-alpha' },
+  arguments: { node_id: 'node-alpha' },
 };
 
 const searchTool: ToolCall = {
   type: 'toolCall',
   id: 'tool-search',
   name: 'node_search',
-  arguments: { query: 'design system' },
+  arguments: { outline: 'design system' },
 };
 
 const readResult: ToolResultMessage = {

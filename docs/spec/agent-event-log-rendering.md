@@ -960,7 +960,12 @@ Rules:
   already-streamed text. A tool-free live answer keeps its prose in the normal
   answer position (not inside process narration), so the same markdown subtree
   survives the live→sealed transition. A **user toggle is sticky** for that process
-  id and overrides the auto default through the live→sealed transition.
+  id and overrides the auto default through the live→sealed transition. The toggle
+  is **persisted per conversation** (`agentDisclosureStore`, a localStorage-backed
+  store keyed by conversationId → disclosure id — the renderer analog of Codex's
+  `collapsedTurnsById`), so an explicit expand/collapse survives reload, conversation
+  switch, and the row remount; absence of a stored choice means the auto default
+  applies. (A detached preview row with no conversationId keeps ephemeral state.)
   - A **resultless** turn (last visible block is a thought/tool — no trailing
     answer prose) drives two SEPARATE decisions, decoupled so a cleanly-completed
     turn never mislabels:
@@ -1055,11 +1060,15 @@ Rules:
   leads with a **status glyph, not the tool-type icon** — the row's verb already
   carries the type. Running shows the spinning ring; **done** a green check inside
   a subtle success ring (`--status-success` at /40 border, /15 fill); **failed** a
-  red ✕ inside a danger ring + red row text. The fourth Codex state — `pending`
-  (declared-but-not-started, a dim hollow ring) — is **deferred**: our projection
-  does not cheaply distinguish it from `running`, and we will not add core events
-  for an icon. The ring fades out with the status glyph when the disclosure chevron
-  reveals on hover.
+  red ✕ inside a danger ring + red row text. A red ✕ is reserved for a **confirmed
+  failure** (an error result or a failed outcome): a tool that simply never settled
+  — no result, no outcome, not running, turn over (e.g. the tail of an interrupted
+  batch) — is **`incomplete`**, a neutral/dimmed state that falls back to the
+  tool-type icon with no status ring, so a never-run step never reads as a failure.
+  Codex's other fourth state — `pending` (declared-but-not-*started*, a dim hollow
+  ring) — remains **deferred**: our projection does not cheaply distinguish it from
+  `running`, and we will not add core events for an icon. The ring fades out with the
+  status glyph when the disclosure chevron reveals on hover.
 - **Reasoning folds like a tool step; narration is body prose.** Inside the
   expanded turn (machine C) the three kinds of block render at three different
   weights, matching Codex's typed items — they are NOT one uniform body:

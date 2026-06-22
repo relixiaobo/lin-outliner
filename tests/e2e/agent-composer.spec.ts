@@ -1585,7 +1585,7 @@ test.describe('agent composer controls', () => {
           stopReason: 'toolUse',
           content: [
             { type: 'text', text: 'Review [[node:Alpha^node-alpha]] and [[node:^node-alpha]] before [[node:^node-missing]].' },
-            { type: 'toolCall', id: 'tool-ref-output', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+            { type: 'toolCall', id: 'tool-ref-output', name: 'node_read', arguments: { node_id: 'node-alpha' } },
           ],
         },
         branches: null,
@@ -1751,7 +1751,7 @@ test.describe('agent composer controls', () => {
             stopReason: 'stop',
             content: [
               { type: 'text', text: 'Previous assistant response before compact.' },
-              { type: 'toolCall', id: 'compact-archive-tool-1', name: 'node_read', arguments: { nodeId: 'node-alpha' } },
+              { type: 'toolCall', id: 'compact-archive-tool-1', name: 'node_read', arguments: { node_id: 'node-alpha' } },
             ],
           },
         },
@@ -1934,7 +1934,7 @@ test.describe('agent composer controls', () => {
         model: 'gpt-5.4',
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
         stopReason: 'toolUse',
-        content: [{ type: 'toolCall', id: 'tool-alpha', name: 'node_read', arguments: { nodeId: 'node-alpha' } }],
+        content: [{ type: 'toolCall', id: 'tool-alpha', name: 'node_read', arguments: { node_id: 'node-alpha' } }],
       },
       pendingToolCallIds: ['tool-alpha'],
       activityEntries: [
