@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | shipped single-agent-collapse #294 + agent-dock-ui #296; authored plans #302/#303 — both **ratified 2026-06-19 + merged**, now boarded (build unassigned) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318) |
@@ -31,85 +31,16 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-06-22).** Nothing actively building code; no open PRs. The **2026-06-16…06-19 wave
-shipped** (all in Recently completed): the single-agent collapse + one-Neva-invariant
-enforcement (#294 / #296 / #299 / #300), the web-search / web-fetch reliability pass
-(#288 / #290 / #292), coordinator working-group channel tools (#289), the channel-activity
-+ transcript-process UI unification (#284 / #291), the file-presentation and
-preview-interaction redesign (#285 / #295), native link blue (#293), and the code-block
-floating toolbar (#301). Two design-review plan PRs were **ratified by the PM
-(2026-06-19)** and boarded below: **#302** `agent-memory-on-timeline` (rebuild agent
-memory as ordinary timeline nodes + dream-as-an-editable-skill — a deliberate reversal of
-the just-shipped activation/briefing engine; **GO on the full direction, PR1 first**) and
-**#303** `node-search-access-ranking` (a recency/access-decay dimension for `node_search`
-— the generic ranking substrate #302's pull-only recall reuses; **GO**, since **revised +
-re-reviewed via #304** into two build-ready PRs — PR A personal-access + PR B
-reference-authority, the latter ratified 2026-06-19). Both plans landed on `main`
-(#302/#303/#304 merged). **#302 `agent-memory-on-timeline` fully shipped (2026-06-19)** — PR1
-`past_chats` re-provided (#305) + PR2 node-based agent memory (#308, chat-source refs + pull-only
-node memory + runtime-only `memory-dream` skill) + PR3 jump-to-source UI (#310, chat-source refs
-navigate to the transcript by projected `sourceSeq` range); plan archived.
-**#303 `node-search-access-ranking` fully shipped (2026-06-19)** — PR A personal-access (#307) +
-PR B reference-authority (#309); plan archived. Of the four
-disjoint lanes from the 2026-06-19 dispatch plan, **agent/outliner disclosure stability shipped
-(#306, codex-3)** — command-surface one-pager · dark-mode-contrast-pass · anthropic-auth-clarity
-remain open.
+**In flight (2026-06-22).** Nothing is actively building code; no open PRs — the last merge was
+file-preview polish + file-node mentions (#318). The agent subsystem portfolio is essentially
+complete (single-agent collapse + one-Neva invariant, the IM-native memory/channel spine, the
+2026-06-22 Codex-transcript wave), so the active build frontier is now the **command-surface /
+performance / UI-quality / files** lanes in the **Backlog** — start at *Top of queue*. The full
+shipped history is in **Recently completed**; small unclaimed follow-ups are collected under
+Backlog § *Deferred follow-ups & carried TODOs*.
 
-**The 2026-06-22 agent-transcript wave shipped** (full entries in Recently completed):
-**codex-message-flow-fidelity** (#312) — the 1:1 Codex desktop-client transcript rebuild (flat
-per-turn timeline, counted tool-activity groups, auto-collapse-on-answer + persistent worked-for
-divider, reasoning "Thought" gist, per-conversation sticky disclosure); **agent-context-slim-decouple**
-(#313) — tool-output slimming de-coupled from the canonical transcript via a separate
-`modelSlimmedContent`; **Dream consolidation + distinguishable inline references** (#315) — Memory Dream
-as a runtime-only consolidation skill (manual `agent_run_dream_now`, PM-authorized unscoped `node_delete`)
-+ chat/file/node refs visually distinguishable. #312/#313 plans archived (#315 extends shipped
-`agent-memory-on-timeline`, no separate plan). Earlier the same day: the parallel-tool-call rendering
-fix (#314) + the tool-call spinner-stuck fix.
-
-**The 2026-06-14/15 portfolio wave shipped** (all in Recently completed): the agent-permission
-redesign (#252 `decide(effect)` core + #266 folder-handoff / typed `file_convert`), unified
-prompt composition + Anthropic L0 cache breakpoints (#263), unified file preview (#262),
-connection-only providers + profile-owned model/effort (#267), bundled built-in skill resources
-(#269), the `default-#General-channel` (plan #265, feature shipped #278), remember-selected-
-conversation (#261), and the **Channel group-chat render set** (#240 result-first fold · #242
-atomic delivery · #243 avatar+name header · #244 Interrupted verdict · #245 colored identity
-avatars) + `[[file:]]` deliverable markers (#246) + DM child-run process fold (#247). **The agent
-subsystem portfolio is essentially complete;** the active build frontier now shifts to the
-command-surface / performance / UI-quality lanes in the Backlog.
-
-**Known-flaky core test (pre-existing, *not* a #217 regression; fast-track fix
-welcome):** `agentRuntimeSkillsIntegration.test.ts` › *"clears pending permission
-notices when the run stops"* times out on its 1000 ms `waitFor` under full-file
-load — fails ~2/3 on `main` (cdece24) and 3/3 on the #217 branch, yet passes 3/3
-in isolation, so it is a test-timing budget issue, not a product bug. Fix =
-raise that test's `waitFor` timeout (and/or trim per-test runtime setup).
-
-**Deferred follow-ups from #208** (non-blocking, surfaced by `/code-review high`;
-file as small fast-track items when a clone is free):
-
-- **F7** — `core.backlinks()` field-hosted-ref shape change (`sourceId` = owner
-  node, kind `field`) for the agent `get_backlinks` tool is uncovered by tests;
-  add a core test pinning the agent-projection shape.
-- **F8** — search `LINKS_TO` / `WITH_REFS` now exclude config/enum-role child
-  refs via the same allowlist; confirm intended and add a search test.
-- **F2** — case-fold length edge (İ/ß can change normalized length); CJK
-  unaffected, low priority.
-- **F11** — agent `backlinks()` rebuilds the full reference summary per call
-  (main-process, not a hot path); cache if it ever shows up.
-- **caseFold/`isMentionWord` dedup** — share one normalizer/word-boundary helper
-  with the search engine's `normalizeSearchText` / `WORD_RE` instead of two
-  copies.
-
-**Carried verification TODO** (merged, needs a one-time manual check):
-
-- `launcher-native-nspanel` (#171) — a one-time packaged `.dmg` eyeball (⌘Tab lists
-  Tenon · floats over another app's fullscreen · summon doesn't steal focus · dock
-  icon · light+dark).
-
-The earlier 2026-06-05…06-12 batches (agent-program M0–M3 spine #179/#200/#202/#212, the
-memory-theory realignment #183/#195/#199/#211, the pre-release architecture sweep, the per-clone
-feature lanes) are all merged and logged under **Recently completed**. The one explicitly
-**deferred** item is automatic associative retrieval (memory, data-gated — see Backlog § memory).
+The one explicitly **deferred** capability is automatic associative retrieval (memory, data-gated
+— Backlog § Agent capabilities); #302 then superseded it with pull-only recall.
 
 ## Backlog
 
@@ -120,11 +51,29 @@ has an entry here, and its status/priority live only here, never in the plan fil
 Items with no `docs/plans/*.md` file are marked *(no plan file)*. All owners are
 unassigned — future dev is not pre-committed to any clone.
 
-**Top of queue (build-ready):** `unified-command-surface` (P2, design ratified, retrieval dep
-shipped #111 — needs a dev-drafted build one-pager first) is the largest remaining product item.
-Alongside it: **performance P3** (localized O(N) cleanups, fast-track each), the **UI-quality
-Layer-3 remainder** (`icon-semantics` · `dark-mode-contrast-pass` — `keyboard-a11y` shipped #273),
-and **`agent-skills-authoring` diff/preview** (its NL save-as-skill routing shipped #271).
+**Top of queue (2026-06-22 re-prioritization).** The agent portfolio is done, so the frontier is
+product surface + polish. Ranked candidates, tagged by build-readiness:
+
+1. **`unified-command-surface`** (P2, *needs a dev one-pager first*) — the largest remaining product
+   item; design ratified (D1–D8), retrieval dep shipped (#111). Next step is a dev-drafted build
+   one-pager (phases / file-scope / tests) → PM ratify → build. Start here for impact.
+2. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups (residual
+   `new Map(prev.byId)` + `nextRevisions` whole-map rebuild), each a small standalone PR; no design gate.
+3. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
+   `dark-mode-contrast-pass` (runs **last**, cross-cutting light+dark pass). `keyboard-a11y` shipped #273.
+4. **`focus-and-selection-polish`** (P2, build-ready, fast-track) — one renderer-only PR, four small
+   ratified behaviors (diagnosis is the contract; rebase on current `main`).
+5. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
+   API-key/Claude-Pro control); presentation-only, light/dark gate.
+6. **`agent-skills-authoring` diff/preview** (P1 tail) — the remaining creative-UX; NL save-as-skill
+   routing already shipped (#271).
+7. **`file-preview` PR3** (P2) — media streaming / Office / URL reader; next slice of a shipping plan,
+   retires the `media-types` whole-file-read limit.
+
+**Needs design / escalation before build** (not in the queue yet): `third-party-skill-import` (write
+the plan first), `launcher-provider-expansion`, the directional agent tails
+(`agent-self-modification` · `agent-generative-ui` · `agent-import-skill` — escalate the capability
+boundary), and `browser-extension-integration` (record-only, **not approved to build**).
 
 The **agent program** (`agent-program`, `meta`) is PM-ratified and its whole arc — foundation
 through the multi-agent spine, **M0 → M3** — has fully landed (M0/M0.5 foundation · M1
@@ -455,6 +404,28 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   outliner-row focus must go through the focusRequest rail (IME composition guard,
   #176 family) — direct `element.focus()` is for non-editor chrome only. Renderer-only;
   no collision with #179/#180.
+
+### Deferred follow-ups & carried TODOs
+
+Small unclaimed items split off from shipped PRs — fast-track each when a clone is free; none block
+anything.
+
+- **#208 review follow-ups** (P3, *fast-track, no plan file*) — non-blocking items surfaced by
+  `/code-review high` on #208: **F7** add a core test pinning the agent `get_backlinks` projection
+  shape (`core.backlinks()` field-hosted-ref: `sourceId` = owner node, kind `field`); **F8** confirm +
+  test that search `LINKS_TO` / `WITH_REFS` excludes config/enum-role child refs via the shared
+  allowlist; **F2** case-fold length edge (İ/ß can change normalized length; CJK unaffected, low);
+  **F11** agent `backlinks()` rebuilds the full reference summary per call (main-process, not hot — cache
+  only if it shows up); **caseFold/`isMentionWord` dedup** — share one normalizer/word-boundary helper
+  with the search engine's `normalizeSearchText` / `WORD_RE` instead of two copies.
+- **flaky-skills-integration-test** (P3, *fast-track, no plan file*) — `agentRuntimeSkillsIntegration.test.ts`
+  › *"clears pending permission notices when the run stops"* times out on its 1000 ms `waitFor` under
+  full-file load (fails ~2/3 on `main`, 3/3 on the old #217 branch, passes 3/3 in isolation) — a
+  test-timing budget issue, not a product bug. Fix = raise that test's `waitFor` (and/or trim per-test
+  setup). See `[[core-test-subset-ordering-artifact]]` for the real baseline.
+- **launcher-native-nspanel dmg eyeball** (carried verification, *no plan file*) — #171 merged; needs a
+  one-time packaged `.dmg` manual check (⌘Tab lists Tenon · floats over another app's fullscreen · summon
+  doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
 
@@ -2576,7 +2547,7 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   geometry was identical to a populated field all along; the "looks weird" was pure empty-state UX.
   `definitionOutlinerPlaceholder()` mirrors the label fn and threads via NodePanel → OutlinerView/FlatView
   to the root trailing draft only; reuses the existing `.row-editor.is-empty::before` mechanism. The
-  dedicated-option-type modelling question was shelved (`docs/plans/definition-child-content-modeling.md`).
+  dedicated-option-type modelling question was shelved (`docs/plans/archive/definition-child-content-modeling.md`).
   Gate: typecheck + `test:renderer` 353/0 + `definition-config.spec.ts` 3/3 + i18n 832/832 + light/dark
   visual; cross-PR merge with #132's i18n verified conflict-free.
 
