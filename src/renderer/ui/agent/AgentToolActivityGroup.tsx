@@ -6,10 +6,9 @@ import { useT } from '../../i18n/I18nProvider';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { isToolCallRowActive } from './AgentProcessTimeline';
 import { AgentToolCallBlock, getToolCallStatus } from './AgentToolCallBlock';
-import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
+import type { AgentExpandState } from './agentProcessTypes';
 import { summarizeToolActivity } from './agentRenderGroups';
-
-type ToolCallBlock = Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }>;
+import type { AgentTurnToolCallItem } from './agentTurnProjection';
 
 interface AgentToolActivityGroupProps {
   conversationId?: string | null;
@@ -17,7 +16,7 @@ interface AgentToolActivityGroupProps {
   turnActive: boolean;
   id: string;
   index: DocumentIndex;
-  members: ToolCallBlock[];
+  members: AgentTurnToolCallItem[];
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onOpenChildRunTranscript?: (childRunId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
@@ -79,7 +78,7 @@ export function AgentToolActivityGroup({
             <AgentToolCallBlock
               expanded={expandState.isExpanded(`tool:${member.toolCall.id}`, false)}
               index={index}
-              key={`tool-${member.toolCall.id}`}
+              key={member.id}
               onToggle={(anchorElement) => {
                 const toolId = `tool:${member.toolCall.id}`;
                 expandState.toggle(toolId, expandState.isExpanded(toolId, false), anchorElement);

@@ -6,11 +6,10 @@ import type { DocumentIndex } from '../../state/document';
 import {
   AgentProcessBlock,
   type AgentExpandState,
-  type AgentProcessSegmentBlock,
 } from './AgentProcessBlock';
 import { AgentMarkdown } from './AgentMarkdown';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
-import { looksLikeRawAgentErrorPayload } from './agentErrorParse';
+import { projectAssistantTurn } from './agentTurnProjection';
 
 export function renderAssistantBlocks(
   message: AssistantMessage,
@@ -32,103 +31,20 @@ export function renderAssistantBlocks(
   toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>,
 ) {
   const rendered: ReactNode[] = [];
-  const isError = !!message.errorMessage && message.stopReason !== 'aborted';
-  const visibleBlocks = message.content.filter((block) => {
-    if (block.type === 'thinking') {
-      return !block.redacted && (block.thinking.trim().length > 0 || streaming);
-    }
-    if (block.type === 'text') {
-      if (isError && looksLikeRawAgentErrorPayload(block.text)) return false;
-      return block.text.trim().length > 0 || streaming;
-    }
-    // A child-run-spawn tool call: in a Channel the run surfaces as its
-    // own inline transcript boundary (AgentChildRunBoundary) right after this turn,
-    // so drop its tool-call block here to avoid showing it twice. In a DM the run
-    // folds into THIS turn's process instead — the tool-call row renders the
-    // child-run summary + result inline, turn-anchored so an edit removes it — so it
-    // stays. The projection's insertChildRunRows skips the DM boundary in lockstep.
-    if (block.type === 'toolCall' && isChannel && childRunsByParentToolCallId?.has(block.id)) return false;
-    return true;
+  const turn = projectAssistantTurn({
+    childRunsByParentToolCallId,
+    contentKey,
+    isChannel,
+    message,
+    runStartedAtMs,
+    streaming,
+    toolCallOutcomes,
+    turnActive,
+    turnInterrupted,
+    workedForMs,
   });
-  // Result-first turn: the final answer is the trailing text after the last
-  // thinking/toolCall block. Everything before it — thinking, tool calls, AND
-  // interim narration text — folds into ONE process disclosure; the trailing
-  // text renders as the visible answer. A turn with no thinking/tools is a
-  // direct answer and renders without a fold.
-  let lastProcessIndex = -1;
-  for (let i = visibleBlocks.length - 1; i >= 0; i -= 1) {
-    const candidate = visibleBlocks[i]!;
-    if (candidate.type === 'thinking' || candidate.type === 'toolCall') {
-      lastProcessIndex = i;
-      break;
-    }
-  }
-  // The trailing answer prose, after the last process block. `finalIsProse`
-  // identifies the result-first split: WITH trailing prose the process can rest
-  // behind the answer; WITHOUT it the turn produced no result. The process does
-  // not enter that resting state until the turn is no longer active, so DM final
-  // prose can stream below the still-expanded process, then collapse on settle
-  // (Codex-style).
-  //
-  // Two SEPARATE concerns, both keyed off this — decoupled so a Channel never
-  // mislabels:
-  //  • `turnFailedWithoutProse` (the alarming RED "Interrupted" label + error
-  //    styling) fires ONLY when the run actually failed/was cancelled/crashed
-  //    (`turnInterrupted`, derived in core from the run's REAL status — never from
-  //    block structure). A cleanly `completed` resultless turn is NEVER red.
-  //  • `surfaceResultlessProcess` (auto-expand the process so its interim work
-  //    isn't buried) fires for a genuine interruption in EITHER mode, AND — per
-  //    the #240 result-first design — for a sealed resultless **DM** turn, where
-  //    the user watched it 1:1. A Channel delivers atomically (its process lives
-  //    in the activity detail view, not inline), so a cleanly-completed resultless
-  //    Channel turn folds to "Worked for …" instead of dumping its process inline.
-  // (The old `turnEnded && !finalIsProse` conflated these: because a Channel turn
-  // is always `turnPhase: idle`, it fired on every result-less turn regardless of
-  // outcome — the recurring Channel mislabel.)
-  const finalBlocks = visibleBlocks.slice(lastProcessIndex + 1);
-  const finalProseBlocks = finalBlocks.filter(
-    (block): block is Extract<(typeof visibleBlocks)[number], { type: 'text' }> => block.type === 'text',
-  );
-  const finalIsProse = finalProseBlocks.some((block) => block.text.trim().length > 0);
-  const processSettled = finalIsProse && !turnActive;
-  // An interruption is a property of a SETTLED turn. `turnInterrupted` is derived
-  // per-message from one run's status, but a turn is active (`turnActive`) when the
-  // CONVERSATION has a live run — so a failed/cancelled run still on the path while
-  // a newer run is already recovering it (retry / reactive-compaction) would
-  // otherwise paint the live, working turn RED ("Interrupted after thinking") even
-  // as its stop button and streaming process are on screen. A turn that is still
-  // running is never interrupted: gate the verdict on `!turnActive`.
-  const turnInterruptedAndSettled = turnInterrupted && !turnActive;
-  const turnFailedWithoutProse = turnInterruptedAndSettled && !finalIsProse;
-  const surfaceResultlessProcess = !finalIsProse && (turnInterruptedAndSettled || (!isChannel && !turnActive));
 
-  if (lastProcessIndex >= 0 || turnActive) {
-    const processEntryEnd = Math.max(0, lastProcessIndex + 1);
-    const segmentId = `process:${contentKey}`;
-
-    const segmentFromBlock = (
-      candidate: (typeof visibleBlocks)[number],
-      sourceIndex: number,
-    ): AgentProcessSegmentBlock => {
-      const hasLater = sourceIndex < visibleBlocks.length - 1;
-      if (candidate.type === 'thinking') {
-        return { kind: 'thinking', sourceIndex, streaming: streaming && !hasLater, text: candidate.thinking };
-      }
-      if (candidate.type === 'toolCall') {
-        return {
-          kind: 'toolCall',
-          childRun: childRunsByParentToolCallId?.get(candidate.id),
-          toolCall: candidate,
-          outcome: toolCallOutcomes?.get(candidate.id),
-        };
-      }
-      return { kind: 'narration', sourceIndex, streaming: streaming && !hasLater, text: candidate.text };
-    };
-
-    const turnSegmentBlocks: AgentProcessSegmentBlock[] = visibleBlocks
-      .slice(0, processEntryEnd)
-      .map((block, sourceIndex) => segmentFromBlock(block, sourceIndex));
-
+  if (turn.process) {
     // ONE turn-level process fold (Codex machine C). It renders the whole
     // pre-answer body — reasoning, interim narration, and the grouped
     // tool-activity — through AgentProcessTimeline (the inner per-group collapse
@@ -138,39 +54,31 @@ export function renderAssistantBlocks(
     // answer streaming below.
     rendered.push(
       <AgentProcessBlock
-        answerStarted={finalIsProse}
-        blocks={turnSegmentBlocks}
         childRunsByParentToolCallId={childRunsByParentToolCallId}
         conversationId={conversationId}
         expandState={expandState}
-        id={segmentId}
         index={documentIndex}
-        key={segmentId}
-        liveStartedAtMs={runStartedAtMs}
+        key={turn.process.id}
         onNodeReferenceOpen={onNodeReferenceOpen}
         onOpenChildRunTranscript={onOpenChildRunTranscript}
         pendingToolCallIds={pendingToolCallIds}
+        process={turn.process}
         results={toolResults}
-        sealed={processSettled}
-        surfaceResultlessProcess={surfaceResultlessProcess}
         turnActive={turnActive}
-        turnFailedWithoutProse={turnFailedWithoutProse}
-        workedForMs={workedForMs}
       />,
     );
   }
 
-  // Trailing answer prose. `finalProseBlocks` is already narrowed to text — the
-  // last process block is the fold boundary, so no thinking/tool survives past it.
-  finalProseBlocks.forEach((block, i) => {
-    const hasLaterText = finalProseBlocks.slice(i + 1).some((candidate) => candidate.text.trim().length > 0);
+  // Trailing answer prose. The projection owns the result-first split; rendering
+  // here is just the final assistant-message items.
+  turn.finalMessages.forEach((block, i) => {
     rendered.push(
       <AgentMarkdown
         index={documentIndex}
         key={`text-${i}`}
-        keyPrefix={`${contentKey}-text-${i}`}
+        keyPrefix={block.id}
         onNodeReferenceOpen={onNodeReferenceOpen}
-        streaming={streaming && !hasLaterText}
+        streaming={block.streaming}
         text={block.text}
       />,
     );

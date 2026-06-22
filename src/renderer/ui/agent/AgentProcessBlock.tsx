@@ -14,17 +14,18 @@ import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentProcessTimeline, isToolCallRowActive } from './AgentProcessTimeline';
 import { childRunToolStatus, getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
 import { sentenceFragment, summarizeToolActivity } from './agentRenderGroups';
-import type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
+import type { AgentExpandState } from './agentProcessTypes';
 import { firstLine, formatRunDuration, previewText } from './agentProcessTypes';
+import type { AgentTurnProcessItem, AgentTurnProcessProjection, AgentTurnToolCallItem } from './agentTurnProjection';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
 
-export type { AgentExpandState, AgentProcessSegmentBlock } from './agentProcessTypes';
+export type { AgentExpandState } from './agentProcessTypes';
 
-// The latest thinking block that has streamed any text — drives the live status
+// The latest reasoning item that has streamed any text — drives the live status
 // line during the thinking phase (before/between tool calls).
 function lastNonEmptyThinking(
-  thinkingBlocks: Extract<AgentProcessSegmentBlock, { kind: 'thinking' }>[],
+  thinkingBlocks: Extract<AgentTurnProcessItem, { type: 'reasoning' }>[],
 ): string | null {
   for (let i = thinkingBlocks.length - 1; i >= 0; i -= 1) {
     const text = thinkingBlocks[i]!.text.trim();
@@ -33,51 +34,28 @@ function lastNonEmptyThinking(
   return null;
 }
 
-function childRunMapFromToolSegments(blocks: AgentProcessSegmentBlock[]): ReadonlyMap<string, AgentRenderChildRunEntity> | undefined {
+function childRunMapFromToolItems(items: AgentTurnProcessItem[]): ReadonlyMap<string, AgentRenderChildRunEntity> | undefined {
   let map: Map<string, AgentRenderChildRunEntity> | undefined;
-  for (const block of blocks) {
-    if (block.kind === 'toolCall' && block.childRun) {
+  for (const item of items) {
+    if (item.type === 'toolCall' && item.childRun) {
       map ??= new Map<string, AgentRenderChildRunEntity>();
-      map.set(block.toolCall.id, block.childRun);
+      map.set(item.toolCall.id, item.childRun);
     }
   }
   return map;
 }
 
 interface AgentProcessBlockProps {
-  blocks: AgentProcessSegmentBlock[];
   expandState: AgentExpandState;
-  id: string;
   index: DocumentIndex;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onOpenChildRunTranscript?: (childRunId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
+  process: AgentTurnProcessProjection;
   results: Map<string, AgentToolResultWithPayloads>;
-  sealed: boolean;
   conversationId?: string | null;
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   turnActive: boolean;
-  /** Run actually failed/cancelled/crashed with no result → RED "Interrupted" label + error styling. */
-  turnFailedWithoutProse: boolean;
-  /**
-   * Show this resultless turn's process expanded (and skip the "Worked for …"
-   * resting header) so its interim work isn't buried. True for a genuine
-   * interruption in either mode, and — per the #240 result-first design — for a
-   * sealed resultless DM turn. A cleanly-completed resultless Channel turn is
-   * false here: it folds to "Worked for …" (atomic delivery, no inline process).
-   */
-  surfaceResultlessProcess: boolean;
-  /** Wall-clock the run took; surfaced as "Worked for …" once sealed. Null when unknown. */
-  workedForMs: number | null;
-  /**
-   * The final answer has started streaming. Drives Codex's auto-collapse: the
-   * body shows expanded while still WORKING (no answer yet) and folds to the
-   * "Worked for {t}" divider the moment the answer begins. A user toggle (sticky
-   * via expandState) overrides.
-   */
-  answerStarted: boolean;
-  /** Producing run's start, for the live "Working for {t}" ticker; null unless running. */
-  liveStartedAtMs: number | null;
 }
 
 interface ProcessSummaryFacts {
@@ -89,24 +67,24 @@ interface ProcessSummaryFacts {
   toolCalls: ToolCall[];
 }
 
-function toolCallOutcomeMap(blocks: AgentProcessSegmentBlock[]): ReadonlyMap<string, AgentToolCallOutcome> {
+function toolCallOutcomeMap(items: AgentTurnProcessItem[]): ReadonlyMap<string, AgentToolCallOutcome> {
   const map = new Map<string, AgentToolCallOutcome>();
-  for (const block of blocks) {
-    if (block.kind === 'toolCall' && block.outcome) map.set(block.toolCall.id, block.outcome);
+  for (const item of items) {
+    if (item.type === 'toolCall' && item.outcome) map.set(item.toolCall.id, item.outcome);
   }
   return map;
 }
 
-function processSummaryFacts(blocks: AgentProcessSegmentBlock[]): ProcessSummaryFacts {
-  const thinkingBlocks = blocks.filter(
-    (block): block is Extract<AgentProcessSegmentBlock, { kind: 'thinking' }> => block.kind === 'thinking',
+function processSummaryFacts(items: AgentTurnProcessItem[]): ProcessSummaryFacts {
+  const thinkingBlocks = items.filter(
+    (item): item is Extract<AgentTurnProcessItem, { type: 'reasoning' }> => item.type === 'reasoning',
   );
-  const toolCalls = blocks
-    .filter((block): block is Extract<AgentProcessSegmentBlock, { kind: 'toolCall' }> => block.kind === 'toolCall')
-    .map((block) => block.toolCall);
+  const toolCalls = items
+    .filter((item): item is AgentTurnToolCallItem => item.type === 'toolCall')
+    .map((item) => item.toolCall);
   return {
-    childRunsByToolCallId: childRunMapFromToolSegments(blocks),
-    toolCallOutcomes: toolCallOutcomeMap(blocks),
+    childRunsByToolCallId: childRunMapFromToolItems(items),
+    toolCallOutcomes: toolCallOutcomeMap(items),
     firstThinkingText: firstLine(thinkingBlocks[0]?.text ?? ''),
     lastThinkingText: lastNonEmptyThinking(thinkingBlocks),
     thinkingCount: thinkingBlocks.length,
@@ -161,7 +139,7 @@ export function summarizeProcess({
     // parallel batch's other calls would count as 'error' in the summary during
     // the frame before the runtime marks them in-flight.
     const active = isToolCallRowActive(
-      { kind: 'toolCall', toolCall, outcome: toolCallOutcomes?.get(toolCall.id) },
+      { id: `tool:${toolCall.id}`, type: 'toolCall', toolCall, outcome: toolCallOutcomes?.get(toolCall.id) },
       pendingToolCallIds,
       results,
       undefined,
@@ -284,29 +262,32 @@ function useElapsedTick(startedAtMs: number | null, active: boolean): number | n
 }
 
 export function AgentProcessBlock({
-  blocks,
   expandState,
-  id,
   index,
   onNodeReferenceOpen,
   onOpenChildRunTranscript,
   pendingToolCallIds,
+  process,
   results,
-  sealed,
   conversationId,
   childRunsByParentToolCallId,
   turnActive,
-  turnFailedWithoutProse,
-  surfaceResultlessProcess,
-  workedForMs,
-  answerStarted,
-  liveStartedAtMs,
 }: AgentProcessBlockProps) {
   const t = useT();
+  const {
+    answerStarted,
+    id,
+    items,
+    liveStartedAtMs,
+    sealed,
+    surfaceResultlessProcess,
+    turnFailedWithoutProse,
+    workedForMs,
+  } = process;
   // Memoized: the live "Working for {t}" ticker re-renders this block every second,
   // and streaming re-renders it per token — without this the fact set (several
-  // array scans over every block) is rebuilt on each, just to advance a digit.
-  const facts = useMemo(() => processSummaryFacts(blocks), [blocks]);
+  // array scans over every item) is rebuilt on each, just to advance a digit.
+  const facts = useMemo(() => processSummaryFacts(items), [items]);
   const liveSegment = turnActive && !sealed;
   // Codex auto-collapse (machine C): the body shows EXPANDED while still working
   // (no answer yet) so the user watches the reasoning + tool activity 1:1, then
@@ -372,10 +353,10 @@ export function AgentProcessBlock({
       ) : null}
       {expanded ? (
         <AgentProcessTimeline
-          blocks={blocks}
           expandState={expandState}
           id={id}
           index={index}
+          items={items}
           onNodeReferenceOpen={onNodeReferenceOpen}
           onOpenChildRunTranscript={onOpenChildRunTranscript}
           pendingToolCallIds={pendingToolCallIds}

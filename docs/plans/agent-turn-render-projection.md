@@ -65,7 +65,7 @@ message-flow semantics. If a future runtime records an explicit assistant
 message phase, the projection becomes the single place to consume it.
 
 `AgentProcessBlock` should receive a process projection rather than raw assistant
-content blocks. It continues to compute the visible summary and live clock, but
+content items. It continues to compute the visible summary and live clock, but
 the fold defaults should be derived from projection fields rather than repeating
 turn partition logic.
 
