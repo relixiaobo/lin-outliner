@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | shipped single-agent-collapse #294 + agent-dock-ui #296; authored plans #302/#303 — both **ratified 2026-06-19 + merged**, now boarded (build unassigned) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**; authored ratified plan agent-process-stable-disclosure #297) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -457,6 +457,25 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   no collision with #179/#180.
 
 ## Recently completed
+
+- **file-preview-pdf-and-mentions** (`codex-3/file-preview-pdf-and-mentions`, PR #318, codex-3, merged
+  2026-06-22) — fast-track file-preview polish + file-node `@` mentions. Expanded PDF previews gain a
+  selectable text layer per page (drag-select extracts real text, fixed-neutral `--document-selection-bg`
+  highlight that survives dark mode over white pages) and remember per-target reader scroll position
+  (page + intra-page offset) across collapse/expand via a renderer-local `localStorage` keyed store — the
+  shared `localStorageStore` helper now also backs `outlineViewState`. Text-like previews (markdown / code
+  / table) drop inner card frames for a generalized `data-preview-text` page-inset matching PDF spacing.
+  Reference search surfaces **file nodes by display filename** so agent-composer `@` mentions insert an
+  existing attachment/image as a node reference, **scoped to the composer only** (outliner `@` picker
+  unchanged, via a `includeFileNodes` flag defaulting off); file-row focus ring is now keyboard-only; a
+  failed PDF load again shows the metadata card + a reason note. **Gate (main):** `/code-review high` — 10
+  findings (scope-leak into the outliner picker, lost PDF-error metadata, file-node `isUntitled`
+  mis-rank, removed focus ring, `--link` selection vs B3/B4, mixed-page restore offset, duplicated
+  store/viewport logic, per-frame read-modify-write, hard-coded `:has()` classes) all folded by the author
+  in commit `84853be5`. The refuted `page.cleanup()` race left untouched (pdf.js `#tryCleanup` is
+  reference-guarded). typecheck ✓ · `test:renderer` 591/0 · no design-system guard regressions · merge
+  clean (no file overlap with the in-flight agent-UI wave). Fast-track, no plan; the `file-preview` plan
+  stays `in-progress` for PR3 (media streaming).
 
 - **live-process-header + disclosure-scroll fix** (`codex-2/agent-working-header-fix`, PR #317, codex-2,
   merged 2026-06-22) — fast-track fix for two Codex-style live-process defects. The active turn header is now

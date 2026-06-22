@@ -12,6 +12,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **File-preview polish + file-node mentions (PR #318, codex-3)** — expanded PDF previews now render a
+  selectable text layer over each page (drag-select extracts the real text, highlighted with a fixed
+  neutral document-selection tint that survives dark mode over white pages), and the reader remembers its
+  per-target scroll position (page + intra-page offset) across collapse/expand via a renderer-local
+  `localStorage` keyed store (shared helper now also backing `outlineViewState`). Text-like previews
+  (markdown / code / table) drop their inner card frames for a generalized page-like inset driven by a
+  `data-preview-text` marker, matching PDF spacing. Reference search can surface **file nodes by their
+  display filename** so agent-composer `@` mentions insert an existing attachment/image as a node
+  reference — scoped to the composer only (the outliner `@` reference picker is unchanged). The file-name
+  row's focus ring is now keyboard-only (`:focus-visible`-correct), and a failed PDF load again shows the
+  metadata card plus a reason note instead of a bare message. **Gate (main):** `/code-review high` (10
+  findings) all folded by the author in the review-response commit; typecheck ✓ · `test:renderer` 591/0 ·
+  no design-system guard regressions · merge clean against current `main` (no file overlap with the
+  in-flight agent-UI wave).
 - **Dream consolidation + distinguishable inline references (PR #315, codex)** — Memory Dream becomes a
   runtime-only human-sleep-style consolidation skill: it consolidates member conversations into
   `#d-memory` / `#d-episode` / `#d-belief` plus optional `#d-question` (unresolved tension) and
