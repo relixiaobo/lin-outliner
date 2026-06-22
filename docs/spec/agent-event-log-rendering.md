@@ -1085,18 +1085,22 @@ Rules:
     commentary reads continuous with the answer below it; only the tool steps and
     the "Worked for {t}" divider separate them.
   - **Reasoning** is the model's THINKING (Codex `reasoning`) → it **collapses like
-    a tool step**: a one-line headline row (`.agent-reasoning-toggle`) with a trailing
+    a tool step**: a one-line row (`.agent-reasoning-toggle`) with a trailing
     `chevron-right` (hover-revealed; rotates 90° to point down when open), the full
     thinking **tucked inside** and revealed on click — NOT shown as open body prose.
-    The headline is the **fixed lifecycle label** — **"Thinking"** while the thought
-    streams, **"Thought"** once the turn settles — never the thought's own first line
-    (the ratified 折中: Codex's uniform reasoning-minimal label, but without the
-    per-item "Thought for {t}" timing our projection does not track). The whole
-    thinking text is the body: a streaming row opens (the user watches it 1:1) and a
-    sealed row rests folded, except a lone-thought turn, which opens by default
-    (nothing else to read). The expanded body is soft (`--text-soft` ≈ Codex
-    `text-secondary`), the dimmer thinking layer distinct from the assistant's own
-    words.
+    The leading label is the **fixed lifecycle word** — **"Thinking"** while the
+    thought streams, **"Thought"** once the turn settles — never the thought's own
+    first line as the headline (the ratified 折中: Codex's uniform reasoning-minimal
+    label, but without the per-item "Thought for {t}" timing our projection does not
+    track). Collapsed, a **dim one-line gist** of the first line (markdown emphasis/
+    heading markers stripped; `.agent-reasoning-gist` at `--text-faint`, truncated)
+    trails the label — Codex previews the body under the header; this is the
+    single-line form — so a column of reasoning rows stays distinguishable rather than
+    a wall of identical "Thought". The whole thinking text is the body: a streaming row
+    opens (the user watches it 1:1) and a sealed row rests folded (except a lone-thought
+    turn, which opens by default); expanded, the gist gives way to the full body, soft
+    (`--text-soft` ≈ Codex `text-secondary`), the dimmer thinking layer distinct from
+    the assistant's own words.
   This is the fix for "reasoning shows fully expanded": only narration (assistant
   speech) is open body prose; reasoning, like every tool, folds to a summary the
   user expands on demand. There is no lightbulb and no meta typography — the fold is
@@ -1104,11 +1108,12 @@ Rules:
 - **Reasoning active cue.** A reasoning row's headline is a **static lifecycle
   label** — **"Thinking"** while it streams (no ellipsis and **no shimmer**: the
   cadenced shimmer is a Codex Statsig A/B experiment, not the default; the live
-  surfaces are the static label + the per-step spinner), sealing to a bare
-  **"Thought"** once the turn settles. Only the **timed** variant — Codex's "Thought
-  for {elapsed}" — remains deferred (it needs per-reasoning-item timing we do not
-  track); the bare sealed label **is** adopted, with the full thinking kept one click
-  away in the body so nothing the user watched stream is lost.
+  surfaces are the static label + the per-step spinner), sealing to **"Thought"**
+  (with a dim one-line gist of the first line beside it, above) once the turn settles.
+  Only the **timed** variant — Codex's "Thought for {elapsed}" — remains deferred (it
+  needs per-reasoning-item timing we do not track); the sealed label **is** adopted,
+  with the full thinking kept one click away in the body so nothing the user watched
+  stream is lost.
 - **One assistant-turn renderer.** The conversation transcript and the child-run
   task detail timeline both render assistant content through the
   same assistant turn/process fold components. The task detail panel reads a raw

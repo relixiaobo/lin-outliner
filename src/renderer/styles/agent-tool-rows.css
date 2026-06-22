@@ -216,10 +216,21 @@
 }
 
 .agent-reasoning-headline {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* A dim one-line preview of the thought's first line beside the "Thought" label
+   (Codex previews the body under the header; this is the single-line form), so a
+   column of reasoning rows stays distinguishable rather than a wall of identical
+   "Thought". It absorbs the truncation; the label stays whole. */
+.agent-reasoning-gist {
   min-width: 0;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-faint);
 }
 
 /* The chevron is an affordance, not a focal mark: hidden at rest, revealed on

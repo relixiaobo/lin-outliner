@@ -512,17 +512,16 @@ test.describe('agent process disclosure', () => {
     await activityToggle.click();
     await expect(activityToggle).toHaveAttribute('aria-expanded', 'true');
 
-    // Reasoning folds like a tool step (Codex `reasoning`): the headline is the
-    // fixed lifecycle label ("Thought" once sealed), and the full thinking — first
-    // line included — is tucked inside until the row is expanded.
+    // Reasoning folds like a tool step (Codex `reasoning`): the leading label is the
+    // fixed lifecycle word ("Thought" once sealed) with a dim one-line gist of the
+    // first line beside it; the rest of the thinking is tucked inside until expanded.
     const reasoning = process.locator('.agent-process-reasoning').first();
     const reasoningToggle = reasoning.locator('.agent-reasoning-toggle');
     await expect(reasoning.locator('.agent-reasoning-headline')).toHaveText('Thought');
-    await expect(reasoning).not.toContainText('Identify relevant outline nodes and tag patterns.');
+    await expect(reasoning.locator('.agent-reasoning-gist')).toContainText('Identify relevant outline nodes and tag patterns.');
     await expect(reasoning).not.toContainText('Compare current Agent rules');
 
     await reasoningToggle.click();
-    await expect(reasoning).toContainText('Identify relevant outline nodes and tag patterns.');
     await expect(reasoning).toContainText('Compare current Agent rules with the existing tag layout decision');
 
     const searchTool = page.locator('.agent-tool-call-toggle').filter({ hasText: 'Searched nodes "design system"' });
