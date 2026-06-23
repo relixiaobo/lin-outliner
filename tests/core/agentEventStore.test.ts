@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { AgentActor, AgentEvent, AgentMemoryStreamSource, AgentPrincipal } from '../../src/core/agentEventLog';
+import type { AgentActor, AgentEvent, AgentPrincipal } from '../../src/core/agentEventLog';
 import {
   AgentEventStore,
   agentCheckpointFileName,
@@ -33,22 +33,6 @@ function base(conversationId: string, seq: number, type: AgentEvent['type'], act
     type,
     createdAt: 1_700_000_000_000 + seq,
     actor,
-  };
-}
-
-function conversationSource(
-  conversationId: string,
-  fromSeqExclusive = 0,
-  throughSeq = 1,
-): AgentMemoryStreamSource {
-  return {
-    stream: 'conversation',
-    streamId: conversationId,
-    range: {
-      fromSeqExclusive,
-      throughSeq,
-      throughEventId: `${conversationId}-event-${throughSeq}`,
-    },
   };
 }
 
@@ -587,16 +571,28 @@ describe('agent event store', () => {
     ]);
     const agentPrincipal: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
     const userPrincipal: AgentPrincipal = { type: 'user', userId: 'local-user' };
-    await store.addMemoryEntry(agentPrincipal, {
-      id: 'memory-agent',
-      fact: 'Current-format agent fact.',
-      sources: [conversationSource(conversationId)],
+    const writePrincipalRun = (id: string, principal: AgentPrincipal, updatedAt: number) => store.writeRunMeta({
+      v: 1,
+      id,
+      agentId: 'built-in:tenon:assistant',
+      anchor: { type: 'principal', principal },
+      kind: 'reflective',
+      status: 'completed',
+      trigger: { type: 'manual' },
+      fingerprint: {
+        appVersion: 'test',
+        promptHash: 'prompt',
+        toolSchemaHash: 'tools',
+        skillBindings: [],
+        modelConfig: 'model',
+      },
+      retention: 'hot',
+      createdAt: updatedAt,
+      updatedAt,
+      latestSeq: 0,
     });
-    await store.addMemoryEntry(userPrincipal, {
-      id: 'memory-user',
-      fact: 'Current-format user fact.',
-      sources: [conversationSource(conversationId)],
-    });
+    await writePrincipalRun('run-agent', agentPrincipal, 2);
+    await writePrincipalRun('run-user', userPrincipal, 3);
     return { conversationId, agentPrincipal, userPrincipal };
   }
 
@@ -609,8 +605,8 @@ describe('agent event store', () => {
       const restarted = new AgentEventStore(root);
       expect(await restarted.listConversationIndexEntries()).toEqual([]);
       await expect(restarted.readEvents(conversationId)).resolves.toEqual([]);
-      await expect(restarted.readMemoryEvents(agentPrincipal)).resolves.toEqual([]);
-      await expect(restarted.readMemoryEvents(userPrincipal)).resolves.toEqual([]);
+      await expect(restarted.listPrincipalRunMetaProjections(agentPrincipal)).resolves.toEqual([]);
+      await expect(restarted.listPrincipalRunMetaProjections(userPrincipal)).resolves.toEqual([]);
       expect(JSON.parse(await readFile(path.join(root, LAYOUT_SENTINEL_FILE), 'utf8'))).toEqual({ v: STORAGE_LAYOUT_VERSION });
     });
   });
@@ -635,7 +631,7 @@ describe('agent event store', () => {
 
       const restarted = new AgentEventStore(root);
       expect(await restarted.listConversationIndexEntries()).toMatchObject([{ id: conversationId }]);
-      expect(await restarted.listMemoryEntries(agentPrincipal)).toMatchObject([{ id: 'memory-agent' }]);
+      expect(await restarted.listPrincipalRunMetaProjections(agentPrincipal)).toMatchObject([{ id: 'run-agent' }]);
     });
   });
 
@@ -647,7 +643,7 @@ describe('agent event store', () => {
       const restarted = new AgentEventStore(root);
       // The destructive path requires positive proof; corruption is not proof.
       expect(await restarted.listConversationIndexEntries()).toMatchObject([{ id: conversationId }]);
-      expect(await restarted.listMemoryEntries(agentPrincipal)).toMatchObject([{ id: 'memory-agent' }]);
+      expect(await restarted.listPrincipalRunMetaProjections(agentPrincipal)).toMatchObject([{ id: 'run-agent' }]);
       // The corrupt sentinel is left for the next launch to re-probe — never overwritten blindly.
       await expect(readFile(path.join(root, LAYOUT_SENTINEL_FILE), 'utf8')).resolves.toContain('not-json');
     });
@@ -685,9 +681,9 @@ describe('agent event store', () => {
         id: conversationId,
         title: 'Current layout',
       }]);
-      expect(await restarted.listMemoryEntries(agentPrincipal)).toMatchObject([{ id: 'memory-agent' }]);
-      expect(await restarted.listMemoryEntries(userPrincipal)).toMatchObject([{ id: 'memory-user' }]);
-      // The unified pool layout: every pool lives under principals/.
+      expect(await restarted.listPrincipalRunMetaProjections(agentPrincipal)).toMatchObject([{ id: 'run-agent' }]);
+      expect(await restarted.listPrincipalRunMetaProjections(userPrincipal)).toMatchObject([{ id: 'run-user' }]);
+      // Principal sidecars live under principals/.
       expect((await readdir(path.join(root, 'principals'))).sort()).toEqual([
         'agent-built-in%3Atenon%3Aassistant',
         'user-local-user',
@@ -1396,407 +1392,6 @@ describe('agent event store', () => {
         displayName: 'Neva',
         model: 'test-model',
         skills: ['skill-a'],
-      });
-    });
-  });
-
-  test('projects agent memory from per-agent JSONL events', async () => {
-    await withStore(async (store, root) => {
-      const agentId = 'built-in:tenon:assistant';
-      const principal: AgentPrincipal = { type: 'agent', agentId };
-      const first = await store.addMemoryEntry(principal, {
-        id: 'memory-1',
-        fact: '  User prefers concise engineering answers.  ',
-        originWorkspace: 'workspace:abc',
-        sources: [conversationSource('conversation-1')],
-        createdAt: 10,
-      });
-      const second = await store.addMemoryEntry(principal, {
-        id: 'memory-2',
-        fact: 'Project codename is Tenon.',
-        sources: [conversationSource('conversation-2')],
-        createdAt: 20,
-      });
-
-      expect(first.fact).toBe('User prefers concise engineering answers.');
-      expect(second.fact).toBe('Project codename is Tenon.');
-      await expect(readFile(store.memoryPaths(principal).memoryEventsPath, 'utf8')).resolves.toContain('memory.entry_added');
-
-      const updated = await store.updateMemoryEntry(principal, 'memory-1', {
-        fact: 'User prefers direct, concise engineering answers.',
-      });
-      expect(updated?.fact).toBe('User prefers direct, concise engineering answers.');
-
-      const removed = await store.removeMemoryEntry(principal, 'memory-1', 'test');
-      expect(removed?.status).toBe('invalidated');
-      await store.removeMemoryEntry(principal, 'memory-1', 'test-again');
-
-      expect(await store.listMemoryEntries(principal)).toMatchObject([
-        { id: 'memory-2', status: 'active' },
-      ]);
-      expect(await store.listMemoryEntries(principal, { includeInvalidated: true, query: 'direct concise' })).toMatchObject([
-        { id: 'memory-1', status: 'invalidated' },
-      ]);
-
-      const raw = await readFile(store.memoryPaths(principal).memoryEventsPath, 'utf8');
-      expect(raw.trim().split('\n')).toHaveLength(4);
-      const restarted = new AgentEventStore(root);
-      expect(await restarted.listMemoryEntries(principal, { includeInvalidated: true })).toMatchObject([
-        { id: 'memory-2', status: 'active' },
-        { id: 'memory-1', status: 'invalidated' },
-      ]);
-    });
-  });
-
-  test('projects memory episodes and their citing entries', async () => {
-    await withStore(async (store, root) => {
-      const principal: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
-      const rawSource = conversationSource('conversation-episode', 2, 5);
-      const episode = await store.recordMemoryEpisode(principal, {
-        id: 'episode-1',
-        gist: 'The user prefers compact status updates.',
-        originWorkspace: 'workspace:abc',
-        sources: [rawSource],
-        createdAt: 10,
-      });
-
-      await store.addMemoryEntry(principal, {
-        id: 'memory-from-episode-a',
-        fact: 'The user prefers compact status updates.',
-        sources: [{ episodeId: episode.id }],
-        createdAt: 20,
-      });
-      await store.addMemoryEntry(principal, {
-        id: 'memory-from-episode-b',
-        fact: 'Status updates should stay concise.',
-        sources: [{ episodeId: episode.id }],
-        createdAt: 30,
-      });
-
-      expect(await store.getMemoryEpisode(principal, episode.id)).toMatchObject({
-        id: 'episode-1',
-        gist: 'The user prefers compact status updates.',
-        originWorkspace: 'workspace:abc',
-        sources: [rawSource],
-      });
-      expect(await store.listMemoryEntriesForEpisode(principal, episode.id)).toMatchObject([
-        { id: 'memory-from-episode-b' },
-        { id: 'memory-from-episode-a' },
-      ]);
-
-      const restarted = new AgentEventStore(root);
-      expect(await restarted.listMemoryEntriesForEpisode(principal, episode.id)).toMatchObject([
-        { id: 'memory-from-episode-b' },
-        { id: 'memory-from-episode-a' },
-      ]);
-    });
-  });
-
-  test('hybrid memory queries expand lexical hits to co-cited paraphrases', async () => {
-    await withStore(async (store) => {
-      const principal: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
-      const episode = await store.recordMemoryEpisode(principal, {
-        id: 'episode-status',
-        gist: 'The user wants short progress reports.',
-        sources: [conversationSource('conversation-status')],
-        createdAt: 10,
-      });
-      await store.addMemoryEntry(principal, {
-        id: 'm1',
-        fact: 'prefers compact status updates',
-        sources: [{ episodeId: episode.id }],
-        createdAt: 20,
-      });
-      await store.addMemoryEntry(principal, {
-        id: 'm2',
-        fact: 'keeps progress notes short',
-        sources: [{ episodeId: episode.id }],
-        createdAt: 30,
-      });
-      await store.addMemoryEntry(principal, {
-        id: 'm3',
-        fact: 'uses amber focus rings',
-        sources: [conversationSource('conversation-focus')],
-        createdAt: 40,
-      });
-
-      const result = await store.queryMemoryEntries(principal, {
-        query: 'compact status updates',
-        limit: 2,
-      });
-
-      expect(result.entries.map((entry) => entry.id)).toEqual(['m1', 'm2']);
-      expect(result.totalEntries).toBe(2);
-    });
-  });
-
-  test('projects memory access strength and schema overview from batched events', async () => {
-    await withStore(async (store, root) => {
-      const principal: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
-      const now = 1_800_000_000_000;
-      const old = await store.addMemoryEntry(principal, {
-        id: 'memory-old-review',
-        fact: 'prefers terse code reviews',
-        sources: [conversationSource('conversation-old')],
-        createdAt: now - 90 * 24 * 60 * 60 * 1000,
-      });
-      const fresh = await store.addMemoryEntry(principal, {
-        id: 'memory-fresh-rings',
-        fact: 'uses amber focus rings',
-        sources: [conversationSource('conversation-fresh')],
-        createdAt: now - 24 * 60 * 60 * 1000,
-      });
-
-      expect((await store.activateMemoryEntries(principal, { now })).entries.map((item) => item.entry.id)).toEqual([
-        fresh.id,
-        old.id,
-      ]);
-
-      const access = await store.recordMemoryAccess(principal, {
-        via: 'recall',
-        entryIds: [old.id, old.id, 'missing'],
-        createdAt: now,
-      });
-      expect(access?.accesses).toEqual([{ entryId: old.id, count: 1 }]);
-      const activated = await store.activateMemoryEntries(principal, { now });
-      expect(activated.entries.map((item) => item.entry.id)).toEqual([
-        old.id,
-        fresh.id,
-      ]);
-      expect(activated.entries[0]?.strength.recallCount).toBe(1);
-      expect(activated.overview.schema.map((node) => node.label)).toContain('reviews');
-
-      const raw = await readFile(store.memoryPaths(principal).memoryEventsPath, 'utf8');
-      const events = raw.trim().split('\n').map((line) => JSON.parse(line) as { type: string; accesses?: unknown[] });
-      expect(events.filter((event) => event.type === 'memory.accessed')).toHaveLength(1);
-      expect(events.find((event) => event.type === 'memory.accessed')?.accesses).toHaveLength(1);
-
-      const restarted = new AgentEventStore(root);
-      expect(await restarted.memoryStrength(principal, old.id, now)).toMatchObject({
-        entryId: old.id,
-        recallCount: 1,
-      });
-
-      await store.removeMemoryEntry(principal, old.id, 'test');
-      expect((await store.activateMemoryEntries(principal, { now })).entries.map((item) => item.entry.id)).toEqual([
-        fresh.id,
-      ]);
-    });
-  });
-
-  test('throttles resident briefing access writes but records deliberate recall practice', async () => {
-    await withStore(async (store) => {
-      const principal: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
-      const now = 1_800_000_000_000;
-      const dayMs = 24 * 60 * 60 * 1000;
-      await store.addMemoryEntry(principal, {
-        id: 'memory-access-throttle',
-        fact: 'needs bounded resident re-exposure writes',
-        sources: [conversationSource('conversation-access')],
-        createdAt: now,
-      });
-
-      await expect(store.recordMemoryAccess(principal, {
-        via: 'briefing',
-        entryIds: ['memory-access-throttle'],
-        createdAt: now,
-      })).resolves.toMatchObject({ type: 'memory.accessed' });
-      await expect(store.recordMemoryAccess(principal, {
-        via: 'briefing',
-        entryIds: ['memory-access-throttle'],
-        createdAt: now + 1,
-      })).resolves.toBeNull();
-      await expect(store.recordMemoryAccess(principal, {
-        via: 'recall',
-        entryIds: ['memory-access-throttle'],
-        createdAt: now + 2,
-      })).resolves.toMatchObject({ type: 'memory.accessed' });
-      await expect(store.recordMemoryAccess(principal, {
-        via: 'recall',
-        entryIds: ['memory-access-throttle'],
-        createdAt: now + 3,
-      })).resolves.toMatchObject({ type: 'memory.accessed' });
-      await expect(store.recordMemoryAccess(principal, {
-        via: 'briefing',
-        entryIds: ['memory-access-throttle'],
-        createdAt: now + dayMs,
-      })).resolves.toMatchObject({ type: 'memory.accessed' });
-
-      expect(await store.memoryStrength(principal, 'memory-access-throttle', now + dayMs)).toMatchObject({
-        briefingCount: 2,
-        recallCount: 2,
-        lastBriefingAt: now + dayMs,
-        lastRecallAt: now + 3,
-      });
-    });
-  });
-
-  test('tolerates a torn trailing memory event line but rejects mid-file corruption', async () => {
-    await withStore(async (store, root) => {
-      const agentId = 'built-in:tenon:assistant';
-      const principal: AgentPrincipal = { type: 'agent', agentId };
-      await store.addMemoryEntry(principal, {
-        id: 'memory-1',
-        fact: 'Survives a crash-torn tail.',
-        sources: [conversationSource('conversation-1')],
-        createdAt: 10,
-      });
-      await store.addMemoryEntry(principal, {
-        id: 'memory-2',
-        fact: 'Second intact entry.',
-        sources: [conversationSource('conversation-2')],
-        createdAt: 20,
-      });
-      const eventsPath = store.memoryPaths(principal).memoryEventsPath;
-      const intact = await readFile(eventsPath, 'utf8');
-
-      // Interrupted append (e.g. quit mid-Dream) leaves a torn FINAL line: drop it, keep reading.
-      await writeFile(eventsPath, `${intact}{"v":1,"eventId":"torn`, 'utf8');
-      expect(await new AgentEventStore(root).listMemoryEntries(principal)).toMatchObject([
-        { id: 'memory-2', status: 'active' },
-        { id: 'memory-1', status: 'active' },
-      ]);
-
-      // The next append repairs the tear in place instead of welding onto the fragment
-      // (which would silently drop this event now and brick the file one append later).
-      await new AgentEventStore(root).addMemoryEntry(principal, {
-        id: 'memory-3',
-        fact: 'Appended after a torn tail.',
-        sources: [conversationSource('conversation-3')],
-        createdAt: 30,
-      });
-      const repaired = await readFile(eventsPath, 'utf8');
-      for (const line of repaired.trim().split('\n')) JSON.parse(line); // every line intact
-      expect(await new AgentEventStore(root).listMemoryEntries(principal)).toMatchObject([
-        { id: 'memory-3', status: 'active' },
-        { id: 'memory-2', status: 'active' },
-        { id: 'memory-1', status: 'active' },
-      ]);
-
-      // A tear can also land between the JSON and its newline: the final line is a complete
-      // event and must survive the repair (only the newline is restored, nothing truncated).
-      await writeFile(eventsPath, intact.trimEnd(), 'utf8');
-      await new AgentEventStore(root).addMemoryEntry(principal, {
-        id: 'memory-4',
-        fact: 'Appended after a newline-only tear.',
-        sources: [conversationSource('conversation-4')],
-        createdAt: 40,
-      });
-      expect(await new AgentEventStore(root).listMemoryEntries(principal)).toMatchObject([
-        { id: 'memory-4', status: 'active' },
-        { id: 'memory-2', status: 'active' },
-        { id: 'memory-1', status: 'active' },
-      ]);
-
-      // A malformed line in the MIDDLE is real corruption and still fails loudly — for
-      // reads and for the pre-append repair alike.
-      const lines = intact.trim().split('\n');
-      await writeFile(eventsPath, `${lines[0]}\n{broken\n${lines[1]}\n`, 'utf8');
-      await expect(new AgentEventStore(root).listMemoryEntries(principal)).rejects.toThrow(/Invalid agent memory event JSON/);
-      await expect(new AgentEventStore(root).addMemoryEntry(principal, {
-        id: 'memory-5',
-        fact: 'Must not be written past corruption.',
-        sources: [conversationSource('conversation-5')],
-        createdAt: 50,
-      })).rejects.toThrow(/Invalid agent memory event JSON/);
-    });
-  });
-
-  test('rejects empty memory updates and keeps normalized facts within the max length', async () => {
-    await withStore(async (store) => {
-      const agentId = 'built-in:tenon:assistant';
-      const principal: AgentPrincipal = { type: 'agent', agentId };
-      const entry = await store.addMemoryEntry(principal, {
-        id: 'memory-long',
-        fact: 'x'.repeat(2_100),
-        sources: [conversationSource('conversation-1')],
-      });
-
-      expect(entry.fact).toHaveLength(2_000);
-      expect(entry.fact.endsWith('...')).toBe(true);
-      await expect(store.updateMemoryEntry(principal, 'memory-long', { fact: '   ' })).rejects.toThrow(/cannot be empty/);
-    });
-  });
-
-  test('compacts high-churn memory logs to the current projection', async () => {
-    await withStore(async (store, root) => {
-      const agentId = 'built-in:tenon:assistant';
-      const principal: AgentPrincipal = { type: 'agent', agentId };
-      await store.appendDreamCompleted(principal, {
-        runId: 'dream-run-before-churn',
-        trigger: 'schedule',
-        startedAt: 40,
-        completedAt: 50,
-        watermark: {
-          conversations: {
-            'conversation-1': { seq: 12, eventId: 'event-12' },
-          },
-        },
-        processed: {
-          conversations: {
-            'conversation-1': {
-              fromSeqExclusive: 0,
-              throughSeq: 12,
-              throughEventId: 'event-12',
-              messageCount: 2,
-              charCount: 200,
-            },
-          },
-          totalMessageCount: 2,
-          totalCharCount: 200,
-          consolidateOnly: false,
-        },
-        changes: { added: 1, updated: 0, forgotten: 0, skipped: 0 },
-      });
-      await store.addMemoryEntry(principal, {
-        id: 'memory-churn',
-        fact: 'Version 0.',
-        sources: [conversationSource('conversation-1')],
-      });
-      await store.addMemoryEntry(principal, {
-        id: 'memory-other-access',
-        fact: 'Other access timestamp.',
-        sources: [conversationSource('conversation-2')],
-      });
-      await store.recordMemoryAccess(principal, {
-        via: 'briefing',
-        entryIds: ['memory-churn', 'memory-churn'],
-        createdAt: 100,
-      });
-      await store.recordMemoryAccess(principal, {
-        via: 'briefing',
-        entryIds: ['memory-other-access'],
-        createdAt: 50,
-      });
-
-      for (let index = 1; index <= 70; index += 1) {
-        await store.updateMemoryEntry(principal, 'memory-churn', { fact: `Version ${index}.` });
-      }
-
-      const raw = await readFile(store.memoryPaths(principal).memoryEventsPath, 'utf8');
-      expect(raw.trim().split('\n').length).toBeLessThan(20);
-      const compactedEntries = await store.listMemoryEntries(principal);
-      expect(compactedEntries).toHaveLength(2);
-      expect(compactedEntries.find((entry) => entry.id === 'memory-churn')).toMatchObject({
-        id: 'memory-churn',
-        fact: 'Version 70.',
-      });
-      expect(compactedEntries.find((entry) => entry.id === 'memory-other-access')).toMatchObject({
-        id: 'memory-other-access',
-        fact: 'Other access timestamp.',
-      });
-      expect(raw).toContain('memory.accessed');
-      expect(await new AgentEventStore(root).memoryStrength(principal, 'memory-churn', 100)).toMatchObject({
-        briefingCount: 1,
-        lastAccessedAt: 100,
-      });
-      expect(await new AgentEventStore(root).memoryStrength(principal, 'memory-other-access', 100)).toMatchObject({
-        briefingCount: 1,
-        lastAccessedAt: 50,
-      });
-      expect((await store.readDreamState(principal)).watermark.conversations['conversation-1']).toEqual({
-        seq: 12,
-        eventId: 'event-12',
       });
     });
   });

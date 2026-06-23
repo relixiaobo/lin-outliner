@@ -137,7 +137,7 @@ truth.
   - skill `execution: isolated` routed through the delegation runtime
   - provider overflow detection, response debug capture, stream option pass-through,
     and session resource cleanup via pi-ai
-- [x] Agent memory foundation (one believer-keyed first-person pool):
+- [x] Agent memory foundation (timeline outline memory):
   - durable memory is ordinary timeline outline content: per-day `#d-memory`
     containers with generated daily headlines, `#d-episode` source episodes, and
     `#d-belief` durable beliefs, with optional `#d-question` unresolved tensions
@@ -181,8 +181,8 @@ truth.
   - `runtime_status`, `config`, and `doctor` tools with permission-gated config
     writes
   - mixed-resolution compaction source ranges for replay/render/runtime context
-- [x] Single-agent collapse (one editable agent; conversations-only; one memory
-  pool): the prior multi-agent Channel apparatus was removed and the model
+- [x] Single-agent collapse (one editable agent; conversations-only; timeline
+  memory): the prior multi-agent Channel apparatus was removed and the model
   collapsed to a single user-customizable agent.
   - **One editable agent, Neva** — `built-in:tenon:assistant` (handle
     `assistant`), edited in Settings → Agent via a stored overlay; no

@@ -855,15 +855,16 @@ debug, and continuation. Spawn ordering is ledger-seed first, conversation
 marker second: a crash inside the spawn window leaves an invisible orphan ledger
 directory, never an un-resumable phantom run in the conversation.
 
-Dream raw sources address the run stream directly as
-`{stream: 'run', streamId: <runId>, range: {fromSeqExclusive, throughSeq, throughEventId}}`.
-The durable memory fact cites its memory episode by `{episodeId}`; the episode
-keeps the gist and raw run/conversation stream sources. Evidence expansion
-replays the ledger's visible transcript, so provenance stays stable across
-later compactions. The Dream watermark cursor records the SCANNED TAIL seq (not
-the last evidence seq) so an already-digested terminal run is skipped on later
-passes from its run-meta alone, without re-reading the ledger. The parent model
-only receives the `Agent` tool result projection.
+Dream raw sources address conversation streams through `past_chats` source
+objects such as
+`{stream: 'conversation', streamId: <conversationId>, range: {fromSeqExclusive, throughSeq, throughEventId}}`.
+Runtime Dream writes durable memory as ordinary `#d-*` outline nodes with
+`[[chat:...]]` inline citations back to the source stream range. Evidence
+expansion replays the visible transcript, so provenance stays stable across
+later compactions. The Dream cursor is derived from clean completed
+`dream.finished.window.end` markers in the protected Dream channel; there is no
+principal memory episode projection to read. The parent model only receives the
+`Agent` tool result projection.
 
 ## Compaction And Resume
 
@@ -908,7 +909,7 @@ representations: the conversation gets `child_run.updated{failed}` and the run's
 own ledger gets a mirrored `run.failed` (without it the run stream would
 self-describe as running forever). It can still be continued through `AgentSend`.
 
-A delegated-run ledger uses the memory log's torn-tail policy, not the
+A delegated-run ledger uses the tolerant sidecar torn-tail policy, not the
 conversation log's strict one: a half-written FINAL line (crash artifact of an
 interrupted append) is dropped on read and truncated by the next append's
 repair; mid-file corruption still fails loudly. Restore-time reconciliation is

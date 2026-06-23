@@ -2469,11 +2469,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentRuntime.setConversationIncludeInDreamData(conversationId(), args.includeInDreamData === true);
     case 'agent_delete_conversation':
       return agentRuntime.deleteConversation(conversationId());
-    case 'agent_list_memory':
-      return agentRuntime.listMemory({
-        includeInvalidated: args.includeInvalidated === true,
-        limit: typeof args.limit === 'number' ? args.limit : undefined,
-      });
     case 'agent_list_dream_history':
       return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
     case 'agent_dream_readiness':
@@ -2485,10 +2480,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         guidance: typeof args.guidance === 'string' ? args.guidance : undefined,
       });
       return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
-    case 'agent_update_memory':
-      return agentRuntime.updateMemory(String(args.memoryId), String(args.fact ?? ''));
-    case 'agent_forget_memory':
-      return agentRuntime.forgetMemory(String(args.memoryId));
     case 'agent_debug_view':
       return agentRuntime.agentDebugView(conversationId());
     case 'agent_debug_run':

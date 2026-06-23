@@ -7,7 +7,6 @@ import {
   type AgentEvent,
   samePrincipal,
   type AgentEventMessageRecord,
-  type AgentMemoryEpisode,
   type AgentMemorySource,
   type AgentMemoryStreamSource,
   type AgentPrincipal,
@@ -167,7 +166,6 @@ export interface PastChatsSourceResult {
 export interface PastChatsEvidenceReadResult {
   mode: 'evidence';
   source: AgentMemorySource;
-  episode?: AgentMemoryEpisode;
   conversation?: { id: string; title: string | null; createdAt: string; updatedAt: string };
   messages: PastChatsEvidenceMessage[];
   totalChars: number;
@@ -418,52 +416,11 @@ export class AgentPastChatsService {
     if (!samePrincipal(params.principal, params.reader)) {
       return pastChatsError(
         'CROSS_PRINCIPAL_EVIDENCE',
-        'Raw memory evidence is only available for the reader principal that owns the memory pool.',
+        'Raw memory evidence is only available for the reader principal that owns the source.',
       );
     }
     const source = params.source;
-    if ('episodeId' in source) {
-      return this.readEpisodeMemorySourceEvidence(params);
-    }
     return this.readStreamMemorySourceEvidence(source, params.maxChars, source);
-  }
-
-  private async readEpisodeMemorySourceEvidence(params: PastChatsEvidenceParams): Promise<PastChatsEvidenceResult> {
-    const source = params.source;
-    if (!('episodeId' in source)) {
-      return pastChatsError('SOURCE_NOT_FOUND', 'Memory source is not an episode source.');
-    }
-    const episode = await this.eventStore.getMemoryEpisode(params.principal, source.episodeId);
-    if (!episode) {
-      return pastChatsError('SOURCE_NOT_FOUND', `No memory episode was found for ${source.episodeId}.`);
-    }
-    const maxChars = clampInteger(params.maxChars, DEFAULT_EVIDENCE_CHARS, 1, MAX_READ_CHARS);
-    let remainingChars = Math.max(0, maxChars - episode.gist.length);
-    const messages: PastChatsEvidenceMessage[] = [];
-    let totalChars = 0;
-    let outputTruncated = remainingChars === 0 && episode.sources.length > 0;
-    for (const rawSource of episode.sources) {
-      if (remainingChars <= 0) {
-        outputTruncated = true;
-        break;
-      }
-      const evidence = await this.readStreamMemorySourceEvidence(rawSource, remainingChars, source);
-      if (evidence.mode !== 'evidence') {
-        continue;
-      }
-      messages.push(...evidence.messages);
-      totalChars += evidence.totalChars;
-      outputTruncated ||= evidence.outputTruncated;
-      remainingChars = Math.max(0, remainingChars - evidence.totalChars);
-    }
-    return {
-      mode: 'evidence',
-      source: { ...source },
-      episode,
-      messages,
-      totalChars,
-      outputTruncated,
-    };
   }
 
   private async readStreamMemorySourceEvidence(

@@ -4,13 +4,13 @@
  * The Dream scheduler ticks every 60s and the fixed-time due gate may retry the same due up to a
  * small durable run-meta cap. A failed Dream advances neither the derived completed-date cursor nor
  * the Dream channel's clean `dream.finished` window, so without a transient backoff a provider error
- * would re-fire on every tick until the cap is hit. After a failure the runtime holds the pool off
+ * would re-fire on every tick until the cap is hit. After a failure the runtime holds the principal off
  * for this long before the next scheduled attempt; the window grows exponentially with consecutive
  * failures, is capped, and resets on the first success.
  *
- * This is transient scheduler control state (it lives in-memory beside the `dreamingPools` guard),
- * not durable self-model — the latter lives in the event-sourced memory log. A restart costs one
- * extra attempt, never a flood.
+ * This is transient scheduler control state (it lives in-memory beside the `dreamingPrincipals` guard),
+ * not durable memory — durable memory lives in ordinary outline nodes and Dream completion is
+ * audited by the protected Dream channel. A restart costs one extra attempt, never a flood.
  */
 export const DREAM_FAILURE_BACKOFF_BASE_MS = 5 * 60_000; // 5 minutes after the first failure
 export const DREAM_FAILURE_BACKOFF_CAP_MS = 6 * 60 * 60_000; // capped at 6 hours

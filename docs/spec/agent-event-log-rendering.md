@@ -10,7 +10,7 @@ Tenon uses an event-sourced agent runtime.
 The durable product source of truth is the **Agent event-log family**:
 
 ```txt
-conversation segments + run events + agent identity/memory logs + referenced payload files
+conversation segments + run events + agent identity records + referenced payload files
 ```
 
 Everything else is derived:
@@ -264,8 +264,7 @@ Current filesystem layout:
       identity.json
   principals/
     <agent-<agentId> | user-<userId>>/
-      memory/
-        events.jsonl
+      runs.json
   conversations/
     <conversationId>/
       meta.json
@@ -293,7 +292,6 @@ Authoritative:
 - `conversations/<id>/segments/*.jsonl`
 - `runs/<id>/events.jsonl`
 - `agents/<id>/identity.json`
-- `principals/<agent-<agentId> | user-<userId>>/memory/events.jsonl`
 - payload files referenced by event payload refs
 
 Derived and rebuildable:
@@ -302,17 +300,18 @@ Derived and rebuildable:
 - `indexes/*.json`
 - `conversations/<id>/meta.json`
 - `conversations/<id>/runs.json`
+- `principals/<principal>/runs.json`
 
 Clean-cut startup policy (pre-release, no migration) — the storage-generation
 sentinel:
 
 - ONE root file `layout.json` `{"v": <generation>}` is written once per on-disk
-  format generation (`STORAGE_LAYOUT_VERSION`, currently `3` = episodic memory
-  episodes + memory source union). First store access reads this single line; a
+  format generation (`STORAGE_LAYOUT_VERSION`, currently `4` = Dream-channel
+  audit history + outline-only durable memory). First store access reads this single line; a
   matching `v` proceeds with no per-conversation probing.
 - A stale `v` or a MISSING sentinel is positive proof of another generation:
   the WHOLE agent data root is hard-deleted (logged with the old generation) —
-  identities, conversations, runs, pools, indexes — and the layout is recreated
+  identities, conversations, runs, principal sidecars, indexes — and the layout is recreated
   lazily with a fresh sentinel. There is no legacy reader, adapter, or
   migration.
 - An unreadable or corrupt sentinel is AMBIGUITY, not proof: the store fails
@@ -334,19 +333,15 @@ spaces; the conversation carries only its slim `child_run.*` markers.
 
 Each line in `events.jsonl` is one JSON event.
 
-Conversation segments, run logs, and agent memory logs share one append-only
-seq-log primitive for JSONL serialization, per-key write queues, latest-seq
-caches, chunked physical-tail reads, offset-bounded replay, and file-size
-checkpoint guards. Conversation replay still joins the conversation segment with
-its indexed JOINED run logs (delegation ledgers excluded) and sorts by `seq`;
-memory uses the same primitive keyed by principal directory. The on-disk store
-stays principal-keyed (`principals/<agent-…|user-…>/memory/events.jsonl`), but
-every memory read/write is now pinned to the single believer
-(`agent:built-in:tenon:assistant`) — one writable first-person pool, not a pool
-per principal. Delegated-run
-ledgers use it with the memory log's torn-tail policy (drop a torn FINAL line on
-read, truncate it on the next append's repair; mid-file corruption still fails
-loudly).
+Conversation segments and run logs share one append-only seq-log primitive for
+JSONL serialization, per-key write queues, latest-seq caches, chunked
+physical-tail reads, offset-bounded replay, and file-size checkpoint guards.
+Conversation replay still joins the conversation segment with its indexed JOINED
+run logs (delegation ledgers excluded) and sorts by `seq`. Principal sidecars no
+longer hold a memory event log; they only hold the derived reflective-run index
+for runs anchored to that principal. Delegated-run ledgers use the tolerant
+sidecar torn-tail policy (drop a torn FINAL line on read, truncate it on the next
+append's repair; mid-file corruption still fails loudly).
 
 ```ts
 interface AgentEventBase {
@@ -505,8 +500,8 @@ user is actually looking at that task's conversation.
 
 Dream audit state is derived from the protected Dream channel's run meta plus
 `dream.finished` markers. Durable model-readable memory is ordinary timeline
-outline content; legacy `dream.completed` entries remain an audit summary, but
-the Dream cursor is the maximum clean completed `dream.finished.window.end`.
+outline content; `dream.finished` entries are the audit summary, and the Dream
+cursor is the maximum clean completed `dream.finished.window.end`.
 Change counts are derived from the Dream-channel run's successful `node_create`
 / `node_edit` writes; a zero-write completion is a valid no-op — remembering
 nothing is a normal Dream outcome, so it records a clean windowed
@@ -539,8 +534,7 @@ obsolete nodes through `node_delete`; an episode does not need all child tags.
 Prior Dream output is a belief graph to update, not self-confirming evidence. The
 former agent-self / run-log Dream is cut (no
 run-evidence harvesting, no per-agent self-model dream). Dream run meta is
-anchored to the protected Dream channel so replay joins the run transcript; the
-semantic memory pool remains believer-keyed. The protected Dream transcript is
+anchored to the protected Dream channel so replay joins the run transcript. The protected Dream transcript is
 visible audit history only: ordinary chat sends to the Dream channel are rejected
 before persistence, the channel is forced out of Dream evidence, and Dream runs
 start with an empty prior active path so previous Dream transcript rows are not
@@ -967,8 +961,8 @@ Rules:
   from Settings, and durable Dream history is surfaced in Settings → Agent
   "Memory & activity" via the `agent_list_dream_history` IPC. `buildAgentTaskEntries`
   filters Dream TASK entities out of the in-conversation task panel, which keeps
-  only child-run tasks. `AgentRenderDreamTaskEntity.principal` remains a constant
-  = the believer and no longer labels separate pools.
+  only child-run tasks. `AgentRenderDreamTaskEntity.principal` remains the Dream
+  subject for audit labeling.
 - `child_run.*` events back `entities.childRuns` — the conversation's permanent
   record of a run, whose final result is an expandable summary with a "View full
   run" link into the full transcript. **Where** that record renders depends on
@@ -1576,11 +1570,9 @@ The current renderer contract is `AgentRenderProjection`, carried by
   corrupt-checkpoint fallback, atomic writes, stale-state guards, and best-effort retention of the latest three
   valid checkpoints.
 - Transcript row virtualization and bounded large-output rendering.
-- Agent memory event emission, projection, reminder injection, and Settings
-  list/edit/forget management.
-- Shared append-only seq-log internals for conversation/run/memory JSONL tails,
-  offsets, queues, and seq caches; memory projection caching keyed by latest seq;
-  high-churn memory compaction back to the current projection.
+- Shared append-only seq-log internals for conversation/run JSONL tails,
+  offsets, queues, and seq caches, plus tolerant torn-tail handling for
+  high-write run sidecars.
 - Mixed-resolution runtime context assembly: compacted historical ranges render
   as compaction summaries for the model path while visible transcript replay can
   still expand archived raw/tool messages.

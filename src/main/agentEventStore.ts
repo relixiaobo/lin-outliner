@@ -22,34 +22,9 @@ import type {
   AgentRunRetention,
   AgentRunStatus,
   AgentIdentityRecord,
-  AgentDreamCompletedChanges,
-  AgentDreamProcessedRun,
-  AgentDreamProcessedConversation,
-  AgentDreamTrigger,
-  AgentDreamWatermark,
-  AgentMemoryEntry,
-  AgentMemoryEpisode,
-  AgentMemoryStreamSource,
-  AgentMemoryEvent,
-  AgentMemorySource,
-  AgentMemoryAccessVia,
   AgentRunTrigger,
 } from '../core/agentEventLog';
 import { agentIdOfRunAnchor, appendAgentEventToReplayState, conversationIdOfRun, getAgentEventActivePath, mergeUniquePrincipals, principalKey, replayAgentEvents, samePrincipal } from '../core/agentEventLog';
-import {
-  buildMemoryOverview,
-  cloneMemoryAccessStats,
-  computeMemoryStrength,
-  emptyMemoryAccessStats,
-  type AgentMemoryAccessStats,
-  type AgentMemoryOverview,
-  type AgentMemoryRankedEntry,
-  type AgentMemoryStrength,
-} from '../core/agentMemoryActivation';
-import {
-  rankMemoryEntriesForBriefing,
-  rankMemoryEntriesForRecall,
-} from '../core/agentMemoryRetrieval';
 import {
   analyzeTextSearchQuery,
   normalizeSearchText,
@@ -77,27 +52,24 @@ const SEARCH_INDEX_FILE = 'search-index.json';
 // the current layout (log + re-probe next launch — never wipe on error).
 // Future format breaks bump the integer instead of authoring a new detector.
 export const LAYOUT_SENTINEL_FILE = 'layout.json';
-// v3 = memory realignment PR-2: memory sources are a discriminated union
-// (`{stream, streamId, range}` or `{episodeId}`) and memory-owned episode gist
-// nodes live in the principal memory log. No legacy source reader; pre-release
-// clean-cut wipes old agent data.
+// v4 = Dream channel PR-3: remove the principal memory event log/projection.
+// Durable memory now lives only in outline nodes; principal sidecars keep only
+// reflective-run indexes. No legacy memory reader; pre-release clean-cut wipes
+// old agent data.
+// v3 = memory realignment PR-2: memory sources were a discriminated union and
+// principal-owned episode gist nodes were still persisted outside the outline.
 // v2 = run unification: a delegated run is its own ledger (`runs/<runId>/
 // events.jsonl`, own seq space) excluded from conversation replay; the
 // conversation stream keeps only the slim child_run.started/updated markers.
 // The pre-unification entity-grade events and transcript-snapshot payloads
 // are gone.
-export const STORAGE_LAYOUT_VERSION = 3;
+export const STORAGE_LAYOUT_VERSION = 4;
 const CHECKPOINT_VERSION = 5;
 const SEARCH_INDEX_VERSION = 2;
 const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
 const MAX_CHECKPOINTS_PER_CONVERSATION = 3;
 const MAX_SEARCH_INDEX_TEXT_CHARS = 20_000;
 const SEARCH_INDEX_PREVIEW_CHARS = 240;
-export const MAX_AGENT_MEMORY_FACT_CHARS = 2_000;
-const MEMORY_COMPACTION_MIN_EVENTS = 64;
-const MEMORY_COMPACTION_CHURN_FACTOR = 2;
-const MEMORY_ACTIVATION_CACHE_BUCKET_MS = 24 * 60 * 60 * 1000;
-const MEMORY_BRIEFING_ACCESS_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export interface AgentPayloadWriteInput {
   id?: string;
@@ -147,64 +119,6 @@ export interface AgentConversationMetaProjection extends AgentConversationMeta {
   title: string | null;
   updatedAt: number;
   latestSeq: number;
-}
-
-export interface AgentMemoryEntryInput {
-  id?: string;
-  fact: string;
-  originWorkspace?: string;
-  sources: AgentMemorySource[];
-  createdAt?: number;
-}
-
-export interface AgentMemoryEpisodeInput {
-  id?: string;
-  gist: string;
-  originWorkspace?: string;
-  sources: AgentMemoryStreamSource[];
-  createdAt?: number;
-}
-
-export interface AgentMemoryEntryPatch {
-  fact?: string;
-  originWorkspace?: string;
-  sources?: AgentMemorySource[];
-  status?: AgentMemoryEntry['status'];
-}
-
-export interface AgentMemoryAccessInput {
-  via: AgentMemoryAccessVia;
-  entryIds: readonly string[];
-  createdAt?: number;
-}
-
-export interface AgentMemoryActivationResult {
-  entries: AgentMemoryRankedEntry[];
-  overview: AgentMemoryOverview;
-  totalEntries: number;
-}
-
-export interface AgentDreamCompletedInput {
-  dreamId?: string;
-  runId: string;
-  trigger: AgentDreamTrigger;
-  startedAt: number;
-  completedAt?: number;
-  watermark: AgentDreamWatermark;
-  processed: {
-    conversations: Record<string, AgentDreamProcessedConversation>;
-    runs?: Record<string, AgentDreamProcessedRun>;
-    totalMessageCount: number;
-    totalCharCount: number;
-    consolidateOnly: boolean;
-  };
-  changes: AgentDreamCompletedChanges;
-}
-
-export interface AgentDreamState {
-  lastCompleted: Extract<AgentMemoryEvent, { type: 'dream.completed' }> | null;
-  watermark: AgentDreamWatermark;
-  lastSuccessAt: number | null;
 }
 
 export interface AgentConversationIndexEntry {
@@ -263,30 +177,14 @@ interface AgentConversationRunIndex {
 }
 
 /**
- * Derived index of the reflective runs anchored to one principal (the runs maintaining that
- * principal's pool). Lives in the principal's pool directory; rebuilt from `runs/` on miss.
+ * Derived index of the reflective runs anchored to one principal. Lives in the
+ * principal sidecar directory; rebuilt from `runs/` on miss.
  */
 interface AgentPrincipalRunIndex {
   v: 1;
   principalKey: string;
   runIds: string[];
   updatedAtByRunId: Record<string, number>;
-}
-
-interface AgentMemoryProjectionCache {
-  latestSeq: number;
-  eventCount: number;
-  entries: Map<string, AgentMemoryEntry>;
-  episodes: Map<string, AgentMemoryEpisode>;
-  memoryIdsByEpisodeId: Map<string, Set<string>>;
-  accessStatsByEntryId: Map<string, AgentMemoryAccessStats>;
-  activationCache?: {
-    latestSeq: number;
-    dayBucket: number;
-    ranked: AgentMemoryRankedEntry[];
-    overview: AgentMemoryOverview;
-  };
-  dream: AgentDreamState;
 }
 
 export interface AgentEventSearchIndexEntry {
@@ -318,7 +216,7 @@ interface AgentEventSearchIndex {
 
 export class AgentEventStore {
   private readonly agentEventLog = new AppendOnlySeqLog<AgentEvent>('agent event', parseEventsJsonl);
-  // Delegated-run ledgers get the memory log's torn-tail policy, NOT the
+  // Delegated-run ledgers get the tolerant sidecar torn-tail policy, NOT the
   // conversation log's strict one: they are high-write append-only sidecars, so
   // a half-written FINAL line is a routine crash artifact of an interrupted
   // child-message append (the run is marked interrupted on restore anyway). A
@@ -327,9 +225,7 @@ export class AgentEventStore {
   // before-append repair truncate the fragment so a resume can append again.
   // Mid-file corruption still fails loudly on both logs.
   private readonly runEventLog = new AppendOnlySeqLog<AgentEvent>('agent run event', parseRunEventsJsonl);
-  private readonly memoryEventLog = new AppendOnlySeqLog<AgentMemoryEvent>('agent memory event', parseMemoryEventsJsonl);
   private indexQueue = Promise.resolve();
-  private readonly memoryProjectionByPrincipal = new Map<string, AgentMemoryProjectionCache>();
   private storageLayoutPromise: Promise<void> | null = null;
 
   constructor(
@@ -391,7 +287,7 @@ export class AgentEventStore {
     };
   }
 
-  /** The agent's identity directory — holds ONLY `identity.json`; pools live under `principals/`. */
+  /** The agent's identity directory — holds ONLY `identity.json`; principal sidecars live under `principals/`. */
   agentPaths(agentId: string): { agentDir: string; identityPath: string } {
     const agentDir = path.join(this.rootDir, 'agents', agentIdentityDirName(agentId));
     return {
@@ -401,18 +297,14 @@ export class AgentEventStore {
   }
 
   /**
-   * On-disk location of a principal's memory pool. One path rule for every
-   * principal type: `principals/<agent-<agentId> | user-<userId>>/memory/`.
-   * The pool is the subject's self-model — see [[agent-data-model]] §4.
+   * On-disk location of a principal's reflective-run sidecars. One path rule for
+   * every principal type: `principals/<agent-<agentId> | user-<userId>>/`.
    */
-  memoryPaths(principal: AgentPrincipal): { poolDir: string; memoryEventsPath: string; runIndexPath: string } {
-    const poolDir = path.join(this.rootDir, 'principals', agentPrincipalDirName(principal));
+  principalPaths(principal: AgentPrincipal): { principalDir: string; runIndexPath: string } {
+    const principalDir = path.join(this.rootDir, 'principals', agentPrincipalDirName(principal));
     return {
-      poolDir,
-      memoryEventsPath: path.join(poolDir, 'memory', RUN_EVENT_LOG_FILE),
-      // The derived index of reflective runs maintaining this pool — lives beside the pool, so
-      // run history and dream state are keyed by the same principal (no cross-pool join).
-      runIndexPath: path.join(poolDir, AGENT_RUN_INDEX_FILE),
+      principalDir,
+      runIndexPath: path.join(principalDir, AGENT_RUN_INDEX_FILE),
     };
   }
 
@@ -834,294 +726,6 @@ export class AgentEventStore {
     }
   }
 
-  async recordMemoryEpisode(principal: AgentPrincipal, input: AgentMemoryEpisodeInput): Promise<AgentMemoryEpisode> {
-    await this.ensureStorageLayout();
-    const key = principalKey(principal);
-    return this.memoryEventLog.enqueue(key, async () => {
-      const createdAt = input.createdAt ?? Date.now();
-      const episode = normalizeMemoryEpisode({
-        id: input.id ?? `episode-${randomUUID()}`,
-        principal,
-        gist: input.gist,
-        originWorkspace: input.originWorkspace,
-        sources: input.sources,
-        createdAt,
-      });
-      if (!episode) throw new Error('Invalid agent memory episode.');
-      const event = await this.nextMemoryEvent(principal, {
-        type: 'memory.episode_recorded',
-        createdAt,
-        episode,
-      });
-      const projection = await this.getMemoryProjection(principal);
-      await this.appendMemoryEvents(principal, [event]);
-      projection.episodes.set(episode.id, episode);
-      projection.latestSeq = event.seq;
-      projection.eventCount += 1;
-      await this.maybeCompactMemoryLog(principal, projection);
-      return episode;
-    });
-  }
-
-  async addMemoryEntry(principal: AgentPrincipal, input: AgentMemoryEntryInput): Promise<AgentMemoryEntry> {
-    await this.ensureStorageLayout();
-    const key = principalKey(principal);
-    return this.memoryEventLog.enqueue(key, async () => {
-      const createdAt = input.createdAt ?? Date.now();
-      const entry = normalizeMemoryEntry({
-        id: input.id ?? `memory-${randomUUID()}`,
-        principal,
-        fact: input.fact,
-        originWorkspace: input.originWorkspace,
-        sources: input.sources,
-        status: 'active',
-        createdAt,
-      });
-      if (!entry) throw new Error('Invalid agent memory entry.');
-      const event = await this.nextMemoryEvent(principal, {
-        type: 'memory.entry_added',
-        createdAt,
-        entry,
-      });
-      const projection = await this.getMemoryProjection(principal);
-      await this.appendMemoryEvents(principal, [event]);
-      setMemoryProjectionEntry(projection, entry, projection.entries.get(entry.id));
-      projection.latestSeq = event.seq;
-      projection.eventCount += 1;
-      await this.maybeCompactMemoryLog(principal, projection);
-      return entry;
-    });
-  }
-
-  async updateMemoryEntry(
-    principal: AgentPrincipal,
-    entryId: string,
-    patch: AgentMemoryEntryPatch,
-  ): Promise<AgentMemoryEntry | null> {
-    await this.ensureStorageLayout();
-    const key = principalKey(principal);
-    return this.memoryEventLog.enqueue(key, async () => {
-      if ('fact' in patch && !normalizeMemoryFact(patch.fact)) {
-        throw new Error('Memory fact cannot be empty.');
-      }
-      const projection = await this.getMemoryProjection(principal);
-      const current = projection.entries.get(entryId);
-      if (!current) return null;
-      const normalizedPatch = normalizeMemoryEntryPatch(patch);
-      if (Object.keys(normalizedPatch).length === 0) return current;
-      const event = await this.nextMemoryEvent(principal, {
-        type: 'memory.entry_updated',
-        createdAt: Date.now(),
-        entryId,
-        patch: normalizedPatch,
-      });
-      await this.appendMemoryEvents(principal, [event]);
-      const next = normalizeMemoryEntry({ ...current, ...normalizedPatch }) ?? current;
-      setMemoryProjectionEntry(projection, next, current);
-      projection.latestSeq = event.seq;
-      projection.eventCount += 1;
-      await this.maybeCompactMemoryLog(principal, projection);
-      return next;
-    });
-  }
-
-  async removeMemoryEntry(principal: AgentPrincipal, entryId: string, reason?: string): Promise<AgentMemoryEntry | null> {
-    await this.ensureStorageLayout();
-    const key = principalKey(principal);
-    return this.memoryEventLog.enqueue(key, async () => {
-      const projection = await this.getMemoryProjection(principal);
-      const current = projection.entries.get(entryId);
-      if (!current) return null;
-      if (current.status === 'invalidated') return current;
-      const event = await this.nextMemoryEvent(principal, {
-        type: 'memory.entry_removed',
-        createdAt: Date.now(),
-        entryId,
-        reason,
-      });
-      await this.appendMemoryEvents(principal, [event]);
-      const next: AgentMemoryEntry = { ...current, status: 'invalidated' };
-      setMemoryProjectionEntry(projection, next, current);
-      projection.latestSeq = event.seq;
-      projection.eventCount += 1;
-      await this.maybeCompactMemoryLog(principal, projection);
-      return next;
-    });
-  }
-
-  async appendDreamCompleted(principal: AgentPrincipal, input: AgentDreamCompletedInput): Promise<Extract<AgentMemoryEvent, { type: 'dream.completed' }>> {
-    await this.ensureStorageLayout();
-    const key = principalKey(principal);
-    return this.memoryEventLog.enqueue(key, async () => {
-      const completedAt = input.completedAt ?? Date.now();
-      const event = await this.nextMemoryEvent(principal, {
-        type: 'dream.completed',
-        createdAt: completedAt,
-        dreamId: input.dreamId ?? `dream-${randomUUID()}`,
-        runId: input.runId,
-        trigger: input.trigger,
-        startedAt: input.startedAt,
-        completedAt,
-        watermark: normalizeDreamWatermark(input.watermark),
-        processed: {
-          conversations: normalizeDreamProcessedConversations(input.processed.conversations),
-          runs: normalizeDreamProcessedRuns(input.processed.runs),
-          totalMessageCount: Math.max(0, Math.trunc(input.processed.totalMessageCount)),
-          totalCharCount: Math.max(0, Math.trunc(input.processed.totalCharCount)),
-          consolidateOnly: input.processed.consolidateOnly,
-        },
-        changes: normalizeDreamChanges(input.changes),
-      }) as Extract<AgentMemoryEvent, { type: 'dream.completed' }>;
-      const projection = await this.getMemoryProjection(principal);
-      await this.appendMemoryEvents(principal, [event]);
-      projection.dream = dreamStateFromCompleted(event);
-      projection.latestSeq = event.seq;
-      projection.eventCount += 1;
-      await this.maybeCompactMemoryLog(principal, projection);
-      return event;
-    });
-  }
-
-  async readDreamState(principal: AgentPrincipal): Promise<AgentDreamState> {
-    await this.ensureStorageLayout();
-    return cloneDreamState((await this.getMemoryProjection(principal)).dream);
-  }
-
-  async getMemoryEntry(principal: AgentPrincipal, entryId: string): Promise<AgentMemoryEntry | null> {
-    await this.ensureStorageLayout();
-    const projection = await this.getMemoryProjection(principal);
-    return projection.entries.get(entryId) ?? null;
-  }
-
-  async getMemoryEpisode(principal: AgentPrincipal, episodeId: string): Promise<AgentMemoryEpisode | null> {
-    await this.ensureStorageLayout();
-    const projection = await this.getMemoryProjection(principal);
-    return projection.episodes.get(episodeId) ?? null;
-  }
-
-  async listMemoryEntriesForEpisode(principal: AgentPrincipal, episodeId: string): Promise<AgentMemoryEntry[]> {
-    await this.ensureStorageLayout();
-    const projection = await this.getMemoryProjection(principal);
-    const ids = projection.memoryIdsByEpisodeId.get(episodeId) ?? new Set<string>();
-    return [...ids]
-      .map((id) => projection.entries.get(id))
-      .filter((entry): entry is AgentMemoryEntry => !!entry)
-      .sort((left, right) => right.createdAt - left.createdAt || right.id.localeCompare(left.id));
-  }
-
-  async listMemoryEntries(
-    principal: AgentPrincipal,
-    options: { includeInvalidated?: boolean; limit?: number; query?: string } = {},
-  ): Promise<AgentMemoryEntry[]> {
-    return (await this.queryMemoryEntries(principal, options)).entries;
-  }
-
-  // A pool is one undivided self-model: no workspace filter here by design — `originWorkspace`
-  // on an entry is provenance metadata, never a retrieval fence.
-  async queryMemoryEntries(
-    principal: AgentPrincipal,
-    options: { includeInvalidated?: boolean; limit?: number; query?: string } = {},
-  ): Promise<{ entries: AgentMemoryEntry[]; totalEntries: number }> {
-    await this.ensureStorageLayout();
-    const projection = await this.getMemoryProjection(principal);
-    const poolEntries = [...projection.entries.values()]
-      .filter((entry) => options.includeInvalidated || entry.status === 'active');
-    const entries = rankMemoryEntriesForRecall(poolEntries, {
-      query: options.query,
-      accessStatsByEntryId: projection.accessStatsByEntryId,
-    }).map((item) => item.entry);
-    return {
-      entries: entries.slice(0, clampMemoryLimit(options.limit)),
-      totalEntries: entries.length,
-    };
-  }
-
-  async activateMemoryEntries(
-    principal: AgentPrincipal,
-    options: { limit?: number; now?: number } = {},
-  ): Promise<AgentMemoryActivationResult> {
-    await this.ensureStorageLayout();
-    const now = options.now ?? Date.now();
-    const projection = await this.getMemoryProjection(principal);
-    const dayBucket = memoryActivationDayBucket(now);
-    const cached = projection.activationCache;
-    if (cached && cached.latestSeq === projection.latestSeq && cached.dayBucket === dayBucket) {
-      return {
-        entries: cached.ranked.slice(0, clampMemoryLimit(options.limit)),
-        overview: { ...cached.overview, generatedAt: now },
-        totalEntries: cached.ranked.length,
-      };
-    }
-    const ranked = rankMemoryEntriesForBriefing(
-      [...projection.entries.values()].filter((entry) => entry.status === 'active'),
-      projection.accessStatsByEntryId,
-      now,
-    );
-    const overview = buildMemoryOverview(ranked, { generatedAt: now });
-    projection.activationCache = {
-      latestSeq: projection.latestSeq,
-      dayBucket,
-      ranked,
-      overview,
-    };
-    return {
-      entries: ranked.slice(0, clampMemoryLimit(options.limit)),
-      overview,
-      totalEntries: ranked.length,
-    };
-  }
-
-  async memoryStrength(principal: AgentPrincipal, entryId: string, now = Date.now()): Promise<AgentMemoryStrength | null> {
-    await this.ensureStorageLayout();
-    const projection = await this.getMemoryProjection(principal);
-    const entry = projection.entries.get(entryId);
-    if (!entry) return null;
-    return computeMemoryStrength(entry, projection.accessStatsByEntryId.get(entryId), now);
-  }
-
-  async recordMemoryAccess(
-    principal: AgentPrincipal,
-    input: AgentMemoryAccessInput,
-  ): Promise<Extract<AgentMemoryEvent, { type: 'memory.accessed' }> | null> {
-    await this.ensureStorageLayout();
-    const key = principalKey(principal);
-    return this.memoryEventLog.enqueue(key, async () => {
-      const projection = await this.getMemoryProjection(principal);
-      const seen = new Set<string>();
-      const createdAt = input.createdAt ?? Date.now();
-      const accesses = input.entryIds
-        .filter((entryId) => {
-          if (seen.has(entryId)) return false;
-          seen.add(entryId);
-          const entry = projection.entries.get(entryId);
-          if (!entry || entry.status !== 'active') return false;
-          if (input.via === 'briefing' && wasBriefedRecently(projection.accessStatsByEntryId.get(entryId), createdAt)) {
-            return false;
-          }
-          return true;
-        })
-        .map((entryId) => ({ entryId, count: 1 }));
-      if (accesses.length === 0) return null;
-      const event = await this.nextMemoryEvent(principal, {
-        type: 'memory.accessed',
-        createdAt,
-        via: input.via,
-        accesses,
-      }) as Extract<AgentMemoryEvent, { type: 'memory.accessed' }>;
-      await this.appendMemoryEvents(principal, [event]);
-      applyMemoryAccessEvent(projection.accessStatsByEntryId, event);
-      projection.latestSeq = event.seq;
-      projection.eventCount += 1;
-      await this.maybeCompactMemoryLog(principal, projection);
-      return event;
-    });
-  }
-
-  async readMemoryEvents(principal: AgentPrincipal): Promise<AgentMemoryEvent[]> {
-    await this.ensureStorageLayout();
-    return this.memoryEventLog.readIfExists(this.memoryPaths(principal).memoryEventsPath);
-  }
-
   private ensureStorageLayout(): Promise<void> {
     // Fail-open (gate #180 finding #2, carried onto the sentinel): a probe/wipe
     // failure must NOT memoize a rejected promise — that would brick every store
@@ -1193,8 +797,6 @@ export class AgentEventStore {
     await rm(this.rootDir, { recursive: true, force: true });
     this.agentEventLog.clear();
     this.runEventLog.clear();
-    this.memoryEventLog.clear();
-    this.memoryProjectionByPrincipal.clear();
     await mkdir(this.rootDir, { recursive: true });
     await atomicWriteFile(sentinelPath, `${JSON.stringify({ v: STORAGE_LAYOUT_VERSION })}\n`);
   }
@@ -1239,73 +841,6 @@ export class AgentEventStore {
       eventIds.add(event.eventId);
       previousSeq = event.seq;
     }
-  }
-
-  private async nextMemoryEvent(
-    principal: AgentPrincipal,
-    input: Omit<Extract<AgentMemoryEvent, { type: 'memory.episode_recorded' }>, 'v' | 'eventId' | 'seq' | 'principal'>
-      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_added' }>, 'v' | 'eventId' | 'seq' | 'principal'>
-      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_updated' }>, 'v' | 'eventId' | 'seq' | 'principal'>
-      | Omit<Extract<AgentMemoryEvent, { type: 'memory.entry_removed' }>, 'v' | 'eventId' | 'seq' | 'principal'>
-      | Omit<Extract<AgentMemoryEvent, { type: 'memory.accessed' }>, 'v' | 'eventId' | 'seq' | 'principal'>
-      | Omit<Extract<AgentMemoryEvent, { type: 'dream.completed' }>, 'v' | 'eventId' | 'seq' | 'principal'>,
-  ): Promise<AgentMemoryEvent> {
-    const key = principalKey(principal);
-    const seq = await this.memoryEventLog.latestSeq(key, () => [this.memoryPaths(principal).memoryEventsPath]) + 1;
-    return {
-      v: 1,
-      eventId: `memory-event-${randomUUID()}`,
-      seq,
-      principal,
-      ...input,
-    } as AgentMemoryEvent;
-  }
-
-  private async appendMemoryEvents(principal: AgentPrincipal, events: readonly AgentMemoryEvent[]): Promise<void> {
-    if (events.length === 0) return;
-    await this.memoryEventLog.appendForKey(principalKey(principal), this.memoryPaths(principal).memoryEventsPath, events);
-  }
-
-  private async getMemoryProjection(principal: AgentPrincipal): Promise<AgentMemoryProjectionCache> {
-    const key = principalKey(principal);
-    const latestSeq = await this.memoryEventLog.latestSeq(key, () => [this.memoryPaths(principal).memoryEventsPath]);
-    const cached = this.memoryProjectionByPrincipal.get(key);
-    if (cached && cached.latestSeq === latestSeq) return cached;
-
-    const events = await this.readMemoryEvents(principal);
-    const projected = projectMemoryEvents(events);
-    const projection: AgentMemoryProjectionCache = {
-      latestSeq,
-      eventCount: events.length,
-      entries: projected.entries,
-      episodes: projected.episodes,
-      memoryIdsByEpisodeId: projected.memoryIdsByEpisodeId,
-      accessStatsByEntryId: projected.accessStatsByEntryId,
-      dream: projected.dream,
-    };
-    this.memoryProjectionByPrincipal.set(key, projection);
-    return projection;
-  }
-
-  private async maybeCompactMemoryLog(principal: AgentPrincipal, projection: AgentMemoryProjectionCache): Promise<void> {
-    if (projection.eventCount < MEMORY_COMPACTION_MIN_EVENTS) return;
-    const projectedEntryCount = Math.max(1, projection.entries.size);
-    if (projection.eventCount < projectedEntryCount * MEMORY_COMPACTION_CHURN_FACTOR) return;
-
-    const events = compactMemoryProjection(
-      principal,
-      projection.episodes,
-      projection.entries,
-      projection.accessStatsByEntryId,
-      projection.dream.lastCompleted,
-    );
-    const filePath = this.memoryPaths(principal).memoryEventsPath;
-    await mkdir(path.dirname(filePath), { recursive: true });
-    await atomicWriteFile(filePath, serializeJsonl(events));
-    const latestSeq = events.at(-1)?.seq ?? 0;
-    projection.latestSeq = latestSeq;
-    projection.eventCount = events.length;
-    this.memoryEventLog.setLatestSeq(principalKey(principal), latestSeq);
   }
 
   private async readEventFileTail(conversationId: string): Promise<AgentEventFileTail> {
@@ -1478,9 +1013,9 @@ export class AgentEventStore {
       updatedAtByRunId[right]! - updatedAtByRunId[left]! || left.localeCompare(right)
     ));
     const index: AgentPrincipalRunIndex = { v: 1, principalKey: principalKey(principal), runIds, updatedAtByRunId };
-    const poolPaths = this.memoryPaths(principal);
-    await mkdir(poolPaths.poolDir, { recursive: true });
-    await atomicWriteFile(poolPaths.runIndexPath, `${JSON.stringify(index)}\n`);
+    const principalPaths = this.principalPaths(principal);
+    await mkdir(principalPaths.principalDir, { recursive: true });
+    await atomicWriteFile(principalPaths.runIndexPath, `${JSON.stringify(index)}\n`);
     return index;
   }
 
@@ -1554,7 +1089,7 @@ export class AgentEventStore {
 
   private async readPrincipalRunIndex(principal: AgentPrincipal): Promise<AgentPrincipalRunIndex | null> {
     try {
-      const raw = await readFile(this.memoryPaths(principal).runIndexPath, 'utf8');
+      const raw = await readFile(this.principalPaths(principal).runIndexPath, 'utf8');
       return normalizePrincipalRunIndex(JSON.parse(raw), principalKey(principal));
     } catch (error) {
       if (isNotFoundError(error)) return null;
@@ -1604,7 +1139,7 @@ export class AgentEventStore {
 
   private async updatePrincipalRunIndex(principal: AgentPrincipal, runId: string, updatedAt: number) {
     await this.enqueueIndexWrite(async () => {
-      const poolPaths = this.memoryPaths(principal);
+      const principalPaths = this.principalPaths(principal);
       const existing = await this.ensurePrincipalRunIndex(principal);
       const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
       const index: AgentPrincipalRunIndex = {
@@ -1619,8 +1154,8 @@ export class AgentEventStore {
       index.runIds.sort((left, right) => (
         index.updatedAtByRunId[right]! - index.updatedAtByRunId[left]! || left.localeCompare(right)
       ));
-      await mkdir(poolPaths.poolDir, { recursive: true });
-      await atomicWriteFile(poolPaths.runIndexPath, `${JSON.stringify(index)}\n`);
+      await mkdir(principalPaths.principalDir, { recursive: true });
+      await atomicWriteFile(principalPaths.runIndexPath, `${JSON.stringify(index)}\n`);
     });
   }
 
@@ -2744,7 +2279,8 @@ function parseEventsJsonl(raw: string, source: string): AgentEvent[] {
 /**
  * The delegated-run ledger parse: like {@link parseEventsJsonl} but a torn FINAL
  * line — the crash artifact of an interrupted child-message append — is dropped
- * with a warning instead of failing the read (same policy as the memory log:
+ * with a warning instead of failing the read (same policy as other high-write
+ * sidecars:
  * the run is marked interrupted on restore, so the lost in-flight event is
  * accounted for). A malformed line in the middle is real corruption and still
  * fails loudly.
@@ -2773,630 +2309,6 @@ function parseRunEventsJsonl(raw: string, source: string): AgentEvent[] {
     }
   }
   return events;
-}
-
-function parseMemoryEventsJsonl(raw: string, source: string): AgentMemoryEvent[] {
-  const events: AgentMemoryEvent[] = [];
-  const lines = raw.split(/\r?\n/);
-  let lastContentIndex = -1;
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if (lines[index]!.trim().length > 0) {
-      lastContentIndex = index;
-      break;
-    }
-  }
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]!.trim();
-    if (!line) continue;
-    try {
-      const event = normalizeMemoryEvent(JSON.parse(line));
-      if (event) events.push(event);
-    } catch (error) {
-      // A torn FINAL line is a crash artifact of an interrupted append (e.g. quit mid-Dream):
-      // drop it and keep the pool readable — the watermark makes the lost write re-derivable.
-      // A malformed line in the middle is real corruption and still fails loudly.
-      if (index === lastContentIndex) {
-        console.warn(`Dropping torn trailing agent memory event at ${source}:${index + 1}`);
-        break;
-      }
-      throw new Error(`Invalid agent memory event JSON at ${source}:${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  return events;
-}
-
-function projectMemoryEvents(events: readonly AgentMemoryEvent[]): {
-  entries: Map<string, AgentMemoryEntry>;
-  episodes: Map<string, AgentMemoryEpisode>;
-  memoryIdsByEpisodeId: Map<string, Set<string>>;
-  accessStatsByEntryId: Map<string, AgentMemoryAccessStats>;
-  dream: AgentDreamState;
-} {
-  const entries = new Map<string, AgentMemoryEntry>();
-  const episodes = new Map<string, AgentMemoryEpisode>();
-  const accessStatsByEntryId = new Map<string, AgentMemoryAccessStats>();
-  let lastCompletedDream: Extract<AgentMemoryEvent, { type: 'dream.completed' }> | null = null;
-  for (const event of [...events].sort(compareMemoryEventsForReplay)) {
-    if (event.type === 'memory.episode_recorded') {
-      const episode = normalizeMemoryEpisode(event.episode);
-      if (episode) episodes.set(episode.id, episode);
-      continue;
-    }
-
-    if (event.type === 'memory.entry_added') {
-      const entry = normalizeMemoryEntry(event.entry);
-      if (entry) entries.set(entry.id, entry);
-      continue;
-    }
-
-    if (event.type === 'dream.completed') {
-      lastCompletedDream = event;
-      continue;
-    }
-
-    if (event.type === 'memory.accessed') {
-      applyMemoryAccessEvent(accessStatsByEntryId, event);
-      continue;
-    }
-
-    const current = entries.get(event.entryId);
-    if (!current) continue;
-    if (event.type === 'memory.entry_updated') {
-      const next = normalizeMemoryEntry({ ...current, ...normalizeMemoryEntryPatch(event.patch) });
-      if (next) entries.set(next.id, next);
-      continue;
-    }
-
-    entries.set(current.id, { ...current, status: 'invalidated' });
-  }
-  const memoryIdsByEpisodeId = buildMemoryEpisodeReverseIndex(entries);
-  return {
-    entries,
-    episodes,
-    memoryIdsByEpisodeId,
-    accessStatsByEntryId,
-    dream: lastCompletedDream ? dreamStateFromCompleted(lastCompletedDream) : emptyDreamState(),
-  };
-}
-
-function compactMemoryProjection(
-  principal: AgentPrincipal,
-  episodes: ReadonlyMap<string, AgentMemoryEpisode>,
-  entries: ReadonlyMap<string, AgentMemoryEntry>,
-  accessStatsByEntryId: ReadonlyMap<string, AgentMemoryAccessStats>,
-  lastCompletedDream: Extract<AgentMemoryEvent, { type: 'dream.completed' }> | null,
-): AgentMemoryEvent[] {
-  const createdAt = Date.now();
-  const episodeEvents = [...episodes.values()]
-    .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
-    .map((episode, index): AgentMemoryEvent => ({
-      v: 1,
-      type: 'memory.episode_recorded',
-      eventId: `episode-compact-${randomUUID()}`,
-      seq: index + 1,
-      principal,
-      createdAt,
-      episode,
-    }));
-  const entryEvents = [...entries.values()]
-    .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
-    .map((entry, index): AgentMemoryEvent => ({
-      v: 1,
-      type: 'memory.entry_added',
-      eventId: `memory-compact-${randomUUID()}`,
-      seq: episodeEvents.length + index + 1,
-      principal,
-      createdAt,
-      entry,
-    }));
-  const activeEntryIds = new Set(entries.keys());
-  const accessEvents = compactMemoryAccessEvents(
-    principal,
-    accessStatsByEntryId,
-    activeEntryIds,
-    episodeEvents.length + entryEvents.length,
-  );
-  const events = [...episodeEvents, ...entryEvents, ...accessEvents];
-  if (lastCompletedDream) {
-    events.push({
-      ...lastCompletedDream,
-      eventId: `dream-compact-${randomUUID()}`,
-      seq: events.length + 1,
-      createdAt,
-    });
-  }
-  return events;
-}
-
-function buildMemoryEpisodeReverseIndex(
-  entries: ReadonlyMap<string, AgentMemoryEntry>,
-): Map<string, Set<string>> {
-  const index = new Map<string, Set<string>>();
-  for (const entry of entries.values()) {
-    indexMemoryEntryEpisodeSources(index, entry);
-  }
-  return index;
-}
-
-function compactMemoryAccessEvents(
-  principal: AgentPrincipal,
-  accessStatsByEntryId: ReadonlyMap<string, AgentMemoryAccessStats>,
-  activeEntryIds: ReadonlySet<string>,
-  seqOffset: number,
-): AgentMemoryEvent[] {
-  const events: AgentMemoryEvent[] = [];
-  for (const via of ['briefing', 'recall'] as const) {
-    const accesses = [...accessStatsByEntryId.entries()]
-      .map(([entryId, stats]) => ({
-        entryId,
-        count: via === 'briefing' ? stats.briefingCount : stats.recallCount,
-        createdAt: via === 'briefing' ? stats.lastBriefingAt : stats.lastRecallAt,
-      }))
-      .filter((access) => activeEntryIds.has(access.entryId) && access.count > 0 && access.createdAt !== null)
-      .sort((left, right) => left.entryId.localeCompare(right.entryId));
-    if (accesses.length === 0) continue;
-    events.push({
-      v: 1,
-      type: 'memory.accessed',
-      eventId: `access-compact-${randomUUID()}`,
-      seq: seqOffset + events.length + 1,
-      principal,
-      createdAt: Math.max(...accesses.map((access) => access.createdAt ?? 0)),
-      via,
-      accesses: accesses.map(({ entryId, count, createdAt }) => ({
-        entryId,
-        count,
-        accessedAt: createdAt ?? undefined,
-      })),
-    });
-  }
-  return events;
-}
-
-function applyMemoryAccessEvent(
-  accessStatsByEntryId: Map<string, AgentMemoryAccessStats>,
-  event: Extract<AgentMemoryEvent, { type: 'memory.accessed' }>,
-): void {
-  for (const access of event.accesses) {
-    const count = Math.max(1, Math.trunc(access.count));
-    const accessedAt = access.accessedAt ?? event.createdAt;
-    const current = cloneMemoryAccessStats(accessStatsByEntryId.get(access.entryId) ?? emptyMemoryAccessStats());
-    if (event.via === 'recall') {
-      current.recallCount += count;
-      current.lastRecallAt = Math.max(current.lastRecallAt ?? 0, accessedAt);
-    } else {
-      current.briefingCount += count;
-      current.lastBriefingAt = Math.max(current.lastBriefingAt ?? 0, accessedAt);
-    }
-    accessStatsByEntryId.set(access.entryId, current);
-  }
-}
-
-function setMemoryProjectionEntry(
-  projection: AgentMemoryProjectionCache,
-  entry: AgentMemoryEntry,
-  previous?: AgentMemoryEntry,
-): void {
-  if (previous) deindexMemoryEntryEpisodeSources(projection.memoryIdsByEpisodeId, previous);
-  projection.entries.set(entry.id, entry);
-  indexMemoryEntryEpisodeSources(projection.memoryIdsByEpisodeId, entry);
-}
-
-function indexMemoryEntryEpisodeSources(index: Map<string, Set<string>>, entry: AgentMemoryEntry): void {
-  for (const source of entry.sources) {
-    if (!('episodeId' in source)) continue;
-    const ids = index.get(source.episodeId) ?? new Set<string>();
-    ids.add(entry.id);
-    index.set(source.episodeId, ids);
-  }
-}
-
-function deindexMemoryEntryEpisodeSources(index: Map<string, Set<string>>, entry: AgentMemoryEntry): void {
-  for (const source of entry.sources) {
-    if (!('episodeId' in source)) continue;
-    const ids = index.get(source.episodeId);
-    if (!ids) continue;
-    ids.delete(entry.id);
-    if (ids.size === 0) index.delete(source.episodeId);
-  }
-}
-
-function normalizeMemoryEvent(value: unknown): AgentMemoryEvent | null {
-  if (!isRecord(value) || value.v !== 1) return null;
-  const principal = normalizePrincipal(value.principal);
-  if (typeof value.eventId !== 'string' || !principal) return null;
-  const seq = numberOrNull(value.seq);
-  const createdAt = numberOrNull(value.createdAt);
-  if (seq === null || createdAt === null) return null;
-
-  if (value.type === 'memory.entry_added') {
-    const entry = normalizeMemoryEntry(value.entry);
-    if (!entry || !samePrincipal(entry.principal, principal)) return null;
-    return {
-      v: 1,
-      type: 'memory.entry_added',
-      eventId: value.eventId,
-      seq,
-      principal,
-      createdAt,
-      entry,
-    };
-  }
-
-  if (value.type === 'memory.episode_recorded') {
-    const episode = normalizeMemoryEpisode(value.episode);
-    if (!episode || !samePrincipal(episode.principal, principal)) return null;
-    return {
-      v: 1,
-      type: 'memory.episode_recorded',
-      eventId: value.eventId,
-      seq,
-      principal,
-      createdAt,
-      episode,
-    };
-  }
-
-  if (value.type === 'memory.entry_updated') {
-    if (typeof value.entryId !== 'string') return null;
-    return {
-      v: 1,
-      type: 'memory.entry_updated',
-      eventId: value.eventId,
-      seq,
-      principal,
-      createdAt,
-      entryId: value.entryId,
-      patch: normalizeMemoryEntryPatch(isRecord(value.patch) ? value.patch : {}),
-    };
-  }
-
-  if (value.type === 'memory.entry_removed') {
-    if (typeof value.entryId !== 'string') return null;
-    return {
-      v: 1,
-      type: 'memory.entry_removed',
-      eventId: value.eventId,
-      seq,
-      principal,
-      createdAt,
-      entryId: value.entryId,
-      reason: typeof value.reason === 'string' ? value.reason : undefined,
-    };
-  }
-
-  if (value.type === 'memory.accessed') {
-    const via = value.via === 'briefing' || value.via === 'recall' ? value.via : null;
-    const accesses = normalizeMemoryAccesses(value.accesses);
-    if (!via || accesses.length === 0) return null;
-    return {
-      v: 1,
-      type: 'memory.accessed',
-      eventId: value.eventId,
-      seq,
-      principal,
-      createdAt,
-      via,
-      accesses,
-    };
-  }
-
-  if (value.type === 'dream.completed') {
-    if (typeof value.dreamId !== 'string' || typeof value.runId !== 'string') return null;
-    const trigger = value.trigger === 'manual' || value.trigger === 'schedule' ? value.trigger : null;
-    const startedAt = numberOrNull(value.startedAt);
-    const completedAt = numberOrNull(value.completedAt);
-    const watermark = normalizeDreamWatermark(value.watermark);
-    const processed = normalizeDreamProcessed(value.processed);
-    const changes = normalizeDreamChanges(isRecord(value.changes) ? value.changes : {});
-    if (!trigger || startedAt === null || completedAt === null || !processed) return null;
-    return {
-      v: 1,
-      type: 'dream.completed',
-      eventId: value.eventId,
-      seq,
-      principal,
-      createdAt,
-      dreamId: value.dreamId,
-      runId: value.runId,
-      trigger,
-      startedAt,
-      completedAt,
-      watermark,
-      processed,
-      changes,
-    };
-  }
-
-  return null;
-}
-
-function normalizeMemoryEntry(value: unknown): AgentMemoryEntry | null {
-  if (!isRecord(value)) return null;
-  const principal = normalizePrincipal(value.principal);
-  if (typeof value.id !== 'string' || !principal) return null;
-  const fact = normalizeMemoryFact(value.fact);
-  const createdAt = numberOrNull(value.createdAt);
-  if (!fact || createdAt === null) return null;
-  return {
-    id: value.id,
-    principal,
-    fact,
-    originWorkspace: normalizeOptionalString(value.originWorkspace),
-    sources: Array.isArray(value.sources) ? value.sources.map(normalizeMemorySource).filter(isPresent) : [],
-    status: value.status === 'invalidated' ? 'invalidated' : 'active',
-    createdAt,
-  };
-}
-
-function normalizeMemoryEpisode(value: unknown): AgentMemoryEpisode | null {
-  if (!isRecord(value)) return null;
-  const principal = normalizePrincipal(value.principal);
-  if (typeof value.id !== 'string' || !principal) return null;
-  const gist = normalizeMemoryGist(value.gist);
-  const createdAt = numberOrNull(value.createdAt);
-  if (!gist || createdAt === null) return null;
-  const sources = Array.isArray(value.sources) ? value.sources.map(normalizeMemoryStreamSource).filter(isPresent) : [];
-  if (sources.length === 0) return null;
-  return {
-    id: value.id,
-    principal,
-    gist,
-    originWorkspace: normalizeOptionalString(value.originWorkspace),
-    sources,
-    createdAt,
-  };
-}
-
-function emptyDreamState(): AgentDreamState {
-  return {
-    lastCompleted: null,
-    watermark: { conversations: {}, runs: {} },
-    lastSuccessAt: null,
-  };
-}
-
-function dreamStateFromCompleted(event: Extract<AgentMemoryEvent, { type: 'dream.completed' }>): AgentDreamState {
-  return {
-    lastCompleted: event,
-    watermark: normalizeDreamWatermark(event.watermark),
-    lastSuccessAt: event.completedAt,
-  };
-}
-
-function cloneDreamState(state: AgentDreamState): AgentDreamState {
-  return {
-    lastCompleted: state.lastCompleted ? JSON.parse(JSON.stringify(state.lastCompleted)) as AgentDreamState['lastCompleted'] : null,
-    watermark: normalizeDreamWatermark(state.watermark),
-    lastSuccessAt: state.lastSuccessAt,
-  };
-}
-
-function normalizeDreamWatermark(value: unknown): AgentDreamWatermark {
-  if (!isRecord(value) || !isRecord(value.conversations)) return { conversations: {}, runs: {} };
-  const conversations: AgentDreamWatermark['conversations'] = {};
-  for (const [conversationId, rawCursor] of Object.entries(value.conversations)) {
-    const cursor = normalizeDreamWatermarkCursor(rawCursor);
-    if (cursor) conversations[conversationId] = cursor;
-  }
-  // ONE cursor shape for run streams too (run unification).
-  const runs: NonNullable<AgentDreamWatermark['runs']> = {};
-  if (isRecord(value.runs)) {
-    for (const [runId, rawCursor] of Object.entries(value.runs)) {
-      const cursor = normalizeDreamWatermarkCursor(rawCursor);
-      if (cursor) runs[runId] = cursor;
-    }
-  }
-  return { conversations, runs };
-}
-
-function normalizeDreamWatermarkCursor(value: unknown): AgentDreamWatermark['conversations'][string] | null {
-  if (!isRecord(value)) return null;
-  const seq = numberOrNull(value.seq);
-  if (seq === null || seq < 0) return null;
-  const eventId = typeof value.eventId === 'string' || value.eventId === null ? value.eventId : null;
-  return { seq: Math.trunc(seq), eventId };
-}
-
-function normalizeDreamProcessed(value: unknown): Extract<AgentMemoryEvent, { type: 'dream.completed' }>['processed'] | null {
-  if (!isRecord(value) || !isRecord(value.conversations)) return null;
-  return {
-    conversations: normalizeDreamProcessedConversations(value.conversations),
-    runs: normalizeDreamProcessedRuns(value.runs),
-    totalMessageCount: nonNegativeInteger(value.totalMessageCount),
-    totalCharCount: nonNegativeInteger(value.totalCharCount),
-    consolidateOnly: value.consolidateOnly === true,
-  };
-}
-
-function normalizeDreamProcessedConversations(value: unknown): Record<string, AgentDreamProcessedConversation> {
-  if (!isRecord(value)) return {};
-  const conversations: Record<string, AgentDreamProcessedConversation> = {};
-  for (const [conversationId, raw] of Object.entries(value)) {
-    if (!isRecord(raw)) continue;
-    const fromSeqExclusive = numberOrNull(raw.fromSeqExclusive);
-    const throughSeq = numberOrNull(raw.throughSeq);
-    if (fromSeqExclusive === null || throughSeq === null || fromSeqExclusive < 0 || throughSeq < fromSeqExclusive) continue;
-    conversations[conversationId] = {
-      fromSeqExclusive: Math.trunc(fromSeqExclusive),
-      throughSeq: Math.trunc(throughSeq),
-      throughEventId: typeof raw.throughEventId === 'string' || raw.throughEventId === null ? raw.throughEventId : null,
-      messageCount: nonNegativeInteger(raw.messageCount),
-      charCount: nonNegativeInteger(raw.charCount),
-    };
-  }
-  return conversations;
-}
-
-function normalizeDreamProcessedRuns(value: unknown): Record<string, AgentDreamProcessedRun> {
-  if (!isRecord(value)) return {};
-  const runs: Record<string, AgentDreamProcessedRun> = {};
-  for (const [runId, raw] of Object.entries(value)) {
-    if (!isRecord(raw) || typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) continue;
-    const fromSeqExclusive = numberOrNull(raw.fromSeqExclusive);
-    const throughSeq = numberOrNull(raw.throughSeq);
-    if (fromSeqExclusive === null || throughSeq === null || fromSeqExclusive < 0 || throughSeq < fromSeqExclusive) continue;
-    runs[runId] = {
-      conversationId: raw.conversationId,
-      fromSeqExclusive: Math.trunc(fromSeqExclusive),
-      throughSeq: Math.trunc(throughSeq),
-      throughEventId: typeof raw.throughEventId === 'string' || raw.throughEventId === null ? raw.throughEventId : null,
-      messageCount: nonNegativeInteger(raw.messageCount),
-      charCount: nonNegativeInteger(raw.charCount),
-    };
-  }
-  return runs;
-}
-
-function normalizeDreamChanges(value: unknown): AgentDreamCompletedChanges {
-  const record = isRecord(value) ? value : {};
-  return {
-    added: nonNegativeInteger(record.added),
-    updated: nonNegativeInteger(record.updated),
-    forgotten: nonNegativeInteger(record.forgotten),
-    skipped: nonNegativeInteger(record.skipped),
-  };
-}
-
-function normalizeMemoryEntryPatch(value: unknown): AgentMemoryEntryPatch {
-  if (!isRecord(value)) return {};
-  const patch: AgentMemoryEntryPatch = {};
-  if ('fact' in value) {
-    const fact = normalizeMemoryFact(value.fact);
-    if (fact) patch.fact = fact;
-  }
-  if ('originWorkspace' in value) {
-    patch.originWorkspace = normalizeOptionalString(value.originWorkspace);
-  }
-  if ('sources' in value) {
-    patch.sources = Array.isArray(value.sources) ? value.sources.map(normalizeMemorySource).filter(isPresent) : [];
-  }
-  if (value.status === 'active' || value.status === 'invalidated') {
-    patch.status = value.status;
-  }
-  return patch;
-}
-
-function normalizeMemoryAccesses(value: unknown): Extract<AgentMemoryEvent, { type: 'memory.accessed' }>['accesses'] {
-  if (!Array.isArray(value)) return [];
-  const accesses: Extract<AgentMemoryEvent, { type: 'memory.accessed' }>['accesses'] = [];
-  const seen = new Set<string>();
-  for (const raw of value) {
-    if (!isRecord(raw) || typeof raw.entryId !== 'string' || raw.entryId.length === 0) continue;
-    if (seen.has(raw.entryId)) continue;
-    const count = nonNegativeInteger(raw.count);
-    if (count <= 0) continue;
-    const accessedAt = numberOrNull(raw.accessedAt);
-    seen.add(raw.entryId);
-    accesses.push({
-      entryId: raw.entryId,
-      count,
-      ...(accessedAt === null ? {} : { accessedAt }),
-    });
-  }
-  return accesses;
-}
-
-function normalizeMemorySource(value: unknown): AgentMemorySource | null {
-  if (!isRecord(value)) return null;
-  if (typeof value.episodeId === 'string' && value.episodeId.length > 0) {
-    return { episodeId: value.episodeId };
-  }
-  return normalizeMemoryStreamSource(value);
-}
-
-function normalizeMemoryStreamSource(value: unknown): AgentMemoryStreamSource | null {
-  if (!isRecord(value)) return null;
-  if (value.stream !== 'conversation' && value.stream !== 'run') return null;
-  if (typeof value.streamId !== 'string' || value.streamId.length === 0) return null;
-  const range = normalizeMemorySourceRange(value.range);
-  if (!range) return null;
-  return {
-    stream: value.stream,
-    streamId: value.streamId,
-    range,
-  };
-}
-
-function normalizeMemorySourceRange(value: unknown): AgentMemoryStreamSource['range'] | null {
-  if (!isRecord(value)) return null;
-  const fromSeqExclusive = numberOrNull(value.fromSeqExclusive);
-  const throughSeq = numberOrNull(value.throughSeq);
-  if (
-    fromSeqExclusive === null
-    || throughSeq === null
-    || fromSeqExclusive < 0
-    || throughSeq < fromSeqExclusive
-  ) {
-    return null;
-  }
-  return {
-    fromSeqExclusive: Math.trunc(fromSeqExclusive),
-    throughSeq: Math.trunc(throughSeq),
-    throughEventId: typeof value.throughEventId === 'string' || value.throughEventId === null
-      ? value.throughEventId
-      : null,
-    ...normalizeCreatedAtClamp(value),
-  };
-}
-
-function normalizeCreatedAtClamp(value: Record<string, unknown>): Pick<AgentMemoryStreamSource['range'], 'fromCreatedAtInclusive' | 'throughCreatedAtExclusive'> {
-  const fromCreatedAtInclusive = numberOrNull(value.fromCreatedAtInclusive);
-  const throughCreatedAtExclusive = numberOrNull(value.throughCreatedAtExclusive);
-  return fromCreatedAtInclusive !== null
-    && throughCreatedAtExclusive !== null
-    && throughCreatedAtExclusive > fromCreatedAtInclusive
-    ? {
-      fromCreatedAtInclusive: Math.trunc(fromCreatedAtInclusive),
-      throughCreatedAtExclusive: Math.trunc(throughCreatedAtExclusive),
-    }
-    : {};
-}
-
-function normalizeMemoryFact(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const fact = normalizeDisplayText(value);
-  if (!fact) return null;
-  if (fact.length <= MAX_AGENT_MEMORY_FACT_CHARS) return fact;
-  return `${fact.slice(0, MAX_AGENT_MEMORY_FACT_CHARS - 3).trimEnd()}...`;
-}
-
-function normalizeMemoryGist(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const gist = normalizeDisplayText(value);
-  if (!gist) return null;
-  const maxChars = 4_000;
-  if (gist.length <= maxChars) return gist;
-  return `${gist.slice(0, maxChars - 3).trimEnd()}...`;
-}
-
-function normalizeOptionalString(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const normalized = value.trim();
-  return normalized || undefined;
-}
-
-function clampMemoryLimit(limit: number | undefined): number {
-  if (limit === undefined) return 50;
-  if (!Number.isFinite(limit)) return 50;
-  return Math.max(1, Math.min(200, Math.trunc(limit)));
-}
-
-function compareMemoryEventsForReplay(left: AgentMemoryEvent, right: AgentMemoryEvent): number {
-  return left.seq - right.seq || left.createdAt - right.createdAt || left.eventId.localeCompare(right.eventId);
-}
-
-function memoryActivationDayBucket(now: number): number {
-  return Math.floor(now / MEMORY_ACTIVATION_CACHE_BUCKET_MS);
-}
-
-function wasBriefedRecently(stats: AgentMemoryAccessStats | undefined, now: number): boolean {
-  if (!stats || stats.lastBriefingAt === null) return false;
-  return now - stats.lastBriefingAt < MEMORY_BRIEFING_ACCESS_WINDOW_MS;
-}
-
-function isPresent<T>(value: T | null | undefined): value is T {
-  return value !== null && value !== undefined;
 }
 
 function cloneReplayState(state: AgentEventReplayState): AgentEventReplayState {
