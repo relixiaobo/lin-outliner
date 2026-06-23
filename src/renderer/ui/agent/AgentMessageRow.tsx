@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import type { AgentMessageEntry, AgentTurnPhase } from '../../agent/runtime';
 import type {
@@ -324,6 +324,13 @@ function formatUsageCost(value: number | undefined): string | null {
   return `$${value.toFixed(4)}`;
 }
 
+function segmentStyle(value: number, total: number): CSSProperties {
+  const share = total > 0 ? value / total : 0;
+  return {
+    '--segment-size': `${Math.max(share * 100, value > 0 ? 2 : 0)}%`,
+  } as CSSProperties;
+}
+
 function usageSummary(message: AssistantMessage, labels: {
   input: string;
   output: string;
@@ -360,12 +367,12 @@ function AgentMessageUsageHoverCard({
   const cardRef = useRef<HTMLDivElement | null>(null);
   const usage = message.usage;
   const cost = usage.cost;
-  const costParts = [
-    [t.agent.message.tokenLabels.input, formatUsageCost(cost?.input)],
-    [t.agent.message.tokenLabels.output, formatUsageCost(cost?.output)],
-    [t.agent.message.tokenLabels.cacheRead, formatUsageCost(cost?.cacheRead)],
-    [t.agent.message.tokenLabels.cacheWrite, formatUsageCost(cost?.cacheWrite)],
-  ].flatMap(([label, value]) => (value && value !== '$0.0000' ? [`${label} ${value}`] : []));
+  const usageRows = [
+    { kind: 'input', label: t.agent.message.tokenLabels.input, tokens: usage.input, cost: cost?.input },
+    { kind: 'output', label: t.agent.message.tokenLabels.output, tokens: usage.output, cost: cost?.output },
+    { kind: 'cache-read', label: t.agent.message.tokenLabels.cacheRead, tokens: usage.cacheRead, cost: cost?.cacheRead },
+    { kind: 'cache-write', label: t.agent.message.tokenLabels.cacheWrite, tokens: usage.cacheWrite, cost: cost?.cacheWrite },
+  ];
   const style = useAnchoredOverlay(cardRef, {
     anchorRef,
     gap: 8,
@@ -383,23 +390,7 @@ function AgentMessageUsageHoverCard({
       style={style}
     >
       <div className="agent-message-usage-hover-title">{t.agent.message.usageDetails}</div>
-      <dl className="agent-message-usage-hover-grid">
-        <div>
-          <dt>{t.agent.message.tokenLabels.input}</dt>
-          <dd>{formatTokenValue(usage.input)}</dd>
-        </div>
-        <div>
-          <dt>{t.agent.message.tokenLabels.output}</dt>
-          <dd>{formatTokenValue(usage.output)}</dd>
-        </div>
-        <div>
-          <dt>{t.agent.message.tokenLabels.cacheRead}</dt>
-          <dd>{formatTokenValue(usage.cacheRead)}</dd>
-        </div>
-        <div>
-          <dt>{t.agent.message.tokenLabels.cacheWrite}</dt>
-          <dd>{formatTokenValue(usage.cacheWrite)}</dd>
-        </div>
+      <dl className="agent-message-usage-hover-totals">
         <div>
           <dt>{t.agent.message.tokenLabels.total}</dt>
           <dd>{formatTokenValue(usage.totalTokens)}</dd>
@@ -409,11 +400,32 @@ function AgentMessageUsageHoverCard({
           <dd>{formatUsageCost(cost?.total) ?? t.agent.message.usageUnavailable}</dd>
         </div>
       </dl>
-      {costParts.length > 0 ? (
-        <div className="agent-message-usage-hover-cost">
-          {costParts.map((part) => <span key={part}>{part}</span>)}
+      <div className="agent-message-usage-hover-bar" aria-hidden>
+        {usageRows.map((row) => (
+          <span
+            className={`is-${row.kind}`}
+            key={row.kind}
+            style={segmentStyle(row.tokens, usage.totalTokens)}
+          />
+        ))}
+      </div>
+      <div className="agent-message-usage-hover-breakdown" aria-label={t.agent.message.usageDetails}>
+        <div className="agent-message-usage-hover-breakdown-head">
+          <span />
+          <span>{t.agent.message.tokens}</span>
+          <span>{t.agent.message.cost}</span>
         </div>
-      ) : null}
+        {usageRows.map((row) => (
+          <div className={row.tokens === 0 && !row.cost ? 'is-zero' : undefined} key={row.kind}>
+            <span>
+              <i className={`is-${row.kind}`} />
+              {row.label}
+            </span>
+            <strong>{formatTokenValue(row.tokens)}</strong>
+            <strong>{formatUsageCost(row.cost) ?? t.agent.message.usageUnavailable}</strong>
+          </div>
+        ))}
+      </div>
     </div>,
     document.body,
   );
