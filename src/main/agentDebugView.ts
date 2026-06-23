@@ -350,12 +350,27 @@ function extractModelInputMessages(value: unknown): DebugRunModelInputMessage[] 
   const messages: DebugRunModelInputMessage[] = [];
   for (const item of value) {
     if (!isRecord(item)) continue;
-    const role = stringValue(item.role);
+    const role = stringValue(item.role) || providerInputItemRole(item);
     if (!role || role === 'system' || role === 'developer') continue;
-    const content = providerContentToPersisted(item.content ?? item.tool_calls ?? item);
+    const content = providerMessageItemToPersisted(item);
     messages.push({ role, content: content.length > 0 ? content : [{ type: 'text', text: '' }] });
   }
   return messages;
+}
+
+function providerInputItemRole(item: Record<string, unknown>): string {
+  const type = stringValue(item.type);
+  if (type === 'function_call' || type === 'custom_tool_call') return 'assistant';
+  if (type === 'function_call_output' || type === 'tool_result') return 'tool';
+  return '';
+}
+
+function providerMessageItemToPersisted(item: Record<string, unknown>): AgentPersistedContent[] {
+  const parts: AgentPersistedContent[] = [];
+  if ('content' in item) parts.push(...providerContentToPersisted(item.content));
+  if (Array.isArray(item.tool_calls)) parts.push(...providerContentToPersisted(item.tool_calls));
+  if (parts.length > 0) return parts;
+  return providerContentToPersisted(item);
 }
 
 function providerContentToPersisted(value: unknown): AgentPersistedContent[] {
@@ -370,14 +385,22 @@ function providerContentToPersisted(value: unknown): AgentPersistedContent[] {
   if (type === 'thinking') {
     return [{ type: 'thinking', thinking: stringValue(value.thinking) || stringValue(value.text) }];
   }
-  if (type === 'tool_use' || type === 'toolCall' || type === 'tool_call') {
+  if (type === 'tool_use' || type === 'toolCall' || type === 'tool_call' || type === 'function_call' || type === 'custom_tool_call' || (type === 'function' && isRecord(value.function))) {
     const fn = isRecord(value.function) ? value.function : {};
     return [{
       type: 'toolCall',
-      id: stringValue(value.id) || stringValue(value.toolUseId) || stringValue(value.tool_call_id) || 'tool-call',
+      id: stringValue(value.id) || stringValue(value.call_id) || stringValue(value.toolUseId) || stringValue(value.tool_call_id) || 'tool-call',
       name: stringValue(value.name) || stringValue(value.toolName) || stringValue(fn.name) || 'tool',
-      arguments: recordValue(value.input) ?? recordValue(value.arguments) ?? parseJsonRecord(stringValue(fn.arguments)) ?? recordValue(fn.arguments) ?? {},
+      arguments: recordValue(value.input) ?? recordValue(value.arguments) ?? parseJsonRecord(stringValue(value.arguments)) ?? parseJsonRecord(stringValue(fn.arguments)) ?? recordValue(fn.arguments) ?? {},
     }];
+  }
+  if (type === 'function_call_output') {
+    const callId = stringValue(value.call_id) || stringValue(value.id);
+    const text = providerContentToPersisted(value.output)
+      .map((part) => persistedText([part]))
+      .filter(Boolean)
+      .join('\n');
+    return [{ type: 'text', text: callId ? `[tool_result ${callId}] ${text}`.trim() : text }];
   }
   if (type === 'tool_result') {
     const toolUseId = stringValue(value.tool_use_id) || stringValue(value.toolUseId);

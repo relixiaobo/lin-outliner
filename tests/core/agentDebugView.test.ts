@@ -255,6 +255,45 @@ describe('extractRunSnapshotFromPayload', () => {
     expect(JSON.stringify(snapshot.messages)).not.toContain('secret-bytes');
   });
 
+  test('captures provider tool calls and tool results in the model input window', () => {
+    const snapshot = extractRunSnapshotFromPayload({
+      input: [
+        {
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'I will search.' }],
+          tool_calls: [{
+            id: 'call-1',
+            type: 'function',
+            function: { name: 'web_search', arguments: '{"query":"Chengdu weather"}' },
+          }],
+        },
+        {
+          type: 'function_call',
+          call_id: 'call-2',
+          name: 'web_search',
+          arguments: '{"query":"Beijing weather"}',
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'call-2',
+          output: 'Beijing: thunderstorm, 20-28C.',
+        },
+      ],
+    });
+
+    expect(snapshot.messages.map((message) => message.role)).toEqual(['assistant', 'assistant', 'tool']);
+    expect(snapshot.messages[0]?.content).toEqual([
+      { type: 'text', text: 'I will search.' },
+      { type: 'toolCall', id: 'call-1', name: 'web_search', arguments: { query: 'Chengdu weather' } },
+    ]);
+    expect(snapshot.messages[1]?.content).toEqual([
+      { type: 'toolCall', id: 'call-2', name: 'web_search', arguments: { query: 'Beijing weather' } },
+    ]);
+    expect(snapshot.messages[2]?.content).toEqual([
+      { type: 'text', text: '[tool_result call-2] Beijing: thunderstorm, 20-28C.' },
+    ]);
+  });
+
   test('degrades to empty on a non-record payload', () => {
     expect(extractRunSnapshotFromPayload('nope')).toEqual({ systemPrompt: '', tools: [], messages: [] });
   });
