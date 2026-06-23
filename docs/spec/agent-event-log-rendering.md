@@ -1259,12 +1259,13 @@ The run detail is ordered for inspection:
    carries the main token/cost readout.
 
 The chat transcript exposes this through an assistant-message **Details** icon
-button that uses the `Info` glyph. Hovering it previews the reply's token and
-cost summary, including cached share when cache activity exists. Cached share is
-derived from the normalized usage as `cacheRead / (input + cacheRead +
-cacheWrite)` so it describes the portion of this input context served from cache,
-not provider-specific cache-hit semantics; clicking opens a run-details pane
-keyed by that reply's
+button that uses the `Info` glyph. Hovering it previews the whole run's token and
+cost summary, not merely the final provider call's usage. Call-level usage is
+shown only on each **Execution → Call N** info hover. Both previews include cached
+share when cache activity exists. Cached share is derived from the normalized
+usage as `cacheRead / (input + cacheRead + cacheWrite)` so it describes the
+portion of this input context served from cache, not provider-specific cache-hit
+semantics; clicking opens a run-details pane keyed by that reply's
 `runId`. If the same run pane already exists, it is activated; opening a
 different reply opens or repurposes a pane for that different `(conversationId,
 runId)`. There is no standalone/global debug entry in the agent dock.

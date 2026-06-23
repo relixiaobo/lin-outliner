@@ -76,6 +76,8 @@ export interface AgentRenderMessageEntity {
   runId?: string;
   stopReason?: string;
   usage?: AgentEventMessageRecord['usage'];
+  /** Aggregated usage for the producing run, if the run has settled. */
+  runUsage?: AgentEventMessageRecord['usage'];
   errorMessage?: string;
   toolCallId?: string;
   toolName?: string;
@@ -678,6 +680,7 @@ function toRenderMessageEntity(
     runId: message.runId,
     stopReason: message.stopReason,
     usage: message.usage,
+    runUsage: run?.usage,
     errorMessage: message.errorMessage,
     toolCallId: message.toolCallId,
     toolName: message.toolName,

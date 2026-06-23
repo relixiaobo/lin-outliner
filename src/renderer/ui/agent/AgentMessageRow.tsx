@@ -368,14 +368,13 @@ function providerModelSummary(message: AssistantMessage): string | null {
 
 function AgentMessageUsageHoverCard({
   anchorRef,
-  message,
+  usage,
 }: {
   anchorRef: RefObject<HTMLElement | null>;
-  message: AssistantMessage;
+  usage: AssistantMessage['usage'];
 }) {
   const t = useT();
   const cardRef = useRef<HTMLDivElement | null>(null);
-  const usage = message.usage;
   const cost = usage.cost;
   const cachedShare = formatCachedShare(usage.input, usage.cacheRead, usage.cacheWrite);
   const usageRows = [
@@ -839,6 +838,7 @@ function AgentMessageRowComponent({
   const copyText = textFromAssistant(message);
   const CopyStateIcon = copied ? CheckIcon : CopyIcon;
   const assistantContentKey = contentKey ?? nodeId ?? entry.id;
+  const usageForHover = entry.runUsage ?? message.usage;
   const assistantBlocks = renderAssistantBlocks(
     message,
     assistantContentKey,
@@ -945,7 +945,7 @@ function AgentMessageRowComponent({
               variant="message"
             />
             {usageHoverOpen ? (
-              <AgentMessageUsageHoverCard anchorRef={detailsButtonRef} message={message} />
+              <AgentMessageUsageHoverCard anchorRef={detailsButtonRef} usage={usageForHover} />
             ) : null}
           </AgentMessageActions>
         ) : null}
@@ -990,6 +990,7 @@ function sameMessageEntry(left: AgentMessageEntry, right: AgentMessageEntry): bo
     && left.streaming === right.streaming
     && left.actor === right.actor
     && left.runId === right.runId
+    && left.runUsage === right.runUsage
     && left.runDurationMs === right.runDurationMs
     && left.runStartedAtMs === right.runStartedAtMs
     && left.turnInterrupted === right.turnInterrupted

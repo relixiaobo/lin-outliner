@@ -99,7 +99,7 @@ test.describe('agent debug panel', () => {
     }).toBe('Command(git push origin main)');
   });
 
-  test('shows token and cost preview when hovering the assistant Details button', async ({ page }) => {
+  test('shows run token and cost preview when hovering the assistant Details button', async ({ page }) => {
     const replyText = 'Open the details pane from this response.';
     await openMockRunDetailsFromAssistantDetailsButton(page, replyText, { openDetails: false });
 
@@ -114,6 +114,8 @@ test.describe('agent debug panel', () => {
     await expect(preview).toContainText('66,420');
     await expect(preview).toContainText('$0.00050');
     await expect(preview).toContainText('48,000');
+    await expect(preview).not.toContainText('22,559');
+    await expect(preview).not.toContainText('$0.0252');
   });
 
   test('opens selected run details from an assistant Details button', async ({ page }) => {

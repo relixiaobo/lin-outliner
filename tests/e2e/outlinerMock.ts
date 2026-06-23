@@ -51,6 +51,22 @@ interface MockFixtureOptions {
   permissionSoftBlockAllows?: string[];
 }
 
+const DEBUG_USAGE = {
+  input: 12000,
+  output: 420,
+  cacheRead: 48000,
+  cacheWrite: 6000,
+  totalTokens: 66420,
+  costUsd: 0.0005,
+  cost: {
+    input: 0.00012,
+    output: 0.0002,
+    cacheRead: 0.00008,
+    cacheWrite: 0.0001,
+    total: 0.0005,
+  },
+};
+
 type E2EWindow = Window & {
   __LIN_E2E__?: {
     calls: Array<{ cmd: string; args: Record<string, unknown> }>;
@@ -168,7 +184,7 @@ export function e2eChatSourceInlineRef(
 }
 
 export async function installElectronMock(page: Page, options: MockFixtureOptions = {}) {
-  await page.addInitScript(({ ids, options, generalChannelId }) => {
+  await page.addInitScript(({ ids, options, generalChannelId, debugUsageFixture }) => {
     type ReferenceTarget =
       | { kind: 'node'; nodeId: string }
       | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' }
@@ -510,21 +526,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         maxTurns: null,
       },
     ];
-    const debugUsage = {
-      input: 12000,
-      output: 420,
-      cacheRead: 48000,
-      cacheWrite: 6000,
-      totalTokens: 66420,
-      costUsd: 0.0005,
-      cost: {
-        input: 0.00012,
-        output: 0.0002,
-        cacheRead: 0.00008,
-        cacheWrite: 0.0001,
-        total: 0.0005,
-      },
-    };
+    const debugUsage = debugUsageFixture;
     // Replayed transcript for the delegated run's own ledger — served whole by
     // `agent_child_run_transcript` (the payload-pinned snapshot is gone).
     const childRunTranscriptMessages = [
@@ -3074,7 +3076,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         };
       },
     };
-  }, { ids, options, generalChannelId: DEFAULT_GENERAL_CHANNEL_ID });
+  }, { ids, options, generalChannelId: DEFAULT_GENERAL_CHANNEL_ID, debugUsageFixture: DEBUG_USAGE });
 }
 
 export function row(page: Page, id: string) {
@@ -3249,6 +3251,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       providerId: message.provider,
       modelId: message.model,
       runId: entry.runId ?? message.runId,
+      runUsage: entry.runUsage ?? message.runUsage,
       runDurationMs: entry.runDurationMs ?? message.runDurationMs,
       turnInterrupted: entry.turnInterrupted ?? message.turnInterrupted,
       stopReason: message.stopReason,
@@ -3466,19 +3469,20 @@ export async function openMockRunDetailsFromAssistantDetailsButton(
           provider: 'openai',
           model: 'gpt-5.4',
           usage: {
-            input: 12000,
-            output: 420,
-            cacheRead: 48000,
-            cacheWrite: 6000,
-            totalTokens: 66420,
+            input: 2499,
+            output: 92,
+            cacheRead: 19968,
+            cacheWrite: 0,
+            totalTokens: 22559,
             cost: {
-              input: 0.00012,
-              output: 0.0002,
-              cacheRead: 0.00008,
-              cacheWrite: 0.0001,
-              total: 0.0005,
+              input: 0.0125,
+              output: 0.00276,
+              cacheRead: 0.00998,
+              cacheWrite: 0,
+              total: 0.0252,
             },
           },
+          runUsage: DEBUG_USAGE,
           stopReason: 'stop',
           content: [{ type: 'text', text: replyText }],
         },
