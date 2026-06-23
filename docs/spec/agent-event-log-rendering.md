@@ -507,37 +507,47 @@ Dream state lives in the believer-keyed memory side log (the single pool, on
 disk under the believer principal directory). Durable model-readable memory is
 ordinary timeline outline content; `dream.completed` projects the latest Dream
 watermark and audit summary. The summary's change counts are derived from the
-private child run's successful `node_create` / `node_edit` writes; a zero-write
-child completion is a valid no-op — remembering nothing is a normal Dream outcome,
-so it records `dream.completed` with zero change counts and advances the watermark,
+Dream-channel run's successful `node_create` / `node_edit` writes; a zero-write
+completion is a valid no-op — remembering nothing is a normal Dream outcome, so
+it records `dream.completed` with zero change counts and advances the watermark,
 keeping a considered-but-empty span from being re-read. The no-op is gated on a
-**clean** terminal state: a child that ended `completed` but was actually cut off
-mid-work (the delegation run hit its `maxTurns` cap while still streaming, or an
-unresolved context overflow truncated it) carries an `incomplete` flag, and a
-zero-write run that is `incomplete` is treated as a **failure**, not a no-op —
-`dream.completed` is not recorded and the watermark does not advance, so the span
-is retried rather than silently dropped. There is **one** Dream — a runtime-only `memory-dream` skill run that
+**clean** terminal state: a run that ended `completed` but was actually cut off
+mid-work (an unresolved context overflow truncated it) carries an `incomplete`
+flag, and a zero-write run that is
+`incomplete` is treated as a **failure**, not a no-op — `dream.completed` is not
+recorded and the watermark does not advance, so the span is retried rather than
+silently dropped. There is **one** Dream — a runtime-only `memory-dream` skill run that
 consolidates the user's member conversations into `#d-memory`, `#d-episode`,
 `#d-belief`, optional `#d-question`, and optional `#d-guidance` nodes. Scheduled
 Dream attempts are at-most-once per daily due
 occurrence: a failed attempt leaves the watermark unchanged but still prevents
 another scheduled attempt for that same due time. A user may still trigger a
-manual Dream from Settings; manual runs use the same child path and same-day
-memory node but bypass the scheduled due gate. Manual consolidate-only runs may
-have no new chat sources and can reconcile outline/prior Dream context directly.
-The child applies the valuable-memory filter, uses `node_search` / `node_read` to
+manual Dream from Settings; manual runs use the same Dream-channel path and
+same-day memory node but bypass the scheduled due gate. Manual consolidate-only
+runs may have no new chat sources and can reconcile outline/prior Dream context
+directly. The Dream run applies the valuable-memory filter, uses `node_search` / `node_read` to
 reconcile relevant prior `#d-*` memory and user-authored outline context, and —
 when the run has memory worth writing — maintains at most one direct `#d-memory`
 container under today's journal node and updates that container's generated daily
 memory headline in place instead of creating multiple same-day memory containers;
-a run that finds nothing worth remembering writes no container at all. The child may write optional `#d-question` nodes for unresolved
+a run that finds nothing worth remembering writes no container at all. The run may write optional `#d-question` nodes for unresolved
 tension and optional `#d-guidance` nodes for future handling, and may delete
 obsolete nodes through `node_delete`; an episode does not need all child tags.
 Prior Dream output is a belief graph to update, not self-confirming evidence. The
 former agent-self / run-log Dream is cut (no
-run-evidence harvesting, no per-agent self-model dream). The believer-anchored
-Dream run meta is indexed and added to the render task projection as a read-only
-Dream task.
+run-evidence harvesting, no per-agent self-model dream). Dream run meta is
+anchored to the protected Dream channel so replay joins the run transcript; the
+semantic memory pool remains believer-keyed. The protected Dream transcript is
+visible audit history only: ordinary chat sends to the Dream channel are rejected
+before persistence, the channel is forced out of Dream evidence, and Dream runs
+start with an empty prior active path so previous Dream transcript rows are not
+fed into the next Dream model context. Ordinary `past_chats` lookup also excludes
+the Dream channel, so its reasoning/tool transcript is user-visible audit history
+rather than recall material for normal chats. That audit history is retained as a
+bounded transcript: after Dream completion, the runtime keeps the newest 512
+Dream-channel runs and prunes older run ledgers, their anchor messages, their
+`dream.finished` markers, and their search-index entries. The retention pass does
+not prune durable outline memory nodes or the Dream watermark.
 
 ## Message Model
 
@@ -944,16 +954,17 @@ Rules:
   `entities.compactions`.
 - The compact root user message remains available for pi-mono projection but is
   not rendered as a normal user bubble.
-- Historical `dream.finished` events become dedicated Dream boundary rows keyed
-  by their hidden anchor message, with status, processed counts, and
-  memory-change counts in `entities.dreams`. Current runtime Dream runs do not
-  expose a manual slash-command boundary; users can trigger a manual run only
+- Outside the protected Dream channel, historical `dream.finished` events become
+  dedicated Dream boundary rows keyed by their hidden anchor message, with status,
+  processed counts, and memory-change counts in `entities.dreams`. Inside the
+  Dream channel, `dream.finished` is metadata attached to the visible manual or
+  scheduled anchor, so the anchor remains an ordinary message row and the
+  assistant/tool transcript stays inline. Users can trigger a manual run only
   from Settings, and durable Dream history is surfaced in Settings → Agent
   "Memory & activity" via the `agent_list_dream_history` IPC. `buildAgentTaskEntries`
-  filters Dream TASK entities out of the
-  in-conversation task panel, which keeps only child-run
-  tasks. `AgentRenderDreamTaskEntity.principal` remains a constant = the believer
-  and no longer labels separate pools.
+  filters Dream TASK entities out of the in-conversation task panel, which keeps
+  only child-run tasks. `AgentRenderDreamTaskEntity.principal` remains a constant
+  = the believer and no longer labels separate pools.
 - `child_run.*` events back `entities.childRuns` — the conversation's permanent
   record of a run, whose final result is an expandable summary with a "View full
   run" link into the full transcript. **Where** that record renders depends on
@@ -1478,6 +1489,9 @@ Storage policy:
 - Checkpoints are written after completed runs and large event-count thresholds.
 - Old checkpoints may be pruned; event logs and referenced payloads are not
   pruned unless an explicit retention/archive policy exists.
+- The Dream channel is the current explicit conversation-run retention policy:
+  only its latest 512 run transcripts stay in the channel log/search index; older
+  Dream run ledgers and their launch/terminal markers are pruned.
 
 ## Runtime Flow
 

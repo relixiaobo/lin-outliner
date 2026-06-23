@@ -212,6 +212,7 @@ export interface AgentConversationIndexEntry {
   title: string | null;
   members: AgentPrincipal[];
   goal?: string;
+  settings: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
   messageCount: number;
@@ -694,21 +695,103 @@ export class AgentEventStore {
     return this.readRunMeta(runId);
   }
 
-  /** Reflective runs anchored to one principal (the runs maintaining that principal's pool). */
   /**
    * EVERY run anchored to a conversation (turn + delegation), in creation order.
    * The run-grounded debug view ([[agent-debug-run-grounded]]) enumerates these,
    * then derives each run's rounds from its own stream.
    */
-  async listConversationRunMetaProjections(conversationId: string): Promise<AgentRunMetaProjection[]> {
+  async listConversationRunMetaProjections(
+    conversationId: string,
+    options: { limit?: number } = {},
+  ): Promise<AgentRunMetaProjection[]> {
     await this.ensureStorageLayout();
     const index = await this.ensureConversationRunIndex(conversationId);
+    const limit = typeof options.limit === 'number' ? Math.max(0, Math.trunc(options.limit)) : null;
+    const runIds = limit === null
+      ? index.runIds
+      : limit === 0
+        ? []
+        : index.runIds.slice(-limit);
     const metas: AgentRunMetaProjection[] = [];
-    for (const runId of index.runIds) {
+    for (const runId of runIds) {
       const meta = await this.readRunMeta(runId);
       if (meta) metas.push(meta);
     }
     return metas.sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
+  }
+
+  /**
+   * Bounded conversation-run retention for channels that intentionally keep run
+   * transcripts as audit history (currently the Dream channel). Pruning removes
+   * old run ledgers and their message-trigger anchors, then rebuilds the derived
+   * conversation/search indexes from the retained log.
+   */
+  async retainRecentConversationRuns(
+    conversationId: string,
+    retainRunCount: number,
+  ): Promise<{ prunedRunIds: string[]; retainedRunIds: string[] }> {
+    await this.ensureStorageLayout();
+    const retainCount = Number.isFinite(retainRunCount) ? Math.max(0, Math.trunc(retainRunCount)) : 0;
+    return this.agentEventLog.enqueue(conversationId, async () => {
+      const paths = this.paths(conversationId);
+      const existing = await this.ensureConversationRunIndex(conversationId);
+      if (existing.runIds.length <= retainCount) {
+        return { prunedRunIds: [], retainedRunIds: existing.runIds.slice() };
+      }
+
+      const retainedRunIds = retainCount === 0 ? [] : existing.runIds.slice(-retainCount);
+      const retainedRunIdSet = new Set(retainedRunIds);
+      const prunedRunIds = existing.runIds.filter((runId) => !retainedRunIdSet.has(runId));
+      const prunedRunIdSet = new Set(prunedRunIds);
+      const conversationEvents = await this.agentEventLog.readIfExists(paths.conversationEventsPath);
+      const retainedRunEvents = await this.readRunEventsByRunId(existing, retainedRunIds);
+      const prunedRunEvents = await this.readRunEventsByRunId(existing, prunedRunIds);
+      const prunedMessageIds = new Set<string>();
+      for (const meta of await Promise.all(prunedRunIds.map((runId) => this.readRunMeta(runId)))) {
+        if (meta?.trigger.type === 'message') prunedMessageIds.add(meta.trigger.messageId);
+      }
+      for (const events of prunedRunEvents.values()) collectMessageIdsFromEvents(events, prunedMessageIds);
+      for (const event of conversationEvents) {
+        if (event.type === 'dream.finished' && event.runId && prunedRunIdSet.has(event.runId)) {
+          prunedMessageIds.add(event.messageId);
+        }
+      }
+      const retainedConversationEvents = conversationEvents.flatMap((event) => {
+        const retained = retainConversationStreamEventAfterRunPrune(event, prunedRunIdSet, prunedMessageIds);
+        return retained ? [retained] : [];
+      });
+      const nextIndex: AgentConversationRunIndex = {
+        v: 2,
+        runIds: retainedRunIds,
+        latestSeqByRunId: Object.fromEntries(retainedRunIds.map((runId) => [
+          runId,
+          existing.latestSeqByRunId[runId] ?? 0,
+        ])),
+        delegationRunIds: existing.delegationRunIds.filter((runId) => retainedRunIdSet.has(runId)),
+      };
+      const retainedEvents = [
+        ...retainedConversationEvents,
+        ...retainedRunIds.flatMap((runId) => retainedRunEvents.get(runId) ?? []),
+      ].sort(compareAgentEventsForReplay);
+      const replayState = replayAgentEvents(retainedEvents);
+
+      await mkdir(paths.conversationSegmentsDir, { recursive: true });
+      await atomicWriteFile(paths.conversationEventsPath, serializeJsonl(retainedConversationEvents));
+      await this.enqueueIndexWrite(async () => {
+        await mkdir(paths.conversationDir, { recursive: true });
+        await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(nextIndex)}\n`);
+      });
+      await rm(paths.checkpointsDir, { recursive: true, force: true });
+      await this.writeConversationMetaFromReplayState(conversationId, replayState);
+      await this.replaceConversationInIndexes(conversationId, replayState, retainedEvents);
+      this.agentEventLog.setLatestSeq(conversationId, replayState.latestSeq);
+      await Promise.all(prunedRunIds.map(async (runId) => {
+        await rm(this.runPaths(runId).runDir, { recursive: true, force: true });
+        this.agentEventLog.deleteKey(runStreamLogKey(runId));
+        this.runEventLog.deleteKey(runStreamLogKey(runId));
+      }));
+      return { prunedRunIds, retainedRunIds };
+    });
   }
 
   /**
@@ -1281,6 +1364,21 @@ export class AgentEventStore {
     return events;
   }
 
+  private async readRunEventsByRunId(
+    index: AgentConversationRunIndex,
+    runIds: readonly string[],
+  ): Promise<Map<string, AgentEvent[]>> {
+    const delegated = new Set(index.delegationRunIds);
+    const eventsByRunId = new Map<string, AgentEvent[]>();
+    for (const runId of runIds) {
+      const events = delegated.has(runId)
+        ? await this.runEventLog.readIfExists(this.runPaths(runId).runEventsPath)
+        : await this.agentEventLog.readIfExists(this.runPaths(runId).runEventsPath);
+      eventsByRunId.set(runId, events);
+    }
+    return eventsByRunId;
+  }
+
   /** EVERY run anchored to the conversation, delegation runs included. */
   private async listRunIdsForConversation(conversationId: string): Promise<string[]> {
     return (await this.ensureConversationRunIndex(conversationId)).runIds;
@@ -1583,6 +1681,31 @@ export class AgentEventStore {
     await atomicWriteFile(paths.conversationMetaPath, `${JSON.stringify(meta)}\n`);
   }
 
+  private async writeConversationMetaFromReplayState(
+    conversationId: string,
+    state: AgentEventReplayState,
+  ): Promise<void> {
+    const conversation = state.conversation;
+    if (!conversation) {
+      await rm(this.paths(conversationId).conversationMetaPath, { force: true });
+      return;
+    }
+    const meta: AgentConversationMetaProjection = {
+      v: 1,
+      id: conversationId,
+      members: conversation.members.slice(),
+      goal: conversation.goal,
+      createdAt: conversation.createdAt,
+      title: conversation.title,
+      name: conversation.title ?? undefined,
+      updatedAt: conversation.updatedAt,
+      latestSeq: state.latestSeq,
+    };
+    const paths = this.paths(conversationId);
+    await mkdir(paths.conversationDir, { recursive: true });
+    await atomicWriteFile(paths.conversationMetaPath, `${JSON.stringify(meta)}\n`);
+  }
+
   private async readConversationMeta(conversationId: string): Promise<AgentConversationMetaProjection | null> {
     try {
       const raw = await readFile(this.paths(conversationId).conversationMetaPath, 'utf8');
@@ -1611,6 +1734,7 @@ export class AgentEventStore {
             title: event.title,
             members: event.members?.slice() ?? [],
             goal: event.goal,
+            settings: entry?.settings ?? {},
             createdAt: event.createdAt,
             updatedAt: event.createdAt,
             messageCount: entry?.messageCount ?? 0,
@@ -1673,14 +1797,30 @@ export class AgentEventStore {
     await this.enqueueIndexWrite(async () => {
       const index = await this.readSearchIndex();
       if (!index) return;
-      for (const [key, entry] of Object.entries(index.messages)) {
-        if (entry.conversationId === conversationId) delete index.messages[key];
-      }
-      for (const [key, entry] of Object.entries(index.userMessages)) {
-        if (entry.conversationId === conversationId) delete index.userMessages[key];
-      }
-      delete index.latestSeqByConversationId[conversationId];
+      removeConversationEntriesFromSearchIndex(index, conversationId);
       await this.writeSearchIndex(index);
+    });
+  }
+
+  private async replaceConversationInIndexes(
+    conversationId: string,
+    state: AgentEventReplayState,
+    events: readonly AgentEvent[],
+  ) {
+    await this.enqueueIndexWrite(async () => {
+      const conversationIndex = await this.readConversationIndex() ?? { conversations: {} };
+      const conversationEntry = conversationIndexEntryFromReplayState(conversationId, state);
+      if (conversationEntry) {
+        conversationIndex.conversations[conversationId] = conversationEntry;
+      } else {
+        delete conversationIndex.conversations[conversationId];
+      }
+      await this.writeConversationIndex(conversationIndex);
+
+      const searchIndex = await this.readSearchIndex() ?? createEmptySearchIndex();
+      removeConversationEntriesFromSearchIndex(searchIndex, conversationId);
+      for (const event of events) applyAgentEventToSearchIndex(searchIndex, event);
+      await this.writeSearchIndex(searchIndex);
     });
   }
 
@@ -1862,6 +2002,9 @@ function updateConversationIndexEntry(
     next.title = event.title;
     next.goal = event.goal ?? next.goal;
   }
+  if (event.type === 'conversation.settings_changed') {
+    next.settings = { ...next.settings, ...event.settings };
+  }
   if (event.type === 'member.added') {
     next.members = mergePrincipals(next.members, [event.member]);
   }
@@ -1903,6 +2046,7 @@ function conversationIndexEntryFromReplayState(
     title: state.conversation.title,
     members: state.conversation.members.slice(),
     goal: state.conversation.goal,
+    settings: { ...state.conversation.settings },
     createdAt: state.conversation.createdAt,
     updatedAt: state.conversation.updatedAt,
     messageCount: Object.keys(state.messages).length,
@@ -1915,7 +2059,8 @@ function conversationIndexEntryFromReplayState(
 function conversationIndexEntryHasCurrentShape(entry: AgentConversationIndexEntry | undefined): boolean {
   if (!entry) return false;
   return Object.prototype.hasOwnProperty.call(entry, 'lastMessageSnippet')
-    && Object.prototype.hasOwnProperty.call(entry, 'lastMessageAt');
+    && Object.prototype.hasOwnProperty.call(entry, 'lastMessageAt')
+    && isRecord(entry.settings);
 }
 
 // The list snippet is derived from the active path's latest user/assistant
@@ -2107,6 +2252,16 @@ function applyAgentEventToSearchIndex(index: AgentEventSearchIndex, event: Agent
   }
 }
 
+function removeConversationEntriesFromSearchIndex(index: AgentEventSearchIndex, conversationId: string): void {
+  for (const [key, entry] of Object.entries(index.messages)) {
+    if (entry.conversationId === conversationId) delete index.messages[key];
+  }
+  for (const [key, entry] of Object.entries(index.userMessages)) {
+    if (entry.conversationId === conversationId) delete index.userMessages[key];
+  }
+  delete index.latestSeqByConversationId[conversationId];
+}
+
 function indexDetailsFromContent(content: readonly AgentPersistedContent[]): {
   text: string;
   normalizedText: string;
@@ -2195,6 +2350,42 @@ function compareAgentEventsForReplay(left: AgentEvent, right: AgentEvent): numbe
 
 function agentRunIdForEvent(event: AgentEvent): string | null {
   return typeof event.runId === 'string' && event.runId.length > 0 ? event.runId : null;
+}
+
+function collectMessageIdsFromEvents(events: Iterable<AgentEvent>, target: Set<string>): void {
+  for (const event of events) {
+    if (event.type === 'user_message.created') target.add(event.messageId);
+    if (event.type === 'assistant_message.started') target.add(event.messageId);
+    if (event.type === 'tool_result.created') target.add(event.messageId);
+  }
+}
+
+function retainConversationStreamEventAfterRunPrune(
+  event: AgentEvent,
+  prunedRunIds: ReadonlySet<string>,
+  prunedMessageIds: ReadonlySet<string>,
+): AgentEvent | null {
+  const runId = agentRunIdForEvent(event);
+  if (runId && prunedRunIds.has(runId)) return null;
+  if (event.type === 'payload.created' && event.payload.scope?.type === 'run' && prunedRunIds.has(event.payload.scope.runId)) return null;
+  if (event.type === 'payload.derived' && event.payload.scope?.type === 'run' && prunedRunIds.has(event.payload.scope.runId)) return null;
+  if (event.type === 'user_message.created') {
+    if (prunedMessageIds.has(event.messageId)) return null;
+    if (event.parentMessageId && prunedMessageIds.has(event.parentMessageId)) {
+      return { ...event, parentMessageId: null };
+    }
+  }
+  if (event.type === 'user_message.edited' && prunedMessageIds.has(event.messageId)) return null;
+  if (event.type === 'branch.selected' && prunedMessageIds.has(event.leafMessageId)) return null;
+  if (event.type === 'compaction.completed') {
+    if (prunedMessageIds.has(event.messageId)) return null;
+    if (
+      prunedMessageIds.has(event.source.fromMessageId)
+      || prunedMessageIds.has(event.source.throughMessageId)
+    ) return null;
+  }
+  if (event.type === 'dream.finished' && prunedMessageIds.has(event.messageId)) return null;
+  return event;
 }
 
 /**

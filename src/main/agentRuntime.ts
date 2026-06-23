@@ -86,6 +86,7 @@ import {
   type AgentPersistedContent,
   type AgentPrincipal,
   type AgentRunFingerprint,
+  type AgentRunKind,
   type AgentRunTrigger,
   type AgentRunMeta,
   type AgentUserQuestionAnswer,
@@ -94,9 +95,13 @@ import {
   type AgentUserQuestionRequestView,
 } from '../core/agentEventLog';
 import {
+  CHANNEL_INCLUDE_IN_DREAM_DATA_SETTING,
+  DEFAULT_DREAM_CHANNEL_ID,
+  DEFAULT_DREAM_CHANNEL_TITLE,
   DEFAULT_GENERAL_CHANNEL_ID,
   DEFAULT_GENERAL_CHANNEL_TITLE,
   agentMentionToken,
+  channelIncludesInDreamData,
   channelAgentMembers,
 } from '../core/agentChannel';
 import {
@@ -178,6 +183,7 @@ import {
   AGENT_DELEGATE_TOOL_NAME,
   AgentDelegationRuntime,
   createTenonAssistantAgentDefinition,
+  recordNodeToolChanges,
   type AgentChildAgentCreateInput,
   type AgentChildRunSnapshot,
 } from './agentDelegation';
@@ -334,8 +340,9 @@ const LOCAL_USER_ID = 'local-user';
 const COMPACT_SUMMARY_MAX_OUTPUT_TOKENS = 20_000;
 const DEFAULT_DREAM_SCHEDULE = '2026-01-01T03:00 RRULE:FREQ=DAILY';
 const DREAM_MIN_VOLUME_CHARS = 1_000;
+const DREAM_CHANNEL_RETAINED_RUNS = 512;
 const MEMORY_DREAM_SKILL_NAME = 'memory-dream';
-const MEMORY_DREAM_CONVERSATION_ID = 'lin-agent-memory-dream';
+const LEGACY_MEMORY_DREAM_CONVERSATION_ID = 'lin-agent-memory-dream';
 const MEMORY_DREAM_ALLOWED_TOOLS = [
   'past_chats',
   'node_search',
@@ -597,6 +604,30 @@ interface AgentDreamRunResult {
 
 type AgentEventInput = AgentRuntimeContextEventInput;
 type AgentMemberPrincipal = Extract<AgentPrincipal, { type: 'agent' }>;
+interface ProtectedDefaultChannelConfig {
+  id: string;
+  title: string;
+  sortRank: number;
+  projectionEvent: string;
+  forcedSettings?: Record<string, unknown>;
+}
+
+const PROTECTED_DEFAULT_CHANNELS: readonly ProtectedDefaultChannelConfig[] = [
+  {
+    id: DEFAULT_GENERAL_CHANNEL_ID,
+    title: DEFAULT_GENERAL_CHANNEL_TITLE,
+    sortRank: 0,
+    projectionEvent: 'general_channel_updated',
+  },
+  {
+    id: DEFAULT_DREAM_CHANNEL_ID,
+    title: DEFAULT_DREAM_CHANNEL_TITLE,
+    sortRank: 1,
+    projectionEvent: 'dream_channel_updated',
+    forcedSettings: { [CHANNEL_INCLUDE_IN_DREAM_DATA_SETTING]: false },
+  },
+] as const;
+
 interface AgentConversationChannelUpdateOptions {
   title?: string;
   addAgentIds?: readonly string[];
@@ -619,6 +650,7 @@ type AgentUserViewOutlineNode = AgentUserViewPanel['visibleOutline'][number];
 export class AgentRuntime {
   private conversations = new Map<string, AgentConversationState>();
   private generalChannelEnsureInFlight: Promise<AgentEventReplayState> | null = null;
+  private dreamChannelEnsureInFlight: Promise<AgentEventReplayState> | null = null;
   private osNotifier?: OsNotifier;
   // The conversation the user is actually VIEWING, reported by the renderer:
   // the displayed conversation when the agent dock is open, else null (the dock
@@ -760,8 +792,8 @@ export class AgentRuntime {
     // name + composed persona) before conversations are set up.
     void this.refreshPrimaryAgentIdentity()
       .catch((error) => this.reportWarn('agent-runtime', 'Failed to load assistant profile overlay.', error));
-    void this.ensureGeneralChannelEventState()
-      .catch((error) => this.reportWarn('agent-runtime', 'Failed to ensure #General.', error));
+    void this.ensureDefaultChannelEventStates()
+      .catch((error) => this.reportWarn('agent-runtime', 'Failed to ensure default channels.', error));
     this.queueScheduledDream(new Date());
     // Crash recovery FIRST: reconcile any occurrence that was attempted but never
     // recorded success (the app crashed/quit/slept mid-run) — at-most-once, so it
@@ -807,6 +839,9 @@ export class AgentRuntime {
   async restoreConversation(conversationId: string) {
     if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) {
       return this.restoreOrCreateGeneralChannel();
+    }
+    if (conversationId === DEFAULT_DREAM_CHANNEL_ID) {
+      return this.restoreOrCreateDreamChannel();
     }
     const eventState = await this.loadEventState(conversationId);
     if (!eventState.conversation) {
@@ -872,6 +907,20 @@ export class AgentRuntime {
     return this.conversationResponse(DEFAULT_GENERAL_CHANNEL_ID, conversation);
   }
 
+  private async restoreOrCreateDreamChannel() {
+    const eventState = await this.ensureDreamChannelEventState();
+    const conversation = await this.createConversationWithEventState(eventState);
+    await this.refreshAgentTaskCache();
+    return this.conversationResponse(DEFAULT_DREAM_CHANNEL_ID, conversation);
+  }
+
+  private async ensureDefaultChannelEventStates(): Promise<void> {
+    await Promise.all([
+      this.ensureGeneralChannelEventState(),
+      this.ensureDreamChannelEventState(),
+    ]);
+  }
+
   private async ensureGeneralChannelEventState(): Promise<AgentEventReplayState> {
     if (this.generalChannelEnsureInFlight) return this.generalChannelEnsureInFlight;
     const operation = this.ensureGeneralChannelEventStateOnce()
@@ -883,61 +932,104 @@ export class AgentRuntime {
   }
 
   private async ensureGeneralChannelEventStateOnce(): Promise<AgentEventReplayState> {
-    const desiredMembers = this.generalChannelMembers();
-    const liveConversation = this.conversations.get(DEFAULT_GENERAL_CHANNEL_ID);
-    const eventState = liveConversation?.eventState ?? await this.loadEventState(DEFAULT_GENERAL_CHANNEL_ID);
-    const inputs = this.generalChannelInvariantInputs(eventState, desiredMembers, {
-      removeUnavailablePeers: !liveConversation || !this.hasActiveRuns(liveConversation),
-    });
-    if (inputs.length === 0) return eventState;
-
-    if (liveConversation) {
-      await this.appendConversationEvents(DEFAULT_GENERAL_CHANNEL_ID, liveConversation, inputs);
-      await this.refreshMemberDisplayNames(liveConversation);
-      this.emitProjection(DEFAULT_GENERAL_CHANNEL_ID, 'general_channel_updated');
-      return liveConversation.eventState;
-    }
-
-    const events = this.buildEvents(eventState, DEFAULT_GENERAL_CHANNEL_ID, inputs);
-    await this.getEventStore().appendEvents(DEFAULT_GENERAL_CHANNEL_ID, events);
-    for (const event of events) appendAgentEventToReplayState(eventState, event);
-    this.publishPersistedEvents(DEFAULT_GENERAL_CHANNEL_ID, events);
-    return eventState;
+    return this.ensureProtectedDefaultChannelEventStateOnce(requiredProtectedDefaultChannelConfig(DEFAULT_GENERAL_CHANNEL_ID));
   }
 
-  private generalChannelMembers(): AgentPrincipal[] {
+  private async ensureDreamChannelEventState(): Promise<AgentEventReplayState> {
+    if (this.dreamChannelEnsureInFlight) return this.dreamChannelEnsureInFlight;
+    const operation = this.ensureDreamChannelEventStateOnce()
+      .finally(() => {
+        if (this.dreamChannelEnsureInFlight === operation) this.dreamChannelEnsureInFlight = null;
+      });
+    this.dreamChannelEnsureInFlight = operation;
+    return operation;
+  }
+
+  private async ensureDreamChannelEventStateOnce(): Promise<AgentEventReplayState> {
+    return this.ensureProtectedDefaultChannelEventStateOnce(requiredProtectedDefaultChannelConfig(DEFAULT_DREAM_CHANNEL_ID));
+  }
+
+  private defaultChannelMembers(): AgentPrincipal[] {
     // Single-agent collapse: every conversation — General included — has exactly
     // one agent member (Neva). Agent definitions are delegation child-agent types,
     // not conversation members, so the roster never joins a conversation.
     return this.defaultConversationMembers();
   }
 
-  private generalChannelInvariantInputs(
+  private async ensureProtectedDefaultChannelEventStateOnce(
+    config: ProtectedDefaultChannelConfig,
+  ): Promise<AgentEventReplayState> {
+    const desiredMembers = this.defaultChannelMembers();
+    const liveConversation = this.conversations.get(config.id);
+    const eventState = liveConversation?.eventState ?? await this.loadEventState(config.id);
+    const inputs = this.protectedDefaultChannelInvariantInputs(config, eventState, desiredMembers, {
+      removeUnavailablePeers: !liveConversation || !this.hasActiveRuns(liveConversation),
+    });
+    if (inputs.length === 0) return eventState;
+
+    if (liveConversation) {
+      await this.appendConversationEvents(config.id, liveConversation, inputs);
+      await this.refreshMemberDisplayNames(liveConversation);
+      this.emitProjection(config.id, config.projectionEvent);
+      return liveConversation.eventState;
+    }
+
+    const events = this.buildEvents(eventState, config.id, inputs);
+    await this.getEventStore().appendEvents(config.id, events);
+    for (const event of events) appendAgentEventToReplayState(eventState, event);
+    this.publishPersistedEvents(config.id, events);
+    return eventState;
+  }
+
+  private protectedDefaultChannelInvariantInputs(
+    config: ProtectedDefaultChannelConfig,
     eventState: AgentEventReplayState,
     desiredMembers: readonly AgentPrincipal[],
     options: { removeUnavailablePeers: boolean },
   ): AgentEventInput[] {
     if (!eventState.conversation) {
-      return [{
+      const inputs: AgentEventInput[] = [{
         type: 'conversation.created',
         actor: systemActor(),
-        title: DEFAULT_GENERAL_CHANNEL_TITLE,
+        title: config.title,
         members: desiredMembers.slice(),
-        goal: DEFAULT_GENERAL_CHANNEL_TITLE,
+        goal: config.title,
       }];
+      if (config.forcedSettings) {
+        inputs.push({
+          type: 'conversation.settings_changed',
+          actor: systemActor(),
+          settings: config.forcedSettings,
+        });
+      }
+      return inputs;
     }
 
     const inputs: AgentEventInput[] = [];
     if (
-      sanitizeConversationTitle(eventState.conversation.title) !== DEFAULT_GENERAL_CHANNEL_TITLE
-      || sanitizeConversationTitle(eventState.conversation.goal) !== DEFAULT_GENERAL_CHANNEL_TITLE
+      sanitizeConversationTitle(eventState.conversation.title) !== config.title
+      || sanitizeConversationTitle(eventState.conversation.goal) !== config.title
     ) {
       inputs.push({
         type: 'conversation.renamed',
         actor: systemActor(),
-        title: DEFAULT_GENERAL_CHANNEL_TITLE,
-        goal: DEFAULT_GENERAL_CHANNEL_TITLE,
+        title: config.title,
+        goal: config.title,
       });
+    }
+
+    if (config.forcedSettings) {
+      const settings: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(config.forcedSettings)) {
+        if (eventState.conversation.settings[key] !== value) settings[key] = value;
+      }
+      if (Object.keys(settings).length > 0) {
+        inputs.push({
+          type: 'conversation.settings_changed',
+          actor: systemActor(),
+          settings,
+        });
+      }
     }
 
     let workingMembers = eventState.conversation.members.slice();
@@ -1071,6 +1163,7 @@ export class AgentRuntime {
       title: sanitizeConversationTitle(entry.title),
       members: entry.members.slice(),
       goal: entry.goal,
+      settings: { ...entry.settings },
       createdAt: entry.createdAt ?? 0,
       updatedAt: entry.updatedAt ?? 0,
       messageCount: entry.messageCount ?? 0,
@@ -1081,7 +1174,7 @@ export class AgentRuntime {
   }
 
   async listConversations() {
-    await this.ensureGeneralChannelEventState();
+    await this.ensureDefaultChannelEventStates();
     const entries = await this.getEventStore().listConversationIndexEntries();
     // Single-agent collapse: channels are the only conversation primitive. Every
     // listed row is a goal-bearing channel (General sorts first); there are no
@@ -1090,8 +1183,7 @@ export class AgentRuntime {
       .filter((entry) => !!entry.goal && !isInternalAgentConversationId(entry.id))
       .map((entry) => this.conversationListMetaFromIndexEntry(entry))
       .sort((left, right) => (
-        (left.id === DEFAULT_GENERAL_CHANNEL_ID ? -1 : 0)
-        || (right.id === DEFAULT_GENERAL_CHANNEL_ID ? 1 : 0)
+        defaultChannelSortRank(left.id) - defaultChannelSortRank(right.id)
         || (right.updatedAt - left.updatedAt)
         || left.id.localeCompare(right.id)
       ));
@@ -1675,7 +1767,7 @@ export class AgentRuntime {
     for (const conversation of this.conversations.values()) {
       conversation.delegationRuntime.reloadAgentDefinitions();
     }
-    await this.ensureGeneralChannelEventState();
+    await this.ensureDefaultChannelEventStates();
     return this.listAllAgentDefinitions(conversationId);
   }
 
@@ -1741,9 +1833,8 @@ export class AgentRuntime {
   }
 
   async renameConversation(conversationId: string, title: string) {
-    if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) {
-      throw new Error('#General cannot be renamed.');
-    }
+    const protectedDefault = protectedDefaultChannelConfig(conversationId);
+    if (protectedDefault) throw new Error(`#${protectedDefault.title} cannot be renamed.`);
     const normalized = normalizeConversationTitle(title);
     const conversation = this.conversations.get(conversationId);
     if (conversation) {
@@ -1770,10 +1861,25 @@ export class AgentRuntime {
     return eventStateToMeta(eventState);
   }
 
-  async deleteConversation(conversationId: string) {
-    if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) {
-      throw new Error('#General cannot be deleted.');
+  async setConversationIncludeInDreamData(conversationId: string, includeInDreamData: boolean) {
+    if (conversationId === DEFAULT_DREAM_CHANNEL_ID && includeInDreamData) {
+      throw new Error('#Dream cannot be included in Dream data.');
     }
+    const conversation = await this.ensureConversationWithId(conversationId);
+    const current = channelIncludesInDreamData(conversationId, conversation.eventState.conversation?.settings);
+    if (current === includeInDreamData) return eventStateToMeta(conversation.eventState);
+    await this.appendConversationEvents(conversationId, conversation, [{
+      type: 'conversation.settings_changed',
+      actor: userActor(),
+      settings: { [CHANNEL_INCLUDE_IN_DREAM_DATA_SETTING]: includeInDreamData },
+    }]);
+    this.emitProjection(conversationId, 'conversation_settings_changed');
+    return eventStateToMeta(conversation.eventState);
+  }
+
+  async deleteConversation(conversationId: string) {
+    const protectedDefault = protectedDefaultChannelConfig(conversationId);
+    if (protectedDefault) throw new Error(`#${protectedDefault.title} cannot be deleted.`);
     const conversation = this.conversations.get(conversationId);
     if (conversation) {
       await this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_deleted');
@@ -1799,6 +1905,9 @@ export class AgentRuntime {
     let startedRunId: string | null = null;
     try {
       const conversation = await this.ensureConversationWithId(conversationId);
+      if (conversationId === DEFAULT_DREAM_CHANNEL_ID) {
+        throw new Error('#Dream does not accept regular chat messages.');
+      }
       const materialized = await this.materializeFileAttachments(normalizeAttachmentInputs(attachmentInput));
       const attachments = materialized.attachments;
       const messageText = rewriteFileReferenceMarkerPaths(message, materialized.pathMap);
@@ -3485,11 +3594,10 @@ export class AgentRuntime {
     };
   }
 
-  private async hasScheduledDreamAttemptForDue(principal: AgentPrincipal, dueAt: number): Promise<boolean> {
-    const runs = await this.getEventStore().listPrincipalRunMetaProjections(principal, { limit: 100 });
+  private async hasScheduledDreamAttemptForDue(_principal: AgentPrincipal, dueAt: number): Promise<boolean> {
+    const runs = await this.getEventStore().listConversationRunMetaProjections(DEFAULT_DREAM_CHANNEL_ID, { limit: 100 });
     return runs.some((run) =>
       run.kind === 'reflective'
-      && run.anchor.type === 'principal'
       && run.trigger.type === 'schedule'
       && run.trigger.schedule === DEFAULT_DREAM_SCHEDULE
       && run.trigger.dueAt === dueAt);
@@ -3532,7 +3640,11 @@ export class AgentRuntime {
     const user = this.userPrincipal();
     const entries = await this.getEventStore().listConversationIndexEntries();
     return entries
-      .filter((entry) => !isInternalAgentConversationId(entry.id) && entry.members.some((member) => samePrincipal(member, user)))
+      .filter((entry) => (
+        !isInternalAgentConversationId(entry.id)
+        && channelIncludesInDreamData(entry.id, entry.settings)
+        && entry.members.some((member) => samePrincipal(member, user))
+      ))
       .map((entry) => entry.id);
   }
 
@@ -3557,20 +3669,20 @@ export class AgentRuntime {
       const skill = await this.renderMemoryDreamSkill(task.runId);
       const prompt = buildMemoryDreamPrompt(task, skill.renderedContent);
       // A successful child that DELIBERATELY writes nothing is a legitimate no-op,
-      // not a failure: remembering nothing is a valid Dream outcome (a real child
-      // failure/cancel already threw in runMemoryDreamChildAgent). It records
+      // not a failure: remembering nothing is a valid Dream outcome (a real
+      // run failure/cancel already threw in runMemoryDreamChannelRun). It records
       // `dream.completed` with zero change counts and advances the watermark, so
       // the considered-but-empty span is not re-read.
       //
-      // But "completed" is not the same as "finished": a maxTurns abort or an
-      // unresolved context overflow ends the child `completed` mid-work. Such a
-      // truncated run that wrote nothing did NOT decide there was nothing worth
-      // remembering — advancing the watermark would silently drop that span's
-      // evidence forever. Treat it as a failure so it is retried, NOT a no-op.
-      const childResult = await this.runMemoryDreamChildAgent(task, prompt, skill.allowedTools);
-      const changes = dreamChangesFromChildNodeChanges(childResult.nodeChanges);
-      if (childResult.incomplete && !dreamChangesHaveCommittedWork(changes)) {
-        throw new Error('Memory Dream child was truncated (maxTurns or context overflow) before writing any memory; not advancing the watermark so the span is retried.');
+      // But "completed" is not the same as "finished": an unresolved context
+      // overflow can end the run `completed` mid-work. Such a truncated run that
+      // wrote nothing did NOT decide there was nothing worth remembering —
+      // advancing the watermark would silently drop that span's evidence forever.
+      // Treat it as a failure so it is retried, NOT a no-op.
+      const runResult = await this.runMemoryDreamChannelRun(task, prompt, skill.allowedTools, model, providerConfig);
+      const changes = dreamChangesFromChildNodeChanges(runResult.nodeChanges);
+      if (runResult.incomplete && !dreamChangesHaveCommittedWork(changes)) {
+        throw new DreamChannelRunError('Memory Dream run was truncated by context overflow before writing any memory; not advancing the watermark so the span is retried.', runResult.anchorMessageId);
       }
       const completed = await this.getEventStore().appendDreamCompleted(task.principal, {
         runId: task.runId,
@@ -3586,8 +3698,21 @@ export class AgentRuntime {
         },
         changes,
       });
-      await this.writeDreamRunMeta(task, 'completed', model);
-      return {
+      await this.writeDreamRunMeta(task, 'completed', model).catch((error) => {
+        this.reportWarn(
+          'dream',
+          `Dream completed but its run metadata could not be refreshed: ${error instanceof Error ? error.message : String(error)}`,
+          error,
+          {
+            agentId: this.agentIdentity.agentId,
+            runId: task.runId,
+            principalKey: principalKey(task.principal),
+            operation: 'writeDreamRunMeta',
+          },
+          'dream-run-meta-write-failed',
+        );
+      });
+      const result: AgentDreamRunResult = {
         agentId: this.agentIdentity.agentId,
         runId: task.runId,
         trigger: task.trigger,
@@ -3597,6 +3722,35 @@ export class AgentRuntime {
         processed: completed.processed,
         changes: completed.changes,
       };
+      await this.appendDreamFinishedEvent(runResult.anchorMessageId, result).catch((error) => {
+        this.reportWarn(
+          'dream',
+          `Dream finished but its terminal channel marker could not be recorded: ${error instanceof Error ? error.message : String(error)}`,
+          error,
+          {
+            agentId: this.agentIdentity.agentId,
+            runId: task.runId,
+            principalKey: principalKey(task.principal),
+            operation: 'appendDreamFinishedEvent',
+          },
+          'dream-finished-marker-write-failed',
+        );
+      });
+      await this.pruneDreamChannelHistory().catch((error) => {
+        this.reportWarn(
+          'dream',
+          `Dream completed but old channel transcript cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+          error,
+          {
+            agentId: this.agentIdentity.agentId,
+            runId: task.runId,
+            principalKey: principalKey(task.principal),
+            operation: 'pruneDreamChannelHistory',
+          },
+          'dream-channel-history-prune-failed',
+        );
+      });
+      return result;
     } catch (error) {
       if (modelForRunMeta) {
         await this.writeDreamRunMeta(task, 'failed', modelForRunMeta).catch(() => undefined);
@@ -3614,7 +3768,7 @@ export class AgentRuntime {
         },
         'dream-memory-extraction-failed',
       );
-      return {
+      const result: AgentDreamRunResult = {
         agentId: this.agentIdentity.agentId,
         runId: task.runId,
         trigger: task.trigger,
@@ -3623,6 +3777,12 @@ export class AgentRuntime {
         completedAt: Date.now(),
         errorMessage: message,
       };
+      const anchorMessageId = error instanceof DreamChannelRunError ? error.anchorMessageId : null;
+      if (anchorMessageId) {
+        await this.appendDreamFinishedEvent(anchorMessageId, result).catch(() => undefined);
+        await this.pruneDreamChannelHistory().catch(() => undefined);
+      }
+      return result;
     }
   }
 
@@ -3648,62 +3808,130 @@ export class AgentRuntime {
     };
   }
 
-  private async runMemoryDreamChildAgent(
+  private async runMemoryDreamChannelRun(
     task: AgentDreamMemoryExtractionTask,
     prompt: string,
     allowedTools: readonly string[],
-  ): Promise<{ nodeChanges: AgentChildRunNodeChanges; incomplete: boolean }> {
-    let conversation: AgentConversationState | null = null;
-    let childRunId: string | null = null;
+    model: Model<Api>,
+    providerConfig: AgentProviderRuntimeConfig,
+  ): Promise<{ nodeChanges: AgentChildRunNodeChanges; incomplete: boolean; anchorMessageId: string }> {
+    let anchorMessageId: string | null = null;
+    let startedRunId: string | null = null;
     try {
-      conversation = await this.ensureConversationWithId(MEMORY_DREAM_CONVERSATION_ID, 'Memory Dream');
+      const nodeChanges: AgentChildRunNodeChanges = {};
+      await this.ensureDreamChannelEventState();
+      const conversation = await this.ensureConversationWithId(DEFAULT_DREAM_CHANNEL_ID);
       await this.refreshRuntimeSettings(conversation);
-      let data = await conversation.delegationRuntime.invokeAgent({
-        description: 'Memory Dream',
-        prompt,
-        run_in_background: false,
-        unattended: true,
+      const activePath: AgentMessage[] = [];
+      const skillRuntime = new AgentSkillRuntime({
+        localRoot: this.options.localFileRoot,
+        includeUserSkills: false,
+        conversationId: `memory-dream:${task.runId}`,
+      });
+      const localWorkspace = createAgentLocalWorkspaceContext(this.options.localFileRoot, this.scratchRoot(), skillRuntime);
+      const dreamAgent = createConfiguredAgent(DEFAULT_DREAM_CHANNEL_ID, providerConfig, activePath, this.outlinerToolHost, {
+        localFileRoot: this.options.localFileRoot,
+        localWorkspace,
+        model,
+        permissionMode: this.options.permissionMode,
+        runtimeSettingsLoader: () => this.getRuntimeSettings(),
+        skillToolEnabled: false,
+        skillRuntime,
+        chatSourceValidator: this.createChatSourceValidator(),
+        pastChats: this.createPastChatsToolRuntime(() => DEFAULT_DREAM_CHANNEL_ID),
         allowedTools: [...allowedTools],
         preapprovedToolRules: [...allowedTools],
+        streamFn: this.options.streamFn,
+        completeSimpleFn: this.options.completeSimpleFn,
+        providerApiKeyLoader: this.options.providerApiKeyLoader,
+        permissionEventHandler: (input) => {
+          const current = this.conversations.get(DEFAULT_DREAM_CHANNEL_ID);
+          return current ? this.appendToolPermissionEvent(DEFAULT_DREAM_CHANNEL_ID, current, input) : Promise.resolve();
+        },
+        afterToolResult: (_toolCallId, toolName, result, isError) => {
+          recordNodeToolChanges(nodeChanges, toolName, result, isError);
+          return undefined;
+        },
+      }, async (payload) => {
+        try {
+          await this.captureDebugRunSnapshot(DEFAULT_DREAM_CHANNEL_ID, payload, task.runId);
+        } catch (error) {
+          this.emitError(DEFAULT_DREAM_CHANNEL_ID, error instanceof Error ? error.message : String(error));
+        }
+        return undefined;
       });
-      childRunId = data.agent_id;
-      while (data.status === 'async_launched' || data.status === 'queued' || data.status === 'running') {
-        data = await conversation.delegationRuntime.status({
-          agent_id: data.agent_id,
-          wait: true,
-          timeout_ms: COMMAND_CHILD_RUN_WAIT_MS,
-        });
-      }
-      if (data.status === 'failed' || data.error) throw new Error(data.error || 'Memory Dream child run failed.');
-      if (data.status === 'cancelled') throw new Error('Memory Dream child run was stopped before completing.');
-      return { nodeChanges: data.node_changes ?? {}, incomplete: data.incomplete === true };
-    } finally {
-      await this.cleanupMemoryDreamChildRun(conversation, childRunId);
+      const anchor = buildMemoryDreamAnchorPrompt(task, prompt);
+      anchorMessageId = await this.appendUserPromptEvent(
+        DEFAULT_DREAM_CHANNEL_ID,
+        conversation,
+        anchor,
+        task.trigger === 'schedule' ? systemActor() : userActor(),
+      );
+      startedRunId = await this.startRun(
+        DEFAULT_DREAM_CHANNEL_ID,
+        conversation,
+        anchor,
+        { type: 'message', messageId: anchorMessageId },
+        {
+          runId: task.runId,
+          executingAgentId: this.agentIdentity.agentId,
+          agent: dreamAgent,
+          kind: 'reflective',
+          fingerprint: memoryDreamRunFingerprint(task, model),
+        },
+      );
+      const activeRun = conversation.activeRuns.get(startedRunId);
+      if (!activeRun) throw new Error('Memory Dream run did not start.');
+      const scoped = this.scopedConversation(conversation, activeRun, dreamAgent);
+      activeRun.unsubscribe = dreamAgent.subscribe(async (event) => {
+        await this.handlePiAgentEvent(DEFAULT_DREAM_CHANNEL_ID, scoped, event);
+        this.emitProjection(DEFAULT_DREAM_CHANNEL_ID, event.type, event.type === 'message_update' ? 'coalesce' : 'immediate');
+      });
+      await dreamAgent.prompt(anchor);
+      await activeRun.settled;
+      await this.persistAndEmitIdle(DEFAULT_DREAM_CHANNEL_ID, conversation);
+      const finalAssistant = lastAssistantMessage(dreamAgent.state.messages as AgentMessage[]);
+      return {
+        nodeChanges,
+        incomplete: finalAssistant ? isContextOverflow(finalAssistant, dreamAgent.state.model.contextWindow) : false,
+        anchorMessageId,
+      };
+    } catch (error) {
+      await this.recoverFromRunError(DEFAULT_DREAM_CHANNEL_ID, startedRunId);
+      throw new DreamChannelRunError(error instanceof Error ? error.message : String(error), anchorMessageId);
     }
   }
 
-  private async cleanupMemoryDreamChildRun(
-    conversation: AgentConversationState | null,
-    childRunId: string | null,
+  private async appendDreamFinishedEvent(
+    anchorMessageId: string,
+    result: AgentDreamRunResult,
   ): Promise<void> {
-    await Promise.allSettled(this.runLedger.pendingWrites());
-    if (childRunId) {
-      conversation?.delegationRuntime.forgetRun(childRunId);
-      this.runLedger.forgetRun(childRunId);
-    }
-    await this.deleteConversation(MEMORY_DREAM_CONVERSATION_ID).catch((error) => {
-      this.reportWarn(
-        'dream',
-        `Failed to clean up Memory Dream child conversation: ${error instanceof Error ? error.message : String(error)}`,
-        error,
-        {
-          conversationId: MEMORY_DREAM_CONVERSATION_ID,
-          ...(childRunId ? { runId: childRunId } : {}),
-          operation: 'cleanupMemoryDreamChildRun',
-        },
-        'memory-dream-cleanup-failed',
-      );
-    });
+    const conversation = this.conversations.get(DEFAULT_DREAM_CHANNEL_ID)
+      ?? await this.ensureConversationWithId(DEFAULT_DREAM_CHANNEL_ID);
+    await this.appendConversationEvents(DEFAULT_DREAM_CHANNEL_ID, conversation, [{
+      type: 'dream.finished',
+      actor: systemActor(),
+      messageId: anchorMessageId,
+      agentId: result.agentId,
+      runId: result.runId,
+      trigger: result.trigger,
+      status: result.status,
+      startedAt: result.startedAt,
+      completedAt: result.completedAt,
+      processed: result.processed,
+      changes: result.changes,
+      errorMessage: result.errorMessage,
+    }]);
+  }
+
+  private async pruneDreamChannelHistory(): Promise<void> {
+    const result = await this.getEventStore().retainRecentConversationRuns(
+      DEFAULT_DREAM_CHANNEL_ID,
+      DREAM_CHANNEL_RETAINED_RUNS,
+    );
+    if (result.prunedRunIds.length === 0) return;
+    await this.refreshAgentTaskCache();
+    this.emitProjection(DEFAULT_DREAM_CHANNEL_ID, 'dream_channel_history_pruned');
   }
 
   private async writeDreamRunMeta(
@@ -3712,38 +3940,30 @@ export class AgentRuntime {
     model: Model<Api>,
   ): Promise<void> {
     const timestamp = status === 'running' ? task.startedAt : Date.now();
+    const existing = await this.getEventStore().readRunMetaProjection(task.runId);
     await this.getEventStore().writeRunMeta({
       v: 1,
       id: task.runId,
-      // Executor vs subject: the runtime's main agent executes every Dream (`agentId`), but the
-      // run is ANCHORED to the principal whose pool it maintains — run history lives beside that
-      // principal's pool, keyed like its dream state ([[agent-data-model]] §4).
+      // Dream now runs as a top-level turn inside the protected Dream channel. The
+      // semantic pool still belongs to `task.principal`; the run transcript and
+      // durable run ledger are anchored to the channel so replay can join them.
       agentId: this.agentIdentity.agentId as AgentRunMetaProjection['agentId'],
-      anchor: { type: 'principal', principal: task.principal },
+      anchor: {
+        type: 'conversation',
+        agentId: this.agentIdentity.agentId as AgentRunMetaProjection['agentId'],
+        conversationId: DEFAULT_DREAM_CHANNEL_ID,
+      },
       kind: 'reflective',
       status,
       trigger: task.trigger === 'schedule'
         ? { type: 'schedule', schedule: DEFAULT_DREAM_SCHEDULE, dueAt: task.dueAt }
         : { type: 'manual' },
-      fingerprint: {
-        appVersion: electronAppVersion(),
-        // The Dream's prompt is the believer-pool extraction request — not the executing
-        // agent's system prompt, which never reaches a Dream completion call.
-        promptHash: hashJson({
-          dream: MEMORY_DREAM_SKILL_NAME,
-          principal: principalKey(task.principal),
-        }),
-        toolSchemaHash: hashJson({ tools: MEMORY_DREAM_ALLOWED_TOOLS }),
-        skillBindings: [MEMORY_DREAM_SKILL_NAME],
-        modelConfig: hashJson({
-          model: model.id,
-          provider: model.provider,
-        }),
-      },
+      fingerprint: memoryDreamRunFingerprint(task, model),
       retention: 'hot',
       createdAt: task.startedAt,
       updatedAt: timestamp,
-      latestSeq: 0,
+      usage: existing?.usage,
+      latestSeq: existing?.latestSeq ?? 0,
     });
     await this.refreshAgentTaskCache();
     this.emitAgentTaskProjection(`dream.${status}`);
@@ -3755,21 +3975,18 @@ export class AgentRuntime {
 
   private async collectDreamTasks(limit = 50): Promise<AgentRenderDreamTaskEntity[]> {
     const store = this.getEventStore();
-    // The believer pool's reflective-run history and its dream state are keyed by the same
-    // principal, so its tasks join locally.
-    const principals = this.listDreamPrincipals();
-    const taskGroups = await Promise.all(principals.map(async (principal): Promise<AgentRenderDreamTaskEntity[]> => {
-      const [runs, dreamState] = await Promise.all([
-        store.listPrincipalRunMetaProjections(principal, { limit }),
-        store.readDreamState(principal),
-      ]);
-      return runs.flatMap((run): AgentRenderDreamTaskEntity[] => {
+    const principal = this.agentPrincipal();
+    const [runs, dreamState] = await Promise.all([
+      store.listConversationRunMetaProjections(DEFAULT_DREAM_CHANNEL_ID, { limit }),
+      store.readDreamState(principal),
+    ]);
+    return runs
+      .flatMap((run): AgentRenderDreamTaskEntity[] => {
         const completed = dreamState.lastCompleted?.runId === run.id ? dreamState.lastCompleted : null;
-        const task = dreamTaskFromRunMeta(run, completed);
+        const task = dreamTaskFromRunMeta(run, completed, principal);
         return task ? [task] : [];
-      });
-    }));
-    return taskGroups.flat().sort(compareRenderTasks);
+      })
+      .sort(compareRenderTasks);
   }
 
   async listDreamHistory(options: { limit?: number } = {}): Promise<AgentRenderDreamTaskEntity[]> {
@@ -3928,11 +4145,9 @@ export class AgentRuntime {
       appVersion: electronAppVersion(),
       promptHash: hashJson({
         agentId,
-        // The conversation agent is already configured for the executing member
-        // when the run starts, so its live system prompt is the turn's real prompt.
-        systemPrompt: agentId === this.agentIdentity.agentId
-          ? this.agentIdentity.systemPrompt
-          : agent.state.systemPrompt,
+        // The executing agent may be a run-profile agent (Dream) rather than the
+        // conversation default, so hash the actual live prompt used for this run.
+        systemPrompt: agent.state.systemPrompt,
       }),
       toolSchemaHash: 'runtime-tools',
       skillBindings: [],
@@ -4972,6 +5187,7 @@ export class AgentRuntime {
     conversationId: string,
     conversation: AgentConversationState,
     prompt: UserMessage,
+    actor: AgentActor = userActor(),
   ): Promise<string> {
     const messageId = this.createMessageId('user');
     const persisted = await this.persistPiUserContent(conversationId, prompt.content, {
@@ -4980,12 +5196,12 @@ export class AgentRuntime {
     const inputs: AgentEventInput[] = [
       ...persisted.payloads.map((payload): AgentEventInput => ({
         type: 'payload.created',
-        actor: userActor(),
+        actor,
         payload,
       })),
       {
         type: 'user_message.created',
-        actor: userActor(),
+        actor,
         createdAt: prompt.timestamp,
         messageId,
         parentMessageId: conversation.eventState.selectedLeafMessageId,
@@ -5253,15 +5469,18 @@ export class AgentRuntime {
     prompt: UserMessage | null = null,
     triggerOverride: AgentRunTrigger | null = null,
     identity: {
+      runId?: string;
       executingAgentId?: string;
       agent?: Agent;
       allowConcurrent?: boolean;
+      kind?: AgentRunKind;
+      fingerprint?: AgentRunFingerprint;
     } = {},
   ): Promise<string> {
     if (!identity.allowConcurrent && this.hasActiveRuns(conversation)) {
       throw new Error('A run is already active in this conversation.');
     }
-    const runId = randomUUID();
+    const runId = identity.runId ?? randomUUID();
     const agentId = (identity.executingAgentId ?? conversation.defaultAgentId) as AgentId;
     const agent = identity.agent ?? conversation.agent;
     let resolveSettled!: () => void;
@@ -5295,9 +5514,9 @@ export class AgentRuntime {
         runId,
         agentId,
         anchor: { type: 'conversation', agentId, conversationId },
-        kind: 'turn',
+        kind: identity.kind ?? 'turn',
         trigger: triggerOverride ?? this.runTrigger(scoped),
-        fingerprint: this.runFingerprint(scoped, agentId, agent),
+        fingerprint: identity.fingerprint ?? this.runFingerprint(scoped, agentId, agent),
         retention: 'hot',
       }]);
     } catch (error) {
@@ -6547,10 +6766,25 @@ function eventStateToMeta(eventState: AgentEventReplayState): AgentConversationL
     title: sanitizeConversationTitle(eventState.conversation.title),
     members: eventState.conversation.members.slice(),
     goal: eventState.conversation.goal,
+    settings: { ...eventState.conversation.settings },
     createdAt: eventState.conversation.createdAt,
     updatedAt: eventState.conversation.updatedAt,
     messageCount: Object.keys(eventState.messages).length,
   };
+}
+
+function protectedDefaultChannelConfig(conversationId: string): ProtectedDefaultChannelConfig | null {
+  return PROTECTED_DEFAULT_CHANNELS.find((config) => config.id === conversationId) ?? null;
+}
+
+function requiredProtectedDefaultChannelConfig(conversationId: string): ProtectedDefaultChannelConfig {
+  const config = protectedDefaultChannelConfig(conversationId);
+  if (!config) throw new Error(`Protected default channel is not configured: ${conversationId}`);
+  return config;
+}
+
+function defaultChannelSortRank(conversationId: string): number {
+  return protectedDefaultChannelConfig(conversationId)?.sortRank ?? PROTECTED_DEFAULT_CHANNELS.length;
 }
 
 function agentMemoryEntryToView(entry: AgentMemoryEntry): AgentMemoryEntryView {
@@ -7626,11 +7860,50 @@ function buildMemoryDreamPrompt(task: AgentDreamMemoryExtractionTask, skillConte
   ].join('\n');
 }
 
+function buildMemoryDreamAnchorPrompt(task: AgentDreamMemoryExtractionTask, hiddenPrompt: string): UserMessage {
+  const label = task.trigger === 'schedule' ? 'Scheduled Dream' : 'Manual Dream';
+  return {
+    role: 'user',
+    timestamp: task.startedAt,
+    content: [
+      { type: 'text', text: systemReminder(hiddenPrompt) },
+      { type: 'text', text: `${label} · ${dreamSpanSummary(task.span)}` },
+    ],
+  };
+}
+
+function dreamSpanSummary(span: DreamMemoryExtractionSpan): string {
+  if (span.consolidateOnly) return 'consolidate existing memory';
+  return `${span.totalMessageCount} messages · ${span.totalCharCount} chars`;
+}
+
+function memoryDreamRunFingerprint(
+  task: AgentDreamMemoryExtractionTask,
+  model: Model<Api>,
+): AgentRunFingerprint {
+  return {
+    appVersion: electronAppVersion(),
+    // The Dream prompt is the believer-pool extraction request, not the protected
+    // channel's normal chat prompt.
+    promptHash: hashJson({
+      dream: MEMORY_DREAM_SKILL_NAME,
+      principal: principalKey(task.principal),
+    }),
+    toolSchemaHash: hashJson({ tools: MEMORY_DREAM_ALLOWED_TOOLS }),
+    skillBindings: [MEMORY_DREAM_SKILL_NAME],
+    modelConfig: hashJson({
+      model: model.id,
+      provider: model.provider,
+    }),
+  };
+}
+
 function dreamTaskFromRunMeta(
   run: AgentRunMetaProjection,
   completed: Extract<AgentMemoryEvent, { type: 'dream.completed' }> | null,
+  principal: AgentPrincipal,
 ): AgentRenderDreamTaskEntity | null {
-  if (run.anchor.type !== 'principal' || run.kind !== 'reflective') return null;
+  if (run.kind !== 'reflective') return null;
   const trigger = dreamTaskTrigger(run);
   if (!trigger) return null;
   const status = renderTaskStatusFromRunStatus(run.status);
@@ -7639,7 +7912,7 @@ function dreamTaskFromRunMeta(
     kind: 'dream',
     status,
     trigger,
-    principal: run.anchor.principal,
+    principal,
     startedAt: run.createdAt,
     updatedAt: run.updatedAt,
     completedAt: status === 'running' ? undefined : run.updatedAt,
@@ -7752,12 +8025,25 @@ function dreamChangesFromChildNodeChanges(nodeChanges: AgentChildRunNodeChanges)
   };
 }
 
+function lastAssistantMessage(messages: readonly AgentMessage[]): AssistantMessage | null {
+  for (const message of [...messages].reverse()) {
+    if (isAssistantMessage(message)) return message;
+  }
+  return null;
+}
+
 function dreamChangesHaveCommittedWork(changes: AgentDreamCompletedChanges): boolean {
   return changes.added + changes.updated + changes.forgotten > 0;
 }
 
+class DreamChannelRunError extends Error {
+  constructor(message: string, readonly anchorMessageId: string | null) {
+    super(message);
+  }
+}
+
 function isInternalAgentConversationId(conversationId: string): boolean {
-  return conversationId === MEMORY_DREAM_CONVERSATION_ID;
+  return conversationId === LEGACY_MEMORY_DREAM_CONVERSATION_ID;
 }
 
 function skippedDreamRunResult(

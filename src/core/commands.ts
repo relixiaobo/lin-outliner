@@ -98,6 +98,7 @@ export const AGENT_COMMANDS = [
   'agent_create_conversation',
   'agent_list_conversations',
   'agent_rename_conversation',
+  'agent_set_conversation_include_in_dream_data',
   'agent_delete_conversation',
   'agent_list_memory',
   'agent_list_dream_history',

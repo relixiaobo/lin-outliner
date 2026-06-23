@@ -90,8 +90,9 @@ and every conversation's members are `{user, Neva}`.
   "fresh" path (a sub-agent with its own identity + memory line) is **removed**
   (`single-agent-finish-collapse`): the `Agent` tool carries no `agent_type`, the
   registry loads only Neva, and no file-backed `.agents/agents/*` definition is
-  loaded. `/research`, runtime Dream, and background self-work are all forks of Neva. Child
-  runs carry `parentRunId`; they are **not** conversation members and **not** peers. ✅ — and
+  loaded. `/research` and background self-work are forks of Neva; runtime Dream
+  is a restricted top-level run in the protected Dream channel. Child runs carry
+  `parentRunId`; they are **not** conversation members and **not** peers. ✅ — and
   the code honors the model (`agent-run-unification`, shipped): a delegated run is
   an ordinary Run with its OWN `runs/<runId>/` ledger (its own seq space, replayed
   alone), kind `delegation`, joined to the parent by
@@ -155,16 +156,18 @@ Definitions + the memory tool surface: `agent-tool-design.md` § *Memory*.
 
 There is **one Dream**: the runtime-only `memory-dream` skill that reads visible
 conversation spans via `past_chats`, gathers relevant outline context with
-`node_search` / `node_read`, and writes timeline memory nodes. Scheduled attempts
-are at most once per daily due; a user may also trigger a manual Dream from
-Settings, and that manual run is not blocked by the scheduled due gate. Each run
+`node_search` / `node_read`, and writes timeline memory nodes. Dream runs as a
+top-level unattended turn in the protected Dream channel using a Dream-only run
+profile, not as a hidden delegation child. Scheduled attempts are at most once per
+daily due; a user may also trigger a manual Dream from Settings, and that manual
+run is not blocked by the scheduled due gate. Each run
 applies the valuable-memory filter, reconciles prior `#d-*` memories as the
 current belief graph, then, when it has memory worth writing, updates today's
 single `#d-memory` container, whose title is a generated daily memory headline; a
 run that finds nothing worth remembering writes nothing and still completes
-cleanly, advancing the watermark — unless it was cut off mid-work (the run hit its
-`maxTurns` cap while still streaming, or an unresolved context overflow truncated
-it), which is flagged `incomplete` and, with zero writes, is retried rather than
+cleanly, advancing the watermark — unless it was cut off mid-work by an
+unresolved context overflow, which is flagged `incomplete` and, with zero writes,
+is retried rather than
 counted as a deliberate no-op. It
 may write `#d-question` for
 unresolved tension and `#d-guidance` for future handling, but these are optional
@@ -178,8 +181,9 @@ the foreground `dream` tool are cut.
 
 **Dream/run surfacing is relocated.** Dream history lives in Settings → Agent
 "Memory & activity" panel (alongside memory inspect/correct/forget), fetched via
-`agent_list_dream_history` — it is no longer in the in-conversation task panel.
-The conversation task panel keeps only child-run (delegation) tasks.
+`agent_list_dream_history`, and the actual run transcript lives in the protected
+Dream channel. The conversation task panel keeps only child-run (delegation)
+tasks.
 
 ## The runtime/policy seam (trigger · mechanism · policy)
 
@@ -253,7 +257,13 @@ members `{user, Neva}`; **General** (`lin-agent-channel-general`,
 `restoreOrCreateGeneralChannel`) is the default landing, sorted first in the one flat
 conversation list; and the user can **create / rename** further channels from that
 list's single `+` button (the surviving `ChannelConfigWindow` create/rename dialog — a
-title plus an optional opening seed, no member roster). The surviving seams are
+title plus an optional opening seed, no member roster). Channel configuration also
+owns the per-channel **include in Dream data** setting: ordinary channels default
+included, the protected Dream channel is forced excluded, and protected default
+channel names stay immutable while their editable settings can still use the same
+configuration surface. Protected default invariants are table-driven in the
+runtime so General and Dream share the same restore/name/member/settings repair
+path. The surviving seams are
 `isChannelConversationId` (id-prefix test) and `usesChannelActivitySurface()`
 (hardcoded `false`, so every channel-surface branch takes its single-agent inline side).
 There is no agent-facing `channel_create`/`channel_update` tool — channel creation is a
@@ -267,11 +277,11 @@ leftover; only the single-agent value is ever assigned.)
 | Three-ledger storage + write-time split | ✅ built | legacy flat log deleted on startup; the store stays principal-keyed internally |
 | `Principal` + per-message `actor` | ✅ built | user actor = `local-user` (single-user); members are always `{user, Neva}` |
 | One editable agent — Neva | ✅ built | built-in `built-in:tenon:assistant` (handle `assistant`); user edits layer as a stored overlay (`builtInAgentProfiles` in `agent-providers.json`); directly editable in Settings → Agent (model/effort/persona/tools/skills); Save persists the overlay, Delete suppressed for the built-in |
-| Channels-only conversations (no DM) | ✅ built | every conversation is single-agent + inline-streaming + steerable; one conversation list (no two sections / two "+" buttons), no nav-lock, "General" default landing; `canonicalDmAgentId` / `lin-agent-dm-` prefix / DM-vs-Channel branching removed |
+| Channels-only conversations (no DM) | ✅ built | every conversation is single-agent + inline-streaming + steerable; one conversation list (no two sections / two "+" buttons), no nav-lock, "General" and protected "Dream" default channels; `canonicalDmAgentId` / `lin-agent-dm-` prefix / DM-vs-Channel branching removed |
 | Run→conversation anchor + per-conversation run index | ✅ built | `runs WHERE conversationId=X` is enumerable |
 | Delegation / child-run runtime (#164) | ✅ built | sub-agents spawned for a TASK (NOT peers/members); ordinary Runs with their own `runs/<runId>/` ledger, joined by `parentRunId`/`parentToolCallId`; surfaced in the conversation task panel (child-run tasks only) |
 | Timeline memory nodes | ✅ built | durable memory lives in per-day generated-headline `#d-memory` plus optional `#d-episode`, `#d-belief`, `#d-question`, and `#d-guidance` outline nodes; foreground retrieval is pull-only through `node_search` / `node_read` |
-| One Dream (conversation + outline context) | ✅ built | scheduled at-most-once-daily and Settings-manual `memory-dream` child runs read member conversations through `past_chats` when sources exist, gather relevant prior memory/workspace context through `node_search` / `node_read`, may delete obsolete nodes with `node_delete`, and update today's memory nodes through the human-dream cycle; manual consolidate-only can reconcile outline/prior Dream context without new chat spans; agent-self / run-log Dream, manual `/dream`, and foreground `dream` are cut |
+| One Dream (conversation + outline context) | ✅ built | scheduled at-most-once-daily and Settings-manual `memory-dream` Dream-channel runs read member conversations through `past_chats` when sources exist, gather relevant prior memory/workspace context through `node_search` / `node_read`, may delete obsolete nodes with `node_delete`, and update today's memory nodes through the human-dream cycle; the Dream channel retains the newest 512 run transcripts and prunes older run ledgers/anchor markers/search entries; manual consolidate-only can reconcile outline/prior Dream context without new chat spans; agent-self / run-log Dream, manual `/dream`, and foreground `dream` are cut |
 | Chat source binding under compaction (#302) | ✅ built | `chat-source` inline refs encode `{stream, streamId, range}` raw sources over the ledgers; node writes validate the exact source before mutation |
 | Permission gate | ✅ built | ask / allow / deny over the hard A3 floor |
 

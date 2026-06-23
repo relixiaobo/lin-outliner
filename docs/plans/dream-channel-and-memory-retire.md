@@ -6,13 +6,11 @@ the now-vestigial Settings Memory surfaces left over from the #302 teardown.
 
 ## Goal
 
-- Dream is currently invisible: it runs as a **parentless child run** inside a
-  transient conversation that is **created then deleted** (`agentRuntime.ts`
-  `runMemoryDreamChildAgent` — create at ~`:3659`
-  `ensureConversationWithId(MEMORY_DREAM_CONVERSATION_ID)`, delete at ~`:3694`
-  `deleteConversation`), so the user never sees what it read, how it reasoned, or
-  what it wrote. Make every run land in a **persistent Dream channel** whose
-  process renders **inline** as the existing agent transcript (the #312 renderer,
+- The legacy Dream implementation was invisible: it ran as a **parentless child
+  run** inside a transient conversation that was **created then deleted**, so the
+  user never saw what it read, how it reasoned, or what it wrote. Make every run
+  land in a **persistent Dream channel** whose recent process renders **inline**
+  as the existing agent transcript (the #312 renderer,
   `docs/spec/agent-event-log-rendering.md`): the run's `past_chats` reads →
   reasoning → `node_*` writes → result are the channel's content. (This requires
   Dream to run as a **top-level run** in the channel, not a child run — see
@@ -62,27 +60,70 @@ id-namespaced single-agent channel (`lin-agent-channel-dream`, members
 `{user, Neva}`) so it reuses the whole channel container — list entry, transcript
 renderer, persistence — with **no new conversation primitive**.
 
+Like General, Dream is a **protected default channel**: startup idempotently
+restores/creates it, and the delete path rejects it. After PR3 the channel is the
+source of truth for Dream history and cursor derivation, so deleting it would
+delete the scheduler's history.
+
+Add a channel-level Dream evidence setting: **include this channel in Dream
+data**. It defaults to **on** for ordinary user channels and **off** for the Dream
+channel. This is a general user-facing exclusion mechanism, not a Dream-id
+hard-code: `userMemberConversationIds` / date-window evidence collection reads the
+setting before a channel can enter Dream's source set. Dream's own transcript
+therefore never becomes primary evidence for the next Dream run, while users can
+also opt other channels out of memory consolidation. The setting is edited from
+Channel configuration for ordinary channels; the Dream channel stays forced off,
+and protected defaults such as General keep their immutable names while still
+using the same configuration surface for editable settings.
+
 What makes it special is presentation, driven off its channel id:
 
-- **No chat composer.** In place of the message composer it shows a **structured
-  Dream launcher** (below). This is a small **new** per-channel-id branch at the
-  composer mount (`AgentChatPanel.tsx:~1407`, `conversationId` already in scope) —
-  *not* an existing seam: `usesChannelActivitySurface()` (`agentChannel.ts:33`) is
-  dead code from the single-agent collapse (always `false`, zero call sites), so
-  there is nothing to "ride".
-- **Run-as-transcript (Dream is a top-level run).** Each Dream run is a persisted
-  turn in this channel rather than a create→delete transient, and it runs as a
-  **top-level run anchored to the Dream channel** — *not* a parentless child run.
-  This is load-bearing: today a parentless child run renders only as a single
-  `kind:'child-run'` **boundary row** (a clickable summary), its full ledger fetched
-  separately into `AgentChildRunDetailsPanel` (`agentRenderProjection.ts:~538`,
-  `AgentChildRunDetailsPanel.tsx:~230`) — which would give a summary, not
-  transparency. As a top-level run the process renders **inline** like any agent
-  turn: an anchoring "user message" (the launch, serialized — see below) followed by
-  the run's real process — `past_chats` reads, reasoning rows,
+- **No ordinary chat.** The Dream channel does not accept normal user chat turns:
+  ordinary `sendMessage` calls are rejected before a `user_message.created` event
+  is persisted. PR2 replaces the composer with a **structured Dream launcher**
+  (below). That launcher is a small **new** per-channel-id branch at the composer
+  mount (`AgentChatPanel.tsx:~1407`, `conversationId` already in scope) — *not* an
+  existing seam: `usesChannelActivitySurface()` (`agentChannel.ts:33`) is dead
+  code from the single-agent collapse (always `false`, zero call sites), so there
+  is nothing to "ride".
+- **Run-as-transcript (Dream is a top-level run with a Dream profile).** Each
+  Dream run is a persisted turn in this channel rather than a create→delete
+  transient, and it runs as a **top-level run anchored to the Dream channel** —
+  *not* a parentless child run. This is load-bearing: today a parentless child run
+  renders only as a single `kind:'child-run'` **boundary row** (a clickable
+  summary), its full ledger fetched separately into `AgentChildRunDetailsPanel`
+  (`agentRenderProjection.ts:~538`, `AgentChildRunDetailsPanel.tsx:~230`) — which
+  would give a summary, not transparency.
+
+  The execution mechanism should still reuse the ordinary top-level run lifecycle
+  (`user_message.created` → `run.started` → assistant / tool process →
+  `run.completed`), but with a **Dream-specific run profile**: render the
+  runtime-only `memory-dream` skill as the prompt, limit tools to Dream's
+  `allowedTools`, preapprove those tools, run unattended, and disable ordinary
+  chat affordances that do not belong in Dream (free-form composer, user skill
+  invocation/listing, self-maintenance, arbitrary tool expansion). This keeps the
+  architecture simple — one top-level run path, one renderer — without widening
+  Dream's private tool/approval policy into a normal chat turn.
+
+  As a top-level run the process renders **inline** like any agent turn: an
+  anchoring "user message" (the launch, serialized — see below) followed by the
+  run's real process — `past_chats` reads, reasoning rows,
   `node_create`/`node_edit`/`node_delete` writes, and the final result. The #312
-  renderer then renders it with no Dream-specific work: the process **is** the
-  transcript; we render what is already recorded, we do not summarize it into a feed.
+  renderer then renders it with no Dream-specific feed: the process **is** the
+  transcript. The protected transcript is visible audit history only: a Dream run
+  starts with an empty prior active path, so previous Dream turns are not fed back
+  into the next Dream's model context. Dream may still reconcile prior memory via
+  explicit `node_search` / `node_read`. To keep the audit surface bounded, the
+  runtime retains the most recent 512 Dream-channel runs and prunes older run
+  ledgers, their anchor messages, their `dream.finished` markers, and their search
+  index entries; durable memory nodes and the Dream watermark are not pruned by
+  that transcript-retention pass.
+
+  `dream.finished` is metadata, not a boundary replacement in the Dream channel.
+  Existing non-channel Dream boundary rendering can remain for older / non-inline
+  contexts, but inside `lin-agent-channel-dream` the anchor stays a normal visible
+  message and the run transcript stays inline; `dream.finished` only supplies
+  status/window/history data for projections.
 
 ### The structured Dream launcher (manual runs)
 
@@ -143,8 +184,7 @@ window it covered. So instead of relocating the watermark to a new store, we
 **eliminate stored dream-state**:
 
 > **`last-dreamed-through` = the max covered-window `end` across the Dream
-> channel's *cleanly completed* run turns that the frontier trusts (scheduled
-> turns by default — see Open question 4).**
+> channel's *cleanly completed* manual or scheduled run turns.**
 
 A purely derived cursor (single source of truth — it cannot drift from the
 channel's actual content); optionally cached as a thin field only if a
@@ -160,37 +200,53 @@ authoritative.
 
 **Auto vs manual — who moves the frontier (the crux of "which days to include"):**
 
-- **Scheduled (auto) run** dreams `[cursor + 1 day .. yesterday]` (a multi-day
-  catch-up window if the app was closed for days), then — by virtue of writing a
-  turn that covers through yesterday — the derived cursor advances to yesterday on
-  its own. There is no separate "advance the cursor" write.
+- **Scheduled (auto) run** dreams `[cursor + 1 day .. today]` at the user's fixed
+  Dream time (a multi-day catch-up window if the app was closed or prior days
+  failed), then — by virtue of writing a clean completed turn that covers through
+  the selected end date — the derived cursor advances on its own. There is no
+  separate "advance the cursor" write.
 - **Manual run** dreams whatever window the user picks — including fully behind
-  the cursor — and (recommended for v1, Open question 4) does **not** move the
-  frontier: the cursor derives over cleanly-completed *scheduled* turns only, so a
-  narrowly-guided manual re-dream ("重点关注 X") never makes the comprehensive
-  nightly pass skip a day. 常梦常新 re-dreams never corrupt the auto frontier.
+  the cursor — and a clean completed manual run **does** move the frontier when it
+  reaches or passes it. Manual Dream therefore suppresses the scheduled Dream for
+  already-covered dates. This is intentional: a user-launched consolidation should
+  count as the latest successful Dream work for scheduling.
 
-**Preserve from #319:** a truncated run (maxTurns / context overflow — the
-`incomplete` flag set in `agentDelegation.ts`) must **not** advance the frontier.
-Derive over `completed && !incomplete` turns only, so the truncated-empty-retry
-semantics #319 shipped survive unchanged.
+Dream writes memory to the **source date's** daily memory node, not merely to the
+run date. If yesterday's scheduled Dream failed and today's catch-up window
+includes both yesterday and today, durable findings from yesterday belong under
+yesterday's `#d-memory` container while today's findings belong under today's
+container.
 
-**Requires (protocol surface — interface-first):** the covered window must persist
+**Preserve from #319:** a truncated run (context overflow — the run's
+`incomplete` result flag) must **not** advance the frontier. Derive over
+`completed && !incomplete` turns only, so the truncated-empty-retry semantics #319
+shipped survive unchanged.
+
+**PR2 protocol surface:** the covered window must persist
 as **structured metadata** (`{ start, end }`), not only the human-readable string
-`Dream · A → B`. There is no field for it today, so add `window?: { start, end }`
+`Dream · A → B`. There is no field for it today; PR2 adds `window?: { start, end }`
 to the existing **`dream.finished`** event (`agentEventLog.ts:~1034`) — it already
 carries `trigger` / `status` / `startedAt` / `completedAt` / `changes`, making it
 the single record the cursor and `lastSuccessAt` derive from
-(`status === 'completed' && trigger === 'schedule'`). The `user_message.created`
+(`status === 'completed'`, manual and scheduled alike). The `user_message.created`
 anchor (`:~720`) has no metadata field and is *not* the home. Changing the event
 shape is a coordinated `agentEventLog.ts` change.
 
 ### Scheduled (automatic) runs
 
-Auto-run is retained (Open question 1 — resolved 甲). A scheduled run posts into the same
-channel with a **synthetic anchor message** (`Scheduled Dream · [range]`, no user
-author) and the same full-process transcript below it; manual and scheduled runs
-are just two sources of the same channel entry shape.
+Auto-run is retained (Open question 1 — resolved 甲). A scheduled run posts into
+the same channel with a **synthetic anchor message** (`Scheduled Dream · [range]`,
+no user author) and the same recently-retained full-process transcript below it;
+manual and scheduled runs are just two sources of the same channel entry shape.
+
+The schedule is a fixed local time. If the fixed-time run cannot complete, retry
+after a short interval up to **three attempts** for that due date. If all three
+attempts fail, abandon that due date until the next day's fixed time; the next
+successful run catches up over the still-uncovered date window. The run-meta guard
+therefore changes from "any attempt blocks this due" to "attempt count for this
+due is below the retry cap." Clean manual runs also update `lastSuccessAt`, so a
+manual Dream after the fixed time suppresses the scheduled run for the covered
+dates.
 
 **Frequency becomes user-configurable.** Today the cadence is the fixed constant
 `DEFAULT_DREAM_SCHEDULE` (`'2026-01-01T03:00 RRULE:FREQ=DAILY'`). Expose a
@@ -218,17 +274,17 @@ is precise:
   read by `fireDreamForPool` scheduling `:3457`, `previewDreamReadiness` `:3794`,
   and `collectDreamTasks` `:3764` for Dream history). It carries **two** scheduler
   inputs beyond the cursor: `lastSuccessAt` (drives `shouldFireDateSchedule`) and —
-  separately — the per-due "already attempted" guard, which already lives in **run
-  meta** (`hasScheduledDreamAttemptForDue` → `listPrincipalRunMetaProjections`
-  `:3488`), *not* the memory projection, so it survives the teardown untouched. PR2
-  must therefore re-derive only `lastSuccessAt` (= max `completedAt` over the
-  channel's `status === 'completed'` `dream.finished` events). The dream-state is
-  **not** orphaned today — which is why deleting the projection is an **escalation,
-  not a drive-by** until cursor + `lastSuccessAt` derive from the channel (PR2) and
-  Dream history is the channel feed (PR1). After PR1 + PR2 the projection is dead and
-  **deleted** — the `AgentEventStore` *class* stays (it still stores conversation
-  events / run streams / payloads / run-meta / index). No relocation, no migration
-  (pre-release: wipe `~/.lin-outliner-*`).
+  separately — the per-due attempt history, which already lives in **run meta**
+  (`hasScheduledDreamAttemptForDue` → `listPrincipalRunMetaProjections` `:3488`),
+  *not* the memory projection. PR2 must therefore re-derive `lastSuccessAt` (= max
+  `completedAt` over clean completed manual or scheduled `dream.finished` events)
+  and replace the per-due guard with a capped-at-3 retry count over run meta. The
+  dream-state is **not** orphaned today — which is why deleting the projection is
+  an **escalation, not a drive-by** until cursor + `lastSuccessAt` derive from the
+  channel (PR2) and Dream history is the channel feed (PR1). After PR1 + PR2 the
+  projection is dead and **deleted** — the `AgentEventStore` *class* stays (it still
+  stores conversation events / run streams / payloads / run-meta / index). No
+  relocation, no migration (pre-release: wipe `~/.lin-outliner-*`).
 - Touches `src/core/commands.ts` (protocol surface) — land interface-first and
   coordinate per the infrastructure-ownership rule. Core tests that exercise the
   pool (`tests/core/agentEventStore.test.ts`, ~250 lines of memory-entry cases) are
@@ -240,26 +296,36 @@ is precise:
 Each PR is shippable and reviewable on its own — none is a scaffold a later PR
 "fills in".
 
-- **PR1 — Dream channel + persisted full-process transcript.** Add the dedicated
-  Dream channel; **run Dream as a top-level run anchored to it** (not a parentless
-  child run) so the #312 renderer shows the process **inline**, not a child-run
-  boundary summary; persist the run instead of create→delete; relocate Dream history
-  here; add `window?: { start, end }` to the `dream.finished` event and stamp each
-  run's covered window on it (protocol — interface-first). Keep the existing
-  `agent_run_dream_now` trigger and the seq-watermark **unchanged** (it still drives
-  scope this PR). *Complete feature:* Dream has a transparent, persistent home. UI
-  gate = light/dark visual.
+- **PR1 — Dream channel + bounded persisted full-process transcript.** Add the dedicated
+  Dream channel; protect it from deletion like General; add the channel-level
+  "include in Dream data" setting with Channel-config UI + IPC/runtime mutation
+  (ordinary channels default on, Dream channel forced off); reject ordinary chat
+  sends to the Dream channel before they persist; **run Dream as a top-level run
+  anchored to it** (not a parentless
+  child run) through the normal run lifecycle plus a Dream-specific run profile
+  (runtime-only `memory-dream` prompt, restricted/preapproved tools, unattended);
+  start those runs with no prior Dream transcript in model context; ensure the
+  #312 renderer shows the process **inline**, not a child-run boundary
+  summary; persist the run instead of create→delete; exclude the Dream channel
+  from ordinary `past_chats` lookup while keeping it visible in the UI; retain
+  the latest 512 Dream-channel run transcripts and prune older run ledgers /
+  anchor markers / search entries; relocate Dream history here. Keep the existing
+  `agent_run_dream_now` trigger and the
+  seq-watermark **unchanged**. *Complete
+  feature:* Dream has a transparent, persistent home. UI gate = light/dark visual.
 - **PR2 — Date-window invocation + derived cursor + launcher + frequency.** Switch
   scope to date ranges via a **date→seq translation** over the still-seq-based
   evidence / `past_chats` layer (local-day, inclusive, no out-of-window leak);
   **derive both the "last dreamed" cursor and `lastSuccessAt` from the channel's
-  `dream.finished` events and stop reading `readDreamState`** (this is what frees
-  PR3 — the per-due attempt guard already lives in run meta and is untouched); build
-  the in-channel structured launcher (date range + guidance → serialized anchor);
-  make frequency user-configurable. Preserve the #319 `incomplete` gate (derive over
-  cleanly-completed turns only). The composer-swap is a **new** per-channel-id branch
-  (`usesChannelActivitySurface()` is dead code), not an existing seam. *Depends on
-  PR1* (needs the channel + `dream.finished.window`). UI gate = light/dark visual.
+  clean completed manual or scheduled `dream.finished` events and stop reading
+  `readDreamState`**; change the scheduled guard to fixed-time + capped three
+  retries per due date over run meta; build the in-channel structured launcher
+  (date range + guidance → serialized anchor); make frequency user-configurable.
+  Preserve the #319 `incomplete` gate (derive over cleanly-completed turns only).
+  The composer-swap is a **new** per-channel-id branch (`usesChannelActivitySurface()`
+  is dead code), not an existing seam. This is where `dream.finished.window` is
+  added and stamped. *Depends on PR1* (needs the channel). UI gate = light/dark
+  visual.
 - **PR3 — Delete the believer-pool memory projection + Settings Memory.** Remove the
   Settings Memory category, the `agent_list_memory` (+ update/forget) commands, the
   memory-edit plumbing, and — now that PR2 derives cursor + `lastSuccessAt` from the
@@ -289,35 +355,40 @@ Each PR is shippable and reviewable on its own — none is a scaffold a later PR
    readiness / history), which is why PR3 is sequenced **after** PR2's derived
    cursor rather than parallel to it. No remaining open risk; the "escalation vs
    drive-by" question is answered by the PR2 → PR3 ordering.
-4. **Should a frontier-reaching manual dream advance the cursor?** Recommend **no
-   for v1**: derive the cursor over cleanly-completed *scheduled* turns only (a
-   one-line `trigger === 'schedule'` predicate on the derivation). A manual run can
-   be narrowly guided ("重点关注 X"), so letting it satisfy the comprehensive
-   nightly frontier would make auto-run skip a day it never fully consolidated; a
-   redundant re-dream is cheap and on-theme for 常梦常新. Note the derived-cursor
-   reframe *inverts the cost*: "all completed turns advance" is now the zero-code
-   default and "scheduled-only" is the (recommended) one-predicate filter — the
-   opposite of the old stored-cursor model. Revisit if the redundancy cost shows up.
+4. **Should a frontier-reaching manual dream advance the cursor? — resolved.**
+   Yes. Clean completed manual Dream counts as Dream work, advances the derived
+   cursor when its window reaches/passes the frontier, and updates `lastSuccessAt`;
+   it therefore suppresses scheduled Dream for already-covered dates.
 
 ## Build checklist
 
 - [ ] PR1: Dream channel id + default-restore (parallel to
-      `restoreOrCreateGeneralChannel`, `agentRuntime.ts:~868`); **run Dream as a
-      top-level run anchored to the channel** (not a parentless child run) so the
-      process renders inline, not a `child-run` boundary summary; persist the run
-      (drop create→delete `:3659` / `:3694`); add `window?:{start,end}` to
-      `dream.finished` (`agentEventLog.ts:~1034`, interface-first) + stamp it;
-      relocate Dream history; light/dark visual gate.
+      `restoreOrCreateGeneralChannel`, `agentRuntime.ts:~868`); protect it from
+      delete; add channel-level Dream evidence inclusion with Channel-config UI +
+      IPC/runtime mutation (ordinary channels default on, Dream channel forced
+      off); reject ordinary chat sends to Dream before persistence; **run Dream as
+      a top-level run anchored to the channel** (not a parentless child run)
+      through normal lifecycle + Dream-specific run profile (runtime-only
+      `memory-dream` prompt, restricted/preapproved tools, unattended, empty prior
+      active path) so the process renders inline, not a `child-run` boundary
+      summary; persist the run (drop create→delete `:3659` / `:3694`); exclude
+      the Dream channel from ordinary `past_chats` lookup; do not replace the
+      anchor message in the Dream channel; retain the latest 512 Dream-channel
+      run transcripts and prune older run ledgers / anchor markers / search
+      entries; relocate Dream history; light/dark visual gate.
 - [ ] PR2: date→seq translation feeding the still-seq evidence/`past_chats` layer
       (`agentDreamExtraction.ts:~366`, `agentPastChats.ts:~395`; local-day,
       inclusive, no out-of-window leak); derive cursor **and** `lastSuccessAt` from
-      the channel's `dream.finished` events (drop `readDreamState`; the per-due guard
-      stays in run meta `:3488`; keep the #319 `incomplete` gate); structured
-      launcher — composer-swap is a **new** per-channel-id branch at
-      `AgentChatPanel.tsx:~1407` (`usesChannelActivitySurface()` `agentChannel.ts:33`
-      is dead code, always `false`), not a seam; user-configurable frequency (confirm
-      a reusable scheduled-routine surface exists, else this is more than a config
-      toggle); light/dark visual gate.
+      the channel's clean completed manual/scheduled `dream.finished` events (drop
+      `readDreamState`; replace the per-due guard with a fixed-time + 3 retry cap
+      over run meta; stamp `dream.finished.window`; keep the #319 `incomplete` gate);
+      structured launcher —
+      composer-swap is a **new** per-channel-id branch at `AgentChatPanel.tsx:~1407`
+      (`usesChannelActivitySurface()` `agentChannel.ts:33` is dead code, always
+      `false`), not a seam; user-configurable frequency (confirm a reusable
+      scheduled-routine surface exists, else this is more than a config toggle);
+      write memory to source-date daily nodes for catch-up windows; light/dark
+      visual gate.
 - [ ] PR3: interface-first `commands.ts` change; delete the **memory projection +
       memory API inside `AgentEventStore`** (`:754–1037`) — **keep the class** —
       `agent_list_memory` (+ update/forget) + memory-edit plumbing + Settings Memory

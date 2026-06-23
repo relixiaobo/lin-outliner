@@ -790,6 +790,10 @@ commandPalette: {
       channelNameRequired: '请填写频道名称。',
       channelSeed: '开场消息',
       channelSeedPlaceholder: '可选，作为频道中的第一条消息',
+      includeInDreamData: 'Dream 数据',
+      includeInDreamDataSublabel: '允许定时和手动 Dream 使用此频道作为来源证据。',
+      includedInDreamData: '已包含',
+      excludedFromDreamData: '已排除',
       channelActivity: '频道活动',
       activityOverflow: ({ count }) => `+${count}`,
       activityStates: {
@@ -818,7 +822,7 @@ commandPalette: {
       conversationTitle: '频道名称',
       cancelRename: '取消重命名',
       saveRename: '保存重命名',
-      saveChannelName: '保存名称',
+      saveChannelSettings: '保存设置',
       cancel: '取消',
     },
     composer: {

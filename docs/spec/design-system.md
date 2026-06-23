@@ -1215,7 +1215,10 @@ category history; see "Settings window".)
   (persisting to the settings-owned overlay) alongside Duplicate, while name /
   tools / persona stay disabled. Channel config uses the
   same settings sheet/inset-list language for name, optional opening message,
-  current members, and add-member actions.
+  the per-channel Dream-data inclusion checkbox, current members, and add-member
+  actions. Protected default channels keep their names disabled in this sheet;
+  the Dream channel also keeps Dream-data inclusion disabled because it is always
+  excluded from Dream evidence.
 - Agent UI uses Tenon foundations: neutral text, translucent chrome, opaque content
   surfaces, sparse semantic color, low elevation, and compact controls.
 - Assistant prose, user bubbles, and composer input use

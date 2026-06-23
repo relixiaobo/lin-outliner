@@ -314,6 +314,8 @@ export const api = {
   agentListConversations: () => command<AgentConversationListMeta[]>('agent_list_conversations'),
   agentRenameConversation: (conversationId: string, title: string) =>
     command<AgentConversationListMeta | null>('agent_rename_conversation', { conversationId, title }),
+  agentSetConversationIncludeInDreamData: (conversationId: string, includeInDreamData: boolean) =>
+    command<AgentConversationListMeta | null>('agent_set_conversation_include_in_dream_data', { conversationId, includeInDreamData }),
   agentDeleteConversation: (conversationId: string) =>
     command<void>('agent_delete_conversation', { conversationId }),
   agentListMemory: (options: { includeInvalidated?: boolean; limit?: number } = {}) =>

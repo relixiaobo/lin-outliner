@@ -1273,17 +1273,16 @@ export function AgentChatPanel({
                 <EmptyState className="agent-conversation-empty" size="inline" title={t.agent.chat.noConversations} />
               ) : channelRows.map((conversation) => {
                 const isCurrent = conversation.id === conversationId;
-                const isDefaultGeneral = conversation.id === DEFAULT_GENERAL_CHANNEL_ID;
                 const title = readableConversationTitle(conversation.title, t.common.untitled);
                 const unread = isCurrent ? 0 : conversation.unreadCount ?? unreadByConversationId.get(conversation.id) ?? 0;
                 const actionMenuKey = `channel:${conversation.id}`;
                 const channelActions: ConversationRowMenuAction[] = [
-                  ...(isDefaultGeneral ? [] : [{
+                  {
                     disabled: anyRunActive,
                     id: 'configure-channel',
                     label: t.agent.chat.configureChannel,
                     onSelect: () => handleConfigureChannel(conversation.id),
-                  } satisfies ConversationRowMenuAction]),
+                  },
                 ];
                 return (
                   <div

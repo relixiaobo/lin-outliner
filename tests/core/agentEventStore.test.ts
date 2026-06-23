@@ -113,6 +113,7 @@ describe('agent event store', () => {
         id: conversationId,
         title: 'Renamed',
         members: [],
+        settings: {},
         createdAt: 1_700_000_000_001,
         updatedAt: 1_700_000_000_005,
         messageCount: 2,
@@ -1797,6 +1798,182 @@ describe('agent event store', () => {
         seq: 12,
         eventId: 'event-12',
       });
+    });
+  });
+
+  test('limits conversation run meta reads from the run index tail', async () => {
+    await withStore(async (store) => {
+      const conversationId = 'conversation-run-limit';
+      const writeRun = (id: string, createdAt: number) => store.writeRunMeta({
+        v: 1,
+        id,
+        agentId: 'built-in:tenon:assistant',
+        anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
+        kind: 'reflective',
+        status: 'completed',
+        trigger: { type: 'manual' },
+        fingerprint: {
+          appVersion: 'test',
+          promptHash: 'prompt',
+          toolSchemaHash: 'tools',
+          skillBindings: [],
+          modelConfig: 'model',
+        },
+        retention: 'hot',
+        createdAt,
+        updatedAt: createdAt,
+        latestSeq: createdAt,
+      });
+      await writeRun('dream-run-1', 1);
+      await writeRun('dream-run-2', 2);
+      await writeRun('dream-run-3', 3);
+
+      await expect(store.listConversationRunMetaProjections(conversationId, { limit: 2 }))
+        .resolves.toMatchObject([
+          { id: 'dream-run-2' },
+          { id: 'dream-run-3' },
+        ]);
+      await expect(store.listConversationRunMetaProjections(conversationId, { limit: 0 }))
+        .resolves.toEqual([]);
+    });
+  });
+
+  test('retains only recent conversation run ledgers and anchor markers', async () => {
+    await withStore(async (store) => {
+      const conversationId = 'conversation-run-retention';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Dream retention' },
+      ]);
+      let seq = 2;
+      let previousAssistantMessageId: string | null = null;
+      const appendRun = async (runId: string, label: string) => {
+        const anchorMessageId = `anchor-${runId}`;
+        const assistantMessageId = `assistant-${runId}`;
+        await store.appendEvents(conversationId, [
+          {
+            ...base(conversationId, seq++, 'user_message.created', userActor),
+            messageId: anchorMessageId,
+            parentMessageId: previousAssistantMessageId,
+            content: [{ type: 'text', text: `${label} anchor prompt` }],
+          },
+          { ...base(conversationId, seq++, 'branch.selected'), leafMessageId: anchorMessageId },
+          { ...base(conversationId, seq++, 'run.started'), runId },
+          {
+            ...base(conversationId, seq++, 'assistant_message.started'),
+            runId,
+            messageId: assistantMessageId,
+            parentMessageId: anchorMessageId,
+            providerId: 'test',
+            modelId: 'test',
+          },
+          {
+            ...base(conversationId, seq++, 'assistant_message.completed'),
+            runId,
+            messageId: assistantMessageId,
+            stopReason: 'stop',
+            content: [{ type: 'text', text: `${label} assistant transcript` }],
+          },
+          { ...base(conversationId, seq++, 'run.completed'), runId },
+          {
+            ...base(conversationId, seq++, 'dream.finished'),
+            messageId: anchorMessageId,
+            agentId: 'built-in:tenon:assistant',
+            runId,
+            trigger: { type: 'manual' },
+            status: 'completed',
+            startedAt: 1_700_000_000_000 + seq,
+            completedAt: 1_700_000_000_000 + seq,
+          },
+        ]);
+        previousAssistantMessageId = assistantMessageId;
+      };
+
+      await appendRun('run-1', 'forgotten');
+      await appendRun('run-2', 'retained-two');
+      await appendRun('run-3', 'retained-three');
+
+      expect(await store.searchMessages('forgotten', { conversationId })).toHaveLength(2);
+      await expect(store.retainRecentConversationRuns(conversationId, 2))
+        .resolves.toEqual({ prunedRunIds: ['run-1'], retainedRunIds: ['run-2', 'run-3'] });
+
+      const events = await store.readEvents(conversationId);
+      expect(events.map((event) => event.type)).toEqual([
+        'conversation.created',
+        'user_message.created',
+        'branch.selected',
+        'run.started',
+        'assistant_message.started',
+        'assistant_message.completed',
+        'run.completed',
+        'dream.finished',
+        'user_message.created',
+        'branch.selected',
+        'run.started',
+        'assistant_message.started',
+        'assistant_message.completed',
+        'run.completed',
+        'dream.finished',
+      ]);
+      expect(events.some((event) => event.type === 'dream.finished' && event.runId === 'run-1')).toBe(false);
+      expect(events.some((event) => event.type === 'user_message.created' && event.messageId === 'anchor-run-1')).toBe(false);
+      expect(events.find((event) => event.type === 'user_message.created' && event.messageId === 'anchor-run-2')).toMatchObject({
+        parentMessageId: null,
+      });
+      expect(events.some((event) => event.type === 'assistant_message.completed' && event.messageId === 'assistant-run-2')).toBe(true);
+      await expect(readFile(store.runPaths('run-1').runMetaPath, 'utf8')).rejects.toThrow();
+      await expect(readFile(store.runPaths('run-2').runMetaPath, 'utf8')).resolves.toContain('"id":"run-2"');
+      await expect(store.listConversationRunMetaProjections(conversationId)).resolves.toMatchObject([
+        { id: 'run-2' },
+        { id: 'run-3' },
+      ]);
+      await expect(store.searchMessages('forgotten', { conversationId })).resolves.toHaveLength(0);
+      await expect(store.searchMessages('retained-two', { conversationId })).resolves.toHaveLength(2);
+    });
+  });
+
+  test('does not mutate retained run storage when retention validation fails', async () => {
+    await withStore(async (store) => {
+      const conversationId = 'conversation-run-retention-invalid';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Invalid retention' },
+        {
+          ...base(conversationId, 2, 'user_message.created', userActor),
+          messageId: 'anchor-run-1',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'old anchor' }],
+        },
+        { ...base(conversationId, 3, 'run.started'), runId: 'run-1' },
+        {
+          ...base(conversationId, 4, 'assistant_message.started'),
+          runId: 'run-1',
+          messageId: 'assistant-run-1',
+          parentMessageId: 'anchor-run-1',
+          providerId: 'test',
+          modelId: 'test',
+        },
+        {
+          ...base(conversationId, 5, 'assistant_message.completed'),
+          runId: 'run-1',
+          messageId: 'assistant-run-1',
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'old assistant' }],
+        },
+        { ...base(conversationId, 6, 'run.completed'), runId: 'run-1' },
+        {
+          ...base(conversationId, 7, 'user_message.created', userActor),
+          messageId: 'anchor-run-2',
+          parentMessageId: 'missing-message-that-is-not-pruned',
+          content: [{ type: 'text', text: 'retained anchor' }],
+        },
+        { ...base(conversationId, 8, 'run.started'), runId: 'run-2' },
+      ]);
+      const rawBefore = await readFile(store.paths(conversationId).conversationEventsPath, 'utf8');
+
+      await expect(store.retainRecentConversationRuns(conversationId, 1))
+        .rejects.toThrow('Missing parent agent message: missing-message-that-is-not-pruned');
+
+      await expect(readFile(store.paths(conversationId).conversationEventsPath, 'utf8')).resolves.toBe(rawBefore);
+      await expect(readFile(store.runPaths('run-1').runMetaPath, 'utf8')).resolves.toContain('"id":"run-1"');
     });
   });
 

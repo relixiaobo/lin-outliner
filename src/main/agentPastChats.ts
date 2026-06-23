@@ -1,4 +1,7 @@
 import {
+  DEFAULT_DREAM_CHANNEL_ID,
+} from '../core/agentChannel';
+import {
   conversationIdOfRun,
   getAgentEventVisibleTranscript,
   type AgentEvent,
@@ -516,7 +519,9 @@ export class AgentPastChatsService {
   }
 
   private async conversationMetaById(): Promise<Map<string, AgentConversationIndexEntry>> {
-    return new Map((await this.eventStore.listConversationIndexEntries()).map((entry) => [entry.id, entry]));
+    return new Map((await this.eventStore.listConversationIndexEntries())
+      .filter((entry) => entry.id !== DEFAULT_DREAM_CHANNEL_ID)
+      .map((entry) => [entry.id, entry]));
   }
 
   private async concreteStreamSource(input: PastChatsStreamSourceInput): Promise<AgentMemoryStreamSource | null> {

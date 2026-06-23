@@ -857,6 +857,10 @@ commandPalette: {
       channelNameRequired: 'Name this Channel.',
       channelSeed: 'Opening message',
       channelSeedPlaceholder: 'Optional first message shared in the Channel',
+      includeInDreamData: 'Dream data',
+      includeInDreamDataSublabel: 'Allow scheduled and manual Dream runs to use this Channel as source evidence.',
+      includedInDreamData: 'Included',
+      excludedFromDreamData: 'Excluded',
       channelActivity: 'Channel activity',
       activityOverflow: ({ count }: { count: number }) => `+${count}`,
       activityStates: {
@@ -886,7 +890,7 @@ commandPalette: {
       conversationTitle: 'Channel name',
       cancelRename: 'Cancel rename',
       saveRename: 'Save rename',
-      saveChannelName: 'Save name',
+      saveChannelSettings: 'Save settings',
       cancel: 'Cancel',
     },
     // The composer: editor, toolbar, model chip, attachment + approval flows.

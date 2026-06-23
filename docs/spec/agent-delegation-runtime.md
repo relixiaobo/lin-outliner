@@ -17,8 +17,9 @@
 > structurally unrepresentable); `contextMode` is always `'fork'`; the registry
 > loads only the built-in Neva and never scans `~/.agents/agents` or
 > `<workspace>/.agents/agents`; a fork runs AS Neva (`executingAgentId` /
-> `memoryOwnerAgentId` are always the parent = Neva). `/research`, runtime Dream, and
-> background self-work are forks. The cross-agent "fresh" run, the by-name agent
+> `memoryOwnerAgentId` are always the parent = Neva). `/research` and background
+> self-work are forks; runtime Dream uses the protected Dream channel's restricted
+> top-level run profile instead. The cross-agent "fresh" run, the by-name agent
 > registry scan, the `additionalAgentDirectories` setting, and the cross-principal
 > memory redaction are all removed as dead code. Read the `fresh` material below
 > as historical design context, not current behavior.
@@ -494,15 +495,11 @@ Every child run writes a separate transcript. The parent conversation stores onl
 This is required so child runs reduce parent-context pressure rather than moving
 tool noise into the main conversation.
 
-The sidechain transcript is still durable evidence. Fresh child run transcripts
-are Dream evidence for the called agent's `memoryOwnerAgentId`; fork transcripts
-are Dream evidence for the parent agent. Dream reads only events past the
-structural boundary (the ledger's first `run.started`), so parent history is
-never reprocessed as fork evidence — and a `tool_result.replaced` that slims an
-INHERITED fork-prefix result never re-enters the window (replacements are lossy
-artifacts of existing messages, not new content). When a fork ledger is
-compacted, the post-compact summary message is fresh ledger content past the
-watermark and is Dreamed like any other evidence (§13.18).
+The sidechain transcript is still durable for run inspection and debug replay,
+but it is no longer a separate Dream evidence stream. Runtime Dream reads member
+conversation event streams; child-run work enters memory only through the
+visible parent-conversation boundary, result, or summary content that survives in
+that conversation stream.
 
 ## Model-Facing Tools
 
@@ -1037,9 +1034,8 @@ Implemented.
 - `Agent` without `agent_type` forks from the current parent context.
 - The fork uses the parent system prompt, parent messages, a fork directive, and
   placeholder results for unresolved tool calls.
-- Fork runs keep the parent `executingAgentId` and `memoryOwnerAgentId`, and
-  Dream treats only the persisted fork boundary plus child-side transcript as new
-  agent-run evidence.
+- Fork runs keep the parent `executingAgentId` and `memoryOwnerAgentId`; their
+  ledgers are not crawled directly by Dream.
 - A runtime-owned read-only isolated restriction can further narrow a child run
   catalog. `/research` uses this to keep generic investigation inside the
   current agent's DM/Channel identity while removing mutation and delegation

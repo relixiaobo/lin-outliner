@@ -755,6 +755,7 @@ export interface AgentConversationListMeta {
   title: string | null;
   members: AgentPrincipal[];
   goal?: string;
+  settings?: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
   messageCount: number;
