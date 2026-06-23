@@ -1838,6 +1838,91 @@ describe('agent event store', () => {
     });
   });
 
+  test('retains only recent conversation run ledgers and anchor markers', async () => {
+    await withStore(async (store) => {
+      const conversationId = 'conversation-run-retention';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Dream retention' },
+      ]);
+      let seq = 2;
+      const appendRun = async (runId: string, label: string) => {
+        const anchorMessageId = `anchor-${runId}`;
+        const assistantMessageId = `assistant-${runId}`;
+        await store.appendEvents(conversationId, [
+          {
+            ...base(conversationId, seq++, 'user_message.created', userActor),
+            messageId: anchorMessageId,
+            parentMessageId: null,
+            content: [{ type: 'text', text: `${label} anchor prompt` }],
+          },
+          { ...base(conversationId, seq++, 'run.started'), runId },
+          {
+            ...base(conversationId, seq++, 'assistant_message.started'),
+            runId,
+            messageId: assistantMessageId,
+            parentMessageId: anchorMessageId,
+            providerId: 'test',
+            modelId: 'test',
+          },
+          {
+            ...base(conversationId, seq++, 'assistant_message.completed'),
+            runId,
+            messageId: assistantMessageId,
+            stopReason: 'stop',
+            content: [{ type: 'text', text: `${label} assistant transcript` }],
+          },
+          { ...base(conversationId, seq++, 'run.completed'), runId },
+          {
+            ...base(conversationId, seq++, 'dream.finished'),
+            messageId: anchorMessageId,
+            agentId: 'built-in:tenon:assistant',
+            runId,
+            trigger: { type: 'manual' },
+            status: 'completed',
+            startedAt: 1_700_000_000_000 + seq,
+            completedAt: 1_700_000_000_000 + seq,
+          },
+        ]);
+      };
+
+      await appendRun('run-1', 'forgotten');
+      await appendRun('run-2', 'retained-two');
+      await appendRun('run-3', 'retained-three');
+
+      expect(await store.searchMessages('forgotten', { conversationId })).toHaveLength(2);
+      await expect(store.retainRecentConversationRuns(conversationId, 2))
+        .resolves.toEqual({ prunedRunIds: ['run-1'], retainedRunIds: ['run-2', 'run-3'] });
+
+      const events = await store.readEvents(conversationId);
+      expect(events.map((event) => event.type)).toEqual([
+        'conversation.created',
+        'user_message.created',
+        'run.started',
+        'assistant_message.started',
+        'assistant_message.completed',
+        'run.completed',
+        'dream.finished',
+        'user_message.created',
+        'run.started',
+        'assistant_message.started',
+        'assistant_message.completed',
+        'run.completed',
+        'dream.finished',
+      ]);
+      expect(events.some((event) => event.type === 'dream.finished' && event.runId === 'run-1')).toBe(false);
+      expect(events.some((event) => event.type === 'user_message.created' && event.messageId === 'anchor-run-1')).toBe(false);
+      expect(events.some((event) => event.type === 'assistant_message.completed' && event.messageId === 'assistant-run-2')).toBe(true);
+      await expect(readFile(store.runPaths('run-1').runMetaPath, 'utf8')).rejects.toThrow();
+      await expect(readFile(store.runPaths('run-2').runMetaPath, 'utf8')).resolves.toContain('"id":"run-2"');
+      await expect(store.listConversationRunMetaProjections(conversationId)).resolves.toMatchObject([
+        { id: 'run-2' },
+        { id: 'run-3' },
+      ]);
+      await expect(store.searchMessages('forgotten', { conversationId })).resolves.toHaveLength(0);
+      await expect(store.searchMessages('retained-two', { conversationId })).resolves.toHaveLength(2);
+    });
+  });
+
   test('persists principal-anchored reflective run meta for Dream runs', async () => {
     await withStore(async (store) => {
       const writeDreamMeta = (id: string, principal: AgentPrincipal) => store.writeRunMeta({

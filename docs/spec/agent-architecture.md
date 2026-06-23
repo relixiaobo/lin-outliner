@@ -261,7 +261,9 @@ title plus an optional opening seed, no member roster). Channel configuration al
 owns the per-channel **include in Dream data** setting: ordinary channels default
 included, the protected Dream channel is forced excluded, and protected default
 channel names stay immutable while their editable settings can still use the same
-configuration surface. The surviving seams are
+configuration surface. Protected default invariants are table-driven in the
+runtime so General and Dream share the same restore/name/member/settings repair
+path. The surviving seams are
 `isChannelConversationId` (id-prefix test) and `usesChannelActivitySurface()`
 (hardcoded `false`, so every channel-surface branch takes its single-agent inline side).
 There is no agent-facing `channel_create`/`channel_update` tool — channel creation is a
@@ -279,7 +281,7 @@ leftover; only the single-agent value is ever assigned.)
 | Run→conversation anchor + per-conversation run index | ✅ built | `runs WHERE conversationId=X` is enumerable |
 | Delegation / child-run runtime (#164) | ✅ built | sub-agents spawned for a TASK (NOT peers/members); ordinary Runs with their own `runs/<runId>/` ledger, joined by `parentRunId`/`parentToolCallId`; surfaced in the conversation task panel (child-run tasks only) |
 | Timeline memory nodes | ✅ built | durable memory lives in per-day generated-headline `#d-memory` plus optional `#d-episode`, `#d-belief`, `#d-question`, and `#d-guidance` outline nodes; foreground retrieval is pull-only through `node_search` / `node_read` |
-| One Dream (conversation + outline context) | ✅ built | scheduled at-most-once-daily and Settings-manual `memory-dream` Dream-channel runs read member conversations through `past_chats` when sources exist, gather relevant prior memory/workspace context through `node_search` / `node_read`, may delete obsolete nodes with `node_delete`, and update today's memory nodes through the human-dream cycle; manual consolidate-only can reconcile outline/prior Dream context without new chat spans; agent-self / run-log Dream, manual `/dream`, and foreground `dream` are cut |
+| One Dream (conversation + outline context) | ✅ built | scheduled at-most-once-daily and Settings-manual `memory-dream` Dream-channel runs read member conversations through `past_chats` when sources exist, gather relevant prior memory/workspace context through `node_search` / `node_read`, may delete obsolete nodes with `node_delete`, and update today's memory nodes through the human-dream cycle; the Dream channel retains the newest 512 run transcripts and prunes older run ledgers/anchor markers/search entries; manual consolidate-only can reconcile outline/prior Dream context without new chat spans; agent-self / run-log Dream, manual `/dream`, and foreground `dream` are cut |
 | Chat source binding under compaction (#302) | ✅ built | `chat-source` inline refs encode `{stream, streamId, range}` raw sources over the ledgers; node writes validate the exact source before mutation |
 | Permission gate | ✅ built | ask / allow / deny over the hard A3 floor |
 

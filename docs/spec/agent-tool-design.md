@@ -2403,7 +2403,10 @@ Dream-only profile whose tools are only `past_chats`, `node_search`, `node_read`
 `node_create`, `node_edit`, and `node_delete`. The Dream channel does not accept
 ordinary chat messages, is excluded from Dream evidence, and supplies no prior
 active path to the Dream agent; its transcript is visible audit history rather
-than model context for later Dreams.
+than model context for later Dreams. That audit history is bounded to the newest
+512 Dream-channel runs; older run ledgers, launch anchors, `dream.finished`
+markers, and search-index entries are pruned while durable outline memory and the
+Dream watermark remain intact.
 The run first reads today's journal node. When it yields durable memory
 worth writing, it creates or reuses exactly one direct `#d-memory` container under
 it and updates that container's generated daily memory headline in place; when

@@ -476,7 +476,10 @@ not a replacement row inside the Dream channel. That transcript is audit history
 not the next Dream run's prior chat context: Dream starts with an empty active
 path, ordinary `past_chats` lookup excludes the Dream channel, and Dream reads
 source evidence only through the runtime-provided prompt, `past_chats`, and
-explicit outline memory/context tools.
+explicit outline memory/context tools. The audit transcript is bounded: the
+runtime retains the most recent 512 Dream-channel runs and prunes older run
+ledgers, their launch anchors, their `dream.finished` markers, and their search
+index entries without pruning durable memory nodes or the Dream watermark.
 Durable model-readable results are ordinary `#d-memory`, `#d-episode`,
 `#d-belief`, `#d-question`, and `#d-guidance` outline nodes.
 

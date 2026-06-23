@@ -9,8 +9,8 @@ the now-vestigial Settings Memory surfaces left over from the #302 teardown.
 - The legacy Dream implementation was invisible: it ran as a **parentless child
   run** inside a transient conversation that was **created then deleted**, so the
   user never saw what it read, how it reasoned, or what it wrote. Make every run
-  land in a **persistent Dream channel** whose process renders **inline** as the
-  existing agent transcript (the #312 renderer,
+  land in a **persistent Dream channel** whose recent process renders **inline**
+  as the existing agent transcript (the #312 renderer,
   `docs/spec/agent-event-log-rendering.md`): the run's `past_chats` reads →
   reasoning → `node_*` writes → result are the channel's content. (This requires
   Dream to run as a **top-level run** in the channel, not a child run — see
@@ -113,7 +113,11 @@ What makes it special is presentation, driven off its channel id:
   transcript. The protected transcript is visible audit history only: a Dream run
   starts with an empty prior active path, so previous Dream turns are not fed back
   into the next Dream's model context. Dream may still reconcile prior memory via
-  explicit `node_search` / `node_read`.
+  explicit `node_search` / `node_read`. To keep the audit surface bounded, the
+  runtime retains the most recent 512 Dream-channel runs and prunes older run
+  ledgers, their anchor messages, their `dream.finished` markers, and their search
+  index entries; durable memory nodes and the Dream watermark are not pruned by
+  that transcript-retention pass.
 
   `dream.finished` is metadata, not a boundary replacement in the Dream channel.
   Existing non-channel Dream boundary rendering can remain for older / non-inline
@@ -232,8 +236,8 @@ shape is a coordinated `agentEventLog.ts` change.
 
 Auto-run is retained (Open question 1 — resolved 甲). A scheduled run posts into
 the same channel with a **synthetic anchor message** (`Scheduled Dream · [range]`,
-no user author) and the same full-process transcript below it; manual and
-scheduled runs are just two sources of the same channel entry shape.
+no user author) and the same recently-retained full-process transcript below it;
+manual and scheduled runs are just two sources of the same channel entry shape.
 
 The schedule is a fixed local time. If the fixed-time run cannot complete, retry
 after a short interval up to **three attempts** for that due date. If all three
@@ -292,7 +296,7 @@ is precise:
 Each PR is shippable and reviewable on its own — none is a scaffold a later PR
 "fills in".
 
-- **PR1 — Dream channel + persisted full-process transcript.** Add the dedicated
+- **PR1 — Dream channel + bounded persisted full-process transcript.** Add the dedicated
   Dream channel; protect it from deletion like General; add the channel-level
   "include in Dream data" setting with Channel-config UI + IPC/runtime mutation
   (ordinary channels default on, Dream channel forced off); reject ordinary chat
@@ -303,8 +307,10 @@ Each PR is shippable and reviewable on its own — none is a scaffold a later PR
   start those runs with no prior Dream transcript in model context; ensure the
   #312 renderer shows the process **inline**, not a child-run boundary
   summary; persist the run instead of create→delete; exclude the Dream channel
-  from ordinary `past_chats` lookup while keeping it visible in the UI; relocate
-  Dream history here. Keep the existing `agent_run_dream_now` trigger and the
+  from ordinary `past_chats` lookup while keeping it visible in the UI; retain
+  the latest 512 Dream-channel run transcripts and prune older run ledgers /
+  anchor markers / search entries; relocate Dream history here. Keep the existing
+  `agent_run_dream_now` trigger and the
   seq-watermark **unchanged**. *Complete
   feature:* Dream has a transparent, persistent home. UI gate = light/dark visual.
 - **PR2 — Date-window invocation + derived cursor + launcher + frequency.** Switch
@@ -367,8 +373,9 @@ Each PR is shippable and reviewable on its own — none is a scaffold a later PR
       active path) so the process renders inline, not a `child-run` boundary
       summary; persist the run (drop create→delete `:3659` / `:3694`); exclude
       the Dream channel from ordinary `past_chats` lookup; do not replace the
-      anchor message in the Dream channel; relocate Dream history; light/dark
-      visual gate.
+      anchor message in the Dream channel; retain the latest 512 Dream-channel
+      run transcripts and prune older run ledgers / anchor markers / search
+      entries; relocate Dream history; light/dark visual gate.
 - [ ] PR2: date→seq translation feeding the still-seq evidence/`past_chats` layer
       (`agentDreamExtraction.ts:~366`, `agentPastChats.ts:~395`; local-day,
       inclusive, no out-of-window leak); derive cursor **and** `lastSuccessAt` from

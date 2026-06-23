@@ -146,7 +146,9 @@ truth.
     manual run; both paths read sources since the Dream watermark when sources
     exist, while the Dream channel itself rejects ordinary chat messages, is
     forced out of Dream evidence, and contributes no prior active-path transcript
-    to later Dream model context; runs gather relevant prior memory/workspace context with `node_search` /
+    to later Dream model context; the Dream channel retains the newest 512 run
+    transcripts and prunes older run ledgers, anchors, terminal markers, and
+    search entries; runs gather relevant prior memory/workspace context with `node_search` /
     `node_read`, apply the
     human-dream cycle and valuable-memory filter, and — when the filter leaves
     memory worth writing — update today's single `#d-memory` container, write

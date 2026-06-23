@@ -543,7 +543,11 @@ before persistence, the channel is forced out of Dream evidence, and Dream runs
 start with an empty prior active path so previous Dream transcript rows are not
 fed into the next Dream model context. Ordinary `past_chats` lookup also excludes
 the Dream channel, so its reasoning/tool transcript is user-visible audit history
-rather than recall material for normal chats.
+rather than recall material for normal chats. That audit history is retained as a
+bounded transcript: after Dream completion, the runtime keeps the newest 512
+Dream-channel runs and prunes older run ledgers, their anchor messages, their
+`dream.finished` markers, and their search-index entries. The retention pass does
+not prune durable outline memory nodes or the Dream watermark.
 
 ## Message Model
 
@@ -1485,6 +1489,9 @@ Storage policy:
 - Checkpoints are written after completed runs and large event-count thresholds.
 - Old checkpoints may be pruned; event logs and referenced payloads are not
   pruned unless an explicit retention/archive policy exists.
+- The Dream channel is the current explicit conversation-run retention policy:
+  only its latest 512 run transcripts stay in the channel log/search index; older
+  Dream run ledgers and their launch/terminal markers are pruned.
 
 ## Runtime Flow
 

@@ -340,6 +340,7 @@ const LOCAL_USER_ID = 'local-user';
 const COMPACT_SUMMARY_MAX_OUTPUT_TOKENS = 20_000;
 const DEFAULT_DREAM_SCHEDULE = '2026-01-01T03:00 RRULE:FREQ=DAILY';
 const DREAM_MIN_VOLUME_CHARS = 1_000;
+const DREAM_CHANNEL_RETAINED_RUNS = 512;
 const MEMORY_DREAM_SKILL_NAME = 'memory-dream';
 const LEGACY_MEMORY_DREAM_CONVERSATION_ID = 'lin-agent-memory-dream';
 const MEMORY_DREAM_ALLOWED_TOOLS = [
@@ -603,6 +604,30 @@ interface AgentDreamRunResult {
 
 type AgentEventInput = AgentRuntimeContextEventInput;
 type AgentMemberPrincipal = Extract<AgentPrincipal, { type: 'agent' }>;
+interface ProtectedDefaultChannelConfig {
+  id: string;
+  title: string;
+  sortRank: number;
+  projectionEvent: string;
+  forcedSettings?: Record<string, unknown>;
+}
+
+const PROTECTED_DEFAULT_CHANNELS: readonly ProtectedDefaultChannelConfig[] = [
+  {
+    id: DEFAULT_GENERAL_CHANNEL_ID,
+    title: DEFAULT_GENERAL_CHANNEL_TITLE,
+    sortRank: 0,
+    projectionEvent: 'general_channel_updated',
+  },
+  {
+    id: DEFAULT_DREAM_CHANNEL_ID,
+    title: DEFAULT_DREAM_CHANNEL_TITLE,
+    sortRank: 1,
+    projectionEvent: 'dream_channel_updated',
+    forcedSettings: { [CHANNEL_INCLUDE_IN_DREAM_DATA_SETTING]: false },
+  },
+] as const;
+
 interface AgentConversationChannelUpdateOptions {
   title?: string;
   addAgentIds?: readonly string[];
@@ -907,26 +932,7 @@ export class AgentRuntime {
   }
 
   private async ensureGeneralChannelEventStateOnce(): Promise<AgentEventReplayState> {
-    const desiredMembers = this.generalChannelMembers();
-    const liveConversation = this.conversations.get(DEFAULT_GENERAL_CHANNEL_ID);
-    const eventState = liveConversation?.eventState ?? await this.loadEventState(DEFAULT_GENERAL_CHANNEL_ID);
-    const inputs = this.generalChannelInvariantInputs(eventState, desiredMembers, {
-      removeUnavailablePeers: !liveConversation || !this.hasActiveRuns(liveConversation),
-    });
-    if (inputs.length === 0) return eventState;
-
-    if (liveConversation) {
-      await this.appendConversationEvents(DEFAULT_GENERAL_CHANNEL_ID, liveConversation, inputs);
-      await this.refreshMemberDisplayNames(liveConversation);
-      this.emitProjection(DEFAULT_GENERAL_CHANNEL_ID, 'general_channel_updated');
-      return liveConversation.eventState;
-    }
-
-    const events = this.buildEvents(eventState, DEFAULT_GENERAL_CHANNEL_ID, inputs);
-    await this.getEventStore().appendEvents(DEFAULT_GENERAL_CHANNEL_ID, events);
-    for (const event of events) appendAgentEventToReplayState(eventState, event);
-    this.publishPersistedEvents(DEFAULT_GENERAL_CHANNEL_ID, events);
-    return eventState;
+    return this.ensureProtectedDefaultChannelEventStateOnce(requiredProtectedDefaultChannelConfig(DEFAULT_GENERAL_CHANNEL_ID));
   }
 
   private async ensureDreamChannelEventState(): Promise<AgentEventReplayState> {
@@ -940,136 +946,90 @@ export class AgentRuntime {
   }
 
   private async ensureDreamChannelEventStateOnce(): Promise<AgentEventReplayState> {
-    const desiredMembers = this.dreamChannelMembers();
-    const liveConversation = this.conversations.get(DEFAULT_DREAM_CHANNEL_ID);
-    const eventState = liveConversation?.eventState ?? await this.loadEventState(DEFAULT_DREAM_CHANNEL_ID);
-    const inputs = this.dreamChannelInvariantInputs(eventState, desiredMembers, {
-      removeUnavailablePeers: !liveConversation || !this.hasActiveRuns(liveConversation),
-    });
-    if (inputs.length === 0) return eventState;
-
-    if (liveConversation) {
-      await this.appendConversationEvents(DEFAULT_DREAM_CHANNEL_ID, liveConversation, inputs);
-      await this.refreshMemberDisplayNames(liveConversation);
-      this.emitProjection(DEFAULT_DREAM_CHANNEL_ID, 'dream_channel_updated');
-      return liveConversation.eventState;
-    }
-
-    const events = this.buildEvents(eventState, DEFAULT_DREAM_CHANNEL_ID, inputs);
-    await this.getEventStore().appendEvents(DEFAULT_DREAM_CHANNEL_ID, events);
-    for (const event of events) appendAgentEventToReplayState(eventState, event);
-    this.publishPersistedEvents(DEFAULT_DREAM_CHANNEL_ID, events);
-    return eventState;
+    return this.ensureProtectedDefaultChannelEventStateOnce(requiredProtectedDefaultChannelConfig(DEFAULT_DREAM_CHANNEL_ID));
   }
 
-  private generalChannelMembers(): AgentPrincipal[] {
+  private defaultChannelMembers(): AgentPrincipal[] {
     // Single-agent collapse: every conversation — General included — has exactly
     // one agent member (Neva). Agent definitions are delegation child-agent types,
     // not conversation members, so the roster never joins a conversation.
     return this.defaultConversationMembers();
   }
 
-  private dreamChannelMembers(): AgentPrincipal[] {
-    return this.defaultConversationMembers();
+  private async ensureProtectedDefaultChannelEventStateOnce(
+    config: ProtectedDefaultChannelConfig,
+  ): Promise<AgentEventReplayState> {
+    const desiredMembers = this.defaultChannelMembers();
+    const liveConversation = this.conversations.get(config.id);
+    const eventState = liveConversation?.eventState ?? await this.loadEventState(config.id);
+    const inputs = this.protectedDefaultChannelInvariantInputs(config, eventState, desiredMembers, {
+      removeUnavailablePeers: !liveConversation || !this.hasActiveRuns(liveConversation),
+    });
+    if (inputs.length === 0) return eventState;
+
+    if (liveConversation) {
+      await this.appendConversationEvents(config.id, liveConversation, inputs);
+      await this.refreshMemberDisplayNames(liveConversation);
+      this.emitProjection(config.id, config.projectionEvent);
+      return liveConversation.eventState;
+    }
+
+    const events = this.buildEvents(eventState, config.id, inputs);
+    await this.getEventStore().appendEvents(config.id, events);
+    for (const event of events) appendAgentEventToReplayState(eventState, event);
+    this.publishPersistedEvents(config.id, events);
+    return eventState;
   }
 
-  private generalChannelInvariantInputs(
+  private protectedDefaultChannelInvariantInputs(
+    config: ProtectedDefaultChannelConfig,
     eventState: AgentEventReplayState,
     desiredMembers: readonly AgentPrincipal[],
     options: { removeUnavailablePeers: boolean },
   ): AgentEventInput[] {
     if (!eventState.conversation) {
-      return [{
+      const inputs: AgentEventInput[] = [{
         type: 'conversation.created',
         actor: systemActor(),
-        title: DEFAULT_GENERAL_CHANNEL_TITLE,
+        title: config.title,
         members: desiredMembers.slice(),
-        goal: DEFAULT_GENERAL_CHANNEL_TITLE,
+        goal: config.title,
       }];
-    }
-
-    const inputs: AgentEventInput[] = [];
-    if (
-      sanitizeConversationTitle(eventState.conversation.title) !== DEFAULT_GENERAL_CHANNEL_TITLE
-      || sanitizeConversationTitle(eventState.conversation.goal) !== DEFAULT_GENERAL_CHANNEL_TITLE
-    ) {
-      inputs.push({
-        type: 'conversation.renamed',
-        actor: systemActor(),
-        title: DEFAULT_GENERAL_CHANNEL_TITLE,
-        goal: DEFAULT_GENERAL_CHANNEL_TITLE,
-      });
-    }
-
-    let workingMembers = eventState.conversation.members.slice();
-    for (const member of desiredMembers) {
-      if (workingMembers.some((candidate) => samePrincipal(candidate, member))) continue;
-      inputs.push({
-        type: 'member.added',
-        actor: systemActor(),
-        member,
-      });
-      workingMembers = [...workingMembers, member];
-    }
-
-    if (options.removeUnavailablePeers) {
-      const desiredAgentIds = new Set(channelAgentMembers(desiredMembers).map((member) => member.agentId));
-      for (const member of channelAgentMembers(workingMembers)) {
-        if (member.agentId === this.coordinatorAgentId()) continue;
-        if (desiredAgentIds.has(member.agentId)) continue;
+      if (config.forcedSettings) {
         inputs.push({
-          type: 'member.removed',
-          actor: systemActor(),
-          member,
-        });
-        workingMembers = workingMembers.filter((candidate) => !samePrincipal(candidate, member));
-      }
-    }
-
-    return inputs;
-  }
-
-  private dreamChannelInvariantInputs(
-    eventState: AgentEventReplayState,
-    desiredMembers: readonly AgentPrincipal[],
-    options: { removeUnavailablePeers: boolean },
-  ): AgentEventInput[] {
-    if (!eventState.conversation) {
-      return [
-        {
-          type: 'conversation.created',
-          actor: systemActor(),
-          title: DEFAULT_DREAM_CHANNEL_TITLE,
-          members: desiredMembers.slice(),
-          goal: DEFAULT_DREAM_CHANNEL_TITLE,
-        },
-        {
           type: 'conversation.settings_changed',
           actor: systemActor(),
-          settings: { [CHANNEL_INCLUDE_IN_DREAM_DATA_SETTING]: false },
-        },
-      ];
+          settings: config.forcedSettings,
+        });
+      }
+      return inputs;
     }
 
     const inputs: AgentEventInput[] = [];
     if (
-      sanitizeConversationTitle(eventState.conversation.title) !== DEFAULT_DREAM_CHANNEL_TITLE
-      || sanitizeConversationTitle(eventState.conversation.goal) !== DEFAULT_DREAM_CHANNEL_TITLE
+      sanitizeConversationTitle(eventState.conversation.title) !== config.title
+      || sanitizeConversationTitle(eventState.conversation.goal) !== config.title
     ) {
       inputs.push({
         type: 'conversation.renamed',
         actor: systemActor(),
-        title: DEFAULT_DREAM_CHANNEL_TITLE,
-        goal: DEFAULT_DREAM_CHANNEL_TITLE,
+        title: config.title,
+        goal: config.title,
       });
     }
 
-    if (eventState.conversation.settings[CHANNEL_INCLUDE_IN_DREAM_DATA_SETTING] !== false) {
-      inputs.push({
-        type: 'conversation.settings_changed',
-        actor: systemActor(),
-        settings: { [CHANNEL_INCLUDE_IN_DREAM_DATA_SETTING]: false },
-      });
+    if (config.forcedSettings) {
+      const settings: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(config.forcedSettings)) {
+        if (eventState.conversation.settings[key] !== value) settings[key] = value;
+      }
+      if (Object.keys(settings).length > 0) {
+        inputs.push({
+          type: 'conversation.settings_changed',
+          actor: systemActor(),
+          settings,
+        });
+      }
     }
 
     let workingMembers = eventState.conversation.members.slice();
@@ -1873,12 +1833,8 @@ export class AgentRuntime {
   }
 
   async renameConversation(conversationId: string, title: string) {
-    if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) {
-      throw new Error('#General cannot be renamed.');
-    }
-    if (conversationId === DEFAULT_DREAM_CHANNEL_ID) {
-      throw new Error('#Dream cannot be renamed.');
-    }
+    const protectedDefault = protectedDefaultChannelConfig(conversationId);
+    if (protectedDefault) throw new Error(`#${protectedDefault.title} cannot be renamed.`);
     const normalized = normalizeConversationTitle(title);
     const conversation = this.conversations.get(conversationId);
     if (conversation) {
@@ -1922,12 +1878,8 @@ export class AgentRuntime {
   }
 
   async deleteConversation(conversationId: string) {
-    if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) {
-      throw new Error('#General cannot be deleted.');
-    }
-    if (conversationId === DEFAULT_DREAM_CHANNEL_ID) {
-      throw new Error('#Dream cannot be deleted.');
-    }
+    const protectedDefault = protectedDefaultChannelConfig(conversationId);
+    if (protectedDefault) throw new Error(`#${protectedDefault.title} cannot be deleted.`);
     const conversation = this.conversations.get(conversationId);
     if (conversation) {
       await this.clearPendingUserQuestionsForConversation(conversationId, 'conversation_deleted');
@@ -3784,6 +3736,20 @@ export class AgentRuntime {
           'dream-finished-marker-write-failed',
         );
       });
+      await this.pruneDreamChannelHistory().catch((error) => {
+        this.reportWarn(
+          'dream',
+          `Dream completed but old channel transcript cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+          error,
+          {
+            agentId: this.agentIdentity.agentId,
+            runId: task.runId,
+            principalKey: principalKey(task.principal),
+            operation: 'pruneDreamChannelHistory',
+          },
+          'dream-channel-history-prune-failed',
+        );
+      });
       return result;
     } catch (error) {
       if (modelForRunMeta) {
@@ -3812,7 +3778,10 @@ export class AgentRuntime {
         errorMessage: message,
       };
       const anchorMessageId = error instanceof DreamChannelRunError ? error.anchorMessageId : null;
-      if (anchorMessageId) await this.appendDreamFinishedEvent(anchorMessageId, result).catch(() => undefined);
+      if (anchorMessageId) {
+        await this.appendDreamFinishedEvent(anchorMessageId, result).catch(() => undefined);
+        await this.pruneDreamChannelHistory().catch(() => undefined);
+      }
       return result;
     }
   }
@@ -3953,6 +3922,16 @@ export class AgentRuntime {
       changes: result.changes,
       errorMessage: result.errorMessage,
     }]);
+  }
+
+  private async pruneDreamChannelHistory(): Promise<void> {
+    const result = await this.getEventStore().retainRecentConversationRuns(
+      DEFAULT_DREAM_CHANNEL_ID,
+      DREAM_CHANNEL_RETAINED_RUNS,
+    );
+    if (result.prunedRunIds.length === 0) return;
+    await this.refreshAgentTaskCache();
+    this.emitProjection(DEFAULT_DREAM_CHANNEL_ID, 'dream_channel_history_pruned');
   }
 
   private async writeDreamRunMeta(
@@ -6787,10 +6766,18 @@ function eventStateToMeta(eventState: AgentEventReplayState): AgentConversationL
   };
 }
 
+function protectedDefaultChannelConfig(conversationId: string): ProtectedDefaultChannelConfig | null {
+  return PROTECTED_DEFAULT_CHANNELS.find((config) => config.id === conversationId) ?? null;
+}
+
+function requiredProtectedDefaultChannelConfig(conversationId: string): ProtectedDefaultChannelConfig {
+  const config = protectedDefaultChannelConfig(conversationId);
+  if (!config) throw new Error(`Protected default channel is not configured: ${conversationId}`);
+  return config;
+}
+
 function defaultChannelSortRank(conversationId: string): number {
-  if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) return 0;
-  if (conversationId === DEFAULT_DREAM_CHANNEL_ID) return 1;
-  return 2;
+  return protectedDefaultChannelConfig(conversationId)?.sortRank ?? PROTECTED_DEFAULT_CHANNELS.length;
 }
 
 function agentMemoryEntryToView(entry: AgentMemoryEntry): AgentMemoryEntryView {
