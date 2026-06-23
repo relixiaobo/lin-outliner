@@ -319,12 +319,10 @@ function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDeb
             </div>
           )}
         </ContextDisclosure>
-        <ContextDisclosure defaultOpen title={labels.inputMessagesDisclosure({ count: run.modelInputMessages.length })}>
-          {run.modelInputMessagesSource === 'legacyRequestWindow' && (
-            <p className="agent-debug-inline-note">{labels.legacyInputMessagesNotice}</p>
-          )}
-          <ModelInputMessageWindow messages={run.modelInputMessages} labels={labels} />
-        </ContextDisclosure>
+        {run.modelInputMessagesSource === 'legacyRequestWindow' && (
+          <p className="agent-debug-inline-note">{labels.legacyInputMessagesNotice}</p>
+        )}
+        <ModelInputMessageSections messages={run.modelInputMessages} labels={labels} />
       </div>
     </DebugPanelSection>
   );
@@ -497,18 +495,22 @@ function stringRecordValue(value: unknown, key: string): string | null {
 
 // --- shared bits ----------------------------------------------------------
 
-function ModelInputMessageWindow({ messages, labels }: { messages: AgentDebugMessageRow[]; labels: DebugLabels }) {
+function ModelInputMessageSections({ messages, labels }: { messages: AgentDebugMessageRow[]; labels: DebugLabels }) {
   const groups = splitModelInputMessages(messages);
   if (messages.length === 0) return <span className="is-muted">{labels.empty}</span>;
   return (
-    <div className="agent-debug-message-window">
+    <>
       {groups.history.length > 0 ? (
-        <MessageGroup title={labels.inputHistoryGroup({ count: groups.history.length })} messages={groups.history} labels={labels} />
+        <ContextDisclosure title={labels.inputHistoryDisclosure({ count: groups.history.length })}>
+          <MessageList messages={groups.history} labels={labels} />
+        </ContextDisclosure>
       ) : null}
       {groups.current.length > 0 ? (
-        <MessageGroup title={labels.currentRequestGroup} messages={groups.current} labels={labels} />
+        <ContextDisclosure defaultOpen title={labels.currentRequestDisclosure}>
+          <MessageList messages={groups.current} labels={labels} />
+        </ContextDisclosure>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -527,14 +529,11 @@ function splitModelInputMessages(messages: AgentDebugMessageRow[]): { current: A
   };
 }
 
-function MessageGroup({ labels, messages, title }: { labels: DebugLabels; messages: AgentDebugMessageRow[]; title: string }) {
+function MessageList({ labels, messages }: { labels: DebugLabels; messages: AgentDebugMessageRow[] }) {
   return (
-    <section className="agent-debug-message-group">
-      <h4>{title}</h4>
-      <div className="agent-debug-message-list">
-        {messages.map((row) => <MessageRow key={row.id} message={row} labels={labels} />)}
-      </div>
-    </section>
+    <div className="agent-debug-message-list">
+      {messages.map((row) => <MessageRow key={row.id} message={row} labels={labels} />)}
+    </div>
   );
 }
 

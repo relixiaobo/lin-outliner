@@ -428,28 +428,6 @@
   gap: var(--space-4);
 }
 
-.agent-debug-message-window {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-5);
-}
-
-.agent-debug-message-group {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.agent-debug-message-group h4 {
-  color: var(--text-soft);
-  font-size: var(--font-meta);
-  font-weight: 650;
-  line-height: var(--line-meta);
-  margin: 0;
-}
-
 .agent-debug-query-card {
   padding: 0;
 }

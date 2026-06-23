@@ -29,18 +29,21 @@ test.describe('agent debug panel', () => {
     await expect(systemPrompt).toBeVisible();
     await expect.poll(async () => systemPrompt.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
     await expect(context.getByText('Tools · 1')).toBeVisible();
-    await expect(context).toContainText('Message window · 3');
-    await expect(context).toContainText('History · 2');
-    await expect(context).toContainText('Current request');
-    await expect(context.locator('.agent-debug-message-window')).toContainText('Generate a PPT about Fable 5.');
-    await expect(context.locator('.agent-debug-message-window')).toContainText('PPT generated with 11 slides.');
-    await expect(context.locator('.agent-debug-message-window')).toContainText('Summarize current outline.');
+    await expect(context.getByText('Message window · 3')).toHaveCount(0);
+    const history = context.locator('details.agent-debug-disclosure', { hasText: 'History · 2' });
+    await expect(history.locator('summary')).toBeVisible();
+    await history.locator('summary').click();
+    await expect(history).toContainText('Generate a PPT about Fable 5.');
+    await expect(history).toContainText('PPT generated with 11 slides.');
+    const currentRequest = context.locator('details.agent-debug-disclosure', { hasText: 'Current request' });
+    await expect(currentRequest.locator('summary')).toBeVisible();
+    await expect(currentRequest).toContainText('Summarize current outline.');
 
     await expect(debugPanel.getByRole('heading', { name: 'Execution · 1' })).toBeVisible();
     const round = debugPanel.locator('.agent-debug-round-card').first();
     await expect(round.getByRole('heading', { name: 'Model call 1' })).toBeVisible();
     await expect(round.locator('.agent-debug-round-request')).toHaveCount(0);
-    await expect(round).not.toContainText('Message window · 3');
+    await expect(round).not.toContainText('History · 2');
     await expect(round).toContainText('Current outline focuses on UI work.');
     await expect(round).toContainText('Usage');
 
@@ -96,7 +99,8 @@ test.describe('agent debug panel', () => {
     await expect(debugPanel.getByRole('heading', { name: 'Model Input', exact: true })).toBeVisible();
     await expect(debugPanel.getByText('System prompt')).toBeVisible();
     await expect(debugPanel.getByText('Tools · 1')).toBeVisible();
-    await expect(debugPanel.getByText('Message window · 3')).toBeVisible();
+    await expect(debugPanel.getByText('History · 2')).toBeVisible();
+    await expect(debugPanel.getByText('Current request')).toBeVisible();
     await expect(debugPanel.getByRole('heading', { name: 'Execution · 1' })).toBeVisible();
   });
 });
