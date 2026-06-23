@@ -444,13 +444,21 @@ function recordToolResult(
 
 function usageToDebugUsage(usage: Usage | undefined): AgentDebugUsage | null {
   if (!usage) return null;
+  const cost = usage.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
   return {
     input: usage.input ?? 0,
     output: usage.output ?? 0,
     cacheRead: usage.cacheRead ?? 0,
     cacheWrite: usage.cacheWrite ?? 0,
     totalTokens: usage.totalTokens ?? 0,
-    costUsd: usage.cost?.total ?? 0,
+    costUsd: cost.total ?? 0,
+    cost: {
+      input: cost.input ?? 0,
+      output: cost.output ?? 0,
+      cacheRead: cost.cacheRead ?? 0,
+      cacheWrite: cost.cacheWrite ?? 0,
+      total: cost.total ?? 0,
+    },
   };
 }
 
@@ -461,13 +469,31 @@ function aggregateRoundUsage(rounds: readonly AgentDebugRound[]): AgentDebugUsag
 
 function sumUsages(usages: readonly AgentDebugUsage[]): AgentDebugUsage | null {
   if (usages.length === 0) return null;
-  const totals: AgentDebugUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, costUsd: 0 };
+  const totals: AgentDebugUsage = {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    costUsd: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
   for (const usage of usages) addUsage(totals, usage);
   return totals;
 }
 
 function emptyDebugTotals(): AgentDebugTotals {
-  return { queries: 0, rounds: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, costUsd: 0 };
+  return {
+    queries: 0,
+    rounds: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    costUsd: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
 }
 
 function addUsage(totals: AgentDebugUsage, usage: AgentDebugUsage) {
@@ -477,6 +503,11 @@ function addUsage(totals: AgentDebugUsage, usage: AgentDebugUsage) {
   totals.cacheWrite += usage.cacheWrite;
   totals.totalTokens += usage.totalTokens;
   totals.costUsd += usage.costUsd;
+  totals.cost.input += usage.cost.input;
+  totals.cost.output += usage.cost.output;
+  totals.cost.cacheRead += usage.cost.cacheRead;
+  totals.cost.cacheWrite += usage.cost.cacheWrite;
+  totals.cost.total += usage.cost.total;
 }
 
 function statusFromStopReason(stopReason: unknown): AgentDebugTurnStatus {

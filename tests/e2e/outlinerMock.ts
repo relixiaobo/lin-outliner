@@ -513,10 +513,17 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const debugUsage = {
       input: 12000,
       output: 420,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 12420,
+      cacheRead: 48000,
+      cacheWrite: 6000,
+      totalTokens: 66420,
       costUsd: 0.0005,
+      cost: {
+        input: 0.00012,
+        output: 0.0002,
+        cacheRead: 0.00008,
+        cacheWrite: 0.0001,
+        total: 0.0005,
+      },
     };
     // Replayed transcript for the delegated run's own ledger — served whole by
     // `agent_child_run_transcript` (the payload-pinned snapshot is gone).

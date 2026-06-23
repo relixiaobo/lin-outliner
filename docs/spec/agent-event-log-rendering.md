@@ -1207,10 +1207,30 @@ Rules:
 
 ### Debug projection (run-grounded — [[agent-debug-run-grounded]])
 
-The debug surface is a read-only **view of the execution tree**:
-`conversation → runs (per agent) → rounds → request-window / response /
-tool-exchange`, derived from the run ledgers that are already the system's truth,
+The run-details surface is a read-only **view of one run selected from the
+conversation's run list**. Its data shape is still the execution tree
+(`conversation → runs (per agent) → rounds → request-window / response /
+tool-exchange`), derived from the run ledgers that are already the system's truth,
 plus the few conversation-stream events a run's own ledger structurally lacks.
+The renderer uses the tree as a selector, not as the primary content.
+
+The selected run detail is ordered for inspection:
+
+1. **Context** — the model-facing request context as captured/derived for this
+   run: system/developer instructions, tool definitions/schemas, and each round's
+   request window (history/current user/file/tool-result context in model order).
+2. **Process** — the response parts, thinking parts, tool calls, and tool results.
+3. **Usage** — secondary telemetry: provider/model/status, timestamps, duration,
+   input/output/cache-read/cache-write tokens, cost breakdown, cache hit rate
+   (`cacheRead / (cacheRead + cacheWrite)`), cached context share
+   (`cacheRead / (input + cacheRead + cacheWrite)`), and a stacked input-context
+   composition chart (`input | cacheRead | cacheWrite`).
+4. **Advanced** — raw identifiers and debug metadata.
+
+The chat transcript exposes this through an assistant-message **More reply
+actions** menu. `Details` opens the same agent-debug pane with `selectedRunId`
+set to that reply's run; the global debug button opens the latest run when no
+explicit run is selected.
 
 **The unit is the round** = one provider call = `(request, response)`, bounded by
 `assistant_message.started` (always present, independent of any wire capture).
@@ -1295,9 +1315,11 @@ absent, and a run shows its latest snapshot.)
   alike — the seq convention is irrelevant to a single-stream walk.
 
 The pure derivation lives in `src/main/agentDebugView.ts`; the renderer
-`DebugTimeline` (`AgentDebugPanel.tsx`) renders every conversation with one view
-(single-agent, members `{user, Neva}`), attributes each run to its agent, nests
-delegated runs under their parent, and lazily loads each run's detail on expand.
+`AgentDebugPanel.tsx` renders every conversation with one run list (single-agent,
+members `{user, Neva}`), attributes each run to its agent, and eagerly loads the
+currently selected run detail. It re-fetches the selected detail when the run shape
+advances so in-flight usage and rounds stay live without subscribing React to raw
+token events.
 
 It must not:
 

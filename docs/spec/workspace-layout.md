@@ -200,6 +200,7 @@ interface WorkspaceContentPanelState extends WorkspacePanelBase {
 interface AgentDebugPanelState extends WorkspacePanelBase {
   type: 'agent-debug';
   conversationId: string | null;
+  selectedRunId?: string | null;
 }
 
 type WorkspacePanelState = WorkspaceContentPanelState | AgentDebugPanelState;
@@ -467,6 +468,9 @@ Rules:
   (rightmost first) rather than adding another pane. Agent-debug panes are added
   only when the resulting count fits; a too-narrow window reports the capacity
   failure and does not drop an existing workspace pane just to show debug chrome.
+- Opening run details from an assistant reply reuses an existing agent-debug pane when
+  one is already present for that conversation and updates its `selectedRunId`; the
+  global debug action opens the latest run when no run is explicitly selected.
 - Closing a pane removes it from the layout. If it was active, focus moves to the
   nearest remaining pane, and clears when that pane is an agent-debug pane (which
   carries no node to focus).

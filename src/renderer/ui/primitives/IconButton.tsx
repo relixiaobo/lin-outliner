@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from 'react';
+import { forwardRef, type ButtonHTMLAttributes } from 'react';
 import { ICON_SIZE, type AppIcon } from '../icons';
 import { cx } from './cx';
 
@@ -29,7 +29,7 @@ interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 
   variant?: IconButtonVariant;
 }
 
-export function IconButton({
+export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton({
   className,
   icon: Icon,
   iconSize,
@@ -39,7 +39,7 @@ export function IconButton({
   type = 'button',
   variant = 'chrome',
   ...buttonProps
-}: IconButtonProps) {
+}, ref) {
   const classes = cx('icon-button', `icon-button-${variant}`, className);
 
   return (
@@ -47,10 +47,11 @@ export function IconButton({
       {...buttonProps}
       aria-label={label}
       className={classes}
+      ref={ref}
       title={title ?? label}
       type={type}
     >
       <Icon size={iconSize ?? DEFAULT_ICON_SIZE[variant]} strokeWidth={strokeWidth} />
     </button>
   );
-}
+});

@@ -237,6 +237,13 @@ export interface AgentDebugUsage {
   cacheWrite: number;
   totalTokens: number;
   costUsd: number;
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
 }
 
 export interface AgentDebugTotals extends AgentDebugUsage {

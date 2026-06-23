@@ -123,8 +123,13 @@ function filePreviewPanel(
   return workspacePanel(id, filePreviewView(target, nodeId, undefined, presentation), size);
 }
 
-function agentDebugPanel(id: string, conversationId: string | null, size = 1): AgentDebugPanelState {
-  return { id, type: 'agent-debug', conversationId, size };
+function agentDebugPanel(
+  id: string,
+  conversationId: string | null,
+  size = 1,
+  selectedRunId: string | null = null,
+): AgentDebugPanelState {
+  return { id, type: 'agent-debug', conversationId, selectedRunId, size };
 }
 
 function navigateWorkspacePanel(panel: WorkspaceContentPanelState, view: PanelView): WorkspaceContentPanelState {
@@ -196,6 +201,7 @@ function sanitizePanel(value: unknown, nodeIds: Set<NodeId>): WorkspacePanelStat
       type: 'agent-debug',
       size,
       conversationId: typeof value.conversationId === 'string' ? value.conversationId : null,
+      selectedRunId: typeof value.selectedRunId === 'string' ? value.selectedRunId : null,
     };
   }
   if (value.type !== 'workspace') return null;
@@ -572,12 +578,17 @@ export function useWorkspaceLayout({
     focusNode(nodeId);
   }, [canFitPanelCount, focusNode, panels, preparePanelCount, rootId]);
 
-  const openAgentDebugPanel = useCallback((conversationId: string | null) => {
+  const openAgentDebugPanel = useCallback((conversationId: string | null, selectedRunId: string | null = null) => {
     const existing = panels.find((panel) => (
       panel.type === 'agent-debug' && panel.conversationId === conversationId
     ));
     if (existing) {
       setActivePanelId(existing.id);
+      setPanels((prev) => prev.map((panel) => (
+        panel.id === existing.id && panel.type === 'agent-debug'
+          ? { ...panel, selectedRunId }
+          : panel
+      )));
       return;
     }
 
@@ -587,7 +598,7 @@ export function useWorkspaceLayout({
     if (emptyDebugPanel) {
       setActivePanelId(emptyDebugPanel.id);
       setPanels((prev) => prev.map((panel) => (
-        panel.id === emptyDebugPanel.id ? agentDebugPanel(panel.id, conversationId, panel.size) : panel
+        panel.id === emptyDebugPanel.id ? agentDebugPanel(panel.id, conversationId, panel.size, selectedRunId) : panel
       )));
       return;
     }
@@ -597,7 +608,7 @@ export function useWorkspaceLayout({
       if (!replacePanel) return;
       setActivePanelId(replacePanel.id);
       setPanels((prev) => prev.map((panel) => (
-        panel.id === replacePanel.id ? agentDebugPanel(panel.id, conversationId, panel.size) : panel
+        panel.id === replacePanel.id ? agentDebugPanel(panel.id, conversationId, panel.size, selectedRunId) : panel
       )));
       return;
     }
@@ -610,7 +621,7 @@ export function useWorkspaceLayout({
     const panelId = nextId('panel');
     preparePanelCount(panels.length + 1);
     setActivePanelId(panelId);
-    setPanels((prev) => [...prev, agentDebugPanel(panelId, conversationId)]);
+    setPanels((prev) => [...prev, agentDebugPanel(panelId, conversationId, 1, selectedRunId)]);
   }, [canFitPanelCount, onPanelOpenRejected, panels, preparePanelCount]);
 
   const repairMissingOutlinerRoots = useCallback((projection: DocumentProjection, nodeIds: NodeLookup): NodeId | null => {

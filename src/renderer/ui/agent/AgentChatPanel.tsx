@@ -89,7 +89,7 @@ interface AgentChatPanelProps {
   dockOpen: boolean;
   userViewContext: AgentUserViewContext;
   onOpenNodeReference: AgentNodeReferenceOpenHandler;
-  onOpenDebugPanel?: (conversationId: string | null) => void;
+  onOpenDebugPanel?: (conversationId: string | null, selectedRunId?: string | null) => void;
 }
 
 interface PendingTranscriptReveal {
@@ -1128,6 +1128,7 @@ export function AgentChatPanel({
         onEdit={editMessage}
         onNodeReferenceOpen={onOpenNodeReference}
         onOpenChildRunTranscript={setSelectedChildRunId}
+        onOpenRunDetails={(runId) => onOpenDebugPanel?.(conversationId, runId)}
         onRegenerate={regenerateMessage}
         onRetry={retryMessage}
         onSwitchBranch={switchBranch}
