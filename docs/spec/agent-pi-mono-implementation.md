@@ -1107,7 +1107,7 @@ Current coverage should stay focused on the Tenon-owned boundary:
   render projection, event store append ordering, checkpoint replay, corrupt
   checkpoint recovery, index rebuild, payload refs, and large-session behavior.
 - Run-grounded debug derivation (`agentDebugView`) from per-run streams + the
-  `debug.run_snapshot.created` per-run system/tools capture.
+  `debug.run_snapshot.created` provider-request capture.
 - Tool argument validation, local path boundaries, bash timeout/output caps,
   node tool behavior, web tool normalization, and tool-result envelope mapping.
 - Renderer runtime hydration, projection events, branch actions, streaming view

@@ -3002,21 +3002,27 @@ export class AgentRuntime {
 
   /**
    * Run-grounded debug capture ([[agent-debug-run-grounded]]): persist the active
-   * run's outbound system prompt + tool schemas once, re-emitting only when they
-   * change (hash-deduped). The message window is already event-sourced; this fills
-   * the request context the ledger lacks. The event carries the run id, so the
-   * conversation append path splits it into the run's own stream. Additive and
-   * best-effort — a capture failure never perturbs the run.
+   * run's outbound system prompt, tool schemas, and full model input window,
+   * re-emitting only when the outbound request shape changes (hash-deduped). The
+   * event carries the run id, so the conversation append path splits it into the
+   * run's own stream. Additive and best-effort — a capture failure never perturbs
+   * the run.
    */
   private async captureDebugRunSnapshot(conversationId: string, payload: unknown, runIdOverride?: string) {
     const conversation = this.conversations.get(conversationId);
     if (!conversation) return;
     const runId = runIdOverride ?? this.activeRunId(conversation);
     if (!runId) return;
-    const { systemPrompt, tools } = extractRunSnapshotFromPayload(payload);
+    const { systemPrompt, tools, messages } = extractRunSnapshotFromPayload(payload);
     // In-memory dedupe key (re-emit only on a real change) — derived from the
     // content itself; the hash is never persisted on the event (no reader needs it).
-    const combined = createHash('sha256').update(systemPrompt).update('\0').update(JSON.stringify(tools)).digest('hex');
+    const combined = createHash('sha256')
+      .update(systemPrompt)
+      .update('\0')
+      .update(JSON.stringify(tools))
+      .update('\0')
+      .update(JSON.stringify(messages))
+      .digest('hex');
     if (this.debugRunSnapshotHashByRun.get(runId) === combined) return;
     await this.appendConversationEvents(conversationId, conversation, [{
       type: 'debug.run_snapshot.created',
@@ -3024,6 +3030,7 @@ export class AgentRuntime {
       runId,
       systemPrompt,
       tools,
+      messages,
     }]);
     // Record the hash only AFTER the append succeeds — a swallowed append failure
     // must not poison the dedupe and silently drop this run's snapshot forever.

@@ -297,7 +297,6 @@ function RunDetail({ run, labels }: { run: AgentDebugRun; labels: DebugLabels })
 }
 
 function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDebugRun }) {
-  const initialMessages = run.rounds[0]?.requestWindow ?? [];
   return (
     <DebugPanelSection title={labels.modelInputTitle}>
       <div className="agent-debug-context-card">
@@ -320,12 +319,12 @@ function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDeb
             </div>
           )}
         </ContextDisclosure>
-        <ContextDisclosure defaultOpen title={labels.inputMessagesDisclosure({ count: initialMessages.length })}>
-          {initialMessages.length === 0 ? (
+        <ContextDisclosure defaultOpen title={labels.inputMessagesDisclosure({ count: run.modelInputMessages.length })}>
+          {run.modelInputMessages.length === 0 ? (
             <span className="is-muted">{labels.empty}</span>
           ) : (
             <div className="agent-debug-message-list">
-              {initialMessages.map((row) => <MessageRow key={row.id} message={row} labels={labels} />)}
+              {run.modelInputMessages.map((row) => <MessageRow key={row.id} message={row} labels={labels} />)}
             </div>
           )}
         </ContextDisclosure>

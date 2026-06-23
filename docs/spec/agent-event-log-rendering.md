@@ -1234,8 +1234,9 @@ The run detail is ordered for inspection:
    and optional parent ids) live inside a collapsed identifiers disclosure in
    this summary, not as a separate main section.
 2. **Model Input** — the input side that seeded this run: system/developer
-   instructions, tool definitions/schemas, and the initial request messages
-   (history/current user/file context) captured before the first provider call.
+   instructions, tool definitions/schemas, and the captured provider message
+   window (history/current user/file context, or the compacted summary message if
+   compaction already replaced older history) from the actual outbound request.
 3. **Execution** — the execution side. Each rendered item is a **model call**
    (internally, one debug `round`: one provider request/response). It contains
    response/thinking parts plus tool exchanges produced by that call. Per-call
@@ -1277,12 +1278,11 @@ CONVERSATION stream (appended with no runId) and are spliced in at derivation:
   only a `tool_result.created` may OPEN an exchange (never an empty-named phantom).
 
 A round stores the *new* context entering that provider call (the triggering /
-prior tool-result messages), not the whole growing history. Only the first
-round's request window is surfaced in **Model Input** as the run's initial input
-messages; later windows are represented through the execution/tool exchange they
-belong to. Rounds begin only after the run's own `run.started`, so a child run's
-inherited fork prefix is folded into the first round's window as input rather
-than counted as a model call.
+prior tool-result messages), not the whole growing history. This `requestWindow`
+is an internal derivation aid for the execution tree; **Model Input** is sourced
+from the captured provider payload's full message window. Rounds begin only after
+the run's own `run.started`, so a child run's inherited fork prefix is folded into
+the first round's internal window rather than counted as a model call.
 
 **Everything rendered is redacted.** The surface is read-only but on screen, so
 every string passes the shared `agentSecretRedaction` gate before display:
@@ -1293,19 +1293,23 @@ thinking, and the per-run system prompt + tool schemas alike.
 
 **Capture (the only additive writes).** The semantic tree is already in the
 ledger; one gap is filled: a per-run `debug.run_snapshot.created` event carries the
-run's outbound **system prompt + tool schemas**, captured once per run from
-`onPayload`, deduped on an in-memory content hash (re-emitted only on a real change;
-the hash is recorded only **after** the append succeeds, so a swallowed write never
-poisons the dedupe — and never persisted on the event, which no reader needs). It is
-replay-neutral. The system prompt is read tolerantly across providers: a top-level
-`system` / `instructions` (Anthropic) **and** a `system` / `developer` role message
-folded into `input` / `messages` (the OpenAI responses / completions shape).
+run's outbound **system prompt + tool schemas + model input message window** from
+`onPayload`, deduped on an in-memory content hash (re-emitted only on a real
+provider-request shape change; the hash is recorded only **after** the append
+succeeds, so a swallowed write never poisons the dedupe — and never persisted on
+the event, which no reader needs). It is replay-neutral. The detail view reads
+system/tool metadata from the latest snapshot, but **Model Input** uses the first
+captured non-empty message window so later tool-result calls do not overwrite the
+run's entry context. The system prompt is read tolerantly across providers: a
+top-level `system` / `instructions` (Anthropic) **and** a `system` / `developer`
+role message folded into `input` / `messages` (the OpenAI responses / completions
+shape).
 (Delegation/child request-context capture — plumbing the child run id through the
 delegation agent's payload callback — per-ROUND snapshot attribution when the
 system/tools change mid-run, and per-round transport metadata + a gated byte-exact
 wire disclosure are scoped follow-ups, deliberately **not** pre-modeled in the type;
-the view degrades gracefully to no system prompt / empty tools when a snapshot is
-absent, and a run shows its latest snapshot.)
+the view degrades gracefully to no system prompt / empty tools / legacy
+request-window messages when a snapshot is absent.)
 
 **Read model + IPC.**
 

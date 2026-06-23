@@ -629,6 +629,29 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         schema: '{"type":"object","properties":{"nodeId":{"type":"string"}}}',
         bytes: 58,
       }],
+      modelInputMessages: [
+        {
+          id: 'model-input-1',
+          role: 'user',
+          summary: 'user: Generate a PPT about Fable 5.',
+          bytes: 40,
+          parts: [{ kind: 'text', body: 'Generate a PPT about Fable 5.', isReminder: false }],
+        },
+        {
+          id: 'model-input-2',
+          role: 'assistant',
+          summary: 'assistant: PPT generated.',
+          bytes: 36,
+          parts: [{ kind: 'text', body: 'PPT generated with 11 slides.', isReminder: false }],
+        },
+        {
+          id: 'model-input-3',
+          role: 'user',
+          summary: 'user: Summarize current outline.',
+          bytes: 56,
+          parts: [{ kind: 'text', body: 'Summarize current outline.', isReminder: false }],
+        },
+      ],
       rounds: [{
         index: 0,
         messageId: 'a1',
