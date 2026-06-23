@@ -1197,17 +1197,17 @@
 
 .agent-debug-cache-chart-bar > .is-input,
 .agent-debug-cache-chart-legend .is-input {
-  background: var(--fill-2);
+  background: var(--usage-input);
 }
 
 .agent-debug-cache-chart-bar > .is-cache-read,
 .agent-debug-cache-chart-legend .is-cache-read {
-  background: var(--fill-4);
+  background: var(--usage-cache-read);
 }
 
 .agent-debug-cache-chart-bar > .is-cache-write,
 .agent-debug-cache-chart-legend .is-cache-write {
-  background: var(--fill-3);
+  background: var(--usage-cache-write);
 }
 
 .agent-debug-cache-chart-legend {
@@ -1228,8 +1228,9 @@
 
 .agent-debug-cache-chart-legend i {
   display: inline-block;
-  width: 8px;
+  width: 12px;
   height: 8px;
+  flex: 0 0 12px;
   border-radius: var(--radius-pill);
 }
 

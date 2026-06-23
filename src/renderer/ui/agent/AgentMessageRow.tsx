@@ -373,13 +373,17 @@ function AgentMessageUsageHoverCard({
     { kind: 'cache-read', label: t.agent.message.tokenLabels.cacheRead, tokens: usage.cacheRead, cost: cost?.cacheRead },
     { kind: 'cache-write', label: t.agent.message.tokenLabels.cacheWrite, tokens: usage.cacheWrite, cost: cost?.cacheWrite },
   ];
+  const breakdownRows = [
+    ...usageRows,
+    { kind: 'total', label: t.agent.message.tokenLabels.total, tokens: usage.totalTokens, cost: cost?.total },
+  ];
   const style = useAnchoredOverlay(cardRef, {
     anchorRef,
     gap: 8,
     layoutKey: `${usage.input}:${usage.output}:${usage.cacheRead}:${usage.cacheWrite}:${usage.totalTokens}:${cost?.total ?? 0}`,
-    maxHeight: 320,
+    maxHeight: 280,
     placement: 'top-end',
-    width: 340,
+    width: 300,
   });
 
   return createPortal(
@@ -390,16 +394,6 @@ function AgentMessageUsageHoverCard({
       style={style}
     >
       <div className="agent-message-usage-hover-title">{t.agent.message.usageDetails}</div>
-      <dl className="agent-message-usage-hover-totals">
-        <div>
-          <dt>{t.agent.message.tokenLabels.total}</dt>
-          <dd>{formatTokenValue(usage.totalTokens)}</dd>
-        </div>
-        <div>
-          <dt>{t.agent.message.cost}</dt>
-          <dd>{formatUsageCost(cost?.total) ?? t.agent.message.usageUnavailable}</dd>
-        </div>
-      </dl>
       <div className="agent-message-usage-hover-bar" aria-hidden>
         {usageRows.map((row) => (
           <span
@@ -410,21 +404,22 @@ function AgentMessageUsageHoverCard({
         ))}
       </div>
       <div className="agent-message-usage-hover-breakdown" aria-label={t.agent.message.usageDetails}>
-        <div className="agent-message-usage-hover-breakdown-head">
-          <span />
-          <span>{t.agent.message.tokens}</span>
-          <span>{t.agent.message.cost}</span>
-        </div>
-        {usageRows.map((row) => (
-          <div className={row.tokens === 0 && !row.cost ? 'is-zero' : undefined} key={row.kind}>
-            <span>
-              <i className={`is-${row.kind}`} />
-              {row.label}
-            </span>
-            <strong>{formatTokenValue(row.tokens)}</strong>
-            <strong>{formatUsageCost(row.cost) ?? t.agent.message.usageUnavailable}</strong>
-          </div>
-        ))}
+        {breakdownRows.map((row) => {
+          const rowClassName = [
+            row.kind === 'total' ? 'is-total' : null,
+            row.tokens === 0 && !row.cost ? 'is-zero' : null,
+          ].filter(Boolean).join(' ') || undefined;
+          return (
+            <div className={rowClassName} key={row.kind}>
+              <span>
+                <i className={`is-${row.kind}`} />
+                {row.label}
+              </span>
+              <strong>{formatTokenValue(row.tokens)}</strong>
+              <strong>{formatUsageCost(row.cost) ?? t.agent.message.usageUnavailable}</strong>
+            </div>
+          );
+        })}
       </div>
     </div>,
     document.body,
