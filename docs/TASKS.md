@@ -199,21 +199,28 @@ before any directional/security-sensitive build.
   `lin-agent-channel-…` single-agent thread, General default, user-creatable), so a dedicated Dream
   channel is in-model, not a re-introduction. The channel shows the **real transcript**, not a
   summary; a **structured Dream launcher** (date-range picker + guidance field → serialized anchor
-  message) replaces the chat composer. **Core reframe (post code-audit):** the seq-watermark is not
-  relocated but **eliminated** — `last-dreamed-through` is **derived** from the Dream channel's
-  cleanly-completed *scheduled* turns, which makes the believer-pool `AgentEventStore` (dual-purpose:
-  vestigial memory entries + load-bearing dream-state) **wholly deletable**. **Shape (b):**
-  - **PR1** — Dream channel + persisted full-process transcript (drop the create→delete transient at
-    `agentRuntime.ts:~3659/3694`); persist each run's `{start,end}` window as structured anchor
-    metadata; relocate Dream history here; keep existing trigger + seq-watermark unchanged this PR.
-  - **PR2** — date-window scope + **derive the cursor from the channel** (drop the stored watermark;
-    keep #319 `incomplete` gating) + structured launcher (composer-swap is a *new* per-channel-id
-    branch — `usesChannelActivitySurface()` is dead code) + user-configurable frequency. Depends on PR1.
-  - **PR3** — retire Settings → Memory + delete the **entire `AgentEventStore`** + `agent_list_memory`
-    (+ update/forget) + memory-edit plumbing + pool core tests; finishes the #302 teardown. Touches
-    `commands.ts` (protocol — interface-first). **Depends on PR2** (not parallel — the store's
-    dream-state half is live until PR2 derives the cursor off it). Pre-release: wipe `~/.lin-outliner-*`,
-    no migration.
+  message) replaces the chat composer. **Core reframe (post code-audit + codex plan-review):** the
+  seq-watermark is not relocated but **eliminated** — `last-dreamed-through` (and `lastSuccessAt`) are
+  **derived** from the Dream channel's `dream.finished` events (`status==='completed' &&
+  trigger==='schedule'`), which makes the believer-pool **memory projection** deletable. Note: the pool
+  is the per-principal `memory/events.jsonl` projection + memory API **inside** `AgentEventStore`
+  (`:754–1037`), **not** the class (which stores all conversation/run/payload/run-meta and stays).
+  **Shape (b):**
+  - **PR1** — Dream channel + **Dream as a top-level run** (not a parentless child run — else the
+    renderer only shows a `child-run` boundary summary, not inline process); persist the run (drop
+    create→delete `agentRuntime.ts:~3659/3694`); add `window?:{start,end}` to the `dream.finished`
+    event (protocol — interface-first) + stamp it; relocate Dream history; keep trigger + watermark
+    unchanged this PR.
+  - **PR2** — date→seq translation (evidence/`past_chats` stay seq-based; local-day, inclusive, no
+    leak) + **derive cursor + `lastSuccessAt` from the channel** (drop `readDreamState`; per-due guard
+    already in run meta; keep #319 `incomplete` gating) + structured launcher (composer-swap is a *new*
+    per-channel-id branch — `usesChannelActivitySurface()` is dead code) + user-configurable frequency.
+    Depends on PR1.
+  - **PR3** — retire Settings → Memory + delete the **memory projection + memory API inside
+    `AgentEventStore`** (`:754–1037`, **keep the class**) + `agent_list_memory` (+ update/forget) +
+    memory-edit plumbing + pool-only core tests; finishes the #302 teardown. Touches `commands.ts`
+    (protocol — interface-first). **Depends on PR2** (not parallel — dream-state live until PR2 derives
+    off the channel). Pre-release: wipe `~/.lin-outliner-*`, no migration.
   - **Ratified (PM, 2026-06-23):** auto-run kept (甲) — scheduled nightly + manual launcher override,
     derived cursor is the auto default window. All open questions resolved. UI gate = light/dark visual.
 - **agent-goal** (P2, *design captured 2026-06-23, PM-ratified (plan PR #323 merged) — needs a dev
