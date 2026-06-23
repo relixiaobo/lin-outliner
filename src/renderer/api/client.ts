@@ -8,6 +8,7 @@ import type {
   AgentConversation,
   AgentCreateConversationOptions,
   AgentConversationListMeta,
+  AgentDreamReadiness,
   AgentMemoryEntryView,
   AgentRenderDreamTaskEntity,
   AgentPickScopeFolderResult,
@@ -319,6 +320,8 @@ export const api = {
     command<AgentMemoryEntryView[]>('agent_list_memory', options),
   agentListDreamHistory: (options: { limit?: number } = {}) =>
     command<AgentRenderDreamTaskEntity[]>('agent_list_dream_history', options),
+  agentDreamReadiness: () =>
+    command<AgentDreamReadiness>('agent_dream_readiness', {}),
   agentRunDreamNow: (options: { limit?: number } = {}) =>
     command<AgentRenderDreamTaskEntity[]>('agent_run_dream_now', options),
   agentUpdateMemory: (memoryId: string, fact: string) =>

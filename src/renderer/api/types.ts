@@ -72,6 +72,7 @@ export type {
 } from '../../core/agentTypes';
 
 export type {
+  AgentDreamReadiness,
   AgentRenderDreamTaskEntity,
 } from '../../core/agentRenderProjection';
 

@@ -5,6 +5,7 @@ import type {
   AgentProviderOption,
   AgentProviderSettingsView,
   AgentDefinitionView,
+  AgentDreamReadiness,
   AgentMemoryEntryView,
   AgentRenderDreamTaskEntity,
   AgentToolPermissionSettingsView,
@@ -62,7 +63,7 @@ interface AgentSettingsViewProps {
 
 type SettingsCategory = SettingsCategoryTarget;
 type SettingsRoute = { type: 'category'; category: SettingsCategory };
-type RequestScope = 'settings' | 'section' | 'mutation';
+type RequestScope = 'settings' | 'section' | 'mutation' | 'dream';
 type PermissionRuleListKind = 'grants' | 'blocks' | 'softBlockAllows';
 
 interface DraftConfig {
@@ -219,6 +220,12 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   const settingsRequestRef = useRef(0);
   const sectionRequestRef = useRef(0);
   const mutationRequestRef = useRef(0);
+  // Dream gets its OWN request scope, not the shared 'mutation' one: a manual
+  // Dream awaits a readiness pre-check and then a full model round-trip, and any
+  // unrelated settings mutation that bumps the 'mutation' ref while it is in
+  // flight would invalidate its requestId and leave the isCurrentRequest-guarded
+  // finally from ever clearing dreamRunBusy — sticking "Dreaming…" forever.
+  const dreamRequestRef = useRef(0);
 
   const [allSkills, setAllSkills] = useState<SkillDefinition[]>([]);
   const [loadingSkills, setLoadingSkills] = useState(false);
@@ -233,6 +240,10 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   const [dreamHistory, setDreamHistory] = useState<AgentRenderDreamTaskEntity[]>([]);
   const [loadingDreams, setLoadingDreams] = useState(false);
   const [dreamRunBusy, setDreamRunBusy] = useState(false);
+  // When a manual "Dream now" pre-check finds too little new evidence, we hold the
+  // readiness here and surface an advisory + a "Dream anyway" override instead of
+  // running. Cleared once the user forces a run or new data clears the bar.
+  const [dreamAdvisory, setDreamAdvisory] = useState<AgentDreamReadiness | null>(null);
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [memoryDraftFact, setMemoryDraftFact] = useState('');
   const [memorySavingId, setMemorySavingId] = useState<string | null>(null);
@@ -265,6 +276,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
       settingsRequestRef.current += 1;
       sectionRequestRef.current += 1;
       mutationRequestRef.current += 1;
+      dreamRequestRef.current += 1;
     };
   }, []);
 
@@ -361,6 +373,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   function requestRefFor(scope: RequestScope) {
     if (scope === 'settings') return settingsRequestRef;
     if (scope === 'section') return sectionRequestRef;
+    if (scope === 'dream') return dreamRequestRef;
     return mutationRequestRef;
   }
 
@@ -778,24 +791,36 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     }
   }
 
-  async function runDreamNow() {
-    const requestId = beginRequest('mutation');
+  async function runDreamNow(options?: { force?: boolean }) {
+    const requestId = beginRequest('dream');
     setDreamRunBusy(true);
     setError(null);
     setNotice(null);
     try {
+      // Pre-check: a manual Dream over too little new evidence is a wasted model
+      // round-trip that just no-ops. Advise and let the user override, unless the
+      // user already chose "Dream anyway".
+      if (!options?.force) {
+        const readiness = await api.agentDreamReadiness();
+        if (!isCurrentRequest('dream', requestId)) return;
+        if (readiness.belowThreshold) {
+          setDreamAdvisory(readiness);
+          return;
+        }
+      }
+      setDreamAdvisory(null);
       const [dreams, memories] = await Promise.all([
         api.agentRunDreamNow({ limit: 50 }),
         api.agentListMemory({ includeInvalidated: true, limit: 200 }),
       ]);
-      if (!isCurrentRequest('mutation', requestId)) return;
+      if (!isCurrentRequest('dream', requestId)) return;
       setDreamHistory(dreams);
       setMemoryEntries(memories);
       setNotice(t.settings.memory.dreamRunNotice);
     } catch (caught) {
-      if (isCurrentRequest('mutation', requestId)) setError(caught instanceof Error ? caught.message : String(caught));
+      if (isCurrentRequest('dream', requestId)) setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      if (isCurrentRequest('mutation', requestId)) setDreamRunBusy(false);
+      if (isCurrentRequest('dream', requestId)) setDreamRunBusy(false);
     }
   }
 
@@ -1215,6 +1240,22 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                     )}
                     wrap
                   />
+                  {dreamAdvisory ? (
+                    <InsetRow
+                      label={t.settings.memory.dreamThinTitle}
+                      sublabel={t.settings.memory.dreamThinDetail({
+                        messages: dreamAdvisory.newMessageCount,
+                        chars: dreamAdvisory.newCharCount,
+                      })}
+                      trailing={(
+                        <Button disabled={dreamRunBusy} onClick={() => void runDreamNow({ force: true })} size="sm" variant="secondary">
+                          {dreamRunBusy ? <LoaderIcon size={ICON_SIZE.menu} /> : <BrainIcon size={ICON_SIZE.menu} />}
+                          <span>{dreamRunBusy ? t.settings.memory.dreamRunNowBusy : t.settings.memory.dreamRunAnywayButton}</span>
+                        </Button>
+                      )}
+                      wrap
+                    />
+                  ) : null}
                 </InsetGroup>
                 <DreamHistoryGroup
                   entries={dreamHistory}

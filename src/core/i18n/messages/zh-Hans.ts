@@ -161,6 +161,10 @@ export const zhHans: PartialMessages = {
       dreamRunNowButton: '运行',
       dreamRunNowBusy: 'Dream 中…',
       dreamRunNotice: 'Dream 已完成',
+      dreamThinTitle: '自上次 Dream 后新增对话不多',
+      dreamThinDetail: ({ messages, chars }: { messages: number; chars: number }) =>
+        `自上次 Dream 以来只有约 ${messages} 条新消息(~${chars} 字)。现在运行主要是整理既有记忆,而非记录新对话。`,
+      dreamRunAnywayButton: '仍然 Dream',
       activeStatus: '有效',
       invalidatedStatus: '已失效',
       createdAt: ({ date }) => `创建于 ${date}`,

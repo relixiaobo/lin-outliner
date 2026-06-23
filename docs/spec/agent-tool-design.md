@@ -2390,7 +2390,13 @@ Runtime Dream is a private built-in skill, `memory-dream`. It is runtime-only:
 not model-invocable, and not exposed as `/dream` or a foreground `dream` tool.
 The scheduled-routines path is at-most-once per daily due occurrence; Settings
 also exposes a manual run button that uses the same restricted child path and is
-not blocked by the scheduled due gate. A run computes per-stream seq ranges from
+not blocked by the scheduled due gate. The manual button first calls a read-only
+`agent_dream_readiness` pre-check (new evidence since the watermark vs. the
+scheduled volume bar); below the bar it advises that there is little new chat
+since the last Dream (a run would mostly reconcile existing memory rather than
+capture new conversations) and offers a "Dream anyway" override instead of
+running — the advisory flags thin new-chat volume, not "nothing to do", since a
+sub-bar manual run is still a valid consolidate-only reconciliation. A run computes per-stream seq ranges from
 the Dream watermark, renders the skill, and forks an unattended child run with
 only `past_chats`, `node_search`, `node_read`, `node_create`, `node_edit`, and
 `node_delete`.

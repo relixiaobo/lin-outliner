@@ -190,6 +190,10 @@ export const en = {
       dreamRunNowButton: 'Run',
       dreamRunNowBusy: 'Dreaming…',
       dreamRunNotice: 'Dream completed',
+      dreamThinTitle: 'Not much new chat since the last Dream',
+      dreamThinDetail: ({ messages, chars }: { messages: number; chars: number }) =>
+        `Only ${messages} new message${messages === 1 ? '' : 's'} (~${chars} characters) since the last Dream. Running now would mostly reconcile existing memory rather than capture new conversations.`,
+      dreamRunAnywayButton: 'Dream anyway',
       activeStatus: 'Active',
       invalidatedStatus: 'Inactive',
       createdAt: ({ date }: { date: string }) => `Created ${date}`,

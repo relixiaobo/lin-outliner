@@ -2474,6 +2474,8 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       });
     case 'agent_list_dream_history':
       return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
+    case 'agent_dream_readiness':
+      return agentRuntime.previewDreamReadiness();
     case 'agent_run_dream_now':
       await agentRuntime.runDreamNow();
       return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
