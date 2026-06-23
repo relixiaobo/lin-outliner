@@ -145,10 +145,14 @@ truth.
     per daily due, while Settings can trigger a manual run; both paths read
     sources since the Dream watermark when sources exist, gather relevant prior
     memory/workspace context with `node_search` / `node_read`, apply the
-    human-dream cycle and valuable-memory filter, update today's single
-    `#d-memory` container, write optional `#d-episode` / `#d-belief` /
-    `#d-question` / `#d-guidance` nodes, may delete obsolete nodes with
-    `node_delete`, record `dream.completed`, and advance the watermark; manual
+    human-dream cycle and valuable-memory filter, and — when the filter leaves
+    memory worth writing — update today's single `#d-memory` container, write
+    optional `#d-episode` / `#d-belief` / `#d-question` / `#d-guidance` nodes, and
+    may delete obsolete nodes with `node_delete`; a run that finds nothing worth
+    remembering writes nothing, and a clean run records `dream.completed` and
+    advances the watermark either way — but a run cut off mid-work (`maxTurns`
+    abort while streaming, or unresolved context overflow) is flagged `incomplete`
+    and, with zero writes, is retried instead of advancing; manual
     consolidate-only runs can reconcile outline/prior Dream context without new
     chat spans
   - `/dream` and the foreground `dream` tool are removed; Dream history remains

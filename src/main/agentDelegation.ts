@@ -278,6 +278,8 @@ interface DelegationRunState extends DelegationDetail {
   detached: boolean;
   terminalNotificationSent: boolean;
   turnCount: number;
+  /** Set when a 'completed' run was actually cut off (maxTurns / unresolved overflow). */
+  incomplete?: boolean;
   preapprovedToolRules?: string[];
   toolResultBudgetState: ToolResultBudgetState;
   nodeChanges: AgentChildRunNodeChanges;
@@ -810,6 +812,12 @@ export class AgentDelegationRuntime {
         run.turnCount += 1;
         run.updatedAt = Date.now();
         if (run.definition?.maxTurns && run.turnCount >= run.definition.maxTurns && run.agent?.state.isStreaming) {
+          // The model still wanted to continue but hit the turn cap: this is a
+          // truncation, not a finish. Mark it so a caller that treats
+          // "completed + empty" as a deliberate outcome (Dream's no-op) does not
+          // advance past unfinished work. (A clean finish exactly AT the cap does
+          // not stream after turn_end, so this branch does not fire for it.)
+          run.incomplete = true;
           run.agent.abort();
         }
         return;
@@ -877,6 +885,17 @@ export class AgentDelegationRuntime {
         } else {
           run.status = 'completed';
           run.result = extractFinalAssistantText(agent.state.messages as AgentMessage[]);
+          // A run can reach 'completed' without the model deciding it was done.
+          // The maxTurns abort already flags run.incomplete inline (:814). The
+          // other truncation is an unresolved context overflow: the final turn is
+          // still over the window (reactive compaction declined, or a continuation
+          // overflowed again). Flag it so a caller that treats "completed + empty"
+          // as a deliberate outcome (Dream's no-op) does not mistake truncation
+          // for a finish.
+          const finalAssistant = lastAssistantMessage(agent.state.messages as AgentMessage[]);
+          if (finalAssistant && isContextOverflow(finalAssistant, agent.state.model.contextWindow)) {
+            run.incomplete = true;
+          }
         }
         run.completedAt = Date.now();
         run.updatedAt = run.completedAt;
@@ -1505,6 +1524,7 @@ function runToToolData(run: DelegationRunState): AgentDelegateToolData {
     completed_at: run.completedAt,
     transcript_message_count: run.messages.length,
     ...(nodeChanges ? { node_changes: nodeChanges } : {}),
+    ...(run.incomplete ? { incomplete: true } : {}),
   };
 }
 

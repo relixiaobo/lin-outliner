@@ -416,16 +416,25 @@ The scheduled Dream gate is daily and at-most-once per due occurrence: a
 successful or failed scheduled Dream run meta for that due time prevents another
 scheduled attempt until the next daily due. A user may still trigger a manual
 Dream from Settings; manual runs use the same child path but are not blocked by
-the scheduled due gate. Scheduled and manual runs both maintain exactly one
-direct `#d-memory` container under today's journal node. Its title is a generated
-daily memory headline and may be updated in place on that day's run; it is not the
-fixed word `Memory`.
+the scheduled due gate. When a run has durable memory worth writing, it maintains
+at most one direct `#d-memory` container under today's journal node, whose title
+is a generated daily memory headline updated in place on that day's run, not the
+fixed word `Memory`. Remembering nothing is a valid, common outcome: a run that
+finds nothing worth remembering writes nothing — no container, no nodes — and
+still completes successfully, advancing the watermark. A zero-write completion
+only counts as this deliberate no-op when the run ended cleanly; a run cut off
+mid-work (the delegation hit its `maxTurns` cap while still streaming, or an
+unresolved context overflow truncated it) is flagged `incomplete` and, having
+written nothing, is treated as a failure so the span is retried instead of being
+silently dropped.
 
 The skill applies a high-signal memory filter before writing: keep explicit or
 repeated user preferences, durable project/work facts, decisions, corrections to
 existing assumptions, and recurring collaboration patterns. Skip greetings,
 routine transcript texture, temporary status/weather, one-off operational steps,
-duplicates, and low-confidence guesses. It also uses `node_search` / `node_read`
+duplicates, low-confidence guesses, and any episode that only narrates that Neva
+answered a question or otherwise acted (an episode records a durable fact about
+the user or the work, never an assistant-action log). It also uses `node_search` / `node_read`
 to pull relevant outline context before writing: prior `#d-*` memory nodes are
 the current belief graph to reconcile, and user-authored outline nodes provide
 workspace context for projects, tasks, decisions, tools, and workflows. Prior

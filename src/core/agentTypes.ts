@@ -195,6 +195,13 @@ export interface AgentChildRunActionResult {
   completed_at?: number;
   transcript_message_count: number;
   node_changes?: AgentChildRunNodeChanges;
+  /**
+   * The run reached a terminal `completed` status WITHOUT the model deciding it
+   * was done: a maxTurns abort or an unresolved context overflow cut it off mid
+   * work. Lets callers that treat "completed + empty" as a deliberate outcome
+   * (Dream's no-op) tell truncation apart from a genuine finish.
+   */
+  incomplete?: boolean;
   instructions?: string;
 }
 

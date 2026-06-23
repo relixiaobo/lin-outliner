@@ -16,6 +16,10 @@ future-useful updates.
 
 ## Contract
 
+- Remembering nothing is a valid and common outcome. If a run yields no durable,
+  future-useful memory, write nothing at all — create no `#d-memory` container and
+  no memory nodes — and end. A no-write run is a success, not a failure; never
+  create an empty container or a placeholder episode just to produce output.
 - This is offline maintenance. Do not answer the user or ask questions.
 - Read raw evidence with `past_chats` before writing memory when the run brief
   lists sources. For `consolidate_only: true` runs with no sources, consolidate
@@ -30,9 +34,11 @@ future-useful updates.
   - `#d-guidance` for a future handling note that should improve later help.
 - `#d-belief`, `#d-question`, and `#d-guidance` are optional children. Do not
   force every episode to contain all three; add each only when it is useful.
-- There is at most one `#d-memory` container under today's journal node. Reuse it
-  for every scheduled or manual Dream run that writes to today; never create
-  multiple same-day memory containers.
+- There is at most one `#d-memory` container under today's journal node, and you
+  create it only on a run that actually has memory worth writing. Reuse it for
+  every scheduled or manual Dream run that writes to today; never create multiple
+  same-day memory containers, and never leave the container with nothing
+  meaningful inside it.
 - The `#d-memory` title is a concise daily memory headline generated from the
   day's consolidated topics, not the fixed word `Memory`.
 - Memory is fallible. Write beliefs as concise statements Neva currently holds,
@@ -78,6 +84,14 @@ only as a local historical note, make it at most an episode; create or update a
 `#d-belief` only for durable, self-contained statements. Use `#d-question` for
 uncertainty instead of turning it into a belief. Use `#d-guidance` only when it
 would change how Neva should help in a future similar situation.
+
+An episode records something durable about the user or the work — never a log of
+what Neva did. Do not write an episode (or any memory node) that only narrates
+that Neva answered a question, looked something up, replied in a language, or
+cited a source. For example, `Neva answered a Chengdu weather follow-up in Chinese
+using China Weather as the source` is transcript narration, not memory: the
+weather is transient and "Neva answered X" is an assistant-action log. If the only
+thing that happened is that Neva handled a transient request, remember nothing.
 
 ## Outline Context
 
@@ -147,8 +161,9 @@ label that reads like a detached footnote.
 
 ## Node Shape
 
-Read today's journal node first. Create or reuse exactly one direct child
-`#d-memory` container under it:
+Read today's journal node first. Only on a run that has durable memory worth
+writing, create or reuse exactly one direct child `#d-memory` container under it
+(when nothing is worth writing, create no container and end):
 
 ```text
 - <daily memory headline> #d-memory
@@ -212,7 +227,8 @@ disambiguation.
 5. Apply the Dream Cycle, Valuable Memory Filter, Citation Discipline, and
    Synthesis Rules, then segment the remaining evidence into a small number of
    topical episodes. Skip thin, repetitive, operational, or low-confidence
-   material.
+   material. If nothing survives the filter, write nothing this run and stop — do
+   not create a container or a placeholder episode.
 6. Use `node_create` only when today's `#d-memory` container or a needed episode
    or child memory node is missing.
 7. Use `node_edit` to update today's memory headline and matching beliefs,
