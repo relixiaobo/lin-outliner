@@ -685,6 +685,17 @@ anything.
   #308 + PR3 #310); plan archived. Post-merge follow-up (main, `538aca00`): replaced the `run` source's
   O(N) per-conversation scan with an O(1) resolver — new read-only `agent_run_conversation_id` command
   exposing `readRunMetaProjection` + `conversationIdOfRun`, so the reveal resolves the owner in one read.
+- **dream-thin-data-precheck** (cc-2, PR #320) — manual "Dream now" no longer wastes a model round-trip
+  over too little new evidence. A read-only **`agent_dream_readiness`** command
+  (`previewDreamReadiness()`, mirroring the scheduled volume calc via an extracted `collectDreamEvidence`)
+  runs first; below the volume bar, Settings → Agent → Memory shows a thin-data advisory + a **"Dream
+  anyway"** override instead of running. The manual flow gets its own `'dream'` request scope (not shared
+  `'mutation'`) so a concurrent settings mutation can't strand the "Dreaming…" busy state. **Gate (main):**
+  `/code-review high` (3 findings folded); re-verified on the rebased head — typecheck ✓ ·
+  dream/readiness/backoff `test:core` 20/0 · `agent-settings` e2e **33/33** (the gate caught + the author
+  fixed an `outlinerMock` regression: `agent_dream_readiness` fell through to the `agent_*` `undefined`
+  stub and broke the pre-check pass-through). Spec + both i18n locales synced (A6). Fast-track, **shape
+  (a)** one PR.
 - **dream-memory-precision** (cc-2, PR #319) — follow-up to the #302 set: stop Dream from recording
   low-value memory by making **"remember nothing" a first-class outcome**. Removes the runtime's
   zero-write throw (which forced failure backoff + re-fire) and reframes the SKILL/prompt so a `#d-memory`

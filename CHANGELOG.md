@@ -1567,6 +1567,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Manual "Dream now" pre-checks for new evidence and advises when there is nothing new (PR #320, cc-2)** —
+  a manual Dream over too little new evidence used to be a wasted model round-trip that just no-ops. A new
+  read-only **`agent_dream_readiness`** command (`AgentRuntime.previewDreamReadiness()`, mirroring the
+  scheduled volume calc via an extracted `collectDreamEvidence`) now runs first; below the volume bar,
+  Settings → Agent → Memory surfaces a thin-data advisory plus a **"Dream anyway"** override instead of
+  running. The manual Dream flow gets its **own** `'dream'` request scope (not the shared `'mutation'` one)
+  so an unrelated settings mutation in flight can't invalidate the readiness request and leave
+  "Dreaming…" stuck forever. **Gate (main):** `/code-review high` (3 findings — independent request scope,
+  advisory copy, `collectDreamEvidence` extraction — all folded by the author); re-verified on the rebased
+  head: typecheck ✓ · dream/readiness/backoff `test:core` 20/0 · `agent-settings` e2e **33/33** (the gate
+  caught and the author fixed an `outlinerMock` regression where `agent_dream_readiness` fell through to the
+  `agent_*` `undefined` stub, breaking the pre-check pass-through). Spec (`agent-skills`, `agent-tool-design`)
+  and both i18n locales synced (A6).
 - **Dream remembers nothing instead of recording low-value memory (PR #319, cc-2)** — a Dream over a
   trivial chat used to be forced to write *something* (e.g. a `#d-episode` that only narrated "Neva
   answered a Chengdu weather follow-up") because two forces required output: the runtime threw
