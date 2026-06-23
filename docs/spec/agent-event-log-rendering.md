@@ -503,33 +503,36 @@ restores). The same dock-open + window-focus signal (reported to main as the *vi
 conversation*) governs OS-banner suppression: a banner is suppressed only when the
 user is actually looking at that task's conversation.
 
-Dream state lives in the believer-keyed memory side log (the single pool, on
-disk under the believer principal directory). Durable model-readable memory is
-ordinary timeline outline content; `dream.completed` projects the latest Dream
-watermark and audit summary. The summary's change counts are derived from the
-Dream-channel run's successful `node_create` / `node_edit` writes; a zero-write
-completion is a valid no-op — remembering nothing is a normal Dream outcome, so
-it records `dream.completed` with zero change counts and advances the watermark,
-keeping a considered-but-empty span from being re-read. The no-op is gated on a
+Dream audit state is derived from the protected Dream channel's run meta plus
+`dream.finished` markers. Durable model-readable memory is ordinary timeline
+outline content; legacy `dream.completed` entries remain an audit summary, but
+the Dream cursor is the maximum clean completed `dream.finished.window.end`.
+Change counts are derived from the Dream-channel run's successful `node_create`
+/ `node_edit` writes; a zero-write completion is a valid no-op — remembering
+nothing is a normal Dream outcome, so it records a clean windowed
+`dream.finished` marker with zero change counts, keeping a
+considered-but-empty date window from being re-read. The no-op is gated on a
 **clean** terminal state: a run that ended `completed` but was actually cut off
 mid-work (an unresolved context overflow truncated it) carries an `incomplete`
 flag, and a zero-write run that is
 `incomplete` is treated as a **failure**, not a no-op — `dream.completed` is not
-recorded and the watermark does not advance, so the span is retried rather than
-silently dropped. There is **one** Dream — a runtime-only `memory-dream` skill run that
+recorded and no clean completed window is recorded, so the span is retried rather
+than silently dropped. There is **one** Dream — a runtime-only `memory-dream` skill run that
 consolidates the user's member conversations into `#d-memory`, `#d-episode`,
 `#d-belief`, optional `#d-question`, and optional `#d-guidance` nodes. Scheduled
-Dream attempts are at-most-once per daily due
-occurrence: a failed attempt leaves the watermark unchanged but still prevents
-another scheduled attempt for that same due time. A user may still trigger a
-manual Dream from Settings; manual runs use the same Dream-channel path and
-same-day memory node but bypass the scheduled due gate. Manual consolidate-only
-runs may have no new chat sources and can reconcile outline/prior Dream context
-directly. The Dream run applies the valuable-memory filter, uses `node_search` / `node_read` to
+Dream attempts use the fixed `agent.runtime.dreamSchedule` date-schedule string;
+a failed due may retry after backoff, but at most three attempts are recorded for
+that due before the runtime gives up until the next scheduled occurrence. Manual
+Dream uses the same Dream-channel path and date-window machinery; a manual run
+that completes a day suppresses scheduled Dream for that already-covered day.
+Manual consolidate-only runs may have no new chat sources and can reconcile
+outline/prior Dream context directly. The Dream run applies the valuable-memory
+filter, uses `node_search` / `node_read` to
 reconcile relevant prior `#d-*` memory and user-authored outline context, and —
 when the run has memory worth writing — maintains at most one direct `#d-memory`
-container under today's journal node and updates that container's generated daily
-memory headline in place instead of creating multiple same-day memory containers;
+container under each source-date journal node and updates that container's
+generated daily memory headline in place instead of creating multiple same-day
+memory containers;
 a run that finds nothing worth remembering writes no container at all. The run may write optional `#d-question` nodes for unresolved
 tension and optional `#d-guidance` nodes for future handling, and may delete
 obsolete nodes through `node_delete`; an episode does not need all child tags.
@@ -547,7 +550,8 @@ rather than recall material for normal chats. That audit history is retained as 
 bounded transcript: after Dream completion, the runtime keeps the newest 512
 Dream-channel runs and prunes older run ledgers, their anchor messages, their
 `dream.finished` markers, and their search-index entries. The retention pass does
-not prune durable outline memory nodes or the Dream watermark.
+not prune durable outline memory nodes or the newest retained completed windows
+needed for the derived Dream cursor.
 
 ## Message Model
 

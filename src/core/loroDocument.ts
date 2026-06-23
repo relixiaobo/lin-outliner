@@ -895,6 +895,8 @@ function normalizeReferenceTarget(value: unknown): RichText['inlineRefs'][number
     const throughEventId = typeof range.throughEventId === 'string'
       ? range.throughEventId
       : range.throughEventId === null ? null : undefined;
+    const fromCreatedAtInclusive = numberInteger(range.fromCreatedAtInclusive);
+    const throughCreatedAtExclusive = numberInteger(range.throughCreatedAtExclusive);
     if (fromSeqExclusive !== null && throughSeq !== null && throughSeq > fromSeqExclusive) {
       return {
         kind: 'chat-source',
@@ -904,6 +906,8 @@ function normalizeReferenceTarget(value: unknown): RichText['inlineRefs'][number
           fromSeqExclusive,
           throughSeq,
           ...(throughEventId !== undefined ? { throughEventId } : {}),
+          ...(fromCreatedAtInclusive !== null ? { fromCreatedAtInclusive } : {}),
+          ...(throughCreatedAtExclusive !== null ? { throughCreatedAtExclusive } : {}),
         },
       };
     }

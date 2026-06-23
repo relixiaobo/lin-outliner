@@ -151,22 +151,23 @@ truth.
     mutating nodes, so fabricated or stale raw-source coordinates fail loudly
   - runtime-owned Dream write-back is a private `memory-dream` skill run in the
     protected Dream channel with only `past_chats` and `node_*` memory tools;
-    scheduled runs are at most once per daily due, while Settings can trigger a
-    manual run; both paths read sources since the Dream watermark when sources
-    exist, while the Dream channel itself rejects ordinary chat messages, is
-    forced out of Dream evidence, and contributes no prior active-path transcript
+    scheduled runs use the fixed runtime schedule and retry a due at most three
+    times, while Settings can trigger a manual date-window run; both paths read
+    date-clamped sources derived from Dream-channel completed windows when
+    sources exist, while the Dream channel itself rejects ordinary chat messages,
+    is forced out of Dream evidence, and contributes no prior active-path transcript
     to later Dream model context; the Dream channel retains the newest 512 run
     transcripts and prunes older run ledgers, anchors, terminal markers, and
     search entries; runs gather relevant prior memory/workspace context with `node_search` /
     `node_read`, apply the
     human-dream cycle and valuable-memory filter, and — when the filter leaves
-    memory worth writing — update today's single `#d-memory` container, write
+    memory worth writing — update the source-date `#d-memory` container, write
     optional `#d-episode` / `#d-belief` / `#d-question` / `#d-guidance` nodes, and
     may delete obsolete nodes with `node_delete`; a run that finds nothing worth
-    remembering writes nothing, and a clean run records `dream.completed` and
-    advances the watermark either way — but a run cut off mid-work by unresolved
+    remembering writes nothing, and a clean run records a windowed
+    `dream.finished` marker either way — but a run cut off mid-work by unresolved
     context overflow is flagged `incomplete` and, with zero writes, is retried
-    instead of advancing; manual
+    instead of recording a completed window; manual
     consolidate-only runs can reconcile outline/prior Dream context without new
     chat spans
   - `/dream` and the foreground `dream` tool are removed; Dream history remains

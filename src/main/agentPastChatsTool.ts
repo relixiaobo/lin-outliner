@@ -27,7 +27,7 @@ Modes:
 - recent: pass recent=true to list recent visible user messages when the user asks about previous conversations but gives no concrete keywords.
 - search: pass query to search visible prior conversation messages by concrete terms, names, decisions, file paths, or concepts.
 - read by message: pass message_id from a recent/search result to read surrounding context.
-- read by source: pass source={stream, stream_id, from_seq_exclusive, through_seq?} to read a raw conversation/run span.
+- read by source: pass source={stream, stream_id, from_seq_exclusive, through_seq?} to read a raw conversation/run span. Runtime-provided sources may also include timestamp clamps; preserve them exactly when present.
 
 Search and recent results are navigation. Read before relying on details. The user does not see tool output; restate recalled facts in your answer.`;
 
@@ -76,6 +76,16 @@ const PAST_CHATS_PARAMETERS = {
           type: ['string', 'null'],
           maxLength: 200,
           description: 'Optional tamper-check event id for through_seq.',
+        },
+        from_created_at_inclusive: {
+          type: ['integer', 'null'],
+          minimum: 0,
+          description: 'Optional inclusive createdAt timestamp clamp for runtime-provided date-window sources.',
+        },
+        through_created_at_exclusive: {
+          type: ['integer', 'null'],
+          minimum: 0,
+          description: 'Optional exclusive createdAt timestamp clamp for runtime-provided date-window sources.',
         },
       },
     },
@@ -445,6 +455,8 @@ function visibleSource(source: AgentMemoryStreamSource) {
       from_seq_exclusive: source.range.fromSeqExclusive,
       through_seq: source.range.throughSeq,
       through_event_id: source.range.throughEventId,
+      from_created_at_inclusive: source.range.fromCreatedAtInclusive ?? null,
+      through_created_at_exclusive: source.range.throughCreatedAtExclusive ?? null,
     },
   };
 }
@@ -469,6 +481,8 @@ function sourceParam(value: unknown): PastChatsStreamSourceInput | null {
   const fromSeqExclusive = value.from_seq_exclusive;
   const throughSeq = value.through_seq;
   const throughEventId = value.through_event_id;
+  const fromCreatedAtInclusive = value.from_created_at_inclusive;
+  const throughCreatedAtExclusive = value.through_created_at_exclusive;
   if ((stream !== 'conversation' && stream !== 'run') || typeof streamId !== 'string' || !streamId.trim()) {
     return null;
   }
@@ -481,6 +495,20 @@ function sourceParam(value: unknown): PastChatsStreamSourceInput | null {
   if (throughEventId !== undefined && throughEventId !== null && typeof throughEventId !== 'string') {
     return null;
   }
+  if (
+    fromCreatedAtInclusive !== undefined
+    && fromCreatedAtInclusive !== null
+    && (typeof fromCreatedAtInclusive !== 'number' || !Number.isSafeInteger(fromCreatedAtInclusive) || fromCreatedAtInclusive < 0)
+  ) {
+    return null;
+  }
+  if (
+    throughCreatedAtExclusive !== undefined
+    && throughCreatedAtExclusive !== null
+    && (typeof throughCreatedAtExclusive !== 'number' || !Number.isSafeInteger(throughCreatedAtExclusive) || throughCreatedAtExclusive < 0)
+  ) {
+    return null;
+  }
   return {
     stream,
     streamId: streamId.trim(),
@@ -488,6 +516,8 @@ function sourceParam(value: unknown): PastChatsStreamSourceInput | null {
       fromSeqExclusive,
       throughSeq,
       throughEventId: throughEventId ?? null,
+      ...(typeof fromCreatedAtInclusive === 'number' ? { fromCreatedAtInclusive } : {}),
+      ...(typeof throughCreatedAtExclusive === 'number' ? { throughCreatedAtExclusive } : {}),
     },
   };
 }

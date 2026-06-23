@@ -268,6 +268,20 @@ function runtimeSettings() {
   };
 }
 
+function scheduledTestNow(offsetDays = 0, hour = 4): Date {
+  const date = new Date();
+  date.setDate(date.getDate() + offsetDays);
+  date.setHours(hour, 0, 0, 0);
+  return date;
+}
+
+function localIsoDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 describe('agent runtime past chats integration', () => {
   const roots: string[] = [];
 
@@ -463,7 +477,9 @@ describe('agent runtime past chats integration', () => {
     const created = await runtime.restoreLatestConversation();
     const longEvidence = `Memory Dream should consolidate this prior chat evidence. ${'memory-dream-signal '.repeat(80)}`;
     await runtime.sendMessage(created.conversationId, longEvidence);
-    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00Z'));
+    const now = scheduledTestNow();
+    const expectedWindowEnd = localIsoDate(now);
+    await runtime.runScheduledDreamsForTest(now);
 
     const dreamCall = calls.find((call) => call.text.includes('<memory-dream-run>'));
     const dreamState = await new AgentEventStore(dataRoot).readDreamState(BELIEVER_PRINCIPAL);
@@ -481,7 +497,11 @@ describe('agent runtime past chats integration', () => {
     ].sort());
     expect(dreamCall?.text).toContain("Tenon's private memory consolidation pass");
     expect(dreamCall?.text).toContain('Remembering nothing is a valid and common outcome');
-    expect(dreamCall?.text).toContain('When you do write memory, maintain exactly one direct child #d-memory container for today');
+    expect(dreamCall?.text).toContain('date_window:');
+    expect(dreamCall?.text).toContain(expectedWindowEnd);
+    expect(dreamCall?.text).toContain('from_created_at_inclusive');
+    expect(dreamCall?.text).toContain('through_created_at_exclusive');
+    expect(dreamCall?.text).toContain('When you do write memory, maintain exactly one direct child #d-memory container per source-date journal node');
     expect(dreamCall?.text).toContain('The #d-memory title must be a concise generated daily memory headline');
     expect(dreamCall?.text).toContain('human-dream cycle');
     expect(dreamCall?.text).toContain('replay salient fragments');
@@ -509,6 +529,15 @@ describe('agent runtime past chats integration', () => {
     expect(conversationIds).toContain(DEFAULT_DREAM_CHANNEL_ID);
     expect(conversationIds).not.toContain('lin-agent-memory-dream');
     const store = new AgentEventStore(dataRoot);
+    const dreamFinished = (await store.readEvents(DEFAULT_DREAM_CHANNEL_ID))
+      .filter((event) => event.type === 'dream.finished')
+      .at(-1);
+    expect(dreamFinished).toMatchObject({
+      type: 'dream.finished',
+      trigger: 'schedule',
+      status: 'completed',
+      window: { end: expectedWindowEnd },
+    });
     const dreamRunMeta = await store.readRunMetaProjection(dreamState.lastCompleted!.runId);
     expect(dreamRunMeta?.status).toBe('completed');
     expect(dreamRunMeta?.latestSeq ?? 0).toBeGreaterThan(0);
@@ -578,9 +607,9 @@ describe('agent runtime past chats integration', () => {
     expect(dreamState.lastCompleted?.changes.forgotten).toBe(1);
   });
 
-  test('scheduled Dream attempts at most once per daily due while manual Dream can still run', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-once-root-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-once-data-'));
+  test('scheduled Dream retries a failed due at most three times while manual Dream suppresses the same-day due', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-retry-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-retry-data-'));
     roots.push(localRoot, dataRoot);
     const core = Core.new();
     const today = core.projection().todayId;
@@ -588,11 +617,25 @@ describe('agent runtime past chats integration', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage(fauxText('Captured enough evidence.')),
-        fauxAssistantMessage(fauxText('Nothing durable to write.')),
+        {
+          ...fauxAssistantMessage(fauxText('Too much backlog to hold in context.')),
+          stopReason: 'stop' as const,
+          usage: { ...EMPTY_USAGE, input: 10_000_000 },
+        },
+        {
+          ...fauxAssistantMessage(fauxText('Too much backlog to hold in context.')),
+          stopReason: 'stop' as const,
+          usage: { ...EMPTY_USAGE, input: 10_000_000 },
+        },
+        {
+          ...fauxAssistantMessage(fauxText('Too much backlog to hold in context.')),
+          stopReason: 'stop' as const,
+          usage: { ...EMPTY_USAGE, input: 10_000_000 },
+        },
         fauxAssistantMessage([
           fauxToolCall('node_create', {
             parent_id: today,
-            outline: '- Retry day memory #d-memory\n  - Durable retry evidence #d-episode',
+            outline: '- Manual retry memory #d-memory\n  - Durable manual evidence #d-episode',
           }, { id: 'tool-memory-dream-retry-node-create' }),
         ]),
         fauxAssistantMessage(fauxText('Memory Dream complete.')),
@@ -614,39 +657,49 @@ describe('agent runtime past chats integration', () => {
           enabled: true,
           apiKey: 'test-key',
         }),
-        runtimeSettingsLoader: async () => runtimeSettings(),
+        runtimeSettingsLoader: async () => ({ ...runtimeSettings(), compactEnabled: false }),
         streamFn: script.streamFn,
       },
     );
 
     const created = await runtime.restoreLatestConversation();
-    const longEvidence = `Memory Dream should run only once per day. ${'memory-dream-once '.repeat(80)}`;
+    const longEvidence = `Memory Dream should retry failed due windows. ${'memory-dream-retry '.repeat(80)}`;
     await runtime.sendMessage(created.conversationId, longEvidence);
 
-    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00Z'));
-    let dreamState = await new AgentEventStore(dataRoot).readDreamState(BELIEVER_PRINCIPAL);
+    const dueDay = scheduledTestNow();
+    await runtime.runScheduledDreamsForTest(dueDay);
     expect(calls).toHaveLength(2);
-    expect(script.pendingCount()).toBe(2);
-    // The first scheduled run finds nothing durable: a valid no-op completion.
-    expect(dreamState.lastCompleted?.trigger).toBe('schedule');
-    expect(dreamState.lastCompleted?.changes.added).toBe(0);
+    expect(script.pendingCount()).toBe(4);
+    let store = new AgentEventStore(dataRoot);
+    let dreamFinished = (await store.readEvents(DEFAULT_DREAM_CHANNEL_ID))
+      .filter((event) => event.type === 'dream.finished')
+      .at(-1);
+    expect(dreamFinished).toMatchObject({ type: 'dream.finished', trigger: 'schedule', status: 'failed' });
 
-    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T05:00:00Z'));
-    dreamState = await new AgentEventStore(dataRoot).readDreamState(BELIEVER_PRINCIPAL);
-    // At most once per daily due: the second same-day scheduled attempt does not fire.
-    expect(calls).toHaveLength(2);
+    await runtime.runScheduledDreamsForTest(new Date(dueDay.getTime() + 5 * 60_000));
+    await runtime.runScheduledDreamsForTest(new Date(dueDay.getTime() + 15 * 60_000));
+    expect(calls).toHaveLength(4);
     expect(script.pendingCount()).toBe(2);
-    expect(dreamState.lastCompleted?.trigger).toBe('schedule');
+    dreamFinished = (await store.readEvents(DEFAULT_DREAM_CHANNEL_ID))
+      .filter((event) => event.type === 'dream.finished')
+      .at(-1);
+    expect(dreamFinished).toMatchObject({ type: 'dream.finished', trigger: 'schedule', status: 'failed' });
+
+    await runtime.runScheduledDreamsForTest(new Date(dueDay.getTime() + 6 * 60 * 60_000));
+    expect(calls).toHaveLength(4);
+    expect(script.pendingCount()).toBe(2);
 
     await runtime.runDreamNow();
-    dreamState = await new AgentEventStore(dataRoot).readDreamState(BELIEVER_PRINCIPAL);
-    const dreamCalls = calls.filter((call) => call.text.includes('<memory-dream-run>'));
-    expect(dreamCalls.length).toBeGreaterThanOrEqual(2);
-    for (const call of dreamCalls.slice(1)) {
-      expect(call.text).not.toContain('Nothing durable to write.');
-      expect(call.text).not.toContain('Scheduled Dream');
-    }
-    expect(calls).toHaveLength(4);
+    store = new AgentEventStore(dataRoot);
+    let dreamState = await store.readDreamState(BELIEVER_PRINCIPAL);
+    expect(calls).toHaveLength(6);
+    expect(script.pendingCount()).toBe(0);
+    expect(dreamState.lastCompleted?.trigger).toBe('manual');
+    expect(dreamState.lastCompleted?.changes.added).toBeGreaterThan(0);
+
+    await runtime.runScheduledDreamsForTest(new Date(dueDay.getTime() + 7 * 60 * 60_000));
+    dreamState = await store.readDreamState(BELIEVER_PRINCIPAL);
+    expect(calls).toHaveLength(6);
     expect(script.pendingCount()).toBe(0);
     expect(dreamState.lastCompleted?.trigger).toBe('manual');
     expect(dreamState.lastCompleted?.changes.added).toBeGreaterThan(0);
@@ -686,7 +739,7 @@ describe('agent runtime past chats integration', () => {
     const created = await runtime.restoreLatestConversation();
     const longEvidence = `Memory Dream sees plenty of low-value chit-chat here. ${'memory-dream-empty '.repeat(80)}`;
     await runtime.sendMessage(created.conversationId, longEvidence);
-    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00Z'));
+    await runtime.runScheduledDreamsForTest(scheduledTestNow());
 
     const dreamState = await new AgentEventStore(dataRoot).readDreamState(BELIEVER_PRINCIPAL);
     expect(script.pendingCount()).toBe(0);
@@ -747,7 +800,7 @@ describe('agent runtime past chats integration', () => {
     const created = await runtime.restoreLatestConversation();
     const longEvidence = `Memory Dream should not count preview-only edits. ${'memory-dream-preview '.repeat(80)}`;
     await runtime.sendMessage(created.conversationId, longEvidence);
-    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00Z'));
+    await runtime.runScheduledDreamsForTest(scheduledTestNow());
 
     const dreamState = await new AgentEventStore(dataRoot).readDreamState(BELIEVER_PRINCIPAL);
     expect(script.pendingCount()).toBe(0);
@@ -807,7 +860,7 @@ describe('agent runtime past chats integration', () => {
     const created = await runtime.restoreLatestConversation();
     const longEvidence = `Memory Dream sees a large backlog here. ${'memory-dream-overflow '.repeat(80)}`;
     await runtime.sendMessage(created.conversationId, longEvidence);
-    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00Z'));
+    await runtime.runScheduledDreamsForTest(scheduledTestNow());
 
     const store = new AgentEventStore(dataRoot);
     const dreamState = await store.readDreamState(BELIEVER_PRINCIPAL);

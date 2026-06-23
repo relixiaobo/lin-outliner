@@ -40,6 +40,7 @@ function dreamEntry(): AgentRenderDreamTaskEntity {
     updatedAt: 150,
     completedAt: 150,
     runId: 'dream-run-1',
+    window: { start: '2026-06-22', end: '2026-06-23' },
     processed: { totalMessageCount: 3, totalCharCount: 900, consolidateOnly: false },
     changes: { added: 2, updated: 1, forgotten: 0, skipped: 0 },
   };
@@ -53,6 +54,7 @@ describe('Settings → Agent Dream history group', () => {
     expect(rendered.container.textContent).toContain('Dream history');
     expect(rendered.container.textContent).toContain('Memory Dream');
     expect(rendered.container.textContent).toContain('Scheduled');
+    expect(rendered.container.textContent).toContain('2026-06-22 to 2026-06-23');
     // 2 added + 1 updated + 0 forgotten = 3 memory changes.
     expect(rendered.container.textContent).toContain('3 memory changes');
     expect(rendered.container.textContent).toContain('3 messages');

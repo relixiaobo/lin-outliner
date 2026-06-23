@@ -3,6 +3,7 @@ import { isHiddenAgentContextBlock } from '../core/agentAttachments';
 import {
   type AgentEvent,
   type AgentEventMessageRecord,
+  type AgentDreamWindow,
   type AgentMemoryEntry,
   type AgentMemorySource,
   type AgentMemoryStreamSource,
@@ -64,6 +65,7 @@ export interface DreamMemoryExtractionConversationInput {
   conversationId: string;
   events: readonly AgentEvent[];
   fromSeqExclusive: number;
+  createdAtRange?: DreamMemoryExtractionCreatedAtRange;
 }
 
 /**
@@ -79,6 +81,12 @@ export interface DreamMemoryExtractionRunInput {
   originWorkspace?: string;
   events: readonly AgentEvent[];
   fromSeqExclusive: number;
+  createdAtRange?: DreamMemoryExtractionCreatedAtRange;
+}
+
+export interface DreamMemoryExtractionCreatedAtRange {
+  fromInclusive: number;
+  throughExclusive: number;
 }
 
 export function buildDreamMemoryExtractionSpanFromEvents(
@@ -109,8 +117,12 @@ export function buildDreamMemoryExtractionSpanFromEvidence(
         fromSeqExclusive: input.fromSeqExclusive,
         throughSeq: evidence.throughSeq,
         throughEventId: evidence.throughEventId,
+        ...(input.createdAtRange ? {
+          fromCreatedAtInclusive: input.createdAtRange.fromInclusive,
+          throughCreatedAtExclusive: input.createdAtRange.throughExclusive,
+        } : {}),
       },
-    }));
+    }), input.createdAtRange);
     if (!range) continue;
     ranges.push(range.range);
     renderedSections.push(`## Conversation ${input.conversationId}\n${range.transcript}`);
@@ -126,8 +138,12 @@ export function buildDreamMemoryExtractionSpanFromEvidence(
         fromSeqExclusive: input.fromSeqExclusive,
         throughSeq: evidence.throughSeq,
         throughEventId: evidence.throughEventId,
+        ...(input.createdAtRange ? {
+          fromCreatedAtInclusive: input.createdAtRange.fromInclusive,
+          throughCreatedAtExclusive: input.createdAtRange.throughExclusive,
+        } : {}),
       },
-    }));
+    }), input.createdAtRange);
     if (!range) continue;
     range.range.conversationId = input.conversationId;
     ranges.push(range.range);
@@ -159,6 +175,10 @@ export function buildConsolidateOnlyDreamMemoryExtractionSpan(runId: string): Dr
     totalCharCount: 0,
     consolidateOnly: true,
   };
+}
+
+export function dreamWindowSummary(window: AgentDreamWindow): string {
+  return window.start === window.end ? window.start : `${window.start} -> ${window.end}`;
 }
 
 /**
@@ -339,8 +359,9 @@ function evidenceRangeFromEvents(
   events: readonly AgentEvent[],
   fromSeqExclusive: number,
   makeSource: (evidence: AgentMemoryStreamEvidence) => AgentMemoryStreamSource,
+  createdAtRange?: DreamMemoryExtractionCreatedAtRange,
 ): { range: DreamMemoryExtractionSourceRange; messages: AgentEventMessageRecord[]; transcript: string } | null {
-  const evidence = extractMemoryStreamEvidence(events, { fromSeqExclusive });
+  const evidence = extractMemoryStreamEvidence(events, { fromSeqExclusive, createdAtRange });
   if (!evidence) return null;
   return {
     messages: evidence.messages,
@@ -365,12 +386,16 @@ export interface AgentMemoryStreamEvidence {
 
 export function extractMemoryStreamEvidence(
   events: readonly AgentEvent[],
-  range: { fromSeqExclusive: number; throughSeq?: number },
+  range: { fromSeqExclusive: number; throughSeq?: number; createdAtRange?: DreamMemoryExtractionCreatedAtRange },
 ): AgentMemoryStreamEvidence | null {
   const sortedEvents = [...events].sort((left, right) => left.seq - right.seq);
   const evidenceEvents = sortedEvents.filter((event) => (
     event.seq > range.fromSeqExclusive
     && (range.throughSeq === undefined || event.seq <= range.throughSeq)
+    && (!range.createdAtRange || (
+      event.createdAt >= range.createdAtRange.fromInclusive
+      && event.createdAt < range.createdAtRange.throughExclusive
+    ))
     && isDreamEvidenceEvent(event)
   ));
   if (evidenceEvents.length === 0) return null;
@@ -420,7 +445,9 @@ export function extractMemoryStreamEvidence(
   // Dream pass would re-read every historical run ledger.
   const throughSeq = range.throughSeq;
   const scanTail = throughSeq === undefined
-    ? sortedEvents.at(-1)!
+    ? (range.createdAtRange
+      ? sortedEvents.filter((event) => event.createdAt < range.createdAtRange!.throughExclusive).at(-1) ?? evidenceEvents.at(-1)!
+      : sortedEvents.at(-1)!)
     : sortedEvents.filter((event) => event.seq <= throughSeq).at(-1) ?? evidenceEvents.at(-1)!;
   return {
     messages,

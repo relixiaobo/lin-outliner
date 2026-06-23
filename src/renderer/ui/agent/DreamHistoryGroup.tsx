@@ -64,6 +64,7 @@ export function dreamMetaChips(
     t.agent.task.status[entry.status],
   ];
   if (entry.processed) parts.push(t.agent.task.messages({ count: entry.processed.totalMessageCount }));
+  if (entry.window) parts.push(t.settings.memory.dreamWindow(entry.window));
   if (entry.changes) {
     parts.push(t.agent.task.memoryChanges({
       count: entry.changes.added + entry.changes.updated + entry.changes.forgotten,

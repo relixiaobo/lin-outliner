@@ -12,6 +12,7 @@ const RUNTIME_SETTINGS: AgentRuntimeSettings = {
   automaticSkillsEnabled: true,
   slashSkillsEnabled: true,
   compactEnabled: true,
+  dreamSchedule: '2026-01-01T03:00 RRULE:FREQ=DAILY',
   additionalSkillDirectories: ['/tmp/skills'],
   providerTimeoutMs: null,
   providerMaxRetries: null,
@@ -151,10 +152,14 @@ describe('agent self-maintenance tools', () => {
     expect(() => normalizeRuntimeSettingPatch('agent.runtime.additionalSkillDirectories', [])).toThrow(
       'Unsupported config setting: agent.runtime.additionalSkillDirectories',
     );
+    expect(() => normalizeRuntimeSettingPatch('agent.runtime.dreamSchedule', '2026-01-01T04:00 RRULE:FREQ=DAILY')).toThrow(
+      'agent.runtime.dreamSchedule is user-managed and cannot be changed by the agent.',
+    );
   });
 
   test('runtime setting reads use the same whitelist as writes', () => {
     expect(readRuntimeSetting(RUNTIME_SETTINGS, 'agent.runtime.compactEnabled')).toBe(true);
+    expect(readRuntimeSetting(RUNTIME_SETTINGS, 'agent.runtime.dreamSchedule')).toBe('2026-01-01T03:00 RRULE:FREQ=DAILY');
     expect(() => readRuntimeSetting(RUNTIME_SETTINGS, 'agent.runtime.memoryIsolation')).toThrow(
       'Unsupported config setting: agent.runtime.memoryIsolation',
     );

@@ -433,6 +433,8 @@ export interface AgentMemorySourceRange {
   fromSeqExclusive: number;
   throughSeq: number;
   throughEventId: string | null;
+  fromCreatedAtInclusive?: number;
+  throughCreatedAtExclusive?: number;
 }
 
 /**
@@ -491,6 +493,13 @@ export interface AgentMemoryAccessedEntry {
 }
 
 export type AgentDreamTrigger = 'schedule' | 'manual';
+
+export interface AgentDreamWindow {
+  /** Inclusive ISO local date. */
+  start: string;
+  /** Inclusive ISO local date. */
+  end: string;
+}
 
 /**
  * ONE consolidation-frontier cursor shape for every stream (a conversation log
@@ -1036,6 +1045,7 @@ export interface DreamFinishedEvent extends AgentEventBase {
   agentId: string;
   runId?: string;
   trigger: AgentDreamTrigger;
+  window?: AgentDreamWindow;
   status: AgentDreamMarkerStatus;
   startedAt: number;
   completedAt: number;
@@ -1221,6 +1231,7 @@ export interface AgentDreamRecord {
   agentId: string;
   runId?: string;
   trigger: AgentDreamTrigger;
+  window?: AgentDreamWindow;
   status: AgentDreamMarkerStatus;
   startedAt: number;
   completedAt: number;
@@ -1744,6 +1755,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         agentId: event.agentId,
         runId: event.runId,
         trigger: event.trigger,
+        window: event.window,
         status: event.status,
         startedAt: event.startedAt,
         completedAt: event.completedAt,

@@ -24,6 +24,8 @@ export function AgentChatSourceReference({
       data-inline-ref-chat-from-seq-exclusive={target.range.fromSeqExclusive}
       data-inline-ref-chat-through-seq={target.range.throughSeq}
       data-inline-ref-chat-through-event-id={target.range.throughEventId ?? undefined}
+      data-inline-ref-chat-from-created-at-inclusive={target.range.fromCreatedAtInclusive ?? undefined}
+      data-inline-ref-chat-through-created-at-exclusive={target.range.throughCreatedAtExclusive ?? undefined}
       href={href}
       onClick={(event) => {
         event.preventDefault();

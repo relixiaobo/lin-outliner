@@ -100,7 +100,10 @@ export function formatReferenceMarker(label: string, target: ReferenceTarget): s
   if (target.kind === 'chat-source') {
     const streamId = encodeReferenceValue(target.streamId.trim());
     const eventId = target.range.throughEventId ? `:${encodeReferenceValue(target.range.throughEventId)}` : '';
-    return `[[chat:${safeLabel}^${target.stream}:${streamId}@${target.range.fromSeqExclusive}-${target.range.throughSeq}${eventId}]]`;
+    const createdAtClamp = target.range.fromCreatedAtInclusive !== undefined && target.range.throughCreatedAtExclusive !== undefined
+      ? `~${target.range.fromCreatedAtInclusive}-${target.range.throughCreatedAtExclusive}`
+      : '';
+    return `[[chat:${safeLabel}^${target.stream}:${streamId}@${target.range.fromSeqExclusive}-${target.range.throughSeq}${eventId}${createdAtClamp}]]`;
   }
   const path = target.path;
   const encodedPath = encodeReferenceValue(path);
@@ -323,7 +326,14 @@ function parseChatSourceReferenceValue(rawValue: string): Extract<ReferenceTarge
   const at = afterStream.indexOf('@');
   if (at <= 0) return null;
   const rawStreamId = afterStream.slice(0, at);
-  const rawRange = afterStream.slice(at + 1);
+  const rawRangeWithClamp = afterStream.slice(at + 1);
+  const clampSeparator = rawRangeWithClamp.lastIndexOf('~');
+  const possibleClamp = clampSeparator >= 0
+    ? parseChatSourceCreatedAtClamp(rawRangeWithClamp.slice(clampSeparator + 1))
+    : {};
+  const hasClamp = possibleClamp.fromCreatedAtInclusive !== undefined
+    && possibleClamp.throughCreatedAtExclusive !== undefined;
+  const rawRange = hasClamp ? rawRangeWithClamp.slice(0, clampSeparator) : rawRangeWithClamp;
   const eventSeparator = rawRange.indexOf(':');
   const rawBounds = eventSeparator >= 0 ? rawRange.slice(0, eventSeparator) : rawRange;
   const rawEventId = eventSeparator >= 0 ? rawRange.slice(eventSeparator + 1) : '';
@@ -343,8 +353,25 @@ function parseChatSourceReferenceValue(rawValue: string): Extract<ReferenceTarge
       fromSeqExclusive,
       throughSeq,
       ...(throughEventId ? { throughEventId } : {}),
+      ...possibleClamp,
     },
   };
+}
+
+function parseChatSourceCreatedAtClamp(rawClamp: string): {
+  fromCreatedAtInclusive?: number;
+  throughCreatedAtExclusive?: number;
+} {
+  if (!rawClamp) return {};
+  const dash = rawClamp.indexOf('-');
+  if (dash <= 0) return {};
+  const fromCreatedAtInclusive = parseNonNegativeInteger(rawClamp.slice(0, dash));
+  const throughCreatedAtExclusive = parseNonNegativeInteger(rawClamp.slice(dash + 1));
+  return fromCreatedAtInclusive !== null
+    && throughCreatedAtExclusive !== null
+    && throughCreatedAtExclusive > fromCreatedAtInclusive
+    ? { fromCreatedAtInclusive, throughCreatedAtExclusive }
+    : {};
 }
 
 function parseNonNegativeInteger(value: string): number | null {

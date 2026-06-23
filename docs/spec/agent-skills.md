@@ -414,28 +414,34 @@ Dream-only run profile. That profile disables user skills and delegation, and it
 tool catalog is limited to `past_chats`, `node_search`, `node_read`,
 `node_create`, `node_edit`, and `node_delete`.
 
-The scheduled Dream gate is daily and at-most-once per due occurrence: a
-successful or failed scheduled Dream run meta for that due time prevents another
-scheduled attempt until the next daily due. A user may still trigger a manual
-Dream from Settings; manual runs use the same restricted Dream-channel path but
-are not blocked by the scheduled due gate. Before a manual run, a cheap read-only readiness
-pre-check (`agent_dream_readiness`) counts the new evidence since the watermark
-against the same volume bar the scheduled path uses; when it is below the bar,
-the Settings control advises that there is little new chat since the last Dream —
-a run now would mostly reconcile existing memory rather than capture new
-conversations — and offers a "Dream anyway" override rather than spending a model
-round-trip by default. (The advisory is about thin *new chat volume*, not "nothing
-to do": a sub-bar manual run is still a valid consolidate-only reconciliation.)
-When a run has durable memory worth writing, it maintains
-at most one direct `#d-memory` container under today's journal node, whose title
-is a generated daily memory headline updated in place on that day's run, not the
-fixed word `Memory`. Remembering nothing is a valid, common outcome: a run that
-finds nothing worth remembering writes nothing — no container, no nodes — and
-still completes successfully, advancing the watermark. A zero-write completion
-only counts as this deliberate no-op when the run ended cleanly; a run cut off
-mid-work (an unresolved context overflow truncated it) is flagged `incomplete`
-and, having written nothing, is treated as
-a failure so the span is retried instead of being silently dropped.
+The scheduled Dream gate uses the user-managed `agent.runtime.dreamSchedule`
+date-schedule string (default: a fixed local daily 03:00 occurrence). A scheduled
+due can retry after transient failure, but only up to three attempts for the same
+due time; after that it gives up until the next scheduled occurrence. The
+runtime derives the Dream cursor from clean completed `dream.finished.window`
+markers in the protected Dream channel, not from mutable scheduler state. A
+manual Dream uses the same restricted Dream-channel path and date-window
+machinery; when it completes a day, that completed window suppresses the
+scheduled Dream for that already-covered day. Before a manual run, a cheap
+read-only readiness pre-check (`agent_dream_readiness`) counts evidence in the
+default manual date window against the same volume bar the scheduled path uses;
+when it is below the bar, the Settings control advises that there is little new
+chat in this Dream window — a run now would mostly reconcile existing memory
+rather than capture new conversations — and offers a "Dream anyway" override
+rather than spending a model round-trip by default. (The advisory is about thin
+*new chat volume*, not "nothing to do": a sub-bar manual run is still a valid
+consolidate-only reconciliation.)
+When a run has durable memory worth writing, it maintains at most one direct
+`#d-memory` container under each source-date journal node, whose title is a
+generated daily memory headline updated in place for that date, not the fixed
+word `Memory`. Remembering nothing is a valid, common outcome: a run that finds
+nothing worth remembering writes nothing — no container, no nodes — and still
+completes successfully, recording a clean windowed `dream.finished` marker so
+that date window is not re-read. A zero-write completion only counts as this
+deliberate no-op when the run ended cleanly; a run cut off mid-work (an
+unresolved context overflow truncated it) is flagged `incomplete` and, having
+written nothing, is treated as a failure so the span is retried instead of being
+silently dropped.
 
 The skill applies a high-signal memory filter before writing: keep explicit or
 repeated user preferences, durable project/work facts, decisions, corrections to
@@ -449,8 +455,8 @@ the current belief graph to reconcile, and user-authored outline nodes provide
 workspace context for projects, tasks, decisions, tools, and workflows. Prior
 Dream output is never self-confirming evidence by itself. Manual
 `consolidate_only` runs may have no new chat sources; in that case Dream
-consolidates from today's outline, prior Dream memory, and relevant user-authored
-outline context.
+consolidates from source-date outline context, prior Dream memory, and relevant
+user-authored outline context.
 
 Dream writes ordinary tagged outline nodes with a human-dream cycle:
 `Replay → Associate → Reconcile → Abstract → Expose tension → Simulate future →
@@ -479,7 +485,8 @@ source evidence only through the runtime-provided prompt, `past_chats`, and
 explicit outline memory/context tools. The audit transcript is bounded: the
 runtime retains the most recent 512 Dream-channel runs and prunes older run
 ledgers, their launch anchors, their `dream.finished` markers, and their search
-index entries without pruning durable memory nodes or the Dream watermark.
+index entries without pruning durable memory nodes or completed date windows
+needed for the derived Dream cursor.
 Durable model-readable results are ordinary `#d-memory`, `#d-episode`,
 `#d-belief`, `#d-question`, and `#d-guidance` outline nodes.
 

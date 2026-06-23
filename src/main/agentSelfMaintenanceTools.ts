@@ -113,6 +113,8 @@ export function normalizeRuntimeSettingPatch(setting: string, value: unknown): A
       return { automaticSkillsEnabled: requireBoolean(setting, value) };
     case 'agent.runtime.slashSkillsEnabled':
       return { slashSkillsEnabled: requireBoolean(setting, value) };
+    case 'agent.runtime.dreamSchedule':
+      throw new Error(`${setting} is user-managed and cannot be changed by the agent.`);
     case 'agent.runtime.disabledSkills':
       return { disabledSkills: requireStringArray(setting, value) };
     case 'agent.runtime.disabledAgents':
@@ -139,6 +141,8 @@ export function readRuntimeSetting(settings: AgentRuntimeSettings, setting: stri
       return settings.automaticSkillsEnabled;
     case 'agent.runtime.slashSkillsEnabled':
       return settings.slashSkillsEnabled;
+    case 'agent.runtime.dreamSchedule':
+      return settings.dreamSchedule;
     case 'agent.runtime.disabledSkills':
       return settings.disabledSkills ?? [];
     case 'agent.runtime.disabledAgents':

@@ -74,6 +74,8 @@ export interface PastChatsStreamSourceInput {
     fromSeqExclusive: number;
     throughSeq?: number;
     throughEventId?: string | null;
+    fromCreatedAtInclusive?: number;
+    throughCreatedAtExclusive?: number;
   };
 }
 
@@ -485,6 +487,7 @@ export class AgentPastChatsService {
     const evidence = extractMemoryStreamEvidence(events, {
       fromSeqExclusive: rawSource.range.fromSeqExclusive,
       throughSeq: rawSource.range.throughSeq,
+      createdAtRange: createdAtRangeFromSource(rawSource),
     });
     if (!evidence) {
       return pastChatsError('SOURCE_NOT_FOUND', `No evidence messages were found for ${rawSource.stream} ${rawSource.streamId}.`);
@@ -543,6 +546,7 @@ export class AgentPastChatsService {
         fromSeqExclusive: Math.max(0, Math.trunc(input.range.fromSeqExclusive)),
         throughSeq: throughSeq ?? tail.seq,
         throughEventId,
+        ...normalizeSourceCreatedAtRange(input.range),
       },
     };
   }
@@ -568,6 +572,40 @@ export class AgentPastChatsService {
     this.visibleConversationCache.set(conversationId, next);
     return next;
   }
+}
+
+function createdAtRangeFromSource(source: AgentMemoryStreamSource): { fromInclusive: number; throughExclusive: number } | undefined {
+  return createdAtRangeFromRange(source.range);
+}
+
+function createdAtRangeFromRange(range: {
+  fromCreatedAtInclusive?: number;
+  throughCreatedAtExclusive?: number;
+}): { fromInclusive: number; throughExclusive: number } | undefined {
+  const fromInclusive = normalizeFiniteTimestamp(range.fromCreatedAtInclusive);
+  const throughExclusive = normalizeFiniteTimestamp(range.throughCreatedAtExclusive);
+  return fromInclusive !== null && throughExclusive !== null && throughExclusive > fromInclusive
+    ? { fromInclusive, throughExclusive }
+    : undefined;
+}
+
+function normalizeSourceCreatedAtRange(range: {
+  fromCreatedAtInclusive?: number;
+  throughCreatedAtExclusive?: number;
+}): Pick<AgentMemoryStreamSource['range'], 'fromCreatedAtInclusive' | 'throughCreatedAtExclusive'> {
+  const normalized = createdAtRangeFromRange(range);
+  return normalized
+    ? {
+      fromCreatedAtInclusive: normalized.fromInclusive,
+      throughCreatedAtExclusive: normalized.throughExclusive,
+    }
+    : {};
+}
+
+function normalizeFiniteTimestamp(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.trunc(value))
+    : null;
 }
 
 export function pastChatsError(

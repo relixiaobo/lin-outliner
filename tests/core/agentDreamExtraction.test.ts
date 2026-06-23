@@ -99,6 +99,22 @@ function conversationSpan(events: readonly AgentEvent[], fromSeqExclusive: numbe
   });
 }
 
+function conversationSpanWithCreatedAtRange(
+  events: readonly AgentEvent[],
+  fromSeqExclusive: number,
+  createdAtRange: { fromInclusive: number; throughExclusive: number },
+) {
+  return buildDreamMemoryExtractionSpanFromEvidence('run-new', {
+    conversations: [{
+      conversationId: 'conversation-1',
+      events: [conversationCreated(), ...events],
+      fromSeqExclusive,
+      createdAtRange,
+    }],
+    runs: [],
+  });
+}
+
 const promptText = (request: ReturnType<typeof buildDreamMemoryExtractionRequest>): string =>
   request.content[0]?.type === 'text' ? request.content[0].text : '';
 
@@ -149,6 +165,40 @@ describe('agent dream extraction', () => {
     });
     expect(span?.transcript).toContain('Remember that concise answers are preferred.');
     expect(span?.transcript).toContain('I will answer concisely.');
+  });
+
+  test('filters Dream evidence by created-at range while preserving the scanned source tail', () => {
+    const windowStart = 1_800_010_000_000;
+    const windowEnd = windowStart + 10_000;
+    const events = [
+      { ...userMessage(2, 'user-before-window', 'Ignore this stale preference.', null), createdAt: windowStart - 1 },
+      { ...userMessage(3, 'user-in-window', 'Remember source-date Dream windows.', 'user-before-window', 'run-new'), createdAt: windowStart },
+      { ...assistantStarted(4, 'assistant-in-window', 'user-in-window', 'run-new'), createdAt: windowStart + 1 },
+      { ...assistantCompleted(5, 'assistant-in-window', 'Dream should write to the source date.', 'run-new'), createdAt: windowStart + 2 },
+      { ...runCompleted(6, 'run-new'), createdAt: windowEnd - 1 },
+      { ...userMessage(7, 'user-after-window', 'Ignore this later preference.', 'assistant-in-window'), createdAt: windowEnd },
+    ];
+
+    const span = conversationSpanWithCreatedAtRange(events, 1, {
+      fromInclusive: windowStart,
+      throughExclusive: windowEnd,
+    });
+
+    expect(span?.sources[0]).toEqual({
+      stream: 'conversation',
+      streamId: 'conversation-1',
+      range: {
+        fromSeqExclusive: 1,
+        throughSeq: 6,
+        throughEventId: 'conversation-1-event-6',
+        fromCreatedAtInclusive: windowStart,
+        throughCreatedAtExclusive: windowEnd,
+      },
+    });
+    expect(span?.transcript).toContain('Remember source-date Dream windows.');
+    expect(span?.transcript).toContain('Dream should write to the source date.');
+    expect(span?.transcript).not.toContain('stale preference');
+    expect(span?.transcript).not.toContain('later preference');
   });
 
   test('the single believer-pool prompt writes subject-named third-person facts', () => {
