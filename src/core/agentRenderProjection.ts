@@ -229,6 +229,23 @@ export interface AgentRenderDreamTaskEntity {
   changes?: AgentDreamCompletedChanges;
 }
 
+/**
+ * A cheap, read-only pre-check for the manual "Dream now" control: how much new
+ * evidence has accrued since the last Dream watermark, and whether it clears the
+ * same volume bar the scheduled path uses. Computed without running the model, so
+ * the UI can advise "probably nothing new to consolidate" and offer a forced run.
+ */
+export interface AgentDreamReadiness {
+  /** New evidence messages since the Dream watermark, across member conversations. */
+  newMessageCount: number;
+  /** New evidence characters since the Dream watermark. */
+  newCharCount: number;
+  /** The volume bar the scheduled Dream uses to decide a run is worthwhile. */
+  thresholdChars: number;
+  /** `newCharCount < thresholdChars` — a manual run is likely a no-op. */
+  belowThreshold: boolean;
+}
+
 export type AgentRenderTaskEntity = AgentRenderChildRunTaskEntity | AgentRenderDreamTaskEntity;
 
 export interface AgentRenderEntities {

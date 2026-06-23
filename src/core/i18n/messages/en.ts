@@ -190,6 +190,10 @@ export const en = {
       dreamRunNowButton: 'Run',
       dreamRunNowBusy: 'Dreaming…',
       dreamRunNotice: 'Dream completed',
+      dreamThinTitle: 'Likely nothing new to consolidate',
+      dreamThinDetail: ({ messages, chars }: { messages: number; chars: number }) =>
+        `Only ${messages} new message${messages === 1 ? '' : 's'} (~${chars} characters) since the last Dream.`,
+      dreamRunAnywayButton: 'Dream anyway',
       activeStatus: 'Active',
       invalidatedStatus: 'Inactive',
       createdAt: ({ date }: { date: string }) => `Created ${date}`,

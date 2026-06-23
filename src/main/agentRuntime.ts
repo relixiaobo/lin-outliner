@@ -265,6 +265,7 @@ import {
   buildAgentRenderProjection,
   renderTaskStatusFromRunStatus,
   type AgentRenderMessageEntity,
+  type AgentDreamReadiness,
   type AgentRenderActiveCompaction,
   type AgentRenderActiveDream,
   type AgentRenderLiveContent,
@@ -3759,6 +3760,27 @@ export class AgentRuntime {
     if (!this.dreamMemoryExtractionEnabled()) throw new Error('Memory Dream is disabled.');
     if (!await this.getActiveProviderConfig()) throw new Error('No enabled agent provider is configured.');
     return this.fireDreamForPool(this.agentPrincipal(), 'manual', new Date());
+  }
+
+  /**
+   * Cheap, read-only pre-check for the manual "Dream now" control: count the new
+   * evidence since the Dream watermark and compare it to the same volume bar the
+   * scheduled path uses, WITHOUT running the model. Lets the UI advise that a
+   * manual run is likely a no-op (and offer to run anyway). Mirrors the volume
+   * computation in createDreamMemoryExtractionTask.
+   */
+  async previewDreamReadiness(): Promise<AgentDreamReadiness> {
+    const dreamState = await this.getEventStore().readDreamState(this.agentPrincipal());
+    const conversations = await this.collectDreamConversationInputs(dreamState);
+    const span = buildDreamMemoryExtractionSpanFromEvents('dream-readiness', conversations);
+    const newCharCount = span?.totalCharCount ?? 0;
+    const newMessageCount = span?.totalMessageCount ?? 0;
+    return {
+      newMessageCount,
+      newCharCount,
+      thresholdChars: DREAM_MIN_VOLUME_CHARS,
+      belowThreshold: newCharCount < DREAM_MIN_VOLUME_CHARS,
+    };
   }
 
   private emitAgentTaskProjection(lastEventType: string) {

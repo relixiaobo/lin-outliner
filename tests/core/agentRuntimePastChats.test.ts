@@ -795,4 +795,61 @@ describe('agent runtime past chats integration', () => {
     expect(dreamState.lastCompleted).toBeNull();
     expect(dreamState.watermark.conversations[created.conversationId]?.seq ?? 0).toBe(0);
   });
+
+  test('previewDreamReadiness reports below-threshold for thin new evidence and clears once volume accrues', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-readiness-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-dream-readiness-data-'));
+    roots.push(localRoot, dataRoot);
+    const core = Core.new();
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage(fauxText('Ack.')),
+        fauxAssistantMessage(fauxText('Ack.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(core),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => runtimeSettings(),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+
+    // No new evidence since the (empty) watermark → below threshold.
+    const empty = await runtime.previewDreamReadiness();
+    expect(empty.thresholdChars).toBeGreaterThan(0);
+    expect(empty.newMessageCount).toBe(0);
+    expect(empty.belowThreshold).toBe(true);
+
+    // A short exchange stays below the volume bar.
+    await runtime.sendMessage(created.conversationId, 'hi there');
+    const thin = await runtime.previewDreamReadiness();
+    expect(thin.newMessageCount).toBeGreaterThan(0);
+    expect(thin.newCharCount).toBeLessThan(thin.thresholdChars);
+    expect(thin.belowThreshold).toBe(true);
+
+    // A long exchange clears the bar, so a manual Dream is worth running.
+    await runtime.sendMessage(created.conversationId, `durable project decisions: ${'consolidate this signal '.repeat(80)}`);
+    const fat = await runtime.previewDreamReadiness();
+    expect(fat.newCharCount).toBeGreaterThanOrEqual(fat.thresholdChars);
+    expect(fat.belowThreshold).toBe(false);
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+  });
 });

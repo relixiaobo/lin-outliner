@@ -5,6 +5,7 @@ import type {
   AgentProviderOption,
   AgentProviderSettingsView,
   AgentDefinitionView,
+  AgentDreamReadiness,
   AgentMemoryEntryView,
   AgentRenderDreamTaskEntity,
   AgentToolPermissionSettingsView,
@@ -233,6 +234,10 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   const [dreamHistory, setDreamHistory] = useState<AgentRenderDreamTaskEntity[]>([]);
   const [loadingDreams, setLoadingDreams] = useState(false);
   const [dreamRunBusy, setDreamRunBusy] = useState(false);
+  // When a manual "Dream now" pre-check finds too little new evidence, we hold the
+  // readiness here and surface an advisory + a "Dream anyway" override instead of
+  // running. Cleared once the user forces a run or new data clears the bar.
+  const [dreamAdvisory, setDreamAdvisory] = useState<AgentDreamReadiness | null>(null);
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [memoryDraftFact, setMemoryDraftFact] = useState('');
   const [memorySavingId, setMemorySavingId] = useState<string | null>(null);
@@ -778,12 +783,24 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     }
   }
 
-  async function runDreamNow() {
+  async function runDreamNow(options?: { force?: boolean }) {
     const requestId = beginRequest('mutation');
     setDreamRunBusy(true);
     setError(null);
     setNotice(null);
     try {
+      // Pre-check: a manual Dream over too little new evidence is a wasted model
+      // round-trip that just no-ops. Advise and let the user override, unless the
+      // user already chose "Dream anyway".
+      if (!options?.force) {
+        const readiness = await api.agentDreamReadiness();
+        if (!isCurrentRequest('mutation', requestId)) return;
+        if (readiness.belowThreshold) {
+          setDreamAdvisory(readiness);
+          return;
+        }
+      }
+      setDreamAdvisory(null);
       const [dreams, memories] = await Promise.all([
         api.agentRunDreamNow({ limit: 50 }),
         api.agentListMemory({ includeInvalidated: true, limit: 200 }),
@@ -1215,6 +1232,22 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                     )}
                     wrap
                   />
+                  {dreamAdvisory ? (
+                    <InsetRow
+                      label={t.settings.memory.dreamThinTitle}
+                      sublabel={t.settings.memory.dreamThinDetail({
+                        messages: dreamAdvisory.newMessageCount,
+                        chars: dreamAdvisory.newCharCount,
+                      })}
+                      trailing={(
+                        <Button disabled={dreamRunBusy} onClick={() => void runDreamNow({ force: true })} size="sm" variant="secondary">
+                          {dreamRunBusy ? <LoaderIcon size={ICON_SIZE.menu} /> : <BrainIcon size={ICON_SIZE.menu} />}
+                          <span>{dreamRunBusy ? t.settings.memory.dreamRunNowBusy : t.settings.memory.dreamRunAnywayButton}</span>
+                        </Button>
+                      )}
+                      wrap
+                    />
+                  ) : null}
                 </InsetGroup>
                 <DreamHistoryGroup
                   entries={dreamHistory}
