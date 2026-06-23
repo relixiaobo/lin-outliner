@@ -66,7 +66,7 @@ test.describe('agent debug panel', () => {
     await round.getByRole('button', { name: 'Call details' }).hover();
     const roundDetails = round.getByRole('tooltip', { name: 'Call details' });
     await expect(roundDetails).toBeVisible();
-    await expect(roundDetails).toContainText('Tokens and cost');
+    await expect(roundDetails).toContainText('Cost');
     await expect(roundDetails).toContainText('Cached');
     await expect(roundDetails).toContainText('73%');
     await expect(roundDetails).toContainText('Input');
@@ -108,7 +108,7 @@ test.describe('agent debug panel', () => {
 
     const preview = page.getByRole('tooltip');
     await expect(preview).toBeVisible();
-    await expect(preview).toContainText('Tokens and cost');
+    await expect(preview).toContainText('Cost');
     await expect(preview).toContainText('Cached');
     await expect(preview).toContainText('73%');
     await expect(preview).toContainText('66,420');

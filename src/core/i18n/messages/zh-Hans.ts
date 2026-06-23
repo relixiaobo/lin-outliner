@@ -926,7 +926,7 @@ commandPalette: {
       model: '模型',
       tokens: 'Token',
       cost: '成本',
-      usageDetails: 'Token 和成本',
+      usageDetails: '成本',
       usageUnavailable: '不可用',
       cachedShare: '已缓存',
       replyAnchorTitle: '跳转到被回应的消息',

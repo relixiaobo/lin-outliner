@@ -1010,7 +1010,7 @@ commandPalette: {
       model: 'Model',
       tokens: 'Tokens',
       cost: 'Cost',
-      usageDetails: 'Tokens and cost',
+      usageDetails: 'Cost',
       usageUnavailable: 'unavailable',
       cachedShare: 'Cached',
       replyAnchorTitle: 'Jump to addressed message',
