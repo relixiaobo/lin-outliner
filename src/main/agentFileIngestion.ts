@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { ToolStatus } from './agentToolEnvelope';
 import { runAgentToolProcess } from './agentToolProcess';
@@ -37,8 +38,6 @@ const MARKITDOWN_STDERR_CAPTURE_CHARS = 20_000;
 export const MARKITDOWN_RICH_DOCUMENT_EXTENSIONS = new Set([
   '.docx',
   '.epub',
-  '.htm',
-  '.html',
   '.pptx',
   '.xls',
   '.xlsx',
@@ -48,9 +47,11 @@ export const MARKITDOWN_RECOVERY_INSTRUCTIONS = [
   'MarkItDown is required to read this rich document as Markdown.',
   'Use bash to inspect the local Python tooling, then install a minimal local backend with `python3 -m pip install --user \'markitdown[docx,pptx,xlsx,xls]\'` or `uv tool install \'markitdown[docx,pptx,xlsx,xls]\'` when uv is available.',
   'Do not assume Homebrew is available.',
-  'If MarkItDown is installed in a custom location, set LIN_AGENT_MARKITDOWN_COMMAND to the executable path.',
+  'If MarkItDown is installed in a custom location, set LIN_AGENT_MARKITDOWN_COMMAND to the executable path or command, for example `python3 -m markitdown`.',
   'After installation, retry the same file_read call.',
 ].join(' ');
+
+const markitdownCommandCache = new Map<string, Promise<MarkitdownCommand>>();
 
 export class AgentFileIngestionFailure extends Error {
   constructor(
@@ -92,15 +93,30 @@ export async function ingestRichDocumentAsMarkdown(filePath: string): Promise<Ma
   return {
     content: truncated ? `${markdown.slice(0, MARKITDOWN_MAX_CHARS)}${MARKITDOWN_TRUNCATION_MARKER}` : markdown,
     converter: 'markitdown',
-    contentChars: markdown.length,
+    contentChars: result.stdoutChars,
     truncated,
   };
 }
 
 async function resolveMarkitdownCommand(cwd: string): Promise<MarkitdownCommand> {
+  const cacheKey = markitdownCommandCacheKey(cwd);
+  const cached = markitdownCommandCache.get(cacheKey);
+  if (cached) return cached;
+
+  const resolution = resolveMarkitdownCommandUncached(cwd);
+  markitdownCommandCache.set(cacheKey, resolution);
+  try {
+    return await resolution;
+  } catch (error) {
+    markitdownCommandCache.delete(cacheKey);
+    throw error;
+  }
+}
+
+async function resolveMarkitdownCommandUncached(cwd: string): Promise<MarkitdownCommand> {
   const explicit = normalizedEnvCommand(process.env[MARKITDOWN_COMMAND_ENV]);
   if (explicit) {
-    const candidate = { command: explicit, argsPrefix: [], label: explicit };
+    const candidate = commandFromEnv(explicit);
     if (await canRunMarkitdown(candidate, cwd)) return candidate;
     throw new AgentFileIngestionFailure('markitdown_unavailable', `${MARKITDOWN_COMMAND_ENV} does not point to a runnable MarkItDown executable.`, MARKITDOWN_RECOVERY_INSTRUCTIONS);
   }
@@ -120,6 +136,22 @@ async function canRunMarkitdown(candidate: MarkitdownCommand, cwd: string): Prom
   return !result.error && result.exitCode === 0;
 }
 
+function markitdownCommandCacheKey(cwd: string): string {
+  return [
+    process.env[MARKITDOWN_COMMAND_ENV] ?? '',
+    process.env.PATH ?? '',
+    cwd,
+  ].join('\0');
+}
+
+function commandFromEnv(value: string): MarkitdownCommand {
+  if (existsSync(value)) return { command: value, argsPrefix: [], label: value };
+  const parts = splitCommandLine(value);
+  if (parts.length === 0) return { command: value, argsPrefix: [], label: value };
+  const [command, ...argsPrefix] = parts;
+  return { command: command!, argsPrefix, label: value };
+}
+
 function normalizedEnvCommand(value: string | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
@@ -127,4 +159,45 @@ function normalizedEnvCommand(value: string | undefined): string | null {
 
 function normalizeMarkdownOutput(value: string): string {
   return value.replace(/\r\n?/g, '\n').trim();
+}
+
+function splitCommandLine(value: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | null = null;
+  let escaping = false;
+  for (const char of value.trim()) {
+    if (escaping) {
+      current += char;
+      escaping = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaping = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (current) {
+        parts.push(current);
+        current = '';
+      }
+      continue;
+    }
+    current += char;
+  }
+  if (escaping) current += '\\';
+  if (current) parts.push(current);
+  return parts;
 }

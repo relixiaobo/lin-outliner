@@ -87,9 +87,10 @@ MarkItDown is the default rich-document Markdown backend for non-PDF formats:
 - `.pptx`
 - `.xlsx`
 - `.xls`
-- `.html`
-- `.htm`
 - `.epub`
+
+`.html` and `.htm` stay on the ordinary text path so local HTML remains
+zero-dependency readable and editable.
 
 The backend is external and optional. Probe order:
 
@@ -97,8 +98,12 @@ The backend is external and optional. Probe order:
 2. `markitdown`
 3. `python3 -m markitdown`
 
-The runtime disables plugins and does not configure LLM or cloud backends. It
-passes only local file paths that have already passed workspace containment.
+`LIN_AGENT_MARKITDOWN_COMMAND` may be a bare executable path or a command with
+arguments such as `python3 -m markitdown`. Successful command resolution is
+cached for the process; failures are not cached so installing MarkItDown and
+retrying can succeed. The runtime disables plugins and does not configure LLM or
+cloud backends. It passes only local file paths that have already passed
+workspace containment.
 
 If MarkItDown is missing, `file_read` returns a recoverable error that explains
 how to install a minimal local backend, for example:
@@ -115,9 +120,9 @@ not install the package itself.
 MarkItDown output is attached as a model-visible text part with a fixed character
 cap. The JSON projection stays metadata-only. If the output is truncated, the
 envelope status is `partial`, and the runtime data records the converter,
-format, content length, and truncation flag. The full Markdown can be persistent
-tool output in a later caching PR, but this PR keeps model-visible content
-bounded.
+format, emitted content length, and truncation flag. The full Markdown can be
+persistent tool output in a later caching PR, but this PR keeps model-visible
+content bounded.
 
 ### 6. Provider-native document support is not the contract
 

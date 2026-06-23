@@ -1757,18 +1757,22 @@ Result behavior:
   image parts. Ordinary text/source files keep their bounded text directly in the
   JSON because the file itself is already text.
 - Rich non-PDF documents use a runtime-owned Markdown path. Supported formats are
-  `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.htm`, and `.epub`; the model
-  still passes only `file_path`, while the runtime converts the document to
-  bounded Markdown and attaches that Markdown as a text content part.
+  `.docx`, `.pptx`, `.xlsx`, `.xls`, and `.epub`; the model still passes only
+  `file_path`, while the runtime converts the document to bounded Markdown and
+  attaches that Markdown as a text content part. `.html` and `.htm` stay on the
+  ordinary text path so they remain zero-dependency readable and editable.
 - MarkItDown is the Markdown backend for rich documents. The runtime probes
   `LIN_AGENT_MARKITDOWN_COMMAND`, then `markitdown`, then
-  `python3 -m markitdown`. Plugins, cloud backends, and LLM-assisted extraction
-  are not enabled by the runtime. Missing MarkItDown returns a recoverable tool
-  error that tells the agent to install a local Python/uv backend through `bash`
-  and retry the same `file_read` call; the file tool does not install packages
-  itself and does not assume Homebrew.
+  `python3 -m markitdown`. `LIN_AGENT_MARKITDOWN_COMMAND` may be a bare
+  executable path or a command with arguments such as `python3 -m markitdown`.
+  Successful command resolution is cached for the process; failed resolution is
+  not cached so installing MarkItDown and retrying can succeed. Plugins, cloud
+  backends, and LLM-assisted extraction are not enabled by the runtime. Missing
+  MarkItDown returns a recoverable tool error that tells the agent to install a
+  local Python/uv backend through `bash` and retry the same `file_read` call; the
+  file tool does not install packages itself and does not assume Homebrew.
 - MarkItDown output is capped. Truncated Markdown sets `status: "partial"`,
-  records `truncated: true` and the original `contentChars` count in the runtime
+  records `truncated: true` and the emitted `contentChars` count in the runtime
   data, and marks the attached Markdown text part as truncated.
 - PDF reads are provider-neutral. `file_read` never sends the original PDF bytes
   to the model as a provider-native document block; the runtime extracts local
@@ -1784,7 +1788,9 @@ Result behavior:
 - PDF reads with `pages` ranges such as `"3"` and `"1-5"` render the selected
   pages with `pdftoppm`, with a maximum of 20 pages per request. When
   `pdftotext` extracts text for that range, the text part is attached before the
-  page images so visual layout inspection and text search both work.
+  page images so visual layout inspection and text search both work. Missing
+  `pdftotext` does not block an explicit page-image read when `pdftoppm` is
+  available.
 - If Poppler is missing for page rendering or PDF conversion, the tool returns a
   recoverable error that tells the agent to use `bash` to detect an available
   package manager and install Poppler. The recovery path must not assume

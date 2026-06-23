@@ -61,7 +61,7 @@ truth.
     PDF page rendering via `pdftoppm`, provider-neutral PDF tool results, and
     notebook parsing
   - `file_read` rich-document Markdown ingestion through optional MarkItDown for
-    `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.htm`, and `.epub`
+    `.docx`, `.pptx`, `.xlsx`, `.xls`, and `.epub`
   - local tool subprocesses use the app environment plus
     `LIN_AGENT_EXTRA_TOOL_PATH` and common macOS Homebrew/system binary paths, so
     GUI-launched app processes can still find installed tools like Poppler and

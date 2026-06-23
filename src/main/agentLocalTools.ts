@@ -405,8 +405,17 @@ interface NotebookCell {
 interface ProcessResult {
   stdout: string;
   stderr: string;
+  stdoutChars: number;
+  stderrChars: number;
   exitCode: number | null;
   error?: Error;
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
+}
+
+interface ProcessOptions {
+  maxStdoutChars?: number;
+  maxStderrChars?: number;
 }
 
 interface ProcessItemsResult {
@@ -454,6 +463,8 @@ const PDF_MAX_EXTRACT_SIZE = 100 * 1024 * 1024;
 const PDF_MAX_PAGES_PER_READ = 20;
 const PDF_INLINE_PAGE_THRESHOLD = 10;
 const PDF_TEXT_MAX_CHARS = 60_000;
+const PDF_TEXT_TRUNCATION_MARKER = '\n[PDF text truncated]';
+const PDF_TEXT_CAPTURE_CHARS = PDF_TEXT_MAX_CHARS + 1;
 const CONVERT_TIMEOUT_MS = 180_000;
 export const POPPLER_RECOVERY_INSTRUCTIONS = [
   'Poppler is required for PDF metadata, text extraction, page rendering, and conversion.',
@@ -909,7 +920,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         }
         if (ext === '.pdf') {
           const buffer = await readFile(filePath);
-          const read = await ingestPdfFile(workspace, filePath, buffer.byteLength, params.pages);
+          const read = await ingestPdfFile(workspace, filePath, buffer, params.pages);
           await notifySuccessfulFileTouch(workspace, filePath);
           const visible = visibleFileRead(read.data);
           return agentToolResult(successEnvelope('file_read', read.data, {
@@ -2009,8 +2020,8 @@ function clearReadStateForDeletedPath(workspace: WorkspaceContext, filePath: str
   }
 }
 
-async function runProcess(command: string, args: string[], cwd: string, timeoutMs = 60_000): Promise<ProcessResult> {
-  return await runAgentToolProcess(command, args, cwd, timeoutMs);
+async function runProcess(command: string, args: string[], cwd: string, timeoutMs = 60_000, options: ProcessOptions = {}): Promise<ProcessResult> {
+  return await runAgentToolProcess(command, args, cwd, timeoutMs, options);
 }
 
 async function runProcessItems(
@@ -2506,11 +2517,15 @@ async function getPdfPageCount(filePath: string): Promise<number> {
 async function ingestPdfFile(
   workspace: WorkspaceContext,
   filePath: string,
-  originalSize: number,
+  buffer: Buffer,
   requestedPages: string | undefined,
 ): Promise<FileIngestionOutput<FileReadPdfData>> {
+  const originalSize = buffer.byteLength;
   if (originalSize === 0) {
     throw new LocalToolFailure('pdf_empty', `PDF file is empty: ${filePath}`, 'Use a valid PDF file.');
+  }
+  if (!isPdfBuffer(buffer)) {
+    throw new LocalToolFailure('pdf_corrupted', `File is not a valid PDF: ${filePath}`, 'Use a valid PDF file, or read the file with its actual extension.');
   }
   if (originalSize > PDF_MAX_EXTRACT_SIZE) {
     throw new LocalToolFailure('pdf_too_large', `PDF file exceeds maximum extraction size of ${formatBytes(PDF_MAX_EXTRACT_SIZE)}.`, 'Use a smaller PDF or split it first.');
@@ -2518,9 +2533,11 @@ async function ingestPdfFile(
 
   const totalPages = await getPdfPageCount(filePath);
   const range = selectPdfPageRange(totalPages, requestedPages);
-  const extractedText = await extractPdfText(filePath, range);
-  const shouldRenderPages = requestedPages !== undefined || (!extractedText && totalPages <= PDF_INLINE_PAGE_THRESHOLD);
-  const rendered = shouldRenderPages ? await renderPdfPages(workspace, filePath, range) : null;
+  const requestedPageImages = requestedPages !== undefined;
+  const requestedRendered = requestedPageImages ? await renderPdfPages(workspace, filePath, range) : null;
+  const extractedText = await extractPdfText(filePath, range, { ignoreUnavailableReader: requestedPageImages });
+  const shouldRenderInlineFallback = !requestedRendered && !extractedText && totalPages <= PDF_INLINE_PAGE_THRESHOLD;
+  const rendered = requestedRendered ?? (shouldRenderInlineFallback ? await renderPdfPages(workspace, filePath, range) : null);
   const imageContent = rendered ? await readPdfPartImages(rendered.outputDir) : [];
   const textContent = extractedText
     ? [{
@@ -2540,7 +2557,7 @@ async function ingestPdfFile(
       pages: range,
       ...(extractedText ? {
         extractedText: {
-          chars: extractedText.text.length,
+          chars: extractedText.chars,
           truncated: extractedText.truncated,
         },
       } : {}),
@@ -2642,7 +2659,15 @@ async function renderPdfPages(workspace: WorkspaceContext, filePath: string, ran
   };
 }
 
-async function extractPdfText(filePath: string, range: PdfPageRange): Promise<{ text: string; truncated: boolean } | null> {
+function isPdfBuffer(buffer: Buffer): boolean {
+  return buffer.byteLength >= 5 && buffer.toString('ascii', 0, 5) === '%PDF-';
+}
+
+async function extractPdfText(
+  filePath: string,
+  range: PdfPageRange,
+  options: { ignoreUnavailableReader?: boolean } = {},
+): Promise<{ text: string; chars: number; truncated: boolean } | null> {
   const result = await runProcess('pdftotext', [
     '-layout',
     '-f',
@@ -2651,8 +2676,9 @@ async function extractPdfText(filePath: string, range: PdfPageRange): Promise<{ 
     String(range.lastPage),
     filePath,
     '-',
-  ], path.dirname(filePath), 60_000);
-  if (result.error || result.exitCode === 127 || /not found|no such file/i.test(result.stderr)) {
+  ], path.dirname(filePath), 60_000, { maxStdoutChars: PDF_TEXT_CAPTURE_CHARS });
+  if (result.error || result.exitCode === 127) {
+    if (options.ignoreUnavailableReader) return null;
     throw new LocalToolFailure(
       'pdf_reader_unavailable',
       result.error?.message ?? (result.stderr.trim() || 'pdftotext is not available.'),
@@ -2662,9 +2688,11 @@ async function extractPdfText(filePath: string, range: PdfPageRange): Promise<{ 
   if (result.exitCode !== 0) return null;
   const normalized = normalizeLineEndings(stripBom(result.stdout)).trim();
   if (!normalized) return null;
-  const truncated = normalized.length > PDF_TEXT_MAX_CHARS;
+  const truncated = result.stdoutTruncated === true || normalized.length > PDF_TEXT_MAX_CHARS;
+  const chars = truncated ? Math.max(result.stdoutChars, normalized.length) : normalized.length;
   return {
-    text: truncated ? `${normalized.slice(0, PDF_TEXT_MAX_CHARS)}\n[PDF text truncated]` : normalized,
+    text: truncated ? `${normalized.slice(0, PDF_TEXT_MAX_CHARS)}${PDF_TEXT_TRUNCATION_MARKER}` : normalized,
+    chars,
     truncated,
   };
 }

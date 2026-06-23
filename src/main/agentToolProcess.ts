@@ -4,6 +4,8 @@ import path from 'node:path';
 export interface AgentToolProcessResult {
   stdout: string;
   stderr: string;
+  stdoutChars: number;
+  stderrChars: number;
   exitCode: number | null;
   error?: Error;
   timedOut?: boolean;
@@ -57,6 +59,8 @@ export async function runAgentToolProcess(
     let timedOut = false;
     let stdoutTruncated = false;
     let stderrTruncated = false;
+    let stdoutChars = 0;
+    let stderrChars = 0;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -68,11 +72,13 @@ export async function runAgentToolProcess(
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => {
+      stdoutChars += chunk.length;
       const next = appendBounded(stdout, chunk, options.maxStdoutChars);
       stdout = next.value;
       stdoutTruncated ||= next.truncated;
     });
     child.stderr.on('data', (chunk: string) => {
+      stderrChars += chunk.length;
       const next = appendBounded(stderr, chunk, options.maxStderrChars);
       stderr = next.value;
       stderrTruncated ||= next.truncated;
@@ -80,12 +86,12 @@ export async function runAgentToolProcess(
     child.once('error', (error) => {
       clearTimeout(timer);
       if (killTimer) clearTimeout(killTimer);
-      resolve({ stdout, stderr, exitCode: null, error, timedOut, stdoutTruncated, stderrTruncated });
+      resolve({ stdout, stderr, stdoutChars, stderrChars, exitCode: null, error, timedOut, stdoutTruncated, stderrTruncated });
     });
     child.once('close', (code) => {
       clearTimeout(timer);
       if (killTimer) clearTimeout(killTimer);
-      resolve({ stdout, stderr, exitCode: code, timedOut, stdoutTruncated, stderrTruncated });
+      resolve({ stdout, stderr, stdoutChars, stderrChars, exitCode: code, timedOut, stdoutTruncated, stderrTruncated });
     });
   });
 }

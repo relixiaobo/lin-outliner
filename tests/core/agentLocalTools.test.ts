@@ -849,6 +849,88 @@ describe('agent local tools', () => {
     });
   });
 
+  test('file_read keeps local HTML on the text path so it remains editable without MarkItDown', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const originalCommand = process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+      process.env.LIN_AGENT_MARKITDOWN_COMMAND = path.join(workspaceRoot, 'missing-markitdown');
+      try {
+        const filePath = path.join(workspaceRoot, 'report.html');
+        await writeFile(filePath, '<h1>Hello</h1>\n<p>World</p>\n', 'utf8');
+
+        const read = await executeTool<{
+          type: 'text';
+          file: { content: string };
+        }>(workspaceRoot, 'file_read', { file_path: filePath });
+        expect(read.ok).toBe(true);
+        expect(read.data!.type).toBe('text');
+        expect(read.data!.file.content).toContain('<h1>Hello</h1>');
+
+        const edited = await executeTool<{ type: 'patch' }>(workspaceRoot, 'file_edit', {
+          file_path: filePath,
+          old_string: 'World',
+          new_string: 'Tenon',
+        });
+        expect(edited.ok).toBe(true);
+        expect(await readFile(filePath, 'utf8')).toContain('<p>Tenon</p>');
+      } finally {
+        if (originalCommand === undefined) {
+          delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+        } else {
+          process.env.LIN_AGENT_MARKITDOWN_COMMAND = originalCommand;
+        }
+      }
+    });
+  });
+
+  test('file_read supports LIN_AGENT_MARKITDOWN_COMMAND with arguments and caches successful probes', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const binDir = path.join(workspaceRoot, 'fake-python-bin');
+      await mkdir(binDir, { recursive: true });
+      const probeLog = path.join(workspaceRoot, 'probe-count.txt');
+      const fakePython = path.join(binDir, 'python3');
+      await writeFile(fakePython, [
+        '#!/bin/sh',
+        'if [ "$1" != "-m" ] || [ "$2" != "markitdown" ]; then exit 2; fi',
+        'if [ "$3" = "--help" ]; then echo probe >> "$PROBE_LOG"; echo "Usage: markitdown"; exit 0; fi',
+        'printf "# Converted from python module\\n\\n%s\\n" "$3"',
+      ].join('\n'), 'utf8');
+      await chmod(fakePython, 0o755);
+
+      const firstPath = path.join(workspaceRoot, 'one.docx');
+      const secondPath = path.join(workspaceRoot, 'two.docx');
+      await writeFile(firstPath, 'first office payload', 'utf8');
+      await writeFile(secondPath, 'second office payload', 'utf8');
+
+      const originalCommand = process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+      const originalProbeLog = process.env.PROBE_LOG;
+      process.env.LIN_AGENT_MARKITDOWN_COMMAND = 'python3 -m markitdown';
+      process.env.PROBE_LOG = probeLog;
+      try {
+        await withPrependedPath(binDir, async () => {
+          const first = await executeTool<{ type: 'markdown'; file: { content: string } }>(workspaceRoot, 'file_read', { file_path: firstPath });
+          const second = await executeTool<{ type: 'markdown'; file: { content: string } }>(workspaceRoot, 'file_read', { file_path: secondPath });
+
+          expect(first.ok).toBe(true);
+          expect(first.data!.file.content).toContain('# Converted from python module');
+          expect(second.ok).toBe(true);
+          expect(second.data!.file.content).toContain(secondPath);
+          expect((await readFile(probeLog, 'utf8')).trim().split('\n')).toHaveLength(1);
+        });
+      } finally {
+        if (originalCommand === undefined) {
+          delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+        } else {
+          process.env.LIN_AGENT_MARKITDOWN_COMMAND = originalCommand;
+        }
+        if (originalProbeLog === undefined) {
+          delete process.env.PROBE_LOG;
+        } else {
+          process.env.PROBE_LOG = originalProbeLog;
+        }
+      }
+    });
+  });
+
   test('file_read returns a recoverable MarkItDown dependency error for rich documents', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const originalCommand = process.env.LIN_AGENT_MARKITDOWN_COMMAND;
@@ -953,6 +1035,135 @@ describe('agent local tools', () => {
         expect(read.error?.code).toBe('pdf_reader_unavailable');
         expect(read.instructions).toContain('pdftotext');
         expect(read.instructions).toContain('retry the same file_read or file_convert call');
+      });
+    });
+  });
+
+  test('file_read accepts successful pdftotext output even when Poppler warns about missing PDF objects', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const binDir = path.join(workspaceRoot, 'fake-pdf-warning-bin');
+      await mkdir(binDir, { recursive: true });
+      const fakePdfinfo = path.join(binDir, 'pdfinfo');
+      await writeFile(fakePdfinfo, [
+        '#!/bin/sh',
+        'echo "Pages: 1"',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdfinfo, 0o755);
+      const fakePdftotext = path.join(binDir, 'pdftotext');
+      await writeFile(fakePdftotext, [
+        '#!/bin/sh',
+        'echo "Syntax Error: Object (12 0) not found" >&2',
+        'echo "Readable PDF text"',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdftotext, 0o755);
+
+      const filePath = path.join(workspaceRoot, 'warning.pdf');
+      await writeFile(filePath, makePdf(['placeholder']), 'utf8');
+
+      await withPrependedPath(binDir, async () => {
+        const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
+        const result = await (tool.execute as any)('pdf-warning', { file_path: filePath });
+        const read = result.details as ToolEnvelope<{ type: 'pdf'; file: { extractedText?: { truncated: boolean } } }>;
+
+        expect(read.ok).toBe(true);
+        expect(read.data!.type).toBe('pdf');
+        expect(read.data!.file.extractedText?.truncated).toBe(false);
+        expect(result.content.some((block: { type: string; text?: string }) => block.type === 'text' && block.text?.includes('Readable PDF text'))).toBe(true);
+      });
+    });
+  });
+
+  test('file_read renders requested PDF pages even when pdftotext is unavailable', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const binDir = path.join(workspaceRoot, 'fake-pdf-render-bin');
+      await mkdir(binDir, { recursive: true });
+      const fakePdfinfo = path.join(binDir, 'pdfinfo');
+      await writeFile(fakePdfinfo, [
+        '#!/bin/sh',
+        'echo "Pages: 2"',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdfinfo, 0o755);
+      const fakePdftotext = path.join(binDir, 'pdftotext');
+      await writeFile(fakePdftotext, [
+        '#!/bin/sh',
+        'echo "pdftotext: command not found" >&2',
+        'exit 127',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdftotext, 0o755);
+      const fakePdftoppm = path.join(binDir, 'pdftoppm');
+      await writeFile(fakePdftoppm, [
+        '#!/bin/sh',
+        'for last do :; done',
+        'printf "fakejpeg" > "$last-1.jpg"',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdftoppm, 0o755);
+
+      const filePath = path.join(workspaceRoot, 'scan.pdf');
+      await writeFile(filePath, makePdf(['page one', 'page two']), 'utf8');
+
+      await withPrependedPath(binDir, async () => {
+        const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
+        const result = await (tool.execute as any)('pdf-render-without-text', { file_path: filePath, pages: '1' });
+        const read = result.details as ToolEnvelope<{
+          type: 'pdf';
+          file: { renderedImages?: { count: number }; extractedText?: { truncated: boolean }; representation: string };
+        }>;
+
+        expect(read.ok).toBe(true);
+        expect(read.data!.file.representation).toBe('images');
+        expect(read.data!.file.renderedImages?.count).toBe(1);
+        expect(read.data!.file.extractedText).toBeUndefined();
+        expect(result.content.some((block: { type: string }) => block.type === 'image')).toBe(true);
+      });
+    });
+  });
+
+  test('file_read rejects a .pdf path whose bytes are not a PDF before invoking Poppler', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'not-a-pdf.pdf');
+      await writeFile(filePath, '<h1>Not a PDF</h1>', 'utf8');
+
+      const read = await executeTool(workspaceRoot, 'file_read', { file_path: filePath });
+
+      expect(read.ok).toBe(false);
+      expect(read.error?.code).toBe('pdf_corrupted');
+      expect(read.error?.message).toContain('not a valid PDF');
+    });
+  });
+
+  test('file_read caps captured PDF text while recording the emitted character count', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const binDir = path.join(workspaceRoot, 'fake-long-pdf-text-bin');
+      await mkdir(binDir, { recursive: true });
+      const fakePdfinfo = path.join(binDir, 'pdfinfo');
+      await writeFile(fakePdfinfo, [
+        '#!/bin/sh',
+        'echo "Pages: 1"',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdfinfo, 0o755);
+      const fakePdftotext = path.join(binDir, 'pdftotext');
+      await writeFile(fakePdftotext, [
+        '#!/bin/sh',
+        'yes a | head -c 65000',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdftotext, 0o755);
+
+      const filePath = path.join(workspaceRoot, 'long-text.pdf');
+      await writeFile(filePath, makePdf(['placeholder']), 'utf8');
+
+      await withPrependedPath(binDir, async () => {
+        const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
+        const result = await (tool.execute as any)('long-pdf-text', { file_path: filePath });
+        const read = result.details as ToolEnvelope<{
+          type: 'pdf';
+          file: { extractedText?: { chars: number; truncated: boolean } };
+        }>;
+        const textPart = result.content.find((block: { type: string; text?: string }) => block.type === 'text' && block.text?.includes('[PDF text truncated]')) as { text: string } | undefined;
+
+        expect(read.ok).toBe(true);
+        expect(read.data!.file.extractedText?.truncated).toBe(true);
+        expect(read.data!.file.extractedText?.chars).toBe(65_000);
+        expect(textPart?.text.length).toBeLessThan(61_000);
       });
     });
   });
