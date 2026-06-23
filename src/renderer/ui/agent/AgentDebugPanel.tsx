@@ -17,8 +17,8 @@ import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
 import { formatBytes } from '../preview/fileNode';
 
-// Run Details is a read-only window onto one run. Context shows what was sent
-// to the model; rounds show what the model and tools did with that context.
+// Run Details is a read-only window onto one run. Model Input shows what seeded
+// the run; Execution shows the provider calls and tools that happened inside it.
 // The pane is opened from a concrete assistant reply, so it does not render the
 // old conversation-level debug timeline.
 
@@ -228,7 +228,7 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
           <dd>{formatDuration(startedAt, completedAt)}</dd>
         </div>
         <div>
-          <dt>{labels.roundCount}</dt>
+          <dt>{labels.modelCallCount}</dt>
           <dd>{rounds.length}</dd>
           <small>{labels.toolCallCount}: {toolCallCount}</small>
         </div>
@@ -285,9 +285,9 @@ function RunDetail({ run, labels }: { run: AgentDebugRun; labels: DebugLabels })
       </DebugPanelSection>
       <RunContextSection labels={labels} run={run} />
 
-      <DebugPanelSection title={labels.roundsTitle({ count: run.rounds.length })}>
+      <DebugPanelSection title={labels.executionTitle({ count: run.rounds.length })}>
         {run.rounds.length === 0 ? (
-          <div className="agent-debug-card is-muted">{labels.noRoundsYet}</div>
+          <div className="agent-debug-card is-muted">{labels.noModelCallsYet}</div>
         ) : run.rounds.map((round) => (
           <RoundCard key={round.index} round={round} labels={labels} />
         ))}
@@ -297,8 +297,9 @@ function RunDetail({ run, labels }: { run: AgentDebugRun; labels: DebugLabels })
 }
 
 function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDebugRun }) {
+  const initialMessages = run.rounds[0]?.requestWindow ?? [];
   return (
-    <DebugPanelSection title={labels.contextTitle}>
+    <DebugPanelSection title={labels.modelInputTitle}>
       <div className="agent-debug-context-card">
         <ContextDisclosure title={labels.systemPromptDisclosure} copyText={run.systemPrompt ?? ''} defaultOpen>
           {run.systemPrompt ? <pre>{run.systemPrompt}</pre> : <span className="is-muted">{labels.empty}</span>}
@@ -319,21 +320,15 @@ function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDeb
             </div>
           )}
         </ContextDisclosure>
-        {run.rounds.map((round) => (
-          <ContextDisclosure
-            defaultOpen
-            key={round.index}
-            title={labels.roundRequestLabel({ count: round.requestWindow.length, index: round.index + 1 })}
-          >
-            {round.requestWindow.length === 0 ? (
-              <span className="is-muted">{labels.empty}</span>
-            ) : (
-              <div className="agent-debug-message-list">
-                {round.requestWindow.map((row) => <MessageRow key={row.id} message={row} labels={labels} />)}
-              </div>
-            )}
-          </ContextDisclosure>
-        ))}
+        <ContextDisclosure defaultOpen title={labels.inputMessagesDisclosure({ count: initialMessages.length })}>
+          {initialMessages.length === 0 ? (
+            <span className="is-muted">{labels.empty}</span>
+          ) : (
+            <div className="agent-debug-message-list">
+              {initialMessages.map((row) => <MessageRow key={row.id} message={row} labels={labels} />)}
+            </div>
+          )}
+        </ContextDisclosure>
       </div>
     </DebugPanelSection>
   );
@@ -343,7 +338,7 @@ function RoundCard({ round, labels }: { round: AgentDebugRound; labels: DebugLab
   return (
     <article className="agent-debug-round-card">
       <div className="agent-debug-section-header">
-        <h3>{labels.roundTitle({ index: round.index + 1 })}</h3>
+        <h3>{labels.modelCallTitle({ index: round.index + 1 })}</h3>
         <span className={`agent-debug-status-pill is-${round.status}`}>{statusLabel(round.status, labels)}</span>
         {round.modelId ? <code className="agent-debug-run-model">{round.modelId}</code> : null}
         {round.stopReason ? <code>{round.stopReason}</code> : null}

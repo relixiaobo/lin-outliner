@@ -1216,30 +1216,29 @@ The pane groups the run projection by inspection task:
 
 ```txt
 run
-  context
+  modelInput
     system/developer prompt
     tool definitions
-    request windows in model order
-  rounds[]
+    initial request messages
+  execution[]
     responseParts[]
     toolExchanges[]
     usage
-  metadata
 ```
 
 The run detail is ordered for inspection:
 
 1. **Run summary** — compact run facts: agent/kind/status, model/provider,
-   timestamps, duration, round/tool-call counts, input-context tokens, output
+   timestamps, duration, model/tool-call counts, input-context tokens, output
    tokens, cache hit, and aggregate cost. Raw identifiers (`runId`, `agentId`,
    and optional parent ids) live inside a collapsed identifiers disclosure in
    this summary, not as a separate main section.
-2. **Context** — the model input side, in the order needed to inspect what was
-   sent: system/developer instructions, tool definitions/schemas, then each
-   round's request window (history/current user/file/tool-result context in
-   model order).
-3. **Rounds** — the execution side. Each round is one provider call and contains
-   the response/thinking parts plus tool exchanges produced by that call. Per-round
+2. **Model Input** — the input side that seeded this run: system/developer
+   instructions, tool definitions/schemas, and the initial request messages
+   (history/current user/file context) captured before the first provider call.
+3. **Execution** — the execution side. Each rendered item is a **model call**
+   (internally, one debug `round`: one provider request/response). It contains
+   response/thinking parts plus tool exchanges produced by that call. Per-call
    usage remains available as a collapsed diagnostic detail, while the summary
    carries the main token/cost readout.
 
@@ -1250,9 +1249,11 @@ cost summary; clicking it opens a run-details pane keyed by that reply's
 different reply opens or repurposes a pane for that different `(conversationId,
 runId)`. There is no standalone/global debug entry in the agent dock.
 
-**The unit is the round** = one provider call = `(request, response)`, bounded by
-`assistant_message.started` (always present, independent of any wire capture).
-Walking a run's own stream in order yields its rounds: each `assistant_message.started`
+The internal debug unit is `round` = one provider call = `(request, response)`,
+bounded by `assistant_message.started` (always present, independent of any wire
+capture). `round` is not a user-facing agent concept; the UI labels it as a
+**model call** inside **Execution**. Walking a run's own stream in order yields
+its rounds: each `assistant_message.started`
 opens a round, its `.completed` closes the response (content / usage / stopReason
 from the ledger), and the intervening `tool_result.created` (and `tool_result.replaced`,
 which records what the model saw after output slimming) are that round's tool
@@ -1275,10 +1276,13 @@ CONVERSATION stream (appended with no runId) and are spliced in at derivation:
   which run did the slimming. A replacement matching no call in a run is dropped;
   only a `tool_result.created` may OPEN an exchange (never an empty-named phantom).
 
-A round renders the *new* context entering it (the triggering / prior tool-result
-messages), not the whole growing history. Rounds begin only after the run's own
-`run.started`, so a child run's inherited fork prefix is folded into the first
-round's window as context rather than counted as rounds.
+A round stores the *new* context entering that provider call (the triggering /
+prior tool-result messages), not the whole growing history. Only the first
+round's request window is surfaced in **Model Input** as the run's initial input
+messages; later windows are represented through the execution/tool exchange they
+belong to. Rounds begin only after the run's own `run.started`, so a child run's
+inherited fork prefix is folded into the first round's window as input rather
+than counted as a model call.
 
 **Everything rendered is redacted.** The surface is read-only but on screen, so
 every string passes the shared `agentSecretRedaction` gate before display:
