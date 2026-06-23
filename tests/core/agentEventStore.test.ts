@@ -1845,6 +1845,7 @@ describe('agent event store', () => {
         { ...base(conversationId, 1, 'conversation.created'), title: 'Dream retention' },
       ]);
       let seq = 2;
+      let previousAssistantMessageId: string | null = null;
       const appendRun = async (runId: string, label: string) => {
         const anchorMessageId = `anchor-${runId}`;
         const assistantMessageId = `assistant-${runId}`;
@@ -1852,9 +1853,10 @@ describe('agent event store', () => {
           {
             ...base(conversationId, seq++, 'user_message.created', userActor),
             messageId: anchorMessageId,
-            parentMessageId: null,
+            parentMessageId: previousAssistantMessageId,
             content: [{ type: 'text', text: `${label} anchor prompt` }],
           },
+          { ...base(conversationId, seq++, 'branch.selected'), leafMessageId: anchorMessageId },
           { ...base(conversationId, seq++, 'run.started'), runId },
           {
             ...base(conversationId, seq++, 'assistant_message.started'),
@@ -1883,6 +1885,7 @@ describe('agent event store', () => {
             completedAt: 1_700_000_000_000 + seq,
           },
         ]);
+        previousAssistantMessageId = assistantMessageId;
       };
 
       await appendRun('run-1', 'forgotten');
@@ -1897,12 +1900,14 @@ describe('agent event store', () => {
       expect(events.map((event) => event.type)).toEqual([
         'conversation.created',
         'user_message.created',
+        'branch.selected',
         'run.started',
         'assistant_message.started',
         'assistant_message.completed',
         'run.completed',
         'dream.finished',
         'user_message.created',
+        'branch.selected',
         'run.started',
         'assistant_message.started',
         'assistant_message.completed',
@@ -1911,6 +1916,9 @@ describe('agent event store', () => {
       ]);
       expect(events.some((event) => event.type === 'dream.finished' && event.runId === 'run-1')).toBe(false);
       expect(events.some((event) => event.type === 'user_message.created' && event.messageId === 'anchor-run-1')).toBe(false);
+      expect(events.find((event) => event.type === 'user_message.created' && event.messageId === 'anchor-run-2')).toMatchObject({
+        parentMessageId: null,
+      });
       expect(events.some((event) => event.type === 'assistant_message.completed' && event.messageId === 'assistant-run-2')).toBe(true);
       await expect(readFile(store.runPaths('run-1').runMetaPath, 'utf8')).rejects.toThrow();
       await expect(readFile(store.runPaths('run-2').runMetaPath, 'utf8')).resolves.toContain('"id":"run-2"');
@@ -1920,6 +1928,52 @@ describe('agent event store', () => {
       ]);
       await expect(store.searchMessages('forgotten', { conversationId })).resolves.toHaveLength(0);
       await expect(store.searchMessages('retained-two', { conversationId })).resolves.toHaveLength(2);
+    });
+  });
+
+  test('does not mutate retained run storage when retention validation fails', async () => {
+    await withStore(async (store) => {
+      const conversationId = 'conversation-run-retention-invalid';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Invalid retention' },
+        {
+          ...base(conversationId, 2, 'user_message.created', userActor),
+          messageId: 'anchor-run-1',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'old anchor' }],
+        },
+        { ...base(conversationId, 3, 'run.started'), runId: 'run-1' },
+        {
+          ...base(conversationId, 4, 'assistant_message.started'),
+          runId: 'run-1',
+          messageId: 'assistant-run-1',
+          parentMessageId: 'anchor-run-1',
+          providerId: 'test',
+          modelId: 'test',
+        },
+        {
+          ...base(conversationId, 5, 'assistant_message.completed'),
+          runId: 'run-1',
+          messageId: 'assistant-run-1',
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'old assistant' }],
+        },
+        { ...base(conversationId, 6, 'run.completed'), runId: 'run-1' },
+        {
+          ...base(conversationId, 7, 'user_message.created', userActor),
+          messageId: 'anchor-run-2',
+          parentMessageId: 'missing-message-that-is-not-pruned',
+          content: [{ type: 'text', text: 'retained anchor' }],
+        },
+        { ...base(conversationId, 8, 'run.started'), runId: 'run-2' },
+      ]);
+      const rawBefore = await readFile(store.paths(conversationId).conversationEventsPath, 'utf8');
+
+      await expect(store.retainRecentConversationRuns(conversationId, 1))
+        .rejects.toThrow('Missing parent agent message: missing-message-that-is-not-pruned');
+
+      await expect(readFile(store.paths(conversationId).conversationEventsPath, 'utf8')).resolves.toBe(rawBefore);
+      await expect(readFile(store.runPaths('run-1').runMetaPath, 'utf8')).resolves.toContain('"id":"run-1"');
     });
   });
 

@@ -744,17 +744,22 @@ export class AgentEventStore {
       const prunedRunIds = existing.runIds.filter((runId) => !retainedRunIdSet.has(runId));
       const prunedRunIdSet = new Set(prunedRunIds);
       const conversationEvents = await this.agentEventLog.readIfExists(paths.conversationEventsPath);
-      const prunedAnchorMessageIds = new Set<string>();
+      const retainedRunEvents = await this.readRunEventsByRunId(existing, retainedRunIds);
+      const prunedRunEvents = await this.readRunEventsByRunId(existing, prunedRunIds);
+      const prunedMessageIds = new Set<string>();
       for (const meta of await Promise.all(prunedRunIds.map((runId) => this.readRunMeta(runId)))) {
-        if (meta?.trigger.type === 'message') prunedAnchorMessageIds.add(meta.trigger.messageId);
+        if (meta?.trigger.type === 'message') prunedMessageIds.add(meta.trigger.messageId);
       }
+      for (const events of prunedRunEvents.values()) collectMessageIdsFromEvents(events, prunedMessageIds);
       for (const event of conversationEvents) {
         if (event.type === 'dream.finished' && event.runId && prunedRunIdSet.has(event.runId)) {
-          prunedAnchorMessageIds.add(event.messageId);
+          prunedMessageIds.add(event.messageId);
         }
       }
-      const retainedConversationEvents = conversationEvents.filter((event) =>
-        retainConversationStreamEventAfterRunPrune(event, prunedRunIdSet, prunedAnchorMessageIds));
+      const retainedConversationEvents = conversationEvents.flatMap((event) => {
+        const retained = retainConversationStreamEventAfterRunPrune(event, prunedRunIdSet, prunedMessageIds);
+        return retained ? [retained] : [];
+      });
       const nextIndex: AgentConversationRunIndex = {
         v: 2,
         runIds: retainedRunIds,
@@ -764,6 +769,11 @@ export class AgentEventStore {
         ])),
         delegationRunIds: existing.delegationRunIds.filter((runId) => retainedRunIdSet.has(runId)),
       };
+      const retainedEvents = [
+        ...retainedConversationEvents,
+        ...retainedRunIds.flatMap((runId) => retainedRunEvents.get(runId) ?? []),
+      ].sort(compareAgentEventsForReplay);
+      const replayState = replayAgentEvents(retainedEvents);
 
       await mkdir(paths.conversationSegmentsDir, { recursive: true });
       await atomicWriteFile(paths.conversationEventsPath, serializeJsonl(retainedConversationEvents));
@@ -772,17 +782,14 @@ export class AgentEventStore {
         await atomicWriteFile(paths.conversationRunIndexPath, `${JSON.stringify(nextIndex)}\n`);
       });
       await rm(paths.checkpointsDir, { recursive: true, force: true });
+      await this.writeConversationMetaFromReplayState(conversationId, replayState);
+      await this.replaceConversationInIndexes(conversationId, replayState, retainedEvents);
+      this.agentEventLog.setLatestSeq(conversationId, replayState.latestSeq);
       await Promise.all(prunedRunIds.map(async (runId) => {
         await rm(this.runPaths(runId).runDir, { recursive: true, force: true });
         this.agentEventLog.deleteKey(runStreamLogKey(runId));
         this.runEventLog.deleteKey(runStreamLogKey(runId));
       }));
-
-      const retainedEvents = await this.readEvents(conversationId);
-      const replayState = replayAgentEvents(retainedEvents);
-      await this.writeConversationMetaFromReplayState(conversationId, replayState);
-      await this.replaceConversationInIndexes(conversationId, replayState, retainedEvents);
-      this.agentEventLog.setLatestSeq(conversationId, replayState.latestSeq);
       return { prunedRunIds, retainedRunIds };
     });
   }
@@ -1355,6 +1362,21 @@ export class AgentEventStore {
       events.push(...await this.agentEventLog.readIfExists(this.runPaths(runId).runEventsPath));
     }
     return events;
+  }
+
+  private async readRunEventsByRunId(
+    index: AgentConversationRunIndex,
+    runIds: readonly string[],
+  ): Promise<Map<string, AgentEvent[]>> {
+    const delegated = new Set(index.delegationRunIds);
+    const eventsByRunId = new Map<string, AgentEvent[]>();
+    for (const runId of runIds) {
+      const events = delegated.has(runId)
+        ? await this.runEventLog.readIfExists(this.runPaths(runId).runEventsPath)
+        : await this.agentEventLog.readIfExists(this.runPaths(runId).runEventsPath);
+      eventsByRunId.set(runId, events);
+    }
+    return eventsByRunId;
   }
 
   /** EVERY run anchored to the conversation, delegation runs included. */
@@ -2330,19 +2352,40 @@ function agentRunIdForEvent(event: AgentEvent): string | null {
   return typeof event.runId === 'string' && event.runId.length > 0 ? event.runId : null;
 }
 
+function collectMessageIdsFromEvents(events: Iterable<AgentEvent>, target: Set<string>): void {
+  for (const event of events) {
+    if (event.type === 'user_message.created') target.add(event.messageId);
+    if (event.type === 'assistant_message.started') target.add(event.messageId);
+    if (event.type === 'tool_result.created') target.add(event.messageId);
+  }
+}
+
 function retainConversationStreamEventAfterRunPrune(
   event: AgentEvent,
   prunedRunIds: ReadonlySet<string>,
   prunedMessageIds: ReadonlySet<string>,
-): boolean {
+): AgentEvent | null {
   const runId = agentRunIdForEvent(event);
-  if (runId && prunedRunIds.has(runId)) return false;
-  if (event.type === 'payload.created' && event.payload.scope?.type === 'run' && prunedRunIds.has(event.payload.scope.runId)) return false;
-  if (event.type === 'payload.derived' && event.payload.scope?.type === 'run' && prunedRunIds.has(event.payload.scope.runId)) return false;
-  if (event.type === 'user_message.created' && prunedMessageIds.has(event.messageId)) return false;
-  if (event.type === 'user_message.edited' && prunedMessageIds.has(event.messageId)) return false;
-  if (event.type === 'branch.selected' && prunedMessageIds.has(event.leafMessageId)) return false;
-  return true;
+  if (runId && prunedRunIds.has(runId)) return null;
+  if (event.type === 'payload.created' && event.payload.scope?.type === 'run' && prunedRunIds.has(event.payload.scope.runId)) return null;
+  if (event.type === 'payload.derived' && event.payload.scope?.type === 'run' && prunedRunIds.has(event.payload.scope.runId)) return null;
+  if (event.type === 'user_message.created') {
+    if (prunedMessageIds.has(event.messageId)) return null;
+    if (event.parentMessageId && prunedMessageIds.has(event.parentMessageId)) {
+      return { ...event, parentMessageId: null };
+    }
+  }
+  if (event.type === 'user_message.edited' && prunedMessageIds.has(event.messageId)) return null;
+  if (event.type === 'branch.selected' && prunedMessageIds.has(event.leafMessageId)) return null;
+  if (event.type === 'compaction.completed') {
+    if (prunedMessageIds.has(event.messageId)) return null;
+    if (
+      prunedMessageIds.has(event.source.fromMessageId)
+      || prunedMessageIds.has(event.source.throughMessageId)
+    ) return null;
+  }
+  if (event.type === 'dream.finished' && prunedMessageIds.has(event.messageId)) return null;
+  return event;
 }
 
 /**
