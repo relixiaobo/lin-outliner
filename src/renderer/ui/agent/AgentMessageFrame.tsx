@@ -51,7 +51,7 @@ export function AgentAssistantContent({
   // message renders — final-answer prose, interim narration, and file_write/file_edit
   // result chips — sits inside this wrapper, so the app-wide InlineFilePreviewLayer
   // (which routes by `closest('[data-agent-transcript-chips]')`) opens them in the
-  // agent dock reader and offers the transcript context menu. Meta surfaces render the
+  // workspace file-only reader and offers the transcript context menu. Meta surfaces render the
   // very same components WITHOUT this ancestor — compaction/child-run boundaries are
   // sibling rows, and the child-run-details + PoV-inspector panels are sibling
   // panels — so their chips keep the safe in-app preview default. The agent-vs-outliner

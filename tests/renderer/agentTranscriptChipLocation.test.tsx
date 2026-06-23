@@ -11,11 +11,11 @@ import { AgentMarkdown } from '../../src/renderer/ui/agent/AgentMarkdown';
 // exactly ONE place: the live assistant message body (AgentAssistantContent) carries
 // `data-agent-transcript-chips`, so every chip a live turn renders — answer prose,
 // interim narration, file_write/file_edit result chips — inherits it via the app-wide
-// InlineFilePreviewLayer's `closest()` and opens in the agent dock reader. The SAME
+// InlineFilePreviewLayer's `closest()` and opens in the workspace file-only reader. The SAME
 // components on meta surfaces (compaction/child-run summaries, the child-run-details and
 // PoV-inspector panels) have no such ancestor and keep the workspace preview. These guards
 // lock that single source: if a future change re-scatters the marker onto AgentMarkdown
-// or a result chip, meta surfaces would leak dock-reader routing again.
+// or a result chip, meta surfaces would leak reader routing again.
 
 interface Rendered {
   cleanup: () => void;

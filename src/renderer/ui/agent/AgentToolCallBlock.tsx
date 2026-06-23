@@ -534,8 +534,8 @@ function num(value: unknown): number {
 // references render, so input and output read identically in the stream.
 function ToolResultFileChip({ output }: { output: FileToolOutput }) {
   return (
-    // Whether this chip opens in the agent dock reader (live transcript) or the
-    // workspace preview pane (child-run details panel) is decided by location, not here: the
+    // Whether this chip opens in the workspace file-only reader (live transcript) or
+    // the normal workspace preview pane (child-run details panel) is decided by location, not here: the
     // app-wide inline-file layer routes by a `[data-agent-transcript-chips]` ancestor,
     // which the live assistant message body sets once (see AgentAssistantContent). In
     // the child-run-details panel this same block has no such ancestor, so its result

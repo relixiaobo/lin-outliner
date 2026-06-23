@@ -7,7 +7,6 @@ import type { InlineFilePreviewDescriptor } from './inlineFilePreviewData';
 import { useT } from '../../i18n/I18nProvider';
 import { wantsNewPaneFromClick } from '../shared';
 import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
-import { dispatchAgentDockFilePreview } from '../agent/agentDockFilePreviewEvents';
 import {
   AgentTranscriptFileMenu,
   type AgentTranscriptFile,
@@ -15,15 +14,15 @@ import {
 } from '../agent/AgentTranscriptFileMenu';
 
 // A transcript file chip points at a working file on disk: clicking it opens the
-// agent dock's local reader (not a workspace pane), and right-click offers the
-// transcript menu. The split is by LOCATION: a chip with a `[data-agent-transcript-chips]`
+// workspace file-only reader in the main canvas (not a split pane), and right-click
+// offers the transcript menu. The split is by LOCATION: a chip with a `[data-agent-transcript-chips]`
 // ancestor is in the live transcript. That marker is set ONCE, on the live assistant
 // message body (AgentAssistantContent), so everything it renders — answer prose,
-// interim narration, and file_write/file_edit result chips — opens in the dock
+// interim narration, and file_write/file_edit result chips — opens in the workspace
 // reader, while the same components on meta surfaces (compaction/child-run summaries,
 // the child-run details + PoV inspector panels) have no such ancestor and keep the
-// workspace preview. An outliner file reference is a node-model field, never under
-// this marker, so it too keeps its workspace preview behavior.
+// normal workspace preview. An outliner file reference is a node-model field, never
+// under this marker, so it too keeps its workspace preview behavior.
 const TRANSCRIPT_CHIP_CONTAINER_SELECTOR = '[data-agent-transcript-chips]';
 
 interface TranscriptFileMenuState {
@@ -184,9 +183,11 @@ export function InlineFilePreviewLayer() {
         return;
       }
       // A transcript chip is a pointer to a working file on disk → preview in the
-      // agent dock reader. An outliner file reference → workspace preview pane.
+      // main workspace as a file-only reader. An outliner file reference → normal
+      // workspace preview pane.
       if (isTranscriptChipElement(element)) {
-        dispatchAgentDockFilePreview({
+        dispatchPreviewTargetOpen({
+          presentation: 'reader',
           target: previewTargetForTranscriptFile({
             entryKind: file.entryKind,
             name: file.name,

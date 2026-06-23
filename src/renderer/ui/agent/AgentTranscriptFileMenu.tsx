@@ -35,8 +35,8 @@ export function previewTargetForTranscriptFile(file: AgentTranscriptFile): Previ
 /**
  * The right-click menu for a file chip rendered inside the agent transcript. Unlike
  * an outliner file reference (which opens the in-app preview pane), a transcript chip
- * is a pointer to a working file on disk: its primary click opens the agent dock
- * reader, while this menu keeps the system actions — Open with default app, Show in
+ * is a pointer to a working file on disk: its primary click opens the workspace
+ * file-only reader, while this menu keeps the system actions — Open with default app, Show in
  * Finder, and promotion into today's daily note as a first-class file node ("Add to
  * Today"). Built on the shared anchored-overlay menu stack (same as NodeContextMenu /
  * FileNodeActionMenu) so it inherits roving keys, Escape, and dismissal.

@@ -2,12 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import type { PreviewTarget } from '../../src/core/preview';
 import { InlineFilePreviewLayer } from '../../src/renderer/ui/editor/InlineFilePreviewLayer';
-import {
-  AGENT_DOCK_FILE_PREVIEW_EVENT,
-  type AgentDockFilePreviewDetail,
-} from '../../src/renderer/ui/agent/agentDockFilePreviewEvents';
 import {
   PREVIEW_TARGET_OPEN_EVENT,
   type PreviewTargetOpenDetail,
@@ -30,7 +25,7 @@ afterEach(() => {
 });
 
 describe('InlineFilePreviewLayer routing', () => {
-  test('live transcript file chips open the agent dock reader instead of the OS default app', async () => {
+  test('live transcript file chips open the workspace file-only reader instead of the OS default app', async () => {
     const openedExternal: Array<{ path: string }> = [];
     const rendered = render({
       openLocalFile: (options) => {
@@ -38,9 +33,9 @@ describe('InlineFilePreviewLayer routing', () => {
         return Promise.resolve();
       },
     });
-    const dockPreviews: PreviewTarget[] = [];
-    rendered.window.addEventListener(AGENT_DOCK_FILE_PREVIEW_EVENT, (event) => {
-      dockPreviews.push((event as CustomEvent<AgentDockFilePreviewDetail>).detail.target);
+    const workspacePreviews: PreviewTargetOpenDetail[] = [];
+    rendered.window.addEventListener(PREVIEW_TARGET_OPEN_EVENT, (event) => {
+      workspacePreviews.push((event as CustomEvent<PreviewTargetOpenDetail>).detail);
     });
     const transcriptRoot = rendered.document.createElement('div');
     transcriptRoot.setAttribute('data-agent-transcript-chips', 'true');
@@ -50,11 +45,14 @@ describe('InlineFilePreviewLayer routing', () => {
     await click(rendered, transcriptRoot.querySelector('[data-inline-ref-kind="local-file"]'));
 
     expect(openedExternal).toEqual([]);
-    expect(dockPreviews).toEqual([{
-      kind: 'local-file',
-      path: '/workdir/report.md',
-      entryKind: 'file',
-      label: 'report.md',
+    expect(workspacePreviews).toEqual([{
+      presentation: 'reader',
+      target: {
+        kind: 'local-file',
+        path: '/workdir/report.md',
+        entryKind: 'file',
+        label: 'report.md',
+      },
     }]);
   });
 

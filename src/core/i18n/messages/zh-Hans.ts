@@ -890,7 +890,6 @@ commandPalette: {
       unavailable: '文件不可用',
       // Right-click menu on a transcript file chip.
       menuLabel: '文件操作',
-      backToMessages: '返回消息',
       addToToday: '添加到今天',
       openWithDefaultApp: '用默认应用打开',
       showInFinder: '在访达中显示',

@@ -262,10 +262,16 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
             }]
           : []),
       ];
+  const readerOpenAction = readerMode && canOpen
+    ? fileControls?.primaryOpen ?? {
+        label: props.target.kind === 'url' ? previewLabels.openInBrowser : previewLabels.openWithDefault,
+        run: openOriginal,
+      }
+    : null;
   const readerMenuActions: FilePreviewMenuAction[] = readerMode
     ? [
-        ...(fileControls?.primaryOpen
-          ? [{ key: 'open', label: fileControls.primaryOpen.label, icon: OpenIcon, run: fileControls.primaryOpen.run }]
+        ...(readerOpenAction
+          ? [{ key: 'open', label: readerOpenAction.label, icon: OpenIcon, run: readerOpenAction.run }]
           : []),
         ...menuActions,
       ]
