@@ -33,8 +33,6 @@
        .agent-child-run-status.is-completed); the light #3f865d reads too dark on
        dark, so lift it to a legible mid green. */
     --status-success-strong: #5fc88a;
-    --usage-input: #68a2ff;
-    --usage-cache-read: #4fcf95;
 
     /* inverse chips invert (dark-on-light in light → light-on-dark here) */
     --surface-inverse: #e6e6ea;

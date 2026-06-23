@@ -153,12 +153,11 @@
   --identity-tint-6: #7c3aed; /* violet */
   --identity-tint-7: #db2777; /* pink */
 
-  /* usage chart aliases — categorical visualization reusing the identity tint
-     system: model tokens are blue-family, cache tokens are green-family. */
+  /* usage chart aliases — categorical visualization reusing the identity tint set. */
   --usage-input: var(--identity-tint-5);
-  --usage-output: color-mix(in srgb, var(--usage-input) 62%, var(--surface) 38%);
+  --usage-output: var(--identity-tint-6);
   --usage-cache-read: var(--identity-tint-3);
-  --usage-cache-write: color-mix(in srgb, var(--usage-cache-read) 62%, var(--surface) 38%);
+  --usage-cache-write: var(--identity-tint-2);
   /* The keyed avatar's hairline ring — the tint hue mixed toward transparent so it
      reads as a soft 1px definition, never a hard border. A token (not an inline
      box-shadow) so the consumer stays tokenized (B11); like --inline-ref-focus-shadow

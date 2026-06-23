@@ -828,7 +828,7 @@
 .agent-message-usage-hover-breakdown > div {
   display: grid;
   min-width: 0;
-  grid-template-columns: max-content max-content max-content;
+  grid-template-columns: minmax(0, 90px) minmax(42px, auto) minmax(58px, auto);
   align-items: center;
   gap: var(--space-3);
 }
@@ -868,6 +868,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
   font-weight: 500;
   text-align: right;
   text-overflow: ellipsis;
