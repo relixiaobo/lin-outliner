@@ -647,12 +647,13 @@ function MessageRow({
   labels: DebugLabels;
   message: AgentDebugMessageRow;
 }) {
+  const roleLabel = messageRoleLabel(message);
   const summary = messageSummaryText(message);
   return (
     <details className={`agent-debug-message-row${className ? ` ${className}` : ''}`}>
       <summary className="agent-debug-message-head">
         <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
-        <span className={`agent-debug-role-label is-${message.role}`}>{message.role}</span>
+        <span className={`agent-debug-role-label is-${message.role}`}>{roleLabel}</span>
         <strong title={summary}>{summary}</strong>
         <code>{formatBytes(message.bytes)}</code>
       </summary>
@@ -667,12 +668,23 @@ function MessageRow({
   );
 }
 
+function messageRoleLabel(message: AgentDebugMessageRow): string {
+  const part = displayPartForMessage(message);
+  if (part?.kind === 'toolCall') return 'tool call';
+  if (part?.kind === 'toolResult') return 'tool result';
+  if (part?.kind === 'text' && message.role === 'tool' && toolResultPrefixPattern.test(part.body)) return 'tool result';
+  return message.role;
+}
+
 function messageSummaryText(message: AgentDebugMessageRow): string {
-  if (message.parts.length === 1) {
-    const [part] = message.parts;
+  const part = displayPartForMessage(message);
+  if (part && message.parts.length === 1) {
+    if (part?.kind === 'text' && message.role === 'tool' && toolResultPrefixPattern.test(part.body)) {
+      return toolResultSummary(part.body, '');
+    }
     if (part?.kind === 'text' && !part.isReminder) return part.body;
-    if (part?.kind === 'toolCall') return `tool_call ${part.name}`;
-    if (part?.kind === 'toolResult') return `tool_result ${shortId(part.toolUseId)}`;
+    if (part?.kind === 'toolCall') return part.name;
+    if (part?.kind === 'toolResult') return toolResultSummary(part.body, part.toolUseId);
     if (part?.kind === 'thinking') return 'thinking';
     if (part?.kind === 'image') return 'image';
     if (part?.kind === 'json') return 'json';
@@ -680,6 +692,18 @@ function messageSummaryText(message: AgentDebugMessageRow): string {
   }
   const prefix = `${message.role}: `;
   return message.summary.startsWith(prefix) ? message.summary.slice(prefix.length) : message.summary;
+}
+
+function displayPartForMessage(message: AgentDebugMessageRow): AgentDebugMessagePart | undefined {
+  if (message.parts.length !== 1) return undefined;
+  return message.parts[0];
+}
+
+const toolResultPrefixPattern = /^\[tool_result\s+[^\]]+\]\s*/;
+
+function toolResultSummary(body: string, toolUseId: string): string {
+  const stripped = body.replace(toolResultPrefixPattern, '').trim();
+  return stripped || shortId(toolUseId) || 'result';
 }
 
 function shortId(value: string): string {
