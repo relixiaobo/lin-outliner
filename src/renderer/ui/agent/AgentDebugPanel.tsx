@@ -351,9 +351,9 @@ function RoundCard({ round, labels }: { round: AgentDebugRound; labels: DebugLab
   );
   return (
     <details className="agent-debug-round-card" open>
-      <summary className="agent-debug-section-header">
+      <summary className="agent-debug-round-head">
         <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
-        <h3>{labels.modelCallTitle({ index: round.index + 1 })}</h3>
+        <span className="agent-debug-disclosure-title">{labels.modelCallTitle({ index: round.index + 1 })}</span>
         {showStatus ? <span className={`agent-debug-status-pill is-${round.status}`}>{statusLabel(round.status, labels)}</span> : null}
         <RoundInfoHover labels={labels} round={round} />
       </summary>

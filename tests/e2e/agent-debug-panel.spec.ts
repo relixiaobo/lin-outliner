@@ -45,10 +45,10 @@ test.describe('agent debug panel', () => {
 
     await expect(debugPanel.getByRole('heading', { name: 'Execution · 1' })).toBeVisible();
     const round = debugPanel.locator('.agent-debug-round-card').first();
-    await expect(round.getByRole('heading', { name: 'Call 1' })).toBeVisible();
+    await expect(round.locator('summary.agent-debug-round-head')).toContainText('Call 1');
     await expect(round).toHaveCSS('border-left-width', '0px');
-    await expect(round.locator('.agent-debug-section-header .agent-debug-status-pill')).toHaveCount(0);
-    await expect(round.locator('.agent-debug-section-header > code')).toHaveCount(0);
+    await expect(round.locator('.agent-debug-round-head .agent-debug-status-pill')).toHaveCount(0);
+    await expect(round.locator('.agent-debug-round-head > code')).toHaveCount(0);
     await expect(round.locator('.agent-debug-role-label')).toHaveCount(0);
     await expect(round.locator('.agent-debug-message-row')).toHaveCount(0);
     await expect(round.locator('.agent-debug-round-request')).toHaveCount(0);
@@ -59,9 +59,9 @@ test.describe('agent debug panel', () => {
     await expect(round.locator('.agent-debug-execution-event', { hasText: 'call' })).toContainText('git push origin main');
     await expect(round.locator('.agent-debug-execution-event', { hasText: 'result' })).toContainText('Pushed to origin/main.');
     await expect(round.locator('.agent-debug-tool-exchange', { hasText: 'bash' })).toContainText('Pushed to origin/main.');
-    await round.locator('summary.agent-debug-section-header').click();
+    await round.locator('summary.agent-debug-round-head').click();
     await expect(outputRow).not.toBeVisible();
-    await round.locator('summary.agent-debug-section-header').click();
+    await round.locator('summary.agent-debug-round-head').click();
     await expect(outputRow).toBeVisible();
     await expect.poll(async () => debugPanel.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
     await expect(round.locator('details.agent-debug-disclosure', { hasText: 'Usage' })).toHaveCount(0);

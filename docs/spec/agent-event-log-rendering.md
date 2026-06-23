@@ -1260,8 +1260,10 @@ The run detail is ordered for inspection:
    tool calls are synthesized from the exchange args only when the provider
    response did not capture the original tool call.
    Calls render as a lightweight disclosure list directly under the Execution
-   header, with subtle dividers rather than separate cards; the run summary
-   carries the main token/cost readout.
+   header; each `Call N` header uses the same top-level disclosure row hierarchy
+   as `System prompt` / `Tools` / `History` / `Current request`, with subtle
+   dividers rather than separate cards. The run summary carries the main
+   token/cost readout.
 
 The chat transcript exposes this through an assistant-message **Details** icon
 button that uses the `Info` glyph. Hovering it previews the whole run's token and

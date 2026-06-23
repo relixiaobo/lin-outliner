@@ -510,16 +510,20 @@
   padding-top: var(--space-2);
 }
 
-.agent-debug-round-card > summary.agent-debug-section-header {
-  justify-content: flex-start;
-  gap: var(--space-4);
-  margin-bottom: 0;
-  padding: var(--space-2) 0 var(--space-3);
+.agent-debug-round-card > summary.agent-debug-round-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  padding: var(--space-3) 0;
   cursor: default;
   list-style: none;
 }
 
-.agent-debug-round-card > summary.agent-debug-section-header::-webkit-details-marker {
+.agent-debug-round-card > summary.agent-debug-round-head::-webkit-details-marker {
   display: none;
 }
 
