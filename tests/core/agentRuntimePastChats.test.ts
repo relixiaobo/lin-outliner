@@ -479,7 +479,8 @@ describe('agent runtime past chats integration', () => {
       'past_chats',
     ].sort());
     expect(dreamCall?.text).toContain("Tenon's private memory consolidation pass");
-    expect(dreamCall?.text).toContain('Maintain exactly one direct child #d-memory container for today');
+    expect(dreamCall?.text).toContain('Remembering nothing is a valid and common outcome');
+    expect(dreamCall?.text).toContain('When you do write memory, maintain exactly one direct child #d-memory container for today');
     expect(dreamCall?.text).toContain('The #d-memory title must be a concise generated daily memory headline');
     expect(dreamCall?.text).toContain('human-dream cycle');
     expect(dreamCall?.text).toContain('replay salient fragments');
@@ -611,13 +612,16 @@ describe('agent runtime past chats integration', () => {
     let dreamState = await new AgentEventStore(dataRoot).readDreamState(BELIEVER_PRINCIPAL);
     expect(calls).toHaveLength(2);
     expect(script.pendingCount()).toBe(2);
-    expect(dreamState.lastCompleted).toBeNull();
+    // The first scheduled run finds nothing durable: a valid no-op completion.
+    expect(dreamState.lastCompleted?.trigger).toBe('schedule');
+    expect(dreamState.lastCompleted?.changes.added).toBe(0);
 
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T05:00:00Z'));
     dreamState = await new AgentEventStore(dataRoot).readDreamState(BELIEVER_PRINCIPAL);
+    // At most once per daily due: the second same-day scheduled attempt does not fire.
     expect(calls).toHaveLength(2);
     expect(script.pendingCount()).toBe(2);
-    expect(dreamState.lastCompleted).toBeNull();
+    expect(dreamState.lastCompleted?.trigger).toBe('schedule');
 
     await runtime.runDreamNow();
     dreamState = await new AgentEventStore(dataRoot).readDreamState(BELIEVER_PRINCIPAL);
@@ -627,7 +631,7 @@ describe('agent runtime past chats integration', () => {
     expect(dreamState.lastCompleted?.changes.added).toBeGreaterThan(0);
   });
 
-  test('scheduled Dream does not advance the watermark when the child writes no memory nodes', async () => {
+  test('scheduled Dream that finds nothing worth remembering completes as a no-op and advances the watermark', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-empty-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-empty-data-'));
     roots.push(localRoot, dataRoot);
@@ -659,14 +663,21 @@ describe('agent runtime past chats integration', () => {
     );
 
     const created = await runtime.restoreLatestConversation();
-    const longEvidence = `Memory Dream should retry this evidence later. ${'memory-dream-empty '.repeat(80)}`;
+    const longEvidence = `Memory Dream sees plenty of low-value chit-chat here. ${'memory-dream-empty '.repeat(80)}`;
     await runtime.sendMessage(created.conversationId, longEvidence);
     await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00Z'));
 
     const dreamState = await new AgentEventStore(dataRoot).readDreamState(BELIEVER_PRINCIPAL);
     expect(script.pendingCount()).toBe(0);
-    expect(dreamState.lastCompleted).toBeNull();
-    expect(dreamState.watermark.conversations[created.conversationId]?.seq ?? 0).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    // Remembering nothing is a valid no-op: the run still completes with zero
+    // change counts and advances the watermark, so the considered-but-empty span
+    // is not re-read on the next Dream.
+    expect(dreamState.lastCompleted?.trigger).toBe('schedule');
+    expect(dreamState.lastCompleted?.changes.added).toBe(0);
+    expect(dreamState.lastCompleted?.changes.updated).toBe(0);
+    expect(dreamState.lastCompleted?.changes.forgotten).toBe(0);
+    expect(dreamState.watermark.conversations[created.conversationId]?.seq ?? 0).toBeGreaterThan(0);
     expect((await runtime.listConversations()).map((entry) => entry.id)).not.toContain('lin-agent-memory-dream');
   });
 
@@ -720,7 +731,11 @@ describe('agent runtime past chats integration', () => {
     const dreamState = await new AgentEventStore(dataRoot).readDreamState(BELIEVER_PRINCIPAL);
     expect(script.pendingCount()).toBe(0);
     expect(core.state().nodes[previewTarget]!.children).toEqual([]);
-    expect(dreamState.lastCompleted).toBeNull();
-    expect(dreamState.watermark.conversations[created.conversationId]?.seq ?? 0).toBe(0);
+    // A preview-only edit commits nothing, so the Dream counts zero work — but it
+    // is still a valid no-op completion that advances the watermark.
+    expect(dreamState.lastCompleted?.trigger).toBe('schedule');
+    expect(dreamState.lastCompleted?.changes.updated).toBe(0);
+    expect(dreamState.lastCompleted?.changes.added).toBe(0);
+    expect(dreamState.watermark.conversations[created.conversationId]?.seq ?? 0).toBeGreaterThan(0);
   });
 });

@@ -2394,9 +2394,12 @@ not blocked by the scheduled due gate. A run computes per-stream seq ranges from
 the Dream watermark, renders the skill, and forks an unattended child run with
 only `past_chats`, `node_search`, `node_read`, `node_create`, `node_edit`, and
 `node_delete`.
-The child first reads today's journal node, creates or reuses exactly one direct
-`#d-memory` container under it, and updates that container's generated daily
-memory headline in place. It uses `node_search` / `node_read` to gather relevant
+The child first reads today's journal node. When the run yields durable memory
+worth writing, it creates or reuses exactly one direct `#d-memory` container under
+it and updates that container's generated daily memory headline in place; when
+nothing is worth remembering it writes nothing and the run still completes,
+recording `dream.completed` with zero changes and advancing the watermark. It uses
+`node_search` / `node_read` to gather relevant
 prior `#d-memory` / `#d-episode` / `#d-belief` / `#d-question` / `#d-guidance`
 nodes and user-authored outline context for the topics extracted from the raw
 chat spans. Manual `consolidate_only` runs may have no new chat sources; then the

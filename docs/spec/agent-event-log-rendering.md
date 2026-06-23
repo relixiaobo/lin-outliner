@@ -508,8 +508,9 @@ disk under the believer principal directory). Durable model-readable memory is
 ordinary timeline outline content; `dream.completed` projects the latest Dream
 watermark and audit summary. The summary's change counts are derived from the
 private child run's successful `node_create` / `node_edit` writes; a zero-write
-child completion does not record `dream.completed` and does not advance the
-watermark. There is **one** Dream — a runtime-only `memory-dream` skill run that
+child completion is a valid no-op — remembering nothing is a normal Dream outcome,
+so it records `dream.completed` with zero change counts and advances the watermark,
+keeping a considered-but-empty span from being re-read. There is **one** Dream — a runtime-only `memory-dream` skill run that
 consolidates the user's member conversations into `#d-memory`, `#d-episode`,
 `#d-belief`, optional `#d-question`, and optional `#d-guidance` nodes. Scheduled
 Dream attempts are at-most-once per daily due
@@ -519,11 +520,11 @@ manual Dream from Settings; manual runs use the same child path and same-day
 memory node but bypass the scheduled due gate. Manual consolidate-only runs may
 have no new chat sources and can reconcile outline/prior Dream context directly.
 The child applies the valuable-memory filter, uses `node_search` / `node_read` to
-reconcile relevant prior `#d-*` memory and user-authored outline context,
-maintains one direct
-`#d-memory` container under today's journal node, and updates that container's
-generated daily memory headline in place instead of creating multiple same-day
-memory containers. The child may write optional `#d-question` nodes for unresolved
+reconcile relevant prior `#d-*` memory and user-authored outline context, and —
+when the run has memory worth writing — maintains at most one direct `#d-memory`
+container under today's journal node and updates that container's generated daily
+memory headline in place instead of creating multiple same-day memory containers;
+a run that finds nothing worth remembering writes no container at all. The child may write optional `#d-question` nodes for unresolved
 tension and optional `#d-guidance` nodes for future handling, and may delete
 obsolete nodes through `node_delete`; an episode does not need all child tags.
 Prior Dream output is a belief graph to update, not self-confirming evidence. The

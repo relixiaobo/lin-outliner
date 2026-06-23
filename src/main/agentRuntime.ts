@@ -3535,10 +3535,12 @@ export class AgentRuntime {
       await this.writeDreamRunMeta(task, 'running', model);
       const skill = await this.renderMemoryDreamSkill(task.runId);
       const prompt = buildMemoryDreamPrompt(task, skill.renderedContent);
+      // A successful child that writes nothing is a legitimate no-op, not a
+      // failure: remembering nothing is a valid Dream outcome (a real child
+      // failure/cancel already threw in runMemoryDreamChildAgent). It still
+      // records `dream.completed` with zero change counts and advances the
+      // watermark, so the considered-but-empty span is not re-read.
       const changes = dreamChangesFromChildNodeChanges(await this.runMemoryDreamChildAgent(task, prompt, skill.allowedTools));
-      if (!dreamChangesHaveCommittedWork(changes)) {
-        throw new Error('Memory Dream child completed without creating or editing memory nodes.');
-      }
       const completed = await this.getEventStore().appendDreamCompleted(task.principal, {
         runId: task.runId,
         trigger: task.trigger,
@@ -7533,9 +7535,11 @@ function buildMemoryDreamPrompt(task: AgentDreamMemoryExtractionTask, skillConte
     `trigger: ${task.trigger}`,
     `started_at: ${new Date(task.startedAt).toISOString()}`,
     '',
-    'Before writing, read today\'s journal node. Maintain exactly one direct child #d-memory container for today across scheduled and manual Dream runs. The #d-memory title must be a concise generated daily memory headline, not the fixed word "Memory"; update the existing container title in place when today already has one.',
+    'Before writing, read today\'s journal node.',
+    'Remembering nothing is a valid and common outcome. If this run yields no durable, future-useful memory, write nothing at all: create no #d-memory container and no memory nodes, then end. That is success, not failure. Never create an empty #d-memory container, and never write an episode that only narrates that Neva answered, looked something up, replied in a language, or cited a source (for example "Neva answered a Chengdu weather follow-up in Chinese using China Weather as the source") — an episode must capture a durable fact about the user or the work, not a log of assistant actions.',
+    'When you do write memory, maintain exactly one direct child #d-memory container for today across scheduled and manual Dream runs. The #d-memory title must be a concise generated daily memory headline, not the fixed word "Memory"; update the existing container title in place when today already has one.',
     'Apply the human-dream cycle from the skill instructions: replay salient fragments, associate them with outline context, reconcile prior memory, abstract stable patterns, expose unresolved tensions as #d-question only when needed, and write future handling notes as #d-guidance only when useful. When processed.consolidate_only is true and sources is empty, replay and consolidate outline context plus prior Dream memory instead of raw chat.',
-    'Apply the Valuable Memory Filter from the skill instructions before writing. Prefer skipping thin or transient evidence over creating low-value memory. Durable #d-belief nodes should be reserved for future-relevant preferences, decisions, project facts, corrections, or recurring patterns.',
+    'Apply the Valuable Memory Filter from the skill instructions before writing. Prefer skipping thin or transient evidence over creating low-value memory; when nothing survives the filter, write nothing rather than a low-value placeholder. Durable #d-belief nodes should be reserved for future-relevant preferences, decisions, project facts, corrections, or recurring patterns.',
     'Use node_search and node_read to gather relevant outline context before writing: prior #d-memory/#d-episode/#d-belief/#d-question/#d-guidance nodes for these topics and user-authored outline nodes that clarify projects, tasks, decisions, tools, or workflow. Treat prior Dream results as current beliefs, tensions, and guidance to reconcile, not as primary evidence. Matching memory nodes and related outline nodes may be edited, moved, merged, or deleted when consolidation warrants it.',
     'When sources are present, read and consolidate only these chat sources. When processed.consolidate_only is true and sources is empty, do not call past_chats; consolidate using node_read/node_search over outline context and prior Dream memory. When a visible citation is useful, copy that source\'s chat_marker_template and replace only "natural source phrase" with a concise label that reads as part of the sentence you write. Do not cite every line mechanically; one episode-level citation can cover child nodes that use the same evidence.',
     'Do not use bookkeeping labels such as source-1, source-2, source, citation, evidence, or link as the visible marker label.',
@@ -7677,10 +7681,6 @@ function dreamChangesFromChildNodeChanges(nodeChanges: AgentChildRunNodeChanges)
     forgotten: uniqueStrings(nodeChanges.trashedNodeIds).length,
     skipped: 0,
   };
-}
-
-function dreamChangesHaveCommittedWork(changes: AgentDreamCompletedChanges): boolean {
-  return changes.added + changes.updated + changes.forgotten > 0;
 }
 
 function isInternalAgentConversationId(conversationId: string): boolean {

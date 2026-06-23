@@ -765,11 +765,13 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
   since the Dream watermark when sources exist; manual consolidate-only runs can
   reconcile outline/prior Dream context without new chat spans. They gather
   relevant prior memory/workspace context via `node_search` / `node_read`, apply
-  the human-dream cycle and valuable-memory filter, write `#d-*` memory nodes
-  (`#d-episode`, `#d-belief`, optional `#d-question`, optional `#d-guidance`) with
-  selective `[[chat:...]]` provenance when citation improves auditability or
-  disambiguation, may delete obsolete nodes with `node_delete`, record
-  `dream.completed`, and write a reflective run meta entry. There is no `/dream`
+  the human-dream cycle and valuable-memory filter, and — when the filter leaves
+  memory worth writing — write `#d-*` memory nodes (`#d-episode`, `#d-belief`,
+  optional `#d-question`, optional `#d-guidance`) with selective `[[chat:...]]`
+  provenance when citation improves auditability or disambiguation, and may delete
+  obsolete nodes with `node_delete`. A run that finds nothing worth remembering
+  writes nothing, and either way the run records `dream.completed` and writes a
+  reflective run meta entry. There is no `/dream`
   slash command and no foreground `dream` tool.
 - `web_search` / `web_fetch` for web access.
 

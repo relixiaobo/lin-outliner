@@ -137,10 +137,11 @@ removed — memory is always one writable pool.
   never holds content — gist is episodic content, not index.
 - **Processes:** consolidation (runtime-only Dream skill — scheduled
   at-most-once daily, plus user-triggered manual runs from Settings — replays
-  visible conversation spans into today's generated-headline `#d-memory`
-  container, optional `#d-episode` / `#d-belief` / `#d-question` /
-  `#d-guidance` nodes, and selective `[[chat:...]]` provenance after a
-  high-signal memory filter) · retrieval (foreground pull through
+  visible conversation spans and, when a high-signal memory filter leaves durable
+  memory worth writing, records it in today's generated-headline `#d-memory`
+  container with optional `#d-episode` / `#d-belief` / `#d-question` /
+  `#d-guidance` nodes and selective `[[chat:...]]` provenance; a run that finds
+  nothing worth remembering writes nothing) · retrieval (foreground pull through
   `node_search` / `node_read`, plus `past_chats` for raw prior chat spans) ·
   forgetting/supersession as ordinary node edits.
 
@@ -158,8 +159,10 @@ conversation spans via `past_chats`, gathers relevant outline context with
 are at most once per daily due; a user may also trigger a manual Dream from
 Settings, and that manual run is not blocked by the scheduled due gate. Each run
 applies the valuable-memory filter, reconciles prior `#d-*` memories as the
-current belief graph, then updates today's single `#d-memory` container, whose
-title is a generated daily memory headline. It may write `#d-question` for
+current belief graph, then, when it has memory worth writing, updates today's
+single `#d-memory` container, whose title is a generated daily memory headline; a
+run that finds nothing worth remembering writes nothing and still completes. It
+may write `#d-question` for
 unresolved tension and `#d-guidance` for future handling, but these are optional
 ordinary tags, not required children. Manual consolidate-only Dream can reconcile
 prior Dream results and outline context without new chat spans, and Dream may
