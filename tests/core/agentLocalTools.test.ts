@@ -4,8 +4,11 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  buildAgentLocalToolProcessEnv,
   createAgentLocalWorkspaceContext,
   createLocalTools,
+  PDF_NATIVE_MAX_SIZE,
+  POPPLER_RECOVERY_INSTRUCTIONS,
   restorePostCompactReadFiles,
   scratchRootForWorkdir,
   setAgentLocalPermissionRoots,
@@ -76,6 +79,44 @@ async function withPrependedPath<T>(binDir: string, fn: () => Promise<T>): Promi
     }
   }
 }
+
+test('agent local tool process env includes configured and standard tool paths', () => {
+  const originalPath = process.env.PATH;
+  const originalExtraPath = process.env.LIN_AGENT_EXTRA_TOOL_PATH;
+  const extraPath = path.join(tmpdir(), 'lin-extra-tools');
+  process.env.PATH = ['/usr/bin', '/opt/homebrew/bin'].join(path.delimiter);
+  process.env.LIN_AGENT_EXTRA_TOOL_PATH = [extraPath, '/usr/bin'].join(path.delimiter);
+  try {
+    const env = buildAgentLocalToolProcessEnv();
+    const segments = env.PATH?.split(path.delimiter) ?? [];
+    expect(segments.slice(0, 3)).toEqual([extraPath, '/usr/bin', '/opt/homebrew/bin']);
+    expect(segments).toContain('/usr/local/bin');
+    expect(segments.filter((segment) => segment === '/usr/bin')).toHaveLength(1);
+    expect(segments.filter((segment) => segment === '/opt/homebrew/bin')).toHaveLength(1);
+  } finally {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+    if (originalExtraPath === undefined) {
+      delete process.env.LIN_AGENT_EXTRA_TOOL_PATH;
+    } else {
+      process.env.LIN_AGENT_EXTRA_TOOL_PATH = originalExtraPath;
+    }
+  }
+});
+
+test('Poppler recovery instructions tell the agent to install with bash and retry', () => {
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('run bash to detect an available package manager');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('Do not assume Homebrew is available');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('`brew install poppler`');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('`sudo port install poppler`');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('`sudo apt-get update && sudo apt-get install -y poppler-utils`');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('If no supported package manager is available');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('retry the same file_read or file_convert call');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('retry file_read without pages');
+});
 
 async function waitForFileContent(filePath: string, predicate: (content: string) => boolean, timeoutMs = 1000): Promise<string> {
   const deadline = Date.now() + timeoutMs;
@@ -737,6 +778,51 @@ describe('agent local tools', () => {
       expect(visible.data.file.dimensions).toEqual({ width: 7, height: 11 });
       expect(visible.data.file.base64).toBeUndefined();
       expect(result.content.some((block: { type: string }) => block.type === 'image')).toBe(true);
+    });
+  });
+
+  test('file_read can return native PDF metadata without rendering pages', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'sample.pdf');
+      await writeFile(filePath, makePdf(['First page', 'Second page']), 'utf8');
+
+      const tool = createLocalTools({ localRoot: workspaceRoot, nativePdfRead: true }).find((candidate) => candidate.name === 'file_read')!;
+      const result = await (tool.execute as any)('test-call', { file_path: filePath });
+      const read = result.details as ToolEnvelope<{
+        type: 'pdf';
+        file: { filePath: string; originalSize: number; mode: string; mimeType: string };
+      }>;
+      const visible = JSON.parse(result.content[0].text);
+
+      expect(read.ok).toBe(true);
+      expect(read.data!.type).toBe('pdf');
+      expect(read.data!.file.mode).toBe('native');
+      expect(read.data!.file.mimeType).toBe('application/pdf');
+      expect(visible.data.file).toEqual({
+        filePath,
+        originalSize: read.data!.file.originalSize,
+        mode: 'native',
+      });
+      expect(JSON.stringify(visible)).not.toContain('base64');
+      expect(result.content.some((block: { type: string }) => block.type === 'image')).toBe(false);
+    });
+  });
+
+  test('file_read rejects oversized native PDF reads before provider payload conversion', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'large.pdf');
+      const bytes = Buffer.alloc(PDF_NATIVE_MAX_SIZE + 1);
+      bytes.write('%PDF-');
+      await writeFile(filePath, bytes);
+
+      const tool = createLocalTools({ localRoot: workspaceRoot, nativePdfRead: true }).find((candidate) => candidate.name === 'file_read')!;
+      const result = await (tool.execute as any)('test-call', { file_path: filePath });
+      const read = result.details as ToolEnvelope<unknown>;
+
+      expect(read.ok).toBe(false);
+      expect(read.error?.code).toBe('pdf_too_large');
+      expect(read.instructions).toContain('pages');
+      expect(result.content[0].text).toContain('pdf_too_large');
     });
   });
 

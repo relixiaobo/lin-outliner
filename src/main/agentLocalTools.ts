@@ -30,6 +30,7 @@ interface LocalToolOptions {
   scratchRoot?: string;
   workspace?: AgentLocalWorkspaceContext;
   skillRuntime?: AgentSkillRuntime;
+  nativePdfRead?: boolean;
 }
 
 export interface AgentLocalWorkspaceContext {
@@ -69,6 +70,7 @@ interface FileReadParams {
 type FileReadData =
   | FileReadTextData
   | FileReadImageData
+  | FileReadPdfData
   | FileReadPdfPartsData
   | FileReadNotebookData
   | FileReadUnchangedData;
@@ -92,6 +94,16 @@ interface FileReadImageData {
     type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
     originalSize: number;
     dimensions?: ImageDimensions;
+  };
+}
+
+interface FileReadPdfData {
+  type: 'pdf';
+  file: {
+    filePath: string;
+    originalSize: number;
+    mode: 'native';
+    mimeType: 'application/pdf';
   };
 }
 
@@ -424,10 +436,30 @@ const BASH_INLINE_OUTPUT_LIMIT = 30_000;
 const BACKGROUND_TASK_HISTORY_LIMIT = 20;
 const BACKGROUND_TASK_TTL_MS = 30 * 60_000;
 const PDF_MAX_EXTRACT_SIZE = 100 * 1024 * 1024;
+export const PDF_NATIVE_MAX_SIZE = 20 * 1024 * 1024;
 const PDF_MAX_PAGES_PER_READ = 20;
 const PDF_INLINE_PAGE_THRESHOLD = 10;
 const PDF_TEXT_MAX_CHARS = 60_000;
 const CONVERT_TIMEOUT_MS = 180_000;
+const EXTRA_TOOL_PATH_ENV = 'LIN_AGENT_EXTRA_TOOL_PATH';
+const DEFAULT_AGENT_TOOL_PATH_SEGMENTS = [
+  '/opt/homebrew/bin',
+  '/opt/homebrew/sbin',
+  '/usr/local/bin',
+  '/usr/local/sbin',
+  '/usr/bin',
+  '/bin',
+  '/usr/sbin',
+  '/sbin',
+];
+export const POPPLER_RECOVERY_INSTRUCTIONS = [
+  'Poppler is required for PDF page rendering and conversion.',
+  'If this is ordinary PDF content analysis on an OpenAI Responses model, retry file_read without pages so the PDF can be attached natively.',
+  'If page images, layout inspection, or PDF conversion are required, run bash to detect an available package manager and install Poppler.',
+  'Do not assume Homebrew is available: use an installed manager such as `brew install poppler`, `sudo port install poppler`, `sudo apt-get update && sudo apt-get install -y poppler-utils`, `sudo dnf install -y poppler-utils`, or `sudo pacman -S --noconfirm poppler`.',
+  'If no supported package manager is available, report that Poppler must be installed so pdfinfo and pdftoppm are on PATH.',
+  'After installation, retry the same file_read or file_convert call.',
+].join(' ');
 const IGNORED_DIRECTORIES = new Set(['.agent-trash', '.git', '.svn', '.hg', '.bzr', '.jj', '.sl', 'node_modules', 'dist', 'out', 'release', 'target']);
 const IMAGE_MEDIA_TYPES = new Map<string, FileReadImageData['file']['type']>([
   ['.jpg', 'image/jpeg'],
@@ -581,7 +613,7 @@ const TASK_STOP_PARAMETERS = {
 export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>[] {
   const workspace = options.workspace ?? createWorkspaceContext(options.localRoot, options.scratchRoot, options.skillRuntime);
   return [
-    createFileReadTool(workspace),
+    createFileReadTool(workspace, { nativePdfRead: options.nativePdfRead }),
     createFileGlobTool(workspace),
     createFileGrepTool(workspace),
     createFileEditTool(workspace),
@@ -825,7 +857,29 @@ function selfDefinitionWriteInstructions(write: SelfDefinitionWrite | null): str
   return undefined;
 }
 
-function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileReadData>> {
+function pathSegments(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(path.delimiter)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+export function buildAgentLocalToolProcessEnv(): NodeJS.ProcessEnv {
+  const segments = [
+    ...pathSegments(process.env[EXTRA_TOOL_PATH_ENV]),
+    ...pathSegments(process.env.PATH),
+    ...DEFAULT_AGENT_TOOL_PATH_SEGMENTS,
+  ];
+  const seen = new Set<string>();
+  const pathValue = segments.filter((segment) => {
+    if (seen.has(segment)) return false;
+    seen.add(segment);
+    return true;
+  }).join(path.delimiter);
+  return { ...process.env, PATH: pathValue };
+}
+
+function createFileReadTool(workspace: WorkspaceContext, options: Pick<LocalToolOptions, 'nativePdfRead'> = {}): AgentTool<any, ToolEnvelope<FileReadData>> {
   return {
     name: 'file_read',
     label: 'File Read',
@@ -875,6 +929,15 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         }
         if (ext === '.pdf') {
           const buffer = await readFile(filePath);
+          if (options.nativePdfRead && params.pages === undefined) {
+            const data = readNativePdfData(filePath, buffer);
+            await notifySuccessfulFileTouch(workspace, filePath);
+            const visible = visibleFileRead(data);
+            return agentToolResult(successEnvelope('file_read', data, {
+              instructions: 'The PDF was attached as a native document block for the next model call. Use the pages parameter only when you need page images or layout inspection.',
+              metrics: metrics(started, data),
+            }), visible);
+          }
           const parts = await extractPdfPages(workspace, filePath, buffer.byteLength, params.pages);
           const extractedText = await extractPdfText(filePath, parts.file.pages);
           if (extractedText) {
@@ -1702,7 +1765,7 @@ async function convertPdfToImages(
   ];
   const result = await runProcess('pdftoppm', args, path.dirname(inputPath), CONVERT_TIMEOUT_MS);
   if (result.error) {
-    throw new LocalToolFailure('converter_unavailable', result.error.message, 'Install poppler so pdftoppm is available on PATH.');
+    throw new LocalToolFailure('converter_unavailable', result.error.message, POPPLER_RECOVERY_INSTRUCTIONS);
   }
   if (result.exitCode !== 0) {
     throw pdfPageRenderFailure(
@@ -1979,7 +2042,7 @@ function clearReadStateForDeletedPath(workspace: WorkspaceContext, filePath: str
 
 async function runProcess(command: string, args: string[], cwd: string, timeoutMs = 60_000): Promise<ProcessResult> {
   return await new Promise<ProcessResult>((resolve) => {
-    const child = spawn(command, args, { cwd, env: process.env, shell: false });
+    const child = spawn(command, args, { cwd, env: buildAgentLocalToolProcessEnv(), shell: false });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
@@ -2009,7 +2072,7 @@ async function runProcessItems(
   timeoutMs: number,
 ): Promise<ProcessItemsResult> {
   return await new Promise<ProcessItemsResult>((resolve) => {
-    const child = spawn(command, args, { cwd, env: process.env, shell: false });
+    const child = spawn(command, args, { cwd, env: buildAgentLocalToolProcessEnv(), shell: false });
     const items: string[] = [];
     let stderr = '';
     let pending = '';
@@ -2110,7 +2173,7 @@ async function runForegroundCommand(workspace: WorkspaceContext, params: BashPar
   const child = spawn(params.command, {
     cwd: workspace.root,
     shell: true,
-    env: process.env,
+    env: buildAgentLocalToolProcessEnv(),
   });
   let stdout = '';
   let stderr = '';
@@ -2188,7 +2251,7 @@ async function startBackgroundCommand(workspace: WorkspaceContext, params: BashP
   const child = spawn(params.command, {
     cwd: workspace.root,
     shell: true,
-    env: process.env,
+    env: buildAgentLocalToolProcessEnv(),
   });
   return registerBackgroundTask(workspace, params, child, { backgroundedByUser: true });
 }
@@ -2477,7 +2540,7 @@ function readUInt24LE(buffer: Buffer, offset: number): number {
 async function getPdfPageCount(filePath: string): Promise<number> {
   const result = await runProcess('pdfinfo', [filePath], path.dirname(filePath), 30_000);
   if (result.error) {
-    throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, 'Install poppler so pdfinfo and pdftoppm are available on PATH, or convert the PDF first.');
+    throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, POPPLER_RECOVERY_INSTRUCTIONS);
   }
   if (result.exitCode !== 0) {
     throw new LocalToolFailure('pdf_read_failed', result.stderr.trim() || 'pdfinfo failed.', 'Check that the PDF is valid and readable.');
@@ -2488,6 +2551,31 @@ async function getPdfPageCount(filePath: string): Promise<number> {
     throw new LocalToolFailure('pdf_read_failed', 'Could not determine the PDF page count.', 'Check that the PDF is valid and readable.');
   }
   return pages;
+}
+
+function readNativePdfData(filePath: string, buffer: Buffer): FileReadPdfData {
+  if (buffer.byteLength === 0) {
+    throw new LocalToolFailure('pdf_empty', `PDF file is empty: ${filePath}`, 'Use a valid PDF file.');
+  }
+  if (buffer.byteLength < 5 || buffer.toString('ascii', 0, 5) !== '%PDF-') {
+    throw new LocalToolFailure('pdf_corrupted', `File is not a valid PDF: ${filePath}`, 'Use a valid PDF file.');
+  }
+  if (buffer.byteLength > PDF_NATIVE_MAX_SIZE) {
+    throw new LocalToolFailure(
+      'pdf_too_large',
+      `PDF file exceeds maximum native document size of ${formatBytes(PDF_NATIVE_MAX_SIZE)}.`,
+      `Call file_read again with pages, for example "1-5". Maximum ${PDF_MAX_PAGES_PER_READ} pages per request, or split the PDF first.`,
+    );
+  }
+  return {
+    type: 'pdf',
+    file: {
+      filePath,
+      originalSize: buffer.byteLength,
+      mode: 'native',
+      mimeType: 'application/pdf',
+    },
+  };
 }
 
 async function extractPdfPages(workspace: WorkspaceContext, filePath: string, originalSize: number, requestedPages: string | undefined): Promise<FileReadPdfPartsData> {
@@ -2506,7 +2594,7 @@ async function extractPdfPages(workspace: WorkspaceContext, filePath: string, or
   const args = ['-jpeg', '-r', '100', '-f', String(range.firstPage), '-l', String(range.lastPage), filePath, prefix];
   const result = await runProcess('pdftoppm', args, path.dirname(filePath), 120_000);
   if (result.error) {
-    throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, 'Install poppler so pdfinfo and pdftoppm are available on PATH, or convert the PDF first.');
+    throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, POPPLER_RECOVERY_INSTRUCTIONS);
   }
   if (result.exitCode !== 0) {
     throw pdfPageRenderFailure(
@@ -2820,6 +2908,8 @@ function visibleFileRead(data: FileReadData): { file: Record<string, unknown> } 
   switch (data.type) {
     case 'image':
       return { file: { filePath: data.file.filePath, originalSize: data.file.originalSize, dimensions: data.file.dimensions } };
+    case 'pdf':
+      return { file: { filePath: data.file.filePath, originalSize: data.file.originalSize, mode: data.file.mode } };
     case 'text':
       return { file: { filePath: data.file.filePath, content: data.file.content, startLine: data.file.startLine, totalLines: data.file.totalLines } };
     case 'notebook':

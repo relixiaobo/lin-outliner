@@ -32,6 +32,7 @@ describe('agent permissions', () => {
       ['bash', { command: 'npm test' }],
       ['bash', { command: 'python3 -c "print(1)"' }],
       ['bash', { command: 'npm install' }],
+      ['bash', { command: 'brew install poppler' }],
       ['bash', { command: 'git push origin main' }],
       ['bash', { command: 'gh pr create --title hi --body body' }],
       ['bash', { command: 'npm publish' }],

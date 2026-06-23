@@ -2041,6 +2041,95 @@ describe('agent runtime skill integration', () => {
     expect(contextTexts[1]!.length).toBeLessThan(40_000);
   });
 
+  test('attaches native PDF payloads before OpenAI Responses provider calls', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-native-pdf-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-native-pdf-data-'));
+    roots.push(localRoot, dataRoot);
+    const pdfPath = path.join(localRoot, 'sample.pdf');
+    await writeFile(pdfPath, '%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n');
+
+    const payloads: unknown[] = [];
+    let callIndex = 0;
+    const streamFn: StreamFn = ((model: Model<Api>, context: Context, options?: SimpleStreamOptions) => {
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(async () => {
+        const toolResult = context.messages.find((message) => message.role === 'toolResult') as
+          | { toolCallId: string; content: Array<{ type: string; text?: string }> }
+          | undefined;
+        if (toolResult) {
+          const text = toolResult.content
+            .filter((part) => part.type === 'text')
+            .map((part) => part.text ?? '')
+            .join('\n');
+          const payload = {
+            input: [{
+              type: 'function_call_output',
+              call_id: toolResult.toolCallId.split('|')[0],
+              output: text,
+            }],
+          };
+          payloads.push(await options?.onPayload?.(payload, model) ?? payload);
+        }
+        const response = callIndex++ === 0
+          ? fauxAssistantMessage([
+              fauxToolCall('file_read', { file_path: pdfPath }, { id: 'tool-read-pdf' }),
+            ], { stopReason: 'toolUse' })
+          : fauxAssistantMessage(fauxText('PDF inspected.'));
+        const message = normalizeAssistantMessage(response, model);
+        stream.push({ type: 'start', partial: { ...message, content: [] } });
+        stream.push({ type: 'done', reason: message.stopReason as Exclude<StopReason, 'error' | 'aborted'>, message });
+        stream.end(message);
+      });
+      return stream;
+    }) as StreamFn;
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        providerModelResolver: () => ({
+          id: 'gpt-native-pdf',
+          name: 'gpt-native-pdf',
+          provider: 'openai',
+          api: 'openai-responses',
+          baseUrl: '',
+          reasoning: false,
+          input: ['text', 'image'],
+          contextWindow: 1_000_000,
+          maxTokens: 32_000,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        }),
+        streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(created.conversationId, 'Read the PDF.');
+
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(payloads).toHaveLength(1);
+    const payload = payloads[0] as {
+      input: Array<{ output: Array<{ type: string; filename?: string; file_data?: string; text?: string }> }>;
+    };
+    const output = payload.input[0]!.output;
+    expect(output.some((part) => part.type === 'input_text' && part.text?.includes('PDF document attached'))).toBe(true);
+    expect(output.some((part) => (
+      part.type === 'input_file'
+      && part.filename === 'sample.pdf'
+      && part.file_data?.startsWith('data:application/pdf;base64,')
+    ))).toBe(true);
+    expect(JSON.stringify(output)).not.toContain('<tenon-native-pdf>');
+  });
+
   test('auto-compacts before a model call when the active context crosses the threshold', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-auto-compact-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-auto-compact-data-'));
