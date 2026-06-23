@@ -86,6 +86,7 @@ import {
   type AgentPersistedContent,
   type AgentPrincipal,
   type AgentRunFingerprint,
+  type AgentRunKind,
   type AgentRunTrigger,
   type AgentRunMeta,
   type AgentUserQuestionAnswer,
@@ -1903,6 +1904,22 @@ export class AgentRuntime {
     return eventStateToMeta(eventState);
   }
 
+  async setConversationIncludeInDreamData(conversationId: string, includeInDreamData: boolean) {
+    if (conversationId === DEFAULT_DREAM_CHANNEL_ID && includeInDreamData) {
+      throw new Error('#Dream cannot be included in Dream data.');
+    }
+    const conversation = await this.ensureConversationWithId(conversationId);
+    const current = channelIncludesInDreamData(conversationId, conversation.eventState.conversation?.settings);
+    if (current === includeInDreamData) return eventStateToMeta(conversation.eventState);
+    await this.appendConversationEvents(conversationId, conversation, [{
+      type: 'conversation.settings_changed',
+      actor: userActor(),
+      settings: { [CHANNEL_INCLUDE_IN_DREAM_DATA_SETTING]: includeInDreamData },
+    }]);
+    this.emitProjection(conversationId, 'conversation_settings_changed');
+    return eventStateToMeta(conversation.eventState);
+  }
+
   async deleteConversation(conversationId: string) {
     if (conversationId === DEFAULT_GENERAL_CHANNEL_ID) {
       throw new Error('#General cannot be deleted.');
@@ -1935,6 +1952,9 @@ export class AgentRuntime {
     let startedRunId: string | null = null;
     try {
       const conversation = await this.ensureConversationWithId(conversationId);
+      if (conversationId === DEFAULT_DREAM_CHANNEL_ID) {
+        throw new Error('#Dream does not accept regular chat messages.');
+      }
       const materialized = await this.materializeFileAttachments(normalizeAttachmentInputs(attachmentInput));
       const attachments = materialized.attachments;
       const messageText = rewriteFileReferenceMarkerPaths(message, materialized.pathMap);
@@ -3806,7 +3826,7 @@ export class AgentRuntime {
       await this.ensureDreamChannelEventState();
       const conversation = await this.ensureConversationWithId(DEFAULT_DREAM_CHANNEL_ID);
       await this.refreshRuntimeSettings(conversation);
-      const activePath = await this.deriveRuntimePiMessages(DEFAULT_DREAM_CHANNEL_ID, conversation.eventState);
+      const activePath: AgentMessage[] = [];
       const skillRuntime = new AgentSkillRuntime({
         localRoot: this.options.localFileRoot,
         includeUserSkills: false,
@@ -3860,6 +3880,8 @@ export class AgentRuntime {
           runId: task.runId,
           executingAgentId: this.agentIdentity.agentId,
           agent: dreamAgent,
+          kind: 'reflective',
+          fingerprint: memoryDreamRunFingerprint(task, model),
         },
       );
       const activeRun = conversation.activeRuns.get(startedRunId);
@@ -3929,21 +3951,7 @@ export class AgentRuntime {
       trigger: task.trigger === 'schedule'
         ? { type: 'schedule', schedule: DEFAULT_DREAM_SCHEDULE, dueAt: task.dueAt }
         : { type: 'manual' },
-      fingerprint: {
-        appVersion: electronAppVersion(),
-        // The Dream's prompt is the believer-pool extraction request — not the executing
-        // agent's system prompt, which never reaches a Dream completion call.
-        promptHash: hashJson({
-          dream: MEMORY_DREAM_SKILL_NAME,
-          principal: principalKey(task.principal),
-        }),
-        toolSchemaHash: hashJson({ tools: MEMORY_DREAM_ALLOWED_TOOLS }),
-        skillBindings: [MEMORY_DREAM_SKILL_NAME],
-        modelConfig: hashJson({
-          model: model.id,
-          provider: model.provider,
-        }),
-      },
+      fingerprint: memoryDreamRunFingerprint(task, model),
       retention: 'hot',
       createdAt: task.startedAt,
       updatedAt: timestamp,
@@ -5458,6 +5466,8 @@ export class AgentRuntime {
       executingAgentId?: string;
       agent?: Agent;
       allowConcurrent?: boolean;
+      kind?: AgentRunKind;
+      fingerprint?: AgentRunFingerprint;
     } = {},
   ): Promise<string> {
     if (!identity.allowConcurrent && this.hasActiveRuns(conversation)) {
@@ -5497,9 +5507,9 @@ export class AgentRuntime {
         runId,
         agentId,
         anchor: { type: 'conversation', agentId, conversationId },
-        kind: 'turn',
+        kind: identity.kind ?? 'turn',
         trigger: triggerOverride ?? this.runTrigger(scoped),
-        fingerprint: this.runFingerprint(scoped, agentId, agent),
+        fingerprint: identity.fingerprint ?? this.runFingerprint(scoped, agentId, agent),
         retention: 'hot',
       }]);
     } catch (error) {
@@ -7831,6 +7841,27 @@ function buildMemoryDreamAnchorPrompt(task: AgentDreamMemoryExtractionTask, hidd
 function dreamSpanSummary(span: DreamMemoryExtractionSpan): string {
   if (span.consolidateOnly) return 'consolidate existing memory';
   return `${span.totalMessageCount} messages · ${span.totalCharCount} chars`;
+}
+
+function memoryDreamRunFingerprint(
+  task: AgentDreamMemoryExtractionTask,
+  model: Model<Api>,
+): AgentRunFingerprint {
+  return {
+    appVersion: electronAppVersion(),
+    // The Dream prompt is the believer-pool extraction request, not the protected
+    // channel's normal chat prompt.
+    promptHash: hashJson({
+      dream: MEMORY_DREAM_SKILL_NAME,
+      principal: principalKey(task.principal),
+    }),
+    toolSchemaHash: hashJson({ tools: MEMORY_DREAM_ALLOWED_TOOLS }),
+    skillBindings: [MEMORY_DREAM_SKILL_NAME],
+    modelConfig: hashJson({
+      model: model.id,
+      provider: model.provider,
+    }),
+  };
 }
 
 function dreamTaskFromRunMeta(

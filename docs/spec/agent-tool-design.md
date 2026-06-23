@@ -2400,7 +2400,10 @@ sub-bar manual run is still a valid consolidate-only reconciliation. A run compu
 the Dream watermark, renders the skill, appends a manual or scheduled anchor to
 the protected Dream channel, and starts an unattended top-level run with a
 Dream-only profile whose tools are only `past_chats`, `node_search`, `node_read`,
-`node_create`, `node_edit`, and `node_delete`.
+`node_create`, `node_edit`, and `node_delete`. The Dream channel does not accept
+ordinary chat messages, is excluded from Dream evidence, and supplies no prior
+active path to the Dream agent; its transcript is visible audit history rather
+than model context for later Dreams.
 The run first reads today's journal node. When it yields durable memory
 worth writing, it creates or reuses exactly one direct `#d-memory` container under
 it and updates that container's generated daily memory headline in place; when

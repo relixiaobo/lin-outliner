@@ -764,7 +764,9 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
   trigger a manual run that uses the same same-day `#d-memory` container. They
   read raw conversation spans since the Dream watermark when sources exist;
   manual consolidate-only runs can reconcile outline/prior Dream context without
-  new chat spans. They gather
+  new chat spans. The Dream channel itself rejects ordinary chat messages, is
+  forced out of Dream evidence, and does not contribute prior active-path
+  transcript to later Dream model context. They gather
   relevant prior memory/workspace context via `node_search` / `node_read`, apply
   the human-dream cycle and valuable-memory filter, and — when the filter leaves
   memory worth writing — write `#d-*` memory nodes (`#d-episode`, `#d-belief`,

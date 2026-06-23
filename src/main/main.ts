@@ -2465,6 +2465,8 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentRuntime.listConversations();
     case 'agent_rename_conversation':
       return agentRuntime.renameConversation(conversationId(), String(args.title ?? ''));
+    case 'agent_set_conversation_include_in_dream_data':
+      return agentRuntime.setConversationIncludeInDreamData(conversationId(), args.includeInDreamData === true);
     case 'agent_delete_conversation':
       return agentRuntime.deleteConversation(conversationId());
     case 'agent_list_memory':

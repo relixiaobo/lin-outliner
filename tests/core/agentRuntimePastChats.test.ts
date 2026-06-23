@@ -628,6 +628,12 @@ describe('agent runtime past chats integration', () => {
 
     await runtime.runDreamNow();
     dreamState = await new AgentEventStore(dataRoot).readDreamState(BELIEVER_PRINCIPAL);
+    const dreamCalls = calls.filter((call) => call.text.includes('<memory-dream-run>'));
+    expect(dreamCalls.length).toBeGreaterThanOrEqual(2);
+    for (const call of dreamCalls.slice(1)) {
+      expect(call.text).not.toContain('Nothing durable to write.');
+      expect(call.text).not.toContain('Scheduled Dream');
+    }
     expect(calls).toHaveLength(4);
     expect(script.pendingCount()).toBe(0);
     expect(dreamState.lastCompleted?.trigger).toBe('manual');

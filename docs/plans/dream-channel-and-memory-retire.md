@@ -71,16 +71,21 @@ channel. This is a general user-facing exclusion mechanism, not a Dream-id
 hard-code: `userMemberConversationIds` / date-window evidence collection reads the
 setting before a channel can enter Dream's source set. Dream's own transcript
 therefore never becomes primary evidence for the next Dream run, while users can
-also opt other channels out of memory consolidation.
+also opt other channels out of memory consolidation. The setting is edited from
+Channel configuration for ordinary channels; the Dream channel stays forced off,
+and protected defaults such as General keep their immutable names while still
+using the same configuration surface for editable settings.
 
 What makes it special is presentation, driven off its channel id:
 
-- **No chat composer.** In place of the message composer it shows a **structured
-  Dream launcher** (below). This is a small **new** per-channel-id branch at the
-  composer mount (`AgentChatPanel.tsx:~1407`, `conversationId` already in scope) —
-  *not* an existing seam: `usesChannelActivitySurface()` (`agentChannel.ts:33`) is
-  dead code from the single-agent collapse (always `false`, zero call sites), so
-  there is nothing to "ride".
+- **No ordinary chat.** The Dream channel does not accept normal user chat turns:
+  ordinary `sendMessage` calls are rejected before a `user_message.created` event
+  is persisted. PR2 replaces the composer with a **structured Dream launcher**
+  (below). That launcher is a small **new** per-channel-id branch at the composer
+  mount (`AgentChatPanel.tsx:~1407`, `conversationId` already in scope) — *not* an
+  existing seam: `usesChannelActivitySurface()` (`agentChannel.ts:33`) is dead
+  code from the single-agent collapse (always `false`, zero call sites), so there
+  is nothing to "ride".
 - **Run-as-transcript (Dream is a top-level run with a Dream profile).** Each
   Dream run is a persisted turn in this channel rather than a create→delete
   transient, and it runs as a **top-level run anchored to the Dream channel** —
@@ -105,7 +110,10 @@ What makes it special is presentation, driven off its channel id:
   run's real process — `past_chats` reads, reasoning rows,
   `node_create`/`node_edit`/`node_delete` writes, and the final result. The #312
   renderer then renders it with no Dream-specific feed: the process **is** the
-  transcript.
+  transcript. The protected transcript is visible audit history only: a Dream run
+  starts with an empty prior active path, so previous Dream turns are not fed back
+  into the next Dream's model context. Dream may still reconcile prior memory via
+  explicit `node_search` / `node_read`.
 
   `dream.finished` is metadata, not a boundary replacement in the Dream channel.
   Existing non-channel Dream boundary rendering can remain for older / non-inline
@@ -286,11 +294,14 @@ Each PR is shippable and reviewable on its own — none is a scaffold a later PR
 
 - **PR1 — Dream channel + persisted full-process transcript.** Add the dedicated
   Dream channel; protect it from deletion like General; add the channel-level
-  "include in Dream data" setting (ordinary channels default on, Dream channel
-  default off); **run Dream as a top-level run anchored to it** (not a parentless
+  "include in Dream data" setting with Channel-config UI + IPC/runtime mutation
+  (ordinary channels default on, Dream channel forced off); reject ordinary chat
+  sends to the Dream channel before they persist; **run Dream as a top-level run
+  anchored to it** (not a parentless
   child run) through the normal run lifecycle plus a Dream-specific run profile
   (runtime-only `memory-dream` prompt, restricted/preapproved tools, unattended);
-  ensure the #312 renderer shows the process **inline**, not a child-run boundary
+  start those runs with no prior Dream transcript in model context; ensure the
+  #312 renderer shows the process **inline**, not a child-run boundary
   summary; persist the run instead of create→delete; relocate Dream history here;
   add `window?: { start, end }` to the `dream.finished` event as an interface
   hook (protocol — interface-first), but leave it unset while the existing
@@ -348,11 +359,13 @@ Each PR is shippable and reviewable on its own — none is a scaffold a later PR
 
 - [ ] PR1: Dream channel id + default-restore (parallel to
       `restoreOrCreateGeneralChannel`, `agentRuntime.ts:~868`); protect it from
-      delete; add channel-level Dream evidence inclusion (Dream channel default
-      off); **run Dream as a top-level run anchored to the channel** (not a
-      parentless child run) through normal lifecycle + Dream-specific run profile
-      (runtime-only `memory-dream` prompt, restricted/preapproved tools,
-      unattended) so the process renders inline, not a `child-run` boundary
+      delete; add channel-level Dream evidence inclusion with Channel-config UI +
+      IPC/runtime mutation (ordinary channels default on, Dream channel forced
+      off); reject ordinary chat sends to Dream before persistence; **run Dream as
+      a top-level run anchored to the channel** (not a parentless child run)
+      through normal lifecycle + Dream-specific run profile (runtime-only
+      `memory-dream` prompt, restricted/preapproved tools, unattended, empty prior
+      active path) so the process renders inline, not a `child-run` boundary
       summary; persist the run (drop create→delete `:3659` / `:3694`); add
       `window?:{start,end}` to `dream.finished` (`agentEventLog.ts:~1034`,
       interface-first) without stamping it until PR2's date-window scope exists;

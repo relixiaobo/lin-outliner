@@ -537,7 +537,11 @@ Prior Dream output is a belief graph to update, not self-confirming evidence. Th
 former agent-self / run-log Dream is cut (no
 run-evidence harvesting, no per-agent self-model dream). Dream run meta is
 anchored to the protected Dream channel so replay joins the run transcript; the
-semantic memory pool remains believer-keyed.
+semantic memory pool remains believer-keyed. The protected Dream transcript is
+visible audit history only: ordinary chat sends to the Dream channel are rejected
+before persistence, the channel is forced out of Dream evidence, and Dream runs
+start with an empty prior active path so previous Dream transcript rows are not
+fed into the next Dream model context.
 
 ## Message Model
 

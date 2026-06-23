@@ -1,9 +1,15 @@
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import type { AgentConversationListMeta } from '../../api/types';
+import {
+  DEFAULT_DREAM_CHANNEL_ID,
+  DEFAULT_GENERAL_CHANNEL_ID,
+  channelIncludesInDreamData,
+} from '../../../core/agentChannel';
 import { channelConfigParamsFromSearch } from '../../../core/settingsWindow';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
+import { CheckboxControl } from '../primitives/CheckboxControl';
 import { EmptyState } from '../primitives/FeedbackState';
 import { Field } from '../primitives/Field';
 import { Input } from '../primitives/Input';
@@ -25,6 +31,7 @@ export function ChannelConfigWindow() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [title, setTitle] = useState('');
+  const [includeInDreamData, setIncludeInDreamData] = useState(true);
   const [seedText, setSeedText] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -39,6 +46,7 @@ export function ChannelConfigWindow() {
       if (mode === 'configure') {
         const current = nextConversations.find((conversation) => conversation.id === conversationId);
         setTitle(readableConversationTitle(current?.title, t.common.untitled));
+        setIncludeInDreamData(channelIncludesInDreamData(current?.id ?? '', current?.settings));
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -65,11 +73,17 @@ export function ChannelConfigWindow() {
   const conversation = mode === 'configure'
     ? conversations.find((candidate) => candidate.id === conversationId) ?? null
     : null;
+  const isProtectedDefault = conversation?.id === DEFAULT_GENERAL_CHANNEL_ID || conversation?.id === DEFAULT_DREAM_CHANNEL_ID;
+  const canRename = mode === 'configure' && !!conversation && !isProtectedDefault;
+  const canEditDreamData = mode === 'configure' && !!conversation && conversation.id !== DEFAULT_DREAM_CHANNEL_ID;
+  const hasEditableSettings = mode === 'create' || canRename || canEditDreamData;
+  const saveDisabled = !hasEditableSettings || ((mode === 'create' || canRename) && !title.trim()) || saving;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     const trimmed = title.trim();
-    if (!trimmed) {
+    if (!hasEditableSettings) return;
+    if ((mode === 'create' || canRename) && !trimmed) {
       setError(t.agent.chat.channelNameRequired);
       return;
     }
@@ -84,7 +98,10 @@ export function ChannelConfigWindow() {
         });
         createdConversationId = created.conversationId;
       } else {
-        await api.agentRenameConversation(conversationId, trimmed);
+        if (canRename) await api.agentRenameConversation(conversationId, trimmed);
+        if (canEditDreamData) {
+          await api.agentSetConversationIncludeInDreamData(conversationId, includeInDreamData);
+        }
       }
       await window.lin?.notifySettingsChanged?.();
       if (createdConversationId) await window.lin?.agentNavigateToConversation?.(createdConversationId);
@@ -97,6 +114,7 @@ export function ChannelConfigWindow() {
   }
 
   const windowTitle = mode === 'create' ? t.agent.chat.newConversation : t.agent.chat.channelSettings;
+  const windowSubtitle = mode === 'create' ? t.agent.chat.createChannel : t.agent.chat.channelSettings;
 
   return (
     <main className="provider-config-window channel-config-window" aria-labelledby={titleId}>
@@ -108,7 +126,7 @@ export function ChannelConfigWindow() {
         </span>
         <span className="settings-sheet-head-text">
           <h1 className="settings-sheet-title" id={titleId}>{windowTitle}</h1>
-          <p className="settings-sheet-subtitle">{t.agent.chat.createChannel}</p>
+          <p className="settings-sheet-subtitle">{windowSubtitle}</p>
         </span>
       </header>
 
@@ -123,6 +141,7 @@ export function ChannelConfigWindow() {
               <Field as="label" className="settings-sheet-row" label={t.agent.chat.channelName} labelClassName="settings-sheet-row-label">
                 <Input
                   className="settings-sheet-row-input"
+                  disabled={mode === 'configure' && !canRename}
                   label={t.agent.chat.channelName}
                   onChange={(event) => setTitle(event.target.value)}
                   placeholder={t.agent.chat.channelNamePlaceholder}
@@ -143,6 +162,22 @@ export function ChannelConfigWindow() {
                   />
                 </Field>
               ) : null}
+              {mode === 'configure' ? (
+                <div className="settings-sheet-row settings-sheet-row-switch">
+                  <span className="settings-sheet-row-text">
+                    <span className="settings-sheet-row-label">{t.agent.chat.includeInDreamData}</span>
+                    <span className="agent-settings-notice">{t.agent.chat.includeInDreamDataSublabel}</span>
+                  </span>
+                  <CheckboxControl
+                    checked={includeInDreamData}
+                    className="agent-settings-checkbox"
+                    disabled={!canEditDreamData}
+                    onCheckedChange={setIncludeInDreamData}
+                  >
+                    {includeInDreamData ? t.agent.chat.includedInDreamData : t.agent.chat.excludedFromDreamData}
+                  </CheckboxControl>
+                </div>
+              ) : null}
             </div>
 
             {error ? (
@@ -159,8 +194,8 @@ export function ChannelConfigWindow() {
               <Button onClick={close} variant="ghost">
                 {t.agent.chat.cancel}
               </Button>
-              <Button disabled={!title.trim() || saving} type="submit" variant="primary">
-                {saving ? t.common.loading : (mode === 'create' ? t.agent.chat.createChannel : t.agent.chat.saveChannelName)}
+              <Button disabled={saveDisabled} type="submit" variant="primary">
+                {saving ? t.common.loading : (mode === 'create' ? t.agent.chat.createChannel : t.agent.chat.saveChannelSettings)}
               </Button>
             </div>
           </div>

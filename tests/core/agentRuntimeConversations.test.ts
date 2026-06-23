@@ -329,7 +329,7 @@ describe('agent runtime conversations', () => {
   test('creates, renames, and deletes channels; default channels stay immutable', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
     roots.push(dataRoot);
-    const { runtime } = await createRuntime(dataRoot);
+    const { runtime, sink } = await createRuntime(dataRoot);
 
     await runtime.restoreLatestConversation();
     const channel = await runtime.createConversation({ title: 'Initial Project' });
@@ -368,8 +368,26 @@ describe('agent runtime conversations', () => {
     await expectRejects(() => runtime.renameConversation(DEFAULT_DREAM_CHANNEL_ID, 'Night Log'), '#Dream cannot be renamed');
     await expectRejects(() => runtime.deleteConversation(DEFAULT_GENERAL_CHANNEL_ID), '#General cannot be deleted');
     await expectRejects(() => runtime.deleteConversation(DEFAULT_DREAM_CHANNEL_ID), '#Dream cannot be deleted');
+    const dreamEventsBeforeMessage = await new AgentEventStore(dataRoot).readEvents(DEFAULT_DREAM_CHANNEL_ID);
+    await runtime.sendMessage(DEFAULT_DREAM_CHANNEL_ID, 'Can we talk here?');
+    const dreamEventsAfterMessage = await new AgentEventStore(dataRoot).readEvents(DEFAULT_DREAM_CHANNEL_ID);
+    expect(dreamEventsAfterMessage).toHaveLength(dreamEventsBeforeMessage.length);
+    expect(sink.events.some((event) =>
+      event.type === 'error'
+      && event.error.includes('#Dream does not accept regular chat messages'),
+    )).toBe(true);
     expect(channelIncludesInDreamData(channel.conversationId, channels.find((entry) => entry.id === channel.conversationId)?.settings))
       .toBe(true);
+    const excluded = await runtime.setConversationIncludeInDreamData(channel.conversationId, false);
+    expect(excluded?.settings).toEqual({ includeInDreamData: false });
+    expect(channelIncludesInDreamData(channel.conversationId, excluded?.settings)).toBe(false);
+    const included = await runtime.setConversationIncludeInDreamData(channel.conversationId, true);
+    expect(included?.settings).toEqual({ includeInDreamData: true });
+    expect(channelIncludesInDreamData(channel.conversationId, included?.settings)).toBe(true);
+    await expectRejects(
+      () => runtime.setConversationIncludeInDreamData(DEFAULT_DREAM_CHANNEL_ID, true),
+      '#Dream cannot be included in Dream data',
+    );
 
     await runtime.deleteConversation(channel.conversationId);
     expect((await runtime.listConversations()).map((entry) => entry.id))

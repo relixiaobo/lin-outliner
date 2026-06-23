@@ -257,7 +257,11 @@ members `{user, Neva}`; **General** (`lin-agent-channel-general`,
 `restoreOrCreateGeneralChannel`) is the default landing, sorted first in the one flat
 conversation list; and the user can **create / rename** further channels from that
 list's single `+` button (the surviving `ChannelConfigWindow` create/rename dialog — a
-title plus an optional opening seed, no member roster). The surviving seams are
+title plus an optional opening seed, no member roster). Channel configuration also
+owns the per-channel **include in Dream data** setting: ordinary channels default
+included, the protected Dream channel is forced excluded, and protected default
+channel names stay immutable while their editable settings can still use the same
+configuration surface. The surviving seams are
 `isChannelConversationId` (id-prefix test) and `usesChannelActivitySurface()`
 (hardcoded `false`, so every channel-surface branch takes its single-agent inline side).
 There is no agent-facing `channel_create`/`channel_update` tool — channel creation is a

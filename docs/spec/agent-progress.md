@@ -144,7 +144,9 @@ truth.
     protected Dream channel with only `past_chats` and `node_*` memory tools;
     scheduled runs are at most once per daily due, while Settings can trigger a
     manual run; both paths read sources since the Dream watermark when sources
-    exist, gather relevant prior memory/workspace context with `node_search` /
+    exist, while the Dream channel itself rejects ordinary chat messages, is
+    forced out of Dream evidence, and contributes no prior active-path transcript
+    to later Dream model context; runs gather relevant prior memory/workspace context with `node_search` /
     `node_read`, apply the
     human-dream cycle and valuable-memory filter, and — when the filter leaves
     memory worth writing — update today's single `#d-memory` container, write

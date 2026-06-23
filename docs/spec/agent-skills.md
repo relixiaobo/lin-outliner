@@ -466,10 +466,16 @@ merge, move, or delete any ordinary outline node when consolidation warrants it;
 deleted nodes are moved to Trash through `node_delete`, not permanently removed.
 
 There is no `/dream` slash command and no foreground `dream` tool. The Dream
-channel is a protected default channel: it cannot be renamed or deleted, and it
-defaults out of future Dream evidence. Its visible transcript contains the manual
-or scheduled Dream anchor and assistant/tool activity; `dream.finished` is
-metadata attached to that anchor, not a replacement row inside the Dream channel.
+channel is a protected default channel: it cannot be renamed or deleted, does
+not accept ordinary chat messages, and is forced out of future Dream evidence.
+Ordinary channels default into Dream evidence and expose an "include in Dream
+data" setting in Channel configuration so the user can exclude them. The Dream
+channel's visible transcript contains the manual or scheduled Dream anchor and
+assistant/tool activity; `dream.finished` is metadata attached to that anchor,
+not a replacement row inside the Dream channel. That transcript is audit history,
+not the next Dream run's prior chat context: Dream starts with an empty active
+path and reads source evidence only through the runtime-provided prompt,
+`past_chats`, and explicit outline memory/context tools.
 Durable model-readable results are ordinary `#d-memory`, `#d-episode`,
 `#d-belief`, `#d-question`, and `#d-guidance` outline nodes.
 
