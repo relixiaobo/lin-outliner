@@ -31,6 +31,8 @@ const MARKITDOWN_TIMEOUT_MS = 120_000;
 const MARKITDOWN_PROBE_TIMEOUT_MS = 10_000;
 const MARKITDOWN_MAX_CHARS = 80_000;
 const MARKITDOWN_TRUNCATION_MARKER = '\n\n[Markdown output truncated]';
+const MARKITDOWN_STDOUT_CAPTURE_CHARS = MARKITDOWN_MAX_CHARS + MARKITDOWN_TRUNCATION_MARKER.length + 1;
+const MARKITDOWN_STDERR_CAPTURE_CHARS = 20_000;
 
 export const MARKITDOWN_RICH_DOCUMENT_EXTENSIONS = new Set([
   '.docx',
@@ -63,7 +65,16 @@ export class AgentFileIngestionFailure extends Error {
 
 export async function ingestRichDocumentAsMarkdown(filePath: string): Promise<MarkdownIngestionResult> {
   const command = await resolveMarkitdownCommand(path.dirname(filePath));
-  const result = await runAgentToolProcess(command.command, [...command.argsPrefix, filePath], path.dirname(filePath), MARKITDOWN_TIMEOUT_MS);
+  const result = await runAgentToolProcess(
+    command.command,
+    [...command.argsPrefix, filePath],
+    path.dirname(filePath),
+    MARKITDOWN_TIMEOUT_MS,
+    {
+      maxStdoutChars: MARKITDOWN_STDOUT_CAPTURE_CHARS,
+      maxStderrChars: MARKITDOWN_STDERR_CAPTURE_CHARS,
+    },
+  );
   if (result.error) {
     throw new AgentFileIngestionFailure('markitdown_unavailable', result.error.message, MARKITDOWN_RECOVERY_INSTRUCTIONS);
   }
@@ -77,7 +88,7 @@ export async function ingestRichDocumentAsMarkdown(filePath: string): Promise<Ma
   if (!markdown) {
     throw new AgentFileIngestionFailure('markitdown_empty', 'MarkItDown produced no Markdown output.', 'Check that the file is valid and contains readable text, or convert it manually to Markdown.');
   }
-  const truncated = markdown.length > MARKITDOWN_MAX_CHARS;
+  const truncated = result.stdoutTruncated === true || markdown.length > MARKITDOWN_MAX_CHARS;
   return {
     content: truncated ? `${markdown.slice(0, MARKITDOWN_MAX_CHARS)}${MARKITDOWN_TRUNCATION_MARKER}` : markdown,
     converter: 'markitdown',

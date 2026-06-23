@@ -864,6 +864,78 @@ describe('agent local tools', () => {
     });
   });
 
+  test('file_read reports truncated MarkItDown output without unbounded model-visible content', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const binDir = path.join(workspaceRoot, 'fake-long-markitdown-bin');
+      await mkdir(binDir, { recursive: true });
+      const fakeMarkitdown = path.join(binDir, 'markitdown');
+      await writeFile(fakeMarkitdown, [
+        '#!/bin/sh',
+        'if [ "$1" = "--help" ]; then echo "Usage: markitdown"; exit 0; fi',
+        'yes a | head -c 81000',
+      ].join('\n'), 'utf8');
+      await chmod(fakeMarkitdown, 0o755);
+
+      const filePath = path.join(workspaceRoot, 'long.docx');
+      await writeFile(filePath, 'fake office payload', 'utf8');
+
+      const originalCommand = process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+      delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+      try {
+        await withPrependedPath(binDir, async () => {
+          const read = await executeTool<{
+            type: 'markdown';
+            file: { content: string; truncated: boolean };
+          }>(workspaceRoot, 'file_read', { file_path: filePath });
+
+          expect(read.ok).toBe(true);
+          expect(read.status).toBe('partial');
+          expect(read.data!.file.truncated).toBe(true);
+          expect(read.data!.file.content).toContain('[Markdown output truncated]');
+          expect(read.data!.file.content.length).toBeLessThan(81_000);
+        });
+      } finally {
+        if (originalCommand === undefined) {
+          delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+        } else {
+          process.env.LIN_AGENT_MARKITDOWN_COMMAND = originalCommand;
+        }
+      }
+    });
+  });
+
+  test('file_read reports missing pdftotext instead of misclassifying PDF text', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const binDir = path.join(workspaceRoot, 'fake-pdf-text-bin');
+      await mkdir(binDir, { recursive: true });
+      const fakePdfinfo = path.join(binDir, 'pdfinfo');
+      await writeFile(fakePdfinfo, [
+        '#!/bin/sh',
+        'echo "Pages: 2"',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdfinfo, 0o755);
+      const fakePdftotext = path.join(binDir, 'pdftotext');
+      await writeFile(fakePdftotext, [
+        '#!/bin/sh',
+        'echo "pdftotext: command not found" >&2',
+        'exit 127',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdftotext, 0o755);
+
+      const filePath = path.join(workspaceRoot, 'sample.pdf');
+      await writeFile(filePath, makePdf(['First page', 'Second page']), 'utf8');
+
+      await withPrependedPath(binDir, async () => {
+        const read = await executeTool(workspaceRoot, 'file_read', { file_path: filePath });
+
+        expect(read.ok).toBe(false);
+        expect(read.error?.code).toBe('pdf_reader_unavailable');
+        expect(read.instructions).toContain('pdftotext');
+        expect(read.instructions).toContain('retry the same file_read or file_convert call');
+      });
+    });
+  });
+
   pdfTextTest('file_read extracts PDF text without native provider payloads', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const filePath = path.join(workspaceRoot, 'sample.pdf');
@@ -873,13 +945,13 @@ describe('agent local tools', () => {
       const result = await (tool.execute as any)('test-call', { file_path: filePath });
       const read = result.details as ToolEnvelope<{
         type: 'pdf';
-        file: { filePath: string; originalSize: number; totalPages: number; mode: string; pages: { firstPage: number; lastPage: number }; extractedText?: { truncated: boolean } };
+        file: { filePath: string; originalSize: number; totalPages: number; representation: string; pages: { firstPage: number; lastPage: number }; extractedText?: { truncated: boolean } };
       }>;
       const visible = JSON.parse(result.content[0].text);
 
       expect(read.ok).toBe(true);
       expect(read.data!.type).toBe('pdf');
-      expect(read.data!.file.mode).toBe('text');
+      expect(read.data!.file.representation).toBe('text');
       expect(read.data!.file.totalPages).toBe(2);
       expect(read.data!.file.pages).toEqual({ firstPage: 1, lastPage: 2 });
       expect(read.data!.file.extractedText?.truncated).toBe(false);
@@ -887,12 +959,12 @@ describe('agent local tools', () => {
         filePath,
         originalSize: read.data!.file.originalSize,
         totalPages: 2,
-        mode: 'text',
         pages: { firstPage: 1, lastPage: 2 },
         extractedText: { truncated: false },
       });
       expect(JSON.stringify(visible)).not.toContain('base64');
       expect(JSON.stringify(visible)).not.toContain('input_file');
+      expect(JSON.stringify(visible)).not.toContain('representation');
       expect(result.content.some((block: { type: string; text?: string }) => block.type === 'text' && block.text?.includes('First page'))).toBe(true);
       expect(result.content.some((block: { type: string }) => block.type === 'image')).toBe(false);
     });

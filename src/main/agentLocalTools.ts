@@ -111,7 +111,7 @@ interface FileReadPdfData {
     filePath: string;
     originalSize: number;
     totalPages: number;
-    mode: 'text' | 'images' | 'text_and_images' | 'metadata';
+    representation: 'text' | 'images' | 'text_and_images' | 'metadata';
     pages: PdfPageRange;
     extractedText?: {
       chars: number;
@@ -2534,7 +2534,7 @@ async function ingestPdfFile(
       filePath,
       originalSize,
       totalPages,
-      mode: extractedText && rendered
+      representation: extractedText && rendered
         ? 'text_and_images'
         : extractedText ? 'text' : rendered ? 'images' : 'metadata',
       pages: range,
@@ -2647,7 +2647,14 @@ async function extractPdfText(filePath: string, range: PdfPageRange): Promise<{ 
     filePath,
     '-',
   ], path.dirname(filePath), 60_000);
-  if (result.error || result.exitCode !== 0) return null;
+  if (result.error || result.exitCode === 127 || /not found|no such file/i.test(result.stderr)) {
+    throw new LocalToolFailure(
+      'pdf_reader_unavailable',
+      result.error?.message ?? (result.stderr.trim() || 'pdftotext is not available.'),
+      POPPLER_RECOVERY_INSTRUCTIONS,
+    );
+  }
+  if (result.exitCode !== 0) return null;
   const normalized = normalizeLineEndings(stripBom(result.stdout)).trim();
   if (!normalized) return null;
   const truncated = normalized.length > PDF_TEXT_MAX_CHARS;
@@ -2923,7 +2930,6 @@ function visibleFileRead(data: FileReadData): { file: Record<string, unknown> } 
           filePath: data.file.filePath,
           originalSize: data.file.originalSize,
           totalPages: data.file.totalPages,
-          mode: data.file.mode,
           pages: data.file.pages,
           ...(data.file.extractedText ? { extractedText: { truncated: data.file.extractedText.truncated } } : {}),
           ...(data.file.renderedImages ? { renderedImages: { count: data.file.renderedImages.count } } : {}),

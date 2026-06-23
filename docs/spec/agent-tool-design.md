@@ -1686,8 +1686,9 @@ interface FileReadPdfData {
     filePath: string;
     originalSize: number;
     totalPages: number;
-    // Runtime-selected representation summary. This is not a file_read input.
-    mode: "text" | "images" | "text_and_images" | "metadata";
+    // Runtime-selected representation summary. This is not a file_read input,
+    // and it is kept out of the model-visible projection.
+    representation: "text" | "images" | "text_and_images" | "metadata";
     pages: {
       firstPage: number;
       lastPage: number;
