@@ -127,9 +127,9 @@ function agentDebugPanel(
   id: string,
   conversationId: string | null,
   size = 1,
-  selectedRunId: string | null = null,
+  runId: string | null = null,
 ): AgentDebugPanelState {
-  return { id, type: 'agent-debug', conversationId, selectedRunId, size };
+  return { id, type: 'agent-debug', conversationId, runId, size };
 }
 
 function navigateWorkspacePanel(panel: WorkspaceContentPanelState, view: PanelView): WorkspaceContentPanelState {
@@ -196,12 +196,17 @@ function sanitizePanel(value: unknown, nodeIds: Set<NodeId>): WorkspacePanelStat
   rememberId(value.id);
   const size = sanitizeSize(value.size);
   if (value.type === 'agent-debug') {
+    const runId = typeof value.runId === 'string'
+      ? value.runId
+      : typeof value.selectedRunId === 'string'
+        ? value.selectedRunId
+        : null;
     return {
       id: value.id,
       type: 'agent-debug',
       size,
       conversationId: typeof value.conversationId === 'string' ? value.conversationId : null,
-      selectedRunId: typeof value.selectedRunId === 'string' ? value.selectedRunId : null,
+      runId,
     };
   }
   if (value.type !== 'workspace') return null;
@@ -561,7 +566,7 @@ export function useWorkspaceLayout({
     if (panels.length >= MAX_PERSISTED_PANELS || !canFitPanelCount(panels.length + 1)) {
       // At the cap, repurpose an existing workspace pane (rightmost first) so a
       // debug conversation is never silently dropped — symmetric with how
-      // openAgentDebugPanel reverse-finds a debug pane. Falls back to the last
+      // openAgentRunDetailsPanel reverse-finds a debug pane. Falls back to the last
       // pane only if somehow none is a workspace pane.
       const replacePanel = [...panels].reverse().find(isWorkspacePanel) ?? panels.at(-1);
       if (!replacePanel) return;
@@ -578,27 +583,22 @@ export function useWorkspaceLayout({
     focusNode(nodeId);
   }, [canFitPanelCount, focusNode, panels, preparePanelCount, rootId]);
 
-  const openAgentDebugPanel = useCallback((conversationId: string | null, selectedRunId: string | null = null) => {
+  const openAgentRunDetailsPanel = useCallback((conversationId: string | null, runId: string | null) => {
     const existing = panels.find((panel) => (
-      panel.type === 'agent-debug' && panel.conversationId === conversationId
+      panel.type === 'agent-debug' && panel.conversationId === conversationId && panel.runId === runId
     ));
     if (existing) {
       setActivePanelId(existing.id);
-      setPanels((prev) => prev.map((panel) => (
-        panel.id === existing.id && panel.type === 'agent-debug'
-          ? { ...panel, selectedRunId }
-          : panel
-      )));
       return;
     }
 
-    const emptyDebugPanel = conversationId
-      ? panels.find((panel) => panel.type === 'agent-debug' && panel.conversationId === null)
+    const emptyDebugPanel = conversationId && runId
+      ? panels.find((panel) => panel.type === 'agent-debug' && panel.conversationId === null && panel.runId === null)
       : null;
     if (emptyDebugPanel) {
       setActivePanelId(emptyDebugPanel.id);
       setPanels((prev) => prev.map((panel) => (
-        panel.id === emptyDebugPanel.id ? agentDebugPanel(panel.id, conversationId, panel.size, selectedRunId) : panel
+        panel.id === emptyDebugPanel.id ? agentDebugPanel(panel.id, conversationId, panel.size, runId) : panel
       )));
       return;
     }
@@ -608,7 +608,7 @@ export function useWorkspaceLayout({
       if (!replacePanel) return;
       setActivePanelId(replacePanel.id);
       setPanels((prev) => prev.map((panel) => (
-        panel.id === replacePanel.id ? agentDebugPanel(panel.id, conversationId, panel.size, selectedRunId) : panel
+        panel.id === replacePanel.id ? agentDebugPanel(panel.id, conversationId, panel.size, runId) : panel
       )));
       return;
     }
@@ -621,7 +621,7 @@ export function useWorkspaceLayout({
     const panelId = nextId('panel');
     preparePanelCount(panels.length + 1);
     setActivePanelId(panelId);
-    setPanels((prev) => [...prev, agentDebugPanel(panelId, conversationId, 1, selectedRunId)]);
+    setPanels((prev) => [...prev, agentDebugPanel(panelId, conversationId, 1, runId)]);
   }, [canFitPanelCount, onPanelOpenRejected, panels, preparePanelCount]);
 
   const repairMissingOutlinerRoots = useCallback((projection: DocumentProjection, nodeIds: NodeLookup): NodeId | null => {
@@ -693,7 +693,7 @@ export function useWorkspaceLayout({
     navigatePanelBack,
     navigatePanelForward,
     navigateRoot,
-    openAgentDebugPanel,
+    openAgentRunDetailsPanel,
     openPanel,
     openPreview,
     panels,

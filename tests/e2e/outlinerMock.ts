@@ -591,9 +591,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           content: [{ type: 'text', text: 'The child run finished inspecting the UI.' }],
         },
       ];
-    // Run-grounded debug view ([[agent-debug-run-grounded]]): the conversation
-    // tree (a single DM turn run) + that run's full detail, served by
-    // agent_debug_view / agent_debug_run.
+    // Run Details fixture: the reply Details button opens this concrete run via
+    // agent_debug_run. agent_debug_view remains mocked for older tests but is not
+    // used by the run-details pane.
     const debugRunSummary = {
       runId: 'mock-run-1',
       agentId: MAIN_AGENT_ID,

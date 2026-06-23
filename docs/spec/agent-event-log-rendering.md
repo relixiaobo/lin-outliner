@@ -1207,43 +1207,41 @@ Rules:
 
 ### Debug projection (run-grounded — [[agent-debug-run-grounded]])
 
-The run-details surface is a read-only **view of one run selected from the
-conversation's run list**. Its data shape is still the execution tree
-(`conversation → runs (per agent) → rounds → request-window / response /
-tool-exchange`), derived from the run ledgers that are already the system's truth,
-plus the few conversation-stream events a run's own ledger structurally lacks.
-The renderer uses the tree as a selector, not as the primary content.
+The run-details surface is a read-only **view of one concrete run**. It is opened
+with `(conversationId, runId)` from a specific assistant reply, then loads that
+run through `agent_debug_run`; it does not render the old conversation-level
+debug timeline or a selector over every run in the conversation.
 
-The selected run detail is ordered for inspection:
+The pane follows the debug data structure:
 
-1. **Context** — the model-facing request context as captured/derived for this
-   run: system/developer instructions, tool definitions/schemas, and each round's
-   request window (history/current user/file/tool-result context in model order).
-2. **Process** — the response parts, thinking parts, tool calls, and tool results.
-3. **Usage** — secondary telemetry: provider/model/status, timestamps, duration,
-   input/output/cache-read/cache-write tokens, cost breakdown, cache hit rate
-   (`cacheRead / (cacheRead + cacheWrite)`), cached context share
-   (`cacheRead / (input + cacheRead + cacheWrite)`), and a stacked input-context
-   composition chart (`input | cacheRead | cacheWrite`).
-4. **Advanced** — raw identifiers and debug metadata.
+```txt
+run
+  context snapshot (system/developer prompt + tool definitions)
+  rounds[]
+    requestWindow[]
+    responseParts[]
+    toolExchanges[]
+    usage
+  metadata
+```
+
+The run detail is ordered for inspection:
+
+1. **Run summary** — compact run facts: agent/kind/status, model/provider,
+   timestamps, duration, aggregate tokens, and aggregate cost.
+2. **Context** — run-level model context that is stable across the run:
+   system/developer instructions and tool definitions/schemas.
+3. **Rounds** — the primary body. Each round is one provider call and contains
+   its request window (history/current user/file/tool-result context in model
+   order), response/thinking parts, tool exchanges, and that round's usage.
+4. **Metadata** — raw identifiers and debug metadata, default-collapsed.
 
 The chat transcript exposes this through an assistant-message **Details** icon
 button that uses the `Info` glyph. Hovering it previews the reply's token and
-cost summary; clicking it opens the same agent-debug pane with `selectedRunId`
-set to that reply's run. There is no standalone/global debug entry in the agent
-dock; the pane is anchored to a concrete response.
-
-The run-details pane has two top-level regions:
-
-1. **Summary** — conversation/run rollups plus the selected run's compact facts
-   bar.
-2. **Details** — the turn list and the selected run's context, rounds, steps,
-   usage, and advanced metadata.
-
-Within Details, **Context** remains the primary reading surface. On wide panes the
-turn list and selected run sit side by side; on narrow panes the layout collapses
-to a single column via container query so the model-facing context is not squeezed
-by the selector. Detailed cost/cache analysis lives in the Usage section.
+cost summary; clicking it opens a run-details pane keyed by that reply's
+`runId`. If the same run pane already exists, it is activated; opening a
+different reply opens or repurposes a pane for that different `(conversationId,
+runId)`. There is no standalone/global debug entry in the agent dock.
 
 **The unit is the round** = one provider call = `(request, response)`, bounded by
 `assistant_message.started` (always present, independent of any wire capture).

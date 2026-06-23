@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import { agentToolActionKindProfile } from '../../../core/agentPermissionModel';
 import type {
-  AgentDebugConversation,
   AgentDebugMessagePart,
   AgentDebugMessageRow,
   AgentDebugRound,
   AgentDebugRun,
-  AgentDebugRunSummary,
   AgentDebugToolExchange,
   AgentDebugTurnStatus,
   AgentDebugUsage,
@@ -19,14 +17,14 @@ import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
 import { formatBytes } from '../preview/fileNode';
 
-// Run-grounded debug view ([[agent-debug-run-grounded]]): a read-only window onto
-// the execution tree — conversation → runs (per agent) → rounds (one provider
-// call) → request window / response / tool exchanges — sourced from the run
-// ledgers the system already writes. DM is the single-member case of Channel.
+// Run Details is a read-only window onto one run:
+// run → rounds (one provider call each) → request window / response / tool
+// exchanges / usage. The pane is opened from a concrete assistant reply, so it
+// does not render the old conversation-level debug timeline.
 
 interface AgentDebugPanelProps {
   conversationId: string | null;
-  selectedRunId?: string | null;
+  runId: string | null;
 }
 
 type DebugLabels = ReturnType<typeof useT>['agentDebug'];
@@ -107,9 +105,8 @@ function partTitle(part: AgentDebugMessagePart, labels: DebugLabels): string {
 
 // --- data hook ------------------------------------------------------------
 
-function useDebugTimeline(conversationId: string | null) {
-  const [resolvedConversationId, setResolvedConversationId] = useState<string | null>(conversationId);
-  const [conversation, setConversation] = useState<AgentDebugConversation | null>(null);
+function useRunDetail(conversationId: string | null, runId: string | null) {
+  const [detail, setDetail] = useState<AgentDebugRun | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
@@ -117,24 +114,17 @@ function useDebugTimeline(conversationId: string | null) {
   const refresh = useCallback(async () => {
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
+    if (!conversationId || !runId) {
+      setDetail(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      let target = conversationId;
-      if (!target) {
-        const conversations = await api.agentListConversations();
-        if (requestId !== requestRef.current) return;
-        target = conversations[0]?.id ?? null;
-      }
+      const next = await api.agentDebugRun(conversationId, runId);
       if (requestId !== requestRef.current) return;
-      setResolvedConversationId(target);
-      if (!target) {
-        setConversation(null);
-        setError(null);
-        return;
-      }
-      const next = await api.agentDebugView(target);
-      if (requestId !== requestRef.current) return;
-      setConversation(next);
+      setDetail(next);
       setError(null);
     } catch (caught) {
       if (requestId !== requestRef.current) return;
@@ -142,67 +132,40 @@ function useDebugTimeline(conversationId: string | null) {
     } finally {
       if (requestId === requestRef.current) setLoading(false);
     }
-  }, [conversationId]);
+  }, [conversationId, runId]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   useEffect(() => {
-    const eventConversationId = conversationId ?? resolvedConversationId;
-    if (!eventConversationId) return undefined;
+    if (!conversationId || !runId) return undefined;
     // A live turn fires many tool_call / tool_result / projection events in quick
     // succession; coalesce them with a trailing debounce so we re-derive the tree
     // once the burst settles, not once per event.
     let timer: ReturnType<typeof setTimeout> | null = null;
     const unlisten = window.lin?.onAgentEvent((event: AgentRuntimeEvent) => {
       if (event.type !== 'projection' && event.type !== 'error' && event.type !== 'tool_call' && event.type !== 'tool_result') return;
-      if (event.conversationId !== eventConversationId) return;
+      if (event.conversationId !== conversationId) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => { timer = null; void refresh(); }, 200);
     });
     return () => { if (timer) clearTimeout(timer); unlisten?.(); };
-  }, [refresh, resolvedConversationId, conversationId]);
+  }, [refresh, conversationId, runId]);
 
-  return { conversation, error, loading, refresh, resolvedConversationId };
+  return { detail, error, loading, refresh };
 }
 
 // --- top-level panel ------------------------------------------------------
 
-export function AgentDebugPanel({ conversationId, selectedRunId: preferredRunId = null }: AgentDebugPanelProps) {
+export function AgentDebugPanel({ conversationId, runId }: AgentDebugPanelProps) {
   const labels = useT().agentDebug;
-  const { conversation, error, loading, refresh, resolvedConversationId } = useDebugTimeline(conversationId);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(preferredRunId);
+  const { detail, error, loading, refresh } = useRunDetail(conversationId, runId);
 
-  useEffect(() => {
-    setSelectedRunId(preferredRunId);
-  }, [preferredRunId]);
-
-  const runs = useMemo(
-    () => [...(conversation?.runs ?? [])].sort((left, right) => right.createdAt - left.createdAt),
-    [conversation],
-  );
-  const selectedRun = useMemo(() => {
-    if (runs.length === 0) return null;
-    return runs.find((run) => run.runId === selectedRunId) ?? runs[0]!;
-  }, [runs, selectedRunId]);
-  const selectedRunDetail = useSelectedRunDetail(resolvedConversationId, selectedRun);
-
-  useEffect(() => {
-    if (!selectedRun && runs.length > 0) setSelectedRunId(runs[0]!.runId);
-  }, [runs, selectedRun]);
-
-  if (!conversationId && !resolvedConversationId && loading) {
+  if (!conversationId || !runId) {
     return (
       <div className="agent-debug-panel">
-        <EmptyState className="agent-debug-empty" icon={LoaderIcon} loading role="status" title={labels.loadingConversation} />
-      </div>
-    );
-  }
-  if (!conversationId && !resolvedConversationId) {
-    return (
-      <div className="agent-debug-panel">
-        <EmptyState className="agent-debug-empty" title={labels.noConversation} />
+        <EmptyState className="agent-debug-empty" title={labels.noRunSelected} />
       </div>
     );
   }
@@ -212,7 +175,7 @@ export function AgentDebugPanel({ conversationId, selectedRunId: preferredRunId 
       <header className="agent-debug-header">
         <div>
           <h2>{labels.title}</h2>
-          <p>{resolvedConversationId ?? conversationId}</p>
+          <p>{runId}</p>
         </div>
         <IconButton
           className="agent-debug-icon-button"
@@ -224,149 +187,15 @@ export function AgentDebugPanel({ conversationId, selectedRunId: preferredRunId 
         />
       </header>
 
-      {loading && !conversation ? <EmptyState icon={LoaderIcon} loading role="status" title={labels.loadingRuntime} /> : null}
-      {error ? <ErrorState message={error} /> : null}
-
-      {conversation ? (
-        <div className="agent-debug-run-page">
-          <section className="agent-debug-summary-region" aria-label={labels.summaryAriaLabel}>
-            <DebugSectionHeader title={labels.summaryTitle} />
-            <div className="agent-debug-summary-grid">
-              <Overview conversation={conversation} labels={labels} />
-              {selectedRun ? (
-                <RunSummaryHeader labels={labels} run={selectedRunDetail.detail ?? selectedRun} />
-              ) : (
-                <div className="agent-debug-card is-muted">{labels.noRuntimeData}</div>
-              )}
-            </div>
-          </section>
-          <section className="agent-debug-details-region" aria-label={labels.detailsAriaLabel}>
-            <DebugSectionHeader title={labels.detailsTitle} />
-            <div className="agent-debug-run-details-layout">
-              <aside className="agent-debug-run-selector" aria-label={labels.runListAriaLabel}>
-                <div className="agent-debug-run-selector-head">
-                  <strong>{labels.turnsTitle}</strong>
-                  <span>{labels.statTotalRuns}: {runs.length}</span>
-                </div>
-                {runs.length === 0 ? (
-                  <div className="agent-debug-card is-muted">{labels.noRuntimeData}</div>
-                ) : runs.map((run) => (
-                  <RunSelectorButton
-                    key={run.runId}
-                    labels={labels}
-                    onSelect={() => setSelectedRunId(run.runId)}
-                    run={run}
-                    selected={selectedRun?.runId === run.runId}
-                  />
-                ))}
-              </aside>
-              <section className="agent-debug-selected-run" aria-label={labels.selectedRunAriaLabel}>
-                {selectedRun ? (
-                  <SelectedRunDetail
-                    detailState={selectedRunDetail}
-                    labels={labels}
-                  />
-                ) : (
-                  <div className="agent-debug-card is-muted">{labels.noRuntimeData}</div>
-                )}
-              </section>
-            </div>
-          </section>
-        </div>
-      ) : (
-        !loading && !error ? <div className="agent-debug-card is-muted">{labels.noRuntimeData}</div> : null
-      )}
-    </div>
-  );
-}
-
-function RunSelectorButton({
-  labels,
-  onSelect,
-  run,
-  selected,
-}: {
-  labels: DebugLabels;
-  onSelect: () => void;
-  run: AgentDebugRunSummary;
-  selected: boolean;
-}) {
-  return (
-    <button
-      aria-pressed={selected}
-      className={`agent-debug-run-selector-button${selected ? ' is-selected' : ''}`}
-      onClick={onSelect}
-      type="button"
-    >
-      <span className="agent-debug-run-selector-main">
-        <span className="agent-debug-agent-badge">{agentLabel(run.agentId)}</span>
-        <span className="agent-debug-run-kind">{kindLabel(run.kind, labels)}</span>
-        <span className={`agent-debug-status-pill is-${run.status}`}>{statusLabel(run.status, labels)}</span>
-      </span>
-      <span className="agent-debug-run-selector-meta">
-        {run.modelId ? <code>{run.modelId}</code> : <span>{labels.unknown}</span>}
-        <span>{labels.runRounds({ count: run.roundCount })}</span>
-        {run.usage ? <span>{formatCost(run.usage.costUsd)}</span> : null}
-      </span>
-    </button>
-  );
-}
-
-function useSelectedRunDetail(
-  conversationId: string | null,
-  run: AgentDebugRunSummary | null,
-) {
-  const [detail, setDetail] = useState<AgentDebugRun | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const loadDetail = useCallback(async () => {
-    if (!conversationId || !run) {
-      setDetail(null);
-      setError(null);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    try {
-      const next = await api.agentDebugRun(conversationId, run.runId);
-      setDetail(next);
-      setError(null);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setLoading(false);
-    }
-  }, [conversationId, run]);
-
-  useEffect(() => {
-    setDetail(null);
-    setError(null);
-    void loadDetail();
-  }, [loadDetail]);
-
-  return { detail, error, loading };
-}
-
-function SelectedRunDetail({
-  detailState,
-  labels,
-}: {
-  detailState: ReturnType<typeof useSelectedRunDetail>;
-  labels: DebugLabels;
-}) {
-  const { detail, error, loading } = detailState;
-  return (
-    <div className="agent-debug-run-detail-shell">
       {loading && !detail ? <EmptyState icon={LoaderIcon} loading role="status" title={labels.loadingRun} /> : null}
       {error ? <ErrorState message={error} /> : null}
-      {detail ? <RunDetail run={detail} labels={labels} /> : (!loading && !error ? <div className="agent-debug-card is-muted">{labels.noRoundsYet}</div> : null)}
+      {detail ? <RunDetail run={detail} labels={labels} /> : (!loading && !error ? <div className="agent-debug-card is-muted">{labels.noRuntimeData}</div> : null)}
     </div>
   );
 }
 
-function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebugRun | AgentDebugRunSummary }) {
-  const rounds = 'rounds' in run ? run.rounds : [];
+function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebugRun }) {
+  const rounds = run.rounds;
   const startedAt = rounds[0]?.startedAt ?? run.createdAt;
   const completedAt = rounds.reduce<number | null>((latest, round) => (
     round.completedAt && (!latest || round.completedAt > latest) ? round.completedAt : latest
@@ -418,34 +247,6 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
   );
 }
 
-function Overview({ conversation, labels }: { conversation: AgentDebugConversation; labels: DebugLabels }) {
-  const { totals, shape, members } = conversation;
-  return (
-    <section className="agent-debug-overview" aria-label={labels.overviewAriaLabel}>
-      <div className="agent-debug-overview-head">
-        <strong>{shape === 'channel' ? labels.shapeChannel : labels.shapeDm}</strong>
-        <span>{labels.membersCount({ count: members.length })}</span>
-      </div>
-      <dl className="agent-debug-overview-list">
-        <div>
-          <dt>{labels.statTotalRuns}</dt>
-          <dd>{conversation.runs.length}</dd>
-          <small>{labels.statRoundsMeta({ count: totals.rounds })}</small>
-        </div>
-        <div>
-          <dt>{labels.statTokens}</dt>
-          <dd>{formatTokens(totals.totalTokens)}</dd>
-          <small>{`${formatTokens(totals.input)} / ${formatTokens(totals.output)}`}</small>
-        </div>
-        <div>
-          <dt>{labels.statCost}</dt>
-          <dd>{formatCost(totals.costUsd)}</dd>
-        </div>
-      </dl>
-    </section>
-  );
-}
-
 function usageRatios(usage: AgentDebugUsage) {
   const inputContext = usage.input + usage.cacheRead + usage.cacheWrite;
   const cacheActivity = usage.cacheRead + usage.cacheWrite;
@@ -467,70 +268,58 @@ function formatPercent(value: number | null): string {
 function RunDetail({ run, labels }: { run: AgentDebugRun; labels: DebugLabels }) {
   return (
     <div className="agent-debug-run-detail">
-      <DebugPanelSection title={labels.contextTitle}>
-        <div className="agent-debug-context-card">
-          <ContextDisclosure title={labels.systemPromptDisclosure} copyText={run.systemPrompt ?? ''} defaultOpen>
-            {run.systemPrompt ? <pre>{run.systemPrompt}</pre> : <span className="is-muted">{labels.empty}</span>}
-          </ContextDisclosure>
-          <ContextDisclosure title={labels.toolsDisclosure({ count: run.tools.length })} defaultOpen>
-            {run.tools.length === 0 ? <span className="is-muted">{labels.noTools}</span> : (
-              <div className="agent-debug-tool-list">
-                {run.tools.map((tool) => (
-                  <details className="agent-debug-tool-row" key={tool.name}>
-                    <summary>
-                      <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
-                      <code>{tool.name}</code>
-                      <span>{tool.description || labels.noDescription}</span>
-                    </summary>
-                    <pre>{tool.schema}</pre>
-                  </details>
-                ))}
-              </div>
-            )}
-          </ContextDisclosure>
-          {run.rounds.map((round) => (
-            <ContextDisclosure
-              defaultOpen={round.index === 0}
-              key={round.index}
-              title={labels.requestWindowLabel({ count: round.requestWindow.length })}
-            >
-              {round.requestWindow.length === 0 ? (
-                <span className="is-muted">{labels.empty}</span>
-              ) : (
-                <div className="agent-debug-message-list">
-                  {round.requestWindow.map((row) => <MessageRow key={row.id} message={row} labels={labels} />)}
-                </div>
-              )}
-            </ContextDisclosure>
-          ))}
-        </div>
-      </DebugPanelSection>
+      <RunSummaryHeader labels={labels} run={run} />
+      <RunContextSection labels={labels} run={run} />
 
-      <DebugPanelSection title={labels.processTitle}>
+      <DebugPanelSection title={labels.roundsTitle({ count: run.rounds.length })}>
         {run.rounds.length === 0 ? (
           <div className="agent-debug-card is-muted">{labels.noRoundsYet}</div>
         ) : run.rounds.map((round) => (
-          <RoundProcessCard key={round.index} round={round} labels={labels} />
+          <RoundCard key={round.index} round={round} labels={labels} />
         ))}
       </DebugPanelSection>
 
-      <DebugPanelSection title={labels.usageTitle}>
-        {run.usage ? <UsageBreakdown usage={run.usage} labels={labels} /> : <div className="agent-debug-card is-muted">{labels.usagePending}</div>}
-      </DebugPanelSection>
-
-      <DebugPanelSection title={labels.advancedTitle}>
+      <ContextDisclosure title={labels.metadataTitle}>
         <div className="agent-debug-advanced-grid">
           <DebugMetric label="runId" value={run.runId} />
           <DebugMetric label="parentRunId" value={run.parentRunId ?? labels.empty} />
           <DebugMetric label="parentToolCallId" value={run.parentToolCallId ?? labels.empty} />
           <DebugMetric label="agentId" value={run.agentId} />
         </div>
-      </DebugPanelSection>
+      </ContextDisclosure>
     </div>
   );
 }
 
-function RoundProcessCard({ round, labels }: { round: AgentDebugRound; labels: DebugLabels }) {
+function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDebugRun }) {
+  return (
+    <DebugPanelSection title={labels.contextTitle}>
+      <div className="agent-debug-context-card">
+        <ContextDisclosure title={labels.systemPromptDisclosure} copyText={run.systemPrompt ?? ''} defaultOpen>
+          {run.systemPrompt ? <pre>{run.systemPrompt}</pre> : <span className="is-muted">{labels.empty}</span>}
+        </ContextDisclosure>
+        <ContextDisclosure title={labels.toolsDisclosure({ count: run.tools.length })}>
+          {run.tools.length === 0 ? <span className="is-muted">{labels.noTools}</span> : (
+            <div className="agent-debug-tool-list">
+              {run.tools.map((tool) => (
+                <details className="agent-debug-tool-row" key={tool.name}>
+                  <summary>
+                    <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
+                    <code>{tool.name}</code>
+                    <span>{tool.description || labels.noDescription}</span>
+                  </summary>
+                  <pre>{tool.schema}</pre>
+                </details>
+              ))}
+            </div>
+          )}
+        </ContextDisclosure>
+      </div>
+    </DebugPanelSection>
+  );
+}
+
+function RoundCard({ round, labels }: { round: AgentDebugRound; labels: DebugLabels }) {
   return (
     <article className="agent-debug-round-card">
       <div className="agent-debug-section-header">
@@ -538,6 +327,17 @@ function RoundProcessCard({ round, labels }: { round: AgentDebugRound; labels: D
         <span className={`agent-debug-status-pill is-${round.status}`}>{statusLabel(round.status, labels)}</span>
         {round.modelId ? <code className="agent-debug-run-model">{round.modelId}</code> : null}
         {round.stopReason ? <code>{round.stopReason}</code> : null}
+      </div>
+
+      <div className="agent-debug-round-request">
+        <DebugSectionHeader title={labels.requestWindowLabel({ count: round.requestWindow.length })} />
+        {round.requestWindow.length === 0 ? (
+          <div className="is-muted">{labels.empty}</div>
+        ) : (
+          <div className="agent-debug-message-list">
+            {round.requestWindow.map((row) => <MessageRow key={row.id} message={row} labels={labels} />)}
+          </div>
+        )}
       </div>
 
       <div className="agent-debug-round-response">
@@ -557,6 +357,11 @@ function RoundProcessCard({ round, labels }: { round: AgentDebugRound; labels: D
           {round.toolExchanges.map((exchange) => <ToolExchangeRow key={exchange.toolCallId} exchange={exchange} labels={labels} />)}
         </div>
       ) : null}
+
+      <div className="agent-debug-round-usage">
+        <DebugSectionHeader title={labels.usageTitle} />
+        {round.usage ? <UsageBreakdown usage={round.usage} labels={labels} /> : <div className="agent-debug-card is-muted">{labels.usagePending}</div>}
+      </div>
     </article>
   );
 }

@@ -13,38 +13,31 @@ test.describe('agent debug panel', () => {
     await expect(debugPanel.getByRole('heading', { name: 'Run Details' })).toBeVisible();
     await expect(debugPanel).toHaveCSS('background-color', 'rgb(255, 255, 255)');
 
-    // Overview: Channel shape + the conversation's run/token rollup.
-    await expect(debugPanel.getByRole('heading', { name: 'Summary' })).toBeVisible();
-    const overview = debugPanel.getByLabel('Agent debug overview');
-    await expect(overview).toContainText('Channel');
-    await expect(overview).toContainText('66k');
+    await expect(debugPanel.getByText('mock-run-1').first()).toBeVisible();
+    await expect(debugPanel.locator('.agent-debug-run-summary')).toContainText('assistant');
+    await expect(debugPanel.locator('.agent-debug-run-summary')).toContainText('gpt-5.4');
+    await expect(debugPanel.getByRole('heading', { name: 'Summary' })).toHaveCount(0);
+    await expect(debugPanel.locator('.agent-debug-run-selector-button')).toHaveCount(0);
 
-    await expect(debugPanel.getByRole('heading', { name: 'Details', exact: true })).toBeVisible();
-    await expect(debugPanel.getByText('Turns')).toBeVisible();
-    const runSelector = debugPanel.locator('.agent-debug-run-selector-button').first();
-    await expect(runSelector).toContainText('assistant');
-    await expect(runSelector).toContainText('gpt-5.4');
-    await expect(runSelector).toContainText('1 round');
-
-    // The selected run detail leads with the actual model-facing request context.
-    await expect(debugPanel.getByRole('heading', { name: 'Context' })).toBeVisible();
+    await expect(debugPanel.getByRole('heading', { name: 'Context', exact: true })).toBeVisible();
     await expect(debugPanel.getByText('System prompt')).toBeVisible();
     await expect(debugPanel.getByText('Tools · 1')).toBeVisible();
-    await expect(debugPanel.locator('.agent-debug-message-list')).toContainText('Summarize current outline.');
 
-    // Process and usage are secondary sections below the context.
-    await expect(debugPanel.getByRole('heading', { name: 'Process' })).toBeVisible();
+    await expect(debugPanel.getByRole('heading', { name: 'Rounds · 1' })).toBeVisible();
     const round = debugPanel.locator('.agent-debug-round-card').first();
     await expect(round.getByRole('heading', { name: 'Round 1' })).toBeVisible();
+    await expect(round).toContainText('New context · 1 message');
+    await expect(round.locator('.agent-debug-message-list')).toContainText('Summarize current outline.');
     await expect(round).toContainText('Current outline focuses on UI work.');
-    await expect(debugPanel.getByRole('heading', { name: 'Usage' })).toBeVisible();
-    await expect(debugPanel).toContainText('Input context');
-    await expect(debugPanel).toContainText('66k');
-    await expect(debugPanel).toContainText('Cache hit');
-    await expect(debugPanel).toContainText('89%');
-    await expect(debugPanel).toContainText('Cached share');
-    await expect(debugPanel).toContainText('73%');
-    await expect(debugPanel.getByLabel('Input context cache composition')).toBeVisible();
+    await expect(round).toContainText('Usage');
+    await expect(round).toContainText('Input context');
+    await expect(round).toContainText('66k');
+    await expect(round).toContainText('Cache hit');
+    await expect(round).toContainText('89%');
+    await expect(round).toContainText('Cached share');
+    await expect(round).toContainText('73%');
+    await expect(round.getByLabel('Input context cache composition')).toBeVisible();
+    await expect(debugPanel.getByText('Metadata')).toBeVisible();
   });
 
   test('adds a user block rule from a logged tool exchange', async ({ page }) => {
@@ -84,10 +77,10 @@ test.describe('agent debug panel', () => {
 
     const debugPanel = page.locator('.outline-panel-surface.is-agent-debug');
     await expect(debugPanel.getByRole('heading', { name: 'Run Details' })).toBeVisible();
-    await expect(debugPanel.getByRole('heading', { name: 'Context' })).toBeVisible();
+    await expect(debugPanel.getByRole('heading', { name: 'Context', exact: true })).toBeVisible();
     await expect(debugPanel.getByText('System prompt')).toBeVisible();
     await expect(debugPanel.getByText('Tools · 1')).toBeVisible();
-    await expect(debugPanel.getByRole('heading', { name: 'Usage' })).toBeVisible();
+    await expect(debugPanel.getByRole('heading', { name: 'Usage', exact: true })).toBeVisible();
     await expect(debugPanel).toContainText('Cache hit');
   });
 });

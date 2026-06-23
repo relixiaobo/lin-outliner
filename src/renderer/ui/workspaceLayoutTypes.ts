@@ -45,7 +45,7 @@ export interface WorkspaceContentPanelState extends WorkspacePanelBase {
 export interface AgentDebugPanelState extends WorkspacePanelBase {
   type: 'agent-debug';
   conversationId: string | null;
-  selectedRunId?: string | null;
+  runId: string | null;
 }
 
 export type WorkspacePanelState = WorkspaceContentPanelState | AgentDebugPanelState;
