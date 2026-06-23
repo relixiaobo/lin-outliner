@@ -179,9 +179,13 @@ truth.
     (`channel_create`/`channel_update`/`channelOrg`), member roster +
     `@`-routing/typeahead/handoff, POV/independence + the POV inspector, the
     channel activity surface, channel permission gates, multi-agent channel-turn
-    execution + parallel-channel runtime, ChannelConfigWindow configure
-    plumbing, and the message-addressing protocol fields (`addressedTo`,
-    `member.added`/`member.removed`)
+    execution + parallel-channel runtime, the ChannelConfigWindow
+    **member-management** plumbing (the window survives as a name-only
+    create/rename dialog), and the message-addressing protocol fields (`addressedTo`,
+    `member.added`/`member.removed`). The Channel container itself survives: every
+    conversation is an id-namespaced single-agent channel, "General" is the default,
+    and users create/rename channels from the one list's `+` (no agent-facing
+    `channel_create` tool — UI action only).
 
 ## Next Milestone
 

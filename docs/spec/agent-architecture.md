@@ -230,7 +230,8 @@ a Channel-vs-DM distinction, no peer agents, and no `@`-routing. Removed:
 - POV / independence cut + the per-agent POV inspector;
 - the channel activity surface and channel permission gates;
 - multi-agent channel-turn execution + the parallel-channel runtime;
-- the `ChannelConfigWindow` configure plumbing;
+- the `ChannelConfigWindow` **member-management** plumbing (the window itself
+  survives as a name-only **create / rename** dialog — see below);
 - the dead message-addressing protocol fields;
 - `canonicalDmAgentId`, the `lin-agent-dm-` prefix, and DM-vs-Channel branching;
 - the two conversation-list sections + two "+" buttons (now one conversation
@@ -238,8 +239,19 @@ a Channel-vs-DM distinction, no peer agents, and no `@`-routing. Removed:
 - `dmRunActive` / `channelRunsActive` (collapsed to one `runActive`).
 
 The render projection collapsed accordingly (no channel/POV entities), and the
-environment reminder is single-agent. The conversation noun
-("channel"/"conversation") stays; only the multi-agent semantics are gone.
+environment reminder is single-agent. Only the multi-*agent* semantics are gone —
+**the Channel container survives as the universal conversation shape.** Every
+conversation is an id-namespaced (`lin-agent-channel-…`) single-agent thread with
+members `{user, Neva}`; **General** (`lin-agent-channel-general`,
+`restoreOrCreateGeneralChannel`) is the default landing, sorted first in the one flat
+conversation list; and the user can **create / rename** further channels from that
+list's single `+` button (the surviving `ChannelConfigWindow` create/rename dialog — a
+title plus an optional opening seed, no member roster). The surviving seams are
+`isChannelConversationId` (id-prefix test) and `usesChannelActivitySurface()`
+(hardcoded `false`, so every channel-surface branch takes its single-agent inline side).
+There is no agent-facing `channel_create`/`channel_update` tool — channel creation is a
+user UI action only. (`AgentDebugConversationShape = 'dm' | 'channel'` is a debug-only
+leftover; only the single-agent value is ever assigned.)
 
 ## Verified status
 
