@@ -335,7 +335,7 @@ function RoundCard({ round, labels }: { round: AgentDebugRound; labels: DebugLab
         <RoundInfoHover labels={labels} round={round} />
       </div>
 
-      <div className="agent-debug-message-list">
+      <div className="agent-debug-execution-list">
         {outputParts.length === 0 && round.toolExchanges.length === 0 ? (
           <div className="is-muted">{labels.noExecutionOutput}</div>
         ) : null}
@@ -418,21 +418,23 @@ function RoundInfoContent({ labels, round }: { labels: DebugLabels; round: Agent
 
 function ExecutionOutputRow({ labels, parts, round }: { labels: DebugLabels; parts: AgentDebugMessagePart[]; round: AgentDebugRound }) {
   const body = parts.map((part) => part.body).join('\n');
-  const message: AgentDebugMessageRow = {
-    id: `${round.messageId}:output`,
-    role: 'assistant',
-    summary: partsSummaryText(parts, labels),
-    bytes: textBytes(body),
-    parts,
-  };
-  return <MessageRow className="is-execution" hideRole labels={labels} message={message} />;
+  const summary = modelOutputSummary(parts, labels);
+  return (
+    <div className="agent-debug-execution-row">
+      <div className="agent-debug-execution-head">
+        <strong title={summary}>{summary}</strong>
+        <code>{formatBytes(textBytes(body))}</code>
+      </div>
+    </div>
+  );
 }
 
 function ToolExchangeRow({ exchange, index, labels }: { exchange: AgentDebugToolExchange; index: number; labels: DebugLabels }) {
   const resultBody = exchange.result ?? labels.toolPending;
   const [blockState, setBlockState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const blockRule = useMemo(() => blockRuleForToolExchange(exchange), [exchange]);
-  const message = useMemo<AgentDebugMessageRow>(() => toolExchangeMessage(exchange, resultBody, index), [exchange, index, resultBody]);
+  const parts = useMemo<AgentDebugMessagePart[]>(() => toolExchangeParts(exchange, resultBody), [exchange, resultBody]);
+  const summary = `${exchange.toolName}: ${truncate(exchange.result ?? exchange.args ?? resultBody, 160)}`;
 
   const addUserBlock = useCallback(async (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -456,13 +458,9 @@ function ToolExchangeRow({ exchange, index, labels }: { exchange: AgentDebugTool
         : labels.addUserBlockLabel;
 
   return (
-    <MessageRow
-      className={`agent-debug-tool-exchange is-execution${exchange.isError ? ' is-error' : ''}`}
-      hideRole
-      labels={labels}
-      message={message}
-      preferSummary
-      trailing={(
+    <div className={`agent-debug-execution-row agent-debug-tool-exchange${exchange.isError ? ' is-error' : ''}`}>
+      <div className="agent-debug-execution-head">
+        <strong title={summary}>{summary}</strong>
         <span className="agent-debug-message-actions-inline">
           {exchange.isError ? <span className="agent-debug-tool-flag">{labels.toolError}</span> : null}
           {blockRule ? (
@@ -478,38 +476,35 @@ function ToolExchangeRow({ exchange, index, labels }: { exchange: AgentDebugTool
             />
           ) : null}
         </span>
-      )}
-    />
+      </div>
+      <div className="agent-debug-part-list">
+        {parts.map((part, partIndex) => (
+          <PartRow part={part} rowId={`${exchange.toolCallId}:tool:${index}`} index={partIndex} key={`${exchange.toolCallId}-${partIndex}`} labels={labels} />
+        ))}
+      </div>
+    </div>
   );
 }
 
-function toolExchangeMessage(exchange: AgentDebugToolExchange, resultBody: string, index: number): AgentDebugMessageRow {
-  const parts: AgentDebugMessagePart[] = [
+function toolExchangeParts(exchange: AgentDebugToolExchange, resultBody: string): AgentDebugMessagePart[] {
+  return [
     ...(exchange.args ? [{ kind: 'toolCall' as const, name: exchange.toolName, toolUseId: exchange.toolCallId, body: exchange.args }] : []),
     { kind: 'toolResult' as const, toolUseId: exchange.toolCallId, body: resultBody, isError: exchange.isError },
   ];
-  const body = parts.map((part) => part.body).join('\n');
-  return {
-    id: `${exchange.toolCallId}:tool:${index}`,
-    role: 'tool',
-    summary: `${exchange.toolName}: ${truncate(exchange.result ?? exchange.args ?? resultBody, 120)}`,
-    bytes: textBytes(body),
-    parts,
-  };
 }
 
-function partsSummaryText(parts: AgentDebugMessagePart[], labels: DebugLabels): string {
+function modelOutputSummary(parts: AgentDebugMessagePart[], labels: DebugLabels): string {
   if (parts.length === 0) return labels.noExecutionOutput;
-  if (parts.length === 1) {
-    const [part] = parts;
-    if (part?.kind === 'text' && !part.isReminder) return part.body;
-    if (part?.kind === 'toolCall') return `tool_call ${part.name}`;
-    if (part?.kind === 'toolResult') return `tool_result ${shortId(part.toolUseId)}`;
-    if (part?.kind === 'thinking') return labels.partThinking;
-    if (part?.kind === 'image') return labels.partImage;
-    if (part?.kind === 'json') return labels.partJson;
-    if (part?.kind === 'text' && part.isReminder) return labels.partReminder;
-  }
+  const textPart = parts.find((part) => part.kind === 'text' && !part.isReminder);
+  if (textPart) return textPart.body;
+  const thinkingPart = parts.find((part) => part.kind === 'thinking');
+  if (thinkingPart) return thinkingPart.body;
+  const [part] = parts;
+  if (part?.kind === 'toolCall') return `tool_call ${part.name}`;
+  if (part?.kind === 'toolResult') return `tool_result ${shortId(part.toolUseId)}`;
+  if (part?.kind === 'image') return labels.partImage;
+  if (part?.kind === 'json') return labels.partJson;
+  if (part?.kind === 'text' && part.isReminder) return labels.partReminder;
   return parts.map((part) => partTitle(part, labels)).join(' · ');
 }
 
@@ -589,27 +584,21 @@ function MessageList({ labels, messages }: { labels: DebugLabels; messages: Agen
 
 function MessageRow({
   className,
-  hideRole,
   labels,
   message,
-  preferSummary,
-  trailing,
 }: {
   className?: string;
-  hideRole?: boolean;
   labels: DebugLabels;
   message: AgentDebugMessageRow;
-  preferSummary?: boolean;
-  trailing?: ReactNode;
 }) {
   const visibleParts = shouldShowMessageParts(message.parts);
-  const summary = preferSummary ? message.summary : messageSummaryText(message);
+  const summary = messageSummaryText(message);
   return (
-    <article className={`agent-debug-message-row${visibleParts ? '' : ' is-compact'}${hideRole ? ' has-no-role' : ''}${className ? ` ${className}` : ''}`}>
+    <article className={`agent-debug-message-row${visibleParts ? '' : ' is-compact'}${className ? ` ${className}` : ''}`}>
       <div className="agent-debug-message-head">
-        {hideRole ? null : <span className={`agent-debug-role-pill is-${message.role}`}>{message.role}</span>}
+        <span className={`agent-debug-role-pill is-${message.role}`}>{message.role}</span>
         <strong title={summary}>{summary}</strong>
-        {trailing ?? <code>{formatBytes(message.bytes)}</code>}
+        <code>{formatBytes(message.bytes)}</code>
       </div>
       {visibleParts ? (
         <div className="agent-debug-part-list">

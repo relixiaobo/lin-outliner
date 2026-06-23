@@ -1246,14 +1246,13 @@ The run detail is ordered for inspection:
    header labels it as `Call N`, hides the default completed state, and keeps
    only non-default status plus an `Info` affordance. Model id, stop reason, and
    compact per-call usage/cost (input context, output, cache hit, cost) live in
-   the hover. The body reuses the same message-row and part-disclosure structure
-   as `Model Input`: an assistant row for model output (text/thinking plus any
-   orphan tool request) followed by tool rows for matching tool arguments and
-   results. Inside Execution, rows are visually flattened: the `Call N` header
-   already supplies the execution context, so rows omit role pills and use light
-   separators instead of nested cards. Tool requests that have a matching
-   exchange are not repeated in the assistant row; their arguments live with the
-   tool row. The run summary carries the main token/cost readout.
+   the hover. The body is a flat call-event list: one model-output summary row
+   (preferring the emitted text over hidden thinking text) followed by tool
+   exchange rows. Tool rows show the tool name plus result summary first, then
+   expose arguments/results through the same part-disclosure control used
+   elsewhere in the pane. Tool requests that have a matching exchange are not
+   repeated in the model-output row; their arguments live with the tool row. The
+   run summary carries the main token/cost readout.
 
 The chat transcript exposes this through an assistant-message **Details** icon
 button that uses the `Info` glyph. Hovering it previews the reply's token and

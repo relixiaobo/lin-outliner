@@ -45,11 +45,11 @@ test.describe('agent debug panel', () => {
     await expect(round.locator('.agent-debug-section-header .agent-debug-status-pill')).toHaveCount(0);
     await expect(round.locator('.agent-debug-section-header > code')).toHaveCount(0);
     await expect(round.locator('.agent-debug-role-pill')).toHaveCount(0);
+    await expect(round.locator('.agent-debug-message-row')).toHaveCount(0);
     await expect(round.locator('.agent-debug-round-request')).toHaveCount(0);
     await expect(round).not.toContainText('History · 2');
-    await expect(round).toContainText('Identify relevant outline nodes.');
     await expect(round).toContainText('Current outline focuses on UI work.');
-    const outputRow = round.locator('.agent-debug-message-row', { hasText: 'Identify relevant outline nodes.' }).first();
+    const outputRow = round.locator('.agent-debug-execution-row', { hasText: 'Current outline focuses on UI work.' }).first();
     await expect(outputRow).not.toContainText('tool_call bash');
     await expect(round.locator('.agent-debug-tool-exchange', { hasText: 'bash' })).toContainText('Pushed to origin/main.');
     await expect.poll(async () => debugPanel.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
