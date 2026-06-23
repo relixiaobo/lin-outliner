@@ -931,6 +931,52 @@ describe('agent local tools', () => {
     });
   });
 
+  test('file_read reuses cached MarkItDown output for the same rich document content', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const binDir = path.join(workspaceRoot, 'fake-cached-markitdown-bin');
+      await mkdir(binDir, { recursive: true });
+      const conversionLog = path.join(workspaceRoot, 'conversion-count.txt');
+      const fakeMarkitdown = path.join(binDir, 'markitdown');
+      await writeFile(fakeMarkitdown, [
+        '#!/bin/sh',
+        'if [ "$1" = "--help" ]; then echo "Usage: markitdown"; exit 0; fi',
+        'echo conversion >> "$CONVERSION_LOG"',
+        'printf "# Cached conversion\\n\\nbody\\n"',
+      ].join('\n'), 'utf8');
+      await chmod(fakeMarkitdown, 0o755);
+
+      const filePath = path.join(workspaceRoot, 'cached.docx');
+      await writeFile(filePath, 'stable office payload', 'utf8');
+
+      const originalCommand = process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+      const originalConversionLog = process.env.CONVERSION_LOG;
+      delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+      process.env.CONVERSION_LOG = conversionLog;
+      try {
+        await withPrependedPath(binDir, async () => {
+          const first = await executeTool<{ type: 'markdown'; file: { content: string } }>(workspaceRoot, 'file_read', { file_path: filePath });
+          const second = await executeTool<{ type: 'markdown'; file: { content: string } }>(workspaceRoot, 'file_read', { file_path: filePath });
+
+          expect(first.ok).toBe(true);
+          expect(second.ok).toBe(true);
+          expect(second.data!.file.content).toBe(first.data!.file.content);
+          expect((await readFile(conversionLog, 'utf8')).trim().split('\n')).toHaveLength(1);
+        });
+      } finally {
+        if (originalCommand === undefined) {
+          delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+        } else {
+          process.env.LIN_AGENT_MARKITDOWN_COMMAND = originalCommand;
+        }
+        if (originalConversionLog === undefined) {
+          delete process.env.CONVERSION_LOG;
+        } else {
+          process.env.CONVERSION_LOG = originalConversionLog;
+        }
+      }
+    });
+  });
+
   test('file_read returns a recoverable MarkItDown dependency error for rich documents', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const originalCommand = process.env.LIN_AGENT_MARKITDOWN_COMMAND;
@@ -1165,6 +1211,60 @@ describe('agent local tools', () => {
         expect(read.data!.file.extractedText?.chars).toBe(65_000);
         expect(textPart?.text.length).toBeLessThan(61_000);
       });
+    });
+  });
+
+  test('file_read reuses cached PDF metadata and text for repeated reads of the same PDF content', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const binDir = path.join(workspaceRoot, 'fake-cached-pdf-bin');
+      await mkdir(binDir, { recursive: true });
+      const pdfinfoLog = path.join(workspaceRoot, 'pdfinfo-count.txt');
+      const pdftotextLog = path.join(workspaceRoot, 'pdftotext-count.txt');
+      const fakePdfinfo = path.join(binDir, 'pdfinfo');
+      await writeFile(fakePdfinfo, [
+        '#!/bin/sh',
+        'echo info >> "$PDFINFO_LOG"',
+        'echo "Pages: 1"',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdfinfo, 0o755);
+      const fakePdftotext = path.join(binDir, 'pdftotext');
+      await writeFile(fakePdftotext, [
+        '#!/bin/sh',
+        'echo text >> "$PDFTEXT_LOG"',
+        'echo "Cached PDF text"',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdftotext, 0o755);
+
+      const filePath = path.join(workspaceRoot, 'cached-text.pdf');
+      await writeFile(filePath, makePdf(['unique cached pdf text']), 'utf8');
+
+      const originalPdfinfoLog = process.env.PDFINFO_LOG;
+      const originalPdfTextLog = process.env.PDFTEXT_LOG;
+      process.env.PDFINFO_LOG = pdfinfoLog;
+      process.env.PDFTEXT_LOG = pdftotextLog;
+      try {
+        await withPrependedPath(binDir, async () => {
+          const first = await executeTool<{ type: 'pdf'; file: { extractedText?: { truncated: boolean } } }>(workspaceRoot, 'file_read', { file_path: filePath });
+          const second = await executeTool<{ type: 'pdf'; file: { extractedText?: { truncated: boolean } } }>(workspaceRoot, 'file_read', { file_path: filePath });
+
+          expect(first.ok).toBe(true);
+          expect(second.ok).toBe(true);
+          expect(second.data!.file.extractedText?.truncated).toBe(false);
+          expect((await readFile(pdfinfoLog, 'utf8')).trim().split('\n')).toHaveLength(1);
+          expect((await readFile(pdftotextLog, 'utf8')).trim().split('\n')).toHaveLength(1);
+        });
+      } finally {
+        if (originalPdfinfoLog === undefined) {
+          delete process.env.PDFINFO_LOG;
+        } else {
+          process.env.PDFINFO_LOG = originalPdfinfoLog;
+        }
+        if (originalPdfTextLog === undefined) {
+          delete process.env.PDFTEXT_LOG;
+        } else {
+          process.env.PDFTEXT_LOG = originalPdfTextLog;
+        }
+      }
     });
   });
 

@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { agentDerivedFileCache, derivedFileCacheKey } from './agentFileIngestionCache';
 import type { ToolStatus } from './agentToolEnvelope';
 import { runAgentToolProcess } from './agentToolProcess';
 
@@ -34,6 +35,7 @@ const MARKITDOWN_MAX_CHARS = 80_000;
 const MARKITDOWN_TRUNCATION_MARKER = '\n\n[Markdown output truncated]';
 const MARKITDOWN_STDOUT_CAPTURE_CHARS = MARKITDOWN_MAX_CHARS + MARKITDOWN_TRUNCATION_MARKER.length + 1;
 const MARKITDOWN_STDERR_CAPTURE_CHARS = 20_000;
+const MARKITDOWN_CACHE_EXTRACTOR = 'markitdown:v1';
 
 export const MARKITDOWN_RICH_DOCUMENT_EXTENSIONS = new Set([
   '.docx',
@@ -64,8 +66,19 @@ export class AgentFileIngestionFailure extends Error {
   }
 }
 
-export async function ingestRichDocumentAsMarkdown(filePath: string): Promise<MarkdownIngestionResult> {
+export async function ingestRichDocumentAsMarkdown(filePath: string, sourceHash?: string): Promise<MarkdownIngestionResult> {
   const command = await resolveMarkitdownCommand(path.dirname(filePath));
+  const cacheKey = sourceHash
+    ? derivedFileCacheKey(MARKITDOWN_CACHE_EXTRACTOR, sourceHash, {
+        ext: path.extname(filePath).toLowerCase(),
+        command: command.label,
+        path: process.env.PATH ?? '',
+        extraPath: process.env.LIN_AGENT_EXTRA_TOOL_PATH ?? '',
+      })
+    : null;
+  const cached = cacheKey ? agentDerivedFileCache.get<MarkdownIngestionResult>(cacheKey) : undefined;
+  if (cached) return cached;
+
   const result = await runAgentToolProcess(
     command.command,
     [...command.argsPrefix, filePath],
@@ -90,12 +103,14 @@ export async function ingestRichDocumentAsMarkdown(filePath: string): Promise<Ma
     throw new AgentFileIngestionFailure('markitdown_empty', 'MarkItDown produced no Markdown output.', 'Check that the file is valid and contains readable text, or convert it manually to Markdown.');
   }
   const truncated = result.stdoutTruncated === true || markdown.length > MARKITDOWN_MAX_CHARS;
-  return {
+  const converted: MarkdownIngestionResult = {
     content: truncated ? `${markdown.slice(0, MARKITDOWN_MAX_CHARS)}${MARKITDOWN_TRUNCATION_MARKER}` : markdown,
     converter: 'markitdown',
     contentChars: result.stdoutChars,
     truncated,
   };
+  if (cacheKey) agentDerivedFileCache.set(cacheKey, converted);
+  return converted;
 }
 
 async function resolveMarkitdownCommand(cwd: string): Promise<MarkitdownCommand> {

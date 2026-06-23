@@ -11,6 +11,7 @@ import {
   MARKITDOWN_RICH_DOCUMENT_EXTENSIONS,
   type FileIngestionOutput,
 } from './agentFileIngestion';
+import { agentDerivedFileCache, derivedFileCacheKey, sha256Buffer } from './agentFileIngestionCache';
 import {
   agentToolResult,
   errorEnvelope,
@@ -465,6 +466,8 @@ const PDF_INLINE_PAGE_THRESHOLD = 10;
 const PDF_TEXT_MAX_CHARS = 60_000;
 const PDF_TEXT_TRUNCATION_MARKER = '\n[PDF text truncated]';
 const PDF_TEXT_CAPTURE_CHARS = PDF_TEXT_MAX_CHARS + 1;
+const PDF_INFO_CACHE_EXTRACTOR = 'pdfinfo:v1';
+const PDF_TEXT_CACHE_EXTRACTOR = 'pdftotext-layout:v1';
 const CONVERT_TIMEOUT_MS = 180_000;
 export const POPPLER_RECOVERY_INSTRUCTIONS = [
   'Poppler is required for PDF metadata, text extraction, page rendering, and conversion.',
@@ -965,7 +968,8 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           if (fileStat.size > MAX_MARKDOWN_SOURCE_BYTES) {
             throw new LocalToolFailure('file_too_large', `File is too large to convert to Markdown: ${filePath}`, `Use a smaller document, split it first, or convert it manually to Markdown. Maximum source size is ${formatBytes(MAX_MARKDOWN_SOURCE_BYTES)}.`);
           }
-          const read = await ingestRichDocumentFile(filePath, fileStat.size);
+          const buffer = await readFile(filePath);
+          const read = await ingestRichDocumentFile(filePath, fileStat.size, sha256Buffer(buffer));
           await notifySuccessfulFileTouch(workspace, filePath);
           const visible = visibleFileRead(read.data);
           return agentToolResult(successEnvelope('file_read', read.data, {
@@ -2498,7 +2502,13 @@ function readUInt24LE(buffer: Buffer, offset: number): number {
   return buffer[offset]! | (buffer[offset + 1]! << 8) | (buffer[offset + 2]! << 16);
 }
 
-async function getPdfPageCount(filePath: string): Promise<number> {
+async function getPdfPageCount(filePath: string, sourceHash?: string): Promise<number> {
+  const cacheKey = sourceHash
+    ? derivedFileCacheKey(PDF_INFO_CACHE_EXTRACTOR, sourceHash, pdfToolCacheOptions({}))
+    : null;
+  const cached = cacheKey ? agentDerivedFileCache.get<number>(cacheKey) : undefined;
+  if (cached !== undefined) return cached;
+
   const result = await runProcess('pdfinfo', [filePath], path.dirname(filePath), 30_000);
   if (result.error) {
     throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, POPPLER_RECOVERY_INSTRUCTIONS);
@@ -2511,6 +2521,7 @@ async function getPdfPageCount(filePath: string): Promise<number> {
   if (!Number.isFinite(pages) || pages < 1) {
     throw new LocalToolFailure('pdf_read_failed', 'Could not determine the PDF page count.', 'Check that the PDF is valid and readable.');
   }
+  if (cacheKey) agentDerivedFileCache.set(cacheKey, pages);
   return pages;
 }
 
@@ -2531,11 +2542,12 @@ async function ingestPdfFile(
     throw new LocalToolFailure('pdf_too_large', `PDF file exceeds maximum extraction size of ${formatBytes(PDF_MAX_EXTRACT_SIZE)}.`, 'Use a smaller PDF or split it first.');
   }
 
-  const totalPages = await getPdfPageCount(filePath);
+  const sourceHash = sha256Buffer(buffer);
+  const totalPages = await getPdfPageCount(filePath, sourceHash);
   const range = selectPdfPageRange(totalPages, requestedPages);
   const requestedPageImages = requestedPages !== undefined;
   const requestedRendered = requestedPageImages ? await renderPdfPages(workspace, filePath, range) : null;
-  const extractedText = await extractPdfText(filePath, range, { ignoreUnavailableReader: requestedPageImages });
+  const extractedText = await extractPdfText(filePath, range, { ignoreUnavailableReader: requestedPageImages, sourceHash });
   const shouldRenderInlineFallback = !requestedRendered && !extractedText && totalPages <= PDF_INLINE_PAGE_THRESHOLD;
   const rendered = requestedRendered ?? (shouldRenderInlineFallback ? await renderPdfPages(workspace, filePath, range) : null);
   const imageContent = rendered ? await readPdfPartImages(rendered.outputDir) : [];
@@ -2603,8 +2615,8 @@ async function ingestPdfFile(
   };
 }
 
-async function ingestRichDocumentFile(filePath: string, originalSize: number): Promise<FileIngestionOutput<FileReadMarkdownData>> {
-  const markdown = await ingestRichDocumentAsMarkdown(filePath);
+async function ingestRichDocumentFile(filePath: string, originalSize: number, sourceHash: string): Promise<FileIngestionOutput<FileReadMarkdownData>> {
+  const markdown = await ingestRichDocumentAsMarkdown(filePath, sourceHash);
   const textContent = {
     type: 'text' as const,
     text: `Converted Markdown from ${filePath}${markdown.truncated ? ' (truncated)' : ''}:\n\n${markdown.content}`,
@@ -2666,8 +2678,18 @@ function isPdfBuffer(buffer: Buffer): boolean {
 async function extractPdfText(
   filePath: string,
   range: PdfPageRange,
-  options: { ignoreUnavailableReader?: boolean } = {},
+  options: { ignoreUnavailableReader?: boolean; sourceHash?: string } = {},
 ): Promise<{ text: string; chars: number; truncated: boolean } | null> {
+  const cacheKey = options.sourceHash
+    ? derivedFileCacheKey(PDF_TEXT_CACHE_EXTRACTOR, options.sourceHash, pdfToolCacheOptions({
+        firstPage: range.firstPage,
+        lastPage: range.lastPage,
+        maxChars: PDF_TEXT_MAX_CHARS,
+      }))
+    : null;
+  const cached = cacheKey ? agentDerivedFileCache.get<{ text: string; chars: number; truncated: boolean }>(cacheKey) : undefined;
+  if (cached) return cached;
+
   const result = await runProcess('pdftotext', [
     '-layout',
     '-f',
@@ -2690,10 +2712,20 @@ async function extractPdfText(
   if (!normalized) return null;
   const truncated = result.stdoutTruncated === true || normalized.length > PDF_TEXT_MAX_CHARS;
   const chars = truncated ? Math.max(result.stdoutChars, normalized.length) : normalized.length;
-  return {
+  const extracted = {
     text: truncated ? `${normalized.slice(0, PDF_TEXT_MAX_CHARS)}${PDF_TEXT_TRUNCATION_MARKER}` : normalized,
     chars,
     truncated,
+  };
+  if (cacheKey) agentDerivedFileCache.set(cacheKey, extracted);
+  return extracted;
+}
+
+function pdfToolCacheOptions(options: Record<string, string | number | boolean | null | undefined>): Record<string, string | number | boolean | null | undefined> {
+  return {
+    ...options,
+    path: process.env.PATH ?? '',
+    extraPath: process.env.LIN_AGENT_EXTRA_TOOL_PATH ?? '',
   };
 }
 
