@@ -1249,9 +1249,11 @@ The run detail is ordered for inspection:
    the hover. The body reuses the same message-row and part-disclosure structure
    as `Model Input`: an assistant row for model output (text/thinking plus any
    orphan tool request) followed by tool rows for matching tool arguments and
-   results. Tool requests that have a matching exchange are not repeated in the
-   assistant row; their arguments live with the tool row. The run summary carries
-   the main token/cost readout.
+   results. Inside Execution, rows are visually flattened: the `Call N` header
+   already supplies the execution context, so rows omit role pills and use light
+   separators instead of nested cards. Tool requests that have a matching
+   exchange are not repeated in the assistant row; their arguments live with the
+   tool row. The run summary carries the main token/cost readout.
 
 The chat transcript exposes this through an assistant-message **Details** icon
 button that uses the `Info` glyph. Hovering it previews the reply's token and

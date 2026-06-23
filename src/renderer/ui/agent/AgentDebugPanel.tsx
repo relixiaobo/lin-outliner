@@ -425,7 +425,7 @@ function ExecutionOutputRow({ labels, parts, round }: { labels: DebugLabels; par
     bytes: textBytes(body),
     parts,
   };
-  return <MessageRow labels={labels} message={message} />;
+  return <MessageRow className="is-execution" hideRole labels={labels} message={message} />;
 }
 
 function ToolExchangeRow({ exchange, index, labels }: { exchange: AgentDebugToolExchange; index: number; labels: DebugLabels }) {
@@ -457,7 +457,8 @@ function ToolExchangeRow({ exchange, index, labels }: { exchange: AgentDebugTool
 
   return (
     <MessageRow
-      className={`agent-debug-tool-exchange${exchange.isError ? ' is-error' : ''}`}
+      className={`agent-debug-tool-exchange is-execution${exchange.isError ? ' is-error' : ''}`}
+      hideRole
       labels={labels}
       message={message}
       preferSummary
@@ -588,12 +589,14 @@ function MessageList({ labels, messages }: { labels: DebugLabels; messages: Agen
 
 function MessageRow({
   className,
+  hideRole,
   labels,
   message,
   preferSummary,
   trailing,
 }: {
   className?: string;
+  hideRole?: boolean;
   labels: DebugLabels;
   message: AgentDebugMessageRow;
   preferSummary?: boolean;
@@ -602,9 +605,9 @@ function MessageRow({
   const visibleParts = shouldShowMessageParts(message.parts);
   const summary = preferSummary ? message.summary : messageSummaryText(message);
   return (
-    <article className={`agent-debug-message-row${visibleParts ? '' : ' is-compact'}${className ? ` ${className}` : ''}`}>
+    <article className={`agent-debug-message-row${visibleParts ? '' : ' is-compact'}${hideRole ? ' has-no-role' : ''}${className ? ` ${className}` : ''}`}>
       <div className="agent-debug-message-head">
-        <span className={`agent-debug-role-pill is-${message.role}`}>{message.role}</span>
+        {hideRole ? null : <span className={`agent-debug-role-pill is-${message.role}`}>{message.role}</span>}
         <strong title={summary}>{summary}</strong>
         {trailing ?? <code>{formatBytes(message.bytes)}</code>}
       </div>

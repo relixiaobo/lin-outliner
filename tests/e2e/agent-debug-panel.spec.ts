@@ -44,6 +44,7 @@ test.describe('agent debug panel', () => {
     await expect(round.getByRole('heading', { name: 'Call 1' })).toBeVisible();
     await expect(round.locator('.agent-debug-section-header .agent-debug-status-pill')).toHaveCount(0);
     await expect(round.locator('.agent-debug-section-header > code')).toHaveCount(0);
+    await expect(round.locator('.agent-debug-role-pill')).toHaveCount(0);
     await expect(round.locator('.agent-debug-round-request')).toHaveCount(0);
     await expect(round).not.toContainText('History · 2');
     await expect(round).toContainText('Identify relevant outline nodes.');
