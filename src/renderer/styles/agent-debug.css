@@ -192,7 +192,6 @@
 }
 
 .agent-debug-context-head code,
-.agent-debug-round-meta code,
 .agent-debug-tool-row code,
 .agent-debug-message-head code {
   color: var(--text-soft);
@@ -500,65 +499,6 @@
   margin-bottom: 0;
 }
 
-.agent-debug-round-head {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-6);
-}
-
-.agent-debug-round-head > div:first-child,
-.agent-debug-round-meta {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.agent-debug-round-head strong {
-  color: var(--text-strong);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
-}
-
-.agent-debug-round-head span {
-  color: var(--text-soft);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
-}
-
-.agent-debug-round-meta {
-  align-items: flex-end;
-  text-align: right;
-}
-
-.agent-debug-round-meta .agent-debug-status-pill {
-  color: var(--text-soft);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
-}
-
-.agent-debug-round-meta .agent-debug-status-pill.is-running {
-  color: var(--text-secondary);
-}
-
-.agent-debug-round-meta .agent-debug-status-pill.is-completed {
-  color: var(--semantic-success-strong);
-}
-
-.agent-debug-round-meta .agent-debug-status-pill.is-error,
-.agent-debug-round-meta .agent-debug-status-pill.is-aborted {
-  color: var(--danger);
-}
-
-.agent-debug-round-timeline {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
 .agent-debug-usage-hover {
   position: relative;
   display: inline-flex;
@@ -699,6 +639,14 @@
 }
 
 .agent-debug-message-row .agent-debug-part-list {
+  gap: var(--space-2);
+}
+
+.agent-debug-message-actions-inline {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
   gap: var(--space-2);
 }
 
@@ -956,41 +904,6 @@
   padding: 0 var(--space-6) var(--space-6) var(--space-8);
 }
 
-.agent-debug-round-flow {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.agent-debug-flow-step {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: 96px minmax(0, 1fr);
-  align-items: start;
-  gap: var(--space-4);
-}
-
-.agent-debug-flow-label {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-soft);
-  font-size: var(--font-meta);
-  font-weight: 600;
-  line-height: var(--line-meta);
-  padding-top: var(--space-2);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-debug-flow-body {
-  min-width: 0;
-}
-
-.agent-debug-flow-body > .agent-debug-part-list {
-  gap: var(--space-2);
-}
-
 .agent-debug-tool-list {
   display: flex;
   min-width: 0;
@@ -998,45 +911,8 @@
   gap: var(--space-3);
 }
 
-.agent-debug-tool-exchange {
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-}
-
 .agent-debug-tool-exchange.is-error {
   border-color: color-mix(in srgb, var(--status-danger) 35%, var(--border-subtle));
-}
-
-.agent-debug-tool-exchange > summary {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-4);
-  list-style: none;
-  padding: var(--space-4) var(--space-5);
-}
-
-.agent-debug-tool-exchange > summary::-webkit-details-marker {
-  display: none;
-}
-
-.agent-debug-tool-exchange > summary code {
-  flex: 0 0 auto;
-  color: var(--text-strong);
-  font-size: var(--font-ui-xs);
-  font-weight: 600;
-}
-
-.agent-debug-tool-exchange > summary strong {
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-  color: var(--text-soft);
-  font-size: var(--font-ui-xs);
-  font-weight: 400;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .agent-debug-tool-flag {
@@ -1044,22 +920,6 @@
   color: var(--danger);
   font-size: var(--font-ui-2xs);
   font-weight: 600;
-  text-transform: uppercase;
-}
-
-.agent-debug-tool-exchange-body {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-4);
-  border-top: 1px solid var(--border-subtle);
-  padding: var(--space-5);
-}
-
-.agent-debug-tool-exchange-body small {
-  color: var(--muted-2);
-  font-size: var(--font-ui-2xs);
-  font-weight: 500;
   text-transform: uppercase;
 }
 

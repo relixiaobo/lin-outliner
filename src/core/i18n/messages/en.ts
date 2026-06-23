@@ -1448,8 +1448,6 @@ commandPalette: {
     currentRequestDisclosure: 'Current request',
     legacyInputMessagesNotice: 'Full provider input was not captured for this older run. Showing the legacy request window only.',
     noExecutionOutput: 'No model output or tool exchange captured yet.',
-    modelOutputLabel: 'Model output',
-    toolExchangeFlowLabel: ({ count, index }: { count: number; index: number }) => (count > 1 ? `Tool ${index}` : 'Tool'),
     toolPending: '(pending)',
     toolError: 'error',
     toolArgs: 'arguments',

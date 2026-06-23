@@ -1329,8 +1329,6 @@ commandPalette: {
     currentRequestDisclosure: '本轮输入',
     legacyInputMessagesNotice: '这个旧运行没有捕获完整 provider 输入，目前只显示旧版请求窗口。',
     noExecutionOutput: '尚未捕获任何模型输出或工具交换。',
-    modelOutputLabel: '模型输出',
-    toolExchangeFlowLabel: ({ count, index }) => (count > 1 ? `工具 ${index}` : '工具'),
     toolPending: '（待定）',
     toolError: '错误',
     toolArgs: '参数',

@@ -1243,14 +1243,15 @@ The run detail is ordered for inspection:
    parts), preserving provider order inside each slice.
 3. **Execution** — the execution side. Each rendered item is a provider call
    (internally, one debug `round`: one provider request/response). The visible
-   header labels it as `Call N` and keeps only call number, status, and an
-   `Info` affordance. Model id, stop reason, and compact per-call usage/cost
-   (input context, output, cache hit, cost) live in the hover. The body is a
-   compact flow: `Model output` (text/thinking plus any orphan tool request)
-   followed by `Tool` exchange rows (tool arguments + tool result) produced by
-   that call. Tool requests that have a matching exchange are not repeated in
-   `Model output`; their arguments live with the exchange. The run summary
-   carries the main token/cost readout.
+   header labels it as `Call N`, hides the default completed state, and keeps
+   only non-default status plus an `Info` affordance. Model id, stop reason, and
+   compact per-call usage/cost (input context, output, cache hit, cost) live in
+   the hover. The body reuses the same message-row and part-disclosure structure
+   as `Model Input`: an assistant row for model output (text/thinking plus any
+   orphan tool request) followed by tool rows for matching tool arguments and
+   results. Tool requests that have a matching exchange are not repeated in the
+   assistant row; their arguments live with the tool row. The run summary carries
+   the main token/cost readout.
 
 The chat transcript exposes this through an assistant-message **Details** icon
 button that uses the `Info` glyph. Hovering it previews the reply's token and
