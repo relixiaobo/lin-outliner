@@ -2588,6 +2588,10 @@ async function ingestPdfFile(
 
 async function ingestRichDocumentFile(filePath: string, originalSize: number): Promise<FileIngestionOutput<FileReadMarkdownData>> {
   const markdown = await ingestRichDocumentAsMarkdown(filePath);
+  const textContent = {
+    type: 'text' as const,
+    text: `Converted Markdown from ${filePath}${markdown.truncated ? ' (truncated)' : ''}:\n\n${markdown.content}`,
+  };
   const data: FileReadMarkdownData = {
     type: 'markdown',
     file: {
@@ -2604,6 +2608,7 @@ async function ingestRichDocumentFile(filePath: string, originalSize: number): P
     : 'The document was converted to Markdown locally.';
   return {
     data,
+    content: [textContent],
     status: markdown.truncated ? 'partial' : undefined,
     instructions,
   };
@@ -2918,8 +2923,9 @@ function visibleFileEdit(data: FileEditData) {
 // model derives the kind from the path extension it passed + the payload shape /
 // attached content); derivable counts (`numLines`, `totalCells`, `count`,
 // `extractedText.chars`), the internal pdf `outputDir`, the image mime (`type`,
-// also on the attached image block), and the notebook `cells` (a duplicate of the
-// rendered `content`) are all stripped. The full data stays on the envelope.
+// also on the attached image block), converted rich-document Markdown
+// (`content`, attached as a text part), and the notebook `cells` (a duplicate of
+// the rendered `content`) are all stripped. The full data stays on the envelope.
 function visibleFileRead(data: FileReadData): { file: Record<string, unknown> } {
   switch (data.type) {
     case 'image':
@@ -2941,7 +2947,6 @@ function visibleFileRead(data: FileReadData): { file: Record<string, unknown> } 
       return {
         file: {
           filePath: data.file.filePath,
-          content: data.file.content,
           converter: data.file.converter,
           truncated: data.file.truncated,
           originalSize: data.file.originalSize,

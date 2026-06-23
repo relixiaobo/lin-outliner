@@ -48,8 +48,8 @@ runtime chooses the representation automatically.
 
 ### 2. Add an internal ingestion boundary
 
-Introduce a main-process file ingestion module that returns the existing
-tool-result data shapes plus provider-facing content parts:
+Introduce a main-process file ingestion module that returns compact tool-result
+metadata plus provider-facing content parts:
 
 ```ts
 FileIngestionOutput {
@@ -61,7 +61,9 @@ FileIngestionOutput {
 ```
 
 This boundary is internal to main/runtime code. It does not become a core
-command protocol, and it does not leak provider-specific payload JSON.
+command protocol, and it does not leak provider-specific payload JSON. For
+runtime-ingested binary/rich formats, the model-visible JSON is metadata-only;
+extracted bodies are attached as text or image content parts.
 
 ### 3. Runtime-owned routing
 
@@ -110,11 +112,12 @@ not install the package itself.
 
 ### 5. Bounded Markdown output
 
-MarkItDown output is model-visible Markdown with a fixed character cap. If the
-output is truncated, the envelope status is `partial`, and the data records the
-converter, format, content length, and truncation flag. The full Markdown can be
-persistent tool output in a later caching PR, but this PR keeps model-visible
-content bounded.
+MarkItDown output is attached as a model-visible text part with a fixed character
+cap. The JSON projection stays metadata-only. If the output is truncated, the
+envelope status is `partial`, and the runtime data records the converter,
+format, content length, and truncation flag. The full Markdown can be persistent
+tool output in a later caching PR, but this PR keeps model-visible content
+bounded.
 
 ### 6. Provider-native document support is not the contract
 

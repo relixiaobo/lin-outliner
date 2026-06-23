@@ -1751,10 +1751,15 @@ Result behavior:
 - Image reads return dimensions when they can be determined, attach the image
   block for the model to inspect, and omit base64 from the model-visible JSON so
   text output stays compact.
+- The model-visible `content[0].text` JSON is a compact metadata projection.
+  Runtime-extracted document bodies are attached as additional tool-result parts:
+  PDF text and rich-document Markdown use text parts, and rendered PDF pages use
+  image parts. Ordinary text/source files keep their bounded text directly in the
+  JSON because the file itself is already text.
 - Rich non-PDF documents use a runtime-owned Markdown path. Supported formats are
   `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.htm`, and `.epub`; the model
   still passes only `file_path`, while the runtime converts the document to
-  bounded Markdown.
+  bounded Markdown and attaches that Markdown as a text content part.
 - MarkItDown is the Markdown backend for rich documents. The runtime probes
   `LIN_AGENT_MARKITDOWN_COMMAND`, then `markitdown`, then
   `python3 -m markitdown`. Plugins, cloud backends, and LLM-assisted extraction
@@ -1762,9 +1767,9 @@ Result behavior:
   error that tells the agent to install a local Python/uv backend through `bash`
   and retry the same `file_read` call; the file tool does not install packages
   itself and does not assume Homebrew.
-- MarkItDown output is capped. Truncated Markdown sets `status: "partial"` and
+- MarkItDown output is capped. Truncated Markdown sets `status: "partial"`,
   records `truncated: true` and the original `contentChars` count in the runtime
-  data.
+  data, and marks the attached Markdown text part as truncated.
 - PDF reads are provider-neutral. `file_read` never sends the original PDF bytes
   to the model as a provider-native document block; the runtime extracts local
   text and/or page images first, then attaches those model-readable parts to the

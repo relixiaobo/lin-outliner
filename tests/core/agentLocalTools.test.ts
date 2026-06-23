@@ -826,8 +826,18 @@ describe('agent local tools', () => {
           const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
           const result = await (tool.execute as any)('rich-doc-visible', { file_path: filePath });
           const visible = JSON.parse(result.content[0].text);
-          expect(visible.data.file.content).toContain('# Converted');
-          expect(result.content).toHaveLength(1);
+          expect(visible.data.file).toEqual({
+            filePath,
+            converter: 'markitdown',
+            truncated: false,
+            originalSize: 'fake office payload'.length,
+          });
+          expect(JSON.stringify(visible)).not.toContain('# Converted');
+          expect(result.content).toHaveLength(2);
+          expect(result.content[1]).toMatchObject({
+            type: 'text',
+            text: `Converted Markdown from ${filePath}:\n\n# Converted\n\nSource: ${filePath}`,
+          });
         });
       } finally {
         if (originalCommand === undefined) {
@@ -893,6 +903,17 @@ describe('agent local tools', () => {
           expect(read.data!.file.truncated).toBe(true);
           expect(read.data!.file.content).toContain('[Markdown output truncated]');
           expect(read.data!.file.content.length).toBeLessThan(81_000);
+
+          const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
+          const result = await (tool.execute as any)('long-rich-doc-visible', { file_path: filePath });
+          const visible = JSON.parse(result.content[0].text);
+          expect(visible.status).toBe('partial');
+          expect(visible.data.file.content).toBeUndefined();
+          expect(visible.data.file.truncated).toBe(true);
+          expect(result.content).toHaveLength(2);
+          expect(result.content[1]).toMatchObject({ type: 'text' });
+          expect(result.content[1].text).toContain('[Markdown output truncated]');
+          expect(result.content[1].text.length).toBeLessThan(82_000);
         });
       } finally {
         if (originalCommand === undefined) {
