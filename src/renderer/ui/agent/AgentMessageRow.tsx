@@ -383,7 +383,7 @@ function AgentMessageUsageHoverCard({
     layoutKey: `${usage.input}:${usage.output}:${usage.cacheRead}:${usage.cacheWrite}:${usage.totalTokens}:${cost?.total ?? 0}`,
     maxHeight: 280,
     placement: 'top-end',
-    width: 300,
+    width: 256,
   });
 
   return createPortal(

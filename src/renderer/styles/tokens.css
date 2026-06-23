@@ -137,12 +137,6 @@
   --status-danger-muted: #9a3f34;
   --status-info: #3b82c4;
 
-  /* usage chart hues — categorical visualization only, not status or control state */
-  --usage-input: #2563eb;
-  --usage-output: #059669;
-  --usage-cache-read: #d99a1c;
-  --usage-cache-write: #db2777;
-
   /* identity tints — a per-agent avatar hue, assigned deterministically by
      identity (agentAvatarColor.ts). Identity is its OWN decorative category: not a
      functional state (B3 keeps those neutral), not a status (B4 reserves these for
@@ -158,6 +152,13 @@
   --identity-tint-5: #2563eb; /* blue */
   --identity-tint-6: #7c3aed; /* violet */
   --identity-tint-7: #db2777; /* pink */
+
+  /* usage chart aliases — categorical visualization reusing the identity tint
+     system: model tokens are blue-family, cache tokens are green-family. */
+  --usage-input: var(--identity-tint-5);
+  --usage-output: color-mix(in srgb, var(--usage-input) 62%, var(--surface) 38%);
+  --usage-cache-read: var(--identity-tint-3);
+  --usage-cache-write: color-mix(in srgb, var(--usage-cache-read) 62%, var(--surface) 38%);
   /* The keyed avatar's hairline ring — the tint hue mixed toward transparent so it
      reads as a soft 1px definition, never a hard border. A token (not an inline
      box-shadow) so the consumer stays tokenized (B11); like --inline-ref-focus-shadow

@@ -828,7 +828,7 @@
 .agent-message-usage-hover-breakdown > div {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(58px, auto) minmax(70px, auto);
+  grid-template-columns: max-content max-content max-content;
   align-items: center;
   gap: var(--space-3);
 }

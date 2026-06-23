@@ -34,9 +34,7 @@
        dark, so lift it to a legible mid green. */
     --status-success-strong: #5fc88a;
     --usage-input: #68a2ff;
-    --usage-output: #4fcf95;
-    --usage-cache-read: #e7b955;
-    --usage-cache-write: #f17fba;
+    --usage-cache-read: #4fcf95;
 
     /* inverse chips invert (dark-on-light in light → light-on-dark here) */
     --surface-inverse: #e6e6ea;
