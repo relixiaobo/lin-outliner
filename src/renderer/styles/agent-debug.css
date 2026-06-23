@@ -501,7 +501,7 @@
   justify-content: flex-start;
   gap: var(--space-4);
   margin-bottom: 0;
-  padding: var(--space-3) 0;
+  padding: var(--space-2) 0 var(--space-3);
   cursor: default;
   list-style: none;
 }
@@ -932,7 +932,7 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 0;
 }
 
 .agent-debug-inline-note {
@@ -988,7 +988,10 @@
 }
 
 .agent-debug-run-detail {
-  gap: var(--space-6);
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-5);
 }
 
 .agent-debug-run-summary {
@@ -999,7 +1002,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface);
-  padding: var(--space-5);
+  padding: var(--space-5) var(--space-5) var(--space-3);
 }
 
 .agent-debug-run-summary-main {
@@ -1036,6 +1039,10 @@
   border-top: 1px solid var(--border-subtle);
 }
 
+.agent-debug-run-summary > .agent-debug-disclosure > summary {
+  padding-bottom: 0;
+}
+
 .agent-debug-advanced-grid {
   display: grid;
   min-width: 0;
@@ -1044,7 +1051,7 @@
 }
 
 .agent-debug-detail-section {
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .agent-debug-detail-section > .agent-debug-section-header {
@@ -1054,7 +1061,11 @@
 }
 
 .agent-debug-execution-section {
-  gap: var(--space-2);
+  gap: var(--space-1);
+}
+
+.agent-debug-model-input-section .agent-debug-disclosure > summary {
+  padding-block: var(--space-2);
 }
 
 @media (max-width: 1200px) {
