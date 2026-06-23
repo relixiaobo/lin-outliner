@@ -1044,16 +1044,19 @@ function PdfPageCanvas({
     | { status: 'ready' }
     | { status: 'error'; error?: string }
   >({ status: 'rendering' });
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [canvasElement, setCanvasElement] = useState<HTMLCanvasElement | null>(null);
+  const setCanvasRef = useCallback((element: HTMLCanvasElement | null) => {
+    setCanvasElement(element);
+  }, []);
 
   useEffect(() => {
+    if (!canvasElement) return undefined;
     let cancelled = false;
     let renderTask: RenderTask | null = null;
     setState({ status: 'rendering' });
 
     void (async () => {
-      const canvas = canvasRef.current;
-      if (!canvas) throw new Error('canvas-unavailable');
+      const canvas = canvasElement;
       canvas.width = 0;
       canvas.height = 0;
       canvas.style.width = '0px';
@@ -1092,14 +1095,14 @@ function PdfPageCanvas({
       cancelled = true;
       renderTask?.cancel();
     };
-  }, [pdfDocument, pageNumber, width]);
+  }, [canvasElement, pdfDocument, pageNumber, width]);
 
   return (
     <div className="file-preview-pdf-stage">
       {state.status === 'rendering' ? <PreviewMessage>{labels.loading}</PreviewMessage> : null}
       {state.status === 'error' ? <PreviewMessage>{labels.unavailable}</PreviewMessage> : null}
       <canvas
-        ref={canvasRef}
+        ref={setCanvasRef}
         aria-label={labels.pdfCanvas({ page: pageNumber })}
         className="file-preview-pdf-canvas"
       />
