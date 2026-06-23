@@ -107,8 +107,12 @@ test('agent local tool process env includes configured and standard tool paths',
 });
 
 test('Poppler recovery instructions tell the agent to install with bash and retry', () => {
-  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('run bash with `brew install poppler`');
-  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('run bash with `sudo apt-get update && sudo apt-get install -y poppler-utils`');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('run bash to detect an available package manager');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('Do not assume Homebrew is available');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('`brew install poppler`');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('`sudo port install poppler`');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('`sudo apt-get update && sudo apt-get install -y poppler-utils`');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('If no supported package manager is available');
   expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('retry the same file_read or file_convert call');
   expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('retry file_read without pages');
 });

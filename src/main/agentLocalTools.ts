@@ -454,8 +454,9 @@ const DEFAULT_AGENT_TOOL_PATH_SEGMENTS = [
 export const POPPLER_RECOVERY_INSTRUCTIONS = [
   'Poppler is required for PDF page rendering and conversion.',
   'If this is ordinary PDF content analysis on an OpenAI Responses model, retry file_read without pages so the PDF can be attached natively.',
-  'If page images, layout inspection, or PDF conversion are required, run bash with `brew install poppler` on macOS.',
-  'On Debian/Ubuntu, run bash with `sudo apt-get update && sudo apt-get install -y poppler-utils`.',
+  'If page images, layout inspection, or PDF conversion are required, run bash to detect an available package manager and install Poppler.',
+  'Do not assume Homebrew is available: use an installed manager such as `brew install poppler`, `sudo port install poppler`, `sudo apt-get update && sudo apt-get install -y poppler-utils`, `sudo dnf install -y poppler-utils`, or `sudo pacman -S --noconfirm poppler`.',
+  'If no supported package manager is available, report that Poppler must be installed so pdfinfo and pdftoppm are on PATH.',
   'After installation, retry the same file_read or file_convert call.',
 ].join(' ');
 const IGNORED_DIRECTORIES = new Set(['.agent-trash', '.git', '.svn', '.hg', '.bzr', '.jj', '.sl', 'node_modules', 'dist', 'out', 'release', 'target']);

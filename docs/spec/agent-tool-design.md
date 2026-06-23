@@ -1757,10 +1757,13 @@ Result behavior:
   therefore still work through images, while text PDFs remain searchable and
   token-efficient.
 - If Poppler is missing for page rendering or PDF conversion, the tool returns a
-  recoverable error that tells the agent to install Poppler through `bash`
-  (`brew install poppler` on macOS, `sudo apt-get update && sudo apt-get install
-  -y poppler-utils` on Debian/Ubuntu) and retry the same `file_read` or
-  `file_convert` call. The file tools never install system packages themselves.
+  recoverable error that tells the agent to use `bash` to detect an available
+  package manager and install Poppler. The recovery path must not assume
+  Homebrew: it can use an installed manager such as Homebrew, MacPorts, apt, dnf,
+  or pacman, then retry the same `file_read` or `file_convert` call. If no
+  supported package manager is available, the agent reports that Poppler must be
+  installed so `pdfinfo` and `pdftoppm` are on `PATH`. The file tools never
+  install system packages themselves.
 - Models that do not support the native PDF payload path keep using the
   Poppler-backed page-rendering path.
 - Notebook reads parse `.ipynb` cells and outputs into a compact text rendering
