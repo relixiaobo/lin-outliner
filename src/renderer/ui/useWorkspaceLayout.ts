@@ -592,13 +592,11 @@ export function useWorkspaceLayout({
       return;
     }
 
-    const emptyDebugPanel = conversationId && runId
-      ? panels.find((panel) => panel.type === 'agent-debug' && panel.conversationId === null && panel.runId === null)
-      : null;
-    if (emptyDebugPanel) {
-      setActivePanelId(emptyDebugPanel.id);
+    const reusableDebugPanel = panels.find((panel) => panel.type === 'agent-debug');
+    if (reusableDebugPanel) {
+      setActivePanelId(reusableDebugPanel.id);
       setPanels((prev) => prev.map((panel) => (
-        panel.id === emptyDebugPanel.id ? agentDebugPanel(panel.id, conversationId, panel.size, runId) : panel
+        panel.id === reusableDebugPanel.id ? agentDebugPanel(panel.id, conversationId, panel.size, runId) : panel
       )));
       return;
     }
