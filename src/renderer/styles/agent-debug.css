@@ -487,11 +487,17 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-5);
+  gap: var(--space-4);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface);
-  padding: var(--space-6);
+  padding: var(--space-5);
+}
+
+.agent-debug-round-card > .agent-debug-section-header {
+  justify-content: flex-start;
+  gap: var(--space-4);
+  margin-bottom: 0;
 }
 
 .agent-debug-round-head {
@@ -551,6 +557,50 @@
   min-width: 0;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+.agent-debug-usage-hover {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.agent-debug-usage-popover {
+  position: absolute;
+  z-index: var(--z-popover);
+  top: calc(100% + var(--space-2));
+  right: 0;
+  width: min(360px, calc(100vw - 48px));
+  max-width: calc(100vw - 48px);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--overlay-shadow-level-1);
+  color: var(--text-strong);
+  opacity: 0;
+  padding: var(--space-4);
+  pointer-events: none;
+  transform: translateY(2px);
+  transition: opacity var(--motion-fast), transform var(--motion-fast), visibility var(--motion-fast);
+  visibility: hidden;
+}
+
+.agent-debug-usage-hover:hover .agent-debug-usage-popover,
+.agent-debug-usage-hover:focus-within .agent-debug-usage-popover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.agent-debug-usage-info-button {
+  color: var(--text-faint);
+}
+
+.agent-debug-usage-info-button:hover {
+  color: var(--text-strong);
 }
 
 .agent-debug-message-row {
@@ -667,7 +717,8 @@
 
 .agent-debug-icon-button:focus-visible,
 .agent-debug-copy-button:focus-visible,
-.agent-debug-block-button:focus-visible {
+.agent-debug-block-button:focus-visible,
+.agent-debug-usage-info-button:focus-visible {
   box-shadow: var(--focus-ring-shadow);
 }
 
@@ -1034,6 +1085,20 @@
   border-radius: var(--radius-md);
   background: var(--surface);
   padding: var(--space-6);
+}
+
+.agent-debug-usage-popover .agent-debug-usage-card {
+  gap: var(--space-4);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.agent-debug-usage-popover .agent-debug-usage-grid,
+.agent-debug-usage-popover .agent-debug-cost-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
 }
 
 .agent-debug-cache-chart {

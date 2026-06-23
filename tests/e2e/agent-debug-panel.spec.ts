@@ -45,17 +45,18 @@ test.describe('agent debug panel', () => {
     await expect(round.locator('.agent-debug-round-request')).toHaveCount(0);
     await expect(round).not.toContainText('History · 2');
     await expect(round).toContainText('Current outline focuses on UI work.');
-    await expect(round).toContainText('Usage');
+    await expect(round.locator('details.agent-debug-disclosure', { hasText: 'Usage' })).toHaveCount(0);
 
-    const roundUsage = round.locator('details.agent-debug-disclosure', { hasText: 'Usage' });
-    await roundUsage.locator('summary').click();
-    await expect(round).toContainText('Input context');
-    await expect(round).toContainText('66k');
-    await expect(round).toContainText('Cache hit');
-    await expect(round).toContainText('89%');
-    await expect(round).toContainText('Cached share');
-    await expect(round).toContainText('73%');
-    await expect(round.getByLabel('Input context cache composition')).toBeVisible();
+    await round.getByRole('button', { name: 'Usage' }).hover();
+    const roundUsage = round.getByRole('tooltip', { name: 'Usage' });
+    await expect(roundUsage).toBeVisible();
+    await expect(roundUsage).toContainText('Input context');
+    await expect(roundUsage).toContainText('66k');
+    await expect(roundUsage).toContainText('Cache hit');
+    await expect(roundUsage).toContainText('89%');
+    await expect(roundUsage).toContainText('Cached share');
+    await expect(roundUsage).toContainText('73%');
+    await expect(roundUsage.getByLabel('Input context cache composition')).toBeVisible();
   });
 
   test('adds a user block rule from a logged tool exchange', async ({ page }) => {

@@ -12,7 +12,7 @@ import type {
 } from '../../../core/agentTypes';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
-import { BlockIcon, ChevronDownIcon, CopyIcon, RefreshIcon, ICON_SIZE, LoaderIcon } from '../icons';
+import { BlockIcon, ChevronDownIcon, CopyIcon, InfoIcon, RefreshIcon, ICON_SIZE, LoaderIcon } from '../icons';
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
 import { formatBytes } from '../preview/fileNode';
@@ -336,6 +336,7 @@ function RoundCard({ round, labels }: { round: AgentDebugRound; labels: DebugLab
         <span className={`agent-debug-status-pill is-${round.status}`}>{statusLabel(round.status, labels)}</span>
         {round.modelId ? <code className="agent-debug-run-model">{round.modelId}</code> : null}
         {round.stopReason ? <code>{round.stopReason}</code> : null}
+        <UsageInfoHover labels={labels} usage={round.usage} />
       </div>
 
       <div className="agent-debug-round-response">
@@ -355,11 +356,25 @@ function RoundCard({ round, labels }: { round: AgentDebugRound; labels: DebugLab
           {round.toolExchanges.map((exchange) => <ToolExchangeRow key={exchange.toolCallId} exchange={exchange} labels={labels} />)}
         </div>
       ) : null}
-
-      <ContextDisclosure title={labels.usageTitle}>
-        {round.usage ? <UsageBreakdown usage={round.usage} labels={labels} /> : <div className="agent-debug-card is-muted">{labels.usagePending}</div>}
-      </ContextDisclosure>
     </article>
+  );
+}
+
+function UsageInfoHover({ labels, usage }: { labels: DebugLabels; usage: AgentDebugUsage | null }) {
+  return (
+    <div className="agent-debug-usage-hover">
+      <IconButton
+        className="agent-debug-usage-info-button"
+        icon={InfoIcon}
+        iconSize={ICON_SIZE.tiny}
+        label={labels.usageTitle}
+        title={usage ? labels.usageTitle : labels.usagePending}
+        variant="panel"
+      />
+      <span className="agent-debug-usage-popover" role="tooltip" aria-label={labels.usageTitle}>
+        {usage ? <UsageBreakdown usage={usage} labels={labels} /> : <span className="is-muted">{labels.usagePending}</span>}
+      </span>
+    </div>
   );
 }
 
