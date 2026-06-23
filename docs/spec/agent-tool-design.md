@@ -1756,6 +1756,11 @@ Result behavior:
   extracted text is attached as a text part before the page images. Scanned PDFs
   therefore still work through images, while text PDFs remain searchable and
   token-efficient.
+- If Poppler is missing for page rendering or PDF conversion, the tool returns a
+  recoverable error that tells the agent to install Poppler through `bash`
+  (`brew install poppler` on macOS, `sudo apt-get update && sudo apt-get install
+  -y poppler-utils` on Debian/Ubuntu) and retry the same `file_read` or
+  `file_convert` call. The file tools never install system packages themselves.
 - Models that do not support the native PDF payload path keep using the
   Poppler-backed page-rendering path.
 - Notebook reads parse `.ipynb` cells and outputs into a compact text rendering

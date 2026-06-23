@@ -451,9 +451,12 @@ const DEFAULT_AGENT_TOOL_PATH_SEGMENTS = [
   '/usr/sbin',
   '/sbin',
 ];
-const POPPLER_INSTALL_INSTRUCTIONS = [
-  'If Poppler is already installed, make sure pdfinfo and pdftoppm are on PATH, then retry.',
-  'Otherwise run bash with `brew install poppler` on macOS or `apt-get install poppler-utils` on Debian/Ubuntu, then retry.',
+export const POPPLER_RECOVERY_INSTRUCTIONS = [
+  'Poppler is required for PDF page rendering and conversion.',
+  'If this is ordinary PDF content analysis on an OpenAI Responses model, retry file_read without pages so the PDF can be attached natively.',
+  'If page images, layout inspection, or PDF conversion are required, run bash with `brew install poppler` on macOS.',
+  'On Debian/Ubuntu, run bash with `sudo apt-get update && sudo apt-get install -y poppler-utils`.',
+  'After installation, retry the same file_read or file_convert call.',
 ].join(' ');
 const IGNORED_DIRECTORIES = new Set(['.agent-trash', '.git', '.svn', '.hg', '.bzr', '.jj', '.sl', 'node_modules', 'dist', 'out', 'release', 'target']);
 const IMAGE_MEDIA_TYPES = new Map<string, FileReadImageData['file']['type']>([
@@ -1760,7 +1763,7 @@ async function convertPdfToImages(
   ];
   const result = await runProcess('pdftoppm', args, path.dirname(inputPath), CONVERT_TIMEOUT_MS);
   if (result.error) {
-    throw new LocalToolFailure('converter_unavailable', result.error.message, POPPLER_INSTALL_INSTRUCTIONS);
+    throw new LocalToolFailure('converter_unavailable', result.error.message, POPPLER_RECOVERY_INSTRUCTIONS);
   }
   if (result.exitCode !== 0) {
     throw pdfPageRenderFailure(
@@ -2535,7 +2538,7 @@ function readUInt24LE(buffer: Buffer, offset: number): number {
 async function getPdfPageCount(filePath: string): Promise<number> {
   const result = await runProcess('pdfinfo', [filePath], path.dirname(filePath), 30_000);
   if (result.error) {
-    throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, POPPLER_INSTALL_INSTRUCTIONS);
+    throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, POPPLER_RECOVERY_INSTRUCTIONS);
   }
   if (result.exitCode !== 0) {
     throw new LocalToolFailure('pdf_read_failed', result.stderr.trim() || 'pdfinfo failed.', 'Check that the PDF is valid and readable.');
@@ -2582,7 +2585,7 @@ async function extractPdfPages(workspace: WorkspaceContext, filePath: string, or
   const args = ['-jpeg', '-r', '100', '-f', String(range.firstPage), '-l', String(range.lastPage), filePath, prefix];
   const result = await runProcess('pdftoppm', args, path.dirname(filePath), 120_000);
   if (result.error) {
-    throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, POPPLER_INSTALL_INSTRUCTIONS);
+    throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, POPPLER_RECOVERY_INSTRUCTIONS);
   }
   if (result.exitCode !== 0) {
     throw pdfPageRenderFailure(

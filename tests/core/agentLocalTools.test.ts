@@ -7,6 +7,7 @@ import {
   buildAgentLocalToolProcessEnv,
   createAgentLocalWorkspaceContext,
   createLocalTools,
+  POPPLER_RECOVERY_INSTRUCTIONS,
   restorePostCompactReadFiles,
   scratchRootForWorkdir,
   setAgentLocalPermissionRoots,
@@ -103,6 +104,13 @@ test('agent local tool process env includes configured and standard tool paths',
       process.env.LIN_AGENT_EXTRA_TOOL_PATH = originalExtraPath;
     }
   }
+});
+
+test('Poppler recovery instructions tell the agent to install with bash and retry', () => {
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('run bash with `brew install poppler`');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('run bash with `sudo apt-get update && sudo apt-get install -y poppler-utils`');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('retry the same file_read or file_convert call');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('retry file_read without pages');
 });
 
 async function waitForFileContent(filePath: string, predicate: (content: string) => boolean, timeoutMs = 1000): Promise<string> {
