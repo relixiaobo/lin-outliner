@@ -13,10 +13,13 @@ test.describe('agent debug panel', () => {
     await expect(debugPanel.getByRole('heading', { name: 'Run Details' })).toBeVisible();
     await expect(debugPanel).toHaveCSS('background-color', 'rgb(255, 255, 255)');
 
-    await expect(debugPanel.getByText('mock-run-1').first()).toBeVisible();
     await expect(debugPanel.locator('.agent-debug-run-summary')).toContainText('assistant');
     await expect(debugPanel.locator('.agent-debug-run-summary')).toContainText('gpt-5.4');
-    await expect(debugPanel.getByRole('heading', { name: 'Summary' })).toHaveCount(0);
+    await expect(debugPanel.getByRole('heading', { name: 'Summary' })).toBeVisible();
+    const identifiers = debugPanel.locator('.agent-debug-run-summary details.agent-debug-disclosure', { hasText: 'Identifiers' });
+    await identifiers.locator('summary').click();
+    await expect(identifiers).toContainText('mock-run-1');
+    await expect(debugPanel.getByText('Metadata')).toHaveCount(0);
     await expect(debugPanel.locator('.agent-debug-run-selector-button')).toHaveCount(0);
 
     await expect(debugPanel.getByRole('heading', { name: 'Context', exact: true })).toBeVisible();
@@ -43,7 +46,6 @@ test.describe('agent debug panel', () => {
     await expect(round).toContainText('Cached share');
     await expect(round).toContainText('73%');
     await expect(round.getByLabel('Input context cache composition')).toBeVisible();
-    await expect(debugPanel.getByText('Metadata')).toBeVisible();
   });
 
   test('adds a user block rule from a logged tool exchange', async ({ page }) => {
@@ -83,6 +85,7 @@ test.describe('agent debug panel', () => {
 
     const debugPanel = page.locator('.outline-panel-surface.is-agent-debug');
     await expect(debugPanel.getByRole('heading', { name: 'Run Details' })).toBeVisible();
+    await expect(debugPanel.getByRole('heading', { name: 'Summary' })).toBeVisible();
     await expect(debugPanel.getByRole('heading', { name: 'Context', exact: true })).toBeVisible();
     await expect(debugPanel.getByText('System prompt')).toBeVisible();
     await expect(debugPanel.getByText('Tools · 1')).toBeVisible();

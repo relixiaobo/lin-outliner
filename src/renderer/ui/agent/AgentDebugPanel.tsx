@@ -175,7 +175,6 @@ export function AgentDebugPanel({ conversationId, runId }: AgentDebugPanelProps)
       <header className="agent-debug-header">
         <div>
           <h2>{labels.title}</h2>
-          <p>{runId}</p>
         </div>
         <IconButton
           className="agent-debug-icon-button"
@@ -201,6 +200,8 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
     round.completedAt && (!latest || round.completedAt > latest) ? round.completedAt : latest
   ), null);
   const usage = run.usage;
+  const ratios = usage ? usageRatios(usage) : null;
+  const toolCallCount = rounds.reduce((count, round) => count + round.toolExchanges.length, 0);
   return (
     <div className="agent-debug-run-summary">
       <div className="agent-debug-run-summary-main">
@@ -220,20 +221,23 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
         <div>
           <dt>{labels.runStarted}</dt>
           <dd>{formatTimestamp(startedAt)}</dd>
-        </div>
-        <div>
-          <dt>{labels.runCompleted}</dt>
-          <dd>{formatTimestamp(completedAt)}</dd>
+          <small>{labels.runCompleted}: {formatTimestamp(completedAt)}</small>
         </div>
         <div>
           <dt>{labels.runDuration}</dt>
           <dd>{formatDuration(startedAt, completedAt)}</dd>
         </div>
+        <div>
+          <dt>{labels.roundCount}</dt>
+          <dd>{rounds.length}</dd>
+          <small>{labels.toolCallCount}: {toolCallCount}</small>
+        </div>
         {usage ? (
           <div>
-            <dt>{labels.statTokens}</dt>
-            <dd>{formatTokens(usage.totalTokens)}</dd>
-            <small>{labels.usageTokens({ total: formatTokens(usage.totalTokens), input: formatTokens(usage.input), output: formatTokens(usage.output) })}</small>
+            <dt>{labels.totalInputContext}</dt>
+            <dd>{formatTokens(ratios?.inputContext ?? 0)}</dd>
+            <small>{labels.cacheHitRate}: {formatPercent(ratios?.cacheHitRate ?? null)}</small>
+            <small>{labels.outputTokens}: {formatTokens(usage.output)}</small>
           </div>
         ) : null}
         {usage ? (
@@ -243,6 +247,14 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
           </div>
         ) : null}
       </dl>
+      <ContextDisclosure title={labels.identifiersTitle}>
+        <div className="agent-debug-advanced-grid">
+          <DebugMetric label="runId" value={run.runId} />
+          <DebugMetric label="agentId" value={run.agentId} />
+          {run.parentRunId ? <DebugMetric label="parentRunId" value={run.parentRunId} /> : null}
+          {run.parentToolCallId ? <DebugMetric label="parentToolCallId" value={run.parentToolCallId} /> : null}
+        </div>
+      </ContextDisclosure>
     </div>
   );
 }
@@ -268,7 +280,9 @@ function formatPercent(value: number | null): string {
 function RunDetail({ run, labels }: { run: AgentDebugRun; labels: DebugLabels }) {
   return (
     <div className="agent-debug-run-detail">
-      <RunSummaryHeader labels={labels} run={run} />
+      <DebugPanelSection title={labels.summaryTitle}>
+        <RunSummaryHeader labels={labels} run={run} />
+      </DebugPanelSection>
       <RunContextSection labels={labels} run={run} />
 
       <DebugPanelSection title={labels.roundsTitle({ count: run.rounds.length })}>
@@ -278,15 +292,6 @@ function RunDetail({ run, labels }: { run: AgentDebugRun; labels: DebugLabels })
           <RoundCard key={round.index} round={round} labels={labels} />
         ))}
       </DebugPanelSection>
-
-      <ContextDisclosure title={labels.metadataTitle}>
-        <div className="agent-debug-advanced-grid">
-          <DebugMetric label="runId" value={run.runId} />
-          <DebugMetric label="parentRunId" value={run.parentRunId ?? labels.empty} />
-          <DebugMetric label="parentToolCallId" value={run.parentToolCallId ?? labels.empty} />
-          <DebugMetric label="agentId" value={run.agentId} />
-        </div>
-      </ContextDisclosure>
     </div>
   );
 }

@@ -969,6 +969,10 @@
   padding-top: var(--space-3);
 }
 
+.agent-debug-run-summary > .agent-debug-disclosure {
+  border-top: 1px solid var(--border-subtle);
+}
+
 .agent-debug-usage-grid,
 .agent-debug-cost-grid,
 .agent-debug-advanced-grid {

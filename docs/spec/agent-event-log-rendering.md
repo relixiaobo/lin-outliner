@@ -1230,7 +1230,10 @@ run
 The run detail is ordered for inspection:
 
 1. **Run summary** — compact run facts: agent/kind/status, model/provider,
-   timestamps, duration, aggregate tokens, and aggregate cost.
+   timestamps, duration, round/tool-call counts, input-context tokens, output
+   tokens, cache hit, and aggregate cost. Raw identifiers (`runId`, `agentId`,
+   and optional parent ids) live inside a collapsed identifiers disclosure in
+   this summary, not as a separate main section.
 2. **Context** — the model input side, in the order needed to inspect what was
    sent: system/developer instructions, tool definitions/schemas, then each
    round's request window (history/current user/file/tool-result context in
@@ -1239,7 +1242,6 @@ The run detail is ordered for inspection:
    the response/thinking parts plus tool exchanges produced by that call. Per-round
    usage remains available as a collapsed diagnostic detail, while the summary
    carries the main token/cost readout.
-4. **Metadata** — raw identifiers and debug metadata, default-collapsed.
 
 The chat transcript exposes this through an assistant-message **Details** icon
 button that uses the `Info` glyph. Hovering it previews the reply's token and
