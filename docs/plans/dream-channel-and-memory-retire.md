@@ -157,7 +157,7 @@ metadata** (`{ start, end }`), not only the human-readable string `Dream · A �
 
 ### Scheduled (automatic) runs
 
-Auto-run is retained (see Open question 1). A scheduled run posts into the same
+Auto-run is retained (Open question 1 — resolved 甲). A scheduled run posts into the same
 channel with a **synthetic anchor message** (`Scheduled Dream · [range]`, no user
 author) and the same full-process transcript below it; manual and scheduled runs
 are just two sources of the same channel entry shape.
@@ -228,13 +228,12 @@ Each PR is shippable and reviewable on its own — none is a scaffold a later PR
 
 ## Open questions
 
-1. **Auto-run: keep or drop?** (Directional — PM ratifies.)
-   - *甲 (recommended):* keep scheduled auto-run **and** add manual override.
-     Consolidation still happens unattended; the launcher is for steering a
-     specific window. Requires the "last dreamed" cursor as the auto-run default.
-   - *乙:* purely on-demand — no scheduler; Dream only runs when the user launches
-     it. Simpler, but loses unattended upkeep.
-   The plan is written to accommodate either; 甲 is the working assumption.
+1. **Auto-run: keep or drop? — resolved 甲 (PM-ratified).** Keep scheduled
+   auto-run **and** add the manual launcher as a steering override. Unattended
+   consolidation stays — it is the core "sleep-style" premise (固化 is involuntary,
+   not user-triggered); the launcher steers a specific window. The auto-run default
+   window is `[derived cursor + 1 day .. yesterday]`. 乙 (purely on-demand, no
+   scheduler) is the path not taken — simpler, but loses unattended upkeep.
 2. **One Dream channel, or per-window threads?** Working assumption: a single
    `lin-agent-channel-dream` with each run as a turn. Per-window separate channels
    are rejected as clutter unless a reason emerges.

@@ -191,28 +191,31 @@ before any directional/security-sensitive build.
     Note: the believer-pool store + Dream extraction substrate still ships under the hood.
     **PR3 jump-to-source UI shipped (#310, 2026-06-19)** — the whole #302 subsystem replacement
     is complete.
-- **dream-channel-and-memory-retire** (P2, *design captured 2026-06-23 — needs a dev one-pager;
-  three PRs*) — see `docs/plans/dream-channel-and-memory-retire.md`. Make Dream **transparent** via
-  a dedicated channel that renders each run's **complete process** (the existing #312 transcript:
-  `past_chats` reads → reasoning → `node_*` writes → result), and retire the vestigial believer-pool
-  Settings Memory surfaces. Channels are the live universal container (every conversation is a
+- **dream-channel-and-memory-retire** (P2, *design ratified 2026-06-23 — dispatch-ready; three PRs*)
+  — see `docs/plans/dream-channel-and-memory-retire.md`. Make Dream **transparent** via a dedicated
+  channel that renders each run's **complete process** (the existing #312 transcript: `past_chats`
+  reads → reasoning → `node_*` writes → result), and retire the vestigial believer-pool Settings
+  Memory surfaces. Channels are the live universal container (every conversation is a
   `lin-agent-channel-…` single-agent thread, General default, user-creatable), so a dedicated Dream
-  channel is in-model, not a re-introduction. Converged design beyond the original "passive-feed
-  summary" framing: the channel shows the **real transcript**, not a summary; a **structured Dream
-  launcher** (date-range picker + guidance field → serialized anchor message) replaces the chat
-  composer; the **seq-watermark becomes a day-granularity date cursor** (legible, a default frontier
-  not a hard gate — auto-run advances it, manual re-dreams don't; "常梦常新"). **Shape (b):**
-  - **PR1** — Dream channel + persisted full-process transcript (drop the create→delete transient
-    at `agentRuntime.ts:~3626/3661`); relocate Dream history here; keep existing trigger + watermark.
-  - **PR2** — date-window invocation (replace watermark with the date cursor) + structured launcher
-    + user-configurable frequency (today fixed `DEFAULT_DREAM_SCHEDULE`). Depends on PR1.
-  - **PR3** — retire Settings → Memory + delete the believer-pool store (`listMemory` →
-    `listMemoryEntries`, `agentRuntime.ts:~1115`, separate from the `#d-*` nodes at `:~7536`) +
-    `agent_list_memory` + memory-edit plumbing; finishes the #302 teardown. Touches `commands.ts`
-    (protocol — interface-first). Depends on PR1; can parallel PR2. Escalate if anything still reads
-    the pool. Pre-release: wipe `~/.lin-outliner-*`, no migration.
-  - **Open (PM ratifies):** keep auto-run + manual override (甲, recommended) vs on-demand only (乙).
-    UI gate = light/dark visual.
+  channel is in-model, not a re-introduction. The channel shows the **real transcript**, not a
+  summary; a **structured Dream launcher** (date-range picker + guidance field → serialized anchor
+  message) replaces the chat composer. **Core reframe (post code-audit):** the seq-watermark is not
+  relocated but **eliminated** — `last-dreamed-through` is **derived** from the Dream channel's
+  cleanly-completed *scheduled* turns, which makes the believer-pool `AgentEventStore` (dual-purpose:
+  vestigial memory entries + load-bearing dream-state) **wholly deletable**. **Shape (b):**
+  - **PR1** — Dream channel + persisted full-process transcript (drop the create→delete transient at
+    `agentRuntime.ts:~3659/3694`); persist each run's `{start,end}` window as structured anchor
+    metadata; relocate Dream history here; keep existing trigger + seq-watermark unchanged this PR.
+  - **PR2** — date-window scope + **derive the cursor from the channel** (drop the stored watermark;
+    keep #319 `incomplete` gating) + structured launcher (composer-swap is a *new* per-channel-id
+    branch — `usesChannelActivitySurface()` is dead code) + user-configurable frequency. Depends on PR1.
+  - **PR3** — retire Settings → Memory + delete the **entire `AgentEventStore`** + `agent_list_memory`
+    (+ update/forget) + memory-edit plumbing + pool core tests; finishes the #302 teardown. Touches
+    `commands.ts` (protocol — interface-first). **Depends on PR2** (not parallel — the store's
+    dream-state half is live until PR2 derives the cursor off it). Pre-release: wipe `~/.lin-outliner-*`,
+    no migration.
+  - **Ratified (PM, 2026-06-23):** auto-run kept (甲) — scheduled nightly + manual launcher override,
+    derived cursor is the auto default window. All open questions resolved. UI gate = light/dark visual.
 - **agent-goal** (P2, *design captured 2026-06-23, PM-ratified (plan PR #323 merged) — needs a dev
   build one-pager; two features*) — see `docs/plans/agent-goal.md`. Let a user hand a long-running
   objective to the agent mid-conversation and have it pursue that objective **autonomously across turns
