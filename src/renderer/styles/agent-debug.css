@@ -932,11 +932,7 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: var(--space-4);
-  background: var(--fill-1);
+  gap: var(--space-2);
 }
 
 .agent-debug-inline-note {
@@ -1048,12 +1044,17 @@
 }
 
 .agent-debug-detail-section {
-  gap: var(--space-4);
+  gap: var(--space-3);
 }
 
 .agent-debug-detail-section > .agent-debug-section-header {
   border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 0;
   padding-bottom: var(--space-3);
+}
+
+.agent-debug-execution-section {
+  gap: var(--space-2);
 }
 
 @media (max-width: 1200px) {

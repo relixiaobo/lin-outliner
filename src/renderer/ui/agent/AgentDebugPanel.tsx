@@ -281,7 +281,7 @@ function RunDetail({ run, labels }: { run: AgentDebugRun; labels: DebugLabels })
       </DebugPanelSection>
       <RunContextSection labels={labels} run={run} />
 
-      <DebugPanelSection title={labels.executionTitle({ count: run.rounds.length })}>
+      <DebugPanelSection className="agent-debug-execution-section" title={labels.executionTitle({ count: run.rounds.length })}>
         {run.rounds.length === 0 ? (
           <div className="agent-debug-card is-muted">{labels.noModelCallsYet}</div>
         ) : run.rounds.map((round) => (
@@ -294,7 +294,7 @@ function RunDetail({ run, labels }: { run: AgentDebugRun; labels: DebugLabels })
 
 function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDebugRun }) {
   return (
-    <DebugPanelSection title={labels.modelInputTitle}>
+    <DebugPanelSection className="agent-debug-model-input-section" title={labels.modelInputTitle}>
       <div className="agent-debug-context-card">
         <ContextDisclosure title={labels.systemPromptDisclosure} copyText={run.systemPrompt ?? ''} defaultOpen>
           {run.systemPrompt ? <pre>{run.systemPrompt}</pre> : <span className="is-muted">{labels.empty}</span>}
@@ -724,9 +724,9 @@ function ContextDisclosure(props: { children: ReactNode; copyText?: string; defa
   );
 }
 
-function DebugPanelSection(props: { children: ReactNode; title: string }) {
+function DebugPanelSection(props: { children: ReactNode; className?: string; title: string }) {
   return (
-    <section className="agent-debug-detail-section">
+    <section className={props.className ? `agent-debug-detail-section ${props.className}` : 'agent-debug-detail-section'}>
       <DebugSectionHeader title={props.title} />
       {props.children}
     </section>

@@ -1240,7 +1240,9 @@ The run detail is ordered for inspection:
    request, normalized for display. The message window is presented as direct
    sibling sections: `History` (messages before the final outbound user message)
    and `Current request` (that user message and its attached reminder/file/text
-   parts), preserving provider order inside each slice.
+   parts), preserving provider order inside each slice. The Model Input section
+   renders these disclosures directly rather than wrapping them in an additional
+   frame.
 3. **Execution** — the execution side. Each rendered item is a provider call
    (internally, one debug `round`: one provider request/response). The visible
    header labels it as `Call N`, hides the default completed state, and keeps
@@ -1252,9 +1254,9 @@ The run detail is ordered for inspection:
    matching `tool_result` rows. Tool result rows use the same part-disclosure
    control as the rest of the pane, and orphan tool calls are synthesized from the
    exchange args only when the provider response did not capture the original
-   `tool_call`. Calls render as a lightweight disclosure list with subtle
-   dividers, not as separate cards; the run summary carries the main token/cost
-   readout.
+   `tool_call`. Calls render as a lightweight disclosure list directly under the
+   Execution header, with subtle dividers rather than separate cards; the run
+   summary carries the main token/cost readout.
 
 The chat transcript exposes this through an assistant-message **Details** icon
 button that uses the `Info` glyph. Hovering it previews the reply's token and

@@ -24,6 +24,7 @@ test.describe('agent debug panel', () => {
 
     await expect(debugPanel.getByRole('heading', { name: 'Model Input', exact: true })).toBeVisible();
     const context = debugPanel.locator('.agent-debug-context-card');
+    await expect(context).toHaveCSS('border-left-width', '0px');
     await expect(context.getByText('System prompt')).toBeVisible();
     const systemPrompt = context.locator('pre').first();
     await expect(systemPrompt).toBeVisible();
