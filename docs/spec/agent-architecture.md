@@ -161,7 +161,11 @@ Settings, and that manual run is not blocked by the scheduled due gate. Each run
 applies the valuable-memory filter, reconciles prior `#d-*` memories as the
 current belief graph, then, when it has memory worth writing, updates today's
 single `#d-memory` container, whose title is a generated daily memory headline; a
-run that finds nothing worth remembering writes nothing and still completes. It
+run that finds nothing worth remembering writes nothing and still completes
+cleanly, advancing the watermark — unless it was cut off mid-work (the run hit its
+`maxTurns` cap while still streaming, or an unresolved context overflow truncated
+it), which is flagged `incomplete` and, with zero writes, is retried rather than
+counted as a deliberate no-op. It
 may write `#d-question` for
 unresolved tension and `#d-guidance` for future handling, but these are optional
 ordinary tags, not required children. Manual consolidate-only Dream can reconcile

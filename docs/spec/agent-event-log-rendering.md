@@ -510,7 +510,13 @@ watermark and audit summary. The summary's change counts are derived from the
 private child run's successful `node_create` / `node_edit` writes; a zero-write
 child completion is a valid no-op — remembering nothing is a normal Dream outcome,
 so it records `dream.completed` with zero change counts and advances the watermark,
-keeping a considered-but-empty span from being re-read. There is **one** Dream — a runtime-only `memory-dream` skill run that
+keeping a considered-but-empty span from being re-read. The no-op is gated on a
+**clean** terminal state: a child that ended `completed` but was actually cut off
+mid-work (the delegation run hit its `maxTurns` cap while still streaming, or an
+unresolved context overflow truncated it) carries an `incomplete` flag, and a
+zero-write run that is `incomplete` is treated as a **failure**, not a no-op —
+`dream.completed` is not recorded and the watermark does not advance, so the span
+is retried rather than silently dropped. There is **one** Dream — a runtime-only `memory-dream` skill run that
 consolidates the user's member conversations into `#d-memory`, `#d-episode`,
 `#d-belief`, optional `#d-question`, and optional `#d-guidance` nodes. Scheduled
 Dream attempts are at-most-once per daily due

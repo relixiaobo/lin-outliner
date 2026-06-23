@@ -738,4 +738,61 @@ describe('agent runtime past chats integration', () => {
     expect(dreamState.lastCompleted?.changes.added).toBe(0);
     expect(dreamState.watermark.conversations[created.conversationId]?.seq ?? 0).toBeGreaterThan(0);
   });
+
+  test('scheduled Dream truncated by context overflow is a failure, not a no-op: watermark not advanced', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-truncated-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-memory-dream-truncated-data-'));
+    roots.push(localRoot, dataRoot);
+    const core = Core.new();
+    const script = scriptedStream(
+      [
+        // Foreground reply to the evidence message (normal turn).
+        fauxAssistantMessage(fauxText('Captured enough evidence.')),
+        // The Dream child's only turn is a silent context overflow: it ends 'stop'
+        // with input far over the window and writes no memory nodes. With
+        // compaction disabled the overflow is never resolved, so the child run
+        // completes but is TRUNCATED — it did not decide there was nothing to
+        // remember, it was cut off.
+        {
+          ...fauxAssistantMessage(fauxText('Too much backlog to hold in context.')),
+          stopReason: 'stop' as const,
+          usage: { ...EMPTY_USAGE, input: 10_000_000 },
+        },
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(core),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        dreamMemoryExtractionEnabled: true,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        // Disable compaction so the reactive overflow compaction declines and the
+        // run stays truncated (the deterministic way to reach the incomplete path).
+        runtimeSettingsLoader: async () => ({ ...runtimeSettings(), compactEnabled: false }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    const longEvidence = `Memory Dream sees a large backlog here. ${'memory-dream-overflow '.repeat(80)}`;
+    await runtime.sendMessage(created.conversationId, longEvidence);
+    await runtime.runScheduledDreamsForTest(new Date('2026-01-02T04:00:00Z'));
+
+    const dreamState = await new AgentEventStore(dataRoot).readDreamState(BELIEVER_PRINCIPAL);
+    // A truncated child with zero writes must NOT advance the watermark — that
+    // would silently drop the span's evidence forever. It is a failure to retry,
+    // distinct from a clean "nothing worth remembering" no-op.
+    expect(dreamState.lastCompleted).toBeNull();
+    expect(dreamState.watermark.conversations[created.conversationId]?.seq ?? 0).toBe(0);
+  });
 });

@@ -421,7 +421,12 @@ at most one direct `#d-memory` container under today's journal node, whose title
 is a generated daily memory headline updated in place on that day's run, not the
 fixed word `Memory`. Remembering nothing is a valid, common outcome: a run that
 finds nothing worth remembering writes nothing — no container, no nodes — and
-still completes successfully.
+still completes successfully, advancing the watermark. A zero-write completion
+only counts as this deliberate no-op when the run ended cleanly; a run cut off
+mid-work (the delegation hit its `maxTurns` cap while still streaming, or an
+unresolved context overflow truncated it) is flagged `incomplete` and, having
+written nothing, is treated as a failure so the span is retried instead of being
+silently dropped.
 
 The skill applies a high-signal memory filter before writing: keep explicit or
 repeated user preferences, durable project/work facts, decisions, corrections to

@@ -3535,12 +3535,22 @@ export class AgentRuntime {
       await this.writeDreamRunMeta(task, 'running', model);
       const skill = await this.renderMemoryDreamSkill(task.runId);
       const prompt = buildMemoryDreamPrompt(task, skill.renderedContent);
-      // A successful child that writes nothing is a legitimate no-op, not a
-      // failure: remembering nothing is a valid Dream outcome (a real child
-      // failure/cancel already threw in runMemoryDreamChildAgent). It still
-      // records `dream.completed` with zero change counts and advances the
-      // watermark, so the considered-but-empty span is not re-read.
-      const changes = dreamChangesFromChildNodeChanges(await this.runMemoryDreamChildAgent(task, prompt, skill.allowedTools));
+      // A successful child that DELIBERATELY writes nothing is a legitimate no-op,
+      // not a failure: remembering nothing is a valid Dream outcome (a real child
+      // failure/cancel already threw in runMemoryDreamChildAgent). It records
+      // `dream.completed` with zero change counts and advances the watermark, so
+      // the considered-but-empty span is not re-read.
+      //
+      // But "completed" is not the same as "finished": a maxTurns abort or an
+      // unresolved context overflow ends the child `completed` mid-work. Such a
+      // truncated run that wrote nothing did NOT decide there was nothing worth
+      // remembering — advancing the watermark would silently drop that span's
+      // evidence forever. Treat it as a failure so it is retried, NOT a no-op.
+      const childResult = await this.runMemoryDreamChildAgent(task, prompt, skill.allowedTools);
+      const changes = dreamChangesFromChildNodeChanges(childResult.nodeChanges);
+      if (childResult.incomplete && !dreamChangesHaveCommittedWork(changes)) {
+        throw new Error('Memory Dream child was truncated (maxTurns or context overflow) before writing any memory; not advancing the watermark so the span is retried.');
+      }
       const completed = await this.getEventStore().appendDreamCompleted(task.principal, {
         runId: task.runId,
         trigger: task.trigger,
@@ -3621,7 +3631,7 @@ export class AgentRuntime {
     task: AgentDreamMemoryExtractionTask,
     prompt: string,
     allowedTools: readonly string[],
-  ): Promise<AgentChildRunNodeChanges> {
+  ): Promise<{ nodeChanges: AgentChildRunNodeChanges; incomplete: boolean }> {
     let conversation: AgentConversationState | null = null;
     let childRunId: string | null = null;
     try {
@@ -3645,7 +3655,7 @@ export class AgentRuntime {
       }
       if (data.status === 'failed' || data.error) throw new Error(data.error || 'Memory Dream child run failed.');
       if (data.status === 'cancelled') throw new Error('Memory Dream child run was stopped before completing.');
-      return data.node_changes ?? {};
+      return { nodeChanges: data.node_changes ?? {}, incomplete: data.incomplete === true };
     } finally {
       await this.cleanupMemoryDreamChildRun(conversation, childRunId);
     }
@@ -7681,6 +7691,10 @@ function dreamChangesFromChildNodeChanges(nodeChanges: AgentChildRunNodeChanges)
     forgotten: uniqueStrings(nodeChanges.trashedNodeIds).length,
     skipped: 0,
   };
+}
+
+function dreamChangesHaveCommittedWork(changes: AgentDreamCompletedChanges): boolean {
+  return changes.added + changes.updated + changes.forgotten > 0;
 }
 
 function isInternalAgentConversationId(conversationId: string): boolean {

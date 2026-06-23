@@ -770,8 +770,12 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
   optional `#d-question`, optional `#d-guidance`) with selective `[[chat:...]]`
   provenance when citation improves auditability or disambiguation, and may delete
   obsolete nodes with `node_delete`. A run that finds nothing worth remembering
-  writes nothing, and either way the run records `dream.completed` and writes a
-  reflective run meta entry. There is no `/dream`
+  writes nothing, and a clean run records `dream.completed` (advancing the
+  watermark) and writes a reflective run meta entry either way. A run cut off
+  mid-work (the delegation hit its `maxTurns` cap while still streaming, or an
+  unresolved context overflow truncated it) is flagged `incomplete`; if it also
+  wrote nothing it is treated as a failure — no `dream.completed`, watermark
+  unchanged — so the span is retried. There is no `/dream`
   slash command and no foreground `dream` tool.
 - `web_search` / `web_fetch` for web access.
 

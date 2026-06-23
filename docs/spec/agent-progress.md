@@ -149,9 +149,12 @@ truth.
     memory worth writing — update today's single `#d-memory` container, write
     optional `#d-episode` / `#d-belief` / `#d-question` / `#d-guidance` nodes, and
     may delete obsolete nodes with `node_delete`; a run that finds nothing worth
-    remembering writes nothing, and either way the run records `dream.completed`
-    and advances the watermark; manual consolidate-only runs can reconcile
-    outline/prior Dream context without new chat spans
+    remembering writes nothing, and a clean run records `dream.completed` and
+    advances the watermark either way — but a run cut off mid-work (`maxTurns`
+    abort while streaming, or unresolved context overflow) is flagged `incomplete`
+    and, with zero writes, is retried instead of advancing; manual
+    consolidate-only runs can reconcile outline/prior Dream context without new
+    chat spans
   - `/dream` and the foreground `dream` tool are removed; Dream history remains
     a runtime task/history projection, not a model command surface
   - permission classification keeps `past_chats` as read-only
