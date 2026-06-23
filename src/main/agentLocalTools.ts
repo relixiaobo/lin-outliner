@@ -6,11 +6,16 @@ import { copyFile, mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile
 import { homedir } from 'node:os';
 import path from 'node:path';
 import {
+  AgentFileIngestionFailure,
+  ingestRichDocumentAsMarkdown,
+  MARKITDOWN_RICH_DOCUMENT_EXTENSIONS,
+  type FileIngestionOutput,
+} from './agentFileIngestion';
+import {
   agentToolResult,
   errorEnvelope,
   successEnvelope,
   type ToolEnvelope,
-  type ToolStatus,
 } from './agentToolEnvelope';
 import type { AgentSkillRuntime } from './agentSkills';
 import {
@@ -25,6 +30,9 @@ import {
   optionalNormalizedString,
   requiredNormalizedString,
 } from './agentToolParams';
+import { buildAgentLocalToolProcessEnv, runAgentToolProcess } from './agentToolProcess';
+
+export { buildAgentLocalToolProcessEnv } from './agentToolProcess';
 
 interface LocalToolOptions {
   localRoot?: string;
@@ -71,6 +79,7 @@ type FileReadData =
   | FileReadTextData
   | FileReadImageData
   | FileReadPdfData
+  | FileReadMarkdownData
   | FileReadNotebookData
   | FileReadUnchangedData;
 
@@ -112,6 +121,18 @@ interface FileReadPdfData {
       count: number;
       outputDir: string;
     };
+  };
+}
+
+interface FileReadMarkdownData {
+  type: 'markdown';
+  file: {
+    filePath: string;
+    content: string;
+    converter: 'markitdown';
+    contentChars: number;
+    truncated: boolean;
+    originalSize: number;
   };
 }
 
@@ -418,6 +439,7 @@ const backgroundTasks = new Map<string, BackgroundTask>();
 const DEFAULT_FILE_READ_LIMIT = 2000;
 const MAX_FILE_READ_LIMIT = 20000;
 const MAX_TEXT_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_MARKDOWN_SOURCE_BYTES = 50 * 1024 * 1024;
 const DEFAULT_GLOB_LIMIT = 100;
 const FILE_GLOB_CANDIDATE_LIMIT = 5000;
 const DEFAULT_GREP_HEAD_LIMIT = 250;
@@ -433,23 +455,11 @@ const PDF_MAX_PAGES_PER_READ = 20;
 const PDF_INLINE_PAGE_THRESHOLD = 10;
 const PDF_TEXT_MAX_CHARS = 60_000;
 const CONVERT_TIMEOUT_MS = 180_000;
-const EXTRA_TOOL_PATH_ENV = 'LIN_AGENT_EXTRA_TOOL_PATH';
-const DEFAULT_AGENT_TOOL_PATH_SEGMENTS = [
-  '/opt/homebrew/bin',
-  '/opt/homebrew/sbin',
-  '/usr/local/bin',
-  '/usr/local/sbin',
-  '/usr/bin',
-  '/bin',
-  '/usr/sbin',
-  '/sbin',
-];
 export const POPPLER_RECOVERY_INSTRUCTIONS = [
-  'Poppler is required for PDF page rendering and conversion.',
-  'If this is ordinary PDF content analysis on an OpenAI Responses model, retry file_read without pages so the PDF can be attached natively.',
-  'If page images, layout inspection, or PDF conversion are required, run bash to detect an available package manager and install Poppler.',
+  'Poppler is required for PDF metadata, text extraction, page rendering, and conversion.',
+  'Run bash to detect an available package manager and install Poppler.',
   'Do not assume Homebrew is available: use an installed manager such as `brew install poppler`, `sudo port install poppler`, `sudo apt-get update && sudo apt-get install -y poppler-utils`, `sudo dnf install -y poppler-utils`, or `sudo pacman -S --noconfirm poppler`.',
-  'If no supported package manager is available, report that Poppler must be installed so pdfinfo and pdftoppm are on PATH.',
+  'If no supported package manager is available, report that Poppler must be installed so pdfinfo, pdftotext, and pdftoppm are on PATH.',
   'After installation, retry the same file_read or file_convert call.',
 ].join(' ');
 const IGNORED_DIRECTORIES = new Set(['.agent-trash', '.git', '.svn', '.hg', '.bzr', '.jj', '.sl', 'node_modules', 'dist', 'out', 'release', 'target']);
@@ -849,28 +859,6 @@ function selfDefinitionWriteInstructions(write: SelfDefinitionWrite | null): str
   return undefined;
 }
 
-function pathSegments(value: string | undefined): string[] {
-  return (value ?? '')
-    .split(path.delimiter)
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-}
-
-export function buildAgentLocalToolProcessEnv(): NodeJS.ProcessEnv {
-  const segments = [
-    ...pathSegments(process.env[EXTRA_TOOL_PATH_ENV]),
-    ...pathSegments(process.env.PATH),
-    ...DEFAULT_AGENT_TOOL_PATH_SEGMENTS,
-  ];
-  const seen = new Set<string>();
-  const pathValue = segments.filter((segment) => {
-    if (seen.has(segment)) return false;
-    seen.add(segment);
-    return true;
-  }).join(path.delimiter);
-  return { ...process.env, PATH: pathValue };
-}
-
 function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileReadData>> {
   return {
     name: 'file_read',
@@ -880,7 +868,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
       'The file_path parameter must be an absolute path.',
       `By default, it reads up to ${DEFAULT_FILE_READ_LIMIT} lines starting from the beginning of the file.`,
       'You can optionally specify a line offset and limit, especially for long files.',
-      `This tool can read text files, images, PDFs, and Jupyter notebooks. PDFs over ${PDF_INLINE_PAGE_THRESHOLD} pages require the pages parameter. It can only read files, not directories.`,
+      'This tool can read text files, images, PDFs, rich documents converted to Markdown, and Jupyter notebooks. PDFs are read as extracted text by default; use pages when page images or layout inspection are needed. It can only read files, not directories.',
       'Use this before file_edit or before rewriting an existing file with file_write.',
     ].join('\n'),
     parameters: FILE_READ_PARAMETERS,
@@ -921,7 +909,7 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         }
         if (ext === '.pdf') {
           const buffer = await readFile(filePath);
-          const read = await readPdfForModel(workspace, filePath, buffer.byteLength, params.pages);
+          const read = await ingestPdfFile(workspace, filePath, buffer.byteLength, params.pages);
           await notifySuccessfulFileTouch(workspace, filePath);
           const visible = visibleFileRead(read.data);
           return agentToolResult(successEnvelope('file_read', read.data, {
@@ -962,12 +950,25 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           const visible = visibleFileRead(data);
           return agentToolResult(successEnvelope('file_read', data, { metrics: metrics(started, data) }), visible);
         }
+        if (MARKITDOWN_RICH_DOCUMENT_EXTENSIONS.has(ext)) {
+          if (fileStat.size > MAX_MARKDOWN_SOURCE_BYTES) {
+            throw new LocalToolFailure('file_too_large', `File is too large to convert to Markdown: ${filePath}`, `Use a smaller document, split it first, or convert it manually to Markdown. Maximum source size is ${formatBytes(MAX_MARKDOWN_SOURCE_BYTES)}.`);
+          }
+          const read = await ingestRichDocumentFile(filePath, fileStat.size);
+          await notifySuccessfulFileTouch(workspace, filePath);
+          const visible = visibleFileRead(read.data);
+          return agentToolResult(successEnvelope('file_read', read.data, {
+            status: read.status,
+            instructions: read.instructions,
+            metrics: metrics(started, read.data),
+          }), visible, read.content);
+        }
         if (fileStat.size > MAX_TEXT_FILE_BYTES) {
           throw new LocalToolFailure('file_too_large', `File is too large to read as text: ${filePath}`, 'Use file_grep to locate relevant content or read a smaller file.');
         }
         const buffer = await readFile(filePath);
         if (looksBinary(buffer)) {
-          throw new LocalToolFailure('binary_unsupported', `Binary file is not supported by file_read: ${filePath}`, 'Use a text, image, or PDF file path.');
+          throw new LocalToolFailure('binary_unsupported', `Binary file is not supported by file_read: ${filePath}`, 'Use a text, image, PDF, notebook, or supported rich document file path.');
         }
         const decoded = decodeTextBuffer(buffer);
         const content = decoded.content;
@@ -2009,26 +2010,7 @@ function clearReadStateForDeletedPath(workspace: WorkspaceContext, filePath: str
 }
 
 async function runProcess(command: string, args: string[], cwd: string, timeoutMs = 60_000): Promise<ProcessResult> {
-  return await new Promise<ProcessResult>((resolve) => {
-    const child = spawn(command, args, { cwd, env: buildAgentLocalToolProcessEnv(), shell: false });
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM');
-    }, timeoutMs);
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => { stdout += chunk; });
-    child.stderr.on('data', (chunk: string) => { stderr += chunk; });
-    child.once('error', (error) => {
-      clearTimeout(timer);
-      resolve({ stdout, stderr, exitCode: null, error });
-    });
-    child.once('close', (code) => {
-      clearTimeout(timer);
-      resolve({ stdout, stderr, exitCode: code });
-    });
-  });
+  return await runAgentToolProcess(command, args, cwd, timeoutMs);
 }
 
 async function runProcessItems(
@@ -2521,17 +2503,12 @@ async function getPdfPageCount(filePath: string): Promise<number> {
   return pages;
 }
 
-async function readPdfForModel(
+async function ingestPdfFile(
   workspace: WorkspaceContext,
   filePath: string,
   originalSize: number,
   requestedPages: string | undefined,
-): Promise<{
-  data: FileReadPdfData;
-  content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>;
-  instructions: string;
-  status?: ToolStatus;
-}> {
+): Promise<FileIngestionOutput<FileReadPdfData>> {
   if (originalSize === 0) {
     throw new LocalToolFailure('pdf_empty', `PDF file is empty: ${filePath}`, 'Use a valid PDF file.');
   }
@@ -2606,6 +2583,29 @@ async function readPdfForModel(
     }],
     instructions: `No embedded PDF text was extracted, and the PDF has too many pages to render inline. Call file_read again with pages, for example "1-5". Maximum ${PDF_MAX_PAGES_PER_READ} pages per request.`,
     status: 'partial',
+  };
+}
+
+async function ingestRichDocumentFile(filePath: string, originalSize: number): Promise<FileIngestionOutput<FileReadMarkdownData>> {
+  const markdown = await ingestRichDocumentAsMarkdown(filePath);
+  const data: FileReadMarkdownData = {
+    type: 'markdown',
+    file: {
+      filePath,
+      content: markdown.content,
+      converter: markdown.converter,
+      contentChars: markdown.contentChars,
+      truncated: markdown.truncated,
+      originalSize,
+    },
+  };
+  const instructions = markdown.truncated
+    ? 'The document was converted to Markdown locally and truncated to fit the file_read output cap. Convert the document manually or split it if more content is needed.'
+    : 'The document was converted to Markdown locally.';
+  return {
+    data,
+    status: markdown.truncated ? 'partial' : undefined,
+    instructions,
   };
 }
 
@@ -2931,6 +2931,16 @@ function visibleFileRead(data: FileReadData): { file: Record<string, unknown> } 
       };
     case 'text':
       return { file: { filePath: data.file.filePath, content: data.file.content, startLine: data.file.startLine, totalLines: data.file.totalLines } };
+    case 'markdown':
+      return {
+        file: {
+          filePath: data.file.filePath,
+          content: data.file.content,
+          converter: data.file.converter,
+          truncated: data.file.truncated,
+          originalSize: data.file.originalSize,
+        },
+      };
     case 'notebook':
       return { file: { filePath: data.file.filePath, content: data.file.content, originalSize: data.file.originalSize } };
     case 'file_unchanged':
@@ -3208,6 +3218,8 @@ function localFsError(error: unknown, filePath: string): LocalToolFailure {
 function localErrorResult<TData>(tool: string, error: unknown, started: number) {
   const failure = error instanceof LocalToolFailure
     ? error
+    : error instanceof AgentFileIngestionFailure
+      ? new LocalToolFailure(error.code, error.message, error.instructions)
     : new LocalToolFailure('unexpected_error', errorMessage(error), 'Retry if this looks transient; otherwise inspect the input and tool state.');
   return agentToolResult(errorEnvelope<TData>(tool, failure.code, failure.message, {
     instructions: failure.instructions,

@@ -109,14 +109,14 @@ test('agent local tool process env includes configured and standard tool paths',
 });
 
 test('Poppler recovery instructions tell the agent to install with bash and retry', () => {
-  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('run bash to detect an available package manager');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('Run bash to detect an available package manager');
   expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('Do not assume Homebrew is available');
   expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('`brew install poppler`');
   expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('`sudo port install poppler`');
   expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('`sudo apt-get update && sudo apt-get install -y poppler-utils`');
   expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('If no supported package manager is available');
+  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('pdftotext');
   expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('retry the same file_read or file_convert call');
-  expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('retry file_read without pages');
 });
 
 async function waitForFileContent(filePath: string, predicate: (content: string) => boolean, timeoutMs = 1000): Promise<string> {
@@ -779,6 +779,88 @@ describe('agent local tools', () => {
       expect(visible.data.file.dimensions).toEqual({ width: 7, height: 11 });
       expect(visible.data.file.base64).toBeUndefined();
       expect(result.content.some((block: { type: string }) => block.type === 'image')).toBe(true);
+    });
+  });
+
+  test('file_read converts rich documents to Markdown with MarkItDown', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const binDir = path.join(workspaceRoot, 'fake-markitdown-bin');
+      await mkdir(binDir, { recursive: true });
+      const fakeMarkitdown = path.join(binDir, 'markitdown');
+      await writeFile(fakeMarkitdown, [
+        '#!/bin/sh',
+        'if [ "$1" = "--help" ]; then echo "Usage: markitdown"; exit 0; fi',
+        'printf "# Converted\\n\\nSource: %s\\n" "$1"',
+      ].join('\n'), 'utf8');
+      await chmod(fakeMarkitdown, 0o755);
+
+      const filePath = path.join(workspaceRoot, 'brief.docx');
+      await writeFile(filePath, 'fake office payload', 'utf8');
+
+      const originalCommand = process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+      delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+      try {
+        await withPrependedPath(binDir, async () => {
+          const read = await executeTool<{
+            type: 'markdown';
+            file: {
+              filePath: string;
+              content: string;
+              converter: 'markitdown';
+              truncated: boolean;
+              originalSize: number;
+            };
+          }>(workspaceRoot, 'file_read', { file_path: filePath });
+
+          expect(read.ok).toBe(true);
+          expect(read.data!.type).toBe('markdown');
+          expect(read.data!.file).toMatchObject({
+            filePath,
+            content: `# Converted\n\nSource: ${filePath}`,
+            converter: 'markitdown',
+            truncated: false,
+            originalSize: 'fake office payload'.length,
+          });
+          expect(read.instructions).toBe('The document was converted to Markdown locally.');
+
+          const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
+          const result = await (tool.execute as any)('rich-doc-visible', { file_path: filePath });
+          const visible = JSON.parse(result.content[0].text);
+          expect(visible.data.file.content).toContain('# Converted');
+          expect(result.content).toHaveLength(1);
+        });
+      } finally {
+        if (originalCommand === undefined) {
+          delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+        } else {
+          process.env.LIN_AGENT_MARKITDOWN_COMMAND = originalCommand;
+        }
+      }
+    });
+  });
+
+  test('file_read returns a recoverable MarkItDown dependency error for rich documents', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const originalCommand = process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+      process.env.LIN_AGENT_MARKITDOWN_COMMAND = path.join(workspaceRoot, 'missing-markitdown');
+      try {
+        const filePath = path.join(workspaceRoot, 'brief.pptx');
+        await writeFile(filePath, 'fake office payload', 'utf8');
+
+        const read = await executeTool(workspaceRoot, 'file_read', { file_path: filePath });
+
+        expect(read.ok).toBe(false);
+        expect(read.error?.code).toBe('markitdown_unavailable');
+        expect(read.instructions).toContain('python3 -m pip install --user');
+        expect(read.instructions).toContain('Do not assume Homebrew is available');
+        expect(read.instructions).toContain('retry the same file_read call');
+      } finally {
+        if (originalCommand === undefined) {
+          delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+        } else {
+          process.env.LIN_AGENT_MARKITDOWN_COMMAND = originalCommand;
+        }
+      }
     });
   });
 

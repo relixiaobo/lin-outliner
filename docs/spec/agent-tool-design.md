@@ -1651,6 +1651,7 @@ type FileReadData =
   | FileReadTextData
   | FileReadImageData
   | FileReadPdfData
+  | FileReadMarkdownData
   | FileReadNotebookData
   | FileReadUnchangedData;
 
@@ -1685,6 +1686,7 @@ interface FileReadPdfData {
     filePath: string;
     originalSize: number;
     totalPages: number;
+    // Runtime-selected representation summary. This is not a file_read input.
     mode: "text" | "images" | "text_and_images" | "metadata";
     pages: {
       firstPage: number;
@@ -1698,6 +1700,18 @@ interface FileReadPdfData {
       count: number;
       outputDir: string;
     };
+  };
+}
+
+interface FileReadMarkdownData {
+  type: "markdown";
+  file: {
+    filePath: string;
+    content: string;
+    converter: "markitdown";
+    contentChars: number;
+    truncated: boolean;
+    originalSize: number;
   };
 }
 
@@ -1736,6 +1750,20 @@ Result behavior:
 - Image reads return dimensions when they can be determined, attach the image
   block for the model to inspect, and omit base64 from the model-visible JSON so
   text output stays compact.
+- Rich non-PDF documents use a runtime-owned Markdown path. Supported formats are
+  `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.htm`, and `.epub`; the model
+  still passes only `file_path`, while the runtime converts the document to
+  bounded Markdown.
+- MarkItDown is the Markdown backend for rich documents. The runtime probes
+  `LIN_AGENT_MARKITDOWN_COMMAND`, then `markitdown`, then
+  `python3 -m markitdown`. Plugins, cloud backends, and LLM-assisted extraction
+  are not enabled by the runtime. Missing MarkItDown returns a recoverable tool
+  error that tells the agent to install a local Python/uv backend through `bash`
+  and retry the same `file_read` call; the file tool does not install packages
+  itself and does not assume Homebrew.
+- MarkItDown output is capped. Truncated Markdown sets `status: "partial"` and
+  records `truncated: true` and the original `contentChars` count in the runtime
+  data.
 - PDF reads are provider-neutral. `file_read` never sends the original PDF bytes
   to the model as a provider-native document block; the runtime extracts local
   text and/or page images first, then attaches those model-readable parts to the
@@ -1757,8 +1785,8 @@ Result behavior:
   Homebrew: it can use an installed manager such as Homebrew, MacPorts, apt, dnf,
   or pacman, then retry the same `file_read` or `file_convert` call. If no
   supported package manager is available, the agent reports that Poppler must be
-  installed so `pdfinfo` and `pdftoppm` are on `PATH`. The file tools never
-  install system packages themselves.
+  installed so `pdfinfo`, `pdftotext`, and `pdftoppm` are on `PATH`. The file
+  tools never install system packages themselves.
 - Notebook reads parse `.ipynb` cells and outputs into a compact text rendering
   plus structured cell metadata.
 - Binary files should return a typed result only when Lin supports the media

@@ -3,7 +3,7 @@
 This document is the working checklist for Lin's local agent integration. Keep
 it current whenever a meaningful agent milestone lands or a priority changes.
 
-Last updated: 2026-06-18
+Last updated: 2026-06-23
 
 ## Current Direction
 
@@ -60,11 +60,14 @@ truth.
   - `file_read` image dimensions, runtime PDF text extraction via `pdftotext`,
     PDF page rendering via `pdftoppm`, provider-neutral PDF tool results, and
     notebook parsing
+  - `file_read` rich-document Markdown ingestion through optional MarkItDown for
+    `.docx`, `.pptx`, `.xlsx`, `.xls`, `.html`, `.htm`, and `.epub`
   - local tool subprocesses use the app environment plus
     `LIN_AGENT_EXTRA_TOOL_PATH` and common macOS Homebrew/system binary paths, so
     GUI-launched app processes can still find installed tools like Poppler and
-    ripgrep; missing-Poppler PDF errors point the agent to `brew install
-    poppler` or `apt-get install poppler-utils`, then retry
+    ripgrep; missing Poppler or MarkItDown errors tell the agent to use `bash`
+    to detect available local tooling, install the dependency without assuming
+    Homebrew, then retry the same file tool call
   - `file_glob` and `file_grep` return local-root-relative paths
   - `file_grep` backed by ripgrep with paginated output modes
   - `file_edit` narrowed to exact non-empty replacements after a full read
