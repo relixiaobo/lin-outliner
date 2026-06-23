@@ -51,23 +51,26 @@ has an entry here, and its status/priority live only here, never in the plan fil
 Items with no `docs/plans/*.md` file are marked *(no plan file)*. All owners are
 unassigned — future dev is not pre-committed to any clone.
 
-**Top of queue (2026-06-22 re-prioritization).** The agent portfolio is done, so the frontier is
+**Top of queue (2026-06-23 re-prioritization).** The agent portfolio is done, so the frontier is
 product surface + polish. Ranked candidates, tagged by build-readiness:
 
 1. **`unified-command-surface`** (P2, *needs a dev one-pager first*) — the largest remaining product
    item; design ratified (D1–D8), retrieval dep shipped (#111). Next step is a dev-drafted build
    one-pager (phases / file-scope / tests) → PM ratify → build. Start here for impact.
-2. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups (residual
+2. **`agent-model-first-picker`** (P2, *direction ratified 2026-06-23 — needs a dev one-pager*) —
+   model-first model picker (merge Provider + Model Override, provider as secondary label,
+   "best available" default); renderer/UX-only, no protocol change. PM-prioritized this round.
+3. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups (residual
    `new Map(prev.byId)` + `nextRevisions` whole-map rebuild), each a small standalone PR; no design gate.
-3. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
+4. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
    `dark-mode-contrast-pass` (runs **last**, cross-cutting light+dark pass). `keyboard-a11y` shipped #273.
-4. **`focus-and-selection-polish`** (P2, build-ready, fast-track) — one renderer-only PR, four small
+5. **`focus-and-selection-polish`** (P2, build-ready, fast-track) — one renderer-only PR, four small
    ratified behaviors (diagnosis is the contract; rebase on current `main`).
-5. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
+6. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
    API-key/Claude-Pro control); presentation-only, light/dark gate.
-6. **`agent-skills-authoring` diff/preview** (P1 tail) — the remaining creative-UX; NL save-as-skill
+7. **`agent-skills-authoring` diff/preview** (P1 tail) — the remaining creative-UX; NL save-as-skill
    routing already shipped (#271).
-7. **`file-preview` PR3** (P2) — media streaming / Office / URL reader; next slice of a shipping plan,
+8. **`file-preview` PR3** (P2) — media streaming / Office / URL reader; next slice of a shipping plan,
    retires the `media-types` whole-file-read limit.
 
 **Needs design / escalation before build** (not in the queue yet): `third-party-skill-import` (write
@@ -269,6 +272,26 @@ Standalone agent items (not part of the program):
   stays (mutually exclusive) — presentation only. Touches `ProviderConfigWindow.tsx`,
   `ProviderOAuthForm.tsx`, i18n en/zh + `i18nCoverage`; design-system neutral tokens
   (B3/B4), UI gate = light/dark visual. Dev drafts the build one-pager.
+- **agent-model-first-picker** (P2, *direction PM-ratified 2026-06-23 — needs a dev-drafted
+  build one-pager*) — make the agent profile's model setting **model-first, not provider-first**.
+  Today `AgentModelEffortSelector` makes the user pick **Provider** (with an `Inherit` abstraction)
+  → **Model Override** (another `Inherit`) → **Thinking Level**; the user's mental model is just
+  "use the best/newest model," and they don't care which connection it comes from. Worse, the product
+  is now **single-agent** (one Neva, #300), so per-profile provider-pinning is vestigial multi-agent
+  baggage. **Goal:** collapse Provider + Model Override into **one "Model" picker** that lists models
+  flat **across all connected providers**, with provider shown only as a **secondary label** per
+  model; **default = "best available"** (the catalog's first-ranked model — which `Inherit` already
+  resolves to today, so the capability exists, only the presentation hides it). When exactly **one**
+  provider is connected, the provider concept should not surface at all. **Key constraint /
+  cheapness:** a model belongs to a connection, so provider can't fully vanish in multi-connection
+  setups (keep it as the secondary label) — but the **saved value stays the canonical
+  `providerId/modelId`** (`core/agentModelId`), so this is **renderer/UX-only, no protocol/data-model
+  change**. **Scope for the dev plan:** the profile editor (`AgentEditor` / `AgentModelEffortSelector`)
+  AND the composer quick-switcher (`AgentComposerModelControl`) for consistency; relabel `Inherit` →
+  "best available" framing; decide the ranking/"best" source (catalog `firstRanked`) and whether the
+  default is sticky-at-setup vs always-newest (escalate that taste call). UI gate = light/dark visual;
+  i18n en/zh. Adjacent to (not blocked by) `anthropic-auth-clarity` (that's connection *setup* UX;
+  this is model *selection* UX).
 
 ### Files & media
 
