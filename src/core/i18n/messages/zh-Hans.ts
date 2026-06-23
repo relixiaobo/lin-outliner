@@ -1336,7 +1336,7 @@ commandPalette: {
     costOutput: '输出成本',
     costCacheRead: '缓存读取成本',
     costCacheWrite: '缓存写入成本',
-    requestWindowLabel: ({ count }) => `新增上下文 · ${count} 条消息`,
+    roundRequestLabel: ({ count, index }) => `第 ${index} 轮请求 · ${count} 条消息`,
     responseLabel: '响应',
     noResponseParts: '尚未捕获任何响应内容。',
     toolExchangesLabel: ({ count }) => `工具调用 · ${count}`,

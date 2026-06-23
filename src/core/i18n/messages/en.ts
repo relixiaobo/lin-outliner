@@ -1456,7 +1456,8 @@ commandPalette: {
     costOutput: 'Output cost',
     costCacheRead: 'Cache read cost',
     costCacheWrite: 'Cache write cost',
-    requestWindowLabel: ({ count }: { count: number }) => `New context · ${count} message${count === 1 ? '' : 's'}`,
+    roundRequestLabel: ({ count, index }: { count: number; index: number }) =>
+      `Round ${index} request · ${count} message${count === 1 ? '' : 's'}`,
     responseLabel: 'Response',
     noResponseParts: 'No response captured yet.',
     toolExchangesLabel: ({ count }: { count: number }) => `Tool calls · ${count}`,

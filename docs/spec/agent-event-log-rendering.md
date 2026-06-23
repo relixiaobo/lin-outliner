@@ -1212,13 +1212,15 @@ with `(conversationId, runId)` from a specific assistant reply, then loads that
 run through `agent_debug_run`; it does not render the old conversation-level
 debug timeline or a selector over every run in the conversation.
 
-The pane follows the debug data structure:
+The pane groups the run projection by inspection task:
 
 ```txt
 run
-  context snapshot (system/developer prompt + tool definitions)
+  context
+    system/developer prompt
+    tool definitions
+    request windows in model order
   rounds[]
-    requestWindow[]
     responseParts[]
     toolExchanges[]
     usage
@@ -1229,11 +1231,14 @@ The run detail is ordered for inspection:
 
 1. **Run summary** — compact run facts: agent/kind/status, model/provider,
    timestamps, duration, aggregate tokens, and aggregate cost.
-2. **Context** — run-level model context that is stable across the run:
-   system/developer instructions and tool definitions/schemas.
-3. **Rounds** — the primary body. Each round is one provider call and contains
-   its request window (history/current user/file/tool-result context in model
-   order), response/thinking parts, tool exchanges, and that round's usage.
+2. **Context** — the model input side, in the order needed to inspect what was
+   sent: system/developer instructions, tool definitions/schemas, then each
+   round's request window (history/current user/file/tool-result context in
+   model order).
+3. **Rounds** — the execution side. Each round is one provider call and contains
+   the response/thinking parts plus tool exchanges produced by that call. Per-round
+   usage remains available as a collapsed diagnostic detail, while the summary
+   carries the main token/cost readout.
 4. **Metadata** — raw identifiers and debug metadata, default-collapsed.
 
 The chat transcript exposes this through an assistant-message **Details** icon

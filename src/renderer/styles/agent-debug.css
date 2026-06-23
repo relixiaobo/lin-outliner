@@ -830,14 +830,6 @@
   padding: 0 var(--space-6) var(--space-6) var(--space-8);
 }
 
-.agent-debug-round-usage {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.agent-debug-round-request,
 .agent-debug-round-response,
 .agent-debug-round-tools {
   display: flex;

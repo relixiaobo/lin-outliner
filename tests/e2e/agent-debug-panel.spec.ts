@@ -6,7 +6,7 @@ test.describe('agent debug panel', () => {
     await openMockedApp(page);
   });
 
-  test('shows a run-focused detail pane with context, process, and usage', async ({ page }) => {
+  test('shows a run-focused detail pane with context and rounds separated', async ({ page }) => {
     await openMockRunDetailsFromAssistantDetailsButton(page);
 
     const debugPanel = page.locator('.outline-panel-surface.is-agent-debug');
@@ -20,16 +20,22 @@ test.describe('agent debug panel', () => {
     await expect(debugPanel.locator('.agent-debug-run-selector-button')).toHaveCount(0);
 
     await expect(debugPanel.getByRole('heading', { name: 'Context', exact: true })).toBeVisible();
-    await expect(debugPanel.getByText('System prompt')).toBeVisible();
-    await expect(debugPanel.getByText('Tools · 1')).toBeVisible();
+    const context = debugPanel.locator('.agent-debug-context-card');
+    await expect(context.getByText('System prompt')).toBeVisible();
+    await expect(context.getByText('Tools · 1')).toBeVisible();
+    await expect(context).toContainText('Round 1 request · 1 message');
+    await expect(context.locator('.agent-debug-message-list')).toContainText('Summarize current outline.');
 
     await expect(debugPanel.getByRole('heading', { name: 'Rounds · 1' })).toBeVisible();
     const round = debugPanel.locator('.agent-debug-round-card').first();
     await expect(round.getByRole('heading', { name: 'Round 1' })).toBeVisible();
-    await expect(round).toContainText('New context · 1 message');
-    await expect(round.locator('.agent-debug-message-list')).toContainText('Summarize current outline.');
+    await expect(round.locator('.agent-debug-round-request')).toHaveCount(0);
+    await expect(round).not.toContainText('Round 1 request · 1 message');
     await expect(round).toContainText('Current outline focuses on UI work.');
     await expect(round).toContainText('Usage');
+
+    const roundUsage = round.locator('details.agent-debug-disclosure', { hasText: 'Usage' });
+    await roundUsage.locator('summary').click();
     await expect(round).toContainText('Input context');
     await expect(round).toContainText('66k');
     await expect(round).toContainText('Cache hit');
@@ -80,7 +86,7 @@ test.describe('agent debug panel', () => {
     await expect(debugPanel.getByRole('heading', { name: 'Context', exact: true })).toBeVisible();
     await expect(debugPanel.getByText('System prompt')).toBeVisible();
     await expect(debugPanel.getByText('Tools · 1')).toBeVisible();
-    await expect(debugPanel.getByRole('heading', { name: 'Usage', exact: true })).toBeVisible();
-    await expect(debugPanel).toContainText('Cache hit');
+    await expect(debugPanel.getByText('Round 1 request · 1 message')).toBeVisible();
+    await expect(debugPanel.getByRole('heading', { name: 'Rounds · 1' })).toBeVisible();
   });
 });
