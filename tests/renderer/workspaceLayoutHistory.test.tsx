@@ -19,6 +19,39 @@ afterEach(() => {
 });
 
 describe('useWorkspaceLayout history focus', () => {
+  test('new file preview panes can open as file-only readers', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-test',
+      panels: [{
+        id: 'panel-test',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'outliner', rootId: 'today' },
+        backStack: [],
+        forwardStack: [],
+      }],
+    });
+
+    act(() => {
+      h.api.navigatePanelPreview('panel-test', { kind: 'asset', assetId: 'asset-alpha', label: 'reader-note.md' }, {
+        newPane: true,
+        nodeId: 'alpha',
+        presentation: 'reader',
+      });
+    });
+
+    const readerPanel = h.api.panels.find((panel) => panel.id !== 'panel-test');
+    expect(readerPanel).toMatchObject({
+      type: 'workspace',
+      view: {
+        kind: 'file-preview',
+        nodeId: 'alpha',
+        presentation: 'reader',
+        target: { kind: 'asset', assetId: 'asset-alpha', label: 'reader-note.md' },
+      },
+    });
+  });
+
   test('back to a scrolled outliner view clears focus without clearing selection state', () => {
     const h = renderLayout({
       activePanelId: 'panel-test',
@@ -81,6 +114,13 @@ function renderLayout(layout: WorkspaceLayout) {
     ...layout,
   }));
   Object.defineProperty(window, 'localStorage', { value: storage, configurable: true });
+  Object.assign(window, {
+    requestAnimationFrame: (callback: FrameRequestCallback) => {
+      callback(Date.now());
+      return 0;
+    },
+    cancelAnimationFrame: () => undefined,
+  });
   Object.assign(globalThis, {
     document,
     window,

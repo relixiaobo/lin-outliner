@@ -389,6 +389,7 @@ export const en = {
       expand: 'Expand',
       collapse: 'Collapse',
       actions: 'Preview actions',
+      openInSplitPane: 'Open in split pane',
       openWithDefault: 'Open with default app',
     },
     agentDock: {

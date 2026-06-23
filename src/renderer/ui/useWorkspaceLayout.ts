@@ -3,6 +3,8 @@ import { todayIsoLocalDate, type DocumentProjection, type NodeId } from '../api/
 import { previewTargetFromUnknown, previewTargetKey, type PreviewTarget } from '../../core/preview';
 import type { NavigateRootOptions } from './shared';
 import type {
+  FilePreviewNavigationOptions,
+  FilePreviewPresentation,
   AgentDebugPanelState,
   OutlinerPanelView,
   PanelView,
@@ -58,8 +60,18 @@ function outlinerView(rootId: NodeId, scrollTop?: number): OutlinerPanelView {
   return withScrollTop({ kind: 'outliner', rootId }, scrollTop);
 }
 
-function filePreviewView(target: PreviewTarget, nodeId?: NodeId, scrollTop?: number): PanelView {
-  return withScrollTop({ kind: 'file-preview', target, ...(nodeId ? { nodeId } : {}) }, scrollTop);
+function filePreviewView(
+  target: PreviewTarget,
+  nodeId?: NodeId,
+  scrollTop?: number,
+  presentation?: FilePreviewPresentation,
+): PanelView {
+  return withScrollTop({
+    kind: 'file-preview',
+    target,
+    ...(nodeId ? { nodeId } : {}),
+    ...(presentation ? { presentation } : {}),
+  }, scrollTop);
 }
 
 function isWorkspacePanel(
@@ -85,7 +97,7 @@ function viewOutlineRootId(view: PanelView): NodeId | null {
 
 function panelViewKey(view: PanelView): string {
   if (view.kind === 'outliner') return `outliner:${view.rootId}`;
-  if (view.nodeId) return `file-preview-node:${view.nodeId}`;
+  if (view.nodeId) return `file-preview-node:${view.nodeId}:${view.presentation ?? 'node'}`;
   return `file-preview:${previewTargetKey(view.target)}`;
 }
 
@@ -101,8 +113,14 @@ function outlinerPanel(id: string, rootId: NodeId, size = 1): WorkspaceContentPa
   return workspacePanel(id, outlinerView(rootId), size);
 }
 
-function filePreviewPanel(id: string, target: PreviewTarget, size = 1, nodeId?: NodeId): WorkspaceContentPanelState {
-  return workspacePanel(id, filePreviewView(target, nodeId), size);
+function filePreviewPanel(
+  id: string,
+  target: PreviewTarget,
+  size = 1,
+  nodeId?: NodeId,
+  presentation?: FilePreviewPresentation,
+): WorkspaceContentPanelState {
+  return workspacePanel(id, filePreviewView(target, nodeId, undefined, presentation), size);
 }
 
 function agentDebugPanel(id: string, conversationId: string | null, size = 1): AgentDebugPanelState {
@@ -138,9 +156,10 @@ function sanitizePanelView(value: unknown, nodeIds: Set<NodeId>): PanelView | nu
   if (value.kind === 'file-preview') {
     const target = previewTargetFromUnknown(value.target);
     const nodeId = typeof value.nodeId === 'string' && nodeIds.has(value.nodeId) ? value.nodeId : undefined;
+    const presentation = value.presentation === 'reader' && nodeId ? value.presentation : undefined;
     // A document asset is only valid here when the file-preview view is bound to
     // its outliner node. Drop legacy asset-targeted previews that have no node id.
-    return target && (target.kind !== 'asset' || nodeId) ? filePreviewView(target, nodeId, scrollTop) : null;
+    return target && (target.kind !== 'asset' || nodeId) ? filePreviewView(target, nodeId, scrollTop, presentation) : null;
   }
   return null;
 }
@@ -385,7 +404,8 @@ export function useWorkspaceLayout({
     focusNode(options?.focus === false ? null : nodeId);
   }, [focusNode]);
 
-  const openPreviewPanel = useCallback((target: PreviewTarget, nodeId?: NodeId) => {
+  const openPreviewPanel = useCallback((target: PreviewTarget, options: FilePreviewNavigationOptions = {}) => {
+    const { nodeId, presentation } = options;
     const keepActive = (panelId: string) => {
       setActivePanelId(panelId);
       window.requestAnimationFrame(() => setActivePanelId(panelId));
@@ -397,36 +417,36 @@ export function useWorkspaceLayout({
       setPanels((prev) => prev.map((panel) => (
         panel.id === replacePanel.id
           ? isWorkspacePanel(panel)
-            ? navigateWorkspacePanel(panel, filePreviewView(target, nodeId))
-            : filePreviewPanel(panel.id, target, panel.size, nodeId)
+            ? navigateWorkspacePanel(panel, filePreviewView(target, nodeId, undefined, presentation))
+            : filePreviewPanel(panel.id, target, panel.size, nodeId, presentation)
           : panel
       )));
     } else {
       const panelId = nextId('panel');
       preparePanelCount(panels.length + 1);
       keepActive(panelId);
-      setPanels((prev) => [...prev, filePreviewPanel(panelId, target, 1, nodeId)]);
+      setPanels((prev) => [...prev, filePreviewPanel(panelId, target, 1, nodeId, presentation)]);
     }
     clearPreviewNavigationState();
   }, [canFitPanelCount, clearPreviewNavigationState, panels, preparePanelCount]);
 
-  const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: { newPane?: boolean; nodeId?: NodeId }) => {
+  const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: FilePreviewNavigationOptions) => {
     if (options?.newPane) {
-      openPreviewPanel(target, options.nodeId);
+      openPreviewPanel(target, options);
       return;
     }
     setActivePanelId(panelId);
     setPanels((prev) => prev.map((panel) => (
       panel.id === panelId && isWorkspacePanel(panel)
-        ? navigateWorkspacePanel(panel, filePreviewView(target, options?.nodeId))
+        ? navigateWorkspacePanel(panel, filePreviewView(target, options?.nodeId, undefined, options?.presentation))
         : panel
     )));
     clearPreviewNavigationState();
   }, [clearPreviewNavigationState, openPreviewPanel]);
 
-  const openPreview = useCallback((target: PreviewTarget, options?: { newPane?: boolean; nodeId?: NodeId }) => {
+  const openPreview = useCallback((target: PreviewTarget, options?: FilePreviewNavigationOptions) => {
     if (options?.newPane) {
-      openPreviewPanel(target, options.nodeId);
+      openPreviewPanel(target, options);
       return;
     }
     const current = panels.find((panel) => panel.id === activePanelId);
@@ -434,7 +454,7 @@ export function useWorkspaceLayout({
       ? current
       : panels.find(isOutlinerPanel) ?? panels.find(isWorkspacePanel);
     if (!targetPanel) {
-      openPreviewPanel(target, options?.nodeId);
+      openPreviewPanel(target, options);
       return;
     }
     navigatePanelPreview(targetPanel.id, target, options);

@@ -40,6 +40,7 @@ import { inlineFileIconKind, INLINE_FILE_ICON_CLASS } from '../editor/inlineFile
 import { highlightCode, isKnownCodeLanguage, plainCodeHtml } from '../editor/shikiHighlighter';
 import { normalizeCodeLanguage } from '../editor/codeLanguages';
 import { wantsNewPaneFromClick } from '../shared';
+import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
 import { formatBytes } from './fileNode';
 import { FilePreviewPill, type FilePreviewMenuAction } from './FilePreviewPill';
 import { usePreviewObjectUrl } from './usePreviewObjectUrl';
@@ -181,7 +182,7 @@ function writePdfReadingPosition(targetKey: string, position: PdfReadingPosition
 
 export interface PreviewRendererProps {
   displayMode: FilePreviewDisplayMode;
-  onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
+  onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   onSummaryPageSelect?: (pageNumber: number) => void;
   source: PreviewFileSource;
   scrollToPageNumber?: number | null;
@@ -232,7 +233,7 @@ export function PreviewRenderer({
 }: {
   displayMode: FilePreviewDisplayMode;
   onSummaryPageSelect?: (pageNumber: number) => void;
-  onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
+  onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   scrollToPageNumber?: number | null;
   onScrollToPageNumberConsumed?: () => void;
   source: PreviewSourceDescriptor;
@@ -258,7 +259,7 @@ export function PreviewRenderer({
 
 export interface FilePreviewShellProps {
   state: PreviewSourceState;
-  onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
+  onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   /** The OS-default-app open action (asset / local file / url). Null when not openable. */
   primaryOpen?: { label: string; run: () => void } | null;
   /** Secondary actions for the `⋯` menu (reveal in Finder, copy, add to outline). */
@@ -267,6 +268,8 @@ export interface FilePreviewShellProps {
   meta?: string | null;
   /** Start in the full reader instead of the summary strip. */
   initialExpanded?: boolean;
+  /** Dedicated split-pane reader: full content only, with header actions outside the preview. */
+  readerMode?: boolean;
 }
 
 /**
@@ -287,6 +290,7 @@ export function FilePreviewShell({
   menuActions = [],
   meta = null,
   initialExpanded = false,
+  readerMode = false,
 }: FilePreviewShellProps) {
   const labels = useT().shell.filePreview;
   const previewRef = useRef<HTMLDivElement | null>(null);
@@ -295,7 +299,8 @@ export function FilePreviewShell({
   const [scrollToPageNumber, setScrollToPageNumber] = useState<number | null>(null);
   const previewable = state.status === 'ready' && isPreviewableSource(state.source);
   const metadataFallback = state.status === 'ready' && !previewable;
-  const displayMode: FilePreviewDisplayMode = previewable && !expanded ? 'summary' : 'full';
+  const effectiveExpanded = readerMode || expanded;
+  const displayMode: FilePreviewDisplayMode = previewable && !effectiveExpanded ? 'summary' : 'full';
   const resizedHeight = displayMode === 'summary' ? previewHeights.summary : previewHeights.full;
   const toggleExpanded = () => {
     setExpanded((value) => {
@@ -345,16 +350,17 @@ export function FilePreviewShell({
     'file-node-preview',
     `file-node-preview--${displayMode}`,
     metadataFallback ? 'file-node-preview--metadata' : '',
+    readerMode ? 'file-node-preview--reader' : '',
     resizedHeight !== undefined ? 'resized' : '',
-    previewable ? (expanded ? 'expanded' : 'collapsed') : '',
+    previewable ? (effectiveExpanded ? 'expanded' : 'collapsed') : '',
   ].filter(Boolean).join(' ');
   const previewStyle = resizedHeight !== undefined
     ? ({ '--file-preview-resized-height': `${resizedHeight}px` } as CSSProperties)
     : undefined;
-  const bodyClass = ['file-node-body', metadataFallback ? 'file-node-body--metadata' : '']
+  const bodyClass = ['file-node-body', metadataFallback ? 'file-node-body--metadata' : '', readerMode ? 'file-node-body--reader' : '']
     .filter(Boolean)
     .join(' ');
-  const pill = state.status !== 'loading' ? (
+  const pill = state.status !== 'loading' && !readerMode ? (
     // Hold the pill until the source resolves: while loading, `previewable` is
     // false, so the primary would briefly be "Open with default app" and a click
     // in that window would open the file externally instead of toggling the
@@ -382,7 +388,7 @@ export function FilePreviewShell({
             onSummaryPageSelect={openSummaryPage}
             source={state.source}
             onOpenTarget={onOpenTarget}
-            scrollToPageNumber={expanded ? scrollToPageNumber : null}
+            scrollToPageNumber={effectiveExpanded ? scrollToPageNumber : null}
             onScrollToPageNumberConsumed={consumeScrollToPageNumber}
             scrollRootRef={previewRef}
           />
@@ -390,7 +396,7 @@ export function FilePreviewShell({
         {metadataFallback ? pill : null}
       </div>
       {metadataFallback ? null : pill}
-      {previewable ? (
+      {previewable && !readerMode ? (
         <div
           aria-label="Resize preview"
           aria-orientation="horizontal"

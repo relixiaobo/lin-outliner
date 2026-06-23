@@ -1,9 +1,12 @@
 import type { PreviewTarget } from '../../../core/preview';
+import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
 
 export const PREVIEW_TARGET_OPEN_EVENT = 'lin:preview-target-open';
 
 export interface PreviewTargetOpenDetail {
   newPane?: boolean;
+  nodeId?: FilePreviewNavigationOptions['nodeId'];
+  presentation?: FilePreviewNavigationOptions['presentation'];
   target: PreviewTarget;
 }
 

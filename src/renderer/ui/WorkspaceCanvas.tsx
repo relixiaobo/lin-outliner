@@ -7,7 +7,7 @@ import { AgentDebugPanel } from './agent/AgentDebugPanel';
 import { FilePreviewPanel } from './preview/FilePreviewPanel';
 import { ResizeHandle } from './primitives/ResizeHandle';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from './shared';
-import type { WorkspacePanelState } from './workspaceLayoutTypes';
+import type { FilePreviewNavigationOptions, WorkspacePanelState } from './workspaceLayoutTypes';
 import type { PreviewTarget } from '../../core/preview';
 import { useT } from '../i18n/I18nProvider';
 
@@ -21,7 +21,7 @@ interface WorkspaceCanvasProps {
   onActivatePanel: (panel: WorkspacePanelState) => void;
   onClosePanel: (panelId: string) => void;
   onNavigatePanelBack: (panelId: string) => void;
-  onNavigatePanelPreview: (panelId: string, target: PreviewTarget, options?: { newPane?: boolean; nodeId?: NodeId }) => void;
+  onNavigatePanelPreview: (panelId: string, target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   onNavigatePanelRoot: (panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => void;
   onPanelScrollPositionChange: (panelId: string, scrollTop: number) => void;
   onPanelResizeReset: (leftPanelId: string, rightPanelId: string) => void;
@@ -94,6 +94,7 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 index={props.index}
                 isNodePinned={props.isNodePinned}
                 nodeId={panel.view.nodeId}
+                presentation={panel.view.presentation}
                 initialScrollTop={panel.view.scrollTop}
                 onBack={() => props.onNavigatePanelBack(panel.id)}
                 onClose={() => props.onClosePanel(panel.id)}
