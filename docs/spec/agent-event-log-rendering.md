@@ -1243,10 +1243,10 @@ The run detail is ordered for inspection:
    and `Current request` (that user message and its attached reminder/file/text
    parts), preserving provider order inside each slice. Model Input uses one
    disclosure-row grammar throughout: top-level items show only their label and
-   count, messages provide scoped one-line summaries, tool-only rows are labeled
-   `tool call` / `tool result` instead of exposing their transport role, and each
-   part can expand into the full body. The section renders these disclosures
-   directly rather than wrapping them in an additional frame.
+   count, messages provide scoped one-line summaries, and rows use short labels
+   such as `user`, `asst`, `call`, and `result` instead of exposing transport
+   roles. Each part can expand into the full body. The section renders these
+   disclosures directly rather than wrapping them in an additional frame.
 3. **Execution** — the execution side. Each rendered item is a provider call
    (internally, one debug `round`: one provider request/response). The visible
    header labels it as `Call N`, hides the default completed state, and keeps
@@ -1254,8 +1254,8 @@ The run detail is ordered for inspection:
    disclosure, default-open. The `Info` hover uses the same token/cost breakdown
    format as the assistant-reply hover, scoped to that provider call. The body is
    a flat, expandable call-event list using the same row grammar as Model Input:
-   a short semantic label (`thinking`, `assistant`, `tool call`, `tool result`)
-   plus a one-line summary, followed by the expandable full body. Tool result
+   a short semantic label (`think`, `asst`, `call`, `result`) plus a one-line
+   summary, followed by the expandable full body. Tool result
    rows use the same part-disclosure control as the rest of the pane, and orphan
    tool calls are synthesized from the exchange args only when the provider
    response did not capture the original tool call.

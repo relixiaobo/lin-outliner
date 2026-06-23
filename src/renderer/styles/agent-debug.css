@@ -615,7 +615,7 @@
 
 .agent-debug-role-label {
   display: inline-flex;
-  width: 86px;
+  width: 58px;
   min-width: 0;
   align-items: center;
   justify-content: flex-start;
@@ -658,7 +658,7 @@
 
 .agent-debug-execution-list > .agent-debug-execution-event > summary {
   display: grid;
-  grid-template-columns: auto 86px minmax(0, 1fr) auto auto;
+  grid-template-columns: auto 58px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--space-3);
   font-size: var(--font-meta);
@@ -672,8 +672,8 @@
 }
 
 .agent-debug-execution-list > .agent-debug-execution-event > summary span {
-  width: 86px;
-  max-width: 86px;
+  width: 58px;
+  max-width: 58px;
   color: var(--text-soft);
   font-family: var(--font-family-mono);
   font-size: var(--font-meta);

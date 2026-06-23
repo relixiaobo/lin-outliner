@@ -567,9 +567,10 @@ function ExecutionToolResultRow({ exchange, index, labels }: { exchange: AgentDe
 }
 
 function executionEventLabel(part: AgentDebugMessagePart, labels: DebugLabels): string {
-  if (part.kind === 'text' && !part.isReminder) return 'assistant';
-  if (part.kind === 'toolCall') return 'tool call';
-  if (part.kind === 'toolResult') return 'tool result';
+  if (part.kind === 'text' && !part.isReminder) return 'asst';
+  if (part.kind === 'toolCall') return 'call';
+  if (part.kind === 'toolResult') return 'result';
+  if (part.kind === 'thinking') return 'think';
   return partTitle(part, labels);
 }
 
@@ -681,9 +682,10 @@ function MessageRow({
 
 function messageRoleLabel(message: AgentDebugMessageRow): string {
   const part = displayPartForMessage(message);
-  if (part?.kind === 'toolCall') return 'tool call';
-  if (part?.kind === 'toolResult') return 'tool result';
-  if (part?.kind === 'text' && message.role === 'tool' && toolResultPrefixPattern.test(part.body)) return 'tool result';
+  if (part?.kind === 'toolCall') return 'call';
+  if (part?.kind === 'toolResult') return 'result';
+  if (part?.kind === 'text' && message.role === 'tool' && toolResultPrefixPattern.test(part.body)) return 'result';
+  if (message.role === 'assistant') return 'asst';
   return message.role;
 }
 

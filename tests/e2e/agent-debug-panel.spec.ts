@@ -55,9 +55,9 @@ test.describe('agent debug panel', () => {
     await expect(round).not.toContainText('History · 2');
     await expect(round).toContainText('Current outline focuses on UI work.');
     const outputRow = round.locator('.agent-debug-execution-event', { hasText: 'Current outline focuses on UI work.' }).first();
-    await expect(outputRow).not.toContainText('tool call');
-    await expect(round.locator('.agent-debug-execution-event', { hasText: 'tool call' })).toContainText('git push origin main');
-    await expect(round.locator('.agent-debug-execution-event', { hasText: 'tool result' })).toContainText('Pushed to origin/main.');
+    await expect(outputRow).not.toContainText('call');
+    await expect(round.locator('.agent-debug-execution-event', { hasText: 'call' })).toContainText('git push origin main');
+    await expect(round.locator('.agent-debug-execution-event', { hasText: 'result' })).toContainText('Pushed to origin/main.');
     await expect(round.locator('.agent-debug-tool-exchange', { hasText: 'bash' })).toContainText('Pushed to origin/main.');
     await round.locator('summary.agent-debug-section-header').click();
     await expect(outputRow).not.toBeVisible();
