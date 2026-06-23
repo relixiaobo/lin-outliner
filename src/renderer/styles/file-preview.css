@@ -4,8 +4,21 @@
   flex-direction: column;
 }
 
+.outline-panel-surface .file-preview-panel--reader {
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
 .file-preview-content {
   min-width: 0;
+}
+
+.file-preview-panel--reader .file-preview-content {
+  display: flex;
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
 }
 
 .file-preview-path-origin {
@@ -21,6 +34,29 @@
   padding: 0 var(--space-1);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.file-preview-reader-title {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.file-preview-reader-actions {
+  display: inline-flex;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  color: color-mix(in srgb, var(--text) 44%, transparent);
+  -webkit-app-region: no-drag;
+}
+
+.file-preview-reader-actions:hover,
+.file-preview-reader-actions:focus-visible,
+.file-preview-reader-actions[aria-expanded='true'] {
+  color: var(--text);
 }
 
 .file-preview-message {
@@ -416,6 +452,14 @@
   max-width: 100%;
 }
 
+.file-node-body--reader {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+
 /* The preview stage is one rounded viewport. Previewable sources toggle between a
    summary strip and the full-scroll renderer; non-previewable metadata keeps its
    natural height inside the same frame. */
@@ -464,6 +508,20 @@
   height: var(--file-preview-expanded-height, min(70vh, 720px));
   overflow: hidden;
   padding-bottom: var(--file-preview-frame-padding-block);
+}
+
+.file-node-preview--reader:not(.collapsed) {
+  padding-bottom: var(--file-preview-frame-padding-block);
+}
+
+.file-node-preview--reader.expanded {
+  min-height: 0;
+  max-height: none;
+  flex: 1 1 auto;
+}
+
+.file-node-preview--reader.expanded:has(> .file-preview-pdf--full) {
+  height: auto;
 }
 
 .file-node-preview.expanded.resized {

@@ -188,7 +188,7 @@ type PreviewTarget =
 
 type PanelView =
   | { kind: 'outliner'; rootId: NodeId; scrollTop?: number }
-  | { kind: 'file-preview'; target: PreviewTarget; nodeId?: NodeId; scrollTop?: number };
+  | { kind: 'file-preview'; target: PreviewTarget; nodeId?: NodeId; presentation?: 'reader'; scrollTop?: number };
 
 interface WorkspaceContentPanelState extends WorkspacePanelBase {
   type: 'workspace';
@@ -317,13 +317,23 @@ sources, but with `nodeId` set. That `nodeId` is the lifecycle switch:
 - With `nodeId`, the view is an ingested file node. The breadcrumb is sourced
   from the outliner ancestry, the title remains the read-only filename, and the
   file node's children outline mounts below the preview hero.
+- With `nodeId` plus `presentation: 'reader'`, the view is a file-only reader.
+  It keeps the node binding so the asset target can persist and sanitize safely,
+  but it does **not** render the file node page: no outliner ancestry breadcrumb,
+  title hero, children outline, References section, Expand/Collapse primary, or
+  inner preview resize handle. The header is a compact back control + filename +
+  `⋯` file-action menu, and the body is the full reader content.
 
 `file-preview` is a workspace-panel view, not an overlay and not part of the
-agent dock. It is opened for outliner file nodes, outliner/agent inline
-local-file refs, visible agent payload rows, and nested links followed from
-inside a preview body (e.g. a directory-listing entry). A plain click opens in
-the active workspace pane when there is one; if the click originates in the agent
-dock, the active workspace pane is used, then the first available workspace pane.
+agent dock. It is opened for outliner file nodes, outliner inline local-file refs,
+agent meta-surface inline local-file refs, visible agent payload rows, and nested
+links followed from inside a preview body (e.g. a directory-listing entry). Live
+agent transcript file chips open the same `file-preview` view with
+`presentation: 'reader'`, so the file-only reader appears in the center workspace
+area by reusing the active/available workspace pane instead of adding a split pane
+or previewing in the agent dock. A plain workspace preview click opens in the
+active workspace pane when there is one; if the click originates in the agent dock,
+the active workspace pane is used, then the first available workspace pane.
 Cmd/Ctrl-click opens a split pane. When the 4-pane cap is already reached,
 preview reuses the rightmost workspace pane and preserves that pane's view
 history so Back can return to the previous outliner or preview view.
@@ -335,8 +345,8 @@ fixed-width primary button plus a separate circular `⋯` menu button), not a to
 toolbar, and that action location is the same for every format. Previewable
 sources use the primary to toggle between a collapsed peek and an expanded
 full-scroll height, and the `⋯` menu carries
-Show-in-Finder / Open-with-default-app / Copy (an ingested asset) or
-Add-to-outline (a loose source). Non-previewable sources render a compact
+Open-in-split-pane / Show-in-Finder / Open-with-default-app / Copy (an ingested
+asset) or Add-to-outline (a loose source). Non-previewable sources render a compact
 metadata fallback card with the file kind and size on one line, modified date on
 its own line, and no icon; the same action bar shows short `Open` as its primary and `⋯` for
 secondary system actions, so unsupported formats do not teach a different control

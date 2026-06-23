@@ -2430,7 +2430,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
         <div className="file-node-row-preview">
           <FilePreviewBody
             node={nonImageFileRow}
-            onOpenTarget={(target, options) => dispatchPreviewTargetOpen({ target, newPane: options?.newPane })}
+            onOpenTarget={(target, options) => dispatchPreviewTargetOpen({
+              target,
+              newPane: options?.newPane,
+              nodeId: options?.nodeId,
+              presentation: options?.presentation,
+            })}
             initialExpanded={false}
           />
         </div>

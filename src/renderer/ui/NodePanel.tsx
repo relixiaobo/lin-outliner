@@ -834,7 +834,12 @@ export function NodePanel(props: NodePanelProps) {
         {fileRoot && (
           <FilePreviewBody
             node={fileRoot}
-            onOpenTarget={(target, options) => dispatchPreviewTargetOpen({ target, newPane: options?.newPane })}
+            onOpenTarget={(target, options) => dispatchPreviewTargetOpen({
+              target,
+              newPane: options?.newPane,
+              nodeId: options?.nodeId,
+              presentation: options?.presentation,
+            })}
           />
         )}
         {showOutliner && (

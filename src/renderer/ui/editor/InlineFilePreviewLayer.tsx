@@ -10,18 +10,19 @@ import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
 import {
   AgentTranscriptFileMenu,
   type AgentTranscriptFile,
+  previewTargetForTranscriptFile,
 } from '../agent/AgentTranscriptFileMenu';
 
-// A transcript file chip points at a working file on disk: clicking it opens the OS
-// default app (not the in-app preview pane), and right-click offers the transcript
-// menu. The split is by LOCATION: a chip with a `[data-agent-transcript-chips]`
+// A transcript file chip points at a working file on disk: clicking it opens the
+// workspace file-only reader in the main canvas (not a split pane), and right-click
+// offers the transcript menu. The split is by LOCATION: a chip with a `[data-agent-transcript-chips]`
 // ancestor is in the live transcript. That marker is set ONCE, on the live assistant
 // message body (AgentAssistantContent), so everything it renders — answer prose,
-// interim narration, and file_write/file_edit result chips — opens externally, while
-// the same components on meta surfaces (compaction/child-run summaries, the child-run
-// details + PoV inspector panels) have no such ancestor and keep the in-app preview.
-// An outliner file reference is a node-model field, never under this marker, so it too
-// keeps its in-app preview behavior.
+// interim narration, and file_write/file_edit result chips — opens in the workspace
+// reader, while the same components on meta surfaces (compaction/child-run summaries,
+// the child-run details + PoV inspector panels) have no such ancestor and keep the
+// normal workspace preview. An outliner file reference is a node-model field, never
+// under this marker, so it too keeps its workspace preview behavior.
 const TRANSCRIPT_CHIP_CONTAINER_SELECTOR = '[data-agent-transcript-chips]';
 
 interface TranscriptFileMenuState {
@@ -181,10 +182,18 @@ export function InlineFilePreviewLayer() {
         hidePreview();
         return;
       }
-      // A transcript chip is a pointer to a working file on disk → open with the OS
-      // default app. An outliner file reference → in-app preview pane (unchanged).
+      // A transcript chip is a pointer to a working file on disk → preview in the
+      // main workspace as a file-only reader. An outliner file reference → normal
+      // workspace preview pane.
       if (isTranscriptChipElement(element)) {
-        void window.lin?.openLocalFile?.({ path: file.path });
+        dispatchPreviewTargetOpen({
+          presentation: 'reader',
+          target: previewTargetForTranscriptFile({
+            entryKind: file.entryKind,
+            name: file.name,
+            path: file.path,
+          }),
+        });
         hidePreview();
         return;
       }

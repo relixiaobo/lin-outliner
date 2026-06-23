@@ -638,6 +638,57 @@ test.describe('file attachments', () => {
     expect(calls.some((call) => call.cmd === 'copy_asset_file')).toBe(true);
   });
 
+  test('file preview menu opens a split pane as a file-only reader', async ({ page }) => {
+    await page.setViewportSize({ width: 1500, height: 900 });
+    await openMockedApp(page);
+    await pasteClipboardFileAndOpenPreview(page, {
+      name: 'reader-note.md',
+      mimeType: 'text/markdown',
+      text: '# Reader note\n\nThis is a split reader.',
+    });
+    const attachmentId = (await todayChildren(page)).at(-1);
+    if (!attachmentId) throw new Error('missing pasted attachment');
+
+    const panelCountBefore = await page.locator('.outline-panel-surface').count();
+    await page.locator('.file-node-row-preview .file-preview-pill-more').click();
+    const inlineMenu = page.getByRole('menu', { name: 'Preview actions' });
+    await inlineMenu.getByRole('menuitem', { name: 'Open in split pane' }).click();
+
+    await expect(page.locator('.outline-panel-surface')).toHaveCount(panelCountBefore + 1);
+    const readerPane = page.locator('.outline-panel-surface.active-panel');
+    await expect(readerPane.locator('.file-preview-panel--reader')).toBeVisible();
+    await expect(readerPane.locator('.panel-breadcrumb-current-label')).toHaveText('reader-note.md');
+    await expect(readerPane.locator('.panel-title-file-heading')).toHaveCount(0);
+    await expect(readerPane.locator('.file-preview-pill')).toHaveCount(0);
+    await expect(readerPane.locator('.file-preview-resize-handle')).toHaveCount(0);
+    await expect(readerPane.locator('.file-preview-markdown h1')).toBeVisible();
+    await expect(readerPane.locator(`[data-trailing-parent-id="${attachmentId}"]`)).toHaveCount(0);
+    await expect(readerPane.locator('.backlinks-section')).toHaveCount(0);
+
+    await expect.poll(async () => page.evaluate(() => {
+      const raw = window.localStorage.getItem('lin-outliner:workspace-layout:v4');
+      if (!raw) return null;
+      const layout = JSON.parse(raw) as {
+        activePanelId?: string;
+        panels?: Array<{ id: string; view?: { kind?: string; nodeId?: string; presentation?: string } }>;
+      };
+      return layout.panels?.find((panel) => panel.id === layout.activePanelId)?.view ?? null;
+    })).toMatchObject({
+      kind: 'file-preview',
+      nodeId: attachmentId,
+      presentation: 'reader',
+    });
+
+    const headerActions = readerPane.locator('.file-preview-reader-actions');
+    await expect(headerActions).toBeVisible();
+    await headerActions.click();
+    const readerMenu = page.getByRole('menu', { name: 'Preview actions' });
+    await expect(readerMenu.getByRole('menuitem', { name: 'Open with default app' })).toBeVisible();
+    await expect(readerMenu.getByRole('menuitem', { name: 'Reveal in Finder' })).toBeVisible();
+    await expect(readerMenu.getByRole('menuitem', { name: 'Copy file' })).toBeVisible();
+    await expect(readerMenu.getByRole('menuitem', { name: 'Open in split pane' })).toHaveCount(0);
+  });
+
   test('expanded childless file rows show an inline child trailing draft', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();

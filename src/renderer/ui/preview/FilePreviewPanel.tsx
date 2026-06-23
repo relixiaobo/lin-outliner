@@ -6,8 +6,10 @@ import {
   useState,
   type Dispatch,
   type DragEvent,
+  type RefObject,
   type SetStateAction,
 } from 'react';
+import { createPortal } from 'react-dom';
 import type { PreviewTarget } from '../../../core/preview';
 import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
@@ -15,10 +17,16 @@ import { useT } from '../../i18n/I18nProvider';
 import { type DocumentIndex, type UiState } from '../../state/document';
 import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import { BacklinksSection } from '../BacklinksSection';
-import { AddChildIcon, FolderIcon, ICON_SIZE, LibraryIcon, MoreIcon } from '../icons';
+import { AddChildIcon, FolderIcon, ICON_SIZE, LibraryIcon, MoreIcon, OpenIcon } from '../icons';
 import { buildOutlinerRows } from '../outliner/row-model';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { MenuItem } from '../primitives/MenuItem';
+import { MenuSurface } from '../primitives/MenuSurface';
+import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
+import { useMenuKeyboard, type MenuInitialFocus } from '../primitives/useMenuKeyboard';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
+import type { FilePreviewNavigationOptions, FilePreviewPresentation } from '../workspaceLayoutTypes';
 import { buildPanelBreadcrumb } from '../panelBreadcrumb';
 import { PanelChildrenOutline, PanelStickyBreadcrumb, usePanelTitleDock } from '../PanelShared';
 import { canAddPreviewTargetToOutline, requestAddPreviewTargetToOutline } from './previewIngest';
@@ -51,11 +59,12 @@ interface FilePreviewPanelProps {
   nodeId?: NodeId;
   onBack: () => void;
   onClose: () => void;
-  onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
+  onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   onScrollPositionChange?: (scrollTop: number) => void;
   onTogglePin: (nodeId: NodeId) => void;
   panelId: string;
+  presentation?: FilePreviewPresentation;
   run: CommandRunner;
   setDragId: (nodeId: NodeId | null) => void;
   setTrigger: (trigger: TriggerState) => void;
@@ -82,12 +91,14 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const attachmentLabels = t.outliner.field.attachment;
   const state = usePreviewSource(props.target);
   const rootNode = props.nodeId ? props.index.byId.get(props.nodeId) : undefined;
-  const fileRoot = isFileNode(rootNode) ? rootNode : null;
-  const nodeTarget = fileRoot ? fileNodeTarget(fileRoot) : null;
+  const readerMode = props.presentation === 'reader';
+  const boundFileNode = isFileNode(rootNode) ? rootNode : null;
+  const fileRoot = readerMode ? null : boundFileNode;
+  const nodeTarget = boundFileNode ? fileNodeTarget(boundFileNode) : null;
   const previewTitle = state.status === 'ready'
     ? sourceTitle(state.source)
     : props.target.label ?? targetTitleFallback(props.target);
-  const title = fileRoot ? fileNodeTitle(fileRoot) || previewTitle : previewTitle;
+  const title = boundFileNode ? fileNodeTitle(boundFileNode) || previewTitle : previewTitle;
   const canOpen = state.status === 'ready' && canOpenPreviewSource(state.source);
   const canReveal = state.status === 'ready' && canRevealPreviewSource(state.source);
   const canAdd = canAddPreviewTargetToOutline(props.target);
@@ -103,7 +114,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const targetKey = useMemo(() => previewTargetFallbackKey(props.target), [props.target]);
   const resetStateRef = useRef<{ nodeId: NodeId | null; targetKey: string } | null>(null);
   const [previewShellKey, setPreviewShellKey] = useState(() =>
-    filePreviewShellKey(props.nodeId ?? null, targetKey),
+    filePreviewShellKey(props.nodeId ?? null, targetKey, props.presentation),
   );
   const initialScrollTopRef = useRef(props.initialScrollTop ?? 0);
   initialScrollTopRef.current = props.initialScrollTop ?? 0;
@@ -159,12 +170,12 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
       && next.nodeId !== null;
     if (!looseToIngested) {
       setBreadcrumbExpanded(false);
-      setPreviewShellKey(filePreviewShellKey(next.nodeId, next.targetKey));
+      setPreviewShellKey(filePreviewShellKey(next.nodeId, next.targetKey, props.presentation));
       restorePanelScroll();
       return;
     }
     requestTitleDockMeasure();
-  }, [fileRoot?.id, props.nodeId, requestTitleDockMeasure, restorePanelScroll, targetKey]);
+  }, [fileRoot?.id, props.nodeId, props.presentation, requestTitleDockMeasure, restorePanelScroll, targetKey]);
 
   useEffect(() => {
     requestTitleDockMeasure();
@@ -206,15 +217,26 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     void props.run(() => api.moveNode(draggedId, fileRoot.id, null));
   };
 
-  const meta = fileRoot
-    ? fileNodePreviewMeta(fileRoot, state, attachmentLabels, previewLabels)
+  const meta = boundFileNode
+    ? fileNodePreviewMeta(boundFileNode, state, attachmentLabels, previewLabels)
     : state.status === 'ready' ? sourceMeta(state.source, previewLabels) : null;
   // An ingested node carries Open-with-default + Reveal/Copy; a loose source carries
   // Open (if openable) + Show-in-Finder (on-disk sources) + Add-to-outline.
-  const fileControls = fileRoot
-    ? fileNodePreviewControls(fileRoot, nodeTarget ?? props.target, attachmentLabels, previewLabels)
+  const openSplitReader = boundFileNode && !readerMode
+    ? () => props.onOpenTarget(nodeTarget ?? props.target, {
+        newPane: true,
+        nodeId: boundFileNode.id,
+        presentation: 'reader',
+      })
+    : undefined;
+  const fileControls = boundFileNode
+    ? fileNodePreviewControls(boundFileNode, nodeTarget ?? props.target, attachmentLabels, previewLabels, {
+        openInSplit: openSplitReader,
+      })
     : null;
-  const primaryOpen = fileControls
+  const primaryOpen = readerMode
+    ? null
+    : fileControls
     ? fileControls.primaryOpen
     : canOpen
       // A url opens in the browser; an on-disk source opens with its default app.
@@ -240,19 +262,33 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
             }]
           : []),
       ];
+  const readerOpenAction = readerMode && canOpen
+    ? fileControls?.primaryOpen ?? {
+        label: props.target.kind === 'url' ? previewLabels.openInBrowser : previewLabels.openWithDefault,
+        run: openOriginal,
+      }
+    : null;
+  const readerMenuActions: FilePreviewMenuAction[] = readerMode
+    ? [
+        ...(readerOpenAction
+          ? [{ key: 'open', label: readerOpenAction.label, icon: OpenIcon, run: readerOpenAction.run }]
+          : []),
+        ...menuActions,
+      ]
+    : [];
   const ingestedBreadcrumb = fileRoot ? buildPanelBreadcrumb(fileRoot, props.index) : null;
   const ingestedBreadcrumbNodes = ingestedBreadcrumb
     ? ingestedBreadcrumb.collapsed && breadcrumbExpanded
       ? [ingestedBreadcrumb.nodes[0], ...ingestedBreadcrumb.hiddenNodes, ...ingestedBreadcrumb.nodes.slice(1)]
       : ingestedBreadcrumb.nodes
     : [];
-  const looseBreadcrumbSegments = !fileRoot
+  const looseBreadcrumbSegments = !fileRoot && !readerMode
     ? looseBreadcrumbFor(props.target, state, previewLabels)
     : [];
 
   return (
     <main
-      className="main-panel file-preview-panel"
+      className={`main-panel file-preview-panel ${readerMode ? 'file-preview-panel--reader' : ''}`}
       ref={mainPanelRef}
       aria-label={title}
       onScroll={handlePanelScroll}
@@ -262,7 +298,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
         canGoBack={props.canGoBack}
         closeLabel={t.nodePanel.closePanel}
         currentTitle={title}
-        origin={fileRoot ? (
+        origin={readerMode ? null : fileRoot ? (
           <ButtonControl
             aria-label={t.nodePanel.openLibrary}
             className="panel-breadcrumb-origin"
@@ -282,7 +318,22 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
         stickyRef={stickyBreadcrumbRef}
         titleDocked={titleDocked}
       >
-        {fileRoot ? (
+        {readerMode ? (
+          <>
+            <span className="panel-breadcrumb-segment panel-breadcrumb-current file-preview-reader-title">
+              <span className="panel-breadcrumb-current-label" data-current-page-title title={title}>
+                {title}
+              </span>
+            </span>
+            {readerMenuActions.length > 0 ? (
+              <FilePreviewHeaderMenu
+                actions={readerMenuActions}
+                ariaLabel={previewLabels.actions}
+                meta={meta}
+              />
+            ) : null}
+          </>
+        ) : fileRoot ? (
           <>
             {ingestedBreadcrumbNodes.map((node, index) => {
               const label = node.content.text || t.common.untitled;
@@ -325,20 +376,24 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
         )}
       </PanelStickyBreadcrumb>
       <div className="panel-inner file-preview-content">
-        <header className="panel-header">
-          <div className="panel-title-row" ref={titleRowRef}>
-            <div className="panel-title-editor" aria-label={t.nodePanel.pageTitleAriaLabel}>
-              <h1 className="panel-title-file-heading" title={title}>{title}</h1>
+        {!readerMode ? (
+          <header className="panel-header">
+            <div className="panel-title-row" ref={titleRowRef}>
+              <div className="panel-title-editor" aria-label={t.nodePanel.pageTitleAriaLabel}>
+                <h1 className="panel-title-file-heading" title={title}>{title}</h1>
+              </div>
             </div>
-          </div>
-        </header>
+          </header>
+        ) : null}
         <FilePreviewShell
           key={previewShellKey}
           state={state}
           onOpenTarget={props.onOpenTarget}
           primaryOpen={primaryOpen}
-          menuActions={menuActions}
+          menuActions={readerMode ? [] : menuActions}
           meta={meta}
+          initialExpanded={readerMode}
+          readerMode={readerMode}
         />
         {fileRoot && (
           <>
@@ -408,6 +463,133 @@ function previewTargetFallbackKey(target: PreviewTarget): string {
   return target.url;
 }
 
-function filePreviewShellKey(nodeId: NodeId | null, targetKey: string): string {
-  return `${nodeId ?? 'loose'}:${targetKey}`;
+function filePreviewShellKey(
+  nodeId: NodeId | null,
+  targetKey: string,
+  presentation: FilePreviewPresentation | undefined,
+): string {
+  return `${nodeId ?? 'loose'}:${targetKey}:${presentation ?? 'default'}`;
+}
+
+function FilePreviewHeaderMenu({
+  actions,
+  ariaLabel,
+  meta,
+}: {
+  actions: FilePreviewMenuAction[];
+  ariaLabel: string;
+  meta: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [menuInitialFocus, setMenuInitialFocus] = useState<MenuInitialFocus>('surface');
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const dismissIgnoreRefs = useMemo(() => [triggerRef], []);
+
+  return (
+    <>
+      <ButtonControl
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={ariaLabel}
+        className="file-preview-reader-actions"
+        onClick={(event) => {
+          event.stopPropagation();
+          const nextOpen = !open;
+          if (nextOpen) setMenuInitialFocus(event.detail === 0 ? 'auto' : 'surface');
+          setOpen(nextOpen);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+          event.preventDefault();
+          event.stopPropagation();
+          setMenuInitialFocus('auto');
+          setOpen(true);
+        }}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+        ref={triggerRef}
+      >
+        <MoreIcon size={ICON_SIZE.menu} />
+      </ButtonControl>
+      {open ? (
+        <FilePreviewHeaderActionMenu
+          actions={actions}
+          anchorRef={triggerRef}
+          ariaLabel={ariaLabel}
+          dismissIgnoreRefs={dismissIgnoreRefs}
+          initialFocus={menuInitialFocus}
+          meta={meta}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function FilePreviewHeaderActionMenu({
+  actions,
+  anchorRef,
+  ariaLabel,
+  dismissIgnoreRefs,
+  initialFocus,
+  meta,
+  onClose,
+}: {
+  actions: FilePreviewMenuAction[];
+  anchorRef: RefObject<HTMLElement | null>;
+  ariaLabel: string;
+  dismissIgnoreRefs: Array<RefObject<HTMLElement | null>>;
+  initialFocus: MenuInitialFocus;
+  meta: string | null;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const style = useAnchoredOverlay(menuRef, {
+    anchorRef,
+    maxHeight: 280,
+    placement: 'bottom-end',
+    width: 220,
+  });
+  useDismissibleOverlay(menuRef, onClose, { escape: false, ignoreRefs: dismissIgnoreRefs });
+  const { onKeyDown } = useMenuKeyboard({
+    surfaceRef: menuRef,
+    onClose,
+    kind: 'menu',
+    getRestoreTarget: () => (anchorRef.current instanceof HTMLElement ? anchorRef.current : null),
+    initialFocus,
+  });
+
+  return createPortal(
+    <MenuSurface
+      aria-label={ariaLabel}
+      className="node-context-menu"
+      preserveSelection
+      onKeyDown={onKeyDown}
+      onMouseDown={(event) => event.stopPropagation()}
+      ref={menuRef}
+      role="menu"
+      style={style}
+    >
+      {meta ? <div className="file-preview-menu-meta" aria-hidden="true">{meta}</div> : null}
+      {actions.map((action) => {
+        const Icon = action.icon;
+        return (
+          <MenuItem
+            key={action.key}
+            className="node-context-item"
+            icon={<Icon size={ICON_SIZE.menu} />}
+            label={action.label}
+            onClick={() => {
+              onClose();
+              action.run();
+            }}
+            role="menuitem"
+          />
+        );
+      })}
+    </MenuSurface>,
+    document.body,
+  );
 }

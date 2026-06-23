@@ -360,6 +360,7 @@ export const zhHans: PartialMessages = {
       expand: '展开',
       collapse: '收起',
       actions: '预览操作',
+      openInSplitPane: '在分栏中打开',
       openWithDefault: '用默认程序打开',
     },
     agentDock: {

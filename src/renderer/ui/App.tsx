@@ -39,6 +39,7 @@ import { useWorkspacePinnedNodes } from './useWorkspacePinnedNodes';
 import { useT } from '../i18n/I18nProvider';
 import { InlineFilePreviewLayer } from './editor/InlineFilePreviewLayer';
 import { onPreviewTargetOpen } from './preview/previewEvents';
+import type { FilePreviewNavigationOptions } from './workspaceLayoutTypes';
 import { fileNodeTarget, isFileNode } from './preview/fileNode';
 import {
   persistOutlineViewState,
@@ -332,14 +333,14 @@ export function App() {
 
   const openFilePreviewForNode = useCallback((
     nodeId: NodeId,
-    options?: NavigateRootOptions & { panelId?: string },
+    options?: NavigateRootOptions & { panelId?: string; presentation?: FilePreviewNavigationOptions['presentation'] },
   ): boolean => {
     const fileTarget = filePreviewTargetForNode(nodeId);
     if (!fileTarget) return false;
     if (options?.panelId) {
-      setPanelPreview(options.panelId, fileTarget, { newPane: options.newPane, nodeId });
+      setPanelPreview(options.panelId, fileTarget, { newPane: options.newPane, nodeId, presentation: options.presentation });
     } else {
-      openPreview(fileTarget, { newPane: options?.newPane, nodeId });
+      openPreview(fileTarget, { newPane: options?.newPane, nodeId, presentation: options?.presentation });
     }
     restoreNodeInOutliner(nodeId);
     return true;
@@ -385,8 +386,8 @@ export function App() {
     focusNode(nodeId as NodeId);
   }) ?? undefined, [navigateRoot, focusNode]);
 
-  useEffect(() => onPreviewTargetOpen(({ newPane, target }) => {
-    openPreview(target, { newPane });
+  useEffect(() => onPreviewTargetOpen(({ newPane, nodeId, presentation, target }) => {
+    openPreview(target, { newPane, nodeId, presentation });
   }), [openPreview]);
 
   const navigatePanelRoot = useCallback((panelId: string, nodeId: NodeId, options?: NavigateRootOptions) => {
@@ -405,7 +406,7 @@ export function App() {
     recordNodeLanding(nodeId);
   }, [openFilePreviewForNode, openPanel, recordNodeLanding, restoreNodeInOutliner, setPanelRoot]);
 
-  const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: { newPane?: boolean; nodeId?: NodeId }) => {
+  const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: FilePreviewNavigationOptions) => {
     setPanelPreview(panelId, target, options);
   }, [setPanelPreview]);
 

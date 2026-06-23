@@ -2,7 +2,8 @@ import { useMemo, type ComponentType } from 'react';
 import type { PreviewTarget } from '../../../core/preview';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
-import { CopyIcon, FolderIcon } from '../icons';
+import { CopyIcon, FolderIcon, OpenIcon } from '../icons';
+import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
 import { fileNodeMeta, fileNodeTarget, type FileNode } from './fileNode';
 import { fileNodeAssetActions, type FileNodeAssetActionKey } from './fileNodeActions';
 import type { FilePreviewMenuAction } from './FilePreviewPill';
@@ -20,7 +21,7 @@ const ASSET_MENU_ICON: Record<Exclude<FileNodeAssetActionKey, 'open'>, Component
 
 interface FilePreviewBodyProps {
   node: FileNode;
-  onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
+  onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   // Previewable sources start in summary mode (a bounded thumbnail strip for PDFs)
   // and Expand switches into the full scrollable renderer.
   initialExpanded?: boolean;
@@ -70,14 +71,16 @@ function FilePreviewBodyResolved({
 }: {
   node: FileNode;
   target: PreviewTarget;
-  onOpenTarget: (target: PreviewTarget, options?: { newPane?: boolean }) => void;
+  onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   initialExpanded: boolean;
 }) {
   const state = usePreviewSource(target);
   const attachmentLabels = useT().outliner.field.attachment;
   const previewLabels = useT().shell.filePreview;
   const meta = fileNodePreviewMeta(node, state, attachmentLabels, previewLabels);
-  const { primaryOpen, menuActions } = fileNodePreviewControls(node, target, attachmentLabels, previewLabels);
+  const { primaryOpen, menuActions } = fileNodePreviewControls(node, target, attachmentLabels, previewLabels, {
+    openInSplit: () => onOpenTarget(target, { newPane: true, nodeId: node.id, presentation: 'reader' }),
+  });
 
   return (
     <FilePreviewShell
@@ -116,7 +119,16 @@ export function fileNodePreviewControls(
   target: PreviewTarget,
   attachmentLabels: Parameters<typeof fileNodeAssetActions>[1],
   previewLabels: ReturnType<typeof useT>['shell']['filePreview'],
+  options: { openInSplit?: () => void } = {},
 ): { primaryOpen: { label: string; run: () => void } | null; menuActions: FilePreviewMenuAction[] } {
+  const openInSplitAction: FilePreviewMenuAction[] = options.openInSplit
+    ? [{
+        key: 'open-in-split',
+        label: previewLabels.openInSplitPane,
+        icon: OpenIcon,
+        run: options.openInSplit,
+      }]
+    : [];
   const assetId = node.assetId;
   if (assetId) {
     const actions = fileNodeAssetActions(assetId, attachmentLabels);
@@ -131,14 +143,14 @@ export function fileNodePreviewControls(
       }));
     return {
       primaryOpen: open ? { label: previewLabels.openWithDefault, run: open.run } : null,
-      menuActions,
+      menuActions: [...openInSplitAction, ...menuActions],
     };
   }
   if (target.kind === 'url') {
     return {
       primaryOpen: { label: previewLabels.openInBrowser, run: () => void api.openExternalUrl(target.url) },
-      menuActions: [],
+      menuActions: openInSplitAction,
     };
   }
-  return { primaryOpen: null, menuActions: [] };
+  return { primaryOpen: null, menuActions: openInSplitAction };
 }

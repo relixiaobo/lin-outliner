@@ -17,8 +17,17 @@ export interface OutlinerPanelView {
 export interface FilePreviewPanelView {
   kind: 'file-preview';
   nodeId?: NodeId;
+  presentation?: FilePreviewPresentation;
   scrollTop?: number;
   target: PreviewTarget;
+}
+
+export type FilePreviewPresentation = 'reader';
+
+export interface FilePreviewNavigationOptions {
+  newPane?: boolean;
+  nodeId?: NodeId;
+  presentation?: FilePreviewPresentation;
 }
 
 export type PanelView = OutlinerPanelView | FilePreviewPanelView;
