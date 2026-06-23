@@ -329,6 +329,7 @@ function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDeb
 }
 
 function RoundCard({ round, labels }: { round: AgentDebugRound; labels: DebugLabels }) {
+  const outputParts = roundOutputParts(round);
   return (
     <article className="agent-debug-round-card">
       <div className="agent-debug-section-header">
@@ -339,24 +340,38 @@ function RoundCard({ round, labels }: { round: AgentDebugRound; labels: DebugLab
         <UsageInfoHover labels={labels} usage={round.usage} />
       </div>
 
-      <div className="agent-debug-round-response">
-        <DebugSectionHeader title={labels.responseLabel} />
-        {round.responseParts.length === 0 ? (
-          <div className="is-muted">{labels.noResponseParts}</div>
-        ) : (
-          <div className="agent-debug-part-list">
-            {round.responseParts.map((part, index) => <PartRow key={index} part={part} index={index} rowId={`${round.index}-resp`} labels={labels} />)}
-          </div>
-        )}
+      <div className="agent-debug-round-flow">
+        {outputParts.length === 0 && round.toolExchanges.length === 0 ? (
+          <div className="is-muted">{labels.noExecutionOutput}</div>
+        ) : null}
+        {outputParts.length > 0 ? (
+          <FlowStep label={labels.modelOutputLabel}>
+            <div className="agent-debug-part-list">
+              {outputParts.map((part, index) => <PartRow key={index} part={part} index={index} rowId={`${round.index}-resp`} labels={labels} />)}
+            </div>
+          </FlowStep>
+        ) : null}
+        {round.toolExchanges.map((exchange, index) => (
+          <FlowStep key={exchange.toolCallId} label={labels.toolExchangeFlowLabel({ count: round.toolExchanges.length, index: index + 1 })}>
+            <ToolExchangeRow exchange={exchange} labels={labels} />
+          </FlowStep>
+        ))}
       </div>
-
-      {round.toolExchanges.length > 0 ? (
-        <div className="agent-debug-round-tools">
-          <DebugSectionHeader title={labels.toolExchangesLabel({ count: round.toolExchanges.length })} />
-          {round.toolExchanges.map((exchange) => <ToolExchangeRow key={exchange.toolCallId} exchange={exchange} labels={labels} />)}
-        </div>
-      ) : null}
     </article>
+  );
+}
+
+function roundOutputParts(round: AgentDebugRound): AgentDebugMessagePart[] {
+  const exchangedToolCallIds = new Set(round.toolExchanges.map((exchange) => exchange.toolCallId));
+  return round.responseParts.filter((part) => part.kind !== 'toolCall' || !exchangedToolCallIds.has(part.toolUseId));
+}
+
+function FlowStep({ children, label }: { children: ReactNode; label: string }) {
+  return (
+    <div className="agent-debug-flow-step">
+      <div className="agent-debug-flow-label">{label}</div>
+      <div className="agent-debug-flow-body">{children}</div>
+    </div>
   );
 }
 

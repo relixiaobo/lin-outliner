@@ -44,7 +44,12 @@ test.describe('agent debug panel', () => {
     await expect(round.getByRole('heading', { name: 'Model call 1' })).toBeVisible();
     await expect(round.locator('.agent-debug-round-request')).toHaveCount(0);
     await expect(round).not.toContainText('History · 2');
+    await expect(round).toContainText('Model output');
+    await expect(round).toContainText('Tool');
+    await expect(round).toContainText('Identify relevant outline nodes.');
     await expect(round).toContainText('Current outline focuses on UI work.');
+    await expect(round.locator('.agent-debug-flow-step', { hasText: 'Model output' })).not.toContainText('tool_call bash');
+    await expect(round.locator('.agent-debug-tool-exchange', { hasText: 'bash' })).toContainText('Pushed to origin/main.');
     await expect(round.locator('details.agent-debug-disclosure', { hasText: 'Usage' })).toHaveCount(0);
 
     await round.getByRole('button', { name: 'Usage' }).hover();

@@ -1237,11 +1237,17 @@ The run detail is ordered for inspection:
    instructions, tool definitions/schemas, and the captured provider message
    window (history/current user/file context, or the compacted summary message if
    compaction already replaced older history) from the final outbound provider
-   request, normalized for display.
+   request, normalized for display. The message window is presented as direct
+   sibling sections: `History` (messages before the final outbound user message)
+   and `Current request` (that user message and its attached reminder/file/text
+   parts), preserving provider order inside each slice.
 3. **Execution** — the execution side. Each rendered item is a **model call**
-   (internally, one debug `round`: one provider request/response). It contains
-   response/thinking parts plus tool exchanges produced by that call. Per-call
-   usage remains available as a collapsed diagnostic detail, while the summary
+   (internally, one debug `round`: one provider request/response). It is displayed
+   as a compact flow: `Model output` (text/thinking plus any orphan tool request)
+   followed by `Tool` exchange rows (tool arguments + tool result) produced by
+   that call. Tool requests that have a matching exchange are not repeated in
+   `Model output`; their arguments live with the exchange. Per-call usage/cost is
+   available from an `Info` hover in the model-call header, while the run summary
    carries the main token/cost readout.
 
 The chat transcript exposes this through an assistant-message **Details** icon

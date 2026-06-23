@@ -918,12 +918,39 @@
   padding: 0 var(--space-6) var(--space-6) var(--space-8);
 }
 
-.agent-debug-round-response,
-.agent-debug-round-tools {
+.agent-debug-round-flow {
   display: flex;
   min-width: 0;
   flex-direction: column;
+  gap: var(--space-3);
+}
+
+.agent-debug-flow-step {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: start;
   gap: var(--space-4);
+}
+
+.agent-debug-flow-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  font-weight: 600;
+  line-height: var(--line-meta);
+  padding-top: var(--space-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-debug-flow-body {
+  min-width: 0;
+}
+
+.agent-debug-flow-body > .agent-debug-part-list {
+  gap: var(--space-2);
 }
 
 .agent-debug-tool-list {
