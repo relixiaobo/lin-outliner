@@ -219,16 +219,6 @@
   flex: 0 0 auto;
 }
 
-.agent-debug-disclosure-preview {
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-  color: var(--text-soft);
-  font-weight: 400;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .agent-debug-disclosure > summary > .agent-debug-copy-button {
   margin-left: auto;
 }

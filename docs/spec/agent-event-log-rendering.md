@@ -1242,10 +1242,10 @@ The run detail is ordered for inspection:
    sibling sections: `History` (messages before the final outbound user message)
    and `Current request` (that user message and its attached reminder/file/text
    parts), preserving provider order inside each slice. Model Input uses one
-   disclosure-row grammar throughout: each top-level item is a one-line summary
-   when collapsed, messages expand into their part summaries, and each part can
-   expand into the full body. The section renders these disclosures directly
-   rather than wrapping them in an additional frame.
+   disclosure-row grammar throughout: top-level items show only their label and
+   count, messages provide scoped one-line summaries, and each part can expand
+   into the full body. The section renders these disclosures directly rather than
+   wrapping them in an additional frame.
 3. **Execution** — the execution side. Each rendered item is a provider call
    (internally, one debug `round`: one provider request/response). The visible
    header labels it as `Call N`, hides the default completed state, and keeps
