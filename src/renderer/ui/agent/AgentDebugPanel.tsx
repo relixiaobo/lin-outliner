@@ -311,13 +311,20 @@ function RunDetail({ run, labels }: { run: AgentDebugRun; labels: DebugLabels })
 }
 
 function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDebugRun }) {
+  const toolsPreview = run.tools.length > 0
+    ? run.tools.slice(0, 4).map((tool) => tool.name).join(', ')
+    : labels.noTools;
   return (
     <DebugPanelSection className="agent-debug-model-input-section" title={labels.modelInputTitle}>
       <div className="agent-debug-context-card">
-        <ContextDisclosure title={labels.systemPromptDisclosure} copyText={run.systemPrompt ?? ''} defaultOpen>
+        <ContextDisclosure
+          copyText={run.systemPrompt ?? ''}
+          preview={run.systemPrompt ? truncate(run.systemPrompt) : labels.empty}
+          title={labels.systemPromptDisclosure}
+        >
           {run.systemPrompt ? <pre>{run.systemPrompt}</pre> : <span className="is-muted">{labels.empty}</span>}
         </ContextDisclosure>
-        <ContextDisclosure title={labels.toolsDisclosure({ count: run.tools.length })}>
+        <ContextDisclosure preview={toolsPreview} title={labels.toolsDisclosure({ count: run.tools.length })}>
           {run.tools.length === 0 ? <span className="is-muted">{labels.noTools}</span> : (
             <div className="agent-debug-tool-list">
               {run.tools.map((tool) => (
@@ -602,12 +609,19 @@ function ModelInputMessageSections({ messages, labels }: { messages: AgentDebugM
   return (
     <>
       {groups.history.length > 0 ? (
-        <ContextDisclosure title={labels.inputHistoryDisclosure({ count: groups.history.length })}>
+        <ContextDisclosure
+          preview={messagesPreview(groups.history)}
+          title={labels.inputHistoryDisclosure({ count: groups.history.length })}
+        >
           <MessageList messages={groups.history} labels={labels} />
         </ContextDisclosure>
       ) : null}
       {groups.current.length > 0 ? (
-        <ContextDisclosure defaultOpen title={labels.currentRequestDisclosure}>
+        <ContextDisclosure
+          defaultOpen
+          preview={messagesPreview(groups.current)}
+          title={labels.currentRequestDisclosure}
+        >
           <MessageList messages={groups.current} labels={labels} />
         </ContextDisclosure>
       ) : null}
@@ -647,24 +661,31 @@ function MessageRow({
   labels: DebugLabels;
   message: AgentDebugMessageRow;
 }) {
-  const visibleParts = shouldShowMessageParts(message.parts);
   const summary = messageSummaryText(message);
   return (
-    <article className={`agent-debug-message-row${visibleParts ? '' : ' is-compact'}${className ? ` ${className}` : ''}`}>
-      <div className="agent-debug-message-head">
+    <details className={`agent-debug-message-row${className ? ` ${className}` : ''}`}>
+      <summary className="agent-debug-message-head">
+        <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
         <span className={`agent-debug-role-pill is-${message.role}`}>{message.role}</span>
         <strong title={summary}>{summary}</strong>
         <code>{formatBytes(message.bytes)}</code>
-      </div>
-      {visibleParts ? (
+      </summary>
+      {message.parts.length > 0 ? (
         <div className="agent-debug-part-list">
           {message.parts.map((part, index) => (
             <PartRow part={part} rowId={message.id} index={index} key={`${message.id}-${index}`} labels={labels} />
           ))}
         </div>
       ) : null}
-    </article>
+    </details>
   );
+}
+
+function messagesPreview(messages: AgentDebugMessageRow[]): string {
+  return truncate(messages.slice(0, 2).map((message) => {
+    const summary = messageSummaryText(message);
+    return `${message.role}: ${summary}`;
+  }).join(' · '));
 }
 
 function messageSummaryText(message: AgentDebugMessageRow): string {
@@ -680,12 +701,6 @@ function messageSummaryText(message: AgentDebugMessageRow): string {
   }
   const prefix = `${message.role}: `;
   return message.summary.startsWith(prefix) ? message.summary.slice(prefix.length) : message.summary;
-}
-
-function shouldShowMessageParts(parts: AgentDebugMessagePart[]): boolean {
-  if (parts.length !== 1) return true;
-  const [part] = parts;
-  return !(part?.kind === 'text' && !part.isReminder);
 }
 
 function shortId(value: string): string {
@@ -732,9 +747,10 @@ function PartRow({
   );
 }
 
-function ContextDisclosure(props: { children: ReactNode; copyText?: string; defaultOpen?: boolean; title: string }) {
+function ContextDisclosure(props: { children: ReactNode; copyText?: string; defaultOpen?: boolean; preview?: string; title: string }) {
   const labels = useT().agentDebug;
   const [open, setOpen] = useState(Boolean(props.defaultOpen));
+  const preview = props.preview ? truncate(props.preview) : '';
 
   useEffect(() => {
     setOpen(Boolean(props.defaultOpen));
@@ -748,7 +764,8 @@ function ContextDisclosure(props: { children: ReactNode; copyText?: string; defa
     >
       <summary>
         <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.menu} />
-        <span>{props.title}</span>
+        <span className="agent-debug-disclosure-title">{props.title}</span>
+        {preview ? <strong className="agent-debug-disclosure-preview" title={preview}>{preview}</strong> : null}
         {props.copyText !== undefined && props.copyText !== '' ? (
           <IconButton
             className="agent-debug-copy-button"

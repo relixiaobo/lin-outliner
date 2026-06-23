@@ -26,18 +26,21 @@ test.describe('agent debug panel', () => {
     const context = debugPanel.locator('.agent-debug-context-card');
     await expect(context).toHaveCSS('border-left-width', '0px');
     await expect(context.getByText('System prompt')).toBeVisible();
-    const systemPrompt = context.locator('pre').first();
+    const systemPromptDisclosure = context.locator('details.agent-debug-disclosure', { hasText: 'System prompt' }).first();
+    const systemPrompt = systemPromptDisclosure.locator('pre').first();
+    await expect(systemPrompt).toBeHidden();
+    await systemPromptDisclosure.locator('summary').click();
     await expect(systemPrompt).toBeVisible();
     await expect.poll(async () => systemPrompt.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
     await expect(context.getByText('Tools · 1')).toBeVisible();
     await expect(context.getByText('Message window · 3')).toHaveCount(0);
     const history = context.locator('details.agent-debug-disclosure', { hasText: 'History · 2' });
-    await expect(history.locator('summary')).toBeVisible();
-    await history.locator('summary').click();
+    await expect(history.locator(':scope > summary')).toBeVisible();
+    await history.locator(':scope > summary').click();
     await expect(history).toContainText('Generate a PPT about Fable 5.');
     await expect(history).toContainText('PPT generated with 11 slides.');
     const currentRequest = context.locator('details.agent-debug-disclosure', { hasText: 'Current request' });
-    await expect(currentRequest.locator('summary')).toBeVisible();
+    await expect(currentRequest.locator(':scope > summary')).toBeVisible();
     await expect(currentRequest).toContainText('Summarize current outline.');
 
     await expect(debugPanel.getByRole('heading', { name: 'Execution · 1' })).toBeVisible();
