@@ -387,6 +387,9 @@ function providerContentToPersisted(value: unknown): AgentPersistedContent[] {
       .join('\n');
     return [{ type: 'text', text: toolUseId ? `[tool_result ${toolUseId}] ${text}`.trim() : text }];
   }
+  if (type === 'input_file' || type === 'file') {
+    return [{ type: 'text', text: `[file ${stringValue(value.filename) || stringValue(value.name) || 'attachment'}]` }];
+  }
   if (type === 'image' || type === 'input_image') return [{ type: 'text', text: stringValue(value.alt) || '[image]' }];
   if ('text' in value || 'content' in value) {
     const text = stringValue(value.text) || stringValue(value.content);

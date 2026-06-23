@@ -237,6 +237,24 @@ describe('extractRunSnapshotFromPayload', () => {
     ]);
   });
 
+  test('summarizes final provider file parts without exposing inline file data', () => {
+    const snapshot = extractRunSnapshotFromPayload({
+      input: [{
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'Read this PDF.' },
+          { type: 'input_file', filename: 'sample.pdf', file_data: 'data:application/pdf;base64,secret-bytes' },
+        ],
+      }],
+    });
+
+    expect(snapshot.messages[0]?.content).toEqual([
+      { type: 'text', text: 'Read this PDF.' },
+      { type: 'text', text: '[file sample.pdf]' },
+    ]);
+    expect(JSON.stringify(snapshot.messages)).not.toContain('secret-bytes');
+  });
+
   test('degrades to empty on a non-record payload', () => {
     expect(extractRunSnapshotFromPayload('nope')).toEqual({ systemPrompt: '', tools: [], messages: [] });
   });

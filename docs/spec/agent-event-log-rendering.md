@@ -1236,7 +1236,8 @@ The run detail is ordered for inspection:
 2. **Model Input** — the input side that seeded this run: system/developer
    instructions, tool definitions/schemas, and the captured provider message
    window (history/current user/file context, or the compacted summary message if
-   compaction already replaced older history) from the actual outbound request.
+   compaction already replaced older history) from the final outbound provider
+   request, normalized for display.
 3. **Execution** — the execution side. Each rendered item is a **model call**
    (internally, one debug `round`: one provider request/response). It contains
    response/thinking parts plus tool exchanges produced by that call. Per-call
@@ -1294,13 +1295,15 @@ thinking, and the per-run system prompt + tool schemas alike.
 **Capture (the only additive writes).** The semantic tree is already in the
 ledger; one gap is filled: a per-run `debug.run_snapshot.created` event carries the
 run's outbound **system prompt + tool schemas + model input message window** from
-`onPayload`, deduped on an in-memory content hash (re-emitted only on a real
-provider-request shape change; the hash is recorded only **after** the append
-succeeds, so a swallowed write never poisons the dedupe — and never persisted on
-the event, which no reader needs). It is replay-neutral. The detail view reads
-system/tool metadata from the latest snapshot, but **Model Input** uses the first
-captured non-empty message window so later tool-result calls do not overwrite the
-run's entry context. The system prompt is read tolerantly across providers: a
+the final provider payload after transport-specific rewriting, deduped on an
+in-memory content hash (re-emitted only on a real provider-request shape change;
+the hash is recorded only **after** the append succeeds, so a swallowed write
+never poisons the dedupe — and never persisted on the event, which no reader
+needs). It is replay-neutral. The detail view reads system/tool metadata from the
+latest snapshot, but **Model Input** uses the first captured non-empty message
+window so later tool-result calls do not overwrite the run's entry context. File
+parts are normalized to file placeholders for display instead of expanding inline
+file data. The system prompt is read tolerantly across providers: a
 top-level `system` / `instructions` (Anthropic) **and** a `system` / `developer`
 role message folded into `input` / `messages` (the OpenAI responses / completions
 shape).

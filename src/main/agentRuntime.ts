@@ -2454,7 +2454,7 @@ export class AgentRuntime {
             this.emitError(conversationId, error instanceof Error ? error.message : String(error));
           }
           try {
-            await this.captureDebugRunSnapshot(conversationId, payload);
+            await this.captureDebugRunSnapshot(conversationId, nextPayload);
           } catch (error) {
             this.emitError(conversationId, error instanceof Error ? error.message : String(error));
           }
@@ -3002,11 +3002,12 @@ export class AgentRuntime {
 
   /**
    * Run-grounded debug capture ([[agent-debug-run-grounded]]): persist the active
-   * run's outbound system prompt, tool schemas, and full model input window,
-   * re-emitting only when the outbound request shape changes (hash-deduped). The
-   * event carries the run id, so the conversation append path splits it into the
-   * run's own stream. Additive and best-effort — a capture failure never perturbs
-   * the run.
+   * run's final outbound provider payload after any transport-specific payload
+   * rewriting, normalized into system prompt, tool schemas, and the model input
+   * window. Re-emit only when the outbound request shape changes (hash-deduped).
+   * The event carries the run id, so the conversation append path splits it into
+   * the run's own stream. Additive and best-effort — a capture failure never
+   * perturbs the run.
    */
   private async captureDebugRunSnapshot(conversationId: string, payload: unknown, runIdOverride?: string) {
     const conversation = this.conversations.get(conversationId);
