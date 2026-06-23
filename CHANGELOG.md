@@ -1567,6 +1567,27 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Dream remembers nothing instead of recording low-value memory (PR #319, cc-2)** — a Dream over a
+  trivial chat used to be forced to write *something* (e.g. a `#d-episode` that only narrated "Neva
+  answered a Chengdu weather follow-up") because two forces required output: the runtime threw
+  `"… completed without creating or editing memory nodes"` on a successful zero-write child (→ failure
+  backoff + re-fire, training the model to always write ≥1 node), and the SKILL/prompt framed a
+  `#d-memory` container as mandatory. Now **"remembering nothing" is a first-class, common outcome**: the
+  zero-write throw is removed, the one-container rule is conditional on actually writing, and
+  transcript-narration / assistant-action episodes are explicitly banned (with the Chengdu-weather line as
+  a negative example). **Reverses a prior #302/#308 decision** — a *clean* zero-write completion now
+  records `dream.completed` with zero change counts **and advances the watermark**, so a
+  considered-but-empty span is not re-read. **But truncation is not a no-op:** the main review gate caught
+  that a child reaching `completed` via a maxTurns abort or an unresolved context overflow also returns
+  zero writes — advancing the watermark there would silently drop that span's evidence forever. The
+  delegation runtime now flags such runs `incomplete` (set before the maxTurns abort, guarded by
+  `isStreaming`; and on overflow at completion), surfaced through `runToToolData`; a truncated **zero-write**
+  Dream is treated as a **failure to retry** (watermark held), while a truncated run that *did* write keeps
+  its work. **Gate (main):** `/code-review high` (8 finder angles → verify) surfaced the truncation
+  data-loss path as Finding 1; the author's fix gates the watermark advance on a clean terminal state.
+  Re-verified by main on the real head: typecheck ✓ · `test:core` **1046/0** (incl. a new deterministic
+  context-overflow test proving the truncated span is retried, not dropped) · `docs:check` ✓. Six
+  `docs/spec/*` synced (A6).
 - **Live process header stays on the `Working` divider + stable disclosure scroll (PR #317, codex-2)** —
   two live-process presentation defects from the Codex-style transcript. (1) **Header:** an active turn
   without a run clock used to replace the persistent header with a summary of the work below — the

@@ -659,8 +659,9 @@ anything.
   scheduled Dream path launches as a restricted child agent, writing `#d-memory`/`#d-episode`/`#d-belief`
   nodes with `[[chat:…]]` provenance. Dream change counts derive from the child's real
   `node_create`/`node_edit` writes; a **zero-write child does not record `dream.completed` or advance
-  the watermark**; the private consolidation conversation is excluded from the channel list and deleted
-  after each run. Specs synced (`agent-tool-design.md`, `agent-architecture.md`, `agent-progress.md`,
+  the watermark** *(refined by #319: a **clean** zero-write run now does advance; only a **truncated**
+  one is held for retry)*; the private consolidation conversation is excluded from the channel list and
+  deleted after each run. Specs synced (`agent-tool-design.md`, `agent-architecture.md`, `agent-progress.md`,
   `agent-event-log-rendering.md`, A6). **Gate (main):** `/code-review` recall-mode, **3 rounds** — 13
   findings (2 data-loss-class: `node_edit` mark/metadata stripping, Dream watermark advancing on
   zero-write) all fixed + verified, plus a 4th-round preview-edit-miscount fix; merge re-verified
@@ -684,6 +685,19 @@ anything.
   #308 + PR3 #310); plan archived. Post-merge follow-up (main, `538aca00`): replaced the `run` source's
   O(N) per-conversation scan with an O(1) resolver — new read-only `agent_run_conversation_id` command
   exposing `readRunMetaProjection` + `conversationIdOfRun`, so the reveal resolves the owner in one read.
+- **dream-memory-precision** (cc-2, PR #319) — follow-up to the #302 set: stop Dream from recording
+  low-value memory by making **"remember nothing" a first-class outcome**. Removes the runtime's
+  zero-write throw (which forced failure backoff + re-fire) and reframes the SKILL/prompt so a `#d-memory`
+  container is conditional on actually writing; transcript-narration / assistant-action episodes are
+  banned. **Reverses the #308 semantics below:** a *clean* zero-write completion now records
+  `dream.completed` and **advances the watermark** (a considered-but-empty span is not re-read). The main
+  review gate (`/code-review high`) caught the inverse data-loss case — a child reaching `completed` via a
+  **maxTurns abort or unresolved context overflow** also writes zero, and advancing the watermark there
+  drops the span forever; so the delegation runtime now flags those `incomplete` (`runToToolData`) and a
+  truncated zero-write Dream is a **failure to retry** (watermark held), while a truncated run that wrote
+  keeps its work. Six `docs/spec/*` synced (A6). **Gate (main):** Finding 1 fix re-verified on the real
+  head — typecheck ✓ · `test:core` **1046/0** (incl. a new deterministic overflow-retry test) ·
+  `docs:check` ✓.
 - **code-block-floating-toolbar** (codex, PR #301) — editable outliner code blocks + read-only agent
   markdown code blocks get a top-right floating toolbar (language selector + copy as separate
   hover/focus-revealed popover-material controls over an opaque code surface), an inset text viewport
