@@ -33,10 +33,11 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 **In flight (2026-06-23).** A Dream-precision + file-reader wave merged today: **#319** (Dream
 remembers-nothing + truncation gating), **#320** (manual-Dream thin-data pre-check), **#321** (file-only
-preview readers). The **agent-goal** plan landed as a `draft` board item (plan PR **#323**, see Agent
-capabilities). **One PR open:** **#322** (`agent-pdf-tool-path`, codex-3 — native PDF payloads to the
-model provider), ready and awaiting the main gate (`/code-review` + `/security-review`, billed +
-PM-triggered). The agent subsystem portfolio is otherwise mature (single-agent collapse + one-Neva
+preview readers), and **#322** (`agent-pdf-tool-path`, codex-3 — native PDF `input_file` payloads on
+OpenAI Responses models; `/code-review high` gate + doc-confirmed provider contract). #322 also seeded
+the **file-ingestion-runtime-follow-up** plan, now promoted to a `draft` board item (Files & media). The
+**agent-goal** plan landed as a `draft` board item (plan PR **#323**, see Agent
+capabilities). **No PR open.** The agent subsystem portfolio is otherwise mature (single-agent collapse + one-Neva
 invariant, the IM-native memory/channel spine, the 2026-06-22 Codex-transcript wave); the active build
 frontier remains the **command-surface / performance / UI-quality / files** lanes in the **Backlog** —
 start at *Top of queue*. The full shipped history is in **Recently completed**; small unclaimed
@@ -369,6 +370,13 @@ archived `done` (see Recently completed). Remaining active work:
   window. (Feature shipped #241, archived `done`.)
 - **asset-gc** (P2, *no plan file*) — asset `index.json` rebuild + garbage
   collection for orphaned assets; drag-from-Finder ingest; inline alt-text editing.
+- **file-ingestion-runtime-follow-up** (P2, draft — *set of independent features*) — provider-neutral
+  agent file-ingestion layer: a `FileIngestionResult` representation + a single provider-capability
+  adapter so every model gets a useful fallback (text/image/metadata), not just native-document
+  models. Builds on the #322 native-PDF slice; covers per-page PDF text fallback, Office/notebook/
+  archive families, and base64-free debug visibility. Each checklist item ships as its own PR. Promoted
+  out of `archive/` after #322 merged (codex-3 staged it there since dev branches can't edit this board).
+  See `docs/plans/file-ingestion-runtime-follow-up.md`.
 
 ### Outliner & UI polish
 
@@ -505,6 +513,22 @@ anything.
 
 ## Recently completed
 
+- **agent-pdf-tool-path** (`codex-3/agent-pdf-tool-path`, PR #322, codex-3, merged 2026-06-23) — sends
+  ordinary PDF `file_read` results to OpenAI Responses models as native `input_file` payloads; keeps
+  Poppler page rendering/text extraction for explicit `pages` reads and non-Responses providers. PDF
+  bytes ride as event-log **source payloads** and convert to `input_file` only at the request boundary —
+  no base64 in tool-result JSON, persisted chat, or debug snapshots. GUI-launched tool subprocesses now
+  prepend common Homebrew/system PATH segments (`buildAgentLocalToolProcessEnv`) with package-manager-
+  neutral Poppler recovery guidance. New `src/main/agentNativePdfPayloads.ts` does the marker→`input_file`
+  conversion. **Gate (main):** `/code-review high` (10 findings) → codex-3 hardening pass: 20 MB native
+  size cap, base64url marker body (collision-safe, no payload-metadata leak), cross-model gate + onPayload
+  marker-strip backstop (non-Responses models get a clean fallback, never raw marker text), native-attach
+  failure returns a real error envelope, tools rebuilt on mid-run model switch; debug snapshot keeps the
+  pre-transform payload. The one provider-contract open item (does `function_call_output.output` accept
+  `input_file`?) was **confirmed via OpenAI's SDK type** (`ResponseFunctionCallOutputItemListParam`
+  includes `ResponseInputFileContentParam`, shape `{type:"input_file", filename, file_data}` — exact
+  match). `test:core` 1054/0, typecheck clean. Seeded the **file-ingestion-runtime-follow-up** plan
+  (promoted to the board). Fast-track, **shape (a)** one PR.
 - **file-preview-open-in-split** (`codex-2/file-preview-open-in-split`, PR #321, codex-2, merged
   2026-06-23) — adds a file-only **reader** presentation (`FilePreviewPresentation = 'reader'`): compact
   header (filename + `⋯` + close), no breadcrumb / title-hero / child outline / resize — just the file

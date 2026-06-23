@@ -12,6 +12,26 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Native PDF payloads for OpenAI Responses models (PR #322, codex-3)** — an ordinary `file_read` of a
+  PDF (no `pages`) on an OpenAI Responses model now sends the PDF to the model as a native `input_file`
+  document block instead of rasterizing pages through Poppler. The original bytes are stored as an
+  event-log **source payload** and converted to `input_file` only at the request boundary, so no base64
+  ever lands in tool-result JSON, persisted chat text, or debug snapshots. Explicit `pages` reads and
+  non-Responses providers keep the existing Poppler page-render/text-extraction path. GUI-launched local
+  tool subprocesses now prepend common Homebrew/system PATH segments (`buildAgentLocalToolProcessEnv`) so
+  `pdfinfo`/`pdftoppm`/`soffice` resolve when the app is launched from Finder, and the missing-Poppler
+  error now gives package-manager-neutral recovery guidance (brew/port/apt/dnf/pacman) instead of assuming
+  Homebrew. Hardening: a 20 MB native-size cap (base64 expands ~⅓); a base64url marker body that is
+  delimiter-collision-safe and never exposes payload metadata to the model; a cross-model gate plus an
+  `onPayload` marker-strip backstop so a model that cannot read native PDFs receives a clean
+  "call `file_read` with pages" fallback rather than raw marker text; native-attach failures surface a
+  recoverable error envelope; agent tools are rebuilt on a mid-run model switch. **Gate (main):**
+  `/code-review high` (10 findings folded + verified); the provider-contract question — does
+  `function_call_output.output` accept `input_file`? — was confirmed against OpenAI's SDK types
+  (`ResponseFunctionCallOutputItemListParam` includes `ResponseInputFileContentParam`, an exact shape
+  match). `test:core` 1054/0, typecheck clean. Seeded the `file-ingestion-runtime-follow-up` plan
+  (provider-neutral ingestion for PDFs/Office/notebooks/archives with universal text/image/metadata
+  fallbacks). Spec synced: `agent-tool-design`, `agent-progress`.
 - **File-only preview readers + transcript chips open in-app (PR #321, codex-2)** — a new
   `FilePreviewPresentation = 'reader'` mode renders a file on its own: a compact header (filename + a
   `⋯` actions menu + close) with **no** breadcrumb, title-hero, child outline, or resize handle, just the
