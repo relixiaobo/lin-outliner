@@ -3466,9 +3466,7 @@ export class AgentRuntime {
     ) return null;
 
     const runId = `dream-run-${randomUUID()}`;
-    const conversations = await this.collectDreamConversationInputs(dreamState);
-    const evidenceSpan = buildDreamMemoryExtractionSpanFromEvents(runId, conversations);
-    const newVolume = evidenceSpan?.totalCharCount ?? 0;
+    const { span: evidenceSpan, newCharCount: newVolume } = await this.collectDreamEvidence(dreamState, runId);
     if (trigger === 'schedule' && newVolume < DREAM_MIN_VOLUME_CHARS) return null;
 
     const span = evidenceSpan ?? (trigger === 'manual'
@@ -3505,6 +3503,28 @@ export class AgentRuntime {
       events: await this.getEventStore().readEvents(conversationId),
       fromSeqExclusive: dreamState.watermark.conversations[conversationId]?.seq ?? 0,
     })));
+  }
+
+  /**
+   * The single source of the Dream "new evidence volume" calc: read the member
+   * conversations since the watermark once and build their evidence span + char/
+   * message totals. Both the scheduled gate (createDreamMemoryExtractionTask) and
+   * the manual pre-check (previewDreamReadiness) derive their numbers from here, so
+   * the volume bar can never drift between the two paths and neither reads the
+   * conversation events twice. The `runId` only stamps the span id; the volume
+   * totals are runId-independent.
+   */
+  private async collectDreamEvidence(
+    dreamState: AgentDreamState,
+    runId: string,
+  ): Promise<{ span: DreamMemoryExtractionSpan | null; newCharCount: number; newMessageCount: number }> {
+    const conversations = await this.collectDreamConversationInputs(dreamState);
+    const span = buildDreamMemoryExtractionSpanFromEvents(runId, conversations);
+    return {
+      span,
+      newCharCount: span?.totalCharCount ?? 0,
+      newMessageCount: span?.totalMessageCount ?? 0,
+    };
   }
 
   /** Conversation ids the user principal is a member of (the Dream's evidence set). */
@@ -3766,15 +3786,13 @@ export class AgentRuntime {
    * Cheap, read-only pre-check for the manual "Dream now" control: count the new
    * evidence since the Dream watermark and compare it to the same volume bar the
    * scheduled path uses, WITHOUT running the model. Lets the UI advise that a
-   * manual run is likely a no-op (and offer to run anyway). Mirrors the volume
-   * computation in createDreamMemoryExtractionTask.
+   * manual run is likely a no-op (and offer to run anyway). Shares the exact
+   * volume calc with the scheduled gate through collectDreamEvidence, so the two
+   * can never drift.
    */
   async previewDreamReadiness(): Promise<AgentDreamReadiness> {
     const dreamState = await this.getEventStore().readDreamState(this.agentPrincipal());
-    const conversations = await this.collectDreamConversationInputs(dreamState);
-    const span = buildDreamMemoryExtractionSpanFromEvents('dream-readiness', conversations);
-    const newCharCount = span?.totalCharCount ?? 0;
-    const newMessageCount = span?.totalMessageCount ?? 0;
+    const { newCharCount, newMessageCount } = await this.collectDreamEvidence(dreamState, 'dream-readiness');
     return {
       newMessageCount,
       newCharCount,

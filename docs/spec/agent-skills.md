@@ -419,9 +419,12 @@ Dream from Settings; manual runs use the same child path but are not blocked by
 the scheduled due gate. Before a manual run, a cheap read-only readiness
 pre-check (`agent_dream_readiness`) counts the new evidence since the watermark
 against the same volume bar the scheduled path uses; when it is below the bar,
-the Settings control advises that there is likely nothing new to consolidate and
-offers a "Dream anyway" override rather than spending a model round-trip on a
-no-op. When a run has durable memory worth writing, it maintains
+the Settings control advises that there is little new chat since the last Dream —
+a run now would mostly reconcile existing memory rather than capture new
+conversations — and offers a "Dream anyway" override rather than spending a model
+round-trip by default. (The advisory is about thin *new chat volume*, not "nothing
+to do": a sub-bar manual run is still a valid consolidate-only reconciliation.)
+When a run has durable memory worth writing, it maintains
 at most one direct `#d-memory` container under today's journal node, whose title
 is a generated daily memory headline updated in place on that day's run, not the
 fixed word `Memory`. Remembering nothing is a valid, common outcome: a run that
