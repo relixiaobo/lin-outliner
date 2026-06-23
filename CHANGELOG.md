@@ -12,6 +12,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **File-only preview readers + transcript chips open in-app (PR #321, codex-2)** — a new
+  `FilePreviewPresentation = 'reader'` mode renders a file on its own: a compact header (filename + a
+  `⋯` actions menu + close) with **no** breadcrumb, title-hero, child outline, or resize handle, just the
+  file body in one frame. Agent-transcript file chips now route to this **in-app reader** instead of
+  handing the file to the OS default app, and a **"Open in split pane"** action opens the reader beside
+  the current pane. `FilePreviewNavigationOptions { newPane, nodeId, presentation }` is plumbed through
+  `openPreview` / `navigatePanelPreview` / `openPreviewPanel` / `previewEvents`, and the panel view key
+  encodes `presentation` so a reader and a default preview of the same target don't collapse into one
+  history entry. The reader header `⋯` (`FilePreviewHeaderMenu`) carries Open-with-default-app / Reveal /
+  Copy, and suppresses "Add to outline" when the target is already an outline node. **Gate (main):**
+  `/code-review high` (6 findings — panel-view-key collapse, reader sanitize, `canAdd` gating, e2e route
+  assertion, +2) all folded and verified; light + dark visual pass on the reader pane and the `⋯` menu;
+  `test:renderer` 599/0 · `file-attachments` e2e green (one reported "regression" was a worktree
+  symlink/pdf.js-worker artifact, retracted — not a branch defect). Spec synced:
+  `agent-event-log-rendering`, `ui-behavior`, `workspace-layout`; i18n en + zh-Hans (A6).
 - **File-preview polish + file-node mentions (PR #318, codex-3)** — expanded PDF previews now render a
   selectable text layer over each page (drag-select extracts the real text, highlighted with a fixed
   neutral document-selection tint that survives dark mode over white pages), and the reader remembers its

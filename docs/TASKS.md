@@ -479,6 +479,18 @@ anything.
 
 ## Recently completed
 
+- **file-preview-open-in-split** (`codex-2/file-preview-open-in-split`, PR #321, codex-2, merged
+  2026-06-23) — adds a file-only **reader** presentation (`FilePreviewPresentation = 'reader'`): compact
+  header (filename + `⋯` + close), no breadcrumb / title-hero / child outline / resize — just the file
+  body in one frame. Agent-transcript file chips now open the **in-app reader** instead of the OS default
+  app, and an **"Open in split pane"** action opens the reader beside the current pane.
+  `FilePreviewNavigationOptions { newPane, nodeId, presentation }` is plumbed through openPreview /
+  navigatePanelPreview / openPreviewPanel / previewEvents; the panel-view key encodes `presentation` so a
+  reader and a default preview of one target keep distinct history. Spec synced:
+  `agent-event-log-rendering`, `ui-behavior`, `workspace-layout`; i18n en + zh (A6). **Gate (main):**
+  `/code-review high` (6 findings folded + verified) · light+dark visual pass (reader pane + `⋯` menu) ·
+  `test:renderer` 599/0 · `file-attachments` e2e green (a reported "regression" was a worktree
+  symlink/pdf.js artifact, retracted). Fast-track, **shape (a)** one PR.
 - **file-preview-pdf-and-mentions** (`codex-3/file-preview-pdf-and-mentions`, PR #318, codex-3, merged
   2026-06-22) — fast-track file-preview polish + file-node `@` mentions. Expanded PDF previews gain a
   selectable text layer per page (drag-select extracts real text, fixed-neutral `--document-selection-bg`
