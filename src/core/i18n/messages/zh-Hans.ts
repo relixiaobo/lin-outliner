@@ -776,7 +776,6 @@ commandPalette: {
       directMessages: '私信',
       noDirectMessages: '暂无智能体',
       noMessagesYet: '暂无消息',
-      openDebug: '打开智能体调试',
       conversations: '频道',
       noConversations: '暂无频道',
       members: '成员',

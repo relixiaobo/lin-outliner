@@ -19,7 +19,6 @@ export {
   Ban as BlockIcon,
   Bold as BoldIcon,
   Brain as BrainIcon,
-  Bug as DebugIcon,
   CalendarDays as CalendarIcon,
   ChartNoAxesGantt as UsedToolsIcon,
   Check as CheckIcon,

@@ -3403,6 +3403,58 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
   });
 }
 
+export async function openMockRunDetailsFromAssistantMore(
+  page: Page,
+  replyText = 'Open the details pane from this response.',
+) {
+  await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
+    conversationTitle: 'General',
+    members: [
+      { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+      {
+        principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        mention: 'assistant',
+        displayName: 'Neva',
+        coordinator: true,
+      },
+    ],
+    model: { id: 'gpt-5.4', provider: 'openai' },
+    conversation: [
+      {
+        nodeId: 'agent-user-more-details',
+        actor: { type: 'user', userId: 'local-user' },
+        message: {
+          role: 'user',
+          timestamp: 1_800_000_000_000,
+          content: [{ type: 'text', text: 'Summarize current outline.' }],
+        },
+      },
+      {
+        nodeId: 'assistant-more-details',
+        runId: 'mock-run-1',
+        actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        message: {
+          role: 'assistant',
+          timestamp: 1_800_000_000_100,
+          api: 'openai-completions',
+          provider: 'openai',
+          model: 'gpt-5.4',
+          stopReason: 'stop',
+          content: [{ type: 'text', text: replyText }],
+        },
+      },
+    ],
+  });
+
+  const row = page.locator('.agent-message-row.assistant', { hasText: replyText });
+  await row.hover();
+  await row.getByRole('button', { name: 'More reply actions' }).click();
+
+  const menu = page.getByRole('menu', { name: 'More reply actions' });
+  await expect(menu).toBeVisible();
+  await menu.getByRole('menuitem', { name: 'Details' }).click();
+}
+
 export async function emitDocumentEvent(page: Page, event: unknown) {
   await page.evaluate((nextEvent) => {
     const win = window as E2EWindow;

@@ -469,8 +469,9 @@ Rules:
   only when the resulting count fits; a too-narrow window reports the capacity
   failure and does not drop an existing workspace pane just to show debug chrome.
 - Opening run details from an assistant reply reuses an existing agent-debug pane when
-  one is already present for that conversation and updates its `selectedRunId`; the
-  global debug action opens the latest run when no run is explicitly selected.
+  one is already present for that conversation and updates its `selectedRunId`. The
+  agent dock does not expose a standalone debug button; details are opened from a
+  concrete assistant reply.
 - Closing a pane removes it from the layout. If it was active, focus moves to the
   nearest remaining pane, and clears when that pane is an agent-debug pane (which
   carries no node to focus).

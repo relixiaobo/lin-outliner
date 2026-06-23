@@ -1229,8 +1229,8 @@ The selected run detail is ordered for inspection:
 
 The chat transcript exposes this through an assistant-message **More reply
 actions** menu. `Details` opens the same agent-debug pane with `selectedRunId`
-set to that reply's run; the global debug button opens the latest run when no
-explicit run is selected.
+set to that reply's run. There is no standalone/global debug entry in the agent
+dock; the pane is anchored to a concrete response.
 
 **The unit is the round** = one provider call = `(request, response)`, bounded by
 `assistant_message.started` (always present, independent of any wire capture).

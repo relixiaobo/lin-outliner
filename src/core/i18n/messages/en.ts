@@ -843,7 +843,6 @@ commandPalette: {
       directMessages: 'Direct Messages',
       noDirectMessages: 'No agents',
       noMessagesYet: 'No messages yet',
-      openDebug: 'Open agent debug',
       conversations: 'Channels',
       noConversations: 'No channels',
       members: 'Members',

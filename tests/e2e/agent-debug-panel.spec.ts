@@ -1,6 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
-import { commandCalls, emitAgentProjection, openMockedApp } from './outlinerMock';
+import { commandCalls, openMockedApp, openMockRunDetailsFromAssistantMore } from './outlinerMock';
 
 test.describe('agent debug panel', () => {
   test.beforeEach(async ({ page }) => {
@@ -8,7 +7,7 @@ test.describe('agent debug panel', () => {
   });
 
   test('shows a run-focused detail pane with context, process, and usage', async ({ page }) => {
-    await page.getByRole('button', { name: 'Open agent debug' }).click();
+    await openMockRunDetailsFromAssistantMore(page);
 
     const debugPanel = page.locator('.outline-panel-surface.is-agent-debug');
     await expect(debugPanel.getByRole('heading', { name: 'Run Details' })).toBeVisible();
@@ -46,7 +45,7 @@ test.describe('agent debug panel', () => {
   });
 
   test('adds a user block rule from a logged tool exchange', async ({ page }) => {
-    await page.getByRole('button', { name: 'Open agent debug' }).click();
+    await openMockRunDetailsFromAssistantMore(page);
 
     const debugPanel = page.locator('.outline-panel-surface.is-agent-debug');
 
@@ -63,52 +62,7 @@ test.describe('agent debug panel', () => {
   });
 
   test('opens selected run details from an assistant More menu', async ({ page }) => {
-    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
-      conversationTitle: 'General',
-      members: [
-        { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
-        {
-          principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
-          mention: 'assistant',
-          displayName: 'Neva',
-          coordinator: true,
-        },
-      ],
-      model: { id: 'gpt-5.4', provider: 'openai' },
-      conversation: [
-        {
-          nodeId: 'agent-user-more-details',
-          actor: { type: 'user', userId: 'local-user' },
-          message: {
-            role: 'user',
-            timestamp: 1_800_000_000_000,
-            content: [{ type: 'text', text: 'Summarize current outline.' }],
-          },
-        },
-        {
-          nodeId: 'assistant-more-details',
-          runId: 'mock-run-1',
-          actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
-          message: {
-            role: 'assistant',
-            timestamp: 1_800_000_000_100,
-            api: 'openai-completions',
-            provider: 'openai',
-            model: 'gpt-5.4',
-            stopReason: 'stop',
-            content: [{ type: 'text', text: 'Open the details pane from this response.' }],
-          },
-        },
-      ],
-    });
-
-    const row = page.locator('.agent-message-row.assistant', { hasText: 'Open the details pane from this response.' });
-    await row.hover();
-    await row.getByRole('button', { name: 'More reply actions' }).click();
-
-    const menu = page.getByRole('menu', { name: 'More reply actions' });
-    await expect(menu).toBeVisible();
-    await menu.getByRole('menuitem', { name: 'Details' }).click();
+    await openMockRunDetailsFromAssistantMore(page);
 
     const debugPanel = page.locator('.outline-panel-surface.is-agent-debug');
     await expect(debugPanel.getByRole('heading', { name: 'Run Details' })).toBeVisible();
