@@ -57,8 +57,9 @@ truth.
   - `bash`
   - `task_stop`
 - [x] Local tool capability parity pass:
-  - `file_read` image dimensions, PDF text extraction via `pdftotext`,
-    PDF page rendering via `pdftoppm`, and notebook parsing
+  - `file_read` image dimensions, OpenAI Responses native PDF payloads,
+    PDF text extraction via `pdftotext`, PDF page rendering via `pdftoppm`, and
+    notebook parsing
   - local tool subprocesses use the app environment plus
     `LIN_AGENT_EXTRA_TOOL_PATH` and common macOS Homebrew/system binary paths, so
     GUI-launched app processes can still find installed tools like Poppler and

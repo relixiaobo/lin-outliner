@@ -122,6 +122,11 @@ import { agentDefinitionDisplayName } from './agentDefinitionDisplay';
 import { DEFAULT_AGENT_SYSTEM_PROMPT, composeAgentPrompt } from './agentSystemPrompt';
 import { applyAgentPromptCacheBreakpoints } from './agentProviderCacheBreakpoints';
 import {
+  attachNativePdfPayloadsToOpenAIResponsesPayload,
+  modelSupportsNativePdfPayloads,
+  nativePdfPayloadRuntimeText,
+} from './agentNativePdfPayloads';
+import {
   deriveDebugConversation,
   deriveDebugRun,
   extractRunSnapshotFromPayload,
@@ -2425,18 +2430,31 @@ export class AgentRuntime {
             if (!current) return Promise.resolve({ approved: false, deniedReason: 'runtime' });
             return this.requestToolApproval(conversationId, current, input, signal);
           },
-          afterToolResult: (toolCallId, toolName, result, isError) => {
+          afterToolResult: async (toolCallId, toolName, result, isError) => {
             const current = conversationRef.current;
             if (!current) return undefined;
+            const nativePdf = await this.afterNativePdfToolResult(conversationId, current, toolCallId, toolName, result, isError);
+            if (nativePdf) return nativePdf;
             return this.contextManager.afterToolResultForModelContext(conversationId, current, toolCallId, toolName, result, isError);
           },
-        }, async (payload) => {
+        }, async (payload, payloadModel) => {
+          let nextPayload = payload;
           try {
-            await this.captureDebugRunSnapshot(conversationId, payload);
+            if (modelSupportsNativePdfPayloads(payloadModel)) {
+              nextPayload = await attachNativePdfPayloadsToOpenAIResponsesPayload(
+                payload,
+                (payloadRef) => this.getEventStore().readPayload(conversationId, payloadRef),
+              ) ?? payload;
+            }
           } catch (error) {
             this.emitError(conversationId, error instanceof Error ? error.message : String(error));
           }
-          return undefined;
+          try {
+            await this.captureDebugRunSnapshot(conversationId, nextPayload);
+          } catch (error) {
+            this.emitError(conversationId, error instanceof Error ? error.message : String(error));
+          }
+          return nextPayload === payload ? undefined : nextPayload;
         })
       : createConfigurationErrorAgent(
           conversationId,
@@ -2577,6 +2595,7 @@ export class AgentRuntime {
     conversation.agent.state.tools = createAgentTools(this.outlinerToolHost, {
       localFileRoot: this.options.localFileRoot,
       localWorkspace: conversation.localWorkspace,
+      nativePdfRead: modelSupportsNativePdfPayloads(conversation.agent.state.model),
       skillRuntime: conversation.skillRuntime,
       skillToolEnabled: conversation.runtimeSettings.automaticSkillsEnabled,
       delegationRuntime: conversation.delegationRuntime,
@@ -5525,6 +5544,44 @@ export class AgentRuntime {
     activeRun.assistantText = '';
   }
 
+  private async afterNativePdfToolResult(
+    conversationId: string,
+    conversation: AgentConversationState,
+    toolCallId: string,
+    toolName: string,
+    result: unknown,
+    isError: boolean,
+  ): Promise<AfterToolCallResult | undefined> {
+    if (isError || toolName.replace(/-/g, '_') !== 'file_read') return undefined;
+    const details = isRecord(result) ? result.details : undefined;
+    if (!isToolEnvelope(details) || !details.ok || !isNativePdfFileReadData(details.data)) return undefined;
+    const activeRunId = this.activeRunId(conversation) ?? undefined;
+    const filePath = details.data.file.filePath;
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(filePath);
+    } catch (error) {
+      this.emitError(conversationId, error instanceof Error ? error.message : String(error));
+      return undefined;
+    }
+    const filename = path.basename(filePath) || 'document.pdf';
+    const label = `PDF file read: ${filename} (${formatRuntimeBytes(bytes.byteLength)})`;
+    const payload = await this.getEventStore().writePayload(conversationId, {
+      data: bytes,
+      mimeType: 'application/pdf',
+      runId: activeRunId,
+      role: 'source',
+      summary: filename,
+    });
+    conversation.activeRun?.toolOutputPayloads.set(toolCallId, { payload, label });
+    return {
+      content: [{
+        type: 'text',
+        text: nativePdfPayloadRuntimeText({ payload, filename, label }),
+      }],
+    };
+  }
+
   private async appendToolResultMessage(conversationId: string, conversation: AgentConversationState, message: ToolResultMessage) {
     const activeRun = conversation.activeRun;
     if (!activeRun) return;
@@ -5839,6 +5896,17 @@ export class AgentRuntime {
       }
       if (part.type === 'payload_ref' && part.payload.mimeType.startsWith('image/')) {
         parts.push(await this.runtimeImageContent(conversationId, part.payload, part.label));
+        continue;
+      }
+      if (part.type === 'payload_ref' && part.payload.mimeType === 'application/pdf') {
+        parts.push({
+          type: 'text',
+          text: nativePdfPayloadRuntimeText({
+            payload: part.payload,
+            filename: part.payload.summary || `${part.payload.id}.pdf`,
+            label: part.label,
+          }),
+        });
         continue;
       }
       if (part.type === 'payload_ref' && part.payload.role === 'tool_output') {
@@ -6750,6 +6818,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isNativePdfFileReadData(value: unknown): value is {
+  type: 'pdf';
+  file: { filePath: string; originalSize: number; mode: 'native'; mimeType: 'application/pdf' };
+} {
+  if (!isRecord(value) || value.type !== 'pdf' || !isRecord(value.file)) return false;
+  return typeof value.file.filePath === 'string'
+    && typeof value.file.originalSize === 'number'
+    && value.file.mode === 'native'
+    && value.file.mimeType === 'application/pdf';
+}
+
+function formatRuntimeBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 function clearPendingProjection(conversation: AgentConversationState) {
   if (!conversation.pendingProjectionTimer) return;
   clearTimeout(conversation.pendingProjectionTimer);
@@ -6974,6 +7059,7 @@ function createConfiguredAgent(
       tools: createAgentTools(outlinerToolHost, {
         localFileRoot,
         localWorkspace: options.localWorkspace,
+        nativePdfRead: modelSupportsNativePdfPayloads(activeLoopModel),
         skillRuntime,
         skillToolEnabled: options.skillToolEnabled,
         delegationRuntime: options.delegationRuntime,

@@ -1650,6 +1650,7 @@ Return data:
 type FileReadData =
   | FileReadTextData
   | FileReadImageData
+  | FileReadPdfData
   | FileReadPdfPartsData
   | FileReadNotebookData
   | FileReadUnchangedData;
@@ -1676,6 +1677,16 @@ interface FileReadImageData {
       width: number;
       height: number;
     };
+  };
+}
+
+interface FileReadPdfData {
+  type: "pdf";
+  file: {
+    filePath: string;
+    originalSize: number;
+    mode: "native";
+    mimeType: "application/pdf";
   };
 }
 
@@ -1732,17 +1743,21 @@ Result behavior:
 - Image reads return dimensions when they can be determined, attach the image
   block for the model to inspect, and omit base64 from the model-visible JSON so
   text output stays compact.
-- PDF reads support `pages` ranges such as `"3"` and `"1-5"`, with a
-  maximum of 20 pages per request. PDFs over 10 pages require an explicit range.
-  The implementation uses the local page-extraction path: `pdfinfo` determines
-  page count, `pdftoppm` renders selected pages as JPEGs, and those page images
-  are attached to the tool result for the model. If `pdftotext` is available and
-  the selected pages contain embedded text, that extracted text is attached as a
-  text part before the page images. Scanned PDFs therefore still work through
-  images, while text PDFs remain searchable and token-efficient.
-- Lin currently does not send native PDF document blocks because `pi-agent-core`
-  exposes text/image tool-result content only. If pi-ai adds document content,
-  small PDFs can adopt a `type: "pdf"` base64 document-block path.
+- On OpenAI Responses-family models, reading a PDF without `pages` returns
+  `FileReadPdfData` and persists the PDF bytes as a source payload. The runtime
+  rehydrates that payload into an OpenAI `input_file` document block immediately
+  before the provider request, so normal PDF analysis does not depend on
+  Poppler and base64 never enters the tool-result JSON.
+- PDF reads with `pages` ranges such as `"3"` and `"1-5"` use the local
+  page-extraction path, with a maximum of 20 pages per request. `pdfinfo`
+  determines page count, `pdftoppm` renders selected pages as JPEGs, and those
+  page images are attached to the tool result for visual layout inspection. If
+  `pdftotext` is available and the selected pages contain embedded text, that
+  extracted text is attached as a text part before the page images. Scanned PDFs
+  therefore still work through images, while text PDFs remain searchable and
+  token-efficient.
+- Models that do not support the native PDF payload path keep using the
+  Poppler-backed page-rendering path.
 - Notebook reads parse `.ipynb` cells and outputs into a compact text rendering
   plus structured cell metadata.
 - Binary files should return a typed result only when Lin supports the media

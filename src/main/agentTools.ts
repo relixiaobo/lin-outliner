@@ -209,6 +209,7 @@ export type { ToolEnvelope } from './agentToolEnvelope';
 export interface AgentToolsOptions {
   localFileRoot?: string;
   localWorkspace?: AgentLocalWorkspaceContext;
+  nativePdfRead?: boolean;
   skillRuntime?: AgentSkillRuntime;
   skillToolEnabled?: boolean;
   delegationRuntime?: AgentDelegationRuntime;
@@ -231,7 +232,12 @@ export function createAgentTools(outliner?: OutlinerToolHost, options: AgentTool
       chatSourceValidator: options.chatSourceValidator,
       localFileRoot: options.localFileRoot,
     }) : []),
-    ...createLocalTools({ localRoot: options.localFileRoot, workspace: options.localWorkspace, skillRuntime: options.skillRuntime }),
+    ...createLocalTools({
+      localRoot: options.localFileRoot,
+      workspace: options.localWorkspace,
+      nativePdfRead: options.nativePdfRead,
+      skillRuntime: options.skillRuntime,
+    }),
     createWebSearchTool(),
     createWebFetchTool(scratchRoot),
     ...(options.pastChats ? [createPastChatsTool(options.pastChats)] : []),

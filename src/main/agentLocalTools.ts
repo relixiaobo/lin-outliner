@@ -30,6 +30,7 @@ interface LocalToolOptions {
   scratchRoot?: string;
   workspace?: AgentLocalWorkspaceContext;
   skillRuntime?: AgentSkillRuntime;
+  nativePdfRead?: boolean;
 }
 
 export interface AgentLocalWorkspaceContext {
@@ -69,6 +70,7 @@ interface FileReadParams {
 type FileReadData =
   | FileReadTextData
   | FileReadImageData
+  | FileReadPdfData
   | FileReadPdfPartsData
   | FileReadNotebookData
   | FileReadUnchangedData;
@@ -92,6 +94,16 @@ interface FileReadImageData {
     type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
     originalSize: number;
     dimensions?: ImageDimensions;
+  };
+}
+
+interface FileReadPdfData {
+  type: 'pdf';
+  file: {
+    filePath: string;
+    originalSize: number;
+    mode: 'native';
+    mimeType: 'application/pdf';
   };
 }
 
@@ -596,7 +608,7 @@ const TASK_STOP_PARAMETERS = {
 export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>[] {
   const workspace = options.workspace ?? createWorkspaceContext(options.localRoot, options.scratchRoot, options.skillRuntime);
   return [
-    createFileReadTool(workspace),
+    createFileReadTool(workspace, { nativePdfRead: options.nativePdfRead }),
     createFileGlobTool(workspace),
     createFileGrepTool(workspace),
     createFileEditTool(workspace),
@@ -862,7 +874,7 @@ export function buildAgentLocalToolProcessEnv(): NodeJS.ProcessEnv {
   return { ...process.env, PATH: pathValue };
 }
 
-function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileReadData>> {
+function createFileReadTool(workspace: WorkspaceContext, options: Pick<LocalToolOptions, 'nativePdfRead'> = {}): AgentTool<any, ToolEnvelope<FileReadData>> {
   return {
     name: 'file_read',
     label: 'File Read',
@@ -912,6 +924,15 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         }
         if (ext === '.pdf') {
           const buffer = await readFile(filePath);
+          if (options.nativePdfRead && params.pages === undefined) {
+            const data = readNativePdfData(filePath, buffer);
+            await notifySuccessfulFileTouch(workspace, filePath);
+            const visible = visibleFileRead(data);
+            return agentToolResult(successEnvelope('file_read', data, {
+              instructions: 'The PDF was attached as a native document block for the next model call. Use the pages parameter only when you need page images or layout inspection.',
+              metrics: metrics(started, data),
+            }), visible);
+          }
           const parts = await extractPdfPages(workspace, filePath, buffer.byteLength, params.pages);
           const extractedText = await extractPdfText(filePath, parts.file.pages);
           if (extractedText) {
@@ -2527,6 +2548,24 @@ async function getPdfPageCount(filePath: string): Promise<number> {
   return pages;
 }
 
+function readNativePdfData(filePath: string, buffer: Buffer): FileReadPdfData {
+  if (buffer.byteLength === 0) {
+    throw new LocalToolFailure('pdf_empty', `PDF file is empty: ${filePath}`, 'Use a valid PDF file.');
+  }
+  if (buffer.byteLength < 5 || buffer.toString('ascii', 0, 5) !== '%PDF-') {
+    throw new LocalToolFailure('pdf_corrupted', `File is not a valid PDF: ${filePath}`, 'Use a valid PDF file.');
+  }
+  return {
+    type: 'pdf',
+    file: {
+      filePath,
+      originalSize: buffer.byteLength,
+      mode: 'native',
+      mimeType: 'application/pdf',
+    },
+  };
+}
+
 async function extractPdfPages(workspace: WorkspaceContext, filePath: string, originalSize: number, requestedPages: string | undefined): Promise<FileReadPdfPartsData> {
   if (originalSize === 0) {
     throw new LocalToolFailure('pdf_empty', `PDF file is empty: ${filePath}`, 'Use a valid PDF file.');
@@ -2857,6 +2896,8 @@ function visibleFileRead(data: FileReadData): { file: Record<string, unknown> } 
   switch (data.type) {
     case 'image':
       return { file: { filePath: data.file.filePath, originalSize: data.file.originalSize, dimensions: data.file.dimensions } };
+    case 'pdf':
+      return { file: { filePath: data.file.filePath, originalSize: data.file.originalSize, mode: data.file.mode } };
     case 'text':
       return { file: { filePath: data.file.filePath, content: data.file.content, startLine: data.file.startLine, totalLines: data.file.totalLines } };
     case 'notebook':

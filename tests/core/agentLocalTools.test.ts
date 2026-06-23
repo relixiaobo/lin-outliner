@@ -768,6 +768,33 @@ describe('agent local tools', () => {
     });
   });
 
+  test('file_read can return native PDF metadata without rendering pages', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'sample.pdf');
+      await writeFile(filePath, makePdf(['First page', 'Second page']), 'utf8');
+
+      const tool = createLocalTools({ localRoot: workspaceRoot, nativePdfRead: true }).find((candidate) => candidate.name === 'file_read')!;
+      const result = await (tool.execute as any)('test-call', { file_path: filePath });
+      const read = result.details as ToolEnvelope<{
+        type: 'pdf';
+        file: { filePath: string; originalSize: number; mode: string; mimeType: string };
+      }>;
+      const visible = JSON.parse(result.content[0].text);
+
+      expect(read.ok).toBe(true);
+      expect(read.data!.type).toBe('pdf');
+      expect(read.data!.file.mode).toBe('native');
+      expect(read.data!.file.mimeType).toBe('application/pdf');
+      expect(visible.data.file).toEqual({
+        filePath,
+        originalSize: read.data!.file.originalSize,
+        mode: 'native',
+      });
+      expect(JSON.stringify(visible)).not.toContain('base64');
+      expect(result.content.some((block: { type: string }) => block.type === 'image')).toBe(false);
+    });
+  });
+
   test('file_read parses Jupyter notebooks into cell text and outputs', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const filePath = path.join(workspaceRoot, 'analysis.ipynb');
