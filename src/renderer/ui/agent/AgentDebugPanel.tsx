@@ -651,7 +651,7 @@ function PartRow({ part, index, rowId, labels }: { index: number; part: AgentDeb
     <details className={`agent-debug-part-details is-${part.kind}`} key={`${rowId}-${index}`}>
       <summary>
         <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
-        <span>{title}</span>
+        <span title={title}>{title}</span>
         <strong>{truncate(part.body, 120)}</strong>
         <IconButton
           className="agent-debug-copy-button"

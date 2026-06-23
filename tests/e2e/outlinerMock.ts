@@ -620,6 +620,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       shape: 'channel',
       members: [MAIN_AGENT_ID, USER_AGENT_ID, REVIEWER_AGENT_ID],
     };
+    const longToolCallId = 'call_hY7YSWjtewOewQfepRMCajzMlfc_00128e64f08e3fd6016a3a61cb0a9c8197a9c011';
     const debugRun = {
       ...debugRunSummary,
       systemPrompt: 'You are Lin agent.\nLong unbroken diagnostic prompt segment: abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789.',
@@ -668,12 +669,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }],
         responseParts: [
           { kind: 'thinking', body: 'Identify relevant outline nodes.' },
-          { kind: 'toolCall', name: 'bash', toolUseId: 'tool-1', body: '{"command":"git push origin main"}' },
+          { kind: 'toolCall', name: 'bash', toolUseId: longToolCallId, body: '{"command":"git push origin main"}' },
           { kind: 'text', body: 'Current outline focuses on UI work.', isReminder: false },
         ],
         stopReason: 'stop',
         usage: debugUsage,
-        toolExchanges: [{ toolCallId: 'tool-1', toolName: 'bash', args: '{"command":"git push origin main"}', result: 'Pushed to origin/main.', isError: false }],
+        toolExchanges: [{ toolCallId: longToolCallId, toolName: 'bash', args: '{"command":"git push origin main"}', result: 'Pushed to origin/main.', isError: false }],
         startedAt: 1_799_999_999_800,
         completedAt: 1_800_000_000_000,
       }],

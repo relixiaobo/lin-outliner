@@ -51,6 +51,7 @@ test.describe('agent debug panel', () => {
     const outputRow = round.locator('.agent-debug-message-row', { hasText: 'Identify relevant outline nodes.' }).first();
     await expect(outputRow).not.toContainText('tool_call bash');
     await expect(round.locator('.agent-debug-tool-exchange', { hasText: 'bash' })).toContainText('Pushed to origin/main.');
+    await expect.poll(async () => debugPanel.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
     await expect(round.locator('details.agent-debug-disclosure', { hasText: 'Usage' })).toHaveCount(0);
 
     await round.getByRole('button', { name: 'Call details' }).hover();

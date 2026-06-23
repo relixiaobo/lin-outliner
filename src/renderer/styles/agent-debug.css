@@ -650,9 +650,16 @@
   gap: var(--space-2);
 }
 
+.agent-debug-part-details {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
 .agent-debug-part-details > summary {
   display: flex;
   min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: var(--space-3);
   color: var(--text-soft);
@@ -662,7 +669,12 @@
 }
 
 .agent-debug-part-details > summary span {
-  flex: 0 0 auto;
+  min-width: 0;
+  max-width: min(42%, 220px);
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-debug-part-details > summary strong {
