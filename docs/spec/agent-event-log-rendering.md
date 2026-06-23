@@ -1228,13 +1228,12 @@ run
 
 The run detail is ordered for inspection:
 
-1. **Run summary** — a flat overview of compact run facts: agent/kind,
-   non-default status, model/provider, duration with the start/end range,
-   model/tool-call counts, input-context tokens, output tokens, cached share, and
-   aggregate cost. It is not a nested metrics card. Raw identifiers (`runId`,
-   `agentId`, and optional parent ids) render inline at the bottom of this
-   summary as low-priority metadata, not as a separate main section or nested
-   disclosure.
+1. **Run summary** — a flat overview of compact diagnostic facts: model/provider,
+   duration with the start/end range, model/tool-call counts, input-context
+   tokens, output tokens, cached share, aggregate cost, and non-default status
+   only when the run is not completed. It is not a nested metrics card, and it
+   does not surface agent kind or raw identifiers (`runId`, `agentId`, parent ids)
+   as primary content.
 2. **Model Input** — the input side that seeded this run: system/developer
    instructions, tool definitions/schemas, and the captured provider message
    window (history/current user/file context, or the compacted summary message if

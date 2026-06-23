@@ -1314,6 +1314,7 @@ commandPalette: {
     runStarted: '开始时间',
     runCompleted: '结束时间',
     runDuration: '耗时',
+    runStatus: '状态',
     modelCallCount: '模型调用',
     toolCallCount: '工具调用',
     systemPromptDisclosure: '系统提示词',

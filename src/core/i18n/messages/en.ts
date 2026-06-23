@@ -1432,6 +1432,7 @@ commandPalette: {
     runStarted: 'Started',
     runCompleted: 'Completed',
     runDuration: 'Duration',
+    runStatus: 'Status',
     modelCallCount: 'Model calls',
     toolCallCount: 'Tool calls',
     systemPromptDisclosure: 'System prompt',

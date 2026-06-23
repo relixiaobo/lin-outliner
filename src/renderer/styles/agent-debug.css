@@ -957,13 +957,6 @@
   text-transform: uppercase;
 }
 
-.agent-debug-run-summary-title {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-3);
-}
-
 .agent-debug-detail-section {
   display: flex;
   min-width: 0;
@@ -985,13 +978,6 @@
   padding: var(--space-1) 0 0;
 }
 
-.agent-debug-run-summary-main {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-3);
-}
-
 .agent-debug-run-summary-facts {
   display: grid;
   min-width: 0;
@@ -1002,42 +988,6 @@
 
 .agent-debug-run-summary-facts > div {
   min-width: 0;
-}
-
-.agent-debug-run-identifiers {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-5);
-  margin-top: var(--space-1);
-  border-top: 1px solid var(--border-subtle);
-  color: var(--text-faint);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
-  padding-top: var(--space-3);
-}
-
-.agent-debug-run-identifiers span {
-  display: inline-flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: var(--space-2);
-}
-
-.agent-debug-run-identifiers b {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-  font-weight: 500;
-}
-
-.agent-debug-run-identifiers code {
-  min-width: 0;
-  max-width: 260px;
-  overflow: hidden;
-  color: var(--text-soft);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .agent-debug-advanced-grid {

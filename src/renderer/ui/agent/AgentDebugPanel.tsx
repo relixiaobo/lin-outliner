@@ -88,28 +88,11 @@ function truncate(text: string, maxLength = 120): string {
   return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength).trim()}...` : trimmed;
 }
 
-/** A short, stable agent label — the name segment of the agentId. Attribution is
- * by label, never color (design system B4). */
-function agentLabel(agentId: string): string {
-  return agentId.split(':').pop() || agentId;
-}
-
 function statusLabel(status: AgentDebugTurnStatus, labels: DebugLabels): string {
   if (status === 'running') return labels.statusRunning;
   if (status === 'completed') return labels.statusCompleted;
   if (status === 'aborted') return labels.statusAborted;
   return labels.statusError;
-}
-
-function kindLabel(kind: string, labels: DebugLabels): string {
-  switch (kind) {
-    case 'turn': return labels.kindTurn;
-    case 'delegation': return labels.kindDelegation;
-    case 'background': return labels.kindBackground;
-    case 'scheduled': return labels.kindScheduled;
-    case 'reflective': return labels.kindReflective;
-    default: return kind || labels.unknown;
-  }
 }
 
 function partTitle(part: AgentDebugMessagePart, labels: DebugLabels): string {
@@ -226,14 +209,13 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
     : formatTimestamp(startedAt);
   return (
     <div className="agent-debug-run-summary">
-      <div className="agent-debug-run-summary-main">
-        <div className="agent-debug-run-summary-title">
-          <span className="agent-debug-agent-badge">{agentLabel(run.agentId)}</span>
-          <strong>{kindLabel(run.kind, labels)}</strong>
-          {showStatus ? <span className={`agent-debug-status-pill is-${run.status}`}>{statusLabel(run.status, labels)}</span> : null}
-        </div>
-      </div>
       <dl className="agent-debug-run-summary-facts">
+        {showStatus ? (
+          <div>
+            <dt>{labels.runStatus}</dt>
+            <dd>{statusLabel(run.status, labels)}</dd>
+          </div>
+        ) : null}
         <div>
           <dt>{labels.runModel}</dt>
           <dd>{run.modelId ?? labels.unknown}</dd>
@@ -264,12 +246,6 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
           </div>
         ) : null}
       </dl>
-      <div aria-label={labels.identifiersTitle} className="agent-debug-run-identifiers">
-        <span><b>run:</b><code title={run.runId}>{run.runId}</code></span>
-        <span><b>agent:</b><code title={run.agentId}>{run.agentId}</code></span>
-        {run.parentRunId ? <span><b>parent run:</b><code title={run.parentRunId}>{run.parentRunId}</code></span> : null}
-        {run.parentToolCallId ? <span><b>parent tool:</b><code title={run.parentToolCallId}>{run.parentToolCallId}</code></span> : null}
-      </div>
     </div>
   );
 }
