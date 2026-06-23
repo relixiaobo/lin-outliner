@@ -649,27 +649,35 @@
 }
 
 .agent-debug-execution-list > .agent-debug-execution-event {
-  padding: var(--space-2) 0;
+  padding: 0;
 }
 
 .agent-debug-execution-list > .agent-debug-execution-event + .agent-debug-execution-event {
   border-top: 1px solid var(--border-subtle);
-  margin-top: var(--space-2);
-  padding-top: var(--space-4);
 }
 
 .agent-debug-execution-list > .agent-debug-execution-event > summary {
+  display: grid;
+  grid-template-columns: auto 86px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
+  padding: var(--space-2) 0;
 }
 
 .agent-debug-execution-list > .agent-debug-execution-event > summary strong {
   color: var(--text-strong);
-  font-weight: 520;
+  font-weight: 500;
 }
 
 .agent-debug-execution-list > .agent-debug-execution-event > summary span {
-  max-width: min(36%, 220px);
+  width: 86px;
+  max-width: 86px;
+  color: var(--text-soft);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
 }
 
 .agent-debug-part-details {

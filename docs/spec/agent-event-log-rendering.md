@@ -1253,11 +1253,12 @@ The run detail is ordered for inspection:
    only non-default status plus an `Info` affordance. Each call is a collapsible
    disclosure, default-open. The `Info` hover uses the same token/cost breakdown
    format as the assistant-reply hover, scoped to that provider call. The body is
-   a flat, expandable call-event list: assistant response parts render in provider
-   order (`thinking`, `assistant text`, `tool_call`, etc.), followed by matching
-   `tool_result` rows. Tool result rows use the same part-disclosure control as
-   the rest of the pane, and orphan tool calls are synthesized from the exchange
-   args only when the provider response did not capture the original `tool_call`.
+   a flat, expandable call-event list using the same row grammar as Model Input:
+   a short semantic label (`thinking`, `assistant`, `tool call`, `tool result`)
+   plus a one-line summary, followed by the expandable full body. Tool result
+   rows use the same part-disclosure control as the rest of the pane, and orphan
+   tool calls are synthesized from the exchange args only when the provider
+   response did not capture the original tool call.
    Calls render as a lightweight disclosure list directly under the Execution
    header, with subtle dividers rather than separate cards; the run summary
    carries the main token/cost readout.
