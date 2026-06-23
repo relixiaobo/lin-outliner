@@ -1651,7 +1651,6 @@ type FileReadData =
   | FileReadTextData
   | FileReadImageData
   | FileReadPdfData
-  | FileReadPdfPartsData
   | FileReadNotebookData
   | FileReadUnchangedData;
 
@@ -1685,16 +1684,8 @@ interface FileReadPdfData {
   file: {
     filePath: string;
     originalSize: number;
-    mode: "native";
-    mimeType: "application/pdf";
-  };
-}
-
-interface FileReadPdfPartsData {
-  type: "parts";
-  file: {
-    filePath: string;
-    originalSize: number;
+    totalPages: number;
+    mode: "text" | "images" | "text_and_images" | "metadata";
     pages: {
       firstPage: number;
       lastPage: number;
@@ -1703,8 +1694,10 @@ interface FileReadPdfPartsData {
       chars: number;
       truncated: boolean;
     };
-    count: number;
-    outputDir: string;
+    renderedImages?: {
+      count: number;
+      outputDir: string;
+    };
   };
 }
 
@@ -1743,22 +1736,21 @@ Result behavior:
 - Image reads return dimensions when they can be determined, attach the image
   block for the model to inspect, and omit base64 from the model-visible JSON so
   text output stays compact.
-- On OpenAI Responses-family models, reading a PDF without `pages` returns
-  `FileReadPdfData` for PDFs up to 20 MB and persists the PDF bytes as a source
-  payload. The runtime rehydrates that payload into an OpenAI `input_file`
-  document block immediately before the provider request, so normal PDF analysis
-  does not depend on Poppler and base64 never enters the tool-result JSON or
-  debug run snapshot. If a later request uses a model without native PDF support,
-  the runtime shows a readable PDF attachment notice instead of sending the
-  private payload marker.
-- PDF reads with `pages` ranges such as `"3"` and `"1-5"` use the local
-  page-extraction path, with a maximum of 20 pages per request. `pdfinfo`
-  determines page count, `pdftoppm` renders selected pages as JPEGs, and those
-  page images are attached to the tool result for visual layout inspection. If
-  `pdftotext` is available and the selected pages contain embedded text, that
-  extracted text is attached as a text part before the page images. Scanned PDFs
-  therefore still work through images, while text PDFs remain searchable and
-  token-efficient.
+- PDF reads are provider-neutral. `file_read` never sends the original PDF bytes
+  to the model as a provider-native document block; the runtime extracts local
+  text and/or page images first, then attaches those model-readable parts to the
+  tool result.
+- Reading a PDF without `pages` uses `pdfinfo` for page count and `pdftotext`
+  for embedded text extraction over the full document, capped by the PDF text
+  limit. Text PDFs therefore stay searchable and token-efficient on every model.
+  If no embedded text is available and the PDF has at most 10 pages, the runtime
+  renders the pages as JPEG images automatically; larger scanned PDFs return
+  metadata plus instructions to call `file_read` again with a narrower `pages`
+  range.
+- PDF reads with `pages` ranges such as `"3"` and `"1-5"` render the selected
+  pages with `pdftoppm`, with a maximum of 20 pages per request. When
+  `pdftotext` extracts text for that range, the text part is attached before the
+  page images so visual layout inspection and text search both work.
 - If Poppler is missing for page rendering or PDF conversion, the tool returns a
   recoverable error that tells the agent to use `bash` to detect an available
   package manager and install Poppler. The recovery path must not assume
@@ -1767,8 +1759,6 @@ Result behavior:
   supported package manager is available, the agent reports that Poppler must be
   installed so `pdfinfo` and `pdftoppm` are on `PATH`. The file tools never
   install system packages themselves.
-- Models that do not support the native PDF payload path keep using the
-  Poppler-backed page-rendering path.
 - Notebook reads parse `.ipynb` cells and outputs into a compact text rendering
   plus structured cell metadata.
 - Binary files should return a typed result only when Lin supports the media

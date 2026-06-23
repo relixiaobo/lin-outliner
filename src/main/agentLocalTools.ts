@@ -10,6 +10,7 @@ import {
   errorEnvelope,
   successEnvelope,
   type ToolEnvelope,
+  type ToolStatus,
 } from './agentToolEnvelope';
 import type { AgentSkillRuntime } from './agentSkills';
 import {
@@ -30,7 +31,6 @@ interface LocalToolOptions {
   scratchRoot?: string;
   workspace?: AgentLocalWorkspaceContext;
   skillRuntime?: AgentSkillRuntime;
-  nativePdfRead?: boolean;
 }
 
 export interface AgentLocalWorkspaceContext {
@@ -71,7 +71,6 @@ type FileReadData =
   | FileReadTextData
   | FileReadImageData
   | FileReadPdfData
-  | FileReadPdfPartsData
   | FileReadNotebookData
   | FileReadUnchangedData;
 
@@ -102,22 +101,16 @@ interface FileReadPdfData {
   file: {
     filePath: string;
     originalSize: number;
-    mode: 'native';
-    mimeType: 'application/pdf';
-  };
-}
-
-interface FileReadPdfPartsData {
-  type: 'parts';
-  file: {
-    filePath: string;
-    originalSize: number;
-    count: number;
-    outputDir: string;
+    totalPages: number;
+    mode: 'text' | 'images' | 'text_and_images' | 'metadata';
     pages: PdfPageRange;
     extractedText?: {
       chars: number;
       truncated: boolean;
+    };
+    renderedImages?: {
+      count: number;
+      outputDir: string;
     };
   };
 }
@@ -436,7 +429,6 @@ const BASH_INLINE_OUTPUT_LIMIT = 30_000;
 const BACKGROUND_TASK_HISTORY_LIMIT = 20;
 const BACKGROUND_TASK_TTL_MS = 30 * 60_000;
 const PDF_MAX_EXTRACT_SIZE = 100 * 1024 * 1024;
-export const PDF_NATIVE_MAX_SIZE = 20 * 1024 * 1024;
 const PDF_MAX_PAGES_PER_READ = 20;
 const PDF_INLINE_PAGE_THRESHOLD = 10;
 const PDF_TEXT_MAX_CHARS = 60_000;
@@ -613,7 +605,7 @@ const TASK_STOP_PARAMETERS = {
 export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>[] {
   const workspace = options.workspace ?? createWorkspaceContext(options.localRoot, options.scratchRoot, options.skillRuntime);
   return [
-    createFileReadTool(workspace, { nativePdfRead: options.nativePdfRead }),
+    createFileReadTool(workspace),
     createFileGlobTool(workspace),
     createFileGrepTool(workspace),
     createFileEditTool(workspace),
@@ -879,7 +871,7 @@ export function buildAgentLocalToolProcessEnv(): NodeJS.ProcessEnv {
   return { ...process.env, PATH: pathValue };
 }
 
-function createFileReadTool(workspace: WorkspaceContext, options: Pick<LocalToolOptions, 'nativePdfRead'> = {}): AgentTool<any, ToolEnvelope<FileReadData>> {
+function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileReadData>> {
   return {
     name: 'file_read',
     label: 'File Read',
@@ -929,38 +921,14 @@ function createFileReadTool(workspace: WorkspaceContext, options: Pick<LocalTool
         }
         if (ext === '.pdf') {
           const buffer = await readFile(filePath);
-          if (options.nativePdfRead && params.pages === undefined) {
-            const data = readNativePdfData(filePath, buffer);
-            await notifySuccessfulFileTouch(workspace, filePath);
-            const visible = visibleFileRead(data);
-            return agentToolResult(successEnvelope('file_read', data, {
-              instructions: 'The PDF was attached as a native document block for the next model call. Use the pages parameter only when you need page images or layout inspection.',
-              metrics: metrics(started, data),
-            }), visible);
-          }
-          const parts = await extractPdfPages(workspace, filePath, buffer.byteLength, params.pages);
-          const extractedText = await extractPdfText(filePath, parts.file.pages);
-          if (extractedText) {
-            parts.file.extractedText = {
-              chars: extractedText.text.length,
-              truncated: extractedText.truncated,
-            };
-          }
-          const imageContent = await readPdfPartImages(parts.file.outputDir);
-          const textContent = extractedText
-            ? [{
-                type: 'text' as const,
-                text: `Extracted text from PDF pages ${parts.file.pages.firstPage}-${parts.file.pages.lastPage} of ${filePath}${extractedText.truncated ? ' (truncated)' : ''}:\n\n${extractedText.text}`,
-              }]
-            : [];
+          const read = await readPdfForModel(workspace, filePath, buffer.byteLength, params.pages);
           await notifySuccessfulFileTouch(workspace, filePath);
-          const visible = visibleFileRead(parts);
-          return agentToolResult(successEnvelope('file_read', parts, {
-            instructions: extractedText
-              ? 'PDF text was extracted for searchable content, and pages were also rendered as images for visual layout inspection.'
-              : 'PDF pages were rendered as images and attached to this tool result so the model can inspect them. No embedded text was extracted.',
-            metrics: metrics(started, parts),
-          }), visible, [...textContent, ...imageContent]);
+          const visible = visibleFileRead(read.data);
+          return agentToolResult(successEnvelope('file_read', read.data, {
+            status: read.status,
+            instructions: read.instructions,
+            metrics: metrics(started, read.data),
+          }), visible, read.content);
         }
         if (ext === '.ipynb') {
           const buffer = await readFile(filePath);
@@ -2553,32 +2521,17 @@ async function getPdfPageCount(filePath: string): Promise<number> {
   return pages;
 }
 
-function readNativePdfData(filePath: string, buffer: Buffer): FileReadPdfData {
-  if (buffer.byteLength === 0) {
-    throw new LocalToolFailure('pdf_empty', `PDF file is empty: ${filePath}`, 'Use a valid PDF file.');
-  }
-  if (buffer.byteLength < 5 || buffer.toString('ascii', 0, 5) !== '%PDF-') {
-    throw new LocalToolFailure('pdf_corrupted', `File is not a valid PDF: ${filePath}`, 'Use a valid PDF file.');
-  }
-  if (buffer.byteLength > PDF_NATIVE_MAX_SIZE) {
-    throw new LocalToolFailure(
-      'pdf_too_large',
-      `PDF file exceeds maximum native document size of ${formatBytes(PDF_NATIVE_MAX_SIZE)}.`,
-      `Call file_read again with pages, for example "1-5". Maximum ${PDF_MAX_PAGES_PER_READ} pages per request, or split the PDF first.`,
-    );
-  }
-  return {
-    type: 'pdf',
-    file: {
-      filePath,
-      originalSize: buffer.byteLength,
-      mode: 'native',
-      mimeType: 'application/pdf',
-    },
-  };
-}
-
-async function extractPdfPages(workspace: WorkspaceContext, filePath: string, originalSize: number, requestedPages: string | undefined): Promise<FileReadPdfPartsData> {
+async function readPdfForModel(
+  workspace: WorkspaceContext,
+  filePath: string,
+  originalSize: number,
+  requestedPages: string | undefined,
+): Promise<{
+  data: FileReadPdfData;
+  content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>;
+  instructions: string;
+  status?: ToolStatus;
+}> {
   if (originalSize === 0) {
     throw new LocalToolFailure('pdf_empty', `PDF file is empty: ${filePath}`, 'Use a valid PDF file.');
   }
@@ -2588,6 +2541,75 @@ async function extractPdfPages(workspace: WorkspaceContext, filePath: string, or
 
   const totalPages = await getPdfPageCount(filePath);
   const range = selectPdfPageRange(totalPages, requestedPages);
+  const extractedText = await extractPdfText(filePath, range);
+  const shouldRenderPages = requestedPages !== undefined || (!extractedText && totalPages <= PDF_INLINE_PAGE_THRESHOLD);
+  const rendered = shouldRenderPages ? await renderPdfPages(workspace, filePath, range) : null;
+  const imageContent = rendered ? await readPdfPartImages(rendered.outputDir) : [];
+  const textContent = extractedText
+    ? [{
+        type: 'text' as const,
+        text: `Extracted text from PDF pages ${range.firstPage}-${range.lastPage} of ${filePath}${extractedText.truncated ? ' (truncated)' : ''}:\n\n${extractedText.text}`,
+      }]
+    : [];
+  const data: FileReadPdfData = {
+    type: 'pdf',
+    file: {
+      filePath,
+      originalSize,
+      totalPages,
+      mode: extractedText && rendered
+        ? 'text_and_images'
+        : extractedText ? 'text' : rendered ? 'images' : 'metadata',
+      pages: range,
+      ...(extractedText ? {
+        extractedText: {
+          chars: extractedText.text.length,
+          truncated: extractedText.truncated,
+        },
+      } : {}),
+      ...(rendered ? {
+        renderedImages: {
+          count: rendered.count,
+          outputDir: rendered.outputDir,
+        },
+      } : {}),
+    },
+  };
+
+  if (extractedText && rendered) {
+    return {
+      data,
+      content: [...textContent, ...imageContent],
+      instructions: 'PDF text was extracted for searchable content, and selected pages were rendered as images for visual layout inspection.',
+    };
+  }
+  if (extractedText) {
+    return {
+      data,
+      content: textContent,
+      instructions: 'PDF text was extracted locally and attached as text. Use the pages parameter only when you need page images or layout inspection.',
+    };
+  }
+  if (rendered) {
+    return {
+      data,
+      content: imageContent,
+      instructions: 'No embedded PDF text was extracted. PDF pages were rendered as images and attached so the model can inspect them visually.',
+      status: 'partial',
+    };
+  }
+  return {
+    data,
+    content: [{
+      type: 'text',
+      text: `PDF metadata for ${filePath}: ${totalPages} pages. No embedded text was extracted in the default read.`,
+    }],
+    instructions: `No embedded PDF text was extracted, and the PDF has too many pages to render inline. Call file_read again with pages, for example "1-5". Maximum ${PDF_MAX_PAGES_PER_READ} pages per request.`,
+    status: 'partial',
+  };
+}
+
+async function renderPdfPages(workspace: WorkspaceContext, filePath: string, range: PdfPageRange): Promise<{ count: number; outputDir: string }> {
   const outputDir = path.join(toolOutputDir(workspace), `pdf-${randomUUID()}`);
   await mkdir(outputDir, { recursive: true });
   const prefix = path.join(outputDir, 'page');
@@ -2610,14 +2632,8 @@ async function extractPdfPages(workspace: WorkspaceContext, filePath: string, or
     throw new LocalToolFailure('pdf_corrupted', 'pdftoppm produced no output pages. The PDF may be invalid.', 'Check the PDF file or convert it to images manually.');
   }
   return {
-    type: 'parts',
-    file: {
-      filePath,
-      originalSize,
-      count: imageFiles.length,
-      outputDir,
-      pages: range,
-    },
+    count: imageFiles.length,
+    outputDir,
   };
 }
 
@@ -2643,13 +2659,6 @@ async function extractPdfText(filePath: string, range: PdfPageRange): Promise<{ 
 
 function selectPdfPageRange(totalPages: number, requestedPages: string | undefined): PdfPageRange {
   if (!requestedPages) {
-    if (totalPages > PDF_INLINE_PAGE_THRESHOLD) {
-      throw new LocalToolFailure(
-        'pdf_too_large',
-        `This PDF has ${totalPages} pages, which is too many to read at once.`,
-        `Call file_read again with pages, for example "1-5". Maximum ${PDF_MAX_PAGES_PER_READ} pages per request.`,
-      );
-    }
     return { firstPage: 1, lastPage: totalPages };
   }
   const range = parsePdfPageRange(requestedPages);
@@ -2909,22 +2918,21 @@ function visibleFileRead(data: FileReadData): { file: Record<string, unknown> } 
     case 'image':
       return { file: { filePath: data.file.filePath, originalSize: data.file.originalSize, dimensions: data.file.dimensions } };
     case 'pdf':
-      return { file: { filePath: data.file.filePath, originalSize: data.file.originalSize, mode: data.file.mode } };
+      return {
+        file: {
+          filePath: data.file.filePath,
+          originalSize: data.file.originalSize,
+          totalPages: data.file.totalPages,
+          mode: data.file.mode,
+          pages: data.file.pages,
+          ...(data.file.extractedText ? { extractedText: { truncated: data.file.extractedText.truncated } } : {}),
+          ...(data.file.renderedImages ? { renderedImages: { count: data.file.renderedImages.count } } : {}),
+        },
+      };
     case 'text':
       return { file: { filePath: data.file.filePath, content: data.file.content, startLine: data.file.startLine, totalLines: data.file.totalLines } };
     case 'notebook':
       return { file: { filePath: data.file.filePath, content: data.file.content, originalSize: data.file.originalSize } };
-    case 'parts': {
-      const file = data.file;
-      return {
-        file: {
-          filePath: file.filePath,
-          originalSize: file.originalSize,
-          pages: file.pages,
-          ...(file.extractedText ? { extractedText: { truncated: file.extractedText.truncated } } : {}),
-        },
-      };
-    }
     case 'file_unchanged':
       return { file: { filePath: data.file.filePath } };
     default: {

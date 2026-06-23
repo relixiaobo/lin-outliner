@@ -116,17 +116,11 @@ import {
   selectReferencedAssetNodes,
   type MaterializedReferencedFile,
 } from './agentReferencedAssets';
-import { errorEnvelope, isToolEnvelope, modelVisibleEnvelope, toolEnvelopeAfterToolCall } from './agentToolEnvelope';
+import { isToolEnvelope, toolEnvelopeAfterToolCall } from './agentToolEnvelope';
 import { createAgentTools, type AgentToolsOptions } from './agentTools';
 import { agentDefinitionDisplayName } from './agentDefinitionDisplay';
 import { DEFAULT_AGENT_SYSTEM_PROMPT, composeAgentPrompt } from './agentSystemPrompt';
 import { applyAgentPromptCacheBreakpoints } from './agentProviderCacheBreakpoints';
-import {
-  attachNativePdfPayloadsToOpenAIResponsesPayload,
-  modelSupportsNativePdfPayloads,
-  nativePdfPayloadRuntimeText,
-  removeNativePdfPayloadMarkersFromPayload,
-} from './agentNativePdfPayloads';
 import {
   deriveDebugConversation,
   deriveDebugRun,
@@ -2435,30 +2429,15 @@ export class AgentRuntime {
           afterToolResult: async (toolCallId, toolName, result, isError) => {
             const current = conversationRef.current;
             if (!current) return undefined;
-            const nativePdf = await this.afterNativePdfToolResult(conversationId, current, toolCallId, toolName, result, isError);
-            if (nativePdf) return nativePdf;
             return this.contextManager.afterToolResultForModelContext(conversationId, current, toolCallId, toolName, result, isError);
           },
-        }, async (payload, payloadModel) => {
-          let nextPayload = payload;
-          try {
-            if (modelSupportsNativePdfPayloads(payloadModel)) {
-              nextPayload = await attachNativePdfPayloadsToOpenAIResponsesPayload(
-                payload,
-                (payloadRef) => this.getEventStore().readPayload(conversationId, payloadRef),
-              ) ?? payload;
-            } else {
-              nextPayload = removeNativePdfPayloadMarkersFromPayload(payload) ?? payload;
-            }
-          } catch (error) {
-            this.emitError(conversationId, error instanceof Error ? error.message : String(error));
-          }
+        }, async (payload) => {
           try {
             await this.captureDebugRunSnapshot(conversationId, payload);
           } catch (error) {
             this.emitError(conversationId, error instanceof Error ? error.message : String(error));
           }
-          return nextPayload === payload ? undefined : nextPayload;
+          return undefined;
         })
       : createConfigurationErrorAgent(
           conversationId,
@@ -2599,7 +2578,6 @@ export class AgentRuntime {
     conversation.agent.state.tools = createAgentTools(this.outlinerToolHost, {
       localFileRoot: this.options.localFileRoot,
       localWorkspace: conversation.localWorkspace,
-      nativePdfRead: modelSupportsNativePdfPayloads(conversation.agent.state.model),
       skillRuntime: conversation.skillRuntime,
       skillToolEnabled: conversation.runtimeSettings.automaticSkillsEnabled,
       delegationRuntime: conversation.delegationRuntime,
@@ -5599,51 +5577,6 @@ export class AgentRuntime {
     activeRun.assistantText = '';
   }
 
-  private async afterNativePdfToolResult(
-    conversationId: string,
-    conversation: AgentConversationState,
-    toolCallId: string,
-    toolName: string,
-    result: unknown,
-    isError: boolean,
-  ): Promise<AfterToolCallResult | undefined> {
-    if (isError || toolName.replace(/-/g, '_') !== 'file_read') return undefined;
-    const details = isRecord(result) ? result.details : undefined;
-    if (!isToolEnvelope(details) || !details.ok || !isNativePdfFileReadData(details.data)) return undefined;
-    const activeRunId = this.activeRunId(conversation) ?? undefined;
-    const filePath = details.data.file.filePath;
-    const filename = path.basename(filePath) || 'document.pdf';
-    try {
-      const bytes = await readFile(filePath);
-      const label = `PDF file read: ${filename} (${formatRuntimeBytes(bytes.byteLength)})`;
-      const payload = await this.getEventStore().writePayload(conversationId, {
-        data: bytes,
-        mimeType: 'application/pdf',
-        runId: activeRunId,
-        role: 'source',
-        summary: filename,
-      });
-      conversation.activeRun?.toolOutputPayloads.set(toolCallId, { payload, label });
-      return {
-        content: [{
-          type: 'text',
-          text: nativePdfPayloadRuntimeText({ payload, filename, label }),
-        }],
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.emitError(conversationId, message);
-      const envelope = errorEnvelope('file_read', 'native_pdf_attachment_failed', message, {
-        instructions: 'The PDF could not be attached as a native document block. Call file_read again, or call file_read with pages to inspect a page range.',
-      });
-      return {
-        content: [{ type: 'text', text: JSON.stringify(modelVisibleEnvelope(envelope), null, 2) }],
-        details: envelope,
-        isError: true,
-      };
-    }
-  }
-
   private async appendToolResultMessage(conversationId: string, conversation: AgentConversationState, message: ToolResultMessage) {
     const activeRun = conversation.activeRun;
     if (!activeRun) return;
@@ -5777,7 +5710,6 @@ export class AgentRuntime {
     conversationId: string,
     eventState: AgentEventReplayState,
     scopedConversation?: AgentConversationState,
-    options: { nativePdfPayloadsEnabled?: boolean } = {},
   ): Promise<AgentMessage[]> {
     // Every model call re-derives its context through here (the agent's
     // transformContext → prepareModelContext). The single agent always reads
@@ -5786,11 +5718,9 @@ export class AgentRuntime {
     const conversation = scopedConversation ?? this.conversations.get(conversationId);
     const activeRun = conversation?.activeRun;
     const liveConversation = conversation && conversation.eventState === eventState ? conversation : null;
-    const nativePdfPayloadsEnabled = options.nativePdfPayloadsEnabled
-      ?? (conversation ? modelSupportsNativePdfPayloads(conversation.agent.state.model) : false);
     const messages: AgentMessage[] = [];
     for (const message of getAgentEventRuntimeTranscriptPath(eventState)) {
-      messages.push(await this.runtimePiMessageFromRecord(conversationId, message, nativePdfPayloadsEnabled));
+      messages.push(await this.runtimePiMessageFromRecord(conversationId, message));
     }
     // Conversation environment reminder (the reminder-stack `environment` slot):
     // the system prompt is identity-only, so the 1:1 framing rides here instead.
@@ -5824,12 +5754,11 @@ export class AgentRuntime {
   private async runtimePiMessageFromRecord(
     conversationId: string,
     message: AgentEventMessageRecord,
-    nativePdfPayloadsEnabled: boolean,
   ): Promise<AgentMessage> {
     if (message.role === 'user') {
       return {
         role: 'user',
-        content: await this.runtimeUserContent(conversationId, message.content, nativePdfPayloadsEnabled),
+        content: await this.runtimeUserContent(conversationId, message.content),
         timestamp: message.createdAt,
       } satisfies UserMessage;
     }
@@ -5852,7 +5781,7 @@ export class AgentRuntime {
       toolName: message.toolName ?? 'unknown',
       // The model sees the slimmed copy when one exists; the canonical full
       // `content` is reserved for the UI/search (see `modelSlimmedContent`).
-      content: await this.runtimeUserContent(conversationId, message.modelSlimmedContent ?? message.content, nativePdfPayloadsEnabled),
+      content: await this.runtimeUserContent(conversationId, message.modelSlimmedContent ?? message.content),
       isError: !!message.isError,
       timestamp: message.createdAt,
     } satisfies ToolResultMessage;
@@ -5949,7 +5878,6 @@ export class AgentRuntime {
   private async runtimeUserContent(
     conversationId: string,
     content: AgentPersistedContent[],
-    nativePdfPayloadsEnabled: boolean,
   ): Promise<Array<PiTextContent | PiImageContent>> {
     const parts: Array<PiTextContent | PiImageContent> = [];
     for (const part of content) {
@@ -5968,13 +5896,7 @@ export class AgentRuntime {
       if (part.type === 'payload_ref' && part.payload.mimeType === 'application/pdf') {
         parts.push({
           type: 'text',
-          text: nativePdfPayloadsEnabled
-            ? nativePdfPayloadRuntimeText({
-                payload: part.payload,
-                filename: part.payload.summary || `${part.payload.id}.pdf`,
-                label: part.label,
-              })
-            : nativePdfPayloadFallbackText(part),
+          text: nativePdfPayloadFallbackText(part),
         });
         continue;
       }
@@ -6887,28 +6809,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isNativePdfFileReadData(value: unknown): value is {
-  type: 'pdf';
-  file: { filePath: string; originalSize: number; mode: 'native'; mimeType: 'application/pdf' };
-} {
-  if (!isRecord(value) || value.type !== 'pdf' || !isRecord(value.file)) return false;
-  return typeof value.file.filePath === 'string'
-    && typeof value.file.originalSize === 'number'
-    && value.file.mode === 'native'
-    && value.file.mimeType === 'application/pdf';
-}
-
-function formatRuntimeBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
 function nativePdfPayloadFallbackText(part: Extract<AgentPersistedContent, { type: 'payload_ref' }>): string {
   const label = part.label || part.payload.summary || 'PDF document';
   return [
     `PDF document attached: ${label}`,
-    'The active model cannot inspect native PDF payloads directly. Call file_read with pages to inspect a page range.',
+    'Use the referenced local file path with file_read to extract text. Add pages only when page images or visual layout inspection are needed.',
   ].join('\n');
 }
 
@@ -7130,7 +7035,6 @@ function createConfiguredAgent(
   const buildTools = () => createAgentTools(outlinerToolHost, {
     localFileRoot,
     localWorkspace: options.localWorkspace,
-    nativePdfRead: modelSupportsNativePdfPayloads(activeLoopModel),
     skillRuntime,
     skillToolEnabled: options.skillToolEnabled,
     delegationRuntime: options.delegationRuntime,

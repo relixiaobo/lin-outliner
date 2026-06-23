@@ -7,7 +7,6 @@ import {
   buildAgentLocalToolProcessEnv,
   createAgentLocalWorkspaceContext,
   createLocalTools,
-  PDF_NATIVE_MAX_SIZE,
   POPPLER_RECOVERY_INSTRUCTIONS,
   restorePostCompactReadFiles,
   scratchRootForWorkdir,
@@ -51,6 +50,8 @@ async function executeTool<TData>(workspaceRoot: string, name: string, params: u
 
 const hasPdfTools = commandExists('pdfinfo') && commandExists('pdftoppm');
 const pdfTest = hasPdfTools ? test : test.skip;
+const hasPdfTextTools = commandExists('pdfinfo') && commandExists('pdftotext');
+const pdfTextTest = hasPdfTextTools ? test : test.skip;
 
 // file_grep shells out to a real `rg` binary; skip ripgrep-backed cases when the
 // binary is not on PATH (mirrors the pdfTest pattern).
@@ -781,48 +782,37 @@ describe('agent local tools', () => {
     });
   });
 
-  test('file_read can return native PDF metadata without rendering pages', async () => {
+  pdfTextTest('file_read extracts PDF text without native provider payloads', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const filePath = path.join(workspaceRoot, 'sample.pdf');
       await writeFile(filePath, makePdf(['First page', 'Second page']), 'utf8');
 
-      const tool = createLocalTools({ localRoot: workspaceRoot, nativePdfRead: true }).find((candidate) => candidate.name === 'file_read')!;
+      const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
       const result = await (tool.execute as any)('test-call', { file_path: filePath });
       const read = result.details as ToolEnvelope<{
         type: 'pdf';
-        file: { filePath: string; originalSize: number; mode: string; mimeType: string };
+        file: { filePath: string; originalSize: number; totalPages: number; mode: string; pages: { firstPage: number; lastPage: number }; extractedText?: { truncated: boolean } };
       }>;
       const visible = JSON.parse(result.content[0].text);
 
       expect(read.ok).toBe(true);
       expect(read.data!.type).toBe('pdf');
-      expect(read.data!.file.mode).toBe('native');
-      expect(read.data!.file.mimeType).toBe('application/pdf');
+      expect(read.data!.file.mode).toBe('text');
+      expect(read.data!.file.totalPages).toBe(2);
+      expect(read.data!.file.pages).toEqual({ firstPage: 1, lastPage: 2 });
+      expect(read.data!.file.extractedText?.truncated).toBe(false);
       expect(visible.data.file).toEqual({
         filePath,
         originalSize: read.data!.file.originalSize,
-        mode: 'native',
+        totalPages: 2,
+        mode: 'text',
+        pages: { firstPage: 1, lastPage: 2 },
+        extractedText: { truncated: false },
       });
       expect(JSON.stringify(visible)).not.toContain('base64');
+      expect(JSON.stringify(visible)).not.toContain('input_file');
+      expect(result.content.some((block: { type: string; text?: string }) => block.type === 'text' && block.text?.includes('First page'))).toBe(true);
       expect(result.content.some((block: { type: string }) => block.type === 'image')).toBe(false);
-    });
-  });
-
-  test('file_read rejects oversized native PDF reads before provider payload conversion', async () => {
-    await withWorkspace(async (workspaceRoot) => {
-      const filePath = path.join(workspaceRoot, 'large.pdf');
-      const bytes = Buffer.alloc(PDF_NATIVE_MAX_SIZE + 1);
-      bytes.write('%PDF-');
-      await writeFile(filePath, bytes);
-
-      const tool = createLocalTools({ localRoot: workspaceRoot, nativePdfRead: true }).find((candidate) => candidate.name === 'file_read')!;
-      const result = await (tool.execute as any)('test-call', { file_path: filePath });
-      const read = result.details as ToolEnvelope<unknown>;
-
-      expect(read.ok).toBe(false);
-      expect(read.error?.code).toBe('pdf_too_large');
-      expect(read.instructions).toContain('pages');
-      expect(result.content[0].text).toContain('pdf_too_large');
     });
   });
 
@@ -884,15 +874,15 @@ describe('agent local tools', () => {
       const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
       const result = await (tool.execute as any)('test-call', { file_path: filePath, pages: '2' });
       const read = result.details as ToolEnvelope<{
-        type: 'parts';
-        file: { count: number; outputDir: string; originalSize: number; pages: { firstPage: number; lastPage: number }; extractedText?: { chars: number } };
+        type: 'pdf';
+        file: { renderedImages?: { count: number; outputDir: string }; originalSize: number; pages: { firstPage: number; lastPage: number }; extractedText?: { chars: number } };
       }>;
 
       expect(read.ok).toBe(true);
-      expect(read.data!.type).toBe('parts');
-      expect(read.data!.file.count).toBe(1);
+      expect(read.data!.type).toBe('pdf');
+      expect(read.data!.file.renderedImages?.count).toBe(1);
       expect(read.data!.file.pages).toEqual({ firstPage: 2, lastPage: 2 });
-      expect((await readdir(read.data!.file.outputDir)).some((entry) => entry.endsWith('.jpg'))).toBe(true);
+      expect((await readdir(read.data!.file.renderedImages!.outputDir)).some((entry) => entry.endsWith('.jpg'))).toBe(true);
       expect(result.content.some((block: { type: string }) => block.type === 'image')).toBe(true);
     });
   });

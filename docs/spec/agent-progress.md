@@ -57,8 +57,8 @@ truth.
   - `bash`
   - `task_stop`
 - [x] Local tool capability parity pass:
-  - `file_read` image dimensions, OpenAI Responses native PDF payloads,
-    PDF text extraction via `pdftotext`, PDF page rendering via `pdftoppm`, and
+  - `file_read` image dimensions, runtime PDF text extraction via `pdftotext`,
+    PDF page rendering via `pdftoppm`, provider-neutral PDF tool results, and
     notebook parsing
   - local tool subprocesses use the app environment plus
     `LIN_AGENT_EXTRA_TOOL_PATH` and common macOS Homebrew/system binary paths, so
