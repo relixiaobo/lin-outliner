@@ -186,6 +186,7 @@ export function AgentDebugPanel({ conversationId, selectedRunId: preferredRunId 
     if (runs.length === 0) return null;
     return runs.find((run) => run.runId === selectedRunId) ?? runs[0]!;
   }, [runs, selectedRunId]);
+  const selectedRunDetail = useSelectedRunDetail(resolvedConversationId, selectedRun);
 
   useEffect(() => {
     if (!selectedRun && runs.length > 0) setSelectedRunId(runs[0]!.runId);
@@ -227,31 +228,49 @@ export function AgentDebugPanel({ conversationId, selectedRunId: preferredRunId 
       {error ? <ErrorState message={error} /> : null}
 
       {conversation ? (
-        <div className="agent-debug-run-details-layout">
-          <aside className="agent-debug-run-selector" aria-label={labels.runListAriaLabel}>
-            <Overview conversation={conversation} labels={labels} />
-            {runs.length === 0 ? (
-              <div className="agent-debug-card is-muted">{labels.noRuntimeData}</div>
-            ) : runs.map((run) => (
-              <RunSelectorButton
-                key={run.runId}
-                labels={labels}
-                onSelect={() => setSelectedRunId(run.runId)}
-                run={run}
-                selected={selectedRun?.runId === run.runId}
-              />
-            ))}
-          </aside>
-          <section className="agent-debug-selected-run" aria-label={labels.selectedRunAriaLabel}>
-            {selectedRun ? (
-              <SelectedRunDetail
-                conversationId={resolvedConversationId}
-                labels={labels}
-                run={selectedRun}
-              />
-            ) : (
-              <div className="agent-debug-card is-muted">{labels.noRuntimeData}</div>
-            )}
+        <div className="agent-debug-run-page">
+          <section className="agent-debug-summary-region" aria-label={labels.summaryAriaLabel}>
+            <DebugSectionHeader title={labels.summaryTitle} />
+            <div className="agent-debug-summary-grid">
+              <Overview conversation={conversation} labels={labels} />
+              {selectedRun ? (
+                <RunSummaryHeader labels={labels} run={selectedRunDetail.detail ?? selectedRun} />
+              ) : (
+                <div className="agent-debug-card is-muted">{labels.noRuntimeData}</div>
+              )}
+            </div>
+          </section>
+          <section className="agent-debug-details-region" aria-label={labels.detailsAriaLabel}>
+            <DebugSectionHeader title={labels.detailsTitle} />
+            <div className="agent-debug-run-details-layout">
+              <aside className="agent-debug-run-selector" aria-label={labels.runListAriaLabel}>
+                <div className="agent-debug-run-selector-head">
+                  <strong>{labels.turnsTitle}</strong>
+                  <span>{labels.statTotalRuns}: {runs.length}</span>
+                </div>
+                {runs.length === 0 ? (
+                  <div className="agent-debug-card is-muted">{labels.noRuntimeData}</div>
+                ) : runs.map((run) => (
+                  <RunSelectorButton
+                    key={run.runId}
+                    labels={labels}
+                    onSelect={() => setSelectedRunId(run.runId)}
+                    run={run}
+                    selected={selectedRun?.runId === run.runId}
+                  />
+                ))}
+              </aside>
+              <section className="agent-debug-selected-run" aria-label={labels.selectedRunAriaLabel}>
+                {selectedRun ? (
+                  <SelectedRunDetail
+                    detailState={selectedRunDetail}
+                    labels={labels}
+                  />
+                ) : (
+                  <div className="agent-debug-card is-muted">{labels.noRuntimeData}</div>
+                )}
+              </section>
+            </div>
           </section>
         </div>
       ) : (
@@ -295,14 +314,19 @@ function RunSelectorButton({
 
 function useSelectedRunDetail(
   conversationId: string | null,
-  run: AgentDebugRunSummary,
+  run: AgentDebugRunSummary | null,
 ) {
   const [detail, setDetail] = useState<AgentDebugRun | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const loadDetail = useCallback(async () => {
-    if (!conversationId) return;
+    if (!conversationId || !run) {
+      setDetail(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const next = await api.agentDebugRun(conversationId, run.runId);
@@ -313,7 +337,7 @@ function useSelectedRunDetail(
     } finally {
       setLoading(false);
     }
-  }, [conversationId, run.runId]);
+  }, [conversationId, run]);
 
   useEffect(() => {
     setDetail(null);
@@ -325,18 +349,15 @@ function useSelectedRunDetail(
 }
 
 function SelectedRunDetail({
-  conversationId,
+  detailState,
   labels,
-  run,
 }: {
-  conversationId: string | null;
+  detailState: ReturnType<typeof useSelectedRunDetail>;
   labels: DebugLabels;
-  run: AgentDebugRunSummary;
 }) {
-  const { detail, error, loading } = useSelectedRunDetail(conversationId, run);
+  const { detail, error, loading } = detailState;
   return (
     <div className="agent-debug-run-detail-shell">
-      <RunSummaryHeader labels={labels} run={detail ?? run} />
       {loading && !detail ? <EmptyState icon={LoaderIcon} loading role="status" title={labels.loadingRun} /> : null}
       {error ? <ErrorState message={error} /> : null}
       {detail ? <RunDetail run={detail} labels={labels} /> : (!loading && !error ? <div className="agent-debug-card is-muted">{labels.noRoundsYet}</div> : null)}

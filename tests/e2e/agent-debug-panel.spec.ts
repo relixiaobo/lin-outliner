@@ -14,10 +14,13 @@ test.describe('agent debug panel', () => {
     await expect(debugPanel).toHaveCSS('background-color', 'rgb(255, 255, 255)');
 
     // Overview: Channel shape + the conversation's run/token rollup.
+    await expect(debugPanel.getByRole('heading', { name: 'Summary' })).toBeVisible();
     const overview = debugPanel.getByLabel('Agent debug overview');
     await expect(overview).toContainText('Channel');
     await expect(overview).toContainText('66k');
 
+    await expect(debugPanel.getByRole('heading', { name: 'Details', exact: true })).toBeVisible();
+    await expect(debugPanel.getByText('Turns')).toBeVisible();
     const runSelector = debugPanel.locator('.agent-debug-run-selector-button').first();
     await expect(runSelector).toContainText('assistant');
     await expect(runSelector).toContainText('gpt-5.4');

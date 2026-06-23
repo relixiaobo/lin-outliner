@@ -1427,6 +1427,11 @@ commandPalette: {
     statRoundsMeta: ({ count }: { count: number }) => `${count} round${count === 1 ? '' : 's'}`,
     statTokens: 'Tokens',
     statCost: 'Cost',
+    summaryTitle: 'Summary',
+    summaryAriaLabel: 'Run details summary',
+    detailsTitle: 'Details',
+    detailsAriaLabel: 'Run details content',
+    turnsTitle: 'Turns',
     // Agent filter.
     filterAll: 'All',
     // Run node.

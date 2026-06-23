@@ -1233,11 +1233,17 @@ cost summary; clicking it opens the same agent-debug pane with `selectedRunId`
 set to that reply's run. There is no standalone/global debug entry in the agent
 dock; the pane is anchored to a concrete response.
 
-The run-details pane treats **Context** as the primary reading surface. On wide
-panes the run list and selected run sit side by side; on narrow panes the layout
-collapses to a single column via container query so the model-facing context is
-not squeezed by the run selector. The selected run header is a compact facts bar,
-not a grid of cards; detailed cost/cache analysis lives in the Usage section.
+The run-details pane has two top-level regions:
+
+1. **Summary** — conversation/run rollups plus the selected run's compact facts
+   bar.
+2. **Details** — the turn list and the selected run's context, rounds, steps,
+   usage, and advanced metadata.
+
+Within Details, **Context** remains the primary reading surface. On wide panes the
+turn list and selected run sit side by side; on narrow panes the layout collapses
+to a single column via container query so the model-facing context is not squeezed
+by the selector. Detailed cost/cache analysis lives in the Usage section.
 
 **The unit is the round** = one provider call = `(request, response)`, bounded by
 `assistant_message.started` (always present, independent of any wire capture).

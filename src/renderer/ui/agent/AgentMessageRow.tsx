@@ -372,7 +372,7 @@ function AgentMessageUsageHoverCard({
     layoutKey: `${usage.input}:${usage.output}:${usage.cacheRead}:${usage.cacheWrite}:${usage.totalTokens}:${cost?.total ?? 0}`,
     maxHeight: 320,
     placement: 'top-end',
-    width: 280,
+    width: 340,
   });
 
   return createPortal(
@@ -410,7 +410,9 @@ function AgentMessageUsageHoverCard({
         </div>
       </dl>
       {costParts.length > 0 ? (
-        <div className="agent-message-usage-hover-cost">{costParts.join(' · ')}</div>
+        <div className="agent-message-usage-hover-cost">
+          {costParts.map((part) => <span key={part}>{part}</span>)}
+        </div>
       ) : null}
     </div>,
     document.body,
