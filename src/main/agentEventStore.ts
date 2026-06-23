@@ -212,6 +212,7 @@ export interface AgentConversationIndexEntry {
   title: string | null;
   members: AgentPrincipal[];
   goal?: string;
+  settings: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
   messageCount: number;
@@ -694,7 +695,6 @@ export class AgentEventStore {
     return this.readRunMeta(runId);
   }
 
-  /** Reflective runs anchored to one principal (the runs maintaining that principal's pool). */
   /**
    * EVERY run anchored to a conversation (turn + delegation), in creation order.
    * The run-grounded debug view ([[agent-debug-run-grounded]]) enumerates these,
@@ -1611,6 +1611,7 @@ export class AgentEventStore {
             title: event.title,
             members: event.members?.slice() ?? [],
             goal: event.goal,
+            settings: entry?.settings ?? {},
             createdAt: event.createdAt,
             updatedAt: event.createdAt,
             messageCount: entry?.messageCount ?? 0,
@@ -1862,6 +1863,9 @@ function updateConversationIndexEntry(
     next.title = event.title;
     next.goal = event.goal ?? next.goal;
   }
+  if (event.type === 'conversation.settings_changed') {
+    next.settings = { ...next.settings, ...event.settings };
+  }
   if (event.type === 'member.added') {
     next.members = mergePrincipals(next.members, [event.member]);
   }
@@ -1903,6 +1907,7 @@ function conversationIndexEntryFromReplayState(
     title: state.conversation.title,
     members: state.conversation.members.slice(),
     goal: state.conversation.goal,
+    settings: { ...state.conversation.settings },
     createdAt: state.conversation.createdAt,
     updatedAt: state.conversation.updatedAt,
     messageCount: Object.keys(state.messages).length,
@@ -1915,7 +1920,8 @@ function conversationIndexEntryFromReplayState(
 function conversationIndexEntryHasCurrentShape(entry: AgentConversationIndexEntry | undefined): boolean {
   if (!entry) return false;
   return Object.prototype.hasOwnProperty.call(entry, 'lastMessageSnippet')
-    && Object.prototype.hasOwnProperty.call(entry, 'lastMessageAt');
+    && Object.prototype.hasOwnProperty.call(entry, 'lastMessageAt')
+    && isRecord(entry.settings);
 }
 
 // The list snippet is derived from the active path's latest user/assistant

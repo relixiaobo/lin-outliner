@@ -140,11 +140,12 @@ truth.
     conversation/run seq ranges
   - write-time validation dereferences every `chat-source` marker before
     mutating nodes, so fabricated or stale raw-source coordinates fail loudly
-  - runtime-owned Dream write-back is a private `memory-dream` skill run with
-    only `past_chats` and `node_*` memory tools; scheduled runs are at most once
-    per daily due, while Settings can trigger a manual run; both paths read
-    sources since the Dream watermark when sources exist, gather relevant prior
-    memory/workspace context with `node_search` / `node_read`, apply the
+  - runtime-owned Dream write-back is a private `memory-dream` skill run in the
+    protected Dream channel with only `past_chats` and `node_*` memory tools;
+    scheduled runs are at most once per daily due, while Settings can trigger a
+    manual run; both paths read sources since the Dream watermark when sources
+    exist, gather relevant prior memory/workspace context with `node_search` /
+    `node_read`, apply the
     human-dream cycle and valuable-memory filter, and — when the filter leaves
     memory worth writing — update today's single `#d-memory` container, write
     optional `#d-episode` / `#d-belief` / `#d-question` / `#d-guidance` nodes, and
@@ -156,7 +157,8 @@ truth.
     consolidate-only runs can reconcile outline/prior Dream context without new
     chat spans
   - `/dream` and the foreground `dream` tool are removed; Dream history remains
-    a runtime task/history projection, not a model command surface
+    a runtime task/history projection plus the protected Dream channel
+    transcript, not a model command surface
   - permission classification keeps `past_chats` as read-only
     `agent.memory.recall`; no `agent.memory.dream` action remains
 - [x] Agent M1 self-maintenance and structured input:

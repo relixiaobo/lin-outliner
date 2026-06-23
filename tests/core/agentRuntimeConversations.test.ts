@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { TOOL_CATALOG } from '../../src/core/agentToolCatalog';
-import { DEFAULT_GENERAL_CHANNEL_ID, DEFAULT_GENERAL_CHANNEL_TITLE } from '../../src/core/agentChannel';
+import {
+  DEFAULT_DREAM_CHANNEL_ID,
+  DEFAULT_DREAM_CHANNEL_TITLE,
+  DEFAULT_GENERAL_CHANNEL_ID,
+  DEFAULT_GENERAL_CHANNEL_TITLE,
+  channelIncludesInDreamData,
+} from '../../src/core/agentChannel';
 import { AGENT_EVENT_VERSION, getAgentEventActivePath, type AgentEvent } from '../../src/core/agentEventLog';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
 import { AgentEventStore } from '../../src/main/agentEventStore';
@@ -290,26 +296,37 @@ describe('agent runtime conversations', () => {
     await expect(runtime.previewPayloadBytes(conversationId, payload.id, runId)).resolves.toEqual(Buffer.from('full tool output'));
   });
 
-  test('#General membership is exactly {user, Neva}', async () => {
+  test('default channel membership is exactly {user, Neva}', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-local-'));
     roots.push(dataRoot, localRoot);
     const { runtime } = await createRuntime(dataRoot, localRoot);
 
     await runtime.restoreConversation(DEFAULT_GENERAL_CHANNEL_ID);
+    await runtime.restoreConversation(DEFAULT_DREAM_CHANNEL_ID);
     // The one-Neva invariant: the only conversation members are the local user and
     // Neva. There is no second agent to add, and no member.added beyond setup.
-    const state = await new AgentEventStore(dataRoot).replay(DEFAULT_GENERAL_CHANNEL_ID);
-    expect(state.conversation?.members).toEqual([
-      { type: 'user', userId: 'local-user' },
-      { type: 'agent', agentId: ASSISTANT_AGENT_ID },
-    ]);
-    expect((await new AgentEventStore(dataRoot).readEvents(DEFAULT_GENERAL_CHANNEL_ID))
-      .filter((event) => event.type === 'member.added'))
-      .toHaveLength(0);
+    const store = new AgentEventStore(dataRoot);
+    for (const conversationId of [DEFAULT_GENERAL_CHANNEL_ID, DEFAULT_DREAM_CHANNEL_ID]) {
+      const state = await store.replay(conversationId);
+      expect(state.conversation?.members).toEqual([
+        { type: 'user', userId: 'local-user' },
+        { type: 'agent', agentId: ASSISTANT_AGENT_ID },
+      ]);
+      expect((await store.readEvents(conversationId))
+        .filter((event) => event.type === 'member.added'))
+        .toHaveLength(0);
+    }
+
+    const dreamState = await store.replay(DEFAULT_DREAM_CHANNEL_ID);
+    expect(dreamState.conversation?.title).toBe(DEFAULT_DREAM_CHANNEL_TITLE);
+    expect(channelIncludesInDreamData(
+      DEFAULT_DREAM_CHANNEL_ID,
+      dreamState.conversation?.settings,
+    )).toBe(false);
   });
 
-  test('creates, renames, and deletes channels; #General stays immutable', async () => {
+  test('creates, renames, and deletes channels; default channels stay immutable', async () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-conversations-data-'));
     roots.push(dataRoot);
     const { runtime } = await createRuntime(dataRoot);
@@ -319,11 +336,22 @@ describe('agent runtime conversations', () => {
     let channels = await runtime.listConversations();
 
     expect(channel.conversationId).toMatch(/^lin-agent-channel-/);
-    expect(channels.map((entry) => entry.id)).toEqual([DEFAULT_GENERAL_CHANNEL_ID, channel.conversationId]);
+    expect(channels.map((entry) => entry.id)).toEqual([
+      DEFAULT_GENERAL_CHANNEL_ID,
+      DEFAULT_DREAM_CHANNEL_ID,
+      channel.conversationId,
+    ]);
+    expect(channels.find((entry) => entry.id === DEFAULT_DREAM_CHANNEL_ID)).toMatchObject({
+      id: DEFAULT_DREAM_CHANNEL_ID,
+      title: DEFAULT_DREAM_CHANNEL_TITLE,
+      goal: DEFAULT_DREAM_CHANNEL_TITLE,
+      settings: { includeInDreamData: false },
+    });
     expect(channels.find((entry) => entry.id === channel.conversationId)).toMatchObject({
       id: channel.conversationId,
       title: 'Initial Project',
       goal: 'Initial Project',
+      settings: {},
       members: [
         { type: 'user', userId: 'local-user' },
         { type: 'agent', agentId: ASSISTANT_AGENT_ID },
@@ -337,11 +365,15 @@ describe('agent runtime conversations', () => {
     expect(channels.find((entry) => entry.id === channel.conversationId))
       .toMatchObject({ title: 'Project Alpha', goal: 'Project Alpha' });
     await expectRejects(() => runtime.renameConversation(DEFAULT_GENERAL_CHANNEL_ID, 'Town Square'), '#General cannot be renamed');
+    await expectRejects(() => runtime.renameConversation(DEFAULT_DREAM_CHANNEL_ID, 'Night Log'), '#Dream cannot be renamed');
     await expectRejects(() => runtime.deleteConversation(DEFAULT_GENERAL_CHANNEL_ID), '#General cannot be deleted');
+    await expectRejects(() => runtime.deleteConversation(DEFAULT_DREAM_CHANNEL_ID), '#Dream cannot be deleted');
+    expect(channelIncludesInDreamData(channel.conversationId, channels.find((entry) => entry.id === channel.conversationId)?.settings))
+      .toBe(true);
 
     await runtime.deleteConversation(channel.conversationId);
     expect((await runtime.listConversations()).map((entry) => entry.id))
-      .toEqual([DEFAULT_GENERAL_CHANNEL_ID]);
+      .toEqual([DEFAULT_GENERAL_CHANNEL_ID, DEFAULT_DREAM_CHANNEL_ID]);
   });
 
   test('Channel creation requires a name; a channel always has exactly {user, Neva}', async () => {

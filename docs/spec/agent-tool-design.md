@@ -2389,18 +2389,19 @@ outline; fabricated or stale coordinates fail loudly.
 Runtime Dream is a private built-in skill, `memory-dream`. It is runtime-only:
 not model-invocable, and not exposed as `/dream` or a foreground `dream` tool.
 The scheduled-routines path is at-most-once per daily due occurrence; Settings
-also exposes a manual run button that uses the same restricted child path and is
-not blocked by the scheduled due gate. The manual button first calls a read-only
+also exposes a manual run button that uses the same restricted Dream-channel path
+and is not blocked by the scheduled due gate. The manual button first calls a read-only
 `agent_dream_readiness` pre-check (new evidence since the watermark vs. the
 scheduled volume bar); below the bar it advises that there is little new chat
 since the last Dream (a run would mostly reconcile existing memory rather than
 capture new conversations) and offers a "Dream anyway" override instead of
 running — the advisory flags thin new-chat volume, not "nothing to do", since a
 sub-bar manual run is still a valid consolidate-only reconciliation. A run computes per-stream seq ranges from
-the Dream watermark, renders the skill, and forks an unattended child run with
-only `past_chats`, `node_search`, `node_read`, `node_create`, `node_edit`, and
-`node_delete`.
-The child first reads today's journal node. When the run yields durable memory
+the Dream watermark, renders the skill, appends a manual or scheduled anchor to
+the protected Dream channel, and starts an unattended top-level run with a
+Dream-only profile whose tools are only `past_chats`, `node_search`, `node_read`,
+`node_create`, `node_edit`, and `node_delete`.
+The run first reads today's journal node. When it yields durable memory
 worth writing, it creates or reuses exactly one direct `#d-memory` container under
 it and updates that container's generated daily memory headline in place; when
 nothing is worth remembering it writes nothing and a clean run still completes,
@@ -2409,27 +2410,26 @@ recording `dream.completed` with zero changes and advancing the watermark. It us
 prior `#d-memory` / `#d-episode` / `#d-belief` / `#d-question` / `#d-guidance`
 nodes and user-authored outline context for the topics extracted from the raw
 chat spans. Manual `consolidate_only` runs may have no new chat sources; then the
-child consolidates from today's outline, prior Dream memory, and relevant
+run consolidates from today's outline, prior Dream memory, and relevant
 user-authored outline context. Prior Dream results are treated as current
 beliefs, tensions, and guidance to reconcile, not as evidence that can reinforce
 itself. User-authored outline nodes may be cited with normal `[[node:...]]`
-references when they materially inform the memory. The child may update, merge,
+references when they materially inform the memory. The run may update, merge,
 move, or delete ordinary outline nodes when consolidation warrants it; `node_delete`
-moves nodes to Trash. The child follows a single
+moves nodes to Trash. The run follows a single
 human-dream cycle: replay salient fragments, associate them with outline context,
 reconcile prior memory, abstract stable patterns, expose unresolved tensions as
 optional `#d-question`, simulate future behavior as optional `#d-guidance`, and
-downselect weak evidence. The run brief gives the child exact `past_chats` source
-objects and the corresponding `[[chat:...]]` marker templates. The child applies
+downselect weak evidence. The run brief gives exact `past_chats` source
+objects and the corresponding `[[chat:...]]` marker templates. The run applies
 the valuable-memory filter, keeps the target coordinates intact, and replaces the
 visible marker label with a short phrase that reads as part of the memory
 sentence when a visible citation is useful. It does not cite every line
-mechanically. After the child completes cleanly, the runtime records
+mechanically. After the run completes cleanly, the runtime records
 `dream.completed` with the processed ranges and advances the watermark; the memory
-nodes themselves are the durable model-readable result. A child that ends
-`completed` but was actually cut off mid-work — the delegation run hit its
-`maxTurns` cap while still streaming, or an unresolved context overflow truncated
-it — is flagged `incomplete` on its result; a zero-write `incomplete` run is
+nodes themselves are the durable model-readable result. A run that ends
+`completed` but was actually cut off mid-work — `maxTurns` while still streaming,
+or an unresolved context overflow truncated it — is flagged `incomplete` on its result; a zero-write `incomplete` run is
 treated as a failure (no `dream.completed`, watermark unchanged) so the span is
 retried rather than dropped. (A truncated run that already committed memory writes
 keeps them and still completes, since the work is durable.)

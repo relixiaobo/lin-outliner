@@ -113,6 +113,7 @@ describe('agent event store', () => {
         id: conversationId,
         title: 'Renamed',
         members: [],
+        settings: {},
         createdAt: 1_700_000_000_001,
         updatedAt: 1_700_000_000_005,
         messageCount: 2,

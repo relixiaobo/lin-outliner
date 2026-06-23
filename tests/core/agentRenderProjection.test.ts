@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { replayAgentEvents, type AgentActor, type AgentEvent } from '../../src/core/agentEventLog';
 import { buildAgentRenderProjection } from '../../src/core/agentRenderProjection';
 import { systemReminder } from '../../src/core/agentAttachments';
+import { DEFAULT_DREAM_CHANNEL_ID } from '../../src/core/agentChannel';
 
 const conversationId = 'conversation-render';
 const systemActor: AgentActor = { type: 'system' };
@@ -342,6 +343,65 @@ describe('agent render projection', () => {
       status: 'completed',
       changes: { added: 1, updated: 0, forgotten: 0, skipped: 0 },
     });
+  });
+
+  test('keeps Dream channel markers attached to their anchor messages', () => {
+    const dreamBase = (seq: number, type: AgentEvent['type'], actor: AgentActor = systemActor) => ({
+      ...base(seq, type, actor),
+      conversationId: DEFAULT_DREAM_CHANNEL_ID,
+    });
+    const state = replayAgentEvents([
+      { ...dreamBase(1, 'conversation.created'), title: 'Dream' },
+      {
+        ...dreamBase(2, 'user_message.created', userActor),
+        messageId: 'user-before-dream',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Remember concise answers.' }],
+      },
+      {
+        ...dreamBase(3, 'dream.finished'),
+        messageId: 'dream-anchor',
+        agentId: 'built-in:tenon:assistant',
+        runId: 'dream-run-1',
+        trigger: 'manual',
+        status: 'completed',
+        startedAt: 1_700_000_000_010,
+        completedAt: 1_700_000_000_020,
+        processed: {
+          conversations: {},
+          totalMessageCount: 1,
+          totalCharCount: 120,
+          consolidateOnly: false,
+        },
+        changes: { added: 1, updated: 0, forgotten: 0, skipped: 0 },
+      },
+      {
+        ...dreamBase(4, 'user_message.created', systemActor),
+        messageId: 'dream-anchor',
+        parentMessageId: 'user-before-dream',
+        content: [
+          { type: 'text', text: systemReminder('Memory Dream completed.') },
+          { type: 'text', text: 'Manual Dream · 1 messages · 120 chars' },
+        ],
+      },
+      {
+        ...dreamBase(5, 'branch.selected'),
+        leafMessageId: 'dream-anchor',
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+
+    expect(projection.rows).toEqual([
+      { id: 'user:user-before-dream', kind: 'message', messageId: 'user-before-dream' },
+      { id: 'user:dream-anchor', kind: 'message', messageId: 'dream-anchor' },
+    ]);
+    expect(projection.transcriptRows).toEqual(projection.rows);
+    expect(projection.entities.messages['dream-anchor']).toMatchObject({
+      id: 'dream-anchor',
+      role: 'user',
+    });
+    expect(projection.entities.dreams).toEqual({});
   });
 
   test('reconstructs consecutive compact boundaries as one transcript timeline', () => {

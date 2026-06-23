@@ -1030,6 +1030,11 @@ export interface CompactionCompletedEvent extends AgentEventBase {
 
 export type AgentDreamMarkerStatus = 'completed' | 'failed' | 'skipped';
 
+export interface AgentDreamWindow {
+  start: string;
+  end: string;
+}
+
 export interface DreamFinishedEvent extends AgentEventBase {
   type: 'dream.finished';
   messageId: string;
@@ -1041,6 +1046,7 @@ export interface DreamFinishedEvent extends AgentEventBase {
   completedAt: number;
   processed?: Extract<AgentMemoryEvent, { type: 'dream.completed' }>['processed'];
   changes?: AgentDreamCompletedChanges;
+  window?: AgentDreamWindow;
   errorMessage?: string;
 }
 
@@ -1226,6 +1232,7 @@ export interface AgentDreamRecord {
   completedAt: number;
   processed?: Extract<AgentMemoryEvent, { type: 'dream.completed' }>['processed'];
   changes?: AgentDreamCompletedChanges;
+  window?: AgentDreamWindow;
   errorMessage?: string;
   createdAt: number;
 }
@@ -1749,6 +1756,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         completedAt: event.completedAt,
         processed: event.processed,
         changes: event.changes,
+        window: event.window,
         errorMessage: event.errorMessage,
         createdAt: event.createdAt,
       };

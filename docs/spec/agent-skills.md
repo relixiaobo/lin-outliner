@@ -409,14 +409,16 @@ model-invocable.
 The runtime renders the skill with `trigger: "runtime"`, passes exact
 `past_chats` source ranges plus `[[chat:...]]` marker templates whose targets are
 fixed and whose visible labels must be replaced with natural sentence fragments,
-and runs an unattended child fork whose catalog is limited to `past_chats`,
-`node_search`, `node_read`, `node_create`, `node_edit`, and `node_delete`.
+and runs an unattended top-level turn in the protected Dream channel with a
+Dream-only run profile. That profile disables user skills and delegation, and its
+tool catalog is limited to `past_chats`, `node_search`, `node_read`,
+`node_create`, `node_edit`, and `node_delete`.
 
 The scheduled Dream gate is daily and at-most-once per due occurrence: a
 successful or failed scheduled Dream run meta for that due time prevents another
 scheduled attempt until the next daily due. A user may still trigger a manual
-Dream from Settings; manual runs use the same child path but are not blocked by
-the scheduled due gate. Before a manual run, a cheap read-only readiness
+Dream from Settings; manual runs use the same restricted Dream-channel path but
+are not blocked by the scheduled due gate. Before a manual run, a cheap read-only readiness
 pre-check (`agent_dream_readiness`) counts the new evidence since the watermark
 against the same volume bar the scheduled path uses; when it is below the bar,
 the Settings control advises that there is little new chat since the last Dream —
@@ -431,10 +433,9 @@ fixed word `Memory`. Remembering nothing is a valid, common outcome: a run that
 finds nothing worth remembering writes nothing — no container, no nodes — and
 still completes successfully, advancing the watermark. A zero-write completion
 only counts as this deliberate no-op when the run ended cleanly; a run cut off
-mid-work (the delegation hit its `maxTurns` cap while still streaming, or an
-unresolved context overflow truncated it) is flagged `incomplete` and, having
-written nothing, is treated as a failure so the span is retried instead of being
-silently dropped.
+mid-work (`maxTurns` while still streaming, or an unresolved context overflow
+truncated it) is flagged `incomplete` and, having written nothing, is treated as
+a failure so the span is retried instead of being silently dropped.
 
 The skill applies a high-signal memory filter before writing: keep explicit or
 repeated user preferences, durable project/work facts, decisions, corrections to
@@ -456,7 +457,7 @@ Dream writes ordinary tagged outline nodes with a human-dream cycle:
 Downselect`. `#d-episode` captures a replayed episode or observed pattern,
 `#d-belief` captures a stable model update, `#d-question` captures unresolved
 tension or uncertainty, and `#d-guidance` captures a future handling note. The
-child tags are optional: an episode does not need all three, and a `#d-question`
+tags are optional: an episode does not need all three, and a `#d-question`
 or `#d-guidance` is written only when it improves future behavior. Citations are
 selective: an episode-level `[[chat:...]]` marker can cover child nodes that use
 the same evidence, and child beliefs/questions/guidance add their own marker only
@@ -464,10 +465,13 @@ when a specific claim needs auditability or disambiguation. Dream may update,
 merge, move, or delete any ordinary outline node when consolidation warrants it;
 deleted nodes are moved to Trash through `node_delete`, not permanently removed.
 
-There is no `/dream` slash command and no foreground `dream` tool. Dream state is
-visible only through the runtime task/history projection backed by
-`dream.completed`; the durable model-readable result is ordinary `#d-memory`,
-`#d-episode`, `#d-belief`, `#d-question`, and `#d-guidance` outline nodes.
+There is no `/dream` slash command and no foreground `dream` tool. The Dream
+channel is a protected default channel: it cannot be renamed or deleted, and it
+defaults out of future Dream evidence. Its visible transcript contains the manual
+or scheduled Dream anchor and assistant/tool activity; `dream.finished` is
+metadata attached to that anchor, not a replacement row inside the Dream channel.
+Durable model-readable results are ordinary `#d-memory`, `#d-episode`,
+`#d-belief`, `#d-question`, and `#d-guidance` outline nodes.
 
 ### Reference Alignment
 

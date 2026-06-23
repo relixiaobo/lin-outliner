@@ -15,6 +15,7 @@ import {
   type AgentRunStatus,
 } from './agentEventLog';
 import {
+  DEFAULT_DREAM_CHANNEL_ID,
   agentMentionToken,
 } from './agentChannel';
 
@@ -175,6 +176,7 @@ export interface AgentRenderDreamEntity {
   completedAt: number;
   processed?: AgentDreamRecord['processed'];
   changes?: AgentDreamCompletedChanges;
+  window?: AgentDreamRecord['window'];
   errorMessage?: string;
   createdAt: number;
 }
@@ -491,7 +493,7 @@ function buildTranscriptRows(
       continue;
     }
     const dream = dreamForMessage(state, entry.message);
-    if (dream) {
+    if (dream && state.conversation?.id !== DEFAULT_DREAM_CHANNEL_ID) {
       appendDreamRow(rows, entities, state, entry.message, dream, entry.archived);
       continue;
     }
@@ -575,7 +577,7 @@ function appendActiveRow(
     return;
   }
   const dream = dreamForMessage(state, message);
-  if (dream) {
+  if (dream && state.conversation?.id !== DEFAULT_DREAM_CHANNEL_ID) {
     appendDreamRow(rows, entities, state, message, dream, false);
     return;
   }
@@ -756,6 +758,7 @@ function toRenderDreamEntity(record: AgentDreamRecord): AgentRenderDreamEntity {
     completedAt: record.completedAt,
     processed: record.processed,
     changes: record.changes,
+    window: record.window,
     errorMessage: record.errorMessage,
     createdAt: record.createdAt,
   };

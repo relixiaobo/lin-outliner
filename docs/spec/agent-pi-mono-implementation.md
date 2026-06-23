@@ -759,11 +759,12 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
 - `task_stop` for stopping background commands created by `bash`.
 - `node_search` / `node_read` for durable timeline memory nodes.
 - `past_chats` for visible prior conversation history and exact raw source spans.
-- Runtime-owned Dream runs are private `memory-dream` skill runs. Scheduled
-  Dream is at most once per daily due, and Settings can trigger a manual run that
-  uses the same same-day `#d-memory` container. They read raw conversation spans
-  since the Dream watermark when sources exist; manual consolidate-only runs can
-  reconcile outline/prior Dream context without new chat spans. They gather
+- Runtime-owned Dream runs are private `memory-dream` skill runs in the protected
+  Dream channel. Scheduled Dream is at most once per daily due, and Settings can
+  trigger a manual run that uses the same same-day `#d-memory` container. They
+  read raw conversation spans since the Dream watermark when sources exist;
+  manual consolidate-only runs can reconcile outline/prior Dream context without
+  new chat spans. They gather
   relevant prior memory/workspace context via `node_search` / `node_read`, apply
   the human-dream cycle and valuable-memory filter, and — when the filter leaves
   memory worth writing — write `#d-*` memory nodes (`#d-episode`, `#d-belief`,
