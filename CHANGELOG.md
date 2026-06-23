@@ -10,6 +10,29 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Changed
+
+- **`file_read` is now a provider-neutral runtime ingestion boundary (PR #326, codex-3)** — reverses the
+  native-PDF payload approach from PR #322 (above): `src/main/agentNativePdfPayloads.ts` and the
+  `nativePdfRead` plumbing are removed, so no provider-native PDF blocks or raw PDF bytes/base64 are sent
+  as the canonical path. The model still passes a local path; the runtime picks the representation. PDFs
+  default to `pdfinfo` page count + `pdftotext -layout` full-document text (bounded to 60k chars);
+  explicit `pages` renders bounded JPEG page images with `pdftoppm`; oversized scanned PDFs return
+  metadata plus a hint to request a narrower range. Rich documents (`.docx`, `.pptx`, `.xlsx`, `.xls`,
+  `.epub`) convert to Markdown through optional **MarkItDown**, probed locally via
+  `LIN_AGENT_MARKITDOWN_COMMAND` (accepts an executable path **or** a command line like
+  `python3 -m markitdown`), then `markitdown`, then `python3 -m markitdown` — no plugins/cloud/LLM
+  backends, no self-install. Local extractors share one subprocess runner
+  (`src/main/agentToolProcess.ts`: `LIN_AGENT_EXTRA_TOOL_PATH` + common GUI/system PATH segments,
+  SIGTERM→SIGKILL escalation, bounded stdout/stderr capture). Missing Poppler or MarkItDown stays a
+  recoverable tool error — the agent installs the dependency via `bash` under the normal permission/audit
+  path and retries the same call. `.html`/`.htm` stay on the plain-text read path (no MarkItDown
+  dependency, still editable). **Gate (main):** `/code-review xhigh` (8 findings fixed + regression-tested
+  in `09939d1a`: pdftotext stderr false-positive, `pages` render-before-extract, restored `%PDF-`
+  magic-byte check, bounded pdftotext capture, cached MarkItDown probes, accurate truncation char counts,
+  env-command-with-args). `test:core` 1061/0, typecheck clean. Spec synced: `agent-tool-design`,
+  `agent-progress`.
+
 ### Added
 
 - **Native PDF payloads for OpenAI Responses models (PR #322, codex-3)** — an ordinary `file_read` of a

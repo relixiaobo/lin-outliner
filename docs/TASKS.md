@@ -34,8 +34,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 **In flight (2026-06-23).** A Dream-precision + file-reader wave merged today: **#319** (Dream
 remembers-nothing + truncation gating), **#320** (manual-Dream thin-data pre-check), **#321** (file-only
 preview readers), and **#322** (`agent-pdf-tool-path`, codex-3 — native PDF `input_file` payloads on
-OpenAI Responses models; `/code-review high` gate + doc-confirmed provider contract). #322 also seeded
-the **file-ingestion-runtime-follow-up** plan, now promoted to a `draft` board item (Files & media). The
+OpenAI Responses models; `/code-review high` gate + doc-confirmed provider contract). #322 seeded the
+**file-ingestion-runtime-follow-up** plan, which then **reversed** that native-PDF slice — shipped as
+**#326** (`file_read` provider-neutral runtime ingestion; `/code-review xhigh` gate, 8 findings fixed +
+regression-tested). The
 **agent-goal** plan landed as a `draft` board item (plan PR **#323**, see Agent
 capabilities). **No PR open.** The agent subsystem portfolio is otherwise mature (single-agent collapse + one-Neva
 invariant, the IM-native memory/channel spine, the 2026-06-22 Codex-transcript wave); the active build
@@ -370,14 +372,6 @@ archived `done` (see Recently completed). Remaining active work:
   window. (Feature shipped #241, archived `done`.)
 - **asset-gc** (P2, *no plan file*) — asset `index.json` rebuild + garbage
   collection for orphaned assets; drag-from-Finder ingest; inline alt-text editing.
-- **file-ingestion-runtime-follow-up** (P2, draft — *set of independent features*) — provider-neutral
-  agent file-ingestion layer: a `FileIngestionResult` representation + a single provider-capability
-  adapter so every model gets a useful fallback (text/image/metadata), not just native-document
-  models. Builds on the #322 native-PDF slice; covers per-page PDF text fallback, Office/notebook/
-  archive families, and base64-free debug visibility. Each checklist item ships as its own PR. Promoted
-  out of `archive/` after #322 merged (codex-3 staged it there since dev branches can't edit this board).
-  See `docs/plans/file-ingestion-runtime-follow-up.md`.
-
 ### Outliner & UI polish
 
 - **nodex-parity-decisions** (meta, *standing reference — not a work item*) — the
@@ -513,6 +507,23 @@ anything.
 
 ## Recently completed
 
+- **file-ingestion-runtime-follow-up** (`codex-3/file-ingestion-runtime`, PR #326, codex-3, merged
+  2026-06-23) — makes `file_read` a **provider-neutral** runtime ingestion boundary, **reversing** the
+  #322 native-PDF approach: deleted `agentNativePdfPayloads.ts` + the `nativePdfRead` plumbing. PDFs now
+  default to `pdfinfo` page count + `pdftotext -layout` full-document text (bounded 60k); explicit `pages`
+  renders bounded JPEG page images via `pdftoppm`; large scanned PDFs return metadata + a narrow-range
+  hint. New `src/main/agentToolProcess.ts` (shared PATH/timeout subprocess runner, SIGTERM→SIGKILL,
+  bounded capture) and `src/main/agentFileIngestion.ts` (rich-document → Markdown via optional MarkItDown:
+  `.docx/.pptx/.xlsx/.xls/.epub`, probed via `LIN_AGENT_MARKITDOWN_COMMAND` → `markitdown` →
+  `python3 -m markitdown`). Missing Poppler/MarkItDown stays a recoverable tool error (install via bash,
+  retry). **Gate (main):** `/code-review xhigh` surfaced 8 findings — pdftotext stderr false-positive
+  discarding good text, `.html/.htm` routed through MarkItDown (lost zero-dep text read + editability),
+  `pages` render aborted by missing pdftotext, dropped `%PDF-` magic-byte check, unbounded pdftotext
+  capture, per-read MarkItDown probes, capped `contentChars`, and env-command-with-args — **all fixed in
+  `09939d1a` with targeted regression tests** (HTML back on the text path; render-before-extract for
+  `pages`; cached probes; `splitCommandLine` for env args). `test:core` 1061/0, typecheck clean. Plan
+  archived `done` (`docs/plans/archive/file-ingestion-runtime-follow-up.md`). Plan-track, **shape (a)** one
+  PR.
 - **agent-pdf-tool-path** (`codex-3/agent-pdf-tool-path`, PR #322, codex-3, merged 2026-06-23) — sends
   ordinary PDF `file_read` results to OpenAI Responses models as native `input_file` payloads; keeps
   Poppler page rendering/text extraction for explicit `pages` reads and non-Responses providers. PDF
