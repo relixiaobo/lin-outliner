@@ -25,6 +25,9 @@ test.describe('agent debug panel', () => {
     await expect(debugPanel.getByRole('heading', { name: 'Model Input', exact: true })).toBeVisible();
     const context = debugPanel.locator('.agent-debug-context-card');
     await expect(context.getByText('System prompt')).toBeVisible();
+    const systemPrompt = context.locator('pre').first();
+    await expect(systemPrompt).toBeVisible();
+    await expect.poll(async () => systemPrompt.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
     await expect(context.getByText('Tools · 1')).toBeVisible();
     await expect(context).toContainText('Messages · 1');
     await expect(context.locator('.agent-debug-message-list')).toContainText('Summarize current outline.');

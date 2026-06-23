@@ -622,7 +622,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
     const debugRun = {
       ...debugRunSummary,
-      systemPrompt: 'You are Lin agent.',
+      systemPrompt: 'You are Lin agent.\nLong unbroken diagnostic prompt segment: abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789.',
       tools: [{
         name: 'node_read',
         description: 'Read node context',
