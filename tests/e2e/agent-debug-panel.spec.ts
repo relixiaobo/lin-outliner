@@ -67,6 +67,8 @@ test.describe('agent debug panel', () => {
     const roundDetails = round.getByRole('tooltip', { name: 'Call details' });
     await expect(roundDetails).toBeVisible();
     await expect(roundDetails).toContainText('Tokens and cost');
+    await expect(roundDetails).toContainText('Cache hit');
+    await expect(roundDetails).toContainText('89%');
     await expect(roundDetails).toContainText('Input');
     await expect(roundDetails).toContainText('12,000');
     await expect(roundDetails).toContainText('Output');
@@ -107,6 +109,8 @@ test.describe('agent debug panel', () => {
     const preview = page.getByRole('tooltip');
     await expect(preview).toBeVisible();
     await expect(preview).toContainText('Tokens and cost');
+    await expect(preview).toContainText('Cache hit');
+    await expect(preview).toContainText('89%');
     await expect(preview).toContainText('66,420');
     await expect(preview).toContainText('$0.00050');
     await expect(preview).toContainText('48,000');

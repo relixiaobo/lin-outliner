@@ -53,6 +53,12 @@ function usageSegmentStyle(value: number, total: number): CSSProperties {
   } as CSSProperties;
 }
 
+function formatCacheHitRate(cacheRead: number, cacheWrite: number): string | null {
+  const total = cacheRead + cacheWrite;
+  if (total <= 0) return null;
+  return `${Math.round((cacheRead / total) * 100)}%`;
+}
+
 function formatTimestamp(value: number | null): string {
   if (!value) return '—';
   return new Intl.DateTimeFormat(undefined, {
@@ -404,12 +410,15 @@ function RoundInfoContent({ labels, round }: { labels: DebugLabels; round: Agent
   if (!usage) {
     return (
       <>
-        <div className="agent-message-usage-hover-title">{t.agent.message.usageDetails}</div>
+        <div className="agent-message-usage-hover-title-row">
+          <div className="agent-message-usage-hover-title">{t.agent.message.usageDetails}</div>
+        </div>
         <span className="is-muted">{labels.usagePending}</span>
       </>
     );
   }
 
+  const cacheHit = formatCacheHitRate(usage.cacheRead, usage.cacheWrite);
   const usageRows = [
     { kind: 'input', label: t.agent.message.tokenLabels.input, tokens: usage.input, cost: usage.cost.input },
     { kind: 'output', label: t.agent.message.tokenLabels.output, tokens: usage.output, cost: usage.cost.output },
@@ -422,7 +431,14 @@ function RoundInfoContent({ labels, round }: { labels: DebugLabels; round: Agent
   ];
   return (
     <>
-      <div className="agent-message-usage-hover-title">{t.agent.message.usageDetails}</div>
+      <div className="agent-message-usage-hover-title-row">
+        <div className="agent-message-usage-hover-title">{t.agent.message.usageDetails}</div>
+        {cacheHit ? (
+          <div className="agent-message-usage-hover-meta">
+            {t.agent.message.cacheHit}: <strong>{cacheHit}</strong>
+          </div>
+        ) : null}
+      </div>
       <div className="agent-message-usage-hover-bar" aria-hidden>
         {usageRows.map((row) => (
           <span

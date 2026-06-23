@@ -1012,6 +1012,7 @@ commandPalette: {
       cost: 'Cost',
       usageDetails: 'Tokens and cost',
       usageUnavailable: 'unavailable',
+      cacheHit: 'Cache hit',
       replyAnchorTitle: 'Jump to addressed message',
       tokenLabels: {
         input: 'Input',

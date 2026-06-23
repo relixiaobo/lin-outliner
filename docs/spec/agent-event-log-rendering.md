@@ -1260,7 +1260,8 @@ The run detail is ordered for inspection:
 
 The chat transcript exposes this through an assistant-message **Details** icon
 button that uses the `Info` glyph. Hovering it previews the reply's token and
-cost summary; clicking it opens a run-details pane keyed by that reply's
+cost summary, including cache hit when cache activity exists; clicking it opens a
+run-details pane keyed by that reply's
 `runId`. If the same run pane already exists, it is activated; opening a
 different reply opens or repurposes a pane for that different `(conversationId,
 runId)`. There is no standalone/global debug entry in the agent dock.

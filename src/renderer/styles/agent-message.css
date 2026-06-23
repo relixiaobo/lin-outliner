@@ -780,6 +780,27 @@
   line-height: var(--line-ui-sm-tight);
 }
 
+.agent-message-usage-hover-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.agent-message-usage-hover-meta {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  white-space: nowrap;
+}
+
+.agent-message-usage-hover-meta strong {
+  color: var(--text-strong);
+  font-weight: 650;
+}
+
 .agent-message-usage-hover-bar {
   display: flex;
   width: 100%;

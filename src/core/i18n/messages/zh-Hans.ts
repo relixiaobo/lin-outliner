@@ -928,6 +928,7 @@ commandPalette: {
       cost: '成本',
       usageDetails: 'Token 和成本',
       usageUnavailable: '不可用',
+      cacheHit: '缓存命中',
       replyAnchorTitle: '跳转到被回应的消息',
       tokenLabels: {
         input: '输入',
