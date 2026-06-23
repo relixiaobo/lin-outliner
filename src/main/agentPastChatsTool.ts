@@ -509,6 +509,10 @@ function sourceParam(value: unknown): PastChatsStreamSourceInput | null {
   ) {
     return null;
   }
+  const hasFromCreatedAt = typeof fromCreatedAtInclusive === 'number';
+  const hasThroughCreatedAt = typeof throughCreatedAtExclusive === 'number';
+  if (hasFromCreatedAt !== hasThroughCreatedAt) return null;
+  if (hasFromCreatedAt && hasThroughCreatedAt && throughCreatedAtExclusive <= fromCreatedAtInclusive) return null;
   return {
     stream,
     streamId: streamId.trim(),

@@ -15,6 +15,7 @@ export function DreamLauncher({ isStreaming }: DreamLauncherProps) {
   const [guidance, setGuidance] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const today = todayInputValue();
 
   useEffect(() => {
     let cancelled = false;
@@ -49,7 +50,13 @@ export function DreamLauncher({ isStreaming }: DreamLauncherProps) {
     }
   }
 
-  const disabled = busy || isStreaming || !startDate || !endDate || startDate > endDate;
+  const disabled = busy
+    || isStreaming
+    || !startDate
+    || !endDate
+    || startDate > endDate
+    || startDate > today
+    || endDate > today;
 
   return (
     <section className="dream-launcher" aria-label={t.agent.chat.dreamLauncherAriaLabel}>
@@ -59,6 +66,7 @@ export function DreamLauncher({ isStreaming }: DreamLauncherProps) {
           <input
             className="dream-launcher-input"
             type="date"
+            max={today}
             value={startDate}
             onChange={(event) => setStartDate(event.currentTarget.value)}
           />
@@ -68,6 +76,7 @@ export function DreamLauncher({ isStreaming }: DreamLauncherProps) {
           <input
             className="dream-launcher-input"
             type="date"
+            max={today}
             value={endDate}
             onChange={(event) => setEndDate(event.currentTarget.value)}
           />

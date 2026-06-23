@@ -130,8 +130,10 @@ What makes it special is presentation, driven off its channel id:
 The launcher is the channel's composer-replacement and the user-friendly front
 end. It collects, with visible controls:
 
-- a **date range** (a date-range picker, defaulting to "since last dreamed → now"
-  — a one-click quick dream; expand to pick any window), and
+- a **date range** (a date-range picker, defaulting to the next uncovered day
+  through today, clamped to today when the derived cursor has already reached or
+  passed it — a one-click quick dream; expand to pick any past-or-present
+  window), and
 - optional **guidance** text ("重点关注 X，忽略 Y"), and
 - a **Dream** button.
 
@@ -167,15 +169,17 @@ precision is not needed for the auto frontier). `buildMemoryDreamPrompt` /
 [start, end] dates"; the prompt still passes only source *pointers* — the agent
 reads content via the `past_chats` tool, never inlined.
 
-**Date → seq mapping (the evidence layer stays seq-based).** Evidence collection
-and the `past_chats` source read are seq-ranged, not date-ranged
+**Date → source mapping (the evidence layer still carries seq pointers).**
+Evidence collection and the `past_chats` source read still carry seq-ranged
+source pointers
 (`extractMemoryStreamEvidence` `agentDreamExtraction.ts:~366`; `readSource`
-`agentPastChats.ts:~395`). A date window must therefore be **translated to a seq
-range** before it reaches them. Pin the semantics up front: **local-day**
-boundaries (`yesterday` is a user-facing local-calendar concept), inclusive
-`[start, end]`, and the translation must clamp by event **timestamp** (not just
-seq) so a seq range straddling a day boundary cannot pull an out-of-window message
-in.
+`agentPastChats.ts:~395`), but a date window must not depend on seq monotonicity.
+Pin the semantics up front: **local-day** boundaries (`yesterday` is a
+user-facing local-calendar concept), inclusive `[start, end]`, and the source
+must clamp by event **timestamp** so an out-of-order seq or a seq range
+straddling a day boundary cannot pull an out-of-window message in. The seq lower
+bound for date-window Dream evidence is therefore the stream floor; the timestamp
+clamp is the authority.
 
 **The frontier is derived from the Dream channel, not stored.** Auto-run still
 needs to tell **new days** from already-covered ones — but that information is
@@ -200,22 +204,27 @@ authoritative.
 
 **Auto vs manual — who moves the frontier (the crux of "which days to include"):**
 
-- **Scheduled (auto) run** dreams `[cursor + 1 day .. today]` at the user's fixed
-  Dream time (a multi-day catch-up window if the app was closed or prior days
-  failed), then — by virtue of writing a clean completed turn that covers through
-  the selected end date — the derived cursor advances on its own. There is no
-  separate "advance the cursor" write.
+- **Scheduled (auto) run** dreams `[cursor + 1 day .. yesterday]` at the user's
+  fixed Dream time, where "yesterday" means the last complete local day before
+  the due time. This avoids permanently skipping the day that is still in
+  progress when the fixed-time run fires. If the app was closed or prior days
+  failed, the next successful scheduled run catches up through the last complete
+  local day; the derived cursor then advances on its own from the clean completed
+  turn. There is no separate "advance the cursor" write.
 - **Manual run** dreams whatever window the user picks — including fully behind
-  the cursor — and a clean completed manual run **does** move the frontier when it
-  reaches or passes it. Manual Dream therefore suppresses the scheduled Dream for
-  already-covered dates. This is intentional: a user-launched consolidation should
-  count as the latest successful Dream work for scheduling.
+  the cursor — with the launcher and runtime clamping the end date to today so a
+  future manual date cannot push the derived cursor into the future. If the
+  default next-uncovered start would be after the default end, the quick-dream
+  window falls back to today so Settings "Run Dream now" remains a valid
+  consolidate/re-dream action. A clean completed manual run **does** move the
+  frontier when it reaches or passes it. Manual Dream therefore suppresses the
+  scheduled Dream for already-covered dates. This is intentional: a user-launched
+  consolidation should count as the latest successful Dream work for scheduling.
 
 Dream writes memory to the **source date's** daily memory node, not merely to the
-run date. If yesterday's scheduled Dream failed and today's catch-up window
-includes both yesterday and today, durable findings from yesterday belong under
-yesterday's `#d-memory` container while today's findings belong under today's
-container.
+run date. If Monday's scheduled Dream failed and Wednesday's catch-up window
+includes Monday and Tuesday, durable findings from Monday belong under Monday's
+`#d-memory` container while Tuesday's findings belong under Tuesday's container.
 
 **Preserve from #319:** a truncated run (context overflow — the run's
 `incomplete` result flag) must **not** advance the frontier. Derive over

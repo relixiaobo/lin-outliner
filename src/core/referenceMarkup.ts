@@ -365,13 +365,18 @@ function parseChatSourceCreatedAtClamp(rawClamp: string): {
   if (!rawClamp) return {};
   const dash = rawClamp.indexOf('-');
   if (dash <= 0) return {};
-  const fromCreatedAtInclusive = parseNonNegativeInteger(rawClamp.slice(0, dash));
-  const throughCreatedAtExclusive = parseNonNegativeInteger(rawClamp.slice(dash + 1));
+  const fromCreatedAtInclusive = parseCreatedAtTimestamp(rawClamp.slice(0, dash));
+  const throughCreatedAtExclusive = parseCreatedAtTimestamp(rawClamp.slice(dash + 1));
   return fromCreatedAtInclusive !== null
     && throughCreatedAtExclusive !== null
     && throughCreatedAtExclusive > fromCreatedAtInclusive
     ? { fromCreatedAtInclusive, throughCreatedAtExclusive }
     : {};
+}
+
+function parseCreatedAtTimestamp(value: string): number | null {
+  const parsed = parseNonNegativeInteger(value);
+  return parsed !== null && parsed >= 946_684_800_000 ? parsed : null;
 }
 
 function parseNonNegativeInteger(value: string): number | null {
@@ -398,7 +403,7 @@ function sanitizeReferenceLabel(label: string): string {
 }
 
 function encodeReferenceValue(value: string): string {
-  return encodeURIComponent(value);
+  return encodeURIComponent(value).replace(/~/gu, '%7E');
 }
 
 function decodeReferenceValue(value: string): string {

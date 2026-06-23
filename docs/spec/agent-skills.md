@@ -418,13 +418,17 @@ The scheduled Dream gate uses the user-managed `agent.runtime.dreamSchedule`
 date-schedule string (default: a fixed local daily 03:00 occurrence). A scheduled
 due can retry after transient failure, but only up to three attempts for the same
 due time; after that it gives up until the next scheduled occurrence. The
-runtime derives the Dream cursor from clean completed `dream.finished.window`
-markers in the protected Dream channel, not from mutable scheduler state. A
-manual Dream uses the same restricted Dream-channel path and date-window
-machinery; when it completes a day, that completed window suppresses the
-scheduled Dream for that already-covered day. Before a manual run, a cheap
-read-only readiness pre-check (`agent_dream_readiness`) counts evidence in the
-default manual date window against the same volume bar the scheduled path uses;
+scheduled window covers only complete local days, ending at the day before the
+due time; if prior scheduled attempts were missed, the next successful scheduled
+run catches up through that last complete day. The runtime derives the Dream
+cursor from clean completed `dream.finished.window` markers in the protected
+Dream channel, not from mutable scheduler state. A manual Dream uses the same
+restricted Dream-channel path and date-window machinery; its end date is clamped
+to today, its default start falls back to today when the derived cursor has
+already reached today, and when it completes a day, that completed window
+suppresses the scheduled Dream for that already-covered day. Before a manual run,
+a cheap read-only readiness pre-check (`agent_dream_readiness`) counts evidence
+in the default manual date window against the same volume bar the scheduled path uses;
 when it is below the bar, the Settings control advises that there is little new
 chat in this Dream window — a run now would mostly reconcile existing memory
 rather than capture new conversations — and offers a "Dream anyway" override

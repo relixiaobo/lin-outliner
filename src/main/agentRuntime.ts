@@ -3650,7 +3650,7 @@ export class AgentRuntime {
       return {
         conversationId,
         events,
-        fromSeqExclusive: dreamFromSeqExclusiveForWindow(events, createdAtRange),
+        fromSeqExclusive: 0,
         createdAtRange,
       };
     }));
@@ -3696,7 +3696,7 @@ export class AgentRuntime {
   }
 
   private async scheduledDreamWindow(derived: DerivedDreamChannelState, now: Date): Promise<AgentDreamWindow | null> {
-    const end = isoLocalDate(now);
+    const end = offsetIsoLocalDate(isoLocalDate(now), -1);
     const start = derived.lastDreamedThrough
       ? offsetIsoLocalDate(derived.lastDreamedThrough, 1)
       : await this.firstDreamEvidenceDate();
@@ -3714,10 +3714,11 @@ export class AgentRuntime {
     if ((options.startDate && !explicitStart) || (options.endDate && !explicitEnd)) {
       throw new Error('Dream date range must use YYYY-MM-DD dates.');
     }
-    const end = explicitEnd ?? isoLocalDate(now);
-    const start = explicitStart
-      ?? (derived.lastDreamedThrough ? offsetIsoLocalDate(derived.lastDreamedThrough, 1) : await this.firstDreamEvidenceDate())
+    const today = isoLocalDate(now);
+    const end = explicitEnd && compareIsoLocalDates(explicitEnd, today) < 0 ? explicitEnd : today;
+    const defaultStart = (derived.lastDreamedThrough ? offsetIsoLocalDate(derived.lastDreamedThrough, 1) : await this.firstDreamEvidenceDate())
       ?? end;
+    const start = explicitStart ?? (compareIsoLocalDates(defaultStart, end) > 0 ? end : defaultStart);
     if (compareIsoLocalDates(start, end) > 0) {
       throw new Error('Dream start date must be on or before the end date.');
     }
@@ -8019,15 +8020,6 @@ function dreamCreatedAtRange(window: AgentDreamWindow): DreamMemoryExtractionCre
     fromInclusive: start.getTime(),
     throughExclusive: through.getTime(),
   };
-}
-
-function dreamFromSeqExclusiveForWindow(
-  events: readonly AgentEvent[],
-  range: DreamMemoryExtractionCreatedAtRange,
-): number {
-  return events
-    .filter((event) => event.createdAt < range.fromInclusive)
-    .reduce((max, event) => Math.max(max, event.seq), 0);
 }
 
 function isDreamEvidenceRuntimeEvent(event: AgentEvent): boolean {

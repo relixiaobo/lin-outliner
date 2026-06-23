@@ -29,6 +29,8 @@ export const pmSchema = new Schema({
         chatFromSeqExclusive: { default: null },
         chatThroughSeq: { default: null },
         chatThroughEventId: { default: '' },
+        chatFromCreatedAtInclusive: { default: null },
+        chatThroughCreatedAtExclusive: { default: null },
         displayName: { default: '' },
         mimeType: { default: '' },
         sizeBytes: { default: null },
@@ -48,6 +50,8 @@ export const pmSchema = new Schema({
             chatFromSeqExclusive: Number(element.dataset.inlineRefChatFromSeqExclusive ?? Number.NaN),
             chatThroughSeq: Number(element.dataset.inlineRefChatThroughSeq ?? Number.NaN),
             chatThroughEventId: element.dataset.inlineRefChatThroughEventId ?? '',
+            chatFromCreatedAtInclusive: Number(element.dataset.inlineRefChatFromCreatedAtInclusive ?? Number.NaN),
+            chatThroughCreatedAtExclusive: Number(element.dataset.inlineRefChatThroughCreatedAtExclusive ?? Number.NaN),
             displayName: element.textContent?.replace(/^@/, '').trim() ?? '',
             mimeType: element.dataset.inlineRefMimeType ?? '',
             sizeBytes: Number(element.dataset.inlineRefSizeBytes ?? Number.NaN),
@@ -74,6 +78,12 @@ export const pmSchema = new Schema({
           attrs['data-inline-ref-chat-through-seq'] = String(node.attrs.chatThroughSeq ?? '');
           const eventId = String(node.attrs.chatThroughEventId ?? '');
           if (eventId) attrs['data-inline-ref-chat-through-event-id'] = eventId;
+          if (Number.isSafeInteger(node.attrs.chatFromCreatedAtInclusive)) {
+            attrs['data-inline-ref-chat-from-created-at-inclusive'] = String(node.attrs.chatFromCreatedAtInclusive);
+          }
+          if (Number.isSafeInteger(node.attrs.chatThroughCreatedAtExclusive)) {
+            attrs['data-inline-ref-chat-through-created-at-exclusive'] = String(node.attrs.chatThroughCreatedAtExclusive);
+          }
         }
         if (targetKind === 'local-file') {
           Object.assign(attrs, inlineFilePreviewAttrs({
