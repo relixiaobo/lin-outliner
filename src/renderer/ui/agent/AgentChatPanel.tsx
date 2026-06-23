@@ -65,6 +65,8 @@ import {
 import type { AgentConversationRenderRow } from './agentConversationRows';
 import { AgentChildRunDetailsPanel } from './AgentChildRunDetailsPanel';
 import { AgentTaskPanel } from './AgentTaskPanel';
+import { AgentDockFilePreview } from './AgentDockFilePreview';
+import { onAgentDockFilePreview, type AgentDockFilePreviewDetail } from './agentDockFilePreviewEvents';
 import { composerCurrentNodeId } from './userViewContext';
 import { resolveUsableActiveProvider } from './providerCatalog';
 import { Button } from '../primitives/Button';
@@ -517,6 +519,7 @@ export function AgentChatPanel({
   const [rowActionMenu, setRowActionMenu] = useState<string | null>(null);
   const [taskPanelOpen, setTaskPanelOpen] = useState(false);
   const [selectedChildRunId, setSelectedChildRunId] = useState<string | null>(null);
+  const [filePreview, setFilePreview] = useState<AgentDockFilePreviewDetail | null>(null);
   const [pendingTranscriptReveal, setPendingTranscriptReveal] = useState<PendingTranscriptReveal | null>(null);
   const [highlightedTranscriptRowKey, setHighlightedTranscriptRowKey] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -549,6 +552,16 @@ export function AgentChatPanel({
     }
     dockOpenRef.current = dockOpen;
   }, [dockOpen]);
+  useEffect(() => onAgentDockFilePreview((detail) => {
+    setHistoryOpen(false);
+    setRowActionMenu(null);
+    setTaskPanelOpen(false);
+    setSelectedChildRunId(null);
+    setFilePreview(detail);
+  }), []);
+  useEffect(() => {
+    setFilePreview(null);
+  }, [conversationId]);
   const agentMembers = useMemo(
     () => members.filter((member) => member.principal.type === 'agent' && member.mention),
     [members],
@@ -1190,6 +1203,16 @@ export function AgentChatPanel({
     active: historyOpen,
     getRestoreTarget: () => historyButtonRef.current,
   });
+  if (filePreview) {
+    return (
+      <div className="agent-chat-panel" data-turn-phase={turnPhase}>
+        <AgentDockFilePreview
+          onClose={() => setFilePreview(null)}
+          target={filePreview.target}
+        />
+      </div>
+    );
+  }
   return (
     <div className="agent-chat-panel" data-turn-phase={turnPhase}>
       <header className="agent-dock-header" ref={headerRef}>

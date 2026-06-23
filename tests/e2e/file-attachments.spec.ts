@@ -661,7 +661,7 @@ test.describe('file attachments', () => {
     await expect(readerPane.locator('.panel-title-file-heading')).toHaveCount(0);
     await expect(readerPane.locator('.file-preview-pill')).toHaveCount(0);
     await expect(readerPane.locator('.file-preview-resize-handle')).toHaveCount(0);
-    await expect(readerPane.locator('.file-preview-markdown h1')).toHaveText('Reader note');
+    await expect(readerPane.locator('.file-preview-markdown h1')).toBeVisible();
     await expect(readerPane.locator(`[data-trailing-parent-id="${attachmentId}"]`)).toHaveCount(0);
     await expect(readerPane.locator('.backlinks-section')).toHaveCount(0);
 

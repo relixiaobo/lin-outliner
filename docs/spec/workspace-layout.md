@@ -325,11 +325,14 @@ sources, but with `nodeId` set. That `nodeId` is the lifecycle switch:
   `⋯` file-action menu, and the body is the full reader content.
 
 `file-preview` is a workspace-panel view, not an overlay and not part of the
-agent dock. It is opened for outliner file nodes, outliner/agent inline
-local-file refs, visible agent payload rows, and nested links followed from
-inside a preview body (e.g. a directory-listing entry). A plain click opens in
-the active workspace pane when there is one; if the click originates in the agent
-dock, the active workspace pane is used, then the first available workspace pane.
+agent dock. It is opened for outliner file nodes, outliner inline local-file refs,
+agent meta-surface inline local-file refs, visible agent payload rows, and nested
+links followed from inside a preview body (e.g. a directory-listing entry). Live
+agent transcript file chips are different: they open the agent dock's file-only
+reader, covering the dock message stream rather than navigating a workspace pane.
+A plain workspace preview click opens in the active workspace pane when there is
+one; if the click originates in the agent dock outside the live transcript, the
+active workspace pane is used, then the first available workspace pane.
 Cmd/Ctrl-click opens a split pane. When the 4-pane cap is already reached,
 preview reuses the rightmost workspace pane and preserves that pane's view
 history so Back can return to the previous outliner or preview view.

@@ -371,10 +371,10 @@ export function AgentMarkdown({
   const components = useMarkdownComponents(documentIndex, onNodeReferenceOpen);
 
   return (
-    // The file-chip open behavior (OS default app vs in-app preview) is decided by
+    // The file-chip open behavior (agent dock reader vs workspace preview) is decided by
     // location, NOT here: a `[data-agent-transcript-chips]` ancestor (set once on the
     // live assistant message body — see AgentAssistantContent) routes chip clicks to
-    // the OS default app. This markdown renders in both the live transcript and meta
+    // the dock reader. This markdown renders in both the live transcript and meta
     // surfaces (compaction/child-run summaries, the PoV inspector), so it stays neutral.
     <div className="agent-markdown">
       {blocks.map((block, blockIndex) => {

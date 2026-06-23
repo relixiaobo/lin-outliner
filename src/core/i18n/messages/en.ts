@@ -973,6 +973,7 @@ commandPalette: {
       unavailable: 'File unavailable',
       // Right-click menu on a transcript file chip.
       menuLabel: 'File actions',
+      backToMessages: 'Back to messages',
       addToToday: 'Add to Today',
       openWithDefaultApp: 'Open with default app',
       showInFinder: 'Show in Finder',

@@ -23,7 +23,7 @@ interface AgentTranscriptFileMenuProps {
   onClose: () => void;
 }
 
-function previewTargetFor(file: AgentTranscriptFile): PreviewTarget {
+export function previewTargetForTranscriptFile(file: AgentTranscriptFile): PreviewTarget {
   return {
     kind: 'local-file',
     path: file.path,
@@ -35,11 +35,11 @@ function previewTargetFor(file: AgentTranscriptFile): PreviewTarget {
 /**
  * The right-click menu for a file chip rendered inside the agent transcript. Unlike
  * an outliner file reference (which opens the in-app preview pane), a transcript chip
- * is a pointer to a working file on disk: it opens with the OS default app, can be
- * revealed in Finder, and can be promoted into today's daily note as a first-class
- * file node ("Add to Today"). Built on the shared anchored-overlay menu stack (same as
- * NodeContextMenu / FileNodeActionMenu) so it inherits roving keys, Escape, and
- * dismissal.
+ * is a pointer to a working file on disk: its primary click opens the agent dock
+ * reader, while this menu keeps the system actions — Open with default app, Show in
+ * Finder, and promotion into today's daily note as a first-class file node ("Add to
+ * Today"). Built on the shared anchored-overlay menu stack (same as NodeContextMenu /
+ * FileNodeActionMenu) so it inherits roving keys, Escape, and dismissal.
  */
 export function AgentTranscriptFileMenu({ file, x, y, onClose }: AgentTranscriptFileMenuProps) {
   const labels = useT().agent.filePreview;
@@ -62,7 +62,7 @@ export function AgentTranscriptFileMenu({ file, x, y, onClose }: AgentTranscript
     // App owns the destination: it ensures today's daily note exists (through the
     // command runner, so the new node is in the index) and creates the file node
     // under it, surfacing a failure toast on its own. Fire-and-forget here.
-    void requestAddPreviewTargetToOutline({ target: previewTargetFor(file) });
+    void requestAddPreviewTargetToOutline({ target: previewTargetForTranscriptFile(file) });
   };
 
   const openExternally = () => {
