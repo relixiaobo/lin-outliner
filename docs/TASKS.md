@@ -37,7 +37,9 @@ preview readers), and **#322** (`agent-pdf-tool-path`, codex-3 — native PDF `i
 OpenAI Responses models; `/code-review high` gate + doc-confirmed provider contract). #322 seeded the
 **file-ingestion-runtime-follow-up** plan, which then **reversed** that native-PDF slice — shipped as
 **#326** (`file_read` provider-neutral runtime ingestion; `/code-review xhigh` gate, 8 findings fixed +
-regression-tested). The
+regression-tested). Also today: **#324** (`dream-channel-and-memory-retire` **PR1** — protected Dream
+channel + Dream as a top-level reflective run, codex-2; `/code-review high` gate, 2 fix rounds incl. a
+caught-and-fixed retention-prune bricking bug; PR2/PR3 remain). The
 **agent-goal** plan landed as a `draft` board item (plan PR **#323**, see Agent
 capabilities). **No PR open.** The agent subsystem portfolio is otherwise mature (single-agent collapse + one-Neva
 invariant, the IM-native memory/channel spine, the 2026-06-22 Codex-transcript wave); the active build
@@ -66,10 +68,11 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
 2. **`agent-model-first-picker`** (P2, *direction ratified 2026-06-23 — needs a dev one-pager*) —
    model-first model picker (merge Provider + Model Override, provider as secondary label,
    "best available" default); renderer/UX-only, no protocol change. PM-prioritized this round.
-3. **`dream-channel-and-memory-retire`** (P2, *design captured 2026-06-23 — needs a dev one-pager;
-   three PRs*) — make Dream transparent via a dedicated channel rendering each run's full-process
-   transcript + a structured date/guidance launcher (seq-watermark → legible date cursor), and
-   retire the vestigial believer-pool Settings Memory pane (finish the #302 teardown). Design in
+3. **`dream-channel-and-memory-retire`** (P2, *in-progress — PR1 shipped #324; PR2 next*) — make Dream
+   transparent via a dedicated channel rendering each run's full-process transcript + a structured
+   date/guidance launcher (seq-watermark → legible date cursor), and retire the vestigial believer-pool
+   Settings Memory pane (finish the #302 teardown). **PR1 (channel + top-level run) merged**; **PR2**
+   (date→seq cursor derivation + structured launcher) is next. Design in
    `docs/plans/dream-channel-and-memory-retire.md`.
 4. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups (residual
    `new Map(prev.byId)` + `nextRevisions` whole-map rebuild), each a small standalone PR; no design gate.
@@ -194,7 +197,7 @@ before any directional/security-sensitive build.
     Note: the believer-pool store + Dream extraction substrate still ships under the hood.
     **PR3 jump-to-source UI shipped (#310, 2026-06-19)** — the whole #302 subsystem replacement
     is complete.
-- **dream-channel-and-memory-retire** (P2, *design ratified 2026-06-23 — dispatch-ready; three PRs*)
+- **dream-channel-and-memory-retire** (P2, *in-progress — PR1 shipped #324 (2026-06-23); PR2 + PR3 remaining*)
   — see `docs/plans/dream-channel-and-memory-retire.md`. Make Dream **transparent** via a dedicated
   channel that renders each run's **complete process** (the existing #312 transcript: `past_chats`
   reads → reasoning → `node_*` writes → result), and retire the vestigial believer-pool Settings
@@ -209,11 +212,15 @@ before any directional/security-sensitive build.
   is the per-principal `memory/events.jsonl` projection + memory API **inside** `AgentEventStore`
   (`:754–1037`), **not** the class (which stores all conversation/run/payload/run-meta and stays).
   **Shape (b):**
-  - **PR1** — Dream channel + **Dream as a top-level run** (not a parentless child run — else the
-    renderer only shows a `child-run` boundary summary, not inline process); persist the run (drop
-    create→delete `agentRuntime.ts:~3659/3694`); add `window?:{start,end}` to the `dream.finished`
-    event (protocol — interface-first) + stamp it; relocate Dream history; keep trigger + watermark
-    unchanged this PR.
+  - **PR1 ✓ shipped #324 (2026-06-23, codex-2; `/code-review high` gate, 2 fix rounds).** Dream channel
+    + **Dream as a top-level reflective run** (not a parentless child run); persist the run (dropped the
+    create→delete child conversation); protected default-channel table (General + Dream share one
+    `PROTECTED_DEFAULT_CHANNELS` mechanism); channel-level `includeInDreamData` setting + IPC command;
+    `#Dream` rejects ordinary chat; run-meta anchored to the channel; Dream channel excluded from
+    `past_chats`; **bounded channel run retention (512) with parent re-rooting on prune**. Kept trigger +
+    seq-watermark unchanged. **Deviation from plan:** the `window?:{start,end}` `dream.finished` field was
+    **dropped, not stamped** — it had no producer/consumer this PR (write-only schema); **PR2 adds it
+    together with its first reader/writer** when date→cursor derivation needs it.
   - **PR2** — date→seq translation (evidence/`past_chats` stay seq-based; local-day, inclusive, no
     leak) + **derive cursor + `lastSuccessAt` from the channel** (drop `readDreamState`; per-due guard
     already in run meta; keep #319 `incomplete` gating) + structured launcher (composer-swap is a *new*

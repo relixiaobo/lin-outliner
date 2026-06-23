@@ -35,6 +35,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Protected Dream channel — Memory Dream runs as a transparent top-level turn (PR #324, codex-2)** —
+  the first PR of `dream-channel-and-memory-retire`. Memory Dream no longer runs as a hidden
+  create→delete child conversation; it runs as a top-level **unattended reflective turn** inside a new
+  persistent, protected **Dream** channel (`lin-agent-channel-dream`), so each run's full process is
+  durable audit history. The Dream channel has an immutable title, cannot be renamed/deleted, and rejects
+  ordinary chat messages; General and Dream now share one table-driven `PROTECTED_DEFAULT_CHANNELS`
+  mechanism. Channels gain a `includeInDreamData` setting (Channel-config checkbox + the
+  `agent_set_conversation_include_in_dream_data` command) controlling whether a channel feeds Dream
+  evidence; the Dream channel is force-excluded from its own evidence and from `past_chats`. Dream run
+  metadata is anchored to the channel (reflective run kind/fingerprint) so replay joins the run ledger,
+  and the channel's run history is bounded to the most recent 512 runs (pruning re-roots retained anchors
+  so replay stays consistent). Trigger + seq-watermark behavior are unchanged this PR (date→cursor
+  derivation is PR2). **Gate (main):** `/code-review high` across two fix rounds — terminal
+  `dream.finished`/run-meta consistency, truncation-signal accuracy, helper/channel-machinery dedup, and a
+  caught-and-fixed retention-prune bricking bug (dangling parent after prune) were all fixed and
+  regression-tested. `test:core` 1065/0, typecheck clean, `docs:check` OK on the integrated tree. Specs
+  synced: `agent-architecture`, `agent-event-log-rendering`, `agent-tool-design`, `agent-skills`,
+  `agent-progress`, `agent-pi-mono-implementation`.
+
 - **Native PDF payloads for OpenAI Responses models (PR #322, codex-3)** — an ordinary `file_read` of a
   PDF (no `pages`) on an OpenAI Responses model now sends the PDF to the model as a native `input_file`
   document block instead of rasterizing pages through Poppler. The original bytes are stored as an
