@@ -213,14 +213,14 @@ includes both yesterday and today, durable findings from yesterday belong under
 yesterday's `#d-memory` container while today's findings belong under today's
 container.
 
-**Preserve from #319:** a truncated run (maxTurns / context overflow — the run's
+**Preserve from #319:** a truncated run (context overflow — the run's
 `incomplete` result flag) must **not** advance the frontier. Derive over
 `completed && !incomplete` turns only, so the truncated-empty-retry semantics #319
 shipped survive unchanged.
 
-**Requires (protocol surface — interface-first):** the covered window must persist
+**PR2 protocol surface:** the covered window must persist
 as **structured metadata** (`{ start, end }`), not only the human-readable string
-`Dream · A → B`. There is no field for it today, so add `window?: { start, end }`
+`Dream · A → B`. There is no field for it today; PR2 adds `window?: { start, end }`
 to the existing **`dream.finished`** event (`agentEventLog.ts:~1034`) — it already
 carries `trigger` / `status` / `startedAt` / `completedAt` / `changes`, making it
 the single record the cursor and `lastSuccessAt` derive from
@@ -302,11 +302,10 @@ Each PR is shippable and reviewable on its own — none is a scaffold a later PR
   (runtime-only `memory-dream` prompt, restricted/preapproved tools, unattended);
   start those runs with no prior Dream transcript in model context; ensure the
   #312 renderer shows the process **inline**, not a child-run boundary
-  summary; persist the run instead of create→delete; relocate Dream history here;
-  add `window?: { start, end }` to the `dream.finished` event as an interface
-  hook (protocol — interface-first), but leave it unset while the existing
-  seq-watermark still drives scope this PR. Keep the existing
-  `agent_run_dream_now` trigger and the seq-watermark **unchanged**. *Complete
+  summary; persist the run instead of create→delete; exclude the Dream channel
+  from ordinary `past_chats` lookup while keeping it visible in the UI; relocate
+  Dream history here. Keep the existing `agent_run_dream_now` trigger and the
+  seq-watermark **unchanged**. *Complete
   feature:* Dream has a transparent, persistent home. UI gate = light/dark visual.
 - **PR2 — Date-window invocation + derived cursor + launcher + frequency.** Switch
   scope to date ranges via a **date→seq translation** over the still-seq-based
@@ -318,9 +317,9 @@ Each PR is shippable and reviewable on its own — none is a scaffold a later PR
   (date range + guidance → serialized anchor); make frequency user-configurable.
   Preserve the #319 `incomplete` gate (derive over cleanly-completed turns only).
   The composer-swap is a **new** per-channel-id branch (`usesChannelActivitySurface()`
-  is dead code), not an existing seam. This is where `dream.finished.window` starts
-  being stamped. *Depends on PR1* (needs the channel + the `dream.finished.window`
-  field). UI gate = light/dark visual.
+  is dead code), not an existing seam. This is where `dream.finished.window` is
+  added and stamped. *Depends on PR1* (needs the channel). UI gate = light/dark
+  visual.
 - **PR3 — Delete the believer-pool memory projection + Settings Memory.** Remove the
   Settings Memory category, the `agent_list_memory` (+ update/forget) commands, the
   memory-edit plumbing, and — now that PR2 derives cursor + `lastSuccessAt` from the
@@ -366,11 +365,10 @@ Each PR is shippable and reviewable on its own — none is a scaffold a later PR
       through normal lifecycle + Dream-specific run profile (runtime-only
       `memory-dream` prompt, restricted/preapproved tools, unattended, empty prior
       active path) so the process renders inline, not a `child-run` boundary
-      summary; persist the run (drop create→delete `:3659` / `:3694`); add
-      `window?:{start,end}` to `dream.finished` (`agentEventLog.ts:~1034`,
-      interface-first) without stamping it until PR2's date-window scope exists;
-      do not replace the anchor message in the Dream channel; relocate Dream
-      history; light/dark visual gate.
+      summary; persist the run (drop create→delete `:3659` / `:3694`); exclude
+      the Dream channel from ordinary `past_chats` lookup; do not replace the
+      anchor message in the Dream channel; relocate Dream history; light/dark
+      visual gate.
 - [ ] PR2: date→seq translation feeding the still-seq evidence/`past_chats` layer
       (`agentDreamExtraction.ts:~366`, `agentPastChats.ts:~395`; local-day,
       inclusive, no out-of-window leak); derive cursor **and** `lastSuccessAt` from

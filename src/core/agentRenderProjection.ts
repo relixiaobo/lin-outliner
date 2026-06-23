@@ -176,7 +176,6 @@ export interface AgentRenderDreamEntity {
   completedAt: number;
   processed?: AgentDreamRecord['processed'];
   changes?: AgentDreamCompletedChanges;
-  window?: AgentDreamRecord['window'];
   errorMessage?: string;
   createdAt: number;
 }
@@ -758,7 +757,6 @@ function toRenderDreamEntity(record: AgentDreamRecord): AgentRenderDreamEntity {
     completedAt: record.completedAt,
     processed: record.processed,
     changes: record.changes,
-    window: record.window,
     errorMessage: record.errorMessage,
     createdAt: record.createdAt,
   };

@@ -2431,8 +2431,8 @@ sentence when a visible citation is useful. It does not cite every line
 mechanically. After the run completes cleanly, the runtime records
 `dream.completed` with the processed ranges and advances the watermark; the memory
 nodes themselves are the durable model-readable result. A run that ends
-`completed` but was actually cut off mid-work — `maxTurns` while still streaming,
-or an unresolved context overflow truncated it — is flagged `incomplete` on its result; a zero-write `incomplete` run is
+`completed` but was actually cut off mid-work by an unresolved context overflow
+is flagged `incomplete` on its result; a zero-write `incomplete` run is
 treated as a failure (no `dream.completed`, watermark unchanged) so the span is
 retried rather than dropped. (A truncated run that already committed memory writes
 keeps them and still completes, since the work is durable.)
@@ -2459,8 +2459,11 @@ Modes:
 The current conversation is excluded by default from `recent`, `search`, and
 `message_id` reads. The model may opt into `include_current_conversation` only
 when it is recovering compacted current-conversation content that is no longer
-in the active context. Source reads are explicit coordinates and are not
-current-conversation filtered.
+in the active context. The protected Dream channel is excluded from all
+`past_chats` modes, including explicit conversation-id filters and source
+coordinates, so Dream reasoning/tool transcript stays user-visible audit history
+rather than ordinary recall material. Source reads are explicit coordinates and
+are otherwise not current-conversation filtered.
 
 Tool results use the shared envelope and expose only the slim model-visible
 projection:

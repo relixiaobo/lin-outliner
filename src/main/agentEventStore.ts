@@ -700,11 +700,20 @@ export class AgentEventStore {
    * The run-grounded debug view ([[agent-debug-run-grounded]]) enumerates these,
    * then derives each run's rounds from its own stream.
    */
-  async listConversationRunMetaProjections(conversationId: string): Promise<AgentRunMetaProjection[]> {
+  async listConversationRunMetaProjections(
+    conversationId: string,
+    options: { limit?: number } = {},
+  ): Promise<AgentRunMetaProjection[]> {
     await this.ensureStorageLayout();
     const index = await this.ensureConversationRunIndex(conversationId);
+    const limit = typeof options.limit === 'number' ? Math.max(0, Math.trunc(options.limit)) : null;
+    const runIds = limit === null
+      ? index.runIds
+      : limit === 0
+        ? []
+        : index.runIds.slice(-limit);
     const metas: AgentRunMetaProjection[] = [];
-    for (const runId of index.runIds) {
+    for (const runId of runIds) {
       const meta = await this.readRunMeta(runId);
       if (meta) metas.push(meta);
     }

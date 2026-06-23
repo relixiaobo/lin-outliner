@@ -433,8 +433,8 @@ fixed word `Memory`. Remembering nothing is a valid, common outcome: a run that
 finds nothing worth remembering writes nothing — no container, no nodes — and
 still completes successfully, advancing the watermark. A zero-write completion
 only counts as this deliberate no-op when the run ended cleanly; a run cut off
-mid-work (`maxTurns` while still streaming, or an unresolved context overflow
-truncated it) is flagged `incomplete` and, having written nothing, is treated as
+mid-work (an unresolved context overflow truncated it) is flagged `incomplete`
+and, having written nothing, is treated as
 a failure so the span is retried instead of being silently dropped.
 
 The skill applies a high-signal memory filter before writing: keep explicit or
@@ -474,8 +474,9 @@ channel's visible transcript contains the manual or scheduled Dream anchor and
 assistant/tool activity; `dream.finished` is metadata attached to that anchor,
 not a replacement row inside the Dream channel. That transcript is audit history,
 not the next Dream run's prior chat context: Dream starts with an empty active
-path and reads source evidence only through the runtime-provided prompt,
-`past_chats`, and explicit outline memory/context tools.
+path, ordinary `past_chats` lookup excludes the Dream channel, and Dream reads
+source evidence only through the runtime-provided prompt, `past_chats`, and
+explicit outline memory/context tools.
 Durable model-readable results are ordinary `#d-memory`, `#d-episode`,
 `#d-belief`, `#d-question`, and `#d-guidance` outline nodes.
 

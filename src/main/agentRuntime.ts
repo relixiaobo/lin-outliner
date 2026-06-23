@@ -183,6 +183,7 @@ import {
   AGENT_DELEGATE_TOOL_NAME,
   AgentDelegationRuntime,
   createTenonAssistantAgentDefinition,
+  recordNodeToolChanges,
   type AgentChildAgentCreateInput,
   type AgentChildRunSnapshot,
 } from './agentDelegation';
@@ -3642,7 +3643,7 @@ export class AgentRuntime {
   }
 
   private async hasScheduledDreamAttemptForDue(_principal: AgentPrincipal, dueAt: number): Promise<boolean> {
-    const runs = await this.getEventStore().listConversationRunMetaProjections(DEFAULT_DREAM_CHANNEL_ID);
+    const runs = await this.getEventStore().listConversationRunMetaProjections(DEFAULT_DREAM_CHANNEL_ID, { limit: 100 });
     return runs.some((run) =>
       run.kind === 'reflective'
       && run.trigger.type === 'schedule'
@@ -3721,15 +3722,15 @@ export class AgentRuntime {
       // `dream.completed` with zero change counts and advances the watermark, so
       // the considered-but-empty span is not re-read.
       //
-      // But "completed" is not the same as "finished": a maxTurns abort or an
-      // unresolved context overflow ends the child `completed` mid-work. Such a
-      // truncated run that wrote nothing did NOT decide there was nothing worth
-      // remembering — advancing the watermark would silently drop that span's
-      // evidence forever. Treat it as a failure so it is retried, NOT a no-op.
+      // But "completed" is not the same as "finished": an unresolved context
+      // overflow can end the run `completed` mid-work. Such a truncated run that
+      // wrote nothing did NOT decide there was nothing worth remembering —
+      // advancing the watermark would silently drop that span's evidence forever.
+      // Treat it as a failure so it is retried, NOT a no-op.
       const runResult = await this.runMemoryDreamChannelRun(task, prompt, skill.allowedTools, model, providerConfig);
       const changes = dreamChangesFromChildNodeChanges(runResult.nodeChanges);
       if (runResult.incomplete && !dreamChangesHaveCommittedWork(changes)) {
-        throw new Error('Memory Dream run was truncated (maxTurns or context overflow) before writing any memory; not advancing the watermark so the span is retried.');
+        throw new DreamChannelRunError('Memory Dream run was truncated by context overflow before writing any memory; not advancing the watermark so the span is retried.', runResult.anchorMessageId);
       }
       const completed = await this.getEventStore().appendDreamCompleted(task.principal, {
         runId: task.runId,
@@ -3745,7 +3746,20 @@ export class AgentRuntime {
         },
         changes,
       });
-      await this.writeDreamRunMeta(task, 'completed', model);
+      await this.writeDreamRunMeta(task, 'completed', model).catch((error) => {
+        this.reportWarn(
+          'dream',
+          `Dream completed but its run metadata could not be refreshed: ${error instanceof Error ? error.message : String(error)}`,
+          error,
+          {
+            agentId: this.agentIdentity.agentId,
+            runId: task.runId,
+            principalKey: principalKey(task.principal),
+            operation: 'writeDreamRunMeta',
+          },
+          'dream-run-meta-write-failed',
+        );
+      });
       const result: AgentDreamRunResult = {
         agentId: this.agentIdentity.agentId,
         runId: task.runId,
@@ -3756,7 +3770,20 @@ export class AgentRuntime {
         processed: completed.processed,
         changes: completed.changes,
       };
-      await this.appendDreamFinishedEvent(runResult.anchorMessageId, result);
+      await this.appendDreamFinishedEvent(runResult.anchorMessageId, result).catch((error) => {
+        this.reportWarn(
+          'dream',
+          `Dream finished but its terminal channel marker could not be recorded: ${error instanceof Error ? error.message : String(error)}`,
+          error,
+          {
+            agentId: this.agentIdentity.agentId,
+            runId: task.runId,
+            principalKey: principalKey(task.principal),
+            operation: 'appendDreamFinishedEvent',
+          },
+          'dream-finished-marker-write-failed',
+        );
+      });
       return result;
     } catch (error) {
       if (modelForRunMeta) {
@@ -3853,7 +3880,7 @@ export class AgentRuntime {
           return current ? this.appendToolPermissionEvent(DEFAULT_DREAM_CHANNEL_ID, current, input) : Promise.resolve();
         },
         afterToolResult: (_toolCallId, toolName, result, isError) => {
-          recordDreamNodeToolChanges(nodeChanges, toolName, result, isError);
+          recordNodeToolChanges(nodeChanges, toolName, result, isError);
           return undefined;
         },
       }, async (payload) => {
@@ -3934,6 +3961,7 @@ export class AgentRuntime {
     model: Model<Api>,
   ): Promise<void> {
     const timestamp = status === 'running' ? task.startedAt : Date.now();
+    const existing = await this.getEventStore().readRunMetaProjection(task.runId);
     await this.getEventStore().writeRunMeta({
       v: 1,
       id: task.runId,
@@ -3955,7 +3983,8 @@ export class AgentRuntime {
       retention: 'hot',
       createdAt: task.startedAt,
       updatedAt: timestamp,
-      latestSeq: 0,
+      usage: existing?.usage,
+      latestSeq: existing?.latestSeq ?? 0,
     });
     await this.refreshAgentTaskCache();
     this.emitAgentTaskProjection(`dream.${status}`);
@@ -3969,11 +3998,10 @@ export class AgentRuntime {
     const store = this.getEventStore();
     const principal = this.agentPrincipal();
     const [runs, dreamState] = await Promise.all([
-      store.listConversationRunMetaProjections(DEFAULT_DREAM_CHANNEL_ID),
+      store.listConversationRunMetaProjections(DEFAULT_DREAM_CHANNEL_ID, { limit }),
       store.readDreamState(principal),
     ]);
     return runs
-      .slice(-limit)
       .flatMap((run): AgentRenderDreamTaskEntity[] => {
         const completed = dreamState.lastCompleted?.runId === run.id ? dreamState.lastCompleted : null;
         const task = dreamTaskFromRunMeta(run, completed, principal);
@@ -7989,61 +8017,6 @@ function dreamChangesFromChildNodeChanges(nodeChanges: AgentChildRunNodeChanges)
     forgotten: uniqueStrings(nodeChanges.trashedNodeIds).length,
     skipped: 0,
   };
-}
-
-function recordDreamNodeToolChanges(
-  changes: AgentChildRunNodeChanges,
-  toolName: string,
-  result: unknown,
-  isError: boolean,
-): void {
-  if (isError) return;
-  if (toolName === 'node_delete') {
-    const data = successfulNodeToolData(result);
-    if (!data) return;
-    appendUniqueNodeIds(changes, 'trashedNodeIds', stringArray(data.deletedNodeIds));
-    appendUniqueNodeIds(changes, 'updatedNodeIds', stringArray(data.restoredNodeIds));
-    return;
-  }
-  if (toolName !== 'node_create' && toolName !== 'node_edit') return;
-  const data = successfulNodeToolData(result);
-  if (!data) return;
-
-  const created = stringArray(data.createdNodeIds);
-  appendUniqueNodeIds(changes, 'createdNodeIds', created);
-  if (toolName !== 'node_edit' || data.status !== 'updated') return;
-  const trashed = stringArray(data.trashedNodeIds);
-  appendUniqueNodeIds(changes, 'trashedNodeIds', trashed);
-  const changedExisting = stringArray(data.affectedNodeIds)
-    .filter((nodeId) => !created.includes(nodeId) && !trashed.includes(nodeId));
-  appendUniqueNodeIds(changes, 'updatedNodeIds', changedExisting);
-}
-
-function successfulNodeToolData(result: unknown): Record<string, unknown> | null {
-  const details = isRecord(result) ? result.details : undefined;
-  if (!isToolEnvelope(details) || !details.ok || details.status === 'unchanged' || !isRecord(details.data)) return null;
-  return details.data;
-}
-
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.length > 0) : [];
-}
-
-function appendUniqueNodeIds(
-  changes: AgentChildRunNodeChanges,
-  key: keyof AgentChildRunNodeChanges,
-  nodeIds: readonly string[],
-): void {
-  if (nodeIds.length === 0) return;
-  const current = changes[key] ?? [];
-  const existing = new Set(current);
-  const next = [...current];
-  for (const nodeId of nodeIds) {
-    if (existing.has(nodeId)) continue;
-    existing.add(nodeId);
-    next.push(nodeId);
-  }
-  changes[key] = next;
 }
 
 function lastAssistantMessage(messages: readonly AgentMessage[]): AssistantMessage | null {

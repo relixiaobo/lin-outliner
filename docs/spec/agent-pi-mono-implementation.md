@@ -775,8 +775,7 @@ Tenon should use lower snake case tool names for all Tenon-owned tools:
   obsolete nodes with `node_delete`. A run that finds nothing worth remembering
   writes nothing, and a clean run records `dream.completed` (advancing the
   watermark) and writes a reflective run meta entry either way. A run cut off
-  mid-work (the delegation hit its `maxTurns` cap while still streaming, or an
-  unresolved context overflow truncated it) is flagged `incomplete`; if it also
+  mid-work by an unresolved context overflow is flagged `incomplete`; if it also
   wrote nothing it is treated as a failure — no `dream.completed`, watermark
   unchanged — so the span is retried. There is no `/dream`
   slash command and no foreground `dream` tool.

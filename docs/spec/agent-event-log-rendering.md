@@ -512,8 +512,8 @@ completion is a valid no-op — remembering nothing is a normal Dream outcome, s
 it records `dream.completed` with zero change counts and advances the watermark,
 keeping a considered-but-empty span from being re-read. The no-op is gated on a
 **clean** terminal state: a run that ended `completed` but was actually cut off
-mid-work (`maxTurns` while still streaming, or an unresolved context overflow
-truncated it) carries an `incomplete` flag, and a zero-write run that is
+mid-work (an unresolved context overflow truncated it) carries an `incomplete`
+flag, and a zero-write run that is
 `incomplete` is treated as a **failure**, not a no-op — `dream.completed` is not
 recorded and the watermark does not advance, so the span is retried rather than
 silently dropped. There is **one** Dream — a runtime-only `memory-dream` skill run that
@@ -541,7 +541,9 @@ semantic memory pool remains believer-keyed. The protected Dream transcript is
 visible audit history only: ordinary chat sends to the Dream channel are rejected
 before persistence, the channel is forced out of Dream evidence, and Dream runs
 start with an empty prior active path so previous Dream transcript rows are not
-fed into the next Dream model context.
+fed into the next Dream model context. Ordinary `past_chats` lookup also excludes
+the Dream channel, so its reasoning/tool transcript is user-visible audit history
+rather than recall material for normal chats.
 
 ## Message Model
 

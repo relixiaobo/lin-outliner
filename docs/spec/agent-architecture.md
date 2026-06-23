@@ -165,9 +165,9 @@ applies the valuable-memory filter, reconciles prior `#d-*` memories as the
 current belief graph, then, when it has memory worth writing, updates today's
 single `#d-memory` container, whose title is a generated daily memory headline; a
 run that finds nothing worth remembering writes nothing and still completes
-cleanly, advancing the watermark — unless it was cut off mid-work (the run hit its
-`maxTurns` cap while still streaming, or an unresolved context overflow truncated
-it), which is flagged `incomplete` and, with zero writes, is retried rather than
+cleanly, advancing the watermark — unless it was cut off mid-work by an
+unresolved context overflow, which is flagged `incomplete` and, with zero writes,
+is retried rather than
 counted as a deliberate no-op. It
 may write `#d-question` for
 unresolved tension and `#d-guidance` for future handling, but these are optional

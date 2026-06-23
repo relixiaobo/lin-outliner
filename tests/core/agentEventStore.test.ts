@@ -1801,6 +1801,43 @@ describe('agent event store', () => {
     });
   });
 
+  test('limits conversation run meta reads from the run index tail', async () => {
+    await withStore(async (store) => {
+      const conversationId = 'conversation-run-limit';
+      const writeRun = (id: string, createdAt: number) => store.writeRunMeta({
+        v: 1,
+        id,
+        agentId: 'built-in:tenon:assistant',
+        anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
+        kind: 'reflective',
+        status: 'completed',
+        trigger: { type: 'manual' },
+        fingerprint: {
+          appVersion: 'test',
+          promptHash: 'prompt',
+          toolSchemaHash: 'tools',
+          skillBindings: [],
+          modelConfig: 'model',
+        },
+        retention: 'hot',
+        createdAt,
+        updatedAt: createdAt,
+        latestSeq: createdAt,
+      });
+      await writeRun('dream-run-1', 1);
+      await writeRun('dream-run-2', 2);
+      await writeRun('dream-run-3', 3);
+
+      await expect(store.listConversationRunMetaProjections(conversationId, { limit: 2 }))
+        .resolves.toMatchObject([
+          { id: 'dream-run-2' },
+          { id: 'dream-run-3' },
+        ]);
+      await expect(store.listConversationRunMetaProjections(conversationId, { limit: 0 }))
+        .resolves.toEqual([]);
+    });
+  });
+
   test('persists principal-anchored reflective run meta for Dream runs', async () => {
     await withStore(async (store) => {
       const writeDreamMeta = (id: string, principal: AgentPrincipal) => store.writeRunMeta({

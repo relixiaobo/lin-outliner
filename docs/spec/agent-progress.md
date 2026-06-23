@@ -153,9 +153,9 @@ truth.
     optional `#d-episode` / `#d-belief` / `#d-question` / `#d-guidance` nodes, and
     may delete obsolete nodes with `node_delete`; a run that finds nothing worth
     remembering writes nothing, and a clean run records `dream.completed` and
-    advances the watermark either way — but a run cut off mid-work (`maxTurns`
-    abort while streaming, or unresolved context overflow) is flagged `incomplete`
-    and, with zero writes, is retried instead of advancing; manual
+    advances the watermark either way — but a run cut off mid-work by unresolved
+    context overflow is flagged `incomplete` and, with zero writes, is retried
+    instead of advancing; manual
     consolidate-only runs can reconcile outline/prior Dream context without new
     chat spans
   - `/dream` and the foreground `dream` tool are removed; Dream history remains
