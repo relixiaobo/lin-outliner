@@ -28,7 +28,7 @@ export function nativePdfPayloadRuntimeText(input: {
   filename: string;
   label?: string;
 }): string {
-  const marker = JSON.stringify(input);
+  const marker = Buffer.from(JSON.stringify(input), 'utf8').toString('base64url');
   const label = input.label ?? input.filename;
   return [
     `PDF document attached: ${label}`,
@@ -51,6 +51,11 @@ export async function attachNativePdfPayloadsToOpenAIResponsesPayload(
   }
 
   return changed ? { ...payload, input } : undefined;
+}
+
+export function removeNativePdfPayloadMarkersFromPayload(payload: unknown): unknown | undefined {
+  const next = replaceNativePdfPayloadMarkersInValue(payload);
+  return next.changed ? next.value : undefined;
 }
 
 async function attachNativePdfPayloadsToResponsesInputItem(
@@ -129,7 +134,8 @@ async function responsesContentFromNativePdfMarkers(
 
     const parsed = parseNativePdfMarker(marker.body);
     if (!parsed) {
-      parts.push({ type: 'input_text', text: text.slice(marker.start, marker.end) });
+      parts.push({ type: 'input_text', text: '[native PDF payload marker omitted]' });
+      changed = true;
       continue;
     }
 
@@ -155,6 +161,49 @@ async function responsesContentFromNativePdfMarkers(
   return { value: parts.length > 0 ? parts : [{ type: 'input_text', text: '' }], changed };
 }
 
+function replaceNativePdfPayloadMarkersInValue(value: unknown): { value: unknown; changed: boolean } {
+  if (typeof value === 'string') return removeNativePdfPayloadMarkersFromText(value);
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((item) => {
+      const replaced = replaceNativePdfPayloadMarkersInValue(item);
+      changed ||= replaced.changed;
+      return replaced.value;
+    });
+    return changed ? { value: next, changed } : { value, changed: false };
+  }
+  if (isRecord(value)) {
+    let changed = false;
+    const next: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      const replaced = replaceNativePdfPayloadMarkersInValue(item);
+      changed ||= replaced.changed;
+      next[key] = replaced.value;
+    }
+    return changed ? { value: next, changed } : { value, changed: false };
+  }
+  return { value, changed: false };
+}
+
+function removeNativePdfPayloadMarkersFromText(text: string): { value: string; changed: boolean } {
+  const markers = [...findNativePdfMarkers(text)];
+  if (markers.length === 0) return { value: text, changed: false };
+
+  let cursor = 0;
+  let value = '';
+  for (const marker of markers) {
+    value += text.slice(cursor, marker.start);
+    value += nativePdfPayloadUnsupportedModelText();
+    cursor = marker.end;
+  }
+  value += text.slice(cursor);
+  return { value, changed: true };
+}
+
+function nativePdfPayloadUnsupportedModelText(): string {
+  return 'The active model cannot inspect native PDF payloads directly. Call file_read with pages to inspect a page range.';
+}
+
 function* findNativePdfMarkers(text: string): Generator<{ start: number; end: number; body: string }> {
   let searchFrom = 0;
   while (searchFrom < text.length) {
@@ -171,7 +220,7 @@ function* findNativePdfMarkers(text: string): Generator<{ start: number; end: nu
 
 function parseNativePdfMarker(body: string): NativePdfMarker | null {
   try {
-    const parsed = JSON.parse(body) as unknown;
+    const parsed = parseNativePdfMarkerBody(body);
     if (!isRecord(parsed) || !isPayloadRef(parsed.payload)) return null;
     const filename = typeof parsed.filename === 'string' && parsed.filename.trim()
       ? parsed.filename.trim()
@@ -184,6 +233,12 @@ function parseNativePdfMarker(body: string): NativePdfMarker | null {
   } catch {
     return null;
   }
+}
+
+function parseNativePdfMarkerBody(body: string): unknown {
+  const trimmed = body.trim();
+  if (trimmed.startsWith('{')) return JSON.parse(trimmed);
+  return JSON.parse(Buffer.from(trimmed, 'base64url').toString('utf8'));
 }
 
 function isPayloadRef(value: unknown): value is AgentPayloadRef {

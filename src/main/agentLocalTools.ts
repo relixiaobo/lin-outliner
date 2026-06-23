@@ -436,6 +436,7 @@ const BASH_INLINE_OUTPUT_LIMIT = 30_000;
 const BACKGROUND_TASK_HISTORY_LIMIT = 20;
 const BACKGROUND_TASK_TTL_MS = 30 * 60_000;
 const PDF_MAX_EXTRACT_SIZE = 100 * 1024 * 1024;
+export const PDF_NATIVE_MAX_SIZE = 20 * 1024 * 1024;
 const PDF_MAX_PAGES_PER_READ = 20;
 const PDF_INLINE_PAGE_THRESHOLD = 10;
 const PDF_TEXT_MAX_CHARS = 60_000;
@@ -2558,6 +2559,13 @@ function readNativePdfData(filePath: string, buffer: Buffer): FileReadPdfData {
   }
   if (buffer.byteLength < 5 || buffer.toString('ascii', 0, 5) !== '%PDF-') {
     throw new LocalToolFailure('pdf_corrupted', `File is not a valid PDF: ${filePath}`, 'Use a valid PDF file.');
+  }
+  if (buffer.byteLength > PDF_NATIVE_MAX_SIZE) {
+    throw new LocalToolFailure(
+      'pdf_too_large',
+      `PDF file exceeds maximum native document size of ${formatBytes(PDF_NATIVE_MAX_SIZE)}.`,
+      `Call file_read again with pages, for example "1-5". Maximum ${PDF_MAX_PAGES_PER_READ} pages per request, or split the PDF first.`,
+    );
   }
   return {
     type: 'pdf',

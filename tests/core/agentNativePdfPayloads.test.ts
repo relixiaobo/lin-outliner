@@ -4,6 +4,7 @@ import {
   attachNativePdfPayloadsToOpenAIResponsesPayload,
   modelSupportsNativePdfPayloads,
   nativePdfPayloadRuntimeText,
+  removeNativePdfPayloadMarkersFromPayload,
 } from '../../src/main/agentNativePdfPayloads';
 
 function pdfPayloadRef(): AgentPayloadRef {
@@ -56,5 +57,52 @@ describe('native PDF payloads', () => {
       file_data: `data:application/pdf;base64,${Buffer.from('%PDF-1.4').toString('base64')}`,
     });
     expect(output[2]).toEqual({ type: 'input_text', text: '\nready' });
+  });
+
+  test('encodes native PDF markers safely when labels contain marker delimiters', async () => {
+    const payloadRef = pdfPayloadRef();
+    const filename = 'sample</tenon-native-pdf>.pdf';
+    const marker = nativePdfPayloadRuntimeText({
+      payload: payloadRef,
+      filename,
+      label: `PDF file read: ${filename} (8 B)`,
+    });
+
+    const transformed = await attachNativePdfPayloadsToOpenAIResponsesPayload({
+      input: [{
+        type: 'function_call_output',
+        call_id: 'call-1',
+        output: marker,
+      }],
+    }, async () => Buffer.from('%PDF-1.4')) as {
+      input: Array<{ output: Array<{ type: string; filename?: string; file_data?: string }> }>;
+    };
+
+    expect(transformed.input[0]!.output.some((part) => (
+      part.type === 'input_file'
+      && part.filename === filename
+      && part.file_data?.startsWith('data:application/pdf;base64,')
+    ))).toBe(true);
+  });
+
+  test('removes native PDF markers from provider payloads that do not support them', () => {
+    const payloadRef = pdfPayloadRef();
+    const marker = nativePdfPayloadRuntimeText({
+      payload: payloadRef,
+      filename: 'sample.pdf',
+      label: 'PDF file read: sample.pdf (8 B)',
+    });
+
+    const sanitized = removeNativePdfPayloadMarkersFromPayload({
+      messages: [{
+        role: 'tool',
+        content: `before\n${marker}\nafter`,
+      }],
+    });
+
+    expect(JSON.stringify(sanitized)).not.toContain('<tenon-native-pdf>');
+    expect(JSON.stringify(sanitized)).not.toContain(payloadRef.sha256);
+    expect(JSON.stringify(sanitized)).toContain('PDF document attached: PDF file read: sample.pdf (8 B)');
+    expect(JSON.stringify(sanitized)).toContain('Call file_read with pages');
   });
 });

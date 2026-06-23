@@ -7,6 +7,7 @@ import {
   buildAgentLocalToolProcessEnv,
   createAgentLocalWorkspaceContext,
   createLocalTools,
+  PDF_NATIVE_MAX_SIZE,
   POPPLER_RECOVERY_INSTRUCTIONS,
   restorePostCompactReadFiles,
   scratchRootForWorkdir,
@@ -804,6 +805,24 @@ describe('agent local tools', () => {
       });
       expect(JSON.stringify(visible)).not.toContain('base64');
       expect(result.content.some((block: { type: string }) => block.type === 'image')).toBe(false);
+    });
+  });
+
+  test('file_read rejects oversized native PDF reads before provider payload conversion', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'large.pdf');
+      const bytes = Buffer.alloc(PDF_NATIVE_MAX_SIZE + 1);
+      bytes.write('%PDF-');
+      await writeFile(filePath, bytes);
+
+      const tool = createLocalTools({ localRoot: workspaceRoot, nativePdfRead: true }).find((candidate) => candidate.name === 'file_read')!;
+      const result = await (tool.execute as any)('test-call', { file_path: filePath });
+      const read = result.details as ToolEnvelope<unknown>;
+
+      expect(read.ok).toBe(false);
+      expect(read.error?.code).toBe('pdf_too_large');
+      expect(read.instructions).toContain('pages');
+      expect(result.content[0].text).toContain('pdf_too_large');
     });
   });
 

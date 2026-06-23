@@ -88,9 +88,9 @@ native path is unavailable.
 
 Extend the PR #322 PDF path with a provider-neutral fallback:
 
-- Add a native PDF raw-size cap before converting bytes to provider payloads.
-  Use a conservative threshold based on provider request limits; cc-2.1 uses a
-  20 MB raw PDF cap because base64 expands by roughly one third.
+- Keep the native PDF raw-size cap before converting bytes to provider payloads.
+  PR #322 uses a conservative 20 MB raw PDF cap because base64 expands by
+  roughly one third.
 - Extract embedded text per page when possible with `pdftotext`.
 - Render page images with Poppler only when the user asks for pages, the PDF has
   no useful text layer, the question needs layout/visual inspection, or the
@@ -156,8 +156,8 @@ The debug run should show the provider-facing result without dumping raw base64:
 
 - Where should extraction caches live: per conversation payload directory, a
   shared content-addressed cache under agent data, or both?
-- Which PDF native cap should ship first: cc-2.1's 20 MB raw threshold, a lower
-  OpenAI-specific threshold, or a provider-configurable threshold?
+- Should the 20 MB PDF native cap become provider-configurable after more live
+  provider validation?
 - Should `file_read` expose a new `mode` option (`auto`, `text`, `pages`,
   `native`) or keep `pages` as the only explicit PDF selector?
 - Do Office extraction features depend on bundled workspace dependencies, or do
@@ -167,8 +167,8 @@ The debug run should show the provider-facing result without dumping raw base64:
 
 ## Build Checklist
 
-- [ ] PDF cap and fallback PR: add a native PDF raw-size cap, per-page text
-      extraction fallback, and tests for large-PDF behavior.
+- [ ] PDF fallback PR: add per-page text extraction fallback and large-PDF
+      summary behavior on top of the current native size cap.
 - [ ] Runtime representation PR: introduce `FileIngestionResult` internally and
       adapt current text/image/PDF paths onto it without changing behavior.
 - [ ] Provider adaptation PR: move native PDF conversion and image/text fallback

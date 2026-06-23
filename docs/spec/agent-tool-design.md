@@ -1744,10 +1744,13 @@ Result behavior:
   block for the model to inspect, and omit base64 from the model-visible JSON so
   text output stays compact.
 - On OpenAI Responses-family models, reading a PDF without `pages` returns
-  `FileReadPdfData` and persists the PDF bytes as a source payload. The runtime
-  rehydrates that payload into an OpenAI `input_file` document block immediately
-  before the provider request, so normal PDF analysis does not depend on
-  Poppler and base64 never enters the tool-result JSON.
+  `FileReadPdfData` for PDFs up to 20 MB and persists the PDF bytes as a source
+  payload. The runtime rehydrates that payload into an OpenAI `input_file`
+  document block immediately before the provider request, so normal PDF analysis
+  does not depend on Poppler and base64 never enters the tool-result JSON or
+  debug run snapshot. If a later request uses a model without native PDF support,
+  the runtime shows a readable PDF attachment notice instead of sending the
+  private payload marker.
 - PDF reads with `pages` ranges such as `"3"` and `"1-5"` use the local
   page-extraction path, with a maximum of 20 pages per request. `pdfinfo`
   determines page count, `pdftoppm` renders selected pages as JPEGs, and those
