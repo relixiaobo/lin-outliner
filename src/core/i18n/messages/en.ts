@@ -1012,7 +1012,7 @@ commandPalette: {
       cost: 'Cost',
       usageDetails: 'Tokens and cost',
       usageUnavailable: 'unavailable',
-      cacheHit: 'Cache hit',
+      cachedShare: 'Cached share',
       replyAnchorTitle: 'Jump to addressed message',
       tokenLabels: {
         input: 'Input',
@@ -1443,7 +1443,7 @@ commandPalette: {
     usagePending: 'usage pending',
     totalInputContext: 'Input context',
     outputTokens: 'Output',
-    cacheHitRate: 'Cache hit',
+    cachedShare: 'Cached share',
     stopReasonLabel: 'Stop reason',
     inputHistoryDisclosure: ({ count }: { count: number }) => `History · ${count}`,
     currentRequestDisclosure: 'Current request',

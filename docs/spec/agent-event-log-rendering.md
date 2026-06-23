@@ -1230,7 +1230,7 @@ The run detail is ordered for inspection:
 
 1. **Run summary** — compact run facts: agent/kind/status, model/provider,
    timestamps, duration, model/tool-call counts, input-context tokens, output
-   tokens, cache hit, and aggregate cost. Raw identifiers (`runId`, `agentId`,
+   tokens, cached share, and aggregate cost. Raw identifiers (`runId`, `agentId`,
    and optional parent ids) live inside a collapsed identifiers disclosure in
    this summary, not as a separate main section.
 2. **Model Input** — the input side that seeded this run: system/developer
@@ -1260,8 +1260,11 @@ The run detail is ordered for inspection:
 
 The chat transcript exposes this through an assistant-message **Details** icon
 button that uses the `Info` glyph. Hovering it previews the reply's token and
-cost summary, including cache hit when cache activity exists; clicking it opens a
-run-details pane keyed by that reply's
+cost summary, including cached share when cache activity exists. Cached share is
+derived from the normalized usage as `cacheRead / (input + cacheRead +
+cacheWrite)` so it describes the portion of this input context served from cache,
+not provider-specific cache-hit semantics; clicking opens a run-details pane
+keyed by that reply's
 `runId`. If the same run pane already exists, it is activated; opening a
 different reply opens or repurposes a pane for that different `(conversationId,
 runId)`. There is no standalone/global debug entry in the agent dock.

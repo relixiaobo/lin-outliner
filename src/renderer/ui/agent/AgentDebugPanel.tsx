@@ -53,10 +53,11 @@ function usageSegmentStyle(value: number, total: number): CSSProperties {
   } as CSSProperties;
 }
 
-function formatCacheHitRate(cacheRead: number, cacheWrite: number): string | null {
-  const total = cacheRead + cacheWrite;
-  if (total <= 0) return null;
-  return `${Math.round((cacheRead / total) * 100)}%`;
+function formatCachedShare(input: number, cacheRead: number, cacheWrite: number): string | null {
+  const cacheActivity = cacheRead + cacheWrite;
+  const inputContext = input + cacheActivity;
+  if (cacheActivity <= 0 || inputContext <= 0) return null;
+  return `${Math.round((cacheRead / inputContext) * 100)}%`;
 }
 
 function formatTimestamp(value: number | null): string {
@@ -253,7 +254,7 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
           <div>
             <dt>{labels.totalInputContext}</dt>
             <dd>{formatTokens(ratios?.inputContext ?? 0)}</dd>
-            <small>{labels.cacheHitRate}: {formatPercent(ratios?.cacheHitRate ?? null)}</small>
+            <small>{labels.cachedShare}: {formatPercent(ratios?.cachedShare ?? null)}</small>
             <small>{labels.outputTokens}: {formatTokens(usage.output)}</small>
           </div>
         ) : null}
@@ -281,7 +282,7 @@ function usageRatios(usage: AgentDebugUsage) {
   const cacheActivity = usage.cacheRead + usage.cacheWrite;
   return {
     inputContext,
-    cacheHitRate: cacheActivity > 0 ? usage.cacheRead / cacheActivity : null,
+    cachedShare: cacheActivity > 0 && inputContext > 0 ? usage.cacheRead / inputContext : null,
   };
 }
 
@@ -418,7 +419,7 @@ function RoundInfoContent({ labels, round }: { labels: DebugLabels; round: Agent
     );
   }
 
-  const cacheHit = formatCacheHitRate(usage.cacheRead, usage.cacheWrite);
+  const cachedShare = formatCachedShare(usage.input, usage.cacheRead, usage.cacheWrite);
   const usageRows = [
     { kind: 'input', label: t.agent.message.tokenLabels.input, tokens: usage.input, cost: usage.cost.input },
     { kind: 'output', label: t.agent.message.tokenLabels.output, tokens: usage.output, cost: usage.cost.output },
@@ -433,9 +434,9 @@ function RoundInfoContent({ labels, round }: { labels: DebugLabels; round: Agent
     <>
       <div className="agent-message-usage-hover-title-row">
         <div className="agent-message-usage-hover-title">{t.agent.message.usageDetails}</div>
-        {cacheHit ? (
+        {cachedShare ? (
           <div className="agent-message-usage-hover-meta">
-            {t.agent.message.cacheHit}: <strong>{cacheHit}</strong>
+            {t.agent.message.cachedShare}: <strong>{cachedShare}</strong>
           </div>
         ) : null}
       </div>

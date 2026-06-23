@@ -928,7 +928,7 @@ commandPalette: {
       cost: '成本',
       usageDetails: 'Token 和成本',
       usageUnavailable: '不可用',
-      cacheHit: '缓存命中',
+      cachedShare: '缓存占比',
       replyAnchorTitle: '跳转到被回应的消息',
       tokenLabels: {
         input: '输入',
@@ -1324,7 +1324,7 @@ commandPalette: {
     usagePending: '用量待定',
     totalInputContext: '输入上下文',
     outputTokens: '输出',
-    cacheHitRate: '缓存命中',
+    cachedShare: '缓存占比',
     stopReasonLabel: '结束原因',
     inputHistoryDisclosure: ({ count }) => `历史 · ${count}`,
     currentRequestDisclosure: '本轮输入',
