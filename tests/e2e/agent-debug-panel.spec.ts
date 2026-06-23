@@ -54,6 +54,10 @@ test.describe('agent debug panel', () => {
     await expect(round.locator('.agent-debug-execution-event', { hasText: 'tool_call bash' })).toContainText('git push origin main');
     await expect(round.locator('.agent-debug-execution-event', { hasText: 'tool_result bash' })).toContainText('Pushed to origin/main.');
     await expect(round.locator('.agent-debug-tool-exchange', { hasText: 'bash' })).toContainText('Pushed to origin/main.');
+    await round.locator('summary.agent-debug-section-header').click();
+    await expect(outputRow).not.toBeVisible();
+    await round.locator('summary.agent-debug-section-header').click();
+    await expect(outputRow).toBeVisible();
     await expect.poll(async () => debugPanel.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
     await expect(round.locator('details.agent-debug-disclosure', { hasText: 'Usage' })).toHaveCount(0);
 

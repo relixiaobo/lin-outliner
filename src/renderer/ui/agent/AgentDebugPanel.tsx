@@ -332,12 +332,13 @@ function RoundCard({ round, labels }: { round: AgentDebugRound; labels: DebugLab
       .map((part) => part.toolUseId),
   );
   return (
-    <article className="agent-debug-round-card">
-      <div className="agent-debug-section-header">
+    <details className="agent-debug-round-card" open>
+      <summary className="agent-debug-section-header">
+        <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
         <h3>{labels.modelCallTitle({ index: round.index + 1 })}</h3>
         {showStatus ? <span className={`agent-debug-status-pill is-${round.status}`}>{statusLabel(round.status, labels)}</span> : null}
         <RoundInfoHover labels={labels} round={round} />
-      </div>
+      </summary>
 
       <div className="agent-debug-execution-list">
         {round.responseParts.length === 0 && round.toolExchanges.length === 0 ? (
@@ -364,13 +365,13 @@ function RoundCard({ round, labels }: { round: AgentDebugRound; labels: DebugLab
           />
         ))}
       </div>
-    </article>
+    </details>
   );
 }
 
 function RoundInfoHover({ labels, round }: { labels: DebugLabels; round: AgentDebugRound }) {
   return (
-    <div className="agent-debug-usage-hover">
+    <div className="agent-debug-usage-hover" onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}>
       <IconButton
         className="agent-debug-usage-info-button"
         icon={InfoIcon}

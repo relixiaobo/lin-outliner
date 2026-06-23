@@ -217,6 +217,7 @@
 
 .agent-debug-disclosure[open] > summary .agent-debug-summary-chevron,
 .agent-debug-query-card[open] > summary .agent-debug-summary-chevron,
+.agent-debug-round-card[open] > summary .agent-debug-summary-chevron,
 .agent-debug-tool-row[open] > summary .agent-debug-summary-chevron,
 .agent-debug-part-details[open] > summary .agent-debug-summary-chevron {
   transform: rotate(0deg);
@@ -493,10 +494,16 @@
   padding: var(--space-5);
 }
 
-.agent-debug-round-card > .agent-debug-section-header {
+.agent-debug-round-card > summary.agent-debug-section-header {
   justify-content: flex-start;
   gap: var(--space-4);
   margin-bottom: 0;
+  cursor: default;
+  list-style: none;
+}
+
+.agent-debug-round-card > summary.agent-debug-section-header::-webkit-details-marker {
+  display: none;
 }
 
 .agent-debug-usage-hover {
