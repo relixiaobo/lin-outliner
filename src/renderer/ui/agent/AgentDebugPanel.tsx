@@ -504,20 +504,50 @@ function stringRecordValue(value: unknown, key: string): string | null {
 // --- shared bits ----------------------------------------------------------
 
 function MessageRow({ message, labels }: { message: AgentDebugMessageRow; labels: DebugLabels }) {
+  const visibleParts = shouldShowMessageParts(message.parts);
+  const summary = messageSummaryText(message);
   return (
-    <article className="agent-debug-message-row">
+    <article className={`agent-debug-message-row${visibleParts ? '' : ' is-compact'}`}>
       <div className="agent-debug-message-head">
-        <span>{message.role}</span>
-        <strong>{message.summary}</strong>
+        <span className={`agent-debug-role-pill is-${message.role}`}>{message.role}</span>
+        <strong title={summary}>{summary}</strong>
         <code>{formatBytes(message.bytes)}</code>
       </div>
-      <div className="agent-debug-part-list">
-        {message.parts.map((part, index) => (
-          <PartRow part={part} rowId={message.id} index={index} key={`${message.id}-${index}`} labels={labels} />
-        ))}
-      </div>
+      {visibleParts ? (
+        <div className="agent-debug-part-list">
+          {message.parts.map((part, index) => (
+            <PartRow part={part} rowId={message.id} index={index} key={`${message.id}-${index}`} labels={labels} />
+          ))}
+        </div>
+      ) : null}
     </article>
   );
+}
+
+function messageSummaryText(message: AgentDebugMessageRow): string {
+  if (message.parts.length === 1) {
+    const [part] = message.parts;
+    if (part?.kind === 'text' && !part.isReminder) return part.body;
+    if (part?.kind === 'toolCall') return `tool_call ${part.name}`;
+    if (part?.kind === 'toolResult') return `tool_result ${shortId(part.toolUseId)}`;
+    if (part?.kind === 'thinking') return 'thinking';
+    if (part?.kind === 'image') return 'image';
+    if (part?.kind === 'json') return 'json';
+    if (part?.kind === 'text' && part.isReminder) return 'system reminder';
+  }
+  const prefix = `${message.role}: `;
+  return message.summary.startsWith(prefix) ? message.summary.slice(prefix.length) : message.summary;
+}
+
+function shouldShowMessageParts(parts: AgentDebugMessagePart[]): boolean {
+  if (parts.length !== 1) return true;
+  const [part] = parts;
+  return !(part?.kind === 'text' && !part.isReminder);
+}
+
+function shortId(value: string): string {
+  if (!value) return '';
+  return value.length > 18 ? `${value.slice(0, 10)}...${value.slice(-4)}` : value;
 }
 
 function PartRow({ part, index, rowId, labels }: { index: number; part: AgentDebugMessagePart; rowId: string; labels: DebugLabels }) {
