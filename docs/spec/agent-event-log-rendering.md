@@ -1232,8 +1232,9 @@ The run detail is ordered for inspection:
    non-default status, model/provider, duration with the start/end range,
    model/tool-call counts, input-context tokens, output tokens, cached share, and
    aggregate cost. It is not a nested metrics card. Raw identifiers (`runId`,
-   `agentId`, and optional parent ids) live inside a collapsed identifiers
-   disclosure in this summary, not as a separate main section.
+   `agentId`, and optional parent ids) render inline at the bottom of this
+   summary as low-priority metadata, not as a separate main section or nested
+   disclosure.
 2. **Model Input** — the input side that seeded this run: system/developer
    instructions, tool definitions/schemas, and the captured provider message
    window (history/current user/file context, or the compacted summary message if

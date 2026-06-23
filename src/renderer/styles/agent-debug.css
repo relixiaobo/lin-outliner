@@ -986,22 +986,10 @@
 }
 
 .agent-debug-run-summary-main {
-  display: grid;
+  display: flex;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 42%);
   align-items: center;
   gap: var(--space-3);
-}
-
-.agent-debug-run-summary-main > code {
-  min-width: 0;
-  overflow: hidden;
-  justify-self: end;
-  color: var(--text-faint);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .agent-debug-run-summary-facts {
@@ -1016,13 +1004,40 @@
   min-width: 0;
 }
 
-.agent-debug-run-summary > .agent-debug-disclosure {
+.agent-debug-run-identifiers {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
   margin-top: var(--space-1);
   border-top: 1px solid var(--border-subtle);
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  padding-top: var(--space-3);
 }
 
-.agent-debug-run-summary > .agent-debug-disclosure > summary {
-  padding-block: var(--space-2) 0;
+.agent-debug-run-identifiers span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.agent-debug-run-identifiers b {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-weight: 500;
+}
+
+.agent-debug-run-identifiers code {
+  min-width: 0;
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-debug-advanced-grid {
@@ -1065,13 +1080,5 @@
 @container (max-width: 520px) {
   .agent-debug-advanced-grid {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .agent-debug-run-summary-main {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .agent-debug-run-summary-main > code {
-    justify-self: stretch;
   }
 }

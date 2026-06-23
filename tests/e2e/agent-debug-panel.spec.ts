@@ -16,9 +16,9 @@ test.describe('agent debug panel', () => {
     await expect(debugPanel.locator('.agent-debug-run-summary')).toContainText('assistant');
     await expect(debugPanel.locator('.agent-debug-run-summary')).toContainText('gpt-5.4');
     await expect(debugPanel.getByRole('heading', { name: 'Summary' })).toBeVisible();
-    const identifiers = debugPanel.locator('.agent-debug-run-summary details.agent-debug-disclosure', { hasText: 'Identifiers' });
-    await identifiers.locator('summary').click();
-    await expect(identifiers).toContainText('mock-run-1');
+    await expect(debugPanel.locator('.agent-debug-run-identifiers')).toContainText('mock-run-1');
+    await expect(debugPanel.locator('.agent-debug-run-identifiers')).toContainText('built-in:tenon:assistant');
+    await expect(debugPanel.locator('.agent-debug-run-summary details.agent-debug-disclosure', { hasText: 'Identifiers' })).toHaveCount(0);
     await expect(debugPanel.getByText('Metadata')).toHaveCount(0);
     await expect(debugPanel.locator('.agent-debug-run-selector-button')).toHaveCount(0);
 

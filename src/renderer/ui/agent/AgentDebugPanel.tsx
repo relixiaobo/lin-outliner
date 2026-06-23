@@ -232,7 +232,6 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
           <strong>{kindLabel(run.kind, labels)}</strong>
           {showStatus ? <span className={`agent-debug-status-pill is-${run.status}`}>{statusLabel(run.status, labels)}</span> : null}
         </div>
-        <code>{run.runId}</code>
       </div>
       <dl className="agent-debug-run-summary-facts">
         <div>
@@ -265,14 +264,12 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
           </div>
         ) : null}
       </dl>
-      <ContextDisclosure title={labels.identifiersTitle}>
-        <div className="agent-debug-advanced-grid">
-          <DebugMetric label="runId" value={run.runId} />
-          <DebugMetric label="agentId" value={run.agentId} />
-          {run.parentRunId ? <DebugMetric label="parentRunId" value={run.parentRunId} /> : null}
-          {run.parentToolCallId ? <DebugMetric label="parentToolCallId" value={run.parentToolCallId} /> : null}
-        </div>
-      </ContextDisclosure>
+      <div aria-label={labels.identifiersTitle} className="agent-debug-run-identifiers">
+        <span><b>run:</b><code title={run.runId}>{run.runId}</code></span>
+        <span><b>agent:</b><code title={run.agentId}>{run.agentId}</code></span>
+        {run.parentRunId ? <span><b>parent run:</b><code title={run.parentRunId}>{run.parentRunId}</code></span> : null}
+        {run.parentToolCallId ? <span><b>parent tool:</b><code title={run.parentToolCallId}>{run.parentToolCallId}</code></span> : null}
+      </div>
     </div>
   );
 }
