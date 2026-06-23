@@ -49,8 +49,10 @@ test.describe('agent debug panel', () => {
     await expect(round.locator('.agent-debug-round-request')).toHaveCount(0);
     await expect(round).not.toContainText('History · 2');
     await expect(round).toContainText('Current outline focuses on UI work.');
-    const outputRow = round.locator('.agent-debug-execution-row', { hasText: 'Current outline focuses on UI work.' }).first();
+    const outputRow = round.locator('.agent-debug-execution-event', { hasText: 'assistant text' }).first();
     await expect(outputRow).not.toContainText('tool_call bash');
+    await expect(round.locator('.agent-debug-execution-event', { hasText: 'tool_call bash' })).toContainText('git push origin main');
+    await expect(round.locator('.agent-debug-execution-event', { hasText: 'tool_result bash' })).toContainText('Pushed to origin/main.');
     await expect(round.locator('.agent-debug-tool-exchange', { hasText: 'bash' })).toContainText('Pushed to origin/main.');
     await expect.poll(async () => debugPanel.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
     await expect(round.locator('details.agent-debug-disclosure', { hasText: 'Usage' })).toHaveCount(0);
