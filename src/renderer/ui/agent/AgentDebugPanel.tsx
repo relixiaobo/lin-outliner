@@ -353,7 +353,7 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
   const usage = run.usage;
   return (
     <div className="agent-debug-run-summary">
-      <div>
+      <div className="agent-debug-run-summary-main">
         <div className="agent-debug-run-summary-title">
           <span className="agent-debug-agent-badge">{agentLabel(run.agentId)}</span>
           <strong>{kindLabel(run.kind, labels)}</strong>
@@ -361,14 +361,38 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
         </div>
         <code>{run.runId}</code>
       </div>
-      <div className="agent-debug-run-summary-grid">
-        <DebugMetric label={labels.runModel} value={run.modelId ?? labels.unknown} meta={run.provider ?? undefined} />
-        <DebugMetric label={labels.runStarted} value={formatTimestamp(startedAt)} />
-        <DebugMetric label={labels.runCompleted} value={formatTimestamp(completedAt)} />
-        <DebugMetric label={labels.runDuration} value={formatDuration(startedAt, completedAt)} />
-        {usage ? <DebugMetric label={labels.statTokens} value={formatTokens(usage.totalTokens)} meta={labels.usageTokens({ total: formatTokens(usage.totalTokens), input: formatTokens(usage.input), output: formatTokens(usage.output) })} /> : null}
-        {usage ? <DebugMetric label={labels.statCost} value={formatCost(usage.costUsd)} /> : null}
-      </div>
+      <dl className="agent-debug-run-summary-facts">
+        <div>
+          <dt>{labels.runModel}</dt>
+          <dd>{run.modelId ?? labels.unknown}</dd>
+          {run.provider ? <small>{run.provider}</small> : null}
+        </div>
+        <div>
+          <dt>{labels.runStarted}</dt>
+          <dd>{formatTimestamp(startedAt)}</dd>
+        </div>
+        <div>
+          <dt>{labels.runCompleted}</dt>
+          <dd>{formatTimestamp(completedAt)}</dd>
+        </div>
+        <div>
+          <dt>{labels.runDuration}</dt>
+          <dd>{formatDuration(startedAt, completedAt)}</dd>
+        </div>
+        {usage ? (
+          <div>
+            <dt>{labels.statTokens}</dt>
+            <dd>{formatTokens(usage.totalTokens)}</dd>
+            <small>{labels.usageTokens({ total: formatTokens(usage.totalTokens), input: formatTokens(usage.input), output: formatTokens(usage.output) })}</small>
+          </div>
+        ) : null}
+        {usage ? (
+          <div>
+            <dt>{labels.statCost}</dt>
+            <dd>{formatCost(usage.costUsd)}</dd>
+          </div>
+        ) : null}
+      </dl>
     </div>
   );
 }
@@ -376,12 +400,28 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
 function Overview({ conversation, labels }: { conversation: AgentDebugConversation; labels: DebugLabels }) {
   const { totals, shape, members } = conversation;
   return (
-    <div className="agent-debug-overview-grid" aria-label={labels.overviewAriaLabel}>
-      <DebugMetric label={labels.metricShape} value={shape === 'channel' ? labels.shapeChannel : labels.shapeDm} meta={labels.membersCount({ count: members.length })} />
-      <DebugMetric label={labels.statTotalRuns} value={conversation.runs.length} meta={labels.statRoundsMeta({ count: totals.rounds })} />
-      <DebugMetric label={labels.statTokens} value={formatTokens(totals.totalTokens)} meta={`${formatTokens(totals.input)} / ${formatTokens(totals.output)}`} />
-      <DebugMetric label={labels.statCost} value={formatCost(totals.costUsd)} />
-    </div>
+    <section className="agent-debug-overview" aria-label={labels.overviewAriaLabel}>
+      <div className="agent-debug-overview-head">
+        <strong>{shape === 'channel' ? labels.shapeChannel : labels.shapeDm}</strong>
+        <span>{labels.membersCount({ count: members.length })}</span>
+      </div>
+      <dl className="agent-debug-overview-list">
+        <div>
+          <dt>{labels.statTotalRuns}</dt>
+          <dd>{conversation.runs.length}</dd>
+          <small>{labels.statRoundsMeta({ count: totals.rounds })}</small>
+        </div>
+        <div>
+          <dt>{labels.statTokens}</dt>
+          <dd>{formatTokens(totals.totalTokens)}</dd>
+          <small>{`${formatTokens(totals.input)} / ${formatTokens(totals.output)}`}</small>
+        </div>
+        <div>
+          <dt>{labels.statCost}</dt>
+          <dd>{formatCost(totals.costUsd)}</dd>
+        </div>
+      </dl>
+    </section>
   );
 }
 

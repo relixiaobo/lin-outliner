@@ -61,6 +61,21 @@ test.describe('agent debug panel', () => {
     }).toBe('Command(git push origin main)');
   });
 
+  test('shows token and cost preview when hovering the assistant Details button', async ({ page }) => {
+    const replyText = 'Open the details pane from this response.';
+    await openMockRunDetailsFromAssistantDetailsButton(page, replyText, { openDetails: false });
+
+    const row = page.locator('.agent-message-row.assistant', { hasText: replyText });
+    await row.getByRole('button', { name: 'Details' }).hover();
+
+    const preview = page.getByRole('tooltip');
+    await expect(preview).toBeVisible();
+    await expect(preview).toContainText('Tokens and cost');
+    await expect(preview).toContainText('66,420');
+    await expect(preview).toContainText('$0.00050');
+    await expect(preview).toContainText('48,000');
+  });
+
   test('opens selected run details from an assistant Details button', async ({ page }) => {
     await openMockRunDetailsFromAssistantDetailsButton(page);
 

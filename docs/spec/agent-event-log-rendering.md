@@ -1228,9 +1228,16 @@ The selected run detail is ordered for inspection:
 4. **Advanced** — raw identifiers and debug metadata.
 
 The chat transcript exposes this through an assistant-message **Details** icon
-button that uses the `Info` glyph. It opens the same agent-debug pane with
-`selectedRunId` set to that reply's run. There is no standalone/global debug
-entry in the agent dock; the pane is anchored to a concrete response.
+button that uses the `Info` glyph. Hovering it previews the reply's token and
+cost summary; clicking it opens the same agent-debug pane with `selectedRunId`
+set to that reply's run. There is no standalone/global debug entry in the agent
+dock; the pane is anchored to a concrete response.
+
+The run-details pane treats **Context** as the primary reading surface. On wide
+panes the run list and selected run sit side by side; on narrow panes the layout
+collapses to a single column via container query so the model-facing context is
+not squeezed by the run selector. The selected run header is a compact facts bar,
+not a grid of cards; detailed cost/cache analysis lives in the Usage section.
 
 **The unit is the round** = one provider call = `(request, response)`, bounded by
 `assistant_message.started` (always present, independent of any wire capture).

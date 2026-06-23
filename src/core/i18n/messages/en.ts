@@ -1009,6 +1009,9 @@ commandPalette: {
       timestamp: 'Time',
       model: 'Model',
       tokens: 'Tokens',
+      cost: 'Cost',
+      usageDetails: 'Tokens and cost',
+      usageUnavailable: 'unavailable',
       replyAnchorTitle: 'Jump to addressed message',
       tokenLabels: {
         input: 'input',

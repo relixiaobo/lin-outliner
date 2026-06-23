@@ -756,3 +756,70 @@
   line-height: var(--line-meta-tight);
   overflow-wrap: anywhere;
 }
+
+.agent-message-usage-hover-card {
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--overlay-shadow-level-1);
+  color: var(--text-strong);
+  padding: var(--space-5);
+  pointer-events: none;
+  user-select: none;
+}
+
+.agent-message-usage-hover-title {
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  font-weight: 650;
+  line-height: var(--line-ui-sm-tight);
+}
+
+.agent-message-usage-hover-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-5);
+  margin: 0;
+}
+
+.agent-message-usage-hover-grid > div {
+  min-width: 0;
+}
+
+.agent-message-usage-hover-grid dt {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.agent-message-usage-hover-grid dd {
+  overflow: hidden;
+  margin: var(--space-1) 0 0;
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  font-weight: 650;
+  line-height: var(--line-ui-sm-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-message-usage-hover-cost {
+  overflow: hidden;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  padding-top: var(--space-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -3406,6 +3406,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
 export async function openMockRunDetailsFromAssistantDetailsButton(
   page: Page,
   replyText = 'Open the details pane from this response.',
+  options: { openDetails?: boolean } = {},
 ) {
   await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
     conversationTitle: 'General',
@@ -3439,6 +3440,20 @@ export async function openMockRunDetailsFromAssistantDetailsButton(
           api: 'openai-completions',
           provider: 'openai',
           model: 'gpt-5.4',
+          usage: {
+            input: 12000,
+            output: 420,
+            cacheRead: 48000,
+            cacheWrite: 6000,
+            totalTokens: 66420,
+            cost: {
+              input: 0.00012,
+              output: 0.0002,
+              cacheRead: 0.00008,
+              cacheWrite: 0.0001,
+              total: 0.0005,
+            },
+          },
           stopReason: 'stop',
           content: [{ type: 'text', text: replyText }],
         },
@@ -3448,6 +3463,7 @@ export async function openMockRunDetailsFromAssistantDetailsButton(
 
   const row = page.locator('.agent-message-row.assistant', { hasText: replyText });
   await row.hover();
+  if (options.openDetails === false) return;
   await row.getByRole('button', { name: 'Details' }).click();
 }
 

@@ -925,6 +925,9 @@ commandPalette: {
       timestamp: '时间',
       model: '模型',
       tokens: 'Token',
+      cost: '成本',
+      usageDetails: 'Token 和成本',
+      usageUnavailable: '不可用',
       replyAnchorTitle: '跳转到被回应的消息',
       tokenLabels: {
         input: '输入',

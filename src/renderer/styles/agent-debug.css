@@ -1,4 +1,5 @@
 .agent-debug-panel {
+  container-type: inline-size;
   display: flex;
   height: 100%;
   min-width: 0;
@@ -77,11 +78,91 @@
   line-height: var(--line-meta-tight);
 }
 
-.agent-debug-overview-grid {
+.agent-debug-overview {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: var(--space-5);
+}
+
+.agent-debug-overview-head {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.agent-debug-overview-head strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  font-weight: 650;
+  line-height: var(--line-ui-sm-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-debug-overview-head span {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+}
+
+.agent-debug-overview-list {
   display: grid;
   min-width: 0;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-4);
+  margin: 0;
+}
+
+.agent-debug-overview-list > div {
+  min-width: 0;
+}
+
+.agent-debug-overview-list dt,
+.agent-debug-run-summary-facts dt {
+  overflow: hidden;
+  color: var(--muted-2);
+  font-size: var(--font-ui-2xs);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: var(--line-ui-2xs);
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.agent-debug-overview-list dd,
+.agent-debug-run-summary-facts dd {
+  min-width: 0;
+  overflow: hidden;
+  margin: var(--space-1) 0 0;
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  font-weight: 650;
+  line-height: var(--line-ui-sm-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-debug-overview-list small,
+.agent-debug-run-summary-facts small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  margin-top: var(--space-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-debug-metric {
@@ -641,12 +722,6 @@
   min-height: 100%;
 }
 
-@media (max-width: 1200px) {
-  .agent-debug-overview-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 /* Run-grounded execution tree ([[agent-debug-run-grounded]]). Neutral functional
    state throughout (B3/B4): agent attribution is the badge LABEL, not a hue. */
 
@@ -901,7 +976,7 @@
   display: grid;
   min-height: 0;
   min-width: 0;
-  grid-template-columns: minmax(220px, 0.32fr) minmax(0, 1fr);
+  grid-template-columns: minmax(210px, 240px) minmax(0, 1fr);
   gap: var(--space-6);
 }
 
@@ -978,21 +1053,19 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-5);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  padding: var(--space-6);
+  gap: var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: var(--space-5);
 }
 
-.agent-debug-run-summary > div:first-child {
+.agent-debug-run-summary-main {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: var(--space-2);
 }
 
-.agent-debug-run-summary > div:first-child > code {
+.agent-debug-run-summary-main > code {
   overflow: hidden;
   color: var(--text-faint);
   font-size: var(--font-ui-xs);
@@ -1001,7 +1074,20 @@
   white-space: nowrap;
 }
 
-.agent-debug-run-summary-grid,
+.agent-debug-run-summary-facts {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4) var(--space-6);
+  margin: 0;
+}
+
+.agent-debug-run-summary-facts > div {
+  min-width: 0;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-3);
+}
+
 .agent-debug-usage-grid,
 .agent-debug-cost-grid,
 .agent-debug-advanced-grid {
@@ -1093,10 +1179,33 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .agent-debug-run-summary-grid,
   .agent-debug-usage-grid,
   .agent-debug-cost-grid,
   .agent-debug-advanced-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 760px) {
+  .agent-debug-run-details-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-debug-overview-list,
+  .agent-debug-run-summary-facts,
+  .agent-debug-usage-grid,
+  .agent-debug-cost-grid,
+  .agent-debug-advanced-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 520px) {
+  .agent-debug-overview-list,
+  .agent-debug-run-summary-facts,
+  .agent-debug-usage-grid,
+  .agent-debug-cost-grid,
+  .agent-debug-advanced-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
