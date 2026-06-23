@@ -101,7 +101,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const title = boundFileNode ? fileNodeTitle(boundFileNode) || previewTitle : previewTitle;
   const canOpen = state.status === 'ready' && canOpenPreviewSource(state.source);
   const canReveal = state.status === 'ready' && canRevealPreviewSource(state.source);
-  const canAdd = !readerMode && canAddPreviewTargetToOutline(props.target);
+  const canAdd = canAddPreviewTargetToOutline(props.target);
   const {
     mainPanelRef,
     requestTitleDockMeasure,

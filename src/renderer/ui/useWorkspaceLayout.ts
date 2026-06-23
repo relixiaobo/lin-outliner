@@ -98,7 +98,7 @@ function viewOutlineRootId(view: PanelView): NodeId | null {
 function panelViewKey(view: PanelView): string {
   if (view.kind === 'outliner') return `outliner:${view.rootId}`;
   if (view.nodeId) return `file-preview-node:${view.nodeId}:${view.presentation ?? 'node'}`;
-  return `file-preview:${previewTargetKey(view.target)}`;
+  return `file-preview:${previewTargetKey(view.target)}:${view.presentation ?? 'default'}`;
 }
 
 function samePanelView(left: PanelView, right: PanelView): boolean {
@@ -156,7 +156,7 @@ function sanitizePanelView(value: unknown, nodeIds: Set<NodeId>): PanelView | nu
   if (value.kind === 'file-preview') {
     const target = previewTargetFromUnknown(value.target);
     const nodeId = typeof value.nodeId === 'string' && nodeIds.has(value.nodeId) ? value.nodeId : undefined;
-    const presentation = value.presentation === 'reader' && nodeId ? value.presentation : undefined;
+    const presentation = value.presentation === 'reader' ? value.presentation : undefined;
     // A document asset is only valid here when the file-preview view is bound to
     // its outliner node. Drop legacy asset-targeted previews that have no node id.
     return target && (target.kind !== 'asset' || nodeId) ? filePreviewView(target, nodeId, scrollTop, presentation) : null;

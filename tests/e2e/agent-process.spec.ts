@@ -380,9 +380,22 @@ test.describe('agent process disclosure', () => {
     await expect(preview.locator('.inline-file-preview-image img')).toBeVisible();
 
     await ref.click();
+    const readerPanel = page.locator('.outline-panel-surface.active-panel.is-file-preview');
+    await expect(readerPanel.locator('.file-preview-panel--reader')).toBeVisible();
+    await expect(readerPanel.locator('.panel-breadcrumb-current-label')).toHaveText('diagram.png');
+    await expect(readerPanel.locator('.panel-title-file-heading')).toHaveCount(0);
+    await expect(readerPanel.locator('.file-preview-pill')).toHaveCount(0);
+    await expect(readerPanel.locator('.file-preview-content')).toContainText('Mock preview text.');
+    await readerPanel.locator('.file-preview-reader-actions').click();
+    const readerMenu = page.getByRole('menu', { name: 'Preview actions' });
+    await expect(readerMenu.getByRole('menuitem', { name: 'Open with default app' })).toBeVisible();
+    await expect(readerMenu.getByRole('menuitem', { name: 'Reveal' })).toBeVisible();
+    await expect(readerMenu.getByRole('menuitem', { name: 'Add to outline' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(readerMenu).toBeHidden();
     await expect.poll(() => page.evaluate(() => (
       (window as typeof window & { __openedLocalFiles?: string[] }).__openedLocalFiles ?? []
-    ))).toContain('/Users/test/Pictures/diagram.png');
+    ))).toEqual([]);
 
     await page.evaluate(() => {
       window.dispatchEvent(new CustomEvent('lin:preview-target-open', {
@@ -397,6 +410,7 @@ test.describe('agent process disclosure', () => {
       }));
     });
     const panel = page.locator('.outline-panel-surface.active-panel.is-file-preview');
+    await expect(panel.locator('.file-preview-panel--reader')).toHaveCount(0);
     await expect(panel.locator('.panel-title-file-heading')).toContainText('diagram.png');
     await expect(panel.locator('.panel-breadcrumb')).toContainText('Users');
     await expect(panel.locator('.file-preview-content')).toContainText('Mock preview text.');

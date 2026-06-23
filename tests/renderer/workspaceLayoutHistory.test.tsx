@@ -52,6 +52,71 @@ describe('useWorkspaceLayout history focus', () => {
     });
   });
 
+  test('loose file readers do not dedupe with the same target normal preview', () => {
+    const target = { kind: 'local-file' as const, path: '/tmp/report.md', entryKind: 'file' as const, label: 'report.md' };
+    const h = renderLayout({
+      activePanelId: 'panel-test',
+      panels: [{
+        id: 'panel-test',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'outliner', rootId: 'today' },
+        backStack: [],
+        forwardStack: [],
+      }],
+    });
+
+    act(() => {
+      h.api.navigatePanelPreview('panel-test', target);
+    });
+    act(() => {
+      h.api.navigatePanelPreview('panel-test', target, { presentation: 'reader' });
+    });
+
+    expect(h.api.panels[0]).toMatchObject({
+      type: 'workspace',
+      view: { kind: 'file-preview', target, presentation: 'reader' },
+      backStack: [
+        { kind: 'outliner', rootId: 'today' },
+        { kind: 'file-preview', target },
+      ],
+    });
+
+    act(() => {
+      h.api.navigatePanelPreview('panel-test', target);
+    });
+
+    expect(h.api.panels[0]).toMatchObject({
+      type: 'workspace',
+      view: { kind: 'file-preview', target },
+      backStack: [
+        { kind: 'outliner', rootId: 'today' },
+        { kind: 'file-preview', target },
+        { kind: 'file-preview', target, presentation: 'reader' },
+      ],
+    });
+  });
+
+  test('loose file readers preserve presentation when restored from storage', () => {
+    const target = { kind: 'local-file' as const, path: '/tmp/report.md', entryKind: 'file' as const, label: 'report.md' };
+    const h = renderLayout({
+      activePanelId: 'panel-test',
+      panels: [{
+        id: 'panel-test',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'file-preview', target, presentation: 'reader' },
+        backStack: [{ kind: 'outliner', rootId: 'today' }],
+        forwardStack: [],
+      }],
+    });
+
+    expect(h.api.panels[0]).toMatchObject({
+      type: 'workspace',
+      view: { kind: 'file-preview', target, presentation: 'reader' },
+    });
+  });
+
   test('back to a scrolled outliner view clears focus without clearing selection state', () => {
     const h = renderLayout({
       activePanelId: 'panel-test',
