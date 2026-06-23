@@ -66,17 +66,17 @@ test.describe('agent debug panel', () => {
     await round.getByRole('button', { name: 'Call details' }).hover();
     const roundDetails = round.getByRole('tooltip', { name: 'Call details' });
     await expect(roundDetails).toBeVisible();
-    await expect(roundDetails).toContainText('Model');
-    await expect(roundDetails).toContainText('gpt-5.4');
-    await expect(roundDetails).toContainText('Stop reason');
-    await expect(roundDetails).toContainText('stop');
-    await expect(roundDetails).toContainText('Input context');
-    await expect(roundDetails).toContainText('66k');
+    await expect(roundDetails).toContainText('Tokens and cost');
+    await expect(roundDetails).toContainText('Input');
+    await expect(roundDetails).toContainText('12,000');
     await expect(roundDetails).toContainText('Output');
     await expect(roundDetails).toContainText('420');
-    await expect(roundDetails).toContainText('Cache hit');
-    await expect(roundDetails).toContainText('89%');
-    await expect(roundDetails).toContainText('Cost');
+    await expect(roundDetails).toContainText('Cache read');
+    await expect(roundDetails).toContainText('48,000');
+    await expect(roundDetails).toContainText('Cache write');
+    await expect(roundDetails).toContainText('6,000');
+    await expect(roundDetails).toContainText('Total');
+    await expect(roundDetails).toContainText('66,420');
     await expect(roundDetails).toContainText('$0.00050');
   });
 

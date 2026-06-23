@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import { agentToolActionKindProfile } from '../../../core/agentPermissionModel';
 import type {
   AgentDebugMessagePart,
@@ -40,6 +40,17 @@ function formatCost(cost: number): string {
   if (cost <= 0) return '$0.0000';
   if (cost < 0.01) return `$${cost.toFixed(5)}`;
   return `$${cost.toFixed(4)}`;
+}
+
+function formatUsageTokens(tokens: number): string {
+  return Number.isFinite(tokens) ? new Intl.NumberFormat().format(tokens) : '0';
+}
+
+function usageSegmentStyle(value: number, total: number): CSSProperties {
+  const share = total > 0 ? value / total : 0;
+  return {
+    '--segment-size': `${Math.max(share * 100, value > 0 ? 2 : 0)}%`,
+  } as CSSProperties;
 }
 
 function formatTimestamp(value: number | null): string {
@@ -388,45 +399,58 @@ function RoundInfoHover({ labels, round }: { labels: DebugLabels; round: AgentDe
 }
 
 function RoundInfoContent({ labels, round }: { labels: DebugLabels; round: AgentDebugRound }) {
+  const t = useT();
   const usage = round.usage;
-  const ratios = usage ? usageRatios(usage) : null;
+  if (!usage) {
+    return (
+      <>
+        <div className="agent-message-usage-hover-title">{t.agent.message.usageDetails}</div>
+        <span className="is-muted">{labels.usagePending}</span>
+      </>
+    );
+  }
 
+  const usageRows = [
+    { kind: 'input', label: t.agent.message.tokenLabels.input, tokens: usage.input, cost: usage.cost.input },
+    { kind: 'output', label: t.agent.message.tokenLabels.output, tokens: usage.output, cost: usage.cost.output },
+    { kind: 'cache-read', label: t.agent.message.tokenLabels.cacheRead, tokens: usage.cacheRead, cost: usage.cost.cacheRead },
+    { kind: 'cache-write', label: t.agent.message.tokenLabels.cacheWrite, tokens: usage.cacheWrite, cost: usage.cost.cacheWrite },
+  ];
+  const rows = [
+    ...usageRows,
+    { kind: 'total', label: t.agent.message.tokenLabels.total, tokens: usage.totalTokens, cost: usage.cost.total },
+  ];
   return (
-    <dl className="agent-debug-round-info-grid">
-      <div>
-        <dt>{labels.runModel}</dt>
-        <dd>{round.modelId || labels.unknown}</dd>
+    <>
+      <div className="agent-message-usage-hover-title">{t.agent.message.usageDetails}</div>
+      <div className="agent-message-usage-hover-bar" aria-hidden>
+        {usageRows.map((row) => (
+          <span
+            className={`is-${row.kind}`}
+            key={row.kind}
+            style={usageSegmentStyle(row.tokens, usage.totalTokens)}
+          />
+        ))}
       </div>
-      <div>
-        <dt>{labels.stopReasonLabel}</dt>
-        <dd>{round.stopReason || labels.unknown}</dd>
+      <div className="agent-message-usage-hover-breakdown" aria-label={t.agent.message.usageDetails}>
+        {rows.map((row) => {
+          const rowClassName = [
+            row.kind === 'total' ? 'is-total' : null,
+            row.tokens === 0 && !row.cost ? 'is-zero' : null,
+          ].filter(Boolean).join(' ') || undefined;
+          return (
+            <div className={rowClassName} key={row.kind}>
+              <span>
+                <i className={`is-${row.kind}`} />
+                {row.label}
+              </span>
+              <strong>{formatUsageTokens(row.tokens)}</strong>
+              <strong>{formatCost(row.cost)}</strong>
+            </div>
+          );
+        })}
       </div>
-      {usage && ratios ? (
-        <>
-          <div>
-            <dt>{labels.totalInputContext}</dt>
-            <dd>{formatTokens(ratios.inputContext)}</dd>
-          </div>
-          <div>
-            <dt>{labels.outputTokens}</dt>
-            <dd>{formatTokens(usage.output)}</dd>
-          </div>
-          <div>
-            <dt>{labels.cacheHitRate}</dt>
-            <dd>{formatPercent(ratios.cacheHitRate)}</dd>
-          </div>
-          <div>
-            <dt>{labels.statCost}</dt>
-            <dd>{formatCost(usage.costUsd)}</dd>
-          </div>
-        </>
-      ) : (
-        <div className="is-span-all">
-          <dt>{labels.statTokens}</dt>
-          <dd>{labels.usagePending}</dd>
-        </div>
-      )}
-    </dl>
+    </>
   );
 }
 

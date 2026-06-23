@@ -1247,16 +1247,16 @@ The run detail is ordered for inspection:
    (internally, one debug `round`: one provider request/response). The visible
    header labels it as `Call N`, hides the default completed state, and keeps
    only non-default status plus an `Info` affordance. Each call is a collapsible
-   disclosure, default-open. Model id, stop reason, and compact per-call
-   usage/cost (input context, output, cache hit, cost) live in the hover. The body
-   is a flat, expandable call-event list: assistant response parts render in
-   provider order (`thinking`, `assistant text`, `tool_call`, etc.), followed by
-   matching `tool_result` rows. Tool result rows use the same part-disclosure
-   control as the rest of the pane, and orphan tool calls are synthesized from the
-   exchange args only when the provider response did not capture the original
-   `tool_call`. Calls render as a lightweight disclosure list directly under the
-   Execution header, with subtle dividers rather than separate cards; the run
-   summary carries the main token/cost readout.
+   disclosure, default-open. The `Info` hover uses the same token/cost breakdown
+   format as the assistant-reply hover, scoped to that provider call. The body is
+   a flat, expandable call-event list: assistant response parts render in provider
+   order (`thinking`, `assistant text`, `tool_call`, etc.), followed by matching
+   `tool_result` rows. Tool result rows use the same part-disclosure control as
+   the rest of the pane, and orphan tool calls are synthesized from the exchange
+   args only when the provider response did not capture the original `tool_call`.
+   Calls render as a lightweight disclosure list directly under the Execution
+   header, with subtle dividers rather than separate cards; the run summary
+   carries the main token/cost readout.
 
 The chat transcript exposes this through an assistant-message **Details** icon
 button that uses the `Info` glyph. Hovering it previews the reply's token and
