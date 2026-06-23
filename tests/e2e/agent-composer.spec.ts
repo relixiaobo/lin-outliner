@@ -1953,10 +1953,10 @@ test.describe('agent composer controls', () => {
     await expect(details).toContainText('self');
     await expect(details).toContainText('@self');
     await expect(details).toContainText('openai/gpt-5.4');
-    await expect(details).toContainText('input 1,200');
-    await expect(details).toContainText('output 34');
-    await expect(details).toContainText('cache read 10');
-    await expect(details).toContainText('total 1,244');
+    await expect(details).toContainText('Input 1,200');
+    await expect(details).toContainText('Output 34');
+    await expect(details).toContainText('Cache read 10');
+    await expect(details).toContainText('Total 1,244');
     await expect.poll(async () => {
       const calls = await commandCalls(page);
       return calls.findLast((call) => call.cmd === 'agent_message_context_menu')?.args;

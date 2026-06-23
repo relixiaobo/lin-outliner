@@ -830,22 +830,22 @@
 
 .agent-message-usage-hover-bar .is-input,
 .agent-message-usage-hover-breakdown i.is-input {
-  background: var(--fill-2);
+  background: var(--usage-input);
 }
 
 .agent-message-usage-hover-bar .is-output,
 .agent-message-usage-hover-breakdown i.is-output {
-  background: var(--fill-4);
+  background: var(--usage-output);
 }
 
 .agent-message-usage-hover-bar .is-cache-read,
 .agent-message-usage-hover-breakdown i.is-cache-read {
-  background: var(--fill-3);
+  background: var(--usage-cache-read);
 }
 
 .agent-message-usage-hover-bar .is-cache-write,
 .agent-message-usage-hover-breakdown i.is-cache-write {
-  background: var(--fill-2);
+  background: var(--usage-cache-write);
 }
 
 .agent-message-usage-hover-breakdown {
@@ -891,9 +891,9 @@
 
 .agent-message-usage-hover-breakdown i {
   display: inline-block;
-  width: 7px;
+  width: 12px;
   height: 7px;
-  flex: 0 0 7px;
+  flex: 0 0 12px;
   border-radius: var(--radius-pill);
 }
 

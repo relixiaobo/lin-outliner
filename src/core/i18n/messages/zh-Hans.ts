@@ -932,8 +932,8 @@ commandPalette: {
       tokenLabels: {
         input: '输入',
         output: '输出',
-        cacheRead: '缓存读取',
-        cacheWrite: '缓存写入',
+        cacheRead: '缓存读',
+        cacheWrite: '缓存写',
         total: '总计',
       },
       timeSeparatorToday: ({ time }) => `今天 ${time}`,
