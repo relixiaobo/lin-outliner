@@ -80,7 +80,7 @@
 
 .agent-debug-run-summary-facts dt {
   overflow: hidden;
-  color: var(--muted-2);
+  color: var(--text-faint);
   font-size: var(--font-ui-2xs);
   font-weight: 500;
   letter-spacing: 0;
@@ -948,22 +948,22 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-4);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  padding: var(--space-5) var(--space-5) var(--space-3);
+  gap: var(--space-3);
+  padding: var(--space-1) 0 0;
 }
 
 .agent-debug-run-summary-main {
-  display: flex;
+  display: grid;
   min-width: 0;
-  flex-direction: column;
-  gap: var(--space-2);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 42%);
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .agent-debug-run-summary-main > code {
+  min-width: 0;
   overflow: hidden;
+  justify-self: end;
   color: var(--text-faint);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
@@ -974,23 +974,22 @@
 .agent-debug-run-summary-facts {
   display: grid;
   min-width: 0;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-4) var(--space-6);
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: var(--space-3) var(--space-6);
   margin: 0;
 }
 
 .agent-debug-run-summary-facts > div {
   min-width: 0;
-  border-top: 1px solid var(--border-subtle);
-  padding-top: var(--space-3);
 }
 
 .agent-debug-run-summary > .agent-debug-disclosure {
+  margin-top: var(--space-1);
   border-top: 1px solid var(--border-subtle);
 }
 
 .agent-debug-run-summary > .agent-debug-disclosure > summary {
-  padding-bottom: 0;
+  padding-block: var(--space-2) 0;
 }
 
 .agent-debug-advanced-grid {
@@ -1025,15 +1024,21 @@
 }
 
 @container (max-width: 760px) {
-  .agent-debug-run-summary-facts,
   .agent-debug-advanced-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @container (max-width: 520px) {
-  .agent-debug-run-summary-facts,
   .agent-debug-advanced-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-debug-run-summary-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-debug-run-summary-main > code {
+    justify-self: stretch;
   }
 }

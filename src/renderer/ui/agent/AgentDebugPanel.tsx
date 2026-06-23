@@ -220,13 +220,17 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
   const usage = run.usage;
   const ratios = usage ? usageRatios(usage) : null;
   const toolCallCount = rounds.reduce((count, round) => count + round.toolExchanges.length, 0);
+  const showStatus = run.status !== 'completed';
+  const timeRange = completedAt
+    ? `${formatTimestamp(startedAt)} - ${formatTimestamp(completedAt)}`
+    : formatTimestamp(startedAt);
   return (
     <div className="agent-debug-run-summary">
       <div className="agent-debug-run-summary-main">
         <div className="agent-debug-run-summary-title">
           <span className="agent-debug-agent-badge">{agentLabel(run.agentId)}</span>
           <strong>{kindLabel(run.kind, labels)}</strong>
-          <span className={`agent-debug-status-pill is-${run.status}`}>{statusLabel(run.status, labels)}</span>
+          {showStatus ? <span className={`agent-debug-status-pill is-${run.status}`}>{statusLabel(run.status, labels)}</span> : null}
         </div>
         <code>{run.runId}</code>
       </div>
@@ -237,13 +241,9 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
           {run.provider ? <small>{run.provider}</small> : null}
         </div>
         <div>
-          <dt>{labels.runStarted}</dt>
-          <dd>{formatTimestamp(startedAt)}</dd>
-          <small>{labels.runCompleted}: {formatTimestamp(completedAt)}</small>
-        </div>
-        <div>
           <dt>{labels.runDuration}</dt>
           <dd>{formatDuration(startedAt, completedAt)}</dd>
+          <small>{timeRange}</small>
         </div>
         <div>
           <dt>{labels.modelCallCount}</dt>
