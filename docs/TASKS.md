@@ -31,13 +31,16 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-06-22).** Nothing is actively building code; no open PRs — the last merge was
-file-preview polish + file-node mentions (#318). The agent subsystem portfolio is essentially
-complete (single-agent collapse + one-Neva invariant, the IM-native memory/channel spine, the
-2026-06-22 Codex-transcript wave), so the active build frontier is now the **command-surface /
-performance / UI-quality / files** lanes in the **Backlog** — start at *Top of queue*. The full
-shipped history is in **Recently completed**; small unclaimed follow-ups are collected under
-Backlog § *Deferred follow-ups & carried TODOs*.
+**In flight (2026-06-23).** A Dream-precision + file-reader wave merged today: **#319** (Dream
+remembers-nothing + truncation gating), **#320** (manual-Dream thin-data pre-check), **#321** (file-only
+preview readers). The **agent-goal** plan landed as a `draft` board item (plan PR **#323**, see Agent
+capabilities). **One PR open:** **#322** (`agent-pdf-tool-path`, codex-3 — native PDF payloads to the
+model provider), ready and awaiting the main gate (`/code-review` + `/security-review`, billed +
+PM-triggered). The agent subsystem portfolio is otherwise mature (single-agent collapse + one-Neva
+invariant, the IM-native memory/channel spine, the 2026-06-22 Codex-transcript wave); the active build
+frontier remains the **command-surface / performance / UI-quality / files** lanes in the **Backlog** —
+start at *Top of queue*. The full shipped history is in **Recently completed**; small unclaimed
+follow-ups are collected under Backlog § *Deferred follow-ups & carried TODOs*.
 
 The one explicitly **deferred** capability is automatic associative retrieval (memory, data-gated
 — Backlog § Agent capabilities); #302 then superseded it with pull-only recall.
@@ -210,6 +213,19 @@ before any directional/security-sensitive build.
     the pool. Pre-release: wipe `~/.lin-outliner-*`, no migration.
   - **Open (PM ratifies):** keep auto-run + manual override (甲, recommended) vs on-demand only (乙).
     UI gate = light/dark visual.
+- **agent-goal** (P2, *design captured 2026-06-23, PM-ratified (plan PR #323 merged) — needs a dev
+  build one-pager; two features*) — see `docs/plans/agent-goal.md`. Let a user hand a long-running
+  objective to the agent mid-conversation and have it pursue that objective **autonomously across turns
+  until a completion audit passes** — not until the model decides to stop. The one genuinely new
+  behavior is **a run that self-continues until a completion audit passes**; everything else reuses
+  delegation child runs, completion notification, usage accounting, Channel delivery, and the permission
+  gate. **No new primitive** (goal = a run behavior + launching skill + run-resident state, not an 8th
+  primitive and not a `Skill`); *committing* a goal (spending budget on autonomous action) routes
+  through the existing ask-gate. **Shape (b):** **Feature A** — DM goal (single agent self-continues to
+  a verified completion within an optional budget); **Feature B** — goal-as-team (a large goal spawns
+  role-diverse `fresh` child runs and the pursuing run acts as **referee**, dissolving the team on
+  completion; builds on A + existing delegation). Directional / autonomy-sensitive — escalate the
+  capability + budget boundary before building.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
