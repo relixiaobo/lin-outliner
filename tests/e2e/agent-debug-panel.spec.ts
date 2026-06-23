@@ -60,6 +60,7 @@ test.describe('agent debug panel', () => {
     await expect(outputRow).not.toContainText('call');
     await expect(round.locator('.agent-debug-execution-event', { hasText: 'call' })).toContainText('git push origin main');
     await expect(round.locator('.agent-debug-execution-event', { hasText: 'result' })).toContainText('Pushed to origin/main.');
+    await expect(round.locator('.agent-debug-tool-exchange > summary > span[title="result"]').first()).toHaveText('result');
     await expect(round.locator('.agent-debug-tool-exchange', { hasText: 'bash' })).toContainText('Pushed to origin/main.');
     await round.locator('summary.agent-debug-round-head').click();
     await expect(outputRow).not.toBeVisible();
@@ -85,6 +86,12 @@ test.describe('agent debug panel', () => {
     await expect(roundDetails).toContainText('Total');
     await expect(roundDetails).toContainText('66,420');
     await expect(roundDetails).toContainText('$0.00050');
+
+    const scrollHost = debugPanel.locator('.agent-debug-panel');
+    await expect.poll(async () => scrollHost.evaluate((node) => {
+      node.scrollTop = node.scrollHeight;
+      return Math.ceil(node.scrollTop + node.clientHeight) >= node.scrollHeight;
+    })).toBe(true);
   });
 
   test('adds a user block rule from a logged tool exchange', async ({ page }) => {

@@ -96,8 +96,8 @@ function statusLabel(status: AgentDebugTurnStatus, labels: DebugLabels): string 
 }
 
 function partTitle(part: AgentDebugMessagePart, labels: DebugLabels): string {
-  if (part.kind === 'toolCall') return `tool_call ${part.name}`;
-  if (part.kind === 'toolResult') return `tool_result ${part.toolUseId || ''}`.trim();
+  if (part.kind === 'toolCall') return 'call';
+  if (part.kind === 'toolResult') return 'result';
   if (part.kind === 'thinking') return labels.partThinking;
   if (part.kind === 'image') return labels.partImage;
   if (part.kind === 'json') return labels.partJson;
@@ -517,7 +517,7 @@ function ExecutionToolResultRow({ exchange, index, labels }: { exchange: AgentDe
       part={resultPart}
       rowId={`${exchange.toolCallId}:tool-result:${index}`}
       summaryOverride={`${exchange.toolName} · ${toolResultSummary(resultBody, exchange.toolCallId)}`}
-      titleOverride="tool result"
+      titleOverride="result"
       trailing={(
         <span className="agent-debug-message-actions-inline">
           {exchange.isError ? <span className="agent-debug-tool-flag">{labels.toolError}</span> : null}
