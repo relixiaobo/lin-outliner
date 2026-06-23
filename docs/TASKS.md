@@ -60,10 +60,11 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
 2. **`agent-model-first-picker`** (P2, *direction ratified 2026-06-23 — needs a dev one-pager*) —
    model-first model picker (merge Provider + Model Override, provider as secondary label,
    "best available" default); renderer/UX-only, no protocol change. PM-prioritized this round.
-3. **`dream-channel-and-memory-retire`** (P2, *direction PM-explored 2026-06-23 — needs a
-   one-pager; two PRs*) — Dream as a passive-feed channel (Dream-now + frequency control, no chat)
-   + retire the vestigial believer-pool Settings Memory pane (finish the #302 teardown). PM-explored
-   this round.
+3. **`dream-channel-and-memory-retire`** (P2, *design captured 2026-06-23 — needs a dev one-pager;
+   three PRs*) — make Dream transparent via a dedicated channel rendering each run's full-process
+   transcript + a structured date/guidance launcher (seq-watermark → legible date cursor), and
+   retire the vestigial believer-pool Settings Memory pane (finish the #302 teardown). Design in
+   `docs/plans/dream-channel-and-memory-retire.md`.
 4. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups (residual
    `new Map(prev.byId)` + `nextRevisions` whole-map rebuild), each a small standalone PR; no design gate.
 5. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
@@ -187,34 +188,28 @@ before any directional/security-sensitive build.
     Note: the believer-pool store + Dream extraction substrate still ships under the hood.
     **PR3 jump-to-source UI shipped (#310, 2026-06-19)** — the whole #302 subsystem replacement
     is complete.
-- **dream-channel-and-memory-retire** (P2, *direction PM-explored 2026-06-23 — needs a dev
-  one-pager; likely two PRs*) — surface Dream as its own **passive-feed channel** and retire the
-  now-vestigial believer-pool Settings Memory pane. Channels are the live universal container
-  (every conversation is a `lin-agent-channel-…` single-agent thread, General default,
-  user-creatable), so a dedicated Dream channel is in-model, not a re-introduction.
-  - **(A) Dream channel — feature.** Each Dream run posts a **read-only summary** ("last night:
-    +3 facts, merged 2, forgot 1, + links") into a dedicated channel — a **feed, not a chat**.
-    Replace the composer with a control surface: a **"Dream now"** trigger (the existing
-    `agent_run_dream_now`) + a **frequency/schedule** control. Frequency is **net-new** — today the
-    cadence is a fixed constant (`agentRuntime.ts` `DEFAULT_DREAM_SCHEDULE` = daily 03:00, not
-    user-configurable); reuse the scheduled-routine surface. Durable memory stays the `#d-*`
-    outliner nodes (truth source); the channel is the **activity view**, not a second store. Today
-    Dream runs in a transient create→delete conversation (`agentRuntime.ts:3626/3661`) — this gives
-    it a persistent home.
-  - **(B) Retire Settings → Memory + the legacy believer pool — cleanup.** Remove the Settings
-    Dream-history group (`DreamHistoryGroup` / `agentListDreamHistory`), relocated to the channel
-    feed; and **likely the whole Memory category** (PM: "no memory to manage — it's all in the
-    outliner"). **Verified caveat:** the Settings Memory pane reads the **believer-pool event
-    store** (`listMemory` → `listMemoryEntries`, `agentRuntime.ts:1115`), which is **separate from
-    the `#d-*` outliner nodes** Dream now writes (`agentRuntime.ts:7536`). So this **finishes the
-    #302 teardown** (the "believer-pool store still ships under the hood" note above): confirm the
-    pool is no longer a source of truth (recall is already pull-only via `node_search`/`node_read`),
-    then delete the pool store + `agent_list_memory` command + the memory-edit plumbing.
-    **Pre-release: wipe `~/.lin-outliner-*`, no migration.** Touches `commands.ts` (protocol surface
-    — coordinate, interface-first).
-  - **Shape:** (A) is a contained UX feature, (B) a subsystem teardown with protocol-surface impact
-    — the dev plan should make them **two PRs** (A can ship first). UI gate = light/dark visual.
-    Escalate the "delete the believer pool outright" call if anything still reads it.
+- **dream-channel-and-memory-retire** (P2, *design captured 2026-06-23 — needs a dev one-pager;
+  three PRs*) — see `docs/plans/dream-channel-and-memory-retire.md`. Make Dream **transparent** via
+  a dedicated channel that renders each run's **complete process** (the existing #312 transcript:
+  `past_chats` reads → reasoning → `node_*` writes → result), and retire the vestigial believer-pool
+  Settings Memory surfaces. Channels are the live universal container (every conversation is a
+  `lin-agent-channel-…` single-agent thread, General default, user-creatable), so a dedicated Dream
+  channel is in-model, not a re-introduction. Converged design beyond the original "passive-feed
+  summary" framing: the channel shows the **real transcript**, not a summary; a **structured Dream
+  launcher** (date-range picker + guidance field → serialized anchor message) replaces the chat
+  composer; the **seq-watermark becomes a day-granularity date cursor** (legible, a default frontier
+  not a hard gate — auto-run advances it, manual re-dreams don't; "常梦常新"). **Shape (b):**
+  - **PR1** — Dream channel + persisted full-process transcript (drop the create→delete transient
+    at `agentRuntime.ts:~3626/3661`); relocate Dream history here; keep existing trigger + watermark.
+  - **PR2** — date-window invocation (replace watermark with the date cursor) + structured launcher
+    + user-configurable frequency (today fixed `DEFAULT_DREAM_SCHEDULE`). Depends on PR1.
+  - **PR3** — retire Settings → Memory + delete the believer-pool store (`listMemory` →
+    `listMemoryEntries`, `agentRuntime.ts:~1115`, separate from the `#d-*` nodes at `:~7536`) +
+    `agent_list_memory` + memory-edit plumbing; finishes the #302 teardown. Touches `commands.ts`
+    (protocol — interface-first). Depends on PR1; can parallel PR2. Escalate if anything still reads
+    the pool. Pre-release: wipe `~/.lin-outliner-*`, no migration.
+  - **Open (PM ratifies):** keep auto-run + manual override (甲, recommended) vs on-demand only (乙).
+    UI gate = light/dark visual.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
