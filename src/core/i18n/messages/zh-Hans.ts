@@ -1340,6 +1340,8 @@ commandPalette: {
     costCacheRead: '缓存读取成本',
     costCacheWrite: '缓存写入成本',
     inputMessagesDisclosure: ({ count }) => `消息窗口 · ${count}`,
+    inputHistoryGroup: ({ count }) => `历史 · ${count}`,
+    currentRequestGroup: '本轮输入',
     legacyInputMessagesNotice: '这个旧运行没有捕获完整 provider 输入，目前只显示旧版请求窗口。',
     responseLabel: '响应',
     noResponseParts: '尚未捕获任何响应内容。',

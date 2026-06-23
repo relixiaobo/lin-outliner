@@ -30,9 +30,11 @@ test.describe('agent debug panel', () => {
     await expect.poll(async () => systemPrompt.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
     await expect(context.getByText('Tools · 1')).toBeVisible();
     await expect(context).toContainText('Message window · 3');
-    await expect(context.locator('.agent-debug-message-list')).toContainText('Generate a PPT about Fable 5.');
-    await expect(context.locator('.agent-debug-message-list')).toContainText('PPT generated with 11 slides.');
-    await expect(context.locator('.agent-debug-message-list')).toContainText('Summarize current outline.');
+    await expect(context).toContainText('History · 2');
+    await expect(context).toContainText('Current request');
+    await expect(context.locator('.agent-debug-message-window')).toContainText('Generate a PPT about Fable 5.');
+    await expect(context.locator('.agent-debug-message-window')).toContainText('PPT generated with 11 slides.');
+    await expect(context.locator('.agent-debug-message-window')).toContainText('Summarize current outline.');
 
     await expect(debugPanel.getByRole('heading', { name: 'Execution · 1' })).toBeVisible();
     const round = debugPanel.locator('.agent-debug-round-card').first();

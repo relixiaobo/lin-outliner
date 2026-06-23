@@ -323,13 +323,7 @@ function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDeb
           {run.modelInputMessagesSource === 'legacyRequestWindow' && (
             <p className="agent-debug-inline-note">{labels.legacyInputMessagesNotice}</p>
           )}
-          {run.modelInputMessages.length === 0 ? (
-            <span className="is-muted">{labels.empty}</span>
-          ) : (
-            <div className="agent-debug-message-list">
-              {run.modelInputMessages.map((row) => <MessageRow key={row.id} message={row} labels={labels} />)}
-            </div>
-          )}
+          <ModelInputMessageWindow messages={run.modelInputMessages} labels={labels} />
         </ContextDisclosure>
       </div>
     </DebugPanelSection>
@@ -502,6 +496,47 @@ function stringRecordValue(value: unknown, key: string): string | null {
 }
 
 // --- shared bits ----------------------------------------------------------
+
+function ModelInputMessageWindow({ messages, labels }: { messages: AgentDebugMessageRow[]; labels: DebugLabels }) {
+  const groups = splitModelInputMessages(messages);
+  if (messages.length === 0) return <span className="is-muted">{labels.empty}</span>;
+  return (
+    <div className="agent-debug-message-window">
+      {groups.history.length > 0 ? (
+        <MessageGroup title={labels.inputHistoryGroup({ count: groups.history.length })} messages={groups.history} labels={labels} />
+      ) : null}
+      {groups.current.length > 0 ? (
+        <MessageGroup title={labels.currentRequestGroup} messages={groups.current} labels={labels} />
+      ) : null}
+    </div>
+  );
+}
+
+function splitModelInputMessages(messages: AgentDebugMessageRow[]): { current: AgentDebugMessageRow[]; history: AgentDebugMessageRow[] } {
+  let currentRequestIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user') {
+      currentRequestIndex = index;
+      break;
+    }
+  }
+  if (currentRequestIndex < 0) return { history: messages, current: [] };
+  return {
+    history: messages.slice(0, currentRequestIndex),
+    current: messages.slice(currentRequestIndex),
+  };
+}
+
+function MessageGroup({ labels, messages, title }: { labels: DebugLabels; messages: AgentDebugMessageRow[]; title: string }) {
+  return (
+    <section className="agent-debug-message-group">
+      <h4>{title}</h4>
+      <div className="agent-debug-message-list">
+        {messages.map((row) => <MessageRow key={row.id} message={row} labels={labels} />)}
+      </div>
+    </section>
+  );
+}
 
 function MessageRow({ message, labels }: { message: AgentDebugMessageRow; labels: DebugLabels }) {
   const visibleParts = shouldShowMessageParts(message.parts);
