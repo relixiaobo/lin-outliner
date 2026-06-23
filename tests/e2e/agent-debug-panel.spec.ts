@@ -49,7 +49,7 @@ test.describe('agent debug panel', () => {
     await expect(round).toHaveCSS('border-left-width', '0px');
     await expect(round.locator('.agent-debug-section-header .agent-debug-status-pill')).toHaveCount(0);
     await expect(round.locator('.agent-debug-section-header > code')).toHaveCount(0);
-    await expect(round.locator('.agent-debug-role-pill')).toHaveCount(0);
+    await expect(round.locator('.agent-debug-role-label')).toHaveCount(0);
     await expect(round.locator('.agent-debug-message-row')).toHaveCount(0);
     await expect(round.locator('.agent-debug-round-request')).toHaveCount(0);
     await expect(round).not.toContainText('History · 2');

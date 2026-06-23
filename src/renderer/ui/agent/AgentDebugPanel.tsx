@@ -652,7 +652,7 @@ function MessageRow({
     <details className={`agent-debug-message-row${className ? ` ${className}` : ''}`}>
       <summary className="agent-debug-message-head">
         <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
-        <span className={`agent-debug-role-pill is-${message.role}`}>{message.role}</span>
+        <span className={`agent-debug-role-label is-${message.role}`}>{message.role}</span>
         <strong title={summary}>{summary}</strong>
         <code>{formatBytes(message.bytes)}</code>
       </summary>

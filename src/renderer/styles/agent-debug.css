@@ -613,16 +613,13 @@
   white-space: nowrap;
 }
 
-.agent-debug-role-pill {
+.agent-debug-role-label {
   display: inline-flex;
-  min-width: 54px;
-  max-width: 96px;
+  width: 72px;
+  min-width: 0;
   align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-pill);
-  padding: 1px var(--space-3);
-  background: var(--fill-2);
-  color: var(--text-secondary);
+  justify-content: flex-start;
+  color: var(--text-soft);
   font-family: var(--font-family-mono);
   font-size: var(--font-meta);
   line-height: var(--line-meta-tight);
