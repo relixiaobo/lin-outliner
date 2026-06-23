@@ -1252,7 +1252,9 @@ The run detail is ordered for inspection:
    matching `tool_result` rows. Tool result rows use the same part-disclosure
    control as the rest of the pane, and orphan tool calls are synthesized from the
    exchange args only when the provider response did not capture the original
-   `tool_call`. The run summary carries the main token/cost readout.
+   `tool_call`. Calls render as a lightweight disclosure list with subtle
+   dividers, not as separate cards; the run summary carries the main token/cost
+   readout.
 
 The chat transcript exposes this through an assistant-message **Details** icon
 button that uses the `Info` glyph. Hovering it previews the reply's token and

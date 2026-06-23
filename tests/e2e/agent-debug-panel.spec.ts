@@ -42,6 +42,7 @@ test.describe('agent debug panel', () => {
     await expect(debugPanel.getByRole('heading', { name: 'Execution · 1' })).toBeVisible();
     const round = debugPanel.locator('.agent-debug-round-card').first();
     await expect(round.getByRole('heading', { name: 'Call 1' })).toBeVisible();
+    await expect(round).toHaveCSS('border-left-width', '0px');
     await expect(round.locator('.agent-debug-section-header .agent-debug-status-pill')).toHaveCount(0);
     await expect(round.locator('.agent-debug-section-header > code')).toHaveCount(0);
     await expect(round.locator('.agent-debug-role-pill')).toHaveCount(0);
