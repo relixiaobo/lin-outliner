@@ -428,6 +428,21 @@ const PDF_MAX_PAGES_PER_READ = 20;
 const PDF_INLINE_PAGE_THRESHOLD = 10;
 const PDF_TEXT_MAX_CHARS = 60_000;
 const CONVERT_TIMEOUT_MS = 180_000;
+const EXTRA_TOOL_PATH_ENV = 'LIN_AGENT_EXTRA_TOOL_PATH';
+const DEFAULT_AGENT_TOOL_PATH_SEGMENTS = [
+  '/opt/homebrew/bin',
+  '/opt/homebrew/sbin',
+  '/usr/local/bin',
+  '/usr/local/sbin',
+  '/usr/bin',
+  '/bin',
+  '/usr/sbin',
+  '/sbin',
+];
+const POPPLER_INSTALL_INSTRUCTIONS = [
+  'If Poppler is already installed, make sure pdfinfo and pdftoppm are on PATH, then retry.',
+  'Otherwise run bash with `brew install poppler` on macOS or `apt-get install poppler-utils` on Debian/Ubuntu, then retry.',
+].join(' ');
 const IGNORED_DIRECTORIES = new Set(['.agent-trash', '.git', '.svn', '.hg', '.bzr', '.jj', '.sl', 'node_modules', 'dist', 'out', 'release', 'target']);
 const IMAGE_MEDIA_TYPES = new Map<string, FileReadImageData['file']['type']>([
   ['.jpg', 'image/jpeg'],
@@ -823,6 +838,28 @@ async function notifySelfDefinitionContentWrite(
 function selfDefinitionWriteInstructions(write: SelfDefinitionWrite | null): string | undefined {
   if (write?.kind === 'skill') return skillWriteInstructions(write.skillWrite);
   return undefined;
+}
+
+function pathSegments(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(path.delimiter)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+export function buildAgentLocalToolProcessEnv(): NodeJS.ProcessEnv {
+  const segments = [
+    ...pathSegments(process.env[EXTRA_TOOL_PATH_ENV]),
+    ...pathSegments(process.env.PATH),
+    ...DEFAULT_AGENT_TOOL_PATH_SEGMENTS,
+  ];
+  const seen = new Set<string>();
+  const pathValue = segments.filter((segment) => {
+    if (seen.has(segment)) return false;
+    seen.add(segment);
+    return true;
+  }).join(path.delimiter);
+  return { ...process.env, PATH: pathValue };
 }
 
 function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileReadData>> {
@@ -1702,7 +1739,7 @@ async function convertPdfToImages(
   ];
   const result = await runProcess('pdftoppm', args, path.dirname(inputPath), CONVERT_TIMEOUT_MS);
   if (result.error) {
-    throw new LocalToolFailure('converter_unavailable', result.error.message, 'Install poppler so pdftoppm is available on PATH.');
+    throw new LocalToolFailure('converter_unavailable', result.error.message, POPPLER_INSTALL_INSTRUCTIONS);
   }
   if (result.exitCode !== 0) {
     throw pdfPageRenderFailure(
@@ -1979,7 +2016,7 @@ function clearReadStateForDeletedPath(workspace: WorkspaceContext, filePath: str
 
 async function runProcess(command: string, args: string[], cwd: string, timeoutMs = 60_000): Promise<ProcessResult> {
   return await new Promise<ProcessResult>((resolve) => {
-    const child = spawn(command, args, { cwd, env: process.env, shell: false });
+    const child = spawn(command, args, { cwd, env: buildAgentLocalToolProcessEnv(), shell: false });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
@@ -2009,7 +2046,7 @@ async function runProcessItems(
   timeoutMs: number,
 ): Promise<ProcessItemsResult> {
   return await new Promise<ProcessItemsResult>((resolve) => {
-    const child = spawn(command, args, { cwd, env: process.env, shell: false });
+    const child = spawn(command, args, { cwd, env: buildAgentLocalToolProcessEnv(), shell: false });
     const items: string[] = [];
     let stderr = '';
     let pending = '';
@@ -2110,7 +2147,7 @@ async function runForegroundCommand(workspace: WorkspaceContext, params: BashPar
   const child = spawn(params.command, {
     cwd: workspace.root,
     shell: true,
-    env: process.env,
+    env: buildAgentLocalToolProcessEnv(),
   });
   let stdout = '';
   let stderr = '';
@@ -2188,7 +2225,7 @@ async function startBackgroundCommand(workspace: WorkspaceContext, params: BashP
   const child = spawn(params.command, {
     cwd: workspace.root,
     shell: true,
-    env: process.env,
+    env: buildAgentLocalToolProcessEnv(),
   });
   return registerBackgroundTask(workspace, params, child, { backgroundedByUser: true });
 }
@@ -2477,7 +2514,7 @@ function readUInt24LE(buffer: Buffer, offset: number): number {
 async function getPdfPageCount(filePath: string): Promise<number> {
   const result = await runProcess('pdfinfo', [filePath], path.dirname(filePath), 30_000);
   if (result.error) {
-    throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, 'Install poppler so pdfinfo and pdftoppm are available on PATH, or convert the PDF first.');
+    throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, POPPLER_INSTALL_INSTRUCTIONS);
   }
   if (result.exitCode !== 0) {
     throw new LocalToolFailure('pdf_read_failed', result.stderr.trim() || 'pdfinfo failed.', 'Check that the PDF is valid and readable.');
@@ -2506,7 +2543,7 @@ async function extractPdfPages(workspace: WorkspaceContext, filePath: string, or
   const args = ['-jpeg', '-r', '100', '-f', String(range.firstPage), '-l', String(range.lastPage), filePath, prefix];
   const result = await runProcess('pdftoppm', args, path.dirname(filePath), 120_000);
   if (result.error) {
-    throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, 'Install poppler so pdfinfo and pdftoppm are available on PATH, or convert the PDF first.');
+    throw new LocalToolFailure('pdf_reader_unavailable', result.error.message, POPPLER_INSTALL_INSTRUCTIONS);
   }
   if (result.exitCode !== 0) {
     throw pdfPageRenderFailure(

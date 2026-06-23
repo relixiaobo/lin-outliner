@@ -4,6 +4,7 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  buildAgentLocalToolProcessEnv,
   createAgentLocalWorkspaceContext,
   createLocalTools,
   restorePostCompactReadFiles,
@@ -76,6 +77,33 @@ async function withPrependedPath<T>(binDir: string, fn: () => Promise<T>): Promi
     }
   }
 }
+
+test('agent local tool process env includes configured and standard tool paths', () => {
+  const originalPath = process.env.PATH;
+  const originalExtraPath = process.env.LIN_AGENT_EXTRA_TOOL_PATH;
+  const extraPath = path.join(tmpdir(), 'lin-extra-tools');
+  process.env.PATH = ['/usr/bin', '/opt/homebrew/bin'].join(path.delimiter);
+  process.env.LIN_AGENT_EXTRA_TOOL_PATH = [extraPath, '/usr/bin'].join(path.delimiter);
+  try {
+    const env = buildAgentLocalToolProcessEnv();
+    const segments = env.PATH?.split(path.delimiter) ?? [];
+    expect(segments.slice(0, 3)).toEqual([extraPath, '/usr/bin', '/opt/homebrew/bin']);
+    expect(segments).toContain('/usr/local/bin');
+    expect(segments.filter((segment) => segment === '/usr/bin')).toHaveLength(1);
+    expect(segments.filter((segment) => segment === '/opt/homebrew/bin')).toHaveLength(1);
+  } finally {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+    if (originalExtraPath === undefined) {
+      delete process.env.LIN_AGENT_EXTRA_TOOL_PATH;
+    } else {
+      process.env.LIN_AGENT_EXTRA_TOOL_PATH = originalExtraPath;
+    }
+  }
+});
 
 async function waitForFileContent(filePath: string, predicate: (content: string) => boolean, timeoutMs = 1000): Promise<string> {
   const deadline = Date.now() + timeoutMs;
