@@ -571,7 +571,7 @@
   z-index: var(--z-popover);
   top: calc(100% + var(--space-2));
   right: 0;
-  width: min(360px, calc(100vw - 48px));
+  width: min(280px, calc(100vw - 48px));
   max-width: calc(100vw - 48px);
   border-radius: var(--radius-overlay-sm);
   background: var(--material-popover);
@@ -601,6 +601,44 @@
 
 .agent-debug-usage-info-button:hover {
   color: var(--text-strong);
+}
+
+.agent-debug-round-info-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin: 0;
+}
+
+.agent-debug-round-info-grid > div {
+  min-width: 0;
+}
+
+.agent-debug-round-info-grid > .is-span-all {
+  grid-column: 1 / -1;
+}
+
+.agent-debug-round-info-grid dt {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.agent-debug-round-info-grid dd {
+  min-width: 0;
+  overflow: hidden;
+  margin: var(--space-2) 0 0;
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  font-weight: 650;
+  line-height: var(--line-ui-sm-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-debug-message-row {
@@ -1032,8 +1070,7 @@
   gap: var(--space-3);
 }
 
-.agent-debug-detail-section,
-.agent-debug-usage-card {
+.agent-debug-detail-section {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -1088,8 +1125,6 @@
   border-top: 1px solid var(--border-subtle);
 }
 
-.agent-debug-usage-grid,
-.agent-debug-cost-grid,
 .agent-debug-advanced-grid {
   display: grid;
   min-width: 0;
@@ -1106,92 +1141,7 @@
   padding-bottom: var(--space-3);
 }
 
-.agent-debug-usage-card {
-  gap: var(--space-5);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  padding: var(--space-6);
-}
-
-.agent-debug-usage-popover .agent-debug-usage-card {
-  gap: var(--space-4);
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
-}
-
-.agent-debug-usage-popover .agent-debug-usage-grid,
-.agent-debug-usage-popover .agent-debug-cost-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3);
-}
-
-.agent-debug-cache-chart {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.agent-debug-cache-chart-bar {
-  display: flex;
-  width: 100%;
-  height: 12px;
-  overflow: hidden;
-  border-radius: var(--radius-pill);
-  background: var(--fill-1);
-}
-
-.agent-debug-cache-chart-bar > span {
-  display: block;
-  width: var(--segment-size);
-  min-width: 0;
-}
-
-.agent-debug-cache-chart-bar > .is-input,
-.agent-debug-cache-chart-legend .is-input {
-  background: var(--usage-input);
-}
-
-.agent-debug-cache-chart-bar > .is-cache-read,
-.agent-debug-cache-chart-legend .is-cache-read {
-  background: var(--usage-cache-read);
-}
-
-.agent-debug-cache-chart-bar > .is-cache-write,
-.agent-debug-cache-chart-legend .is-cache-write {
-  background: var(--usage-cache-write);
-}
-
-.agent-debug-cache-chart-legend {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-  color: var(--text-soft);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
-}
-
-.agent-debug-cache-chart-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.agent-debug-cache-chart-legend i {
-  display: inline-block;
-  width: 12px;
-  height: 8px;
-  flex: 0 0 12px;
-  border-radius: var(--radius-pill);
-}
-
 @media (max-width: 1200px) {
-  .agent-debug-usage-grid,
-  .agent-debug-cost-grid,
   .agent-debug-advanced-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1199,8 +1149,6 @@
 
 @container (max-width: 760px) {
   .agent-debug-run-summary-facts,
-  .agent-debug-usage-grid,
-  .agent-debug-cost-grid,
   .agent-debug-advanced-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1208,8 +1156,6 @@
 
 @container (max-width: 520px) {
   .agent-debug-run-summary-facts,
-  .agent-debug-usage-grid,
-  .agent-debug-cost-grid,
   .agent-debug-advanced-grid {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { agentToolActionKindProfile } from '../../../core/agentPermissionModel';
 import type {
   AgentDebugMessagePart,
@@ -265,10 +265,6 @@ function usageRatios(usage: AgentDebugUsage) {
   return {
     inputContext,
     cacheHitRate: cacheActivity > 0 ? usage.cacheRead / cacheActivity : null,
-    cachedContextShare: inputContext > 0 ? usage.cacheRead / inputContext : null,
-    inputShare: inputContext > 0 ? usage.input / inputContext : 0,
-    cacheReadShare: inputContext > 0 ? usage.cacheRead / inputContext : 0,
-    cacheWriteShare: inputContext > 0 ? usage.cacheWrite / inputContext : 0,
   };
 }
 
@@ -335,9 +331,7 @@ function RoundCard({ round, labels }: { round: AgentDebugRound; labels: DebugLab
       <div className="agent-debug-section-header">
         <h3>{labels.modelCallTitle({ index: round.index + 1 })}</h3>
         <span className={`agent-debug-status-pill is-${round.status}`}>{statusLabel(round.status, labels)}</span>
-        {round.modelId ? <code className="agent-debug-run-model">{round.modelId}</code> : null}
-        {round.stopReason ? <code>{round.stopReason}</code> : null}
-        <UsageInfoHover labels={labels} usage={round.usage} />
+        <RoundInfoHover labels={labels} round={round} />
       </div>
 
       <div className="agent-debug-round-flow">
@@ -375,63 +369,64 @@ function FlowStep({ children, label }: { children: ReactNode; label: string }) {
   );
 }
 
-function UsageInfoHover({ labels, usage }: { labels: DebugLabels; usage: AgentDebugUsage | null }) {
+function RoundInfoHover({ labels, round }: { labels: DebugLabels; round: AgentDebugRound }) {
   return (
     <div className="agent-debug-usage-hover">
       <IconButton
         className="agent-debug-usage-info-button"
         icon={InfoIcon}
         iconSize={ICON_SIZE.tiny}
-        label={labels.usageTitle}
-        title={usage ? labels.usageTitle : labels.usagePending}
+        label={labels.roundInfoTitle}
+        title={labels.roundInfoTitle}
         variant="panel"
       />
-      <span className="agent-debug-usage-popover" role="tooltip" aria-label={labels.usageTitle}>
-        {usage ? <UsageBreakdown usage={usage} labels={labels} /> : <span className="is-muted">{labels.usagePending}</span>}
+      <span className="agent-debug-usage-popover" role="tooltip" aria-label={labels.roundInfoTitle}>
+        <RoundInfoContent labels={labels} round={round} />
       </span>
     </div>
   );
 }
 
-function UsageBreakdown({ labels, usage }: { labels: DebugLabels; usage: AgentDebugUsage }) {
-  const ratios = usageRatios(usage);
-  const hasCacheActivity = usage.cacheRead > 0 || usage.cacheWrite > 0;
-  const segmentStyle = (share: number) => ({
-    '--segment-size': `${Math.max(share * 100, share > 0 ? 2 : 0)}%`,
-  }) as CSSProperties;
+function RoundInfoContent({ labels, round }: { labels: DebugLabels; round: AgentDebugRound }) {
+  const usage = round.usage;
+  const ratios = usage ? usageRatios(usage) : null;
 
   return (
-    <div className="agent-debug-usage-card">
-      <div className="agent-debug-usage-grid">
-        <DebugMetric label={labels.totalInputContext} value={formatTokens(ratios.inputContext)} />
-        <DebugMetric label={labels.inputTokens} value={formatTokens(usage.input)} />
-        <DebugMetric label={labels.outputTokens} value={formatTokens(usage.output)} />
-        <DebugMetric label={labels.cacheReadTokens} value={formatTokens(usage.cacheRead)} />
-        <DebugMetric label={labels.cacheWriteTokens} value={formatTokens(usage.cacheWrite)} />
-        <DebugMetric label={labels.actualCost} value={formatCost(usage.costUsd)} />
-        <DebugMetric label={labels.cacheHitRate} value={formatPercent(ratios.cacheHitRate)} />
-        <DebugMetric label={labels.cachedContextShare} value={formatPercent(ratios.cachedContextShare)} />
+    <dl className="agent-debug-round-info-grid">
+      <div>
+        <dt>{labels.runModel}</dt>
+        <dd>{round.modelId || labels.unknown}</dd>
       </div>
-      <div className="agent-debug-cache-chart" aria-label={labels.cacheChartLabel}>
-        <div className="agent-debug-cache-chart-bar">
-          <span className="is-input" style={segmentStyle(ratios.inputShare)} />
-          <span className="is-cache-read" style={segmentStyle(ratios.cacheReadShare)} />
-          <span className="is-cache-write" style={segmentStyle(ratios.cacheWriteShare)} />
+      <div>
+        <dt>{labels.stopReasonLabel}</dt>
+        <dd>{round.stopReason || labels.unknown}</dd>
+      </div>
+      {usage && ratios ? (
+        <>
+          <div>
+            <dt>{labels.totalInputContext}</dt>
+            <dd>{formatTokens(ratios.inputContext)}</dd>
+          </div>
+          <div>
+            <dt>{labels.outputTokens}</dt>
+            <dd>{formatTokens(usage.output)}</dd>
+          </div>
+          <div>
+            <dt>{labels.cacheHitRate}</dt>
+            <dd>{formatPercent(ratios.cacheHitRate)}</dd>
+          </div>
+          <div>
+            <dt>{labels.statCost}</dt>
+            <dd>{formatCost(usage.costUsd)}</dd>
+          </div>
+        </>
+      ) : (
+        <div className="is-span-all">
+          <dt>{labels.statTokens}</dt>
+          <dd>{labels.usagePending}</dd>
         </div>
-        <div className="agent-debug-cache-chart-legend">
-          <span><i className="is-input" />{labels.uncachedInput}</span>
-          <span><i className="is-cache-read" />{labels.cacheRead}</span>
-          <span><i className="is-cache-write" />{labels.cacheWrite}</span>
-        </div>
-        {!hasCacheActivity ? <small className="is-muted">{labels.noCacheActivity}</small> : null}
-      </div>
-      <div className="agent-debug-cost-grid">
-        <DebugMetric label={labels.costInput} value={formatCost(usage.cost.input)} />
-        <DebugMetric label={labels.costOutput} value={formatCost(usage.cost.output)} />
-        <DebugMetric label={labels.costCacheRead} value={formatCost(usage.cost.cacheRead)} />
-        <DebugMetric label={labels.costCacheWrite} value={formatCost(usage.cost.cacheWrite)} />
-      </div>
-    </div>
+      )}
+    </dl>
   );
 }
 

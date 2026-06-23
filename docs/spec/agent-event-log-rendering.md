@@ -1241,13 +1241,15 @@ The run detail is ordered for inspection:
    sibling sections: `History` (messages before the final outbound user message)
    and `Current request` (that user message and its attached reminder/file/text
    parts), preserving provider order inside each slice.
-3. **Execution** — the execution side. Each rendered item is a **model call**
-   (internally, one debug `round`: one provider request/response). It is displayed
-   as a compact flow: `Model output` (text/thinking plus any orphan tool request)
+3. **Execution** — the execution side. Each rendered item is a provider call
+   (internally, one debug `round`: one provider request/response). The visible
+   header labels it as `Call N` and keeps only call number, status, and an
+   `Info` affordance. Model id, stop reason, and compact per-call usage/cost
+   (input context, output, cache hit, cost) live in the hover. The body is a
+   compact flow: `Model output` (text/thinking plus any orphan tool request)
    followed by `Tool` exchange rows (tool arguments + tool result) produced by
    that call. Tool requests that have a matching exchange are not repeated in
-   `Model output`; their arguments live with the exchange. Per-call usage/cost is
-   available from an `Info` hover in the model-call header, while the run summary
+   `Model output`; their arguments live with the exchange. The run summary
    carries the main token/cost readout.
 
 The chat transcript exposes this through an assistant-message **Details** icon
@@ -1260,7 +1262,7 @@ runId)`. There is no standalone/global debug entry in the agent dock.
 The internal debug unit is `round` = one provider call = `(request, response)`,
 bounded by `assistant_message.started` (always present, independent of any wire
 capture). `round` is not a user-facing agent concept; the UI labels it as a
-**model call** inside **Execution**. Walking a run's own stream in order yields
+**Call** inside **Execution**. Walking a run's own stream in order yields
 its rounds: each `assistant_message.started`
 opens a round, its `.completed` closes the response (content / usage / stopReason
 from the ledger), and the intervening `tool_result.created` (and `tool_result.replaced`,

@@ -41,7 +41,8 @@ test.describe('agent debug panel', () => {
 
     await expect(debugPanel.getByRole('heading', { name: 'Execution · 1' })).toBeVisible();
     const round = debugPanel.locator('.agent-debug-round-card').first();
-    await expect(round.getByRole('heading', { name: 'Model call 1' })).toBeVisible();
+    await expect(round.getByRole('heading', { name: 'Call 1' })).toBeVisible();
+    await expect(round.locator('.agent-debug-section-header > code')).toHaveCount(0);
     await expect(round.locator('.agent-debug-round-request')).toHaveCount(0);
     await expect(round).not.toContainText('History · 2');
     await expect(round).toContainText('Model output');
@@ -52,16 +53,21 @@ test.describe('agent debug panel', () => {
     await expect(round.locator('.agent-debug-tool-exchange', { hasText: 'bash' })).toContainText('Pushed to origin/main.');
     await expect(round.locator('details.agent-debug-disclosure', { hasText: 'Usage' })).toHaveCount(0);
 
-    await round.getByRole('button', { name: 'Usage' }).hover();
-    const roundUsage = round.getByRole('tooltip', { name: 'Usage' });
-    await expect(roundUsage).toBeVisible();
-    await expect(roundUsage).toContainText('Input context');
-    await expect(roundUsage).toContainText('66k');
-    await expect(roundUsage).toContainText('Cache hit');
-    await expect(roundUsage).toContainText('89%');
-    await expect(roundUsage).toContainText('Cached share');
-    await expect(roundUsage).toContainText('73%');
-    await expect(roundUsage.getByLabel('Input context cache composition')).toBeVisible();
+    await round.getByRole('button', { name: 'Call details' }).hover();
+    const roundDetails = round.getByRole('tooltip', { name: 'Call details' });
+    await expect(roundDetails).toBeVisible();
+    await expect(roundDetails).toContainText('Model');
+    await expect(roundDetails).toContainText('gpt-5.4');
+    await expect(roundDetails).toContainText('Stop reason');
+    await expect(roundDetails).toContainText('stop');
+    await expect(roundDetails).toContainText('Input context');
+    await expect(roundDetails).toContainText('66k');
+    await expect(roundDetails).toContainText('Output');
+    await expect(roundDetails).toContainText('420');
+    await expect(roundDetails).toContainText('Cache hit');
+    await expect(roundDetails).toContainText('89%');
+    await expect(roundDetails).toContainText('Cost');
+    await expect(roundDetails).toContainText('$0.00050');
   });
 
   test('adds a user block rule from a logged tool exchange', async ({ page }) => {
