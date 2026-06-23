@@ -3403,7 +3403,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
   });
 }
 
-export async function openMockRunDetailsFromAssistantMore(
+export async function openMockRunDetailsFromAssistantDetailsButton(
   page: Page,
   replyText = 'Open the details pane from this response.',
 ) {
@@ -3448,11 +3448,7 @@ export async function openMockRunDetailsFromAssistantMore(
 
   const row = page.locator('.agent-message-row.assistant', { hasText: replyText });
   await row.hover();
-  await row.getByRole('button', { name: 'More reply actions' }).click();
-
-  const menu = page.getByRole('menu', { name: 'More reply actions' });
-  await expect(menu).toBeVisible();
-  await menu.getByRole('menuitem', { name: 'Details' }).click();
+  await row.getByRole('button', { name: 'Details' }).click();
 }
 
 export async function emitDocumentEvent(page: Page, event: unknown) {

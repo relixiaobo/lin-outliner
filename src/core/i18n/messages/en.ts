@@ -996,7 +996,6 @@ commandPalette: {
       editMessage: 'Edit message',
       copy: 'Copy',
       copyMessage: 'Copy message',
-      moreActions: 'More reply actions',
       showMore: 'Show more',
       showLess: 'Show less',
       retry: 'Retry',

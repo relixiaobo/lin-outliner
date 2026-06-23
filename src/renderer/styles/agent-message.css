@@ -281,41 +281,6 @@
   color: var(--text-faint);
 }
 
-.agent-message-action-menu {
-  z-index: var(--z-agent-menu);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  overflow: hidden;
-  border-radius: var(--radius-overlay-sm);
-  background: var(--material-popover);
-  -webkit-backdrop-filter: var(--material-backdrop);
-  backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
-  padding: var(--space-2);
-}
-
-.agent-message-action-menu-item {
-  justify-content: flex-start;
-  border-radius: var(--radius-sm);
-  color: var(--text-soft);
-  font-size: var(--font-ui-sm);
-  line-height: var(--line-ui-sm);
-}
-
-.agent-message-action-menu-item:hover:not(:disabled),
-.agent-message-action-menu-item:focus-visible:not(:disabled) {
-  background: var(--fill-2);
-  color: var(--text-strong);
-}
-
-.agent-message-action-menu-item-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .agent-branch-navigator {
   display: inline-flex;
   align-items: center;

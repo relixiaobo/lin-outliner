@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { commandCalls, openMockedApp, openMockRunDetailsFromAssistantMore } from './outlinerMock';
+import { commandCalls, openMockedApp, openMockRunDetailsFromAssistantDetailsButton } from './outlinerMock';
 
 test.describe('agent debug panel', () => {
   test.beforeEach(async ({ page }) => {
@@ -7,7 +7,7 @@ test.describe('agent debug panel', () => {
   });
 
   test('shows a run-focused detail pane with context, process, and usage', async ({ page }) => {
-    await openMockRunDetailsFromAssistantMore(page);
+    await openMockRunDetailsFromAssistantDetailsButton(page);
 
     const debugPanel = page.locator('.outline-panel-surface.is-agent-debug');
     await expect(debugPanel.getByRole('heading', { name: 'Run Details' })).toBeVisible();
@@ -45,7 +45,7 @@ test.describe('agent debug panel', () => {
   });
 
   test('adds a user block rule from a logged tool exchange', async ({ page }) => {
-    await openMockRunDetailsFromAssistantMore(page);
+    await openMockRunDetailsFromAssistantDetailsButton(page);
 
     const debugPanel = page.locator('.outline-panel-surface.is-agent-debug');
 
@@ -61,8 +61,8 @@ test.describe('agent debug panel', () => {
     }).toBe('Command(git push origin main)');
   });
 
-  test('opens selected run details from an assistant More menu', async ({ page }) => {
-    await openMockRunDetailsFromAssistantMore(page);
+  test('opens selected run details from an assistant Details button', async ({ page }) => {
+    await openMockRunDetailsFromAssistantDetailsButton(page);
 
     const debugPanel = page.locator('.outline-panel-surface.is-agent-debug');
     await expect(debugPanel.getByRole('heading', { name: 'Run Details' })).toBeVisible();

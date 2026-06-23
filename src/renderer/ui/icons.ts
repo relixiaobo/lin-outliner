@@ -53,6 +53,7 @@ export {
   Highlighter as HighlightIcon,
   Home as HomeIcon,
   Image as ImageIcon,
+  Info as InfoIcon,
   Eye as ShowIcon,
   EyeOff as HideIcon,
   Italic as ItalicIcon,

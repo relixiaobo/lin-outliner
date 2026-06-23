@@ -24,7 +24,7 @@ import {
   FileTextIcon,
   FolderIcon,
   ICON_SIZE,
-  MoreIcon,
+  InfoIcon,
   PencilIcon,
   RedoIcon,
   StopIcon,
@@ -61,7 +61,6 @@ import {
   nearestScrollContainer,
   usePendingDisclosureAnchor,
 } from '../interactions/disclosureScrollAnchor';
-import { AnchoredActionMenu, type AnchoredMenuAction } from '../primitives/AnchoredActionMenu';
 
 const USER_MESSAGE_COLLAPSED_LINES = 5;
 const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
@@ -500,8 +499,6 @@ function AgentMessageRowComponent({
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [messageMenuOpen, setMessageMenuOpen] = useState(false);
-  const messageMenuAnchorRef = useRef<HTMLButtonElement | null>(null);
   // Disclosure (process fold + inner tool/reasoning) expand state. A row in a
   // conversation reads from the persisted per-conversation store so a user's
   // expand/collapse survives reload, conversation switch, and the streaming→sealed
@@ -752,20 +749,6 @@ function AgentMessageRowComponent({
     }
     setDetailsOpen(true);
   };
-  const assistantMenuActions: AnchoredMenuAction[] = [
-    { label: t.agent.message.details, onSelect: openAssistantDetails },
-    {
-      label: t.agent.message.copy,
-      disabled: !copyText && !onCopy,
-      onSelect: () => void copyAssistantMessage(copyText),
-    },
-    ...(nodeId && (hasError ? onRetry : onRegenerate) ? [{
-      label: hasError ? t.agent.message.retry : t.agent.message.regenerate,
-      disabled: actionsDisabled,
-      onSelect: () => void (hasError ? onRetry : onRegenerate)?.(nodeId),
-    } satisfies AnchoredMenuAction] : []),
-  ];
-
   // A sealed assistant turn whose only content was a child run spawn renders no
   // blocks (the run is shown as the boundary that follows) — skip the empty bubble
   // entirely rather than leave a blank frame.
@@ -832,25 +815,12 @@ function AgentMessageRowComponent({
             />
             <IconButton
               className="agent-message-action-button"
-              icon={MoreIcon}
-              label={t.agent.message.moreActions}
-              onClick={() => setMessageMenuOpen((open) => !open)}
-              ref={messageMenuAnchorRef}
-              title={t.agent.message.moreActions}
+              icon={InfoIcon}
+              label={t.agent.message.details}
+              onClick={openAssistantDetails}
+              title={t.agent.message.details}
               variant="message"
             />
-            {messageMenuOpen ? (
-              <AnchoredActionMenu
-                actions={assistantMenuActions}
-                anchorRef={messageMenuAnchorRef}
-                ariaLabel={t.agent.message.moreActions}
-                className="agent-message-action-menu"
-                itemClassName="agent-message-action-menu-item"
-                itemLabelClassName="agent-message-action-menu-item-label"
-                onClose={() => setMessageMenuOpen(false)}
-                width={180}
-              />
-            ) : null}
           </AgentMessageActions>
         ) : null}
         {detailsOpen ? (

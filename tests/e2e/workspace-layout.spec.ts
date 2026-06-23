@@ -8,7 +8,7 @@ import {
   emitDocumentEvent,
   ids,
   openMockedApp,
-  openMockRunDetailsFromAssistantMore,
+  openMockRunDetailsFromAssistantDetailsButton,
   row,
   rowBody,
 } from './outlinerMock';
@@ -236,7 +236,7 @@ test.describe('workspace layout resizing', () => {
 
   test('debug panel capacity failures show feedback instead of silently no-oping', async ({ page }) => {
     await page.setViewportSize({ width: 760, height: 900 });
-    await openMockRunDetailsFromAssistantMore(page);
+    await openMockRunDetailsFromAssistantDetailsButton(page);
 
     await expect(page.locator('.outline-panel-surface')).toHaveCount(1);
     await expect(page.locator('.error')).toContainText('Window is too narrow to open another pane.');

@@ -912,7 +912,6 @@ commandPalette: {
       editMessage: '编辑消息',
       copy: '复制',
       copyMessage: '复制消息',
-      moreActions: '更多回复操作',
       showMore: '展开',
       showLess: '收起',
       retry: '重试',

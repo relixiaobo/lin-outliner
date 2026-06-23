@@ -4,7 +4,7 @@ import {
   ids,
   nodeById,
   openMockedApp,
-  openMockRunDetailsFromAssistantMore,
+  openMockRunDetailsFromAssistantDetailsButton,
   row,
   rowEditor,
   trailingEditor,
@@ -314,7 +314,7 @@ test.describe('outliner navigation and page title parity', () => {
 
   test('page-history navigation keeps the outliner pane context when a debug pane shares the canvas', async ({ page }) => {
     await row(page, ids.alpha).getByRole('button', { name: 'Open' }).click();
-    await openMockRunDetailsFromAssistantMore(page);
+    await openMockRunDetailsFromAssistantDetailsButton(page);
     // The debug surface is now a pane in the canvas alongside the outliner pane
     // (there is no tab strip). Opening it makes the debug pane active.
     await expect(page.locator('.outline-panel-surface.is-agent-debug')).toHaveCount(1);
