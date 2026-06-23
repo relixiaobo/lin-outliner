@@ -306,6 +306,8 @@ export interface AgentDebugRun {
   tools: AgentDebugToolEntry[];
   /** The actual model input messages captured from the provider request payload. */
   modelInputMessages: AgentDebugMessageRow[];
+  /** Whether Model Input messages came from the provider payload or a legacy derived fallback. */
+  modelInputMessagesSource: 'captured' | 'legacyRequestWindow';
   rounds: AgentDebugRound[];
 }
 

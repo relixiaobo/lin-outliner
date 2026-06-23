@@ -1309,7 +1309,8 @@ delegation agent's payload callback — per-ROUND snapshot attribution when the
 system/tools change mid-run, and per-round transport metadata + a gated byte-exact
 wire disclosure are scoped follow-ups, deliberately **not** pre-modeled in the type;
 the view degrades gracefully to no system prompt / empty tools / legacy
-request-window messages when a snapshot is absent.)
+request-window messages when a snapshot is absent. Legacy message fallback is
+explicitly labelled in the UI because it is not the full provider input window.)
 
 **Read model + IPC.**
 

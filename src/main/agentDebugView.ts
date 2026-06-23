@@ -160,6 +160,8 @@ export function deriveDebugRun(events: readonly AgentEvent[], context: DerivedRu
   const rounds = deriveDebugRounds(events);
   const lastRound = rounds.at(-1);
   const snapshot = context.snapshot ?? null;
+  const capturedModelInputMessages = snapshot?.messages ?? [];
+  const hasCapturedModelInput = capturedModelInputMessages.length > 0;
   return {
     runId: meta.id,
     agentId: meta.agentId,
@@ -176,7 +178,8 @@ export function deriveDebugRun(events: readonly AgentEvent[], context: DerivedRu
     createdAt: meta.createdAt,
     systemPrompt: snapshot?.systemPrompt ?? null,
     tools: snapshot?.tools ?? [],
-    modelInputMessages: snapshot?.messages.length ? snapshot.messages : (rounds[0]?.requestWindow ?? []),
+    modelInputMessages: hasCapturedModelInput ? capturedModelInputMessages : (rounds[0]?.requestWindow ?? []),
+    modelInputMessagesSource: hasCapturedModelInput ? 'captured' : 'legacyRequestWindow',
     rounds,
   };
 }

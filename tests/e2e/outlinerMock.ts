@@ -652,6 +652,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           parts: [{ kind: 'text', body: 'Summarize current outline.', isReminder: false }],
         },
       ],
+      modelInputMessagesSource: 'captured',
       rounds: [{
         index: 0,
         messageId: 'a1',

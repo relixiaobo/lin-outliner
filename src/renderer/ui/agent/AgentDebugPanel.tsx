@@ -320,6 +320,9 @@ function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDeb
           )}
         </ContextDisclosure>
         <ContextDisclosure defaultOpen title={labels.inputMessagesDisclosure({ count: run.modelInputMessages.length })}>
+          {run.modelInputMessagesSource === 'legacyRequestWindow' && (
+            <p className="agent-debug-inline-note">{labels.legacyInputMessagesNotice}</p>
+          )}
           {run.modelInputMessages.length === 0 ? (
             <span className="is-muted">{labels.empty}</span>
           ) : (

@@ -305,6 +305,7 @@ describe('deriveDebugRun + snapshot + summary assembly', () => {
     expect(run.systemPrompt).toBe('You are Tenon.');
     expect(run.tools).toEqual([{ name: 'list_files', description: 'List', schema: '{}', bytes: 16 }]);
     expect(run.modelInputMessages.map((message) => message.summary)).toEqual(['user: hi']);
+    expect(run.modelInputMessagesSource).toBe('captured');
     expect(run.rounds.map((round) => round.messageId)).toEqual(['a1']);
     expect(run.kind).toBe('turn');
     expect(run.createdAt).toBe(1700);
@@ -341,6 +342,7 @@ describe('deriveDebugRun + snapshot + summary assembly', () => {
     const run = deriveDebugRun(events, { meta, snapshot: null, parentToolCallId: null });
     expect(run.usage?.totalTokens).toBe(165);
     expect(run.usage?.costUsd).toBeCloseTo(0.015, 5);
+    expect(run.modelInputMessagesSource).toBe('legacyRequestWindow');
 
     // Two rounds + in-flight usage rollup — the case most apt to drift: the light
     // path must still match the oracle's summary exactly.

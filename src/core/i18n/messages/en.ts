@@ -1460,6 +1460,7 @@ commandPalette: {
     costCacheRead: 'Cache read cost',
     costCacheWrite: 'Cache write cost',
     inputMessagesDisclosure: ({ count }: { count: number }) => `Messages · ${count}`,
+    legacyInputMessagesNotice: 'Full provider input was not captured for this older run. Showing the legacy request window only.',
     responseLabel: 'Response',
     noResponseParts: 'No response captured yet.',
     toolExchangesLabel: ({ count }: { count: number }) => `Tool calls · ${count}`,
