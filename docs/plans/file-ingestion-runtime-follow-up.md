@@ -1,181 +1,166 @@
-# File Ingestion Runtime Follow-up
+# File Read Runtime
 
 ## Goal
 
-Build a provider-neutral file ingestion layer for agent tools. Local paths remain
-the way the model discovers files and calls `file_read`, but after that call the
-runtime owns parsing, extraction, caching, paging, and provider adaptation.
+Make `file_read` a single, provider-neutral file ingestion entry point. The
+model still passes a local path, but the runtime owns representation selection:
+plain text, Markdown, page images, notebooks, or metadata. The model should not
+choose parser modes or provider-specific file payloads.
 
-The PDF work in PR #322 is the first slice: it keeps the path-based workflow but
-uses OpenAI Responses `input_file` only when the active provider supports native
-PDF input. The follow-up turns that into a general file ingestion contract so all
-models get a useful fallback, not just native-document models.
-
-Shape: this is a set of independent complete features. Each feature ships as its
-own PR and leaves the app better on its own.
+Shape: this is one complete feature in one PR. The PR ships the runtime
+boundary, provider-neutral PDF behavior, and a MarkItDown-backed Markdown
+backend for rich non-PDF documents.
 
 ## Non-goals
 
+- Do not expose a `mode` selector to the model. Runtime chooses the best
+  representation from the file type, available tools, and bounded output rules.
 - Do not make file tools install system packages implicitly. Missing
   dependencies stay recoverable tool errors; the agent may use `bash` under the
-  normal permission/audit path.
+  normal permission/audit path and retry the same `file_read` call.
 - Do not put raw base64 into model-visible JSON, persisted chat text, or debug
   summaries.
-- Do not require every provider to support native file blocks. Text and image
-  fallbacks must remain first-class.
-- Do not change `src/core/commands.ts` or `src/core/types.ts` for this plan
-  unless a later feature explicitly becomes a coordinated protocol change.
+- Do not send raw PDF bytes to the model as the primary path, including
+  provider-native PDF/file blocks or PDF base64. PDFs are converted to text,
+  page images, or metadata by the runtime.
+- Do not implement OCR in this PR. Scanned PDFs are handled by page-image
+  rendering when the page range is bounded, or by metadata plus instructions to
+  request pages.
+- Do not change `src/core/commands.ts` or `src/core/types.ts`.
 
 ## Design
 
-### 1. Source payloads are the source of truth
+### 1. Keep the `file_read` schema small
 
-When a tool reads a binary or rich file, store the original bytes as a source
-payload with stable metadata:
+`file_read` keeps the current selector surface:
 
-```
-source payload
-  id
-  mimeType
-  byteLength
-  sha256
-  summary
-  display metadata
-```
-
-Derived representations reference the source payload and can be regenerated.
-This keeps the original file available for provider-native paths while allowing
-model-independent fallbacks.
-
-### 2. Add a derived representation layer
-
-Introduce a small internal model for extracted file representations:
-
-```
-FileIngestionResult {
-  source: AgentPayloadRef
-  kind: "pdf" | "image" | "office" | "notebook" | "audio" | "video" | "archive" | "text"
-  metadata: Record<string, unknown>
-  parts: FileIngestionPart[]
+```ts
+interface FileReadParams {
+  file_path: string;
+  offset?: number;
+  limit?: number;
+  pages?: string;
 }
-
-FileIngestionPart =
-  | { type: "text"; text: string; page?: number; section?: string; truncated?: boolean }
-  | { type: "image"; payload: AgentPayloadRef; page?: number; alt?: string }
-  | { type: "table"; text: string; sheet?: string; range?: string; truncated?: boolean }
-  | { type: "manifest"; text: string; truncated?: boolean }
 ```
 
-This representation is not a core command protocol. It lives in main/runtime
-code and feeds the agent provider boundary.
+`pages` is a range selector for PDF/page-like files, not a parser mode. The
+runtime chooses the representation automatically.
 
-### 3. Provider adaptation happens last
+### 2. Add an internal ingestion boundary
 
-Provider adapters consume `FileIngestionResult` and the target model capability:
+Introduce a main-process file ingestion module that returns compact tool-result
+metadata plus provider-facing content parts:
 
-| Capability | Preferred input |
+```ts
+FileIngestionOutput {
+  data: FileReadData;
+  content?: Array<TextPart | ImagePart>;
+  status?: ToolStatus;
+  instructions?: string;
+}
+```
+
+This boundary is internal to main/runtime code. It does not become a core
+command protocol, and it does not leak provider-specific payload JSON. For
+runtime-ingested binary/rich formats, the model-visible JSON is metadata-only;
+extracted bodies are attached as text or image content parts.
+
+### 3. Runtime-owned routing
+
+The runtime routes by file type:
+
+| File family | Runtime behavior |
 |---|---|
-| Native file/document input | Original source payload, size-capped |
-| Image input | Extracted text plus selected rendered images |
-| Text only | Extracted text, tables, manifests, and summaries |
-| No useful rich input | Metadata plus instructions to request a narrower read |
+| Text/code/Markdown/logs | Existing bounded text path with freshness tracking. |
+| JSON/CSV/XML | Text first when small and readable; rich Markdown can be introduced later if needed. |
+| Images | Existing image block plus dimensions; image base64 stays out of model-visible JSON. |
+| PDF | Existing fast PDF path: `pdfinfo` + `pdftotext`; explicit `pages` renders JPEG page images; large scanned PDFs return metadata plus instructions to request pages. |
+| Notebooks | Existing compact `.ipynb` parser. |
+| Rich non-PDF documents | MarkItDown converts to bounded Markdown. |
+| Unsupported binary | Recoverable error with supported formats and next steps. |
 
-Native file upload is an optimization, not the canonical representation. The
-runtime should always know what fallback content the model would receive if the
-native path is unavailable.
+### 4. MarkItDown backend
 
-### 4. PDF follow-up
+MarkItDown is the default rich-document Markdown backend for non-PDF formats:
 
-Extend the PR #322 PDF path with a provider-neutral fallback:
+- `.docx`
+- `.pptx`
+- `.xlsx`
+- `.xls`
+- `.epub`
 
-- Keep the native PDF raw-size cap before converting bytes to provider payloads.
-  PR #322 uses a conservative 20 MB raw PDF cap because base64 expands by
-  roughly one third.
-- Extract embedded text per page when possible with `pdftotext`.
-- Render page images with Poppler only when the user asks for pages, the PDF has
-  no useful text layer, the question needs layout/visual inspection, or the
-  provider cannot accept native PDFs.
-- For large PDFs, return a page count, text availability summary, and
-  instructions to call `file_read` with a page range instead of sending the whole
-  PDF.
-- Keep Poppler as an optional dependency with actionable recovery instructions.
+`.html` and `.htm` stay on the ordinary text path so local HTML remains
+zero-dependency readable and editable.
 
-### 5. Other file families
+The backend is external and optional. Probe order:
 
-Text and code:
-- Keep the existing bounded text read/freshness behavior.
-- Treat markdown, JSON, CSV, and logs as text first, with specialized summaries
-  only when needed.
+1. `LIN_AGENT_MARKITDOWN_COMMAND`
+2. `markitdown`
+3. `python3 -m markitdown`
 
-Images:
-- Keep dimensions and image blocks.
-- Add optional OCR only as a later feature; do not block image reads on OCR.
-- For non-vision models, expose metadata and a recoverable instruction that the
-  model cannot visually inspect the image.
+`LIN_AGENT_MARKITDOWN_COMMAND` may be a bare executable path or a command with
+arguments such as `python3 -m markitdown`. Successful command resolution is
+cached for the process; failures are not cached so installing MarkItDown and
+retrying can succeed. The runtime disables plugins and does not configure LLM or
+cloud backends. It passes only local file paths that have already passed
+workspace containment.
 
-Office documents:
-- Convert `.docx` to paragraphs and tables.
-- Convert `.pptx` to slide text, speaker notes, and selected rendered slide
-  images.
-- Convert `.xlsx` to workbook metadata, sheet names, used ranges, and sampled
-  tables.
-- Keep native file payloads only as an optimization for models that support them.
+If MarkItDown is missing, `file_read` returns a recoverable error that explains
+how to install a minimal local backend, for example:
 
-Notebooks:
-- Keep the current cell parser.
-- Treat rich outputs as parts: text output, image payloads, and compact metadata.
+```bash
+python3 -m pip install 'markitdown[docx,pptx,xlsx,xls]'
+```
 
-Audio and video:
-- Start with metadata only.
-- Add transcript/key-frame extraction as independent later features.
+or a `uv` equivalent when available. The tool does not assume Homebrew and does
+not install the package itself.
 
-Archives and directories:
-- Never inline the whole archive.
-- Produce a manifest with sizes, paths, and supported file counts.
-- Let the agent choose specific files for follow-up `file_read` calls.
+### 5. Bounded Markdown output
 
-### 6. Caching and invalidation
+MarkItDown output is attached as a model-visible text part with a fixed character
+cap. The JSON projection stays metadata-only. If the output is truncated, the
+envelope status is `partial`, and the runtime data records the converter,
+format, emitted content length, and truncation flag. The full Markdown can be
+persistent tool output in a later caching PR, but this PR keeps model-visible
+content bounded.
 
-Cache derived representations by source payload `sha256`, extractor version, and
-options such as page range or text limit. If the source file changes, the source
-payload hash changes and derived cache entries no longer match.
+### 6. Provider-native document support is not the contract
 
-Do not cache provider-specific payload JSON. Cache model-neutral parts, then
-adapt them per provider at request time.
+Several providers support native PDF or document inputs:
 
-### 7. Debugging and observability
+- OpenAI file inputs can include PDFs and extract both text and page images:
+  https://developers.openai.com/api/docs/guides/file-inputs
+- Anthropic documents Claude PDF support:
+  https://docs.anthropic.com/en/docs/build-with-claude/pdf-support
+- Gemini documents PDF processing:
+  https://ai.google.dev/gemini-api/docs/document-processing
+- Mistral documents OCR and document QnA:
+  https://docs.mistral.ai/studio-api/document-processing/document_qna
+- xAI documents uploaded files:
+  https://docs.x.ai/developers/files
+- Perplexity documents PDF attachments:
+  https://docs.perplexity.ai/docs/sonar/media
 
-The debug run should show the provider-facing result without dumping raw base64:
+These capabilities are useful provider facts, but they are not portable enough
+to be the ingestion contract. Runtime-derived text, Markdown, and images remain
+the canonical path.
 
-- source payload id, MIME type, byte length, and summary
-- derived part counts by type
-- selected provider path: native file, text fallback, images, or metadata only
-- truncation and recovery instructions
+## Build Order
 
-## Open questions
+- Add `src/main/agentFileIngestion.ts` with the rich-document Markdown backend
+  and shared ingestion output types.
+- Route rich non-PDF documents from `file_read` through MarkItDown.
+- Keep PDF fast text/page-image behavior from the current PR and rename PDF
+  helper terminology away from model-specific names.
+- Add stable tests with a fake MarkItDown command so CI does not depend on a
+  Python package install.
+- Update `docs/spec/agent-tool-design.md` and `docs/spec/agent-progress.md` to
+  describe runtime-owned representation selection.
 
-- Where should extraction caches live: per conversation payload directory, a
-  shared content-addressed cache under agent data, or both?
-- Should the 20 MB PDF native cap become provider-configurable after more live
-  provider validation?
-- Should `file_read` expose a new `mode` option (`auto`, `text`, `pages`,
-  `native`) or keep `pages` as the only explicit PDF selector?
-- Do Office extraction features depend on bundled workspace dependencies, or do
-  they keep using external conversion tools with recoverable install guidance?
-- Should OCR/transcription be local-only, provider-backed, or deferred until a
-  user explicitly asks for those capabilities?
+## Future Work
 
-## Build Checklist
-
-- [ ] PDF fallback PR: add per-page text extraction fallback and large-PDF
-      summary behavior on top of the current native size cap.
-- [ ] Runtime representation PR: introduce `FileIngestionResult` internally and
-      adapt current text/image/PDF paths onto it without changing behavior.
-- [ ] Provider adaptation PR: move native PDF conversion and image/text fallback
-      selection behind one provider-capability function.
-- [ ] Office extraction PR: implement `.docx`, `.pptx`, and `.xlsx` text/table
-      extraction with bounded output and tests.
-- [ ] Archive manifest PR: add safe archive listing without automatic recursive
-      extraction.
-- [ ] Debug visibility PR: show selected ingestion path and derived part counts
-      without base64.
+- Cache derived file representations by source hash, extractor id, extractor
+  version, and options.
+- Add Docling as an optional structured backend for complex reading order,
+  tables, and layout-heavy documents.
+- Add OCR backends only after the runtime boundary and caching are stable.

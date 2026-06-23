@@ -13,6 +13,7 @@ import {
   type Usage,
 } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
+import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -106,6 +107,45 @@ function textFromContent(content: unknown): string {
     ))
     .map((part) => part.text)
     .join('\n');
+}
+
+const hasPdfTextTools = commandExists('pdfinfo') && commandExists('pdftotext');
+const pdfTextTest = hasPdfTextTools ? test : test.skip;
+
+function commandExists(command: string): boolean {
+  return !spawnSync(command, ['--version'], { stdio: 'ignore' }).error;
+}
+
+function makePdf(pageTexts: string[]): string {
+  const objects: string[] = [];
+  const pageIds = pageTexts.map((_, index) => 3 + index);
+  const contentIds = pageTexts.map((_, index) => 3 + pageTexts.length + index);
+  const fontId = 3 + pageTexts.length * 2;
+  objects[0] = '<< /Type /Catalog /Pages 2 0 R >>';
+  objects[1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pageTexts.length} >>`;
+  pageTexts.forEach((text, index) => {
+    objects[pageIds[index]! - 1] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentIds[index]} 0 R >>`;
+  });
+  pageTexts.forEach((text, index) => {
+    const stream = `BT /F1 24 Tf 100 700 Td (${text.replace(/[()\\]/g, '\\$&')}) Tj ET`;
+    objects[contentIds[index]! - 1] = `<< /Length ${Buffer.byteLength(stream, 'utf8')} >>\nstream\n${stream}\nendstream`;
+  });
+  objects[fontId - 1] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(pdf, 'utf8'));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = Buffer.byteLength(pdf, 'utf8');
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += '0000000000 65535 f \n';
+  for (const offset of offsets.slice(1)) {
+    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return pdf;
 }
 
 function projectionTexts(projection: AgentRenderProjection) {
@@ -2041,12 +2081,12 @@ describe('agent runtime skill integration', () => {
     expect(contextTexts[1]!.length).toBeLessThan(40_000);
   });
 
-  test('attaches native PDF payloads before OpenAI Responses provider calls', async () => {
-    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-native-pdf-'));
-    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-native-pdf-data-'));
+  pdfTextTest('extracts PDF text before OpenAI Responses provider calls', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-pdf-text-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-pdf-text-data-'));
     roots.push(localRoot, dataRoot);
     const pdfPath = path.join(localRoot, 'sample.pdf');
-    await writeFile(pdfPath, '%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n');
+    await writeFile(pdfPath, makePdf(['First page', 'Second page']), 'utf8');
 
     const payloads: unknown[] = [];
     let callIndex = 0;
@@ -2118,16 +2158,16 @@ describe('agent runtime skill integration', () => {
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(payloads).toHaveLength(1);
     const payload = payloads[0] as {
-      input: Array<{ output: Array<{ type: string; filename?: string; file_data?: string; text?: string }> }>;
+      input: Array<{ output: string }>;
     };
     const output = payload.input[0]!.output;
-    expect(output.some((part) => part.type === 'input_text' && part.text?.includes('PDF document attached'))).toBe(true);
-    expect(output.some((part) => (
-      part.type === 'input_file'
-      && part.filename === 'sample.pdf'
-      && part.file_data?.startsWith('data:application/pdf;base64,')
-    ))).toBe(true);
-    expect(JSON.stringify(output)).not.toContain('<tenon-native-pdf>');
+    expect(output).toContain('Extracted text from PDF pages 1-2');
+    expect(output).toContain('First page');
+    expect(output).toContain('Second page');
+    expect(output).not.toContain('input_file');
+    expect(output).not.toContain('file_data');
+    expect(output).not.toContain('data:application/pdf;base64,');
+    expect(output).not.toContain('<tenon-native-pdf>');
   });
 
   test('auto-compacts before a model call when the active context crosses the threshold', async () => {

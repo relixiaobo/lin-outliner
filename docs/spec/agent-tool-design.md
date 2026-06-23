@@ -1651,7 +1651,7 @@ type FileReadData =
   | FileReadTextData
   | FileReadImageData
   | FileReadPdfData
-  | FileReadPdfPartsData
+  | FileReadMarkdownData
   | FileReadNotebookData
   | FileReadUnchangedData;
 
@@ -1685,16 +1685,10 @@ interface FileReadPdfData {
   file: {
     filePath: string;
     originalSize: number;
-    mode: "native";
-    mimeType: "application/pdf";
-  };
-}
-
-interface FileReadPdfPartsData {
-  type: "parts";
-  file: {
-    filePath: string;
-    originalSize: number;
+    totalPages: number;
+    // Runtime-selected representation summary. This is not a file_read input,
+    // and it is kept out of the model-visible projection.
+    representation: "text" | "images" | "text_and_images" | "metadata";
     pages: {
       firstPage: number;
       lastPage: number;
@@ -1703,8 +1697,22 @@ interface FileReadPdfPartsData {
       chars: number;
       truncated: boolean;
     };
-    count: number;
-    outputDir: string;
+    renderedImages?: {
+      count: number;
+      outputDir: string;
+    };
+  };
+}
+
+interface FileReadMarkdownData {
+  type: "markdown";
+  file: {
+    filePath: string;
+    content: string;
+    converter: "markitdown";
+    contentChars: number;
+    truncated: boolean;
+    originalSize: number;
   };
 }
 
@@ -1743,32 +1751,54 @@ Result behavior:
 - Image reads return dimensions when they can be determined, attach the image
   block for the model to inspect, and omit base64 from the model-visible JSON so
   text output stays compact.
-- On OpenAI Responses-family models, reading a PDF without `pages` returns
-  `FileReadPdfData` for PDFs up to 20 MB and persists the PDF bytes as a source
-  payload. The runtime rehydrates that payload into an OpenAI `input_file`
-  document block immediately before the provider request, so normal PDF analysis
-  does not depend on Poppler and base64 never enters the tool-result JSON or
-  debug run snapshot. If a later request uses a model without native PDF support,
-  the runtime shows a readable PDF attachment notice instead of sending the
-  private payload marker.
-- PDF reads with `pages` ranges such as `"3"` and `"1-5"` use the local
-  page-extraction path, with a maximum of 20 pages per request. `pdfinfo`
-  determines page count, `pdftoppm` renders selected pages as JPEGs, and those
-  page images are attached to the tool result for visual layout inspection. If
-  `pdftotext` is available and the selected pages contain embedded text, that
-  extracted text is attached as a text part before the page images. Scanned PDFs
-  therefore still work through images, while text PDFs remain searchable and
-  token-efficient.
+- The model-visible `content[0].text` JSON is a compact metadata projection.
+  Runtime-extracted document bodies are attached as additional tool-result parts:
+  PDF text and rich-document Markdown use text parts, and rendered PDF pages use
+  image parts. Ordinary text/source files keep their bounded text directly in the
+  JSON because the file itself is already text.
+- Rich non-PDF documents use a runtime-owned Markdown path. Supported formats are
+  `.docx`, `.pptx`, `.xlsx`, `.xls`, and `.epub`; the model still passes only
+  `file_path`, while the runtime converts the document to bounded Markdown and
+  attaches that Markdown as a text content part. `.html` and `.htm` stay on the
+  ordinary text path so they remain zero-dependency readable and editable.
+- MarkItDown is the Markdown backend for rich documents. The runtime probes
+  `LIN_AGENT_MARKITDOWN_COMMAND`, then `markitdown`, then
+  `python3 -m markitdown`. `LIN_AGENT_MARKITDOWN_COMMAND` may be a bare
+  executable path or a command with arguments such as `python3 -m markitdown`.
+  Successful command resolution is cached for the process; failed resolution is
+  not cached so installing MarkItDown and retrying can succeed. Plugins, cloud
+  backends, and LLM-assisted extraction are not enabled by the runtime. Missing
+  MarkItDown returns a recoverable tool error that tells the agent to install a
+  local Python/uv backend through `bash` and retry the same `file_read` call; the
+  file tool does not install packages itself and does not assume Homebrew.
+- MarkItDown output is capped. Truncated Markdown sets `status: "partial"`,
+  records `truncated: true` and the emitted `contentChars` count in the runtime
+  data, and marks the attached Markdown text part as truncated.
+- PDF reads are provider-neutral. `file_read` never sends the original PDF bytes
+  to the model as a provider-native document block; the runtime extracts local
+  text and/or page images first, then attaches those model-readable parts to the
+  tool result.
+- Reading a PDF without `pages` uses `pdfinfo` for page count and `pdftotext`
+  for embedded text extraction over the full document, capped by the PDF text
+  limit. Text PDFs therefore stay searchable and token-efficient on every model.
+  If no embedded text is available and the PDF has at most 10 pages, the runtime
+  renders the pages as JPEG images automatically; larger scanned PDFs return
+  metadata plus instructions to call `file_read` again with a narrower `pages`
+  range.
+- PDF reads with `pages` ranges such as `"3"` and `"1-5"` render the selected
+  pages with `pdftoppm`, with a maximum of 20 pages per request. When
+  `pdftotext` extracts text for that range, the text part is attached before the
+  page images so visual layout inspection and text search both work. Missing
+  `pdftotext` does not block an explicit page-image read when `pdftoppm` is
+  available.
 - If Poppler is missing for page rendering or PDF conversion, the tool returns a
   recoverable error that tells the agent to use `bash` to detect an available
   package manager and install Poppler. The recovery path must not assume
   Homebrew: it can use an installed manager such as Homebrew, MacPorts, apt, dnf,
   or pacman, then retry the same `file_read` or `file_convert` call. If no
   supported package manager is available, the agent reports that Poppler must be
-  installed so `pdfinfo` and `pdftoppm` are on `PATH`. The file tools never
-  install system packages themselves.
-- Models that do not support the native PDF payload path keep using the
-  Poppler-backed page-rendering path.
+  installed so `pdfinfo`, `pdftotext`, and `pdftoppm` are on `PATH`. The file
+  tools never install system packages themselves.
 - Notebook reads parse `.ipynb` cells and outputs into a compact text rendering
   plus structured cell metadata.
 - Binary files should return a typed result only when Lin supports the media
