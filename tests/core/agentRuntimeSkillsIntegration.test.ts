@@ -1034,8 +1034,6 @@ describe('agent runtime skill integration', () => {
     ].sort());
     expect(childTools).not.toContain('file_write');
     expect(childTools).not.toContain('file_edit');
-    expect(childTools).not.toContain('runtime_status');
-    expect(childTools).not.toContain('doctor');
     expect(childTools).not.toContain('node_create');
     expect(childTools).not.toContain('node_edit');
     expect(childTools).not.toContain('node_delete');

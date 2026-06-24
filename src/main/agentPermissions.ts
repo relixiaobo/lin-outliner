@@ -158,9 +158,6 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
   'web_fetch',
   'past_chats',
   'ask_user_question',
-  'runtime_status',
-  'config',
-  'doctor',
   'skill',
   'task_stop',
   'node_read',
@@ -190,10 +187,6 @@ const TOOL_ALIASES = new Map<string, string>([
   ['pastchats', 'past_chats'],
   ['ask_user_question', 'ask_user_question'],
   ['askuserquestion', 'ask_user_question'],
-  ['runtime_status', 'runtime_status'],
-  ['runtimestatus', 'runtime_status'],
-  ['config', 'config'],
-  ['doctor', 'doctor'],
   ['skill', 'skill'],
   ['task_stop', 'task_stop'],
   ['agent', 'agent'],
@@ -591,50 +584,6 @@ export function deriveAgentToolActionDescriptors(input: {
       reversible: true,
       externalEffect: false,
       highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'runtime_status') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.runtime.status'), {
-      accessScope: 'none',
-      title: 'runtime status',
-      summary: 'Read redacted local agent runtime status.',
-      consequence: 'This reads local runtime settings and provider status without secrets.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'doctor') {
-    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'agent.doctor.run'), {
-      accessScope: 'none',
-      title: 'runtime doctor',
-      summary: 'Run read-only local agent diagnostics.',
-      consequence: 'This reads local diagnostic state without secrets or mutation.',
-      reversible: true,
-      externalEffect: false,
-      highConsequence: false,
-    })];
-  }
-
-  if (toolName === 'config') {
-    const argsRecord = input.args && typeof input.args === 'object' && !Array.isArray(input.args)
-      ? input.args as Record<string, unknown>
-      : null;
-    const writes = !!argsRecord && Object.hasOwn(argsRecord, 'value');
-    return [descriptor(toolName, writes ? 'agent.config.write' : 'agent.config.read', {
-      accessScope: 'none',
-      title: writes ? 'agent config write' : 'agent config read',
-      summary: writes ? 'Update a whitelisted local agent runtime setting.' : 'Read a whitelisted local agent runtime setting.',
-      consequence: writes
-        ? 'This changes local agent runtime behavior through a whitelisted settings API.'
-        : 'This reads local agent runtime configuration without secrets.',
-      reversible: writes,
-      externalEffect: false,
-      highConsequence: false,
-      requestTitle: writes ? 'Approve agent config change?' : undefined,
-      requestTarget: getStringArg(argsRecord, 'setting') ?? 'agent runtime setting',
     })];
   }
 
@@ -2043,7 +1992,7 @@ function toolPathArgumentName(toolName: string): string | null {
 
 function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
-  if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'runtime_status' || toolName === 'config' || toolName === 'doctor') return 'control';
+  if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill' || toolName === 'ask_user_question') return 'control';
   if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete') return 'write';
   if (toolName === 'operation_history') {
     return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';

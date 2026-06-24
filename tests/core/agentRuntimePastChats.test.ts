@@ -318,8 +318,6 @@ describe('agent runtime past chats integration', () => {
     expect(tools).toContain('past_chats');
     expect(tools).toContain('node_search');
     expect(tools).toContain('node_read');
-    expect(tools).toContain('runtime_status');
-    expect(tools).toContain('doctor');
     expect(tools).not.toContain('recall');
     expect(tools).not.toContain('dream');
   });

@@ -2545,21 +2545,16 @@ projection:
 
 ## Self-Maintenance Controls
 
-Runtime control tools are not file tools:
+Agent self-configuration tools (`runtime_status`, `config`, `doctor`) were
+removed as over-built for their current value. Runtime settings are managed by
+the user through Settings → Agent; a future change may reintroduce agent
+self-configuration through a different mechanism. The standing safety principle
+survives the removal:
 
-- `runtime_status` and doctor diagnostics are read-only and must redact secrets.
-- `config` reads when `value` is omitted and writes when `value` is present,
-  matching cc-2.1's small `ConfigTool` shape.
-- `config` writes are ask-gated, whitelisted, audited changes through
-  runtime-owned write paths. The current write whitelist is:
-  `agent.runtime.compactEnabled`,
-  `agent.runtime.automaticSkillsEnabled`, `agent.runtime.slashSkillsEnabled`,
-  `agent.runtime.disabledSkills`, `agent.runtime.disabledAgents`,
-  provider retry/timeout/cache settings. Review/approval cards are UI around the
-  permission request, not a separate model-facing tool.
 - The agent must not use `file_edit`, `file_write`, or `bash` to mutate provider
   settings, permission config, hook config, skill registry metadata, or
-  last-known-good recovery state.
+  last-known-good recovery state. Runtime-owned configuration changes only
+  through runtime-owned APIs or Settings, never as ordinary file writes.
 - Skill maintenance does not add a separate model-facing CRUD tool family in v1.
   It follows cc-2.1's smaller surface: `/skillify` produces/reviews content, then
   uses existing file tools. There is **no** agent-definition authoring surface —
