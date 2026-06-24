@@ -219,4 +219,24 @@ describe('buildReferenceSummary', () => {
       ['unlinked', 'manual-search-child', 'manual-search-child'],
     ]);
   });
+
+  test('excludes inline refs carried by a result ref attached directly to a search node', () => {
+    const byId = new Map([
+      node({ id: 'target', content: plainText('Target') }),
+      node({ id: 'search', type: 'search', children: ['result-ref'], content: plainText('Saved search') }),
+      node({
+        id: 'result-ref',
+        type: 'reference',
+        parentId: 'search',
+        targetId: 'target',
+        refRole: 'searchResult',
+        content: { ...plainText('result'), inlineRefs: [{ offset: 0, target: nodeReferenceTarget('target') }] },
+      }),
+    ].map((entry) => [entry.id, entry]));
+
+    const summary = buildReferenceSummary(byId, { includeUnlinked: true });
+
+    expect(summary.byTarget.get('target')).toBeUndefined();
+    expect(summary.countsByTarget.get('target')).toBeUndefined();
+  });
 });
