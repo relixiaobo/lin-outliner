@@ -1,4 +1,4 @@
-# Agent Goal — an autonomous control loop for long-running objectives
+# Agent Goal — a nested, autonomous control loop for long-running objectives
 
 ## Goal
 
@@ -8,10 +8,11 @@ Let a user hand a long-running **objective** to the agent and have it pursued
 Mid-flight the owner can watch progress, steer, reassign, or abandon; on a
 terminal outcome the result is delivered back to the conversation.
 
-Stated precisely, this is a **supervisory control system**: the user gives a
+Stated precisely, this is a **nested supervisory control system**: the user gives a
 setpoint (the Goal), an autonomous control loop drives toward it (plan → act →
 sense → audit → repeat), and the loop self-terminates on verified completion or
-escalates. The design adds exactly **one new fact object — `Goal`** — and reuses
+escalates. The loop is **self-similar** — a goal-shaped subtask becomes a sub-Goal
+with the same loop one level down, so one minimal unit covers arbitrary depth. The design adds exactly **one new fact object — `Goal`** — and reuses
 the existing execution machinery (Runs, fork delegation, completion notification,
 usage accounting, the `agent_child_run_*` controls, the permission gate) for
 everything else.
@@ -37,7 +38,7 @@ everything else.
 - **No silent autonomy.** Committing a detached, budget-spending Goal routes
   through the ask-gate, in the attended turn, where its scope is authorized.
 
-## The frame — it is a (supervisory) control system
+## The frame — it is a nested (recursive) supervisory control system
 
 Map the design onto the classical control loop (sensor → comparator → controller
 → actuator → plant → feedback):
@@ -70,6 +71,25 @@ closed loop, it is open-loop with a lie. Therefore the load-bearing rule:
 
 > **The audit (sensor) MUST be independent of the worker (actuator). Completion is
 > never self-declared.**
+
+### Nesting — the whole system is one unit, recursively
+
+The control unit is **self-similar**: an *actuator* (a Run) whose own task is
+goal-shaped becomes a *controller* (a sub-Goal) with its own plan → act → sense →
+audit → decide. The minimal structure never changes; only the depth does. A
+"team" is one controller's actuators for a single cycle; a sub-team is the same
+thing one level down. So `turn / Goal / sub-Goal / team / worker` are **the same
+unit at different levels**, not distinct concepts — which is why the model stays
+small while the depth stays unbounded (the cascaded-SCADA / VSM recursion, proven
+in industry).
+
+Two signals run along the nesting and are the whole inter-level contract:
+**down** = acceptance criteria + `scope` (may only narrow) + a `budget` slice;
+**up** = a result that has passed *that level's own independent verifier*, or an
+escalation when the level needs to exceed its contract. The honesty patch
+(sensor ≠ actuator) therefore recurses with the structure — every level has its
+own verifier — and one **shared tree budget** is the single ceiling that keeps
+unbounded recursion bounded.
 
 ## Concept model
 
@@ -210,15 +230,38 @@ A `type` field on the Goal, set at assignment, decides the audit semantics:
   authority escalates (`blocked`).
 - **budget** (token/time) is **per goal-tree**, a fold over the subtree's usage.
 
-### One-Neva roles
+### Team formation, temporary profiles & recursion
 
 Worker/executor **and** verifier are all narrowed **Neva forks**
 (`agentDelegation.ts:593` is fork-only; `:594` narrows via
 `restrictAgentDefinitionTools` + `allowedTools`; `:605-608` inherits Neva's
-identity/memory). The verifier's "independence" = fresh context + adversarial
-framing + artifacts-and-criteria only — **not** a different identity (a different
-model is the high-stakes upgrade). Seed fork profiles: `researcher` /
-`implementer` / `verifier`.
+identity/memory). A "team" is not a standing org — it is **one cycle's fan-out of
+single-shot forks**, created by the loop's `plan`/`act` step and dissolved when the
+cycle's results return. No owner approval gates it: the **owner controls the
+outcome and the bounds (criteria + scope + budget + the verifier gate +
+escalation), never the process** — they do not ratify who is on the team.
+
+- **Temporary least-privilege profiles.** Each worker fork gets a profile *derived
+  for its subtask*: `allowedTools` ∩ the subtask's `scope` subset, via
+  `restrictAgentDefinitionTools`. The profile is computed per subtask and dies with
+  the worker — there is **no fixed role library**. `researcher` / `implementer` are
+  shorthand defaults for common tool subsets, not entities.
+- **The verifier is the one distinct profile-kind.** Its independence is structural
+  (fresh context + adversarial framing + artifacts-and-criteria only — **not** a
+  different identity), so it is the single profile we name and reuse deliberately;
+  a different model is its high-stakes upgrade.
+- **Topology: star.** Workers are mutually invisible and consult the loop (the
+  referee), which integrates. (Mesh / goal-scoped Channel stays an open question.)
+- **Recursion is allowed.** A subtask that is itself goal-shaped is promoted to a
+  **sub-Goal** with its own full loop and its own independent verifier — the nested
+  unit. Kept safe by three governors, not by an approval gate:
+  1. **one shared tree budget** — the parent allocates a slice; the whole subtree
+     folds back into the single ceiling, so depth cannot outrun spend;
+  2. **scope only narrows** — a sub-Goal inherits a subset; needing *more* authority
+     **escalates** up, never self-grants;
+  3. **an independent verifier at every level** — completion is never self-declared
+     at any depth.
+  A **soft depth limit** keeps the tree legible; the budget is the hard backstop.
 
 ## Tool surface
 
@@ -263,10 +306,12 @@ target** (ancestor / same conversation).
 - **Feature A — Goal with independent verification (single worker).** A user sets a
   Goal; the control loop pursues it via Neva-fork Runs; **completion is gated by an
   independent verifier Run**; terminal outcomes notify. Complete and useful alone.
-- **Feature B — Goal-as-team.** When the objective is large, the loop's `plan` step
-  decomposes and fans out to multiple narrowed Neva-fork workers (referee = the
-  loop), with the same independent verifier gate. Builds on A + existing fork
-  delegation.
+- **Feature B — Goal-as-team (with recursion).** When the objective is large, the
+  loop's `plan` step decomposes and fans out to single-shot Neva-fork workers on
+  **temporary least-privilege profiles** (referee = the loop), with the same
+  independent verifier gate; a goal-shaped subtask is promoted to a **sub-Goal**
+  (the nested unit), bounded by the shared tree budget + narrow-only scope + a
+  verifier at every level. Builds on A + existing fork delegation.
 
 ## Open questions
 
@@ -286,6 +331,14 @@ target** (ancestor / same conversation).
    incremental and off the critical path.
 6. **Composer placement** of `/goal` and the one-tap affordance — settle at build
    time (reversible).
+7. **Per-profile model selection.** May a derived worker profile (or the verifier)
+   pick a cheaper/stronger model per subtask, and is that an owner bound or a loop
+   decision? **Recommend** loop-chosen by default; the verifier's different-model
+   upgrade is owner-gated for high stakes.
+
+(Decided, not open: team formation needs **no owner approval**; recursion into
+sub-Goals **is allowed**, governed by the shared tree budget + narrow-only scope +
+a verifier at every level.)
 
 ## Risks
 
@@ -341,14 +394,20 @@ Result: **no overlap.**
 
 ### Feature B — Goal-as-team
 
-- [ ] Loop `plan` decomposes; spawns narrowed Neva-fork workers; referee = the loop.
+- [ ] Loop `plan` decomposes; `act` fans out single-shot Neva-fork workers on
+      **temporary least-privilege profiles** (tools ∩ subtask-scope, derived per
+      subtask, dissolved with the worker); referee = the loop. No owner approval gate.
 - [ ] Derived team: tag worker Runs with the Goal/root id; team view = grouping;
       dissolution via existing stop-scope on completion.
-- [ ] Scope inheritance down the tree; shared goal-tree budget; same independent
-      verifier gate.
-- [ ] Seed fork profiles authored: `researcher` / `implementer` / `verifier`.
-- [ ] Verify: a large Goal fans out a role-diverse team, integrates, is
-      independently verified, and dissolves the team on completion.
+- [ ] Scope inheritance down the tree (narrow-only; expand → escalate); shared tree
+      budget with a soft depth limit; same independent verifier gate at every level.
+- [ ] **Recursion:** promote a goal-shaped subtask to a sub-Goal (its own loop +
+      verifier), governed by the shared tree budget.
+- [ ] Only the **verifier** profile is named/reused; worker profiles are derived per
+      subtask, not a fixed library.
+- [ ] Verify: a large Goal fans out workers on derived profiles, recurses on a
+      goal-shaped subtask, integrates, is independently verified at each level, and
+      dissolves teams on completion.
 
 ### On ship
 
