@@ -35,6 +35,31 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Dream date-window scheduling + derived cursor (PR #328, codex-2)** — the second PR of
+  `dream-channel-and-memory-retire`. Memory Dream's scope moves from the opaque seq-watermark to
+  user-legible **local-day date windows**. The "last dreamed through" cursor and `lastSuccessAt` are now
+  **derived** from the protected Dream channel's clean completed `dream.finished.window` markers (no
+  stored dream-state read), and a date window is translated to a **timestamp-clamped** source span — the
+  seq lower bound is the stream floor and the `createdAt` clamp is the authority, so out-of-order or
+  day-straddling seqs cannot pull an out-of-window message in. Dream writes memory to the **source-date**
+  daily node, so a multi-day catch-up files each day's findings under that day's `#d-memory` container.
+  Scheduled runs cover **complete days only** (`[cursor+1 .. yesterday]`) at the user-configurable
+  `agent.runtime.dreamSchedule` fixed local time, with a **fixed-time + 3-retries-per-due** cap replacing
+  the at-most-once gate; a clean manual run suppresses the scheduled Dream for already-covered days. The
+  in-channel **structured Dream launcher** (start/end date pickers + guidance → serialized anchor)
+  replaces the chat composer on the Dream channel; the `#319` incomplete-gate is preserved. Adds the
+  `window?:{start,end}` field to `dream.finished` together with its first reader/writer (the PR1
+  deviation), and a `fromCreatedAtInclusive`/`throughCreatedAtExclusive` clamp on chat-source references
+  threaded through markup/loro/pmSchema/editor/tool layers. **Gate (main):** `/code-review xhigh` — 8
+  findings fixed + re-verified (`274a5670`): scheduled window ends at *yesterday* (no same-day lockout
+  permanently skipping the day still in progress), manual default window clamps instead of throwing (so
+  Settings "Run Dream now" stays valid once the cursor reaches today), manual end date clamped to today
+  (no future-cursor scheduler stall), redundant seq lower-bound dropped in favor of the timestamp clamp,
+  symmetric clamp validation + tilde-escaping across all reference codecs, pmSchema clamp round-trip, and
+  the manual-suppression test isolated from the retry-cap path. typecheck clean; affected `test:core` +
+  `test:renderer` suites green. Specs synced: `agent-skills`, `agent-progress`,
+  `agent-event-log-rendering`; plan updated.
+
 - **Protected Dream channel — Memory Dream runs as a transparent top-level turn (PR #324, codex-2)** —
   the first PR of `dream-channel-and-memory-retire`. Memory Dream no longer runs as a hidden
   create→delete child conversation; it runs as a top-level **unattended reflective turn** inside a new

@@ -68,12 +68,13 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
 2. **`agent-model-first-picker`** (P2, *direction ratified 2026-06-23 — needs a dev one-pager*) —
    model-first model picker (merge Provider + Model Override, provider as secondary label,
    "best available" default); renderer/UX-only, no protocol change. PM-prioritized this round.
-3. **`dream-channel-and-memory-retire`** (P2, *in-progress — PR1 shipped #324; PR2 next*) — make Dream
+3. **`dream-channel-and-memory-retire`** (P2, *in-progress — PR1 #324 + PR2 #328 shipped; PR3 next*) — make Dream
    transparent via a dedicated channel rendering each run's full-process transcript + a structured
    date/guidance launcher (seq-watermark → legible date cursor), and retire the vestigial believer-pool
-   Settings Memory pane (finish the #302 teardown). **PR1 (channel + top-level run) merged**; **PR2**
-   (date→seq cursor derivation + structured launcher) is next. Design in
-   `docs/plans/dream-channel-and-memory-retire.md`.
+   Settings Memory pane (finish the #302 teardown). **PR1 (channel + top-level run) and PR2 (date-window
+   scheduling + derived cursor + launcher) merged**; **PR3** (delete the believer-pool memory projection +
+   Settings Memory) is next — already rebased on PR2, awaits a `--force-with-lease` push + retarget to
+   `main`. Design in `docs/plans/dream-channel-and-memory-retire.md`.
 4. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups (residual
    `new Map(prev.byId)` + `nextRevisions` whole-map rebuild), each a small standalone PR; no design gate.
 5. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
@@ -197,7 +198,7 @@ before any directional/security-sensitive build.
     Note: the believer-pool store + Dream extraction substrate still ships under the hood.
     **PR3 jump-to-source UI shipped (#310, 2026-06-19)** — the whole #302 subsystem replacement
     is complete.
-- **dream-channel-and-memory-retire** (P2, *in-progress — PR1 shipped #324 (2026-06-23); PR2 + PR3 remaining*)
+- **dream-channel-and-memory-retire** (P2, *in-progress — PR1 #324 + PR2 #328 shipped (2026-06-23/24); PR3 remaining*)
   — see `docs/plans/dream-channel-and-memory-retire.md`. Make Dream **transparent** via a dedicated
   channel that renders each run's **complete process** (the existing #312 transcript: `past_chats`
   reads → reasoning → `node_*` writes → result), and retire the vestigial believer-pool Settings
@@ -221,16 +222,22 @@ before any directional/security-sensitive build.
     seq-watermark unchanged. **Deviation from plan:** the `window?:{start,end}` `dream.finished` field was
     **dropped, not stamped** — it had no producer/consumer this PR (write-only schema); **PR2 adds it
     together with its first reader/writer** when date→cursor derivation needs it.
-  - **PR2** — date→seq translation (evidence/`past_chats` stay seq-based; local-day, inclusive, no
-    leak) + **derive cursor + `lastSuccessAt` from the channel** (drop `readDreamState`; per-due guard
-    already in run meta; keep #319 `incomplete` gating) + structured launcher (composer-swap is a *new*
-    per-channel-id branch — `usesChannelActivitySurface()` is dead code) + user-configurable frequency.
-    Depends on PR1.
-  - **PR3** — retire Settings → Memory + delete the **memory projection + memory API inside
+  - **PR2 ✓ shipped #328 (2026-06-24, codex-2; `/code-review xhigh` gate, 8 findings fixed + re-verified `274a5670`).**
+    Date-window scope (local-day, inclusive) translated to a **timestamp-clamped** source span (seq lower
+    bound = stream floor, `createdAt` clamp is the authority) + **derive cursor + `lastSuccessAt` from the
+    channel's clean completed `dream.finished.window`** (dropped `readDreamState`) + fixed-time + **3-retries-per-due**
+    cap over run meta + structured launcher (new per-channel-id composer-swap branch) + user-configurable
+    `agent.runtime.dreamSchedule`; source-date memory writes; keeps #319 `incomplete` gating; stamps the
+    `window?:{start,end}` field deferred from PR1. **Key fixes:** scheduled window ends at *yesterday*
+    (`[cursor+1 .. yesterday]`, no same-day lockout), manual default window clamps instead of throwing, end
+    date clamped to today (no future-cursor stall), symmetric clamp validation + tilde-escaping across all
+    reference codecs. Depended on PR1.
+  - **PR3 (#329, next)** — retire Settings → Memory + delete the **memory projection + memory API inside
     `AgentEventStore`** (`:754–1037`, **keep the class**) + `agent_list_memory` (+ update/forget) +
     memory-edit plumbing + pool-only core tests; finishes the #302 teardown. Touches `commands.ts`
-    (protocol — interface-first). **Depends on PR2** (not parallel — dream-state live until PR2 derives
-    off the channel). Pre-release: wipe `~/.lin-outliner-*`, no migration.
+    (protocol — interface-first). First review (xhigh) found it clean. Now PR2 is merged, **PR3 needs a
+    `--force-with-lease` push of the local rebase + retarget to `main`** before the gate/merge. Pre-release:
+    wipe `~/.lin-outliner-*`, no migration.
   - **Ratified (PM, 2026-06-23):** auto-run kept (甲) — scheduled nightly + manual launcher override,
     derived cursor is the auto default window. All open questions resolved. UI gate = light/dark visual.
 - **agent-goal** (P2, *design captured 2026-06-23, PM-ratified (plan PR #323 merged) — needs a dev
