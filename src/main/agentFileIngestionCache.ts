@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { setBoundedMapEntry } from './boundedMap';
 
 type CacheOptionValue = string | number | boolean | null | undefined;
 
@@ -9,28 +9,22 @@ export class AgentDerivedFileCache {
 
   get<T>(key: string): T | undefined {
     if (!this.entries.has(key)) return undefined;
-    const value = this.entries.get(key) as T;
+    const value = this.entries.get(key);
     this.entries.delete(key);
     this.entries.set(key, value);
-    return value;
+    return cloneCacheValue(value) as T;
   }
 
   set<T>(key: string, value: T): void {
-    if (this.entries.has(key)) this.entries.delete(key);
-    this.entries.set(key, value);
-    while (this.entries.size > this.maxEntries) {
-      const oldest = this.entries.keys().next().value;
-      if (oldest === undefined) break;
-      this.entries.delete(oldest);
-    }
+    setBoundedMapEntry(this.entries, key, cloneCacheValue(value), this.maxEntries);
+  }
+
+  clear(): void {
+    this.entries.clear();
   }
 }
 
 export const agentDerivedFileCache = new AgentDerivedFileCache();
-
-export function sha256Buffer(buffer: Buffer): string {
-  return createHash('sha256').update(buffer).digest('hex');
-}
 
 export function derivedFileCacheKey(
   extractor: string,
@@ -43,4 +37,9 @@ export function derivedFileCacheKey(
       .sort(([left], [right]) => left.localeCompare(right)),
   );
   return JSON.stringify({ extractor, sourceHash, options: normalizedOptions });
+}
+
+function cloneCacheValue<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  return structuredClone(value);
 }

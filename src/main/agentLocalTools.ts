@@ -11,7 +11,8 @@ import {
   MARKITDOWN_RICH_DOCUMENT_EXTENSIONS,
   type FileIngestionOutput,
 } from './agentFileIngestion';
-import { agentDerivedFileCache, derivedFileCacheKey, sha256Buffer } from './agentFileIngestionCache';
+import { agentDerivedFileCache, derivedFileCacheKey } from './agentFileIngestionCache';
+import { sha256Buffer, sha256File } from './fileHashing';
 import {
   agentToolResult,
   errorEnvelope,
@@ -968,8 +969,8 @@ function createFileReadTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
           if (fileStat.size > MAX_MARKDOWN_SOURCE_BYTES) {
             throw new LocalToolFailure('file_too_large', `File is too large to convert to Markdown: ${filePath}`, `Use a smaller document, split it first, or convert it manually to Markdown. Maximum source size is ${formatBytes(MAX_MARKDOWN_SOURCE_BYTES)}.`);
           }
-          const buffer = await readFile(filePath);
-          const read = await ingestRichDocumentFile(filePath, fileStat.size, sha256Buffer(buffer));
+          const sourceHash = await sha256File(filePath);
+          const read = await ingestRichDocumentFile(filePath, fileStat.size, sourceHash);
           await notifySuccessfulFileTouch(workspace, filePath);
           const visible = visibleFileRead(read.data);
           return agentToolResult(successEnvelope('file_read', read.data, {

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -23,8 +23,14 @@ import {
 import { AgentSkillRuntime } from '../../src/main/agentSkills';
 import { agentAttachmentDir, materializePathBackedAttachment } from '../../src/main/agentAttachmentMaterialization';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
+import { agentDerivedFileCache } from '../../src/main/agentFileIngestionCache';
 
 const localToolSets = new Map<string, ReturnType<typeof createLocalTools>>();
+
+beforeEach(() => {
+  agentDerivedFileCache.clear();
+  localToolSets.clear();
+});
 
 async function withWorkspace<T>(fn: (workspaceRoot: string) => Promise<T>): Promise<T> {
   const workspaceRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-'));
@@ -801,7 +807,9 @@ describe('agent local tools', () => {
       delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
       try {
         await withPrependedPath(binDir, async () => {
-          const read = await executeTool<{
+          const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
+          const result = await (tool.execute as any)('rich-doc-visible', { file_path: filePath });
+          const read = result.details as ToolEnvelope<{
             type: 'markdown';
             file: {
               filePath: string;
@@ -810,7 +818,7 @@ describe('agent local tools', () => {
               truncated: boolean;
               originalSize: number;
             };
-          }>(workspaceRoot, 'file_read', { file_path: filePath });
+          }>;
 
           expect(read.ok).toBe(true);
           expect(read.data!.type).toBe('markdown');
@@ -823,8 +831,6 @@ describe('agent local tools', () => {
           });
           expect(read.instructions).toBe('The document was converted to Markdown locally.');
 
-          const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
-          const result = await (tool.execute as any)('rich-doc-visible', { file_path: filePath });
           const visible = JSON.parse(result.content[0].text);
           expect(visible.data.file).toEqual({
             filePath,
