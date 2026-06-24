@@ -57,6 +57,8 @@ export function App() {
   // (CSS-only, no React state) -> open full panel. We persist only the binary
   // open/collapsed in React; the chip is a pure :hover affordance in CSS.
   const [agentOpen, setAgentOpen] = useState(true);
+  const agentOpenRef = useRef(agentOpen);
+  agentOpenRef.current = agentOpen;
   const agentRailState: AgentRailState = agentOpen ? 'open' : 'collapsed';
   const [sidebarExpandedIds, setSidebarExpandedIds] = useState<Set<NodeId>>(() => new Set());
   const [pendingFocus, setPendingFocus] = useState<FocusHint | null>(null);
@@ -207,16 +209,20 @@ export function App() {
   const { isNodePinned, pinNodeAtIndex, pinnedNodeIds, togglePin } = useWorkspacePinnedNodes(index?.byId ?? null);
 
   const openAgentRail = useCallback(() => {
-    if (!agentOpen) prepareAgentOpen();
+    if (agentOpenRef.current) return;
+    prepareAgentOpen();
+    agentOpenRef.current = true;
     setAgentOpen(true);
-  }, [agentOpen, prepareAgentOpen]);
+  }, [prepareAgentOpen]);
   const toggleAgentRail = useCallback(() => {
-    if (!agentOpen) prepareAgentOpen();
-    setAgentOpen((open) => !open);
-  }, [agentOpen, prepareAgentOpen]);
+    const nextOpen = !agentOpenRef.current;
+    if (nextOpen) prepareAgentOpen();
+    agentOpenRef.current = nextOpen;
+    setAgentOpen(nextOpen);
+  }, [prepareAgentOpen]);
   // A content row (e.g. a command node's Run button) can ask to surface the agent
-  // panel on its delivery conversation; preflow the rail width before opening so
-  // the floating sidebar and canvas do not visibly jump through an oversized frame.
+  // panel on its delivery conversation. Reveals are layout no-ops while the rail is
+  // already open; only the collapsed -> open transition preflows rail width.
   useEffect(() => onAgentRevealRequest(() => openAgentRail()), [openAgentRail]);
 
   useDragSelection({ rootId, index, ui, setUi });

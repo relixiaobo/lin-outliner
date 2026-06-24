@@ -284,7 +284,7 @@
   padding: var(--space-3);
 }
 
-.dream-manual-guidance:focus-visible {
+:root[data-input-modality="keyboard"] .dream-manual-guidance:focus-visible {
   border-color: var(--focus-ring);
   box-shadow: var(--focus-ring-shadow);
 }
@@ -582,8 +582,8 @@
   color: var(--text-faint);
 }
 
-.agent-question-text:focus-visible,
-.agent-question-option:focus-within {
+:root[data-input-modality="keyboard"] .agent-question-text:focus-visible,
+:root[data-input-modality="keyboard"] .agent-question-option:focus-within {
   box-shadow: var(--focus-ring-shadow);
 }
 

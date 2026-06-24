@@ -91,6 +91,23 @@ export function clampRailWidthsForPanelFloor(
   rails: ResponsiveRailState,
   panelCount: number,
 ) {
+  return clampRailWidthsForPanelFloorMode(metrics, rails, panelCount, { allowSidebarRelief: true });
+}
+
+export function clampAgentRailForPanelFloor(
+  metrics: WorkspaceLayoutMetrics,
+  rails: ResponsiveRailState,
+  panelCount: number,
+) {
+  return clampRailWidthsForPanelFloorMode(metrics, rails, panelCount, { allowSidebarRelief: false });
+}
+
+function clampRailWidthsForPanelFloorMode(
+  metrics: WorkspaceLayoutMetrics,
+  rails: ResponsiveRailState,
+  panelCount: number,
+  options: { allowSidebarRelief: boolean },
+) {
   const next = clampRailWidthsToLimits(rails);
   const nextRails = { ...rails, ...next };
   let deficit = panelFloorWidth(metrics, panelCount) - availablePanelWidth(metrics, nextRails);
@@ -101,7 +118,7 @@ export function clampRailWidthsForPanelFloor(
     deficit -= reduction;
   }
 
-  if (deficit > 0 && rails.sidebarOpen) {
+  if (options.allowSidebarRelief && deficit > 0 && rails.sidebarOpen) {
     const reduction = Math.min(deficit, next.sidebarWidth - MIN_SIDEBAR_WIDTH);
     next.sidebarWidth -= reduction;
   }

@@ -947,7 +947,6 @@ commandPalette: {
         cacheWrite: '缓存写',
         total: '总计',
       },
-      timeSeparatorToday: ({ time }) => `今天 ${time}`,
     },
     process: {
       // Live divider while the turn is active: bare "处理中" under 1s, then the

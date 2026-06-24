@@ -179,16 +179,15 @@
 /* The field inputs are borderless inside the clipped inset card, so the global
    outer text-control ring (base.css) would be cropped by the card's
    overflow:hidden — show the neutral keyboard focus on the ROW instead, as the
-   inset ring the list primitive uses (.inset-row-main:focus-visible). focus-within
-   is right here: the only focusable things in a field row are the text input
-   (which shows focus on pointer too, as a field should) and the key-reveal toggle
-   (B8). The oauth reply input reuses .settings-sheet-row-input but sits outside an
-   inset card, so it keeps the global outer ring — not clipped there. */
+   inset ring the list primitive uses (.inset-row-main:focus-visible). Pointer
+   focus relies on the caret / local editing affordance, not an extra row frame.
+   The oauth reply input reuses .settings-sheet-row-input but sits outside an
+   inset card, so it keeps the global keyboard ring — not clipped there. */
 .inset-card .settings-sheet-row-input:focus-visible {
   box-shadow: none;
 }
 
-.inset-card .settings-sheet-row:focus-within {
+:root[data-input-modality="keyboard"] .inset-card .settings-sheet-row:focus-within {
   box-shadow: var(--outline-focus);
 }
 

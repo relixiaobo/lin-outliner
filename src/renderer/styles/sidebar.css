@@ -38,6 +38,7 @@
   border-radius: var(--panel-radius);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
+  transform: translate3d(0, 0, 0);
   transition:
     transform var(--motion-layout),
     opacity var(--motion-layout);
@@ -71,7 +72,7 @@
 /* Collapsed: the rail slides out to the left and fades; the content base then
    extends to the left window edge. The lights/toggle stay (window chrome). */
 .app.sidebar-collapsed .sidebar-dock {
-  transform: translateX(calc(-100% - var(--layout-gap) - 4px));
+  transform: translate3d(calc(-100% - var(--layout-gap) - 4px), 0, 0);
   opacity: 0;
   pointer-events: none;
 }

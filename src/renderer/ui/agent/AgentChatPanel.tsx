@@ -58,7 +58,6 @@ import { AgentMessageRow } from './AgentMessageRow';
 import {
   buildConversationRenderRows,
   getEntryRole,
-  getEntryTimestamp,
   isBoundaryEntry,
   isTurnBoundaryEntry,
 } from './agentConversationRows';
@@ -74,14 +73,13 @@ import { IconButton } from '../primitives/IconButton';
 import { AnchoredActionMenu } from '../primitives/AnchoredActionMenu';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
-import { useI18n, useT } from '../../i18n/I18nProvider';
+import { useT } from '../../i18n/I18nProvider';
 
 const TRANSCRIPT_ROW_GAP_PX = 14;
 const TRANSCRIPT_ROW_ESTIMATE_PX = 104;
 const TRANSCRIPT_VIRTUAL_MIN_ROWS = 40;
 const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
 const TRANSCRIPT_JUMP_HIGHLIGHT_MS = 2_200;
-const MESSAGE_TIME_SEPARATOR_GAP_MS = 60 * 60 * 1000;
 
 interface AgentChatPanelProps {
   index: DocumentIndex;
@@ -94,7 +92,23 @@ interface AgentChatPanelProps {
 
 interface PendingTranscriptReveal {
   conversationId: string;
+  deferUntilDockOpen: boolean;
+  reachedTargetConversation: boolean;
   target: AgentChatSourceRevealTarget;
+}
+
+function parseCssTimeMs(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.endsWith('ms')) {
+    const parsed = Number.parseFloat(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (trimmed.endsWith('s')) {
+    const parsed = Number.parseFloat(trimmed);
+    return Number.isFinite(parsed) ? parsed * 1000 : null;
+  }
+  return null;
 }
 
 function shouldStickToBottom(element: HTMLDivElement): boolean {
@@ -130,13 +144,6 @@ function readableConversationTitle(title: string | null | undefined, fallback: s
   const readable = nodeReferenceMarkersToText(title ?? '').replace(/\s+/g, ' ').trim();
   if (!readable || readable === RUNTIME_UNTITLED_SENTINEL) return fallback;
   return readable;
-}
-
-function formatMessageTimeSeparator(timestamp: number, locale: string, today: (input: { time: string }) => string): string {
-  const date = new Date(timestamp);
-  const time = date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-  if (date.toDateString() === new Date().toDateString()) return today({ time });
-  return `${date.toLocaleDateString(locale, { month: 'short', day: 'numeric' })} ${time}`;
 }
 
 interface ConversationRowMenuAction {
@@ -470,7 +477,6 @@ export function AgentChatPanel({
   userViewContext,
 }: AgentChatPanelProps) {
   const t = useT();
-  const { locale } = useI18n();
   const {
     entries,
     error,
@@ -531,6 +537,7 @@ export function AgentChatPanel({
   const agentDefinitionsRequestRef = useRef(0);
   const scrollFrameRef = useRef<number | null>(null);
   const bottomScrollFrameRef = useRef<number | null>(null);
+  const revealAfterDockOpenTimerRef = useRef<number | null>(null);
   const highlightTimerRef = useRef<number | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
   const copyPayloadTextCacheRef = useRef<PayloadTextPromiseCache>(new Map());
@@ -841,8 +848,68 @@ export function AgentChatPanel({
     }, TRANSCRIPT_JUMP_HIGHLIGHT_MS);
   }, [shouldVirtualizeTranscript, updateScrollMetrics, virtualLayout.items]);
 
+  useEffect(() => {
+    if (!pendingTranscriptReveal?.deferUntilDockOpen || !dockOpen || conversationId !== pendingTranscriptReveal.conversationId) {
+      return undefined;
+    }
+
+    const dock = scrollRef.current?.closest<HTMLElement>('.agent-dock') ?? null;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      if (revealAfterDockOpenTimerRef.current !== null) {
+        window.clearTimeout(revealAfterDockOpenTimerRef.current);
+        revealAfterDockOpenTimerRef.current = null;
+      }
+      setPendingTranscriptReveal((current) => (
+        current === pendingTranscriptReveal
+          ? { ...current, deferUntilDockOpen: false }
+          : current
+      ));
+    };
+
+    const fallbackDelay = dock
+      ? (parseCssTimeMs(getComputedStyle(dock).getPropertyValue('--motion-layout-duration')) ?? 160) + 32
+      : 0;
+    revealAfterDockOpenTimerRef.current = window.setTimeout(finish, fallbackDelay);
+
+    const handleTransitionEnd = (event: TransitionEvent) => {
+      if (event.target !== dock) return;
+      if (event.propertyName !== 'transform' && event.propertyName !== 'opacity') return;
+      finish();
+    };
+    dock?.addEventListener('transitionend', handleTransitionEnd);
+
+    return () => {
+      dock?.removeEventListener('transitionend', handleTransitionEnd);
+      if (revealAfterDockOpenTimerRef.current !== null) {
+        window.clearTimeout(revealAfterDockOpenTimerRef.current);
+        revealAfterDockOpenTimerRef.current = null;
+      }
+    };
+  }, [conversationId, dockOpen, pendingTranscriptReveal]);
+
+  useEffect(() => {
+    if (!pendingTranscriptReveal) return;
+    if (conversationId === pendingTranscriptReveal.conversationId) {
+      if (pendingTranscriptReveal.reachedTargetConversation) return;
+      setPendingTranscriptReveal((current) => (
+        current === pendingTranscriptReveal
+          ? { ...current, reachedTargetConversation: true }
+          : current
+      ));
+      return;
+    }
+    if (!pendingTranscriptReveal.reachedTargetConversation) return;
+    setPendingTranscriptReveal((current) => (
+      current === pendingTranscriptReveal ? null : current
+    ));
+  }, [conversationId, pendingTranscriptReveal]);
+
   useLayoutEffect(() => {
     if (!pendingTranscriptReveal || conversationId !== pendingTranscriptReveal.conversationId) return;
+    if (!dockOpen || pendingTranscriptReveal.deferUntilDockOpen) return;
     const target = pendingTranscriptReveal.target;
     const rowIndex = conversationRows.findIndex((row) => conversationRowMatchesChatSource(row, target));
     const blankProjection = revision === `${conversationId}-0-0-0-`;
@@ -873,6 +940,7 @@ export function AgentChatPanel({
     conversationId,
     conversationRows,
     pendingTranscriptReveal,
+    dockOpen,
     revealTranscriptRow,
     revision,
   ]);
@@ -892,6 +960,10 @@ export function AgentChatPanel({
     if (bottomScrollFrameRef.current !== null) {
       window.cancelAnimationFrame(bottomScrollFrameRef.current);
       bottomScrollFrameRef.current = null;
+    }
+    if (revealAfterDockOpenTimerRef.current !== null) {
+      window.clearTimeout(revealAfterDockOpenTimerRef.current);
+      revealAfterDockOpenTimerRef.current = null;
     }
     if (highlightTimerRef.current !== null) {
       window.clearTimeout(highlightTimerRef.current);
@@ -933,6 +1005,8 @@ export function AgentChatPanel({
     if (options.transcriptTarget) {
       setPendingTranscriptReveal({
         conversationId: targetConversationId,
+        deferUntilDockOpen: !dockOpenRef.current,
+        reachedTargetConversation: false,
         target: options.transcriptTarget,
       });
     }
@@ -1366,12 +1440,8 @@ export function AgentChatPanel({
             {visibleConversationRows.map((row, offset) => {
               const rowIndex = virtualRange.start + offset;
               const item = virtualLayout.items[rowIndex];
-              const previousRow = rowIndex > 0 ? conversationRows[rowIndex - 1] : undefined;
               const rowHighlighted = highlightedTranscriptRowKey === row.key;
               const renderedRow = renderConversationRow(row, rowHighlighted);
-              const showTimeSeparator = previousRow
-                ? getEntryTimestamp(row.entry) - getEntryTimestamp(previousRow.entry) > MESSAGE_TIME_SEPARATOR_GAP_MS
-                : false;
               return (
                 <AgentTranscriptRowShell
                   highlighted={rowHighlighted}
@@ -1383,11 +1453,6 @@ export function AgentChatPanel({
                     : undefined}
                   virtualized={shouldVirtualizeTranscript}
                 >
-                  {showTimeSeparator ? (
-                    <div className="agent-message-time-separator">
-                      <span>{formatMessageTimeSeparator(getEntryTimestamp(row.entry), locale, t.agent.message.timeSeparatorToday)}</span>
-                    </div>
-                  ) : null}
                   {renderedRow}
                 </AgentTranscriptRowShell>
               );

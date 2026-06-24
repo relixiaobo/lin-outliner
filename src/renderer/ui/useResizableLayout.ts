@@ -9,6 +9,7 @@ import {
   MIN_AGENT_WIDTH,
   MIN_SIDEBAR_WIDTH,
   availablePanelWidth,
+  clampAgentRailForPanelFloor,
   clampRailWidthsForPanelFloor,
   clampRailWidthsToLimits,
   panelCountFitsAtMinimumRails,
@@ -84,6 +85,8 @@ export function useResizableLayout({
   const preferredRailsRef = useRef(preferredRails);
   const renderedRailsRef = useRef(renderedRails);
   const railOpenRef = useRef({ sidebarOpen, agentOpen });
+  const previousAgentOpenRef = useRef(agentOpen);
+  const previousSidebarOpenRef = useRef(sidebarOpen);
   const panelCount = Math.max(1, panels.length);
   const panelCountRef = useRef(panelCount);
 
@@ -166,9 +169,23 @@ export function useResizableLayout({
     return panelCountFitsAtMinimumRails(metrics, rails, clampedPanelCount);
   }, [commitRenderedRails, railStateFrom]);
 
+  const reflowForAgentOpen = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      commitRenderedRails(preferredRailsRef.current);
+      return;
+    }
+    const metrics = workspaceLayoutMetricsFromCanvas(canvas);
+    commitRenderedRails(clampAgentRailForPanelFloor(
+      metrics,
+      railStateFrom(preferredRailsRef.current, { agentOpen: true }),
+      panelCountRef.current,
+    ));
+  }, [commitRenderedRails, railStateFrom]);
+
   const prepareAgentOpen = useCallback(() => {
-    reflowRailsForPanelCount(panelCountRef.current, { agentOpen: true });
-  }, [reflowRailsForPanelCount]);
+    reflowForAgentOpen();
+  }, [reflowForAgentOpen]);
 
   useLayoutEffect(() => {
     let frame = 0;
@@ -189,8 +206,16 @@ export function useResizableLayout({
   }, [reflowRailsForPanelCount]);
 
   useLayoutEffect(() => {
+    const agentJustOpened = agentOpen && !previousAgentOpenRef.current;
+    const sidebarChanged = sidebarOpen !== previousSidebarOpenRef.current;
+    previousAgentOpenRef.current = agentOpen;
+    previousSidebarOpenRef.current = sidebarOpen;
+    if (agentJustOpened && !sidebarChanged) {
+      reflowForAgentOpen();
+      return;
+    }
     reflowRailsForPanelCount(panelCount);
-  }, [agentOpen, panelCount, reflowRailsForPanelCount, sidebarOpen]);
+  }, [agentOpen, panelCount, reflowForAgentOpen, reflowRailsForPanelCount, sidebarOpen]);
 
   const beginRailResize = useCallback((kind: RailKind, event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();

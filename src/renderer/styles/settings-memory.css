@@ -42,7 +42,7 @@
   padding: var(--space-3) var(--space-4);
 }
 
-.settings-memory-editor:focus-visible {
+:root[data-input-modality="keyboard"] .settings-memory-editor:focus-visible {
   outline: none;
   box-shadow: var(--outline-focus);
 }
