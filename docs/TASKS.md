@@ -478,6 +478,24 @@ anything.
 
 ## Recently completed
 
+- **response-run-details-pane** (`codex/agent-response-detail-pane`, PR #325, codex, merged 2026-06-24) —
+  reworks the assistant-reply **Run Details** into a run-scoped pane on the **shared pane chrome** (sticky
+  breadcrumb / close / content shell), drops the manual refresh button (still event-driven), and reorganizes
+  into **Summary / Model Input / Execution**. Model Input is split into system prompt / tools / history /
+  current request from the **captured provider payloads**; Execution is a flat expandable call list in
+  provider output order. Adds a shared `AgentUsageBreakdown` (reply + call usage hovers) and a shared
+  read-only `CodeBlockSurface` reused across agent markdown, tool rows, Run Details, transcript messages,
+  and outliner code rows. **Gate (main):** `/code-review high` (10 findings) → codex fix `f912835c`:
+  disclosure no longer collapses on live count change, snapshot dedupe stops per-round event bloat (messages
+  captured once), narrow-window info button falls back to the inline popover, code blocks highlight lazily on
+  expand, the no-`user`-row model-input split now labels the whole window as the current request, the
+  `[tool_result …]` prefix contract is shared via `agentDebugProtocol`, and `DebugMetric` /
+  `truncate` / `formatDuration` / usage-breakdown duplication removed. At merge: resolved a conflict in
+  `outlinerMock.ts` (kept both `defaultDreamChannelId` + `debugUsageFixture` fixtures) and a semantic
+  conflict in `agentRuntime.ts` (main relocated the native-PDF rewrite out of the `onPayload` callback, so
+  the snapshot now captures from `payload`). Verified: typecheck clean, `test:core` 1064/0, `docs:check` OK,
+  e2e `agent-debug-panel`/`outliner-code-block`/`agent-process` 26/0. Spec synced: `agent-event-log-rendering`,
+  `workspace-layout`, `commands`, `i18n`. Fast-track, **shape (a)** one PR, *no plan file*.
 - **file-ingestion-derived-cache** (`codex-3/file-ingestion-derived-cache`, PR #327, codex-3, merged
   2026-06-24) — a fast-track follow-up to #326: memoizes successful runtime extractions (MarkItDown
   rich-doc → Markdown, PDF `pdfinfo`/`pdftotext` metadata+text) in a small in-process **LRU cache**

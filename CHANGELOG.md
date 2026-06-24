@@ -12,6 +12,26 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Response Run Details pane reworked + shared read-only code blocks (PR #325, codex)** — the assistant
+  reply info button now opens a **run-scoped** Run Details pane (one concrete response run; an already-open
+  pane retargets when another reply's info button is clicked, and falls back to the inline details popover
+  when the workspace can't fit a pane). Run Details moves onto the **shared pane chrome** (same sticky
+  breadcrumb / close alignment / content shell as node and file panes), drops the manual refresh button
+  (still refreshes from runtime events), and reorganizes into **Summary / Model Input / Execution**. Model
+  Input splits into system prompt, tools, history, and current request from the **captured provider
+  payloads** (what was actually sent); Execution is a flat expandable call list in provider output order
+  (thinking, assistant text, tool calls, tool results). Reply and call usage hovers now share one
+  `AgentUsageBreakdown` (token rows + total cost + cached share), and a shared read-only `CodeBlockSurface`
+  backs agent markdown, tool rows, Run Details, transcript messages, and outliner code rows. **Gate
+  (main):** `/code-review high` (10 findings) → codex fix `f912835c`: disclosure no longer collapses on
+  live count change (reset keyed on run id), debug snapshot stops re-emitting per provider round (messages
+  captured once, excluded from the dedupe hash), narrow-window info button falls back to the inline
+  popover, code blocks highlight lazily on expand, the no-`user`-row model-input split now labels the
+  whole window as the current request, the `[tool_result …]` prefix contract moved to a shared
+  `agentDebugProtocol` helper, and the usage-breakdown + `DebugMetric`/`truncate`/`formatDuration`
+  duplication was removed. Verified: typecheck clean, `test:core` 1064/0, `docs:check` OK, e2e
+  `agent-debug-panel` + `outliner-code-block` + `agent-process` 26/0. Spec synced:
+  `agent-event-log-rendering`, `workspace-layout`, `commands`, `i18n`.
 - **`file_read` is now a provider-neutral runtime ingestion boundary (PR #326, codex-3)** — reverses the
   native-PDF payload approach from PR #322 (above): `src/main/agentNativePdfPayloads.ts` and the
   `nativePdfRead` plumbing are removed, so no provider-native PDF blocks or raw PDF bytes/base64 are sent
