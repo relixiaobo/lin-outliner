@@ -50,6 +50,8 @@ export interface AgentMessageEntry {
   actor: AgentActor | null;
   /** Run that produced this message, when known. */
   runId: string | null;
+  /** Aggregated usage for the producing run; falls back to message usage when unavailable. */
+  runUsage?: Usage;
   /** First event seq that represents this message as source evidence. */
   sourceSeq?: number;
   /** Every event seq that represents this message as source evidence. */
@@ -295,6 +297,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       streaming,
       actor: entity.actor,
       runId: entity.runId ?? null,
+      runUsage: entity.runUsage,
       sourceSeq: entity.sourceSeq,
       sourceSeqs: entity.sourceSeqs?.slice(),
       toolCallOutcomes: toolCallOutcomesFromEntity(entity),
@@ -360,6 +363,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       streaming: true,
       actor: null,
       runId: null,
+      runUsage: undefined,
       runDurationMs: null,
       // No assistant entity yet → no run record; anchor the live "Working for {t}"
       // ticker to the turn-start timestamp (last user message) until the real

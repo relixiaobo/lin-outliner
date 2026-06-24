@@ -140,20 +140,25 @@ test.describe('code block editor', () => {
       const sizer = block?.querySelector<HTMLElement>('.code-block-sizer');
       const textareaRect = ta.getBoundingClientRect();
       const blockRect = block?.getBoundingClientRect();
+      const blockStyle = block ? getComputedStyle(block) : null;
       return {
         bottomInset: blockRect ? blockRect.bottom - textareaRect.bottom : Number.POSITIVE_INFINITY,
+        blockHasFocusRing: Boolean(blockStyle && blockStyle.boxShadow !== 'none'),
         insetLeft: blockRect ? textareaRect.left - blockRect.left : 0,
         lines: ta.value.split('\n').length,
         scrollbarGutter: sizer ? Number.parseFloat(getComputedStyle(sizer).paddingBottom) : 0,
         scrollWidth: ta.scrollWidth,
         clientWidth: ta.clientWidth,
+        textareaHasFocusRing: getComputedStyle(ta).boxShadow !== 'none',
         whiteSpace: getComputedStyle(ta).whiteSpace,
       };
     });
     expect(metrics.bottomInset).toBeLessThanOrEqual(4);
+    expect(metrics.blockHasFocusRing).toBe(true);
     expect(metrics.insetLeft).toBeGreaterThanOrEqual(8);
     expect(metrics.lines).toBe(1);
     expect(metrics.scrollbarGutter).toBeGreaterThanOrEqual(7);
+    expect(metrics.textareaHasFocusRing).toBe(false);
     expect(metrics.whiteSpace).toBe('pre');
     expect(metrics.scrollWidth).toBeGreaterThan(metrics.clientWidth);
   });

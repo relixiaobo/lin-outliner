@@ -24,6 +24,7 @@ import {
   FileTextIcon,
   FolderIcon,
   ICON_SIZE,
+  InfoIcon,
   PencilIcon,
   RedoIcon,
   StopIcon,
@@ -60,6 +61,7 @@ import {
   nearestScrollContainer,
   usePendingDisclosureAnchor,
 } from '../interactions/disclosureScrollAnchor';
+import { AgentUsageHoverCard, formatUsageCostValue } from './AgentUsageBreakdown';
 
 const USER_MESSAGE_COLLAPSED_LINES = 5;
 const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
@@ -84,6 +86,7 @@ interface AgentMessageRowProps {
   onRetry?: (nodeId: string) => void | Promise<void>;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onOpenChildRunTranscript?: (childRunId: string) => void;
+  onOpenRunDetails?: (runId: string) => boolean | void;
   onDisclosureToggle?: () => void;
   onSwitchBranch?: (nodeId: string) => void | Promise<void>;
   pendingToolCallIds: ReadonlySet<string>;
@@ -351,6 +354,7 @@ function AgentMessageDetailsPopover({
   const detailsRef = useRef<HTMLDivElement | null>(null);
   const providerModel = message.role === 'assistant' ? providerModelSummary(message) : null;
   const tokens = message.role === 'assistant' ? usageSummary(message, t.agent.message.tokenLabels) : null;
+  const cost = message.role === 'assistant' ? formatUsageCostValue(message.usage.cost?.total) : null;
 
   useEffect(() => {
     function onPointerDown(event: PointerEvent) {
@@ -391,6 +395,12 @@ function AgentMessageDetailsPopover({
           <div>
             <dt>{t.agent.message.tokens}</dt>
             <dd>{tokens}</dd>
+          </div>
+        ) : null}
+        {cost ? (
+          <div>
+            <dt>{t.agent.message.cost}</dt>
+            <dd>{cost}</dd>
           </div>
         ) : null}
       </dl>
@@ -478,6 +488,7 @@ function AgentMessageRowComponent({
   onRetry,
   onNodeReferenceOpen,
   onOpenChildRunTranscript,
+  onOpenRunDetails,
   onDisclosureToggle,
   onSwitchBranch,
   pendingToolCallIds,
@@ -496,6 +507,8 @@ function AgentMessageRowComponent({
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [usageHoverOpen, setUsageHoverOpen] = useState(false);
+  const detailsButtonRef = useRef<HTMLButtonElement | null>(null);
   // Disclosure (process fold + inner tool/reasoning) expand state. A row in a
   // conversation reads from the persisted per-conversation store so a user's
   // expand/collapse survives reload, conversation switch, and the streaming→sealed
@@ -719,6 +732,7 @@ function AgentMessageRowComponent({
   const copyText = textFromAssistant(message);
   const CopyStateIcon = copied ? CheckIcon : CopyIcon;
   const assistantContentKey = contentKey ?? nodeId ?? entry.id;
+  const usageForHover = entry.runUsage ?? message.usage;
   const assistantBlocks = renderAssistantBlocks(
     message,
     assistantContentKey,
@@ -739,7 +753,14 @@ function AgentMessageRowComponent({
     entry.toolCallOutcomes,
   );
   const showToolbar = nodeId !== null && !turnActive && isLastInTurn;
-
+  const openAssistantDetails = () => {
+    setUsageHoverOpen(false);
+    if (entry.runId && onOpenRunDetails) {
+      const opened = onOpenRunDetails(entry.runId);
+      if (opened !== false) return;
+    }
+    setDetailsOpen(true);
+  };
   // A sealed assistant turn whose only content was a child run spawn renders no
   // blocks (the run is shown as the boundary that follows) — skip the empty bubble
   // entirely rather than leave a blank frame.
@@ -804,6 +825,22 @@ function AgentMessageRowComponent({
               disabled={actionsDisabled}
               onSwitchBranch={onSwitchBranch}
             />
+            <IconButton
+              className="agent-message-action-button"
+              icon={InfoIcon}
+              label={t.agent.message.details}
+              onBlur={() => setUsageHoverOpen(false)}
+              onClick={openAssistantDetails}
+              onFocus={() => setUsageHoverOpen(true)}
+              onMouseEnter={() => setUsageHoverOpen(true)}
+              onMouseLeave={() => setUsageHoverOpen(false)}
+              ref={detailsButtonRef}
+              title=""
+              variant="message"
+            />
+            {usageHoverOpen ? (
+              <AgentUsageHoverCard anchorRef={detailsButtonRef} usage={usageForHover} />
+            ) : null}
           </AgentMessageActions>
         ) : null}
         {detailsOpen ? (
@@ -847,6 +884,7 @@ function sameMessageEntry(left: AgentMessageEntry, right: AgentMessageEntry): bo
     && left.streaming === right.streaming
     && left.actor === right.actor
     && left.runId === right.runId
+    && left.runUsage === right.runUsage
     && left.runDurationMs === right.runDurationMs
     && left.runStartedAtMs === right.runStartedAtMs
     && left.turnInterrupted === right.turnInterrupted

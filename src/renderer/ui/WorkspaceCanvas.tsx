@@ -112,7 +112,14 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
                 ui={props.ui}
               />
             ) : panel.type === 'agent-debug' ? (
-              <AgentDebugPanel conversationId={panel.conversationId} />
+              <AgentDebugPanel
+                canGoBack={false}
+                conversationId={panel.conversationId}
+                onBack={() => undefined}
+                onClose={() => props.onClosePanel(panel.id)}
+                runId={panel.runId}
+                showClose={activePanels.length > 1}
+              />
             ) : (
               null
             )}

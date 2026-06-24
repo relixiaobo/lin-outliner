@@ -562,22 +562,10 @@
 }
 
 .agent-tool-call-copy:hover:not(:disabled) {
-  background: var(--control-hover);
   color: var(--text-strong);
 }
 
 .agent-tool-call-copy:disabled {
   cursor: default;
   opacity: 0.4;
-}
-
-.agent-tool-call-section pre {
-  max-height: 220px;
-  overflow: auto;
-  margin: 0;
-  color: var(--text-soft);
-  font: inherit;
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
-  white-space: pre-wrap;
 }

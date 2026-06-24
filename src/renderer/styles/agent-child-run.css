@@ -484,8 +484,6 @@
   text-transform: lowercase;
 }
 
-.agent-transcript-tool-result-row pre,
-.agent-child-run-result-box pre,
 .agent-pov-inspector-part pre {
   max-height: 280px;
   overflow: auto;
@@ -681,31 +679,8 @@
   opacity: 0.5;
 }
 
-.agent-tool-persisted-output pre {
-  max-height: 280px;
-  content-visibility: auto;
-}
-
-/* Highlighted JSON for tool input/output. Flattened to render directly on the
-   panel surface — no inner frame — so a tool call's Input/Output read as one
-   card, not nested cards (design-system "density without noise"). The Shiki
-   <pre> owns scrolling and code metrics; it sits flush-left under its label,
-   matching the frameless plain-text <pre> output. */
 .agent-tool-code {
   min-width: 0;
-}
-
-.agent-tool-code pre.shiki {
-  margin: 0;
-  max-height: 280px;
-  overflow: auto;
-  font-family: var(--font-family-mono);
-  font-size: var(--font-code-block);
-  line-height: var(--line-code-block);
-  white-space: pre;
-  tab-size: 2;
-  background: transparent !important;
-  color: var(--text-strong);
 }
 
 .agent-tool-image-list {

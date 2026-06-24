@@ -1216,14 +1216,84 @@ Rules:
 
 ### Debug projection (run-grounded — [[agent-debug-run-grounded]])
 
-The debug surface is a read-only **view of the execution tree**:
-`conversation → runs (per agent) → rounds → request-window / response /
-tool-exchange`, derived from the run ledgers that are already the system's truth,
-plus the few conversation-stream events a run's own ledger structurally lacks.
+The run-details surface is a read-only **view of one concrete run**. It is opened
+with `(conversationId, runId)` from a specific assistant reply, then loads that
+run through `agent_debug_run`; it does not render the old conversation-level
+debug timeline or a selector over every run in the conversation. Its pane chrome
+uses the shared pane breadcrumb/close layout used by node and file panes. The
+projection is loaded on open and refreshed from agent runtime events; there is no
+separate manual refresh button in the pane toolbar.
 
-**The unit is the round** = one provider call = `(request, response)`, bounded by
-`assistant_message.started` (always present, independent of any wire capture).
-Walking a run's own stream in order yields its rounds: each `assistant_message.started`
+The pane groups the run projection by inspection task:
+
+```txt
+run
+  modelInput
+    system/developer prompt
+    tool definitions
+    initial request messages
+  execution[]
+    responseParts[]
+    toolExchanges[]
+    usage
+```
+
+The run detail is ordered for inspection:
+
+1. **Run summary** — a flat overview of compact diagnostic facts: model/provider,
+   duration with the start/end range, model/tool-call counts, input-context
+   tokens, output tokens, cached share, aggregate cost, and non-default status
+   only when the run is not completed. It is not a nested metrics card, and it
+   does not surface agent kind or raw identifiers (`runId`, `agentId`, parent ids)
+   as primary content.
+2. **Model Input** — the input side that seeded this run: system/developer
+   instructions, tool definitions/schemas, and the captured provider message
+   window (history/current user/file context, or the compacted summary message if
+   compaction already replaced older history) from the final outbound provider
+   request, normalized for display. The message window is presented as direct
+   sibling sections: `History` (messages before the final outbound user message)
+   and `Current request` (that user message and its attached reminder/file/text
+   parts), preserving provider order inside each slice. Model Input uses one
+   disclosure-row grammar throughout: top-level items show only their label and
+   count, messages provide scoped one-line summaries, and rows use short labels
+   such as `user`, `asst`, `call`, and `result` instead of exposing transport
+   roles. Each part can expand into the full body. The section renders these
+   disclosures directly rather than wrapping them in an additional frame.
+3. **Execution** — the execution side. Each rendered item is a provider call
+   (internally, one debug `round`: one provider request/response). The visible
+   header labels it as `Call N`, hides the default completed state, and keeps
+   only non-default status plus an `Info` affordance. Each call is a collapsible
+   disclosure, default-open. The `Info` hover uses the same token/cost breakdown
+   format as the assistant-reply hover, scoped to that provider call. The body is
+   a flat, expandable call-event list using the same row grammar as Model Input:
+   a short semantic label (`think`, `asst`, `call`, `result`) plus a one-line
+   summary, followed by the expandable full body. Tool result
+   rows use the same part-disclosure control as the rest of the pane, and orphan
+   tool calls are synthesized from the exchange args only when the provider
+   response did not capture the original tool call.
+   Calls render as a lightweight disclosure list directly under the Execution
+   header; each `Call N` header uses the same top-level disclosure row hierarchy
+   as `System prompt` / `Tools` / `History` / `Current request`, with subtle
+   dividers rather than separate cards. The run summary carries the main
+   token/cost readout.
+
+The chat transcript exposes this through an assistant-message **Details** icon
+button that uses the `Info` glyph. Hovering it previews the whole run's token and
+cost summary, not merely the final provider call's usage. Call-level usage is
+shown only on each **Execution → Call N** info hover. Both previews include cached
+share when cache activity exists. Cached share is derived from the normalized
+usage as `cacheRead / (input + cacheRead + cacheWrite)` so it describes the
+portion of this input context served from cache, not provider-specific cache-hit
+semantics; clicking opens a run-details pane keyed by that reply's
+`runId`. If the same run pane already exists, it is activated; opening a
+different reply opens or repurposes a pane for that different `(conversationId,
+runId)`. There is no standalone/global debug entry in the agent dock.
+
+The internal debug unit is `round` = one provider call = `(request, response)`,
+bounded by `assistant_message.started` (always present, independent of any wire
+capture). `round` is not a user-facing agent concept; the UI labels it as a
+**Call** inside **Execution**. Walking a run's own stream in order yields
+its rounds: each `assistant_message.started`
 opens a round, its `.completed` closes the response (content / usage / stopReason
 from the ledger), and the intervening `tool_result.created` (and `tool_result.replaced`,
 which records what the model saw after output slimming) are that round's tool
@@ -1246,10 +1316,12 @@ CONVERSATION stream (appended with no runId) and are spliced in at derivation:
   which run did the slimming. A replacement matching no call in a run is dropped;
   only a `tool_result.created` may OPEN an exchange (never an empty-named phantom).
 
-A round renders the *new* context entering it (the triggering / prior tool-result
-messages), not the whole growing history. Rounds begin only after the run's own
-`run.started`, so a child run's inherited fork prefix is folded into the first
-round's window as context rather than counted as rounds.
+A round stores the *new* context entering that provider call (the triggering /
+prior tool-result messages), not the whole growing history. This `requestWindow`
+is an internal derivation aid for the execution tree; **Model Input** is sourced
+from the captured provider payload's full message window. Rounds begin only after
+the run's own `run.started`, so a child run's inherited fork prefix is folded into
+the first round's internal window rather than counted as a model call.
 
 **Everything rendered is redacted.** The surface is read-only but on screen, so
 every string passes the shared `agentSecretRedaction` gate before display:
@@ -1260,19 +1332,26 @@ thinking, and the per-run system prompt + tool schemas alike.
 
 **Capture (the only additive writes).** The semantic tree is already in the
 ledger; one gap is filled: a per-run `debug.run_snapshot.created` event carries the
-run's outbound **system prompt + tool schemas**, captured once per run from
-`onPayload`, deduped on an in-memory content hash (re-emitted only on a real change;
-the hash is recorded only **after** the append succeeds, so a swallowed write never
-poisons the dedupe — and never persisted on the event, which no reader needs). It is
-replay-neutral. The system prompt is read tolerantly across providers: a top-level
-`system` / `instructions` (Anthropic) **and** a `system` / `developer` role message
-folded into `input` / `messages` (the OpenAI responses / completions shape).
+run's outbound **system prompt + tool schemas + model input message window** from
+the final provider payload after transport-specific rewriting, deduped on an
+in-memory content hash (re-emitted only on a real provider-request shape change;
+the hash is recorded only **after** the append succeeds, so a swallowed write
+never poisons the dedupe — and never persisted on the event, which no reader
+needs). It is replay-neutral. The detail view reads system/tool metadata from the
+latest snapshot, but **Model Input** uses the first captured non-empty message
+window so later tool-result calls do not overwrite the run's entry context. File
+parts are normalized to file placeholders for display instead of expanding inline
+file data. The system prompt is read tolerantly across providers: a
+top-level `system` / `instructions` (Anthropic) **and** a `system` / `developer`
+role message folded into `input` / `messages` (the OpenAI responses / completions
+shape).
 (Delegation/child request-context capture — plumbing the child run id through the
 delegation agent's payload callback — per-ROUND snapshot attribution when the
 system/tools change mid-run, and per-round transport metadata + a gated byte-exact
 wire disclosure are scoped follow-ups, deliberately **not** pre-modeled in the type;
-the view degrades gracefully to no system prompt / empty tools when a snapshot is
-absent, and a run shows its latest snapshot.)
+the view degrades gracefully to no system prompt / empty tools / legacy
+request-window messages when a snapshot is absent. Legacy message fallback is
+explicitly labelled in the UI because it is not the full provider input window.)
 
 **Read model + IPC.**
 
@@ -1304,9 +1383,11 @@ absent, and a run shows its latest snapshot.)
   alike — the seq convention is irrelevant to a single-stream walk.
 
 The pure derivation lives in `src/main/agentDebugView.ts`; the renderer
-`DebugTimeline` (`AgentDebugPanel.tsx`) renders every conversation with one view
-(single-agent, members `{user, Neva}`), attributes each run to its agent, nests
-delegated runs under their parent, and lazily loads each run's detail on expand.
+`AgentDebugPanel.tsx` renders every conversation with one run list (single-agent,
+members `{user, Neva}`), attributes each run to its agent, and eagerly loads the
+currently selected run detail. It re-fetches the selected detail when the run shape
+advances so in-flight usage and rounds stay live without subscribing React to raw
+token events.
 
 It must not:
 

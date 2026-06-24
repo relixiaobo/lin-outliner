@@ -237,6 +237,13 @@ export interface AgentDebugUsage {
   cacheWrite: number;
   totalTokens: number;
   costUsd: number;
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
 }
 
 export interface AgentDebugTotals extends AgentDebugUsage {
@@ -297,6 +304,10 @@ export interface AgentDebugRun {
   systemPrompt: string | null;
   /** The agent's tool schemas for this run (per-run snapshot), if captured. */
   tools: AgentDebugToolEntry[];
+  /** The actual model input messages captured from the provider request payload. */
+  modelInputMessages: AgentDebugMessageRow[];
+  /** Whether Model Input messages came from the provider payload or a legacy derived fallback. */
+  modelInputMessagesSource: 'captured' | 'legacyRequestWindow';
   rounds: AgentDebugRound[];
 }
 

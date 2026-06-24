@@ -200,6 +200,7 @@ interface WorkspaceContentPanelState extends WorkspacePanelBase {
 interface AgentDebugPanelState extends WorkspacePanelBase {
   type: 'agent-debug';
   conversationId: string | null;
+  runId: string | null;
 }
 
 type WorkspacePanelState = WorkspaceContentPanelState | AgentDebugPanelState;
@@ -467,6 +468,12 @@ Rules:
   (rightmost first) rather than adding another pane. Agent-debug panes are added
   only when the resulting count fits; a too-narrow window reports the capacity
   failure and does not drop an existing workspace pane just to show debug chrome.
+- Opening run details from an assistant reply opens an agent-debug pane keyed by
+  that concrete `(conversationId, runId)`. If that same run pane already exists it
+  is activated; a different reply/run is a different details target. The agent
+  dock does not expose a standalone debug button; details are opened from a
+  concrete assistant reply. The agent-debug pane uses the same sticky breadcrumb /
+  close chrome as node and file panes so pane headers align across the workspace.
 - Closing a pane removes it from the layout. If it was active, focus moves to the
   nearest remaining pane, and clears when that pane is an agent-debug pane (which
   carries no node to focus).

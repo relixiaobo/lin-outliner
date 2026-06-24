@@ -51,6 +51,22 @@ interface MockFixtureOptions {
   permissionSoftBlockAllows?: string[];
 }
 
+const DEBUG_USAGE = {
+  input: 12000,
+  output: 420,
+  cacheRead: 48000,
+  cacheWrite: 6000,
+  totalTokens: 66420,
+  costUsd: 0.0005,
+  cost: {
+    input: 0.00012,
+    output: 0.0002,
+    cacheRead: 0.00008,
+    cacheWrite: 0.0001,
+    total: 0.0005,
+  },
+};
+
 type E2EWindow = Window & {
   __LIN_E2E__?: {
     calls: Array<{ cmd: string; args: Record<string, unknown> }>;
@@ -168,7 +184,7 @@ export function e2eChatSourceInlineRef(
 }
 
 export async function installElectronMock(page: Page, options: MockFixtureOptions = {}) {
-  await page.addInitScript(({ ids, options, defaultDreamChannelId, generalChannelId }) => {
+  await page.addInitScript(({ ids, options, defaultDreamChannelId, generalChannelId, debugUsageFixture }) => {
     type ReferenceTarget =
       | { kind: 'node'; nodeId: string }
       | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' }
@@ -513,14 +529,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         maxTurns: null,
       },
     ];
-    const debugUsage = {
-      input: 12000,
-      output: 420,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 12420,
-      costUsd: 0.0005,
-    };
+    const debugUsage = debugUsageFixture;
     // Replayed transcript for the delegated run's own ledger — served whole by
     // `agent_child_run_transcript` (the payload-pinned snapshot is gone).
     const childRunTranscriptMessages = [
@@ -587,9 +596,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           content: [{ type: 'text', text: 'The child run finished inspecting the UI.' }],
         },
       ];
-    // Run-grounded debug view ([[agent-debug-run-grounded]]): the conversation
-    // tree (a single DM turn run) + that run's full detail, served by
-    // agent_debug_view / agent_debug_run.
+    // Run Details fixture: the reply Details button opens this concrete run via
+    // agent_debug_run. agent_debug_view remains mocked for older tests but is not
+    // used by the run-details pane.
     const debugRunSummary = {
       runId: 'mock-run-1',
       agentId: MAIN_AGENT_ID,
@@ -616,15 +625,42 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       shape: 'channel',
       members: [MAIN_AGENT_ID, USER_AGENT_ID, REVIEWER_AGENT_ID],
     };
+    const longToolCallId = 'call_hY7YSWjtewOewQfepRMCajzMlfc_00128e64f08e3fd6016a3a61cb0a9c8197a9c011';
+    const deniedToolCallId = 'call_denied_tool_00128e64f08e3fd6016a3a61cb0a9c8197a9c012';
+    const deniedToolResult = '{"ok":false,"tool":"bash","status":"denied","error":{"code":"permission_denied","message":"User denied permission. The requested tool call was not executed."}}';
     const debugRun = {
       ...debugRunSummary,
-      systemPrompt: 'You are Lin agent.',
+      systemPrompt: 'You are Lin agent.\nLong unbroken diagnostic prompt segment: abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789.',
       tools: [{
         name: 'node_read',
         description: 'Read node context',
         schema: '{"type":"object","properties":{"nodeId":{"type":"string"}}}',
         bytes: 58,
       }],
+      modelInputMessages: [
+        {
+          id: 'model-input-1',
+          role: 'user',
+          summary: 'user: Generate a PPT about Fable 5.',
+          bytes: 40,
+          parts: [{ kind: 'text', body: 'Generate a PPT about Fable 5.', isReminder: false }],
+        },
+        {
+          id: 'model-input-2',
+          role: 'assistant',
+          summary: 'assistant: PPT generated.',
+          bytes: 36,
+          parts: [{ kind: 'text', body: 'PPT generated with 11 slides.', isReminder: false }],
+        },
+        {
+          id: 'model-input-3',
+          role: 'user',
+          summary: 'user: Summarize current outline.',
+          bytes: 56,
+          parts: [{ kind: 'text', body: 'Summarize current outline.', isReminder: false }],
+        },
+      ],
+      modelInputMessagesSource: 'captured',
       rounds: [{
         index: 0,
         messageId: 'a1',
@@ -640,12 +676,16 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }],
         responseParts: [
           { kind: 'thinking', body: 'Identify relevant outline nodes.' },
-          { kind: 'toolCall', name: 'bash', toolUseId: 'tool-1', body: '{"command":"git push origin main"}' },
+          { kind: 'toolCall', name: 'bash', toolUseId: longToolCallId, body: '{"command":"git push origin main"}' },
           { kind: 'text', body: 'Current outline focuses on UI work.', isReminder: false },
+          { kind: 'toolCall', name: 'bash', toolUseId: deniedToolCallId, body: '{"command":"git push --force origin main"}' },
         ],
         stopReason: 'stop',
         usage: debugUsage,
-        toolExchanges: [{ toolCallId: 'tool-1', toolName: 'bash', args: '{"command":"git push origin main"}', result: 'Pushed to origin/main.', isError: false }],
+        toolExchanges: [
+          { toolCallId: longToolCallId, toolName: 'bash', args: '{"command":"git push origin main"}', result: 'Pushed to origin/main.', isError: false },
+          { toolCallId: deniedToolCallId, toolName: 'bash', args: '{"command":"git push --force origin main"}', result: deniedToolResult, isError: true },
+        ],
         startedAt: 1_799_999_999_800,
         completedAt: 1_800_000_000_000,
       }],
@@ -3042,7 +3082,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         };
       },
     };
-  }, { ids, options, defaultDreamChannelId: DEFAULT_DREAM_CHANNEL_ID, generalChannelId: DEFAULT_GENERAL_CHANNEL_ID });
+  }, { ids, options, defaultDreamChannelId: DEFAULT_DREAM_CHANNEL_ID, generalChannelId: DEFAULT_GENERAL_CHANNEL_ID, debugUsageFixture: DEBUG_USAGE });
 }
 
 export function row(page: Page, id: string) {
@@ -3217,6 +3257,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       providerId: message.provider,
       modelId: message.model,
       runId: entry.runId ?? message.runId,
+      runUsage: entry.runUsage ?? message.runUsage,
       runDurationMs: entry.runDurationMs ?? message.runDurationMs,
       turnInterrupted: entry.turnInterrupted ?? message.turnInterrupted,
       stopReason: message.stopReason,
@@ -3394,6 +3435,71 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
     },
     timestamp: Date.now(),
   });
+}
+
+export async function openMockRunDetailsFromAssistantDetailsButton(
+  page: Page,
+  replyText = 'Open the details pane from this response.',
+  options: { openDetails?: boolean } = {},
+) {
+  await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
+    conversationTitle: 'General',
+    members: [
+      { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+      {
+        principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        mention: 'assistant',
+        displayName: 'Neva',
+        coordinator: true,
+      },
+    ],
+    model: { id: 'gpt-5.4', provider: 'openai' },
+    conversation: [
+      {
+        nodeId: 'agent-user-more-details',
+        actor: { type: 'user', userId: 'local-user' },
+        message: {
+          role: 'user',
+          timestamp: 1_800_000_000_000,
+          content: [{ type: 'text', text: 'Summarize current outline.' }],
+        },
+      },
+      {
+        nodeId: 'assistant-more-details',
+        runId: 'mock-run-1',
+        actor: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        message: {
+          role: 'assistant',
+          timestamp: 1_800_000_000_100,
+          api: 'openai-completions',
+          provider: 'openai',
+          model: 'gpt-5.4',
+          usage: {
+            input: 2499,
+            output: 92,
+            cacheRead: 19968,
+            cacheWrite: 0,
+            totalTokens: 22559,
+            cost: {
+              input: 0.0125,
+              output: 0.00276,
+              cacheRead: 0.00998,
+              cacheWrite: 0,
+              total: 0.0252,
+            },
+          },
+          runUsage: DEBUG_USAGE,
+          stopReason: 'stop',
+          content: [{ type: 'text', text: replyText }],
+        },
+      },
+    ],
+  });
+
+  const row = page.locator('.agent-message-row.assistant', { hasText: replyText });
+  await row.hover();
+  if (options.openDetails === false) return;
+  await row.getByRole('button', { name: 'Details' }).click();
 }
 
 export async function emitDocumentEvent(page: Page, event: unknown) {

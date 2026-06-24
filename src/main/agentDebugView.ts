@@ -13,7 +13,8 @@ import type {
   AgentDebugUsage,
   Usage,
 } from '../core/agentTypes';
-import type { AgentEvent, AgentPersistedContent, DebugRunToolSchema } from '../core/agentEventLog';
+import { formatAgentDebugToolResultText } from '../core/agentDebugProtocol';
+import type { AgentEvent, AgentPersistedContent, DebugRunModelInputMessage, DebugRunToolSchema } from '../core/agentEventLog';
 import type { AgentRunMetaProjection } from './agentEventStore';
 import { elideLargeBlobs, redactSecretKeyedValues, redactSecretLikeContent } from './agentSecretRedaction';
 
@@ -23,10 +24,11 @@ import { elideLargeBlobs, redactSecretKeyedValues, redactSecretLikeContent } fro
 // provider-wire parsing, no seq-matching across streams: a run replays alone and
 // its rounds fall out of the ledger it already wrote.
 
-/** A per-run snapshot of the agent's system prompt + tools, captured once per run. */
+/** A derived per-run snapshot of the outbound provider request context. */
 export interface AgentDebugRunSnapshot {
   systemPrompt: string | null;
   tools: AgentDebugToolEntry[];
+  messages: AgentDebugMessageRow[];
 }
 
 interface DerivedRunContext {
@@ -158,6 +160,9 @@ export function deriveDebugRun(events: readonly AgentEvent[], context: DerivedRu
   const { meta } = context;
   const rounds = deriveDebugRounds(events);
   const lastRound = rounds.at(-1);
+  const snapshot = context.snapshot ?? null;
+  const capturedModelInputMessages = snapshot?.messages ?? [];
+  const hasCapturedModelInput = capturedModelInputMessages.length > 0;
   return {
     runId: meta.id,
     agentId: meta.agentId,
@@ -172,8 +177,10 @@ export function deriveDebugRun(events: readonly AgentEvent[], context: DerivedRu
     // per-round detail the user can already see).
     usage: usageToDebugUsage(meta.usage) ?? aggregateRoundUsage(rounds),
     createdAt: meta.createdAt,
-    systemPrompt: context.snapshot?.systemPrompt ?? null,
-    tools: context.snapshot?.tools ?? [],
+    systemPrompt: snapshot?.systemPrompt ?? null,
+    tools: snapshot?.tools ?? [],
+    modelInputMessages: hasCapturedModelInput ? capturedModelInputMessages : (rounds[0]?.requestWindow ?? []),
+    modelInputMessagesSource: hasCapturedModelInput ? 'captured' : 'legacyRequestWindow',
     rounds,
   };
 }
@@ -263,16 +270,16 @@ export function deriveDebugConversation(
 }
 
 /**
- * The once-per-run request context the ledger lacks: the agent's outbound system
- * prompt + tool schemas, pulled from the raw provider payload at capture time
- * ([[agent-debug-run-grounded]]). The message window is already event-sourced, so
- * we keep only system + tools. Tolerant of both provider shapes: Anthropic puts
- * the system prompt at the top level (`system`), while the OpenAI providers
- * (responses / completions) fold it into the message array as a `system` /
- * `developer` role entry — so we fall back to scanning `input` / `messages`.
+ * The once-per-run request context the ledger lacks: the outbound system prompt,
+ * tool schemas, and full provider message window, pulled from the raw provider
+ * payload at capture time ([[agent-debug-run-grounded]]). Tolerant of both
+ * provider shapes: Anthropic puts the system prompt at the top level (`system`),
+ * while the OpenAI providers (responses / completions) fold it into the message
+ * array as a `system` / `developer` role entry — so we fall back to scanning
+ * `input` / `messages`.
  */
-export function extractRunSnapshotFromPayload(payload: unknown): { systemPrompt: string; tools: DebugRunToolSchema[] } {
-  if (!isRecord(payload)) return { systemPrompt: '', tools: [] };
+export function extractRunSnapshotFromPayload(payload: unknown): { systemPrompt: string; tools: DebugRunToolSchema[]; messages: DebugRunModelInputMessage[] } {
+  if (!isRecord(payload)) return { systemPrompt: '', tools: [], messages: [] };
   const systemPrompt = firstNonEmpty([
     extractSystemPrompt(payload.system),
     extractSystemPrompt(payload.instructions),
@@ -280,7 +287,11 @@ export function extractRunSnapshotFromPayload(payload: unknown): { systemPrompt:
     extractSystemFromMessages(payload.input),
     extractSystemFromMessages(payload.messages),
   ]);
-  return { systemPrompt, tools: extractTools(payload.tools) };
+  return {
+    systemPrompt,
+    tools: extractTools(payload.tools),
+    messages: firstNonEmptyMessages([extractModelInputMessages(payload.input), extractModelInputMessages(payload.messages)]),
+  };
 }
 
 /** OpenAI-style fold: the system prompt is a `system`/`developer` role message. */
@@ -296,22 +307,32 @@ function extractSystemFromMessages(value: unknown): string {
 }
 
 /**
- * The run's per-run system/tools snapshot, read from the latest
- * `debug.run_snapshot.created` in its stream (hash-deduped at capture, so the
- * last one is current). Null when no snapshot was captured (e.g. a delegation
- * run, whose request-context capture is a follow-up) — the view degrades to no
- * system prompt and an empty tool list.
+ * The run's provider-request snapshot. System/tool metadata comes from the
+ * latest `debug.run_snapshot.created` in its stream (hash-deduped at capture, so
+ * the last one is current), while Model Input uses the first captured non-empty
+ * message window so later tool-result provider calls do not overwrite the run's
+ * entry context. Null when no snapshot was captured (e.g. a delegation run,
+ * whose request-context capture is a follow-up) — the view degrades to no system
+ * prompt, an empty tool list, and the legacy request-window fallback.
  */
 export function snapshotFromRunEvents(events: readonly AgentEvent[]): AgentDebugRunSnapshot | null {
   let latest: Extract<AgentEvent, { type: 'debug.run_snapshot.created' }> | null = null;
+  let modelInputMessages: DebugRunModelInputMessage[] | null = null;
   for (const event of events) {
-    if (event.type === 'debug.run_snapshot.created') latest = event;
+    if (event.type !== 'debug.run_snapshot.created') continue;
+    latest = event;
+    if (modelInputMessages === null && event.messages?.length) {
+      modelInputMessages = event.messages;
+    }
   }
   if (!latest) return null;
   // The system prompt / tool schemas can carry a secret embedded by a user-authored
   // agent; redact like every other on-screen string.
   return {
     systemPrompt: redactDisplayText(latest.systemPrompt),
+    messages: (modelInputMessages ?? latest.messages ?? []).map((message, index) => (
+      messageRow(`model-input-${index}`, message.role, persistedParts(message.content))
+    )),
     tools: latest.tools.map((tool): AgentDebugToolEntry => {
       const description = redactDisplayText(tool.description);
       const schema = redactDisplayText(tool.schema);
@@ -323,6 +344,96 @@ export function snapshotFromRunEvents(events: readonly AgentEvent[]): AgentDebug
       };
     }),
   };
+}
+
+function extractModelInputMessages(value: unknown): DebugRunModelInputMessage[] {
+  if (!Array.isArray(value)) return [];
+  const messages: DebugRunModelInputMessage[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const role = stringValue(item.role) || providerInputItemRole(item);
+    if (!role || role === 'system' || role === 'developer') continue;
+    const content = providerMessageItemToPersisted(item);
+    messages.push({ role, content: content.length > 0 ? content : [{ type: 'text', text: '' }] });
+  }
+  return messages;
+}
+
+function providerInputItemRole(item: Record<string, unknown>): string {
+  const type = stringValue(item.type);
+  if (type === 'function_call' || type === 'custom_tool_call') return 'assistant';
+  if (type === 'function_call_output' || type === 'tool_result') return 'tool';
+  return '';
+}
+
+function providerMessageItemToPersisted(item: Record<string, unknown>): AgentPersistedContent[] {
+  const parts: AgentPersistedContent[] = [];
+  if ('content' in item) parts.push(...providerContentToPersisted(item.content));
+  if (Array.isArray(item.tool_calls)) parts.push(...providerContentToPersisted(item.tool_calls));
+  if (parts.length > 0) return parts;
+  return providerContentToPersisted(item);
+}
+
+function providerContentToPersisted(value: unknown): AgentPersistedContent[] {
+  if (typeof value === 'string') return [{ type: 'text', text: value }];
+  if (Array.isArray(value)) return value.flatMap(providerContentToPersisted);
+  if (!isRecord(value)) return [];
+
+  const type = stringValue(value.type);
+  if (type === 'text' || type === 'input_text' || type === 'output_text') {
+    return [{ type: 'text', text: stringValue(value.text) || stringValue(value.content) }];
+  }
+  if (type === 'thinking') {
+    return [{ type: 'thinking', thinking: stringValue(value.thinking) || stringValue(value.text) }];
+  }
+  if (type === 'tool_use' || type === 'toolCall' || type === 'tool_call' || type === 'function_call' || type === 'custom_tool_call' || (type === 'function' && isRecord(value.function))) {
+    const fn = isRecord(value.function) ? value.function : {};
+    return [{
+      type: 'toolCall',
+      id: stringValue(value.id) || stringValue(value.call_id) || stringValue(value.toolUseId) || stringValue(value.tool_call_id) || 'tool-call',
+      name: stringValue(value.name) || stringValue(value.toolName) || stringValue(fn.name) || 'tool',
+      arguments: recordValue(value.input) ?? recordValue(value.arguments) ?? parseJsonRecord(stringValue(value.arguments)) ?? parseJsonRecord(stringValue(fn.arguments)) ?? recordValue(fn.arguments) ?? {},
+    }];
+  }
+  if (type === 'function_call_output') {
+    const callId = stringValue(value.call_id) || stringValue(value.id);
+    const text = providerContentToPersisted(value.output)
+      .map((part) => persistedText([part]))
+      .filter(Boolean)
+      .join('\n');
+    return [{ type: 'text', text: formatAgentDebugToolResultText(callId, text) }];
+  }
+  if (type === 'tool_result') {
+    const toolUseId = stringValue(value.tool_use_id) || stringValue(value.toolUseId);
+    const text = providerContentToPersisted(value.content)
+      .map((part) => persistedText([part]))
+      .filter(Boolean)
+      .join('\n');
+    return [{ type: 'text', text: formatAgentDebugToolResultText(toolUseId, text) }];
+  }
+  if (type === 'input_file' || type === 'file') {
+    return [{ type: 'text', text: `[file ${stringValue(value.filename) || stringValue(value.name) || 'attachment'}]` }];
+  }
+  if (type === 'image' || type === 'input_image') return [{ type: 'text', text: stringValue(value.alt) || '[image]' }];
+  if ('text' in value || 'content' in value) {
+    const text = stringValue(value.text) || stringValue(value.content);
+    if (text) return [{ type: 'text', text }];
+  }
+  return [{ type: 'text', text: stableJson(value) }];
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return isRecord(value) ? value : null;
+}
+
+function parseJsonRecord(value: string): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return recordValue(parsed);
+  } catch {
+    return null;
+  }
 }
 
 function extractSystemPrompt(value: unknown): string {
@@ -361,6 +472,11 @@ function extractTools(value: unknown): DebugRunToolSchema[] {
 function firstNonEmpty(values: string[]): string {
   for (const value of values) if (value) return value;
   return '';
+}
+
+function firstNonEmptyMessages(values: DebugRunModelInputMessage[][]): DebugRunModelInputMessage[] {
+  for (const value of values) if (value.length > 0) return value;
+  return [];
 }
 
 function stringValue(value: unknown): string {
@@ -444,13 +560,21 @@ function recordToolResult(
 
 function usageToDebugUsage(usage: Usage | undefined): AgentDebugUsage | null {
   if (!usage) return null;
+  const cost = usage.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
   return {
     input: usage.input ?? 0,
     output: usage.output ?? 0,
     cacheRead: usage.cacheRead ?? 0,
     cacheWrite: usage.cacheWrite ?? 0,
     totalTokens: usage.totalTokens ?? 0,
-    costUsd: usage.cost?.total ?? 0,
+    costUsd: cost.total ?? 0,
+    cost: {
+      input: cost.input ?? 0,
+      output: cost.output ?? 0,
+      cacheRead: cost.cacheRead ?? 0,
+      cacheWrite: cost.cacheWrite ?? 0,
+      total: cost.total ?? 0,
+    },
   };
 }
 
@@ -461,13 +585,31 @@ function aggregateRoundUsage(rounds: readonly AgentDebugRound[]): AgentDebugUsag
 
 function sumUsages(usages: readonly AgentDebugUsage[]): AgentDebugUsage | null {
   if (usages.length === 0) return null;
-  const totals: AgentDebugUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, costUsd: 0 };
+  const totals: AgentDebugUsage = {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    costUsd: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
   for (const usage of usages) addUsage(totals, usage);
   return totals;
 }
 
 function emptyDebugTotals(): AgentDebugTotals {
-  return { queries: 0, rounds: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, costUsd: 0 };
+  return {
+    queries: 0,
+    rounds: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    costUsd: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
 }
 
 function addUsage(totals: AgentDebugUsage, usage: AgentDebugUsage) {
@@ -477,6 +619,11 @@ function addUsage(totals: AgentDebugUsage, usage: AgentDebugUsage) {
   totals.cacheWrite += usage.cacheWrite;
   totals.totalTokens += usage.totalTokens;
   totals.costUsd += usage.costUsd;
+  totals.cost.input += usage.cost.input;
+  totals.cost.output += usage.cost.output;
+  totals.cost.cacheRead += usage.cost.cacheRead;
+  totals.cost.cacheWrite += usage.cost.cacheWrite;
+  totals.cost.total += usage.cost.total;
 }
 
 function statusFromStopReason(stopReason: unknown): AgentDebugTurnStatus {

@@ -161,7 +161,7 @@ export function App() {
     navigatePanelPreview: setPanelPreview,
     navigatePanelRoot: setPanelRoot,
     navigateRoot: setActivePanelRoot,
-    openAgentDebugPanel,
+    openAgentRunDetailsPanel,
     openPanel,
     openPreview,
     panels,
@@ -677,7 +677,7 @@ export function App() {
           railState={agentRailState}
           userViewContext={agentUserViewContext}
           onOpenNodeReference={openNodeReferenceFromAgent}
-          onOpenDebugPanel={openAgentDebugPanel}
+          onOpenRunDetailsPanel={(conversationId, runId) => openAgentRunDetailsPanel(conversationId, runId) === 'opened'}
           onResizeKeyDown={resizeAgentWithKeyboard}
           onResizeReset={resetAgentWidth}
           onResizeStart={beginAgentResize}

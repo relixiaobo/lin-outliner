@@ -20,7 +20,7 @@ interface AgentDockProps {
   railState: AgentRailState;
   userViewContext: AgentUserViewContext;
   onOpenNodeReference: AgentNodeReferenceOpenHandler;
-  onOpenDebugPanel: (conversationId: string | null) => void;
+  onOpenRunDetailsPanel: (conversationId: string | null, runId: string | null) => boolean | void;
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   onResizeReset: () => void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
@@ -41,7 +41,7 @@ export function AgentDock(props: AgentDockProps) {
         dockOpen={open}
         userViewContext={props.userViewContext}
         onOpenNodeReference={props.onOpenNodeReference}
-        onOpenDebugPanel={props.onOpenDebugPanel}
+        onOpenRunDetailsPanel={props.onOpenRunDetailsPanel}
       />
       {/* Resize handle is inert unless the rail is open (collapsed/chip have no
           resizable width). tabIndex -1 + pointer-events:none in CSS when closed. */}

@@ -603,18 +603,23 @@ export interface DebugRunToolSchema {
   schema: string;
 }
 
+export interface DebugRunModelInputMessage {
+  role: string;
+  content: AgentPersistedContent[];
+}
+
 /**
- * A once-per-run capture of the agent's outbound system prompt + tool schemas
- * ([[agent-debug-run-grounded]]). Written to the run's OWN stream, hash-deduped
- * so it re-emits only when the system prompt or tools change mid-run. The
- * message window the model saw is already in the ledger; this fills the only
- * request context the ledger lacks. Replay-neutral.
+ * A capture of the agent's outbound system prompt, tool schemas, and model input
+ * message window ([[agent-debug-run-grounded]]). Written to the run's OWN stream,
+ * hash-deduped so it re-emits only when the outbound request shape changes
+ * mid-run. Replay-neutral.
  */
 export interface DebugRunSnapshotCreatedEvent extends AgentEventBase {
   type: 'debug.run_snapshot.created';
   runId: string;
   systemPrompt: string;
   tools: DebugRunToolSchema[];
+  messages?: DebugRunModelInputMessage[];
 }
 
 export interface BranchSelectedEvent extends AgentEventBase {

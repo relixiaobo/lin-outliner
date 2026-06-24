@@ -3,7 +3,15 @@ import {
   MAC_TRAFFIC_LIGHT_POSITION,
   MAC_TRAFFIC_LIGHT_SIZE,
 } from '../../src/core/chromeGeometry';
-import { e2eProjection, emitDocumentEvent, ids, openMockedApp, row, rowBody } from './outlinerMock';
+import {
+  e2eProjection,
+  emitDocumentEvent,
+  ids,
+  openMockedApp,
+  openMockRunDetailsFromAssistantDetailsButton,
+  row,
+  rowBody,
+} from './outlinerMock';
 
 const WORKSPACE_LAYOUT_STORAGE_KEY = 'lin-outliner:workspace-layout:v4';
 const WORKSPACE_PINNED_NODES_STORAGE_KEY = 'lin-outliner:workspace-layout:v3:pinned';
@@ -228,7 +236,7 @@ test.describe('workspace layout resizing', () => {
 
   test('debug panel capacity failures show feedback instead of silently no-oping', async ({ page }) => {
     await page.setViewportSize({ width: 760, height: 900 });
-    await page.getByRole('button', { name: 'Open agent debug' }).click();
+    await openMockRunDetailsFromAssistantDetailsButton(page);
 
     await expect(page.locator('.outline-panel-surface')).toHaveCount(1);
     await expect(page.locator('.error')).toContainText('Window is too narrow to open another pane.');

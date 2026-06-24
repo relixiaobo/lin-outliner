@@ -2,7 +2,8 @@
    one look. Only the functional differences diverge: the agent block is a
    read-only, bounded-height <pre>; the outliner row is an editable textarea
    layered over a Shiki highlight layer with a language <select>. */
-.agent-code-block {
+.agent-code-block,
+.code-block {
   position: relative;
   overflow: hidden;
   margin: var(--space-1) 0;
@@ -14,16 +15,11 @@
 }
 
 .code-block {
-  position: relative;
-  overflow: hidden;
-  margin: var(--space-1) 0;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-soft);
   --code-block-editor-max-height: min(42vh, 420px);
-  --code-block-scrollbar-edge-inset: var(--space-1);
-  --code-block-content-inset: var(--space-5);
-  --code-block-scrollbar-gutter: var(--space-4);
+}
+
+.code-block:focus-within {
+  box-shadow: var(--focus-ring-shadow);
 }
 
 .agent-code-header,
@@ -224,14 +220,18 @@
 
 /* Agent transcript code is read-only and scrolls within a bounded height. */
 .agent-code-body {
-  padding: var(--code-block-content-inset);
+  padding: var(--code-block-content-inset) 0 0 var(--code-block-content-inset);
 }
 
 .agent-code-block pre {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
   max-height: 280px;
   overflow: auto;
   color: var(--text-strong);
-  padding-bottom: var(--code-block-scrollbar-gutter);
+  padding-right: calc(var(--code-block-content-inset) + var(--control-size-xl));
+  padding-bottom: var(--code-block-content-inset);
 }
 
 /* Outliner code rows are editable: a transparent textarea over the highlight
@@ -240,7 +240,7 @@
   position: relative;
   max-height: var(--code-block-editor-max-height);
   overflow: hidden;
-  padding: var(--code-block-content-inset);
+  padding: var(--code-block-content-inset) 0 0 var(--code-block-content-inset);
 }
 
 .code-block-sizer {
@@ -248,26 +248,31 @@
   pointer-events: none;
   overflow: hidden;
   min-height: var(--line-code-block);
-  padding-bottom: var(--code-block-scrollbar-gutter);
+  padding-right: calc(var(--code-block-content-inset) + var(--control-size-xl));
+  padding-bottom: var(--code-block-content-inset);
 }
 
 .code-block-highlight {
   position: absolute;
-  inset: var(--code-block-content-inset) var(--code-block-content-inset) var(--code-block-scrollbar-edge-inset);
+  inset: var(--code-block-content-inset) 0 0 var(--code-block-content-inset);
   overflow: hidden;
   pointer-events: none;
 }
 
 .code-block-highlight pre.shiki {
   color: var(--text-strong);
+  padding-right: calc(var(--code-block-content-inset) + var(--control-size-xl));
+  padding-bottom: var(--code-block-content-inset);
 }
 
 .code-block-textarea {
   position: absolute;
-  inset: var(--code-block-content-inset) var(--code-block-content-inset) var(--code-block-scrollbar-edge-inset);
+  inset: var(--code-block-content-inset) 0 0 var(--code-block-content-inset);
   display: block;
   width: auto;
   height: auto;
+  padding-right: calc(var(--code-block-content-inset) + var(--control-size-xl));
+  padding-bottom: var(--code-block-content-inset);
   resize: none;
   overflow-x: auto;
   overflow-y: auto;
@@ -275,4 +280,8 @@
   color: transparent;
   caret-color: var(--text-strong);
   outline: none;
+}
+
+.code-block-textarea:focus-visible {
+  box-shadow: none;
 }

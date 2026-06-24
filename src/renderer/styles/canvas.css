@@ -139,6 +139,9 @@
 }
 
 .outline-panel-surface.is-agent-debug {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
   overflow: hidden;
   background: var(--surface);
 }

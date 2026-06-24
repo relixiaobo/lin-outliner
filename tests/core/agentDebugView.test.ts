@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { formatAgentDebugToolResultText } from '../../src/core/agentDebugProtocol';
 import type { AgentActor, AgentEvent } from '../../src/core/agentEventLog';
 import {
   deriveDebugRounds,
@@ -192,6 +193,7 @@ describe('extractRunSnapshotFromPayload', () => {
     });
     expect(snapshot.systemPrompt).toBe('You are Tenon.\n\nBe concise.');
     expect(snapshot.tools).toEqual([{ name: 'list_files', description: 'List files', schema: '{\n  "type": "object"\n}' }]);
+    expect(snapshot.messages.map((message) => message.role)).toEqual(['user']);
   });
 
   test('reads an OpenAI-shaped payload (instructions + tools.function)', () => {
@@ -210,18 +212,128 @@ describe('extractRunSnapshotFromPayload', () => {
       input: [{ role: 'developer', content: 'You are Tenon.' }, { role: 'user', content: 'hi' }],
     });
     expect(fromInput.systemPrompt).toBe('You are Tenon.');
+    expect(fromInput.messages.map((message) => message.role)).toEqual(['user']);
     const fromMessages = extractRunSnapshotFromPayload({
       messages: [{ role: 'system', content: 'Be concise.' }, { role: 'user', content: 'hi' }],
     });
     expect(fromMessages.systemPrompt).toBe('Be concise.');
+    expect(fromMessages.messages.map((message) => message.role)).toEqual(['user']);
+  });
+
+  test('captures the full model input message window from provider payloads', () => {
+    const snapshot = extractRunSnapshotFromPayload({
+      input: [
+        { role: 'developer', content: 'You are Tenon.' },
+        { role: 'user', content: 'Generate a PPT.' },
+        { role: 'assistant', content: [{ type: 'output_text', text: 'PPT generated.' }] },
+        { role: 'user', content: [{ type: 'input_text', text: 'Today weather?' }] },
+      ],
+    });
+
+    expect(snapshot.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
+    expect(snapshot.messages.map((message) => message.content[0])).toEqual([
+      { type: 'text', text: 'Generate a PPT.' },
+      { type: 'text', text: 'PPT generated.' },
+      { type: 'text', text: 'Today weather?' },
+    ]);
+  });
+
+  test('summarizes final provider file parts without exposing inline file data', () => {
+    const snapshot = extractRunSnapshotFromPayload({
+      input: [{
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'Read this PDF.' },
+          { type: 'input_file', filename: 'sample.pdf', file_data: 'data:application/pdf;base64,secret-bytes' },
+        ],
+      }],
+    });
+
+    expect(snapshot.messages[0]?.content).toEqual([
+      { type: 'text', text: 'Read this PDF.' },
+      { type: 'text', text: '[file sample.pdf]' },
+    ]);
+    expect(JSON.stringify(snapshot.messages)).not.toContain('secret-bytes');
+  });
+
+  test('captures provider tool calls and tool results in the model input window', () => {
+    const snapshot = extractRunSnapshotFromPayload({
+      input: [
+        {
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'I will search.' }],
+          tool_calls: [{
+            id: 'call-1',
+            type: 'function',
+            function: { name: 'web_search', arguments: '{"query":"Chengdu weather"}' },
+          }],
+        },
+        {
+          type: 'function_call',
+          call_id: 'call-2',
+          name: 'web_search',
+          arguments: '{"query":"Beijing weather"}',
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'call-2',
+          output: 'Beijing: thunderstorm, 20-28C.',
+        },
+      ],
+    });
+
+    expect(snapshot.messages.map((message) => message.role)).toEqual(['assistant', 'assistant', 'tool']);
+    expect(snapshot.messages[0]?.content).toEqual([
+      { type: 'text', text: 'I will search.' },
+      { type: 'toolCall', id: 'call-1', name: 'web_search', arguments: { query: 'Chengdu weather' } },
+    ]);
+    expect(snapshot.messages[1]?.content).toEqual([
+      { type: 'toolCall', id: 'call-2', name: 'web_search', arguments: { query: 'Beijing weather' } },
+    ]);
+    expect(snapshot.messages[2]?.content).toEqual([
+      { type: 'text', text: formatAgentDebugToolResultText('call-2', 'Beijing: thunderstorm, 20-28C.') },
+    ]);
   });
 
   test('degrades to empty on a non-record payload', () => {
-    expect(extractRunSnapshotFromPayload('nope')).toEqual({ systemPrompt: '', tools: [] });
+    expect(extractRunSnapshotFromPayload('nope')).toEqual({ systemPrompt: '', tools: [], messages: [] });
   });
 });
 
 describe('deriveDebugRun + snapshot + summary assembly', () => {
+  test('keeps the first captured model input messages when later provider calls update the snapshot', () => {
+    seqCounter = 0;
+    const runId = 'run-snapshot-window';
+    const snapshot = snapshotFromRunEvents([
+      ev('debug.run_snapshot.created', {
+        runId,
+        systemPrompt: 'Initial prompt.',
+        tools: [{ name: 'web_search', description: 'Search', schema: '{}' }],
+        messages: [
+          { role: 'user', content: [{ type: 'text', text: 'Generate a PPT.' }] },
+          { role: 'assistant', content: [{ type: 'text', text: 'PPT generated.' }] },
+          { role: 'user', content: [{ type: 'text', text: 'Today weather?' }] },
+        ],
+      }),
+      ev('debug.run_snapshot.created', {
+        runId,
+        systemPrompt: 'Updated prompt.',
+        tools: [{ name: 'web_search', description: 'Search the web', schema: '{}' }],
+        messages: [
+          { role: 'tool', content: [{ type: 'text', text: 'weather result' }] },
+        ],
+      }),
+    ]);
+
+    expect(snapshot?.systemPrompt).toBe('Updated prompt.');
+    expect(snapshot?.tools[0]?.description).toBe('Search the web');
+    expect(snapshot?.messages.map((message) => message.summary)).toEqual([
+      'user: Generate a PPT.',
+      'assistant: PPT generated.',
+      'user: Today weather?',
+    ]);
+  });
+
   test('assembles a run from its stream + per-run snapshot, and projects to a summary', () => {
     seqCounter = 0;
     const runId = 'run-assembled';
@@ -231,6 +343,7 @@ describe('deriveDebugRun + snapshot + summary assembly', () => {
         runId,
         systemPrompt: 'You are Tenon.',
         tools: [{ name: 'list_files', description: 'List', schema: '{}' }],
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
       }),
       ev('user_message.created', { runId, messageId: 'u1', parentMessageId: null, content: [{ type: 'text', text: 'hi' }] }, userActor),
       ev('assistant_message.started', { runId, messageId: 'a1', parentMessageId: 'u1', providerId: 'anthropic', modelId: 'claude', apiId: 'messages' }),
@@ -249,6 +362,8 @@ describe('deriveDebugRun + snapshot + summary assembly', () => {
     const run = deriveDebugRun(events, { meta, snapshot: snapshotFromRunEvents(events), parentToolCallId: null });
     expect(run.systemPrompt).toBe('You are Tenon.');
     expect(run.tools).toEqual([{ name: 'list_files', description: 'List', schema: '{}', bytes: 16 }]);
+    expect(run.modelInputMessages.map((message) => message.summary)).toEqual(['user: hi']);
+    expect(run.modelInputMessagesSource).toBe('captured');
     expect(run.rounds.map((round) => round.messageId)).toEqual(['a1']);
     expect(run.kind).toBe('turn');
     expect(run.createdAt).toBe(1700);
@@ -285,6 +400,7 @@ describe('deriveDebugRun + snapshot + summary assembly', () => {
     const run = deriveDebugRun(events, { meta, snapshot: null, parentToolCallId: null });
     expect(run.usage?.totalTokens).toBe(165);
     expect(run.usage?.costUsd).toBeCloseTo(0.015, 5);
+    expect(run.modelInputMessagesSource).toBe('legacyRequestWindow');
 
     // Two rounds + in-flight usage rollup — the case most apt to drift: the light
     // path must still match the oracle's summary exactly.

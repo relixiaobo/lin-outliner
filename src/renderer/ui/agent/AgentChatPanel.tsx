@@ -40,7 +40,6 @@ import type {
 import {
   AddIcon,
   ChevronDownIcon,
-  DebugIcon,
   HashIcon,
   ICON_SIZE,
   LoaderIcon,
@@ -90,7 +89,7 @@ interface AgentChatPanelProps {
   dockOpen: boolean;
   userViewContext: AgentUserViewContext;
   onOpenNodeReference: AgentNodeReferenceOpenHandler;
-  onOpenDebugPanel?: (conversationId: string | null) => void;
+  onOpenRunDetailsPanel?: (conversationId: string | null, runId: string | null) => boolean | void;
 }
 
 interface PendingTranscriptReveal {
@@ -467,7 +466,7 @@ export function AgentChatPanel({
   index,
   dockOpen,
   onOpenNodeReference,
-  onOpenDebugPanel,
+  onOpenRunDetailsPanel,
   userViewContext,
 }: AgentChatPanelProps) {
   const t = useT();
@@ -1129,6 +1128,7 @@ export function AgentChatPanel({
         onEdit={editMessage}
         onNodeReferenceOpen={onOpenNodeReference}
         onOpenChildRunTranscript={setSelectedChildRunId}
+        onOpenRunDetails={(runId) => onOpenRunDetailsPanel?.(conversationId, runId)}
         onRegenerate={regenerateMessage}
         onRetry={retryMessage}
         onSwitchBranch={switchBranch}
@@ -1231,14 +1231,6 @@ export function AgentChatPanel({
             <UsedToolsIcon size={ICON_SIZE.toolbar} />
             {runningTaskCount > 0 ? <span className="agent-task-panel-badge">{runningTaskCount}</span> : null}
           </ButtonControl>
-          <IconButton
-            className="agent-menu-button"
-            icon={DebugIcon}
-            label={t.agent.chat.openDebug}
-            onClick={() => onOpenDebugPanel?.(conversationId)}
-            title={t.agent.chat.openDebug}
-            variant="composerTool"
-          />
         </div>
         {historyOpen ? createPortal(
           <div

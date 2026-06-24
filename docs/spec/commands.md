@@ -314,8 +314,9 @@ turn). See `agent-architecture.md` (Channel runtime).
 `agent_child_run_transcript` (the drill-in transcript, replayed from the run's own ledger).
 
 ### Agent — debug
-`agent_debug_view` (the conversation's execution tree), `agent_debug_run` (one
-run's rounds + per-run snapshot), `agent_payload_text`.
+`agent_debug_view` (the conversation's run list + rollups), `agent_debug_run`
+(one run's model-facing context, process, usage, and per-run snapshot),
+`agent_payload_text`.
 
 ### Agent — providers and runtime settings
 `agent_get_provider_settings`, `agent_update_runtime_settings`,
