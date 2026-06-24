@@ -114,9 +114,7 @@ select:focus-visible {
   outline: none;
 }
 
-:root[data-input-modality="keyboard"] input:focus-visible,
-:root[data-input-modality="keyboard"] textarea:focus-visible,
-:root[data-input-modality="keyboard"] select:focus-visible {
+:root[data-input-modality="keyboard"] :where(input:focus-visible, textarea:focus-visible, select:focus-visible) {
   outline: none;
   box-shadow: var(--focus-ring-shadow);
 }

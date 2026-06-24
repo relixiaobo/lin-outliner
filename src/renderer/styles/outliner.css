@@ -192,7 +192,7 @@
   padding: 0 var(--space-4);
 }
 
-.definition-text-input.input-bare:focus-visible {
+:root[data-input-modality="keyboard"] .definition-text-input.input-bare:focus-visible {
   border-color: var(--border-emphasis);
   background: var(--fill-2);
 }

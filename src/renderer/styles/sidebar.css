@@ -42,7 +42,6 @@
   transition:
     transform var(--motion-layout),
     opacity var(--motion-layout);
-  will-change: transform, opacity;
 }
 
 /* The rail's first row is a vertical spacer that drops the nav below the window

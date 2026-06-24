@@ -1,16 +1,22 @@
 type InputModality = 'keyboard' | 'pointer';
 
-const NAVIGATION_KEYS = new Set([
-  'ArrowDown',
-  'ArrowLeft',
-  'ArrowRight',
-  'ArrowUp',
-  'End',
-  'Home',
-  'PageDown',
-  'PageUp',
-  'Tab',
+const MODIFIER_KEYS = new Set([
+  'Alt',
+  'CapsLock',
+  'Control',
+  'Fn',
+  'FnLock',
+  'Hyper',
+  'Meta',
+  'NumLock',
+  'ScrollLock',
+  'Shift',
+  'Super',
+  'Symbol',
+  'SymbolLock',
 ]);
+
+const NUMBER_STEPPER_KEYS = new Set(['ArrowDown', 'ArrowUp']);
 
 export function installInputModalityTracking(
   ownerDocument: Document = document,
@@ -37,9 +43,16 @@ export function installInputModalityTracking(
 }
 
 function usesKeyboardFocusModality(event: KeyboardEvent): boolean {
-  if (!NAVIGATION_KEYS.has(event.key)) return false;
   if (event.key === 'Tab') return true;
+  if (MODIFIER_KEYS.has(event.key)) return false;
+  if (isNumberStepperKey(event)) return true;
   return !isTextEditingTarget(event.target);
+}
+
+function isNumberStepperKey(event: KeyboardEvent): boolean {
+  return NUMBER_STEPPER_KEYS.has(event.key)
+    && event.target instanceof HTMLInputElement
+    && event.target.type === 'number';
 }
 
 function isTextEditingTarget(target: EventTarget | null): boolean {

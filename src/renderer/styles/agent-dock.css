@@ -27,7 +27,6 @@
   transition:
     transform var(--motion-layout),
     opacity var(--motion-layout);
-  will-change: transform, opacity;
 }
 
 /* Collapsed: the rail slides out past the RIGHT window edge and fades; the content

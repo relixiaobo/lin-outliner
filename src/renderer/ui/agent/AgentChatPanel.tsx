@@ -94,6 +94,7 @@ interface AgentChatPanelProps {
 interface PendingTranscriptReveal {
   conversationId: string;
   deferUntilDockOpen: boolean;
+  reachedTargetConversation: boolean;
   target: AgentChatSourceRevealTarget;
 }
 
@@ -849,7 +850,9 @@ export function AgentChatPanel({
   }, [shouldVirtualizeTranscript, updateScrollMetrics, virtualLayout.items]);
 
   useEffect(() => {
-    if (!pendingTranscriptReveal?.deferUntilDockOpen || !dockOpen) return undefined;
+    if (!pendingTranscriptReveal?.deferUntilDockOpen || !dockOpen || conversationId !== pendingTranscriptReveal.conversationId) {
+      return undefined;
+    }
 
     const dock = scrollRef.current?.closest<HTMLElement>('.agent-dock') ?? null;
     let finished = false;
@@ -886,7 +889,24 @@ export function AgentChatPanel({
         revealAfterDockOpenTimerRef.current = null;
       }
     };
-  }, [dockOpen, pendingTranscriptReveal]);
+  }, [conversationId, dockOpen, pendingTranscriptReveal]);
+
+  useEffect(() => {
+    if (!pendingTranscriptReveal) return;
+    if (conversationId === pendingTranscriptReveal.conversationId) {
+      if (pendingTranscriptReveal.reachedTargetConversation) return;
+      setPendingTranscriptReveal((current) => (
+        current === pendingTranscriptReveal
+          ? { ...current, reachedTargetConversation: true }
+          : current
+      ));
+      return;
+    }
+    if (!pendingTranscriptReveal.reachedTargetConversation) return;
+    setPendingTranscriptReveal((current) => (
+      current === pendingTranscriptReveal ? null : current
+    ));
+  }, [conversationId, pendingTranscriptReveal]);
 
   useLayoutEffect(() => {
     if (!pendingTranscriptReveal || conversationId !== pendingTranscriptReveal.conversationId) return;
@@ -987,6 +1007,7 @@ export function AgentChatPanel({
       setPendingTranscriptReveal({
         conversationId: targetConversationId,
         deferUntilDockOpen: !dockOpenRef.current,
+        reachedTargetConversation: false,
         target: options.transcriptTarget,
       });
     }

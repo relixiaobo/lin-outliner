@@ -2,7 +2,6 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { LauncherApp } from './LauncherApp';
 import { I18nProvider } from '../i18n/I18nProvider';
-import { installInputModalityTracking } from '../ui/focus/inputModality';
 // Design tokens first (defines :root), then the dark media override, then the
 // launcher's own rules that consume them. These are pure CSS custom-property
 // sheets — no JS, no editor graph — so the launcher inherits the app's color /
@@ -19,8 +18,6 @@ import '../styles/launcher.css';
 // app bundle (src/renderer/main.tsx) so the launcher window loads instantly and
 // never pulls in ProseMirror / Shiki / markdown / the document projection.
 // See docs/plans/lazy-like-global-launcher.md (bundle-bloat mitigation).
-
-installInputModalityTracking();
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

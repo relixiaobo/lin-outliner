@@ -86,6 +86,7 @@ export function useResizableLayout({
   const renderedRailsRef = useRef(renderedRails);
   const railOpenRef = useRef({ sidebarOpen, agentOpen });
   const previousAgentOpenRef = useRef(agentOpen);
+  const previousSidebarOpenRef = useRef(sidebarOpen);
   const panelCount = Math.max(1, panels.length);
   const panelCountRef = useRef(panelCount);
 
@@ -206,8 +207,10 @@ export function useResizableLayout({
 
   useLayoutEffect(() => {
     const agentJustOpened = agentOpen && !previousAgentOpenRef.current;
+    const sidebarChanged = sidebarOpen !== previousSidebarOpenRef.current;
     previousAgentOpenRef.current = agentOpen;
-    if (agentJustOpened) {
+    previousSidebarOpenRef.current = sidebarOpen;
+    if (agentJustOpened && !sidebarChanged) {
       reflowForAgentOpen();
       return;
     }

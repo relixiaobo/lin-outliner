@@ -276,3 +276,7 @@
   caret-color: var(--text-strong);
   outline: none;
 }
+
+.code-block-textarea:focus-visible {
+  box-shadow: none;
+}

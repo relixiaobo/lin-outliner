@@ -31,6 +31,9 @@ describe('input modality tracking', () => {
 
     keydown(rendered, textarea, 'Home');
     expect(rendered.document.documentElement.dataset.inputModality).toBe('pointer');
+
+    keydown(rendered, input, 'a');
+    expect(rendered.document.documentElement.dataset.inputModality).toBe('pointer');
   });
 
   test('treats arrow navigation on non-text controls as keyboard modality', () => {
@@ -39,6 +42,24 @@ describe('input modality tracking', () => {
     if (!button) throw new Error('Missing button');
 
     keydown(rendered, button, 'ArrowDown');
+    expect(rendered.document.documentElement.dataset.inputModality).toBe('keyboard');
+  });
+
+  test('treats control activation keys as keyboard modality before programmatic focus', () => {
+    const rendered = renderDocument('<button id="open">Open</button>');
+    const button = rendered.document.getElementById('open');
+    if (!button) throw new Error('Missing button');
+
+    keydown(rendered, button, 'Enter');
+    expect(rendered.document.documentElement.dataset.inputModality).toBe('keyboard');
+  });
+
+  test('treats number input steppers as keyboard modality', () => {
+    const rendered = renderDocument('<input id="count" type="number" value="1">');
+    const input = rendered.document.getElementById('count');
+    if (!input) throw new Error('Missing number input');
+
+    keydown(rendered, input, 'ArrowUp');
     expect(rendered.document.documentElement.dataset.inputModality).toBe('keyboard');
   });
 });
