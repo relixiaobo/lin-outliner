@@ -295,6 +295,8 @@ target** (ancestor / same conversation).
 | **Durable execution / Temporal** | workflow = Goal/controller; activity = Run | signals = steer; queries = status; retry policy = reassign; cancellation; **deterministic loop ↔ effectful attempt** (Goal loop replayable from the ledger; Runs do the dirty work → clean crash/restart resume) |
 | **BDI + goal lifecycle** | committed intention vs plan execution | **achievement vs maintenance** goal types; goal state machine; commitment/reconsideration |
 | **OTP supervision trees** | Goal = supervisor; child Run = worker | restart strategy on executor failure; task outlives the worker |
+| **HTN planning (hierarchical task networks)** | the `plan` step decomposes a compound objective into sub-tasks / sub-Goals | recursive method decomposition → the nested unit; compound task ↔ sub-Goal, primitive task ↔ a worker Run |
+| **Contract Net Protocol** | the loop (manager) announces a subtask and awards it to a forked worker (contractor) | task announce → award allocation; the referee assigns and the award's least-privilege scope **is** the worker's temporary profile (we borrow allocation, not competitive bidding) |
 | **Principal–agent** | owner = principal; Neva fork = agent | audit = anti-moral-hazard; **independent verification**; scope = bounded discretion |
 | **Control theory / MAPE-K / cybernetics** | Goal = setpoint+controller; audit = sensor+comparator | the closed loop; **sensor ≠ actuator** |
 | **Event sourcing / CQRS** | facts = write model; Turn/Task/Team = read models | projections are read-only views, never write models |
