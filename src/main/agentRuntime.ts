@@ -501,7 +501,7 @@ interface AgentToolFilter {
  * complete capability set and is applied verbatim by `filterAgentTools`.
  *
  * The built-in assistant (Neva) is different: its core tools — `past_chats`,
- * `node_*`, `skill`, and self-maintenance — are never part of the
+ * `node_*`, and `skill` — are never part of the
  * editable catalog (`TOOL_CATALOG`), so a strict allow-list would silently
  * strip them. A catalog restriction is therefore expressed as a *disallow-list
  * over the unchecked catalog tools*, never as an allow-list; the core tools
