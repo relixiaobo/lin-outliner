@@ -230,6 +230,12 @@ Linked references include:
 - reference field values, attributed to the owning content node and grouped under
   the field name.
 
+Search nodes do not count as reference sources. A saved search is a view/query,
+not a user-authored citation of every node it happens to include, filter by, or
+name in its title. Materialized search result references, direct references and
+plain-text mentions on `search` nodes, and query operand references or mentions
+inside `queryCondition` subtrees stay out of the backlink graph.
+
 Unlinked mentions are exact, case-insensitive title matches in visible node text
 and descriptions. Latin-word matches require word boundaries, so `Project Alpha`
 does not match `Project Alphabet`; adjacent Unicode letters/numbers are also

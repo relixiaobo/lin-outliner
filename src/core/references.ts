@@ -84,11 +84,12 @@ export function buildReferenceSummary(
 ): ReferenceSummary {
   const byTarget = new Map<NodeId, ReferenceSource[]>();
   const isDeleted = options.isDeleted ?? (() => false);
+  const isSearchReferenceSource = searchReferenceSourcePredicate(byId);
 
   for (const node of byId.values()) {
     if (isDeleted(node.id)) continue;
     if (node.type === 'reference' && node.targetId && refRoleCountsAsBacklink(node)) {
-      const source = referenceSourceForNode(byId, node);
+      const source = referenceSourceForNode(byId, node, isSearchReferenceSource);
       if (!source) continue;
       addReferenceSource(byTarget, {
         targetId: node.targetId,
@@ -100,6 +101,7 @@ export function buildReferenceSummary(
       });
     }
 
+    if (isSearchReferenceSource(node.id)) continue;
     for (const inlineRef of node.content.inlineRefs) {
       const targetId = inlineRefNodeId(inlineRef);
       if (!targetId) continue;
@@ -114,7 +116,7 @@ export function buildReferenceSummary(
   }
 
   if (options.includeUnlinked) {
-    addUnlinkedMentions(byId, byTarget, isDeleted, options);
+    addUnlinkedMentions(byId, byTarget, isDeleted, isSearchReferenceSource, options);
   }
 
   return {
@@ -134,21 +136,64 @@ export function referencesForTarget(
 function referenceSourceForNode(
   byId: ReadonlyMap<NodeId, ReferenceNodeLike>,
   reference: ReferenceNodeLike,
+  isSearchReferenceSource: (nodeId: NodeId) => boolean,
 ): Pick<ReferenceSource, 'sourceNodeId' | 'kind' | 'fieldEntryId' | 'fieldDefId'> | null {
   const parent = reference.parentId ? byId.get(reference.parentId) : undefined;
   if (!parent) return null;
   if (parent?.type === 'fieldEntry') {
+    const sourceNodeId = parent.parentId ?? parent.id;
+    if (isSearchReferenceSource(sourceNodeId)) return null;
     return {
-      sourceNodeId: parent.parentId ?? parent.id,
+      sourceNodeId,
       kind: 'field',
       fieldEntryId: parent.id,
       fieldDefId: parent.fieldDefId,
     };
   }
+  if (isSearchReferenceSource(parent.id)) return null;
   return {
     sourceNodeId: parent?.id ?? reference.id,
     kind: 'tree',
   };
+}
+
+function searchReferenceSourcePredicate(
+  byId: ReadonlyMap<NodeId, ReferenceNodeLike>,
+): (nodeId: NodeId) => boolean {
+  const cache = new Map<NodeId, boolean>();
+  return (nodeId) => {
+    const node = byId.get(nodeId);
+    return node?.type === 'search' || nodeIsInQueryConditionSubtree(byId, cache, nodeId);
+  };
+}
+
+function nodeIsInQueryConditionSubtree(
+  byId: ReadonlyMap<NodeId, ReferenceNodeLike>,
+  cache: Map<NodeId, boolean>,
+  nodeId: NodeId,
+): boolean {
+  const cached = cache.get(nodeId);
+  if (cached !== undefined) return cached;
+
+  let result = false;
+  const visited: NodeId[] = [];
+  let current = byId.get(nodeId);
+  while (current) {
+    const currentCached = cache.get(current.id);
+    if (currentCached !== undefined) {
+      result = currentCached;
+      break;
+    }
+    visited.push(current.id);
+    if (current.type === 'queryCondition') {
+      result = true;
+      break;
+    }
+    current = current.parentId ? byId.get(current.parentId) : undefined;
+  }
+
+  for (const id of visited) cache.set(id, result);
+  return result;
 }
 
 function addReferenceSource(
@@ -195,6 +240,7 @@ function addUnlinkedMentions(
   byId: ReadonlyMap<NodeId, ReferenceNodeLike>,
   byTarget: Map<NodeId, ReferenceSource[]>,
   isDeleted: (nodeId: NodeId) => boolean,
+  isSearchReferenceSource: (nodeId: NodeId) => boolean,
   options: ReferenceSummaryOptions,
 ): void {
   const targetTitles = mentionTargetTitles(
@@ -208,7 +254,7 @@ function addUnlinkedMentions(
 
   const scanDescriptions = options.includeDescriptions ?? true;
   for (const source of byId.values()) {
-    if (!nodeCanSourceUnlinkedMention(source, isDeleted)) continue;
+    if (!nodeCanSourceUnlinkedMention(source, isDeleted, isSearchReferenceSource)) continue;
     addUnlinkedMentionsFromText(
       byTarget,
       source,
@@ -271,8 +317,13 @@ function nodeCanBeMentionTarget(node: ReferenceNodeLike): boolean {
   return node.type !== 'reference' && node.type !== 'fieldEntry' && node.type !== 'defConfig' && node.type !== 'systemOption';
 }
 
-function nodeCanSourceUnlinkedMention(node: ReferenceNodeLike, isDeleted: (nodeId: NodeId) => boolean): boolean {
+function nodeCanSourceUnlinkedMention(
+  node: ReferenceNodeLike,
+  isDeleted: (nodeId: NodeId) => boolean,
+  isSearchReferenceSource: (nodeId: NodeId) => boolean,
+): boolean {
   if (isDeleted(node.id)) return false;
+  if (isSearchReferenceSource(node.id)) return false;
   if (node.type && NON_MENTION_NODE_TYPES.has(node.type)) return false;
   return true;
 }

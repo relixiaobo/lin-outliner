@@ -173,4 +173,50 @@ describe('buildReferenceSummary', () => {
     expect(summary.byTarget.get('target')).toBeUndefined();
     expect(summary.countsByTarget.get('target')).toBeUndefined();
   });
+
+  test('excludes saved-search internal references from backlinks without hiding manual children', () => {
+    const byId = new Map([
+      node({ id: 'target', content: plainText('Target') }),
+      node({ id: 'source', children: ['source-ref'], content: plainText('Source') }),
+      node({ id: 'source-ref', type: 'reference', parentId: 'source', targetId: 'target' }),
+      node({
+        id: 'search',
+        type: 'search',
+        children: ['legacy-result-ref', 'condition', 'manual-search-child'],
+        content: { ...plainText('Search mentions Target'), inlineRefs: [{ offset: 0, target: nodeReferenceTarget('target') }] },
+      }),
+      node({ id: 'legacy-result-ref', type: 'reference', parentId: 'search', targetId: 'target' }),
+      node({
+        id: 'condition',
+        type: 'queryCondition',
+        parentId: 'search',
+        children: ['operand-ref', 'operand-node'],
+        content: { ...plainText('Condition mentions Target'), inlineRefs: [{ offset: 0, target: nodeReferenceTarget('target') }] },
+      }),
+      node({ id: 'operand-ref', type: 'reference', parentId: 'condition', targetId: 'target' }),
+      node({
+        id: 'operand-node',
+        parentId: 'condition',
+        content: { ...plainText('Operand mentions Target'), inlineRefs: [{ offset: 0, target: nodeReferenceTarget('target') }] },
+      }),
+      node({
+        id: 'manual-search-child',
+        parentId: 'search',
+        children: ['manual-search-child-ref'],
+        content: { ...plainText('Manual child mentions Target'), inlineRefs: [{ offset: 0, target: nodeReferenceTarget('target') }] },
+      }),
+      node({ id: 'manual-search-child-ref', type: 'reference', parentId: 'manual-search-child', targetId: 'target' }),
+    ].map((entry) => [entry.id, entry]));
+
+    const summary = buildReferenceSummary(byId, { includeUnlinked: true });
+    const sources = summary.byTarget.get('target') ?? [];
+
+    expect(summary.countsByTarget.get('target')).toEqual({ linked: 3, unlinked: 1, total: 4 });
+    expect(sources.map((source) => [source.kind, source.sourceNodeId, source.referenceNodeId])).toEqual([
+      ['tree', 'source', 'source-ref'],
+      ['inline', 'manual-search-child', 'manual-search-child'],
+      ['tree', 'manual-search-child', 'manual-search-child-ref'],
+      ['unlinked', 'manual-search-child', 'manual-search-child'],
+    ]);
+  });
 });
