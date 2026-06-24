@@ -26,6 +26,10 @@
   --code-block-scrollbar-gutter: var(--space-4);
 }
 
+.code-block:focus-within {
+  box-shadow: var(--focus-ring-shadow);
+}
+
 .agent-code-header,
 .code-block-chrome {
   position: absolute;
@@ -275,4 +279,8 @@
   color: transparent;
   caret-color: var(--text-strong);
   outline: none;
+}
+
+.code-block-textarea:focus-visible {
+  box-shadow: none;
 }
