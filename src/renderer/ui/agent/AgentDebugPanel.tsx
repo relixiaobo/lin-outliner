@@ -469,7 +469,7 @@ function ExecutionToolExchangeRows({
           part={toolCallPart}
           rowId={`${exchange.toolCallId}:tool-call:${index}`}
           summaryOverride={exchange.toolName}
-          titleOverride="tool call"
+          titleOverride="call"
         />
       ) : null}
       <ExecutionToolResultRow exchange={exchange} index={index} labels={labels} />
@@ -722,8 +722,8 @@ function PartRow({
     <details className={`agent-debug-part-details is-${part.kind}${className ? ` ${className}` : ''}`} key={`${rowId}-${index}`}>
       <summary>
         <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
-        <span title={title}>{title}</span>
-        <strong>{truncate(summary, 120)}</strong>
+        <span className="agent-debug-part-title" title={title}>{title}</span>
+        <strong className="agent-debug-part-summary">{truncate(summary, 120)}</strong>
         {trailing}
         <IconButton
           className="agent-debug-copy-button"
