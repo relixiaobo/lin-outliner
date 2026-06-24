@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296; authored plans #302/#303, both shipped 2026-06-19) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327) |
@@ -478,6 +478,22 @@ anything.
 
 ## Recently completed
 
+- **file-convert-removal** (`cc-2/file-convert-removal`, PR #331, cc-2, merged 2026-06-24) — removes the
+  typed `file_convert` local tool as redundant with `bash`: both spawned the same converter binaries
+  (`soffice`/`libreoffice`, `pdftoppm`, macOS `sips`) through the same process environment
+  (`buildAgentLocalToolProcessEnv`) under the same permission floor — only `shell:false` vs `shell:true`
+  differed. The "highest-frequency workflow" rationale from #266 (which introduced it) was never measured
+  (A9), and hardcoded `sips` made it less portable than `bash`'s fallback. Drops `createFileConvertTool` +
+  converters/helpers, the three `file.convert.*` action kinds, `'file_convert'` from `LOCAL_FILE_TOOL_NAMES`,
+  the tests, and the spec sections; default agent tool count **27 → 26**. The `bash` description now points
+  the agent at the converter binaries; `file_read`'s PDF/document ingestion (shared `getPdfPageCount` /
+  `runProcess` / `POPPLER_RECOVERY_INSTRUCTIONS` / `IMAGE_MEDIA_TYPES`) is untouched. **Gate (main):**
+  `/code-review high` (2 dead-code findings) → cleanup commit `c242cc97` removes the orphaned
+  `selectPdfConversionPageRange` (sole caller was the removed `convertPdfToImages`; `file_read` uses the
+  distinct `selectPdfPageRange`) and the now-unused `copyFile`/`unlink` imports. Verified at gate on the
+  merge commit: typecheck clean, `test:core` 1061 ran / 0 fail (2 skip), `docs:check` OK. Specs synced:
+  `agent-tool-design`, `agent-skills`. Fast-track, **shape (a)** one PR, *no plan file*. Pre-release: no
+  migration — a remembered `file.convert.*` grant becomes inert.
 - **response-run-details-pane** (`codex/agent-response-detail-pane`, PR #325, codex, merged 2026-06-24) —
   reworks the assistant-reply **Run Details** into a run-scoped pane on the **shared pane chrome** (sticky
   breadcrumb / close / content shell), drops the manual refresh button (still event-driven), and reorganizes

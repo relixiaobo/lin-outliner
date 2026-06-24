@@ -87,6 +87,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Removed
 
+- **`file_convert` tool removed — redundant with `bash` (PR #331, cc-2)** — the typed `file_convert`
+  local tool added no capability over `bash`: both spawned the same converter binaries
+  (`soffice`/`libreoffice`, `pdftoppm`, macOS `sips`) through the **same process environment**
+  (`buildAgentLocalToolProcessEnv` PATH/env, workdir `cwd`) and under the **same permission floor** —
+  the only difference was `shell:false` vs `shell:true`. Its "highest-frequency workflow" rationale
+  (from #266) was never measured (A9), and hardcoding `sips` made it **less** portable than `bash`'s
+  fallback. Removes `createFileConvertTool` + the converters/helpers, the three `file.convert.*` action
+  kinds (`deriveFileConvertActionDescriptors` / path-descriptor copy), `'file_convert'` from
+  `LOCAL_FILE_TOOL_NAMES`, the `file_convert` tests, and the spec sections. Default agent tool count
+  **27 → 26** (local tools 9 → 8). **Kept** (shared with `file_read` PDF/document ingestion):
+  `IMAGE_MEDIA_TYPES`, `getPdfPageCount`, `POPPLER_RECOVERY_INSTRUCTIONS`, `runProcess`; the `bash`
+  description now points the agent at `soffice`/`pdftoppm`/`sips` for conversion. **Gate (main):**
+  `/code-review high` (2 dead-code findings) → cleanup commit `c242cc97` drops the orphaned
+  `selectPdfConversionPageRange` (its only caller was the removed `convertPdfToImages`; `file_read`'s
+  PDF path uses the distinct `selectPdfPageRange`) and the now-unused `copyFile`/`unlink` imports.
+  Verified at gate on the merge commit: `typecheck` clean, `test:core` 1061 ran / 0 fail (2 skip);
+  `docs:check` OK. Specs synced:
+  `agent-tool-design`, `agent-skills`. Pre-release: no migration — a remembered grant keyed on a
+  `file.convert.*` kind becomes inert (acceptable per the no-back-compat rule).
 - **Legacy believer-pool memory projection retired (PR #329, codex-2)** — the third and final PR of
   `dream-channel-and-memory-retire`, finishing the #302 teardown now that PR #328 derives the Dream cursor
   and `lastSuccessAt` from the channel. Deletes the per-principal believer-pool **memory projection + its
