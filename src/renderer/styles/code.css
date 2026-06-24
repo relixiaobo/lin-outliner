@@ -224,14 +224,14 @@
 
 /* Agent transcript code is read-only and scrolls within a bounded height. */
 .agent-code-body {
-  padding: var(--code-block-content-inset);
+  padding: var(--code-block-content-inset) var(--code-block-content-inset) 0;
 }
 
 .agent-code-block pre {
   max-height: 280px;
   overflow: auto;
   color: var(--text-strong);
-  padding-bottom: var(--code-block-scrollbar-gutter);
+  padding-bottom: var(--code-block-content-inset);
 }
 
 /* Outliner code rows are editable: a transparent textarea over the highlight

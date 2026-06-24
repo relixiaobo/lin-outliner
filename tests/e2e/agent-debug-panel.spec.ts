@@ -74,6 +74,22 @@ test.describe('agent debug panel', () => {
     await expect(outputCodeHeader).toHaveCSS('opacity', '0');
     await outputCodeBlock.hover();
     await expect(outputCodeHeader).toHaveCSS('opacity', '1');
+    const outputCodeMetrics = await outputCodeBlock.locator('pre').first().evaluate((element) => {
+      const pre = element as HTMLElement;
+      const block = pre.closest<HTMLElement>('.agent-debug-code-block');
+      if (!block) return null;
+      const preRect = pre.getBoundingClientRect();
+      const blockRect = block.getBoundingClientRect();
+      const style = getComputedStyle(block);
+      return {
+        bottomInset: blockRect.bottom - preRect.bottom,
+        contentInset: Number.parseFloat(style.getPropertyValue('--code-block-content-inset')),
+        paddingBottom: Number.parseFloat(getComputedStyle(pre).paddingBottom),
+      };
+    });
+    expect(outputCodeMetrics).not.toBeNull();
+    expect(outputCodeMetrics!.bottomInset).toBeLessThanOrEqual(4);
+    expect(outputCodeMetrics!.paddingBottom).toBe(outputCodeMetrics!.contentInset);
     const toolCallRow = round.locator('.agent-debug-execution-event', { hasText: 'git push origin main' }).first();
     await toolCallRow.locator(':scope > summary').click();
     const highlightedToolCall = toolCallRow.locator('.agent-debug-code-block pre.shiki').first();
