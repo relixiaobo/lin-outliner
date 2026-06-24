@@ -88,6 +88,10 @@ function truncate(text: string, maxLength = 120): string {
   return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength).trim()}...` : trimmed;
 }
 
+function textByteLength(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
+
 function statusLabel(status: AgentDebugTurnStatus, labels: DebugLabels): string {
   if (status === 'running') return labels.statusRunning;
   if (status === 'completed') return labels.statusCompleted;
@@ -519,7 +523,7 @@ function ExecutionToolResultRow({ exchange, index, labels }: { exchange: AgentDe
       summaryOverride={`${exchange.toolName} · ${toolResultSummary(resultBody, exchange.toolCallId)}`}
       titleOverride="result"
       trailing={(
-        <span className="agent-debug-message-actions-inline">
+        <>
           {exchange.isError ? <span className="agent-debug-tool-flag">{labels.toolError}</span> : null}
           {blockRule ? (
             <IconButton
@@ -533,7 +537,7 @@ function ExecutionToolResultRow({ exchange, index, labels }: { exchange: AgentDe
               variant="panel"
             />
           ) : null}
-        </span>
+        </>
       )}
     />
   );
@@ -720,19 +724,22 @@ function PartRow({
   const summary = summaryOverride ?? part.body;
   return (
     <details className={`agent-debug-part-details is-${part.kind}${className ? ` ${className}` : ''}`} key={`${rowId}-${index}`}>
-      <summary>
+      <summary className="agent-debug-message-head agent-debug-part-head">
         <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
-        <span className="agent-debug-part-title" title={title}>{title}</span>
-        <strong className="agent-debug-part-summary">{truncate(summary, 120)}</strong>
-        {trailing}
-        <IconButton
-          className="agent-debug-copy-button"
-          icon={CopyIcon}
-          iconSize={ICON_SIZE.tiny}
-          label={labels.copyTitle({ title })}
-          onClick={(event) => { event.preventDefault(); void copyText(part.body); }}
-          variant="panel"
-        />
+        <span className="agent-debug-role-label" title={title}>{title}</span>
+        <strong title={summary}>{truncate(summary, 120)}</strong>
+        <code>{formatBytes(textByteLength(part.body))}</code>
+        <span className="agent-debug-message-actions-inline">
+          {trailing}
+          <IconButton
+            className="agent-debug-copy-button"
+            icon={CopyIcon}
+            iconSize={ICON_SIZE.tiny}
+            label={labels.copyTitle({ title })}
+            onClick={(event) => { event.preventDefault(); event.stopPropagation(); void copyText(part.body); }}
+            variant="panel"
+          />
+        </span>
       </summary>
       <pre>{part.body}</pre>
     </details>

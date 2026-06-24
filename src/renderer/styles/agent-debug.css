@@ -665,65 +665,10 @@
   border-top: 1px solid var(--border-subtle);
 }
 
-.agent-debug-execution-list > .agent-debug-execution-event > summary {
-  display: grid;
-  grid-template-columns: auto 58px minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
-  padding: var(--space-2) 0;
-}
-
-.agent-debug-execution-list > .agent-debug-execution-event > summary > .agent-debug-part-summary {
-  color: var(--text-strong);
-  font-weight: 500;
-}
-
-.agent-debug-execution-list > .agent-debug-execution-event > summary > .agent-debug-part-title {
-  width: 58px;
-  max-width: 58px;
-  color: var(--text-soft);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta-tight);
-}
-
 .agent-debug-part-details {
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-}
-
-.agent-debug-part-details > summary {
-  display: flex;
-  min-width: 0;
-  max-width: 100%;
-  align-items: center;
-  gap: var(--space-3);
-  color: var(--text-soft);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs-relaxed);
-  list-style: none;
-}
-
-.agent-debug-part-details > summary .agent-debug-part-title {
-  min-width: 0;
-  max-width: min(42%, 220px);
-  flex: 0 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-debug-part-details > summary .agent-debug-part-summary {
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-  color: var(--text-soft);
-  font-weight: 400;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .agent-debug-copy-button,
