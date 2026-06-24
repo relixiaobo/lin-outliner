@@ -1774,6 +1774,12 @@ Result behavior:
 - MarkItDown output is capped. Truncated Markdown sets `status: "partial"`,
   records `truncated: true` and the emitted `contentChars` count in the runtime
   data, and marks the attached Markdown text part as truncated.
+- Runtime ingestion keeps a small in-process derived-result cache for expensive
+  text extraction. Cache keys include the source file hash, extractor identity,
+  relevant options such as PDF page range, and the local tool environment. The
+  cache is disposable and never becomes truth: errors are not cached, ordinary
+  text-file freshness still comes from the per-run read record, and rendered PDF
+  page image directories remain per-read scratch outputs.
 - PDF reads are provider-neutral. `file_read` never sends the original PDF bytes
   to the model as a provider-native document block; the runtime extracts local
   text and/or page images first, then attaches those model-readable parts to the

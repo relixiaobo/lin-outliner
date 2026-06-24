@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -23,8 +23,14 @@ import {
 import { AgentSkillRuntime } from '../../src/main/agentSkills';
 import { agentAttachmentDir, materializePathBackedAttachment } from '../../src/main/agentAttachmentMaterialization';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
+import { agentDerivedFileCache } from '../../src/main/agentFileIngestionCache';
 
 const localToolSets = new Map<string, ReturnType<typeof createLocalTools>>();
+
+beforeEach(() => {
+  agentDerivedFileCache.clear();
+  localToolSets.clear();
+});
 
 async function withWorkspace<T>(fn: (workspaceRoot: string) => Promise<T>): Promise<T> {
   const workspaceRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-'));
@@ -801,7 +807,9 @@ describe('agent local tools', () => {
       delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
       try {
         await withPrependedPath(binDir, async () => {
-          const read = await executeTool<{
+          const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
+          const result = await (tool.execute as any)('rich-doc-visible', { file_path: filePath });
+          const read = result.details as ToolEnvelope<{
             type: 'markdown';
             file: {
               filePath: string;
@@ -810,7 +818,7 @@ describe('agent local tools', () => {
               truncated: boolean;
               originalSize: number;
             };
-          }>(workspaceRoot, 'file_read', { file_path: filePath });
+          }>;
 
           expect(read.ok).toBe(true);
           expect(read.data!.type).toBe('markdown');
@@ -823,8 +831,6 @@ describe('agent local tools', () => {
           });
           expect(read.instructions).toBe('The document was converted to Markdown locally.');
 
-          const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
-          const result = await (tool.execute as any)('rich-doc-visible', { file_path: filePath });
           const visible = JSON.parse(result.content[0].text);
           expect(visible.data.file).toEqual({
             filePath,
@@ -926,6 +932,52 @@ describe('agent local tools', () => {
           delete process.env.PROBE_LOG;
         } else {
           process.env.PROBE_LOG = originalProbeLog;
+        }
+      }
+    });
+  });
+
+  test('file_read reuses cached MarkItDown output for the same rich document content', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const binDir = path.join(workspaceRoot, 'fake-cached-markitdown-bin');
+      await mkdir(binDir, { recursive: true });
+      const conversionLog = path.join(workspaceRoot, 'conversion-count.txt');
+      const fakeMarkitdown = path.join(binDir, 'markitdown');
+      await writeFile(fakeMarkitdown, [
+        '#!/bin/sh',
+        'if [ "$1" = "--help" ]; then echo "Usage: markitdown"; exit 0; fi',
+        'echo conversion >> "$CONVERSION_LOG"',
+        'printf "# Cached conversion\\n\\nbody\\n"',
+      ].join('\n'), 'utf8');
+      await chmod(fakeMarkitdown, 0o755);
+
+      const filePath = path.join(workspaceRoot, 'cached.docx');
+      await writeFile(filePath, 'stable office payload', 'utf8');
+
+      const originalCommand = process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+      const originalConversionLog = process.env.CONVERSION_LOG;
+      delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+      process.env.CONVERSION_LOG = conversionLog;
+      try {
+        await withPrependedPath(binDir, async () => {
+          const first = await executeTool<{ type: 'markdown'; file: { content: string } }>(workspaceRoot, 'file_read', { file_path: filePath });
+          const second = await executeTool<{ type: 'markdown'; file: { content: string } }>(workspaceRoot, 'file_read', { file_path: filePath });
+
+          expect(first.ok).toBe(true);
+          expect(second.ok).toBe(true);
+          expect(second.data!.file.content).toBe(first.data!.file.content);
+          expect((await readFile(conversionLog, 'utf8')).trim().split('\n')).toHaveLength(1);
+        });
+      } finally {
+        if (originalCommand === undefined) {
+          delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
+        } else {
+          process.env.LIN_AGENT_MARKITDOWN_COMMAND = originalCommand;
+        }
+        if (originalConversionLog === undefined) {
+          delete process.env.CONVERSION_LOG;
+        } else {
+          process.env.CONVERSION_LOG = originalConversionLog;
         }
       }
     });
@@ -1165,6 +1217,60 @@ describe('agent local tools', () => {
         expect(read.data!.file.extractedText?.chars).toBe(65_000);
         expect(textPart?.text.length).toBeLessThan(61_000);
       });
+    });
+  });
+
+  test('file_read reuses cached PDF metadata and text for repeated reads of the same PDF content', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const binDir = path.join(workspaceRoot, 'fake-cached-pdf-bin');
+      await mkdir(binDir, { recursive: true });
+      const pdfinfoLog = path.join(workspaceRoot, 'pdfinfo-count.txt');
+      const pdftotextLog = path.join(workspaceRoot, 'pdftotext-count.txt');
+      const fakePdfinfo = path.join(binDir, 'pdfinfo');
+      await writeFile(fakePdfinfo, [
+        '#!/bin/sh',
+        'echo info >> "$PDFINFO_LOG"',
+        'echo "Pages: 1"',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdfinfo, 0o755);
+      const fakePdftotext = path.join(binDir, 'pdftotext');
+      await writeFile(fakePdftotext, [
+        '#!/bin/sh',
+        'echo text >> "$PDFTEXT_LOG"',
+        'echo "Cached PDF text"',
+      ].join('\n'), 'utf8');
+      await chmod(fakePdftotext, 0o755);
+
+      const filePath = path.join(workspaceRoot, 'cached-text.pdf');
+      await writeFile(filePath, makePdf(['unique cached pdf text']), 'utf8');
+
+      const originalPdfinfoLog = process.env.PDFINFO_LOG;
+      const originalPdfTextLog = process.env.PDFTEXT_LOG;
+      process.env.PDFINFO_LOG = pdfinfoLog;
+      process.env.PDFTEXT_LOG = pdftotextLog;
+      try {
+        await withPrependedPath(binDir, async () => {
+          const first = await executeTool<{ type: 'pdf'; file: { extractedText?: { truncated: boolean } } }>(workspaceRoot, 'file_read', { file_path: filePath });
+          const second = await executeTool<{ type: 'pdf'; file: { extractedText?: { truncated: boolean } } }>(workspaceRoot, 'file_read', { file_path: filePath });
+
+          expect(first.ok).toBe(true);
+          expect(second.ok).toBe(true);
+          expect(second.data!.file.extractedText?.truncated).toBe(false);
+          expect((await readFile(pdfinfoLog, 'utf8')).trim().split('\n')).toHaveLength(1);
+          expect((await readFile(pdftotextLog, 'utf8')).trim().split('\n')).toHaveLength(1);
+        });
+      } finally {
+        if (originalPdfinfoLog === undefined) {
+          delete process.env.PDFINFO_LOG;
+        } else {
+          process.env.PDFINFO_LOG = originalPdfinfoLog;
+        }
+        if (originalPdfTextLog === undefined) {
+          delete process.env.PDFTEXT_LOG;
+        } else {
+          process.env.PDFTEXT_LOG = originalPdfTextLog;
+        }
+      }
     });
   });
 

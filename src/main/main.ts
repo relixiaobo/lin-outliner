@@ -39,6 +39,7 @@ import {
 import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
 import { ASSET_URL_SCHEME } from '../core/assets';
 import { handlePreviewCommand } from './previewSource';
+import { setBoundedMapEntry } from './boundedMap';
 import {
   LIN_AGENT_OAUTH_EVENT_CHANNEL,
   LIN_DOCUMENT_EVENT_CHANNEL,
@@ -2252,13 +2253,7 @@ function localFilePathRank(filePath: string, query: string): number {
 // clearing would drop ids that prepare/preview still need for the visible
 // results, leaving recently surfaced files unselectable mid-session.
 function setBoundedLocalFileCache<V>(cache: Map<string, V>, key: string, value: V): void {
-  if (cache.has(key)) cache.delete(key);
-  cache.set(key, value);
-  while (cache.size > LOCAL_FILE_CACHE_LIMIT) {
-    const oldest = cache.keys().next().value;
-    if (oldest === undefined) break;
-    cache.delete(oldest);
-  }
+  setBoundedMapEntry(cache, key, value, LOCAL_FILE_CACHE_LIMIT);
 }
 
 function cacheLocalFileSearchPath(filePath: string): string {
