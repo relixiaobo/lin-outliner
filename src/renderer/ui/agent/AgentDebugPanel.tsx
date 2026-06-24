@@ -527,6 +527,18 @@ function ExecutionToolResultRow({ exchange, index, labels }: { exchange: AgentDe
       : blockState === 'error'
         ? labels.userBlockError
         : labels.addUserBlockLabel;
+  const blockButton = blockRule ? (
+    <IconButton
+      className={`agent-debug-block-button is-${blockState}`}
+      disabled={blockState === 'saving'}
+      icon={BlockIcon}
+      iconSize={ICON_SIZE.tiny}
+      label={blockButtonLabel}
+      onClick={addUserBlock}
+      title={blockState === 'idle' ? labels.addUserBlockTitle({ rule: blockRule }) : blockButtonLabel}
+      variant="panel"
+    />
+  ) : null;
 
   return (
     <PartRow
@@ -537,23 +549,7 @@ function ExecutionToolResultRow({ exchange, index, labels }: { exchange: AgentDe
       rowId={`${exchange.toolCallId}:tool-result:${index}`}
       summaryOverride={`${exchange.toolName} · ${toolResultSummary(resultBody, exchange.toolCallId)}`}
       titleOverride="result"
-      trailing={(
-        <>
-          {exchange.isError ? <span className="agent-debug-tool-flag">{labels.toolError}</span> : null}
-          {blockRule ? (
-            <IconButton
-              className={`agent-debug-block-button is-${blockState}`}
-              disabled={blockState === 'saving'}
-              icon={BlockIcon}
-              iconSize={ICON_SIZE.tiny}
-              label={blockButtonLabel}
-              onClick={addUserBlock}
-              title={blockState === 'idle' ? labels.addUserBlockTitle({ rule: blockRule }) : blockButtonLabel}
-              variant="panel"
-            />
-          ) : null}
-        </>
-      )}
+      trailing={blockButton}
     />
   );
 }
@@ -737,8 +733,15 @@ function PartRow({
 }) {
   const title = titleOverride ?? partTitle(part, labels);
   const summary = summaryOverride ?? part.body;
+  const isError = part.kind === 'toolResult' && part.isError;
+  const detailsClassName = [
+    'agent-debug-part-details',
+    `is-${part.kind}`,
+    isError ? 'is-error' : null,
+    className,
+  ].filter(Boolean).join(' ');
   return (
-    <details className={`agent-debug-part-details is-${part.kind}${className ? ` ${className}` : ''}`} key={`${rowId}-${index}`}>
+    <details className={detailsClassName} key={`${rowId}-${index}`}>
       <summary className="agent-debug-message-head agent-debug-part-head">
         <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
         <span className="agent-debug-role-label" title={title}>{title}</span>

@@ -59,10 +59,12 @@ test.describe('agent debug panel', () => {
     await expect(round).toContainText('Current outline focuses on UI work.');
     const outputRow = round.locator('.agent-debug-execution-event', { hasText: 'Current outline focuses on UI work.' }).first();
     await expect(outputRow).not.toContainText('call');
-    await expect(round.locator('.agent-debug-execution-event', { hasText: 'call' })).toContainText('git push origin main');
-    await expect(round.locator('.agent-debug-execution-event', { hasText: 'result' })).toContainText('Pushed to origin/main.');
-    await expect(round.locator('.agent-debug-tool-exchange > summary > .agent-debug-role-label').first()).toHaveText('result');
-    await expect(round.locator('.agent-debug-tool-exchange', { hasText: 'bash' })).toContainText('Pushed to origin/main.');
+    const successfulToolCall = round.locator('.agent-debug-execution-event', { hasText: 'git push origin main' }).first();
+    await expect(successfulToolCall).toContainText('call');
+    const successfulToolResult = round.locator('.agent-debug-tool-exchange', { hasText: 'Pushed to origin/main.' }).first();
+    await expect(successfulToolResult).toContainText('result');
+    await expect(successfulToolResult.locator(':scope > summary > .agent-debug-role-label')).toHaveText('result');
+    await expect(successfulToolResult).toContainText('bash');
     await expect(outputRow.locator(':scope > summary .agent-debug-copy-button')).toHaveCount(0);
     await outputRow.locator(':scope > summary').click();
     const outputCodeBlock = outputRow.locator('.agent-debug-code-block').first();
@@ -90,11 +92,31 @@ test.describe('agent debug panel', () => {
     expect(outputCodeMetrics).not.toBeNull();
     expect(outputCodeMetrics!.bottomInset).toBeLessThanOrEqual(4);
     expect(outputCodeMetrics!.paddingBottom).toBe(outputCodeMetrics!.contentInset);
-    const toolCallRow = round.locator('.agent-debug-execution-event', { hasText: 'git push origin main' }).first();
+    const toolCallRow = successfulToolCall;
     await toolCallRow.locator(':scope > summary').click();
     const highlightedToolCall = toolCallRow.locator('.agent-debug-code-block pre.shiki').first();
     await expect(highlightedToolCall).toBeVisible();
     await expect(highlightedToolCall.locator('span')).not.toHaveCount(0);
+    const errorResultRow = round.locator('.agent-debug-tool-exchange.is-error').first();
+    await expect(errorResultRow.locator(':scope > summary strong')).toContainText('permission_denied');
+    await expect.poll(async () => errorResultRow.locator(':scope > summary strong').evaluate((node) => {
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--danger)';
+      document.body.append(probe);
+      const expected = getComputedStyle(probe).color;
+      probe.remove();
+      const style = getComputedStyle(node);
+      return style.color === expected;
+    })).toBe(true);
+    await expect(errorResultRow.locator('.agent-debug-tool-flag')).toHaveCount(0);
+    await errorResultRow.locator(':scope > summary').click();
+    await expect.poll(async () => errorResultRow.locator('.agent-debug-code-block pre').first().evaluate((node) => {
+      const pre = node as HTMLElement;
+      return {
+        scrollsHorizontally: pre.scrollWidth > pre.clientWidth,
+        whiteSpace: getComputedStyle(pre).whiteSpace,
+      };
+    })).toEqual({ scrollsHorizontally: true, whiteSpace: 'pre' });
     await round.locator('summary.agent-debug-round-head').click();
     await expect(outputRow).not.toBeVisible();
     await round.locator('summary.agent-debug-round-head').click();

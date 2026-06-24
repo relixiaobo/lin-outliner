@@ -623,6 +623,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       members: [MAIN_AGENT_ID, USER_AGENT_ID, REVIEWER_AGENT_ID],
     };
     const longToolCallId = 'call_hY7YSWjtewOewQfepRMCajzMlfc_00128e64f08e3fd6016a3a61cb0a9c8197a9c011';
+    const deniedToolCallId = 'call_denied_tool_00128e64f08e3fd6016a3a61cb0a9c8197a9c012';
+    const deniedToolResult = '{"ok":false,"tool":"bash","status":"denied","error":{"code":"permission_denied","message":"User denied permission. The requested tool call was not executed."}}';
     const debugRun = {
       ...debugRunSummary,
       systemPrompt: 'You are Lin agent.\nLong unbroken diagnostic prompt segment: abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqrstuvwxyz0123456789.',
@@ -673,10 +675,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           { kind: 'thinking', body: 'Identify relevant outline nodes.' },
           { kind: 'toolCall', name: 'bash', toolUseId: longToolCallId, body: '{"command":"git push origin main"}' },
           { kind: 'text', body: 'Current outline focuses on UI work.', isReminder: false },
+          { kind: 'toolCall', name: 'bash', toolUseId: deniedToolCallId, body: '{"command":"git push --force origin main"}' },
         ],
         stopReason: 'stop',
         usage: debugUsage,
-        toolExchanges: [{ toolCallId: longToolCallId, toolName: 'bash', args: '{"command":"git push origin main"}', result: 'Pushed to origin/main.', isError: false }],
+        toolExchanges: [
+          { toolCallId: longToolCallId, toolName: 'bash', args: '{"command":"git push origin main"}', result: 'Pushed to origin/main.', isError: false },
+          { toolCallId: deniedToolCallId, toolName: 'bash', args: '{"command":"git push --force origin main"}', result: deniedToolResult, isError: true },
+        ],
         startedAt: 1_799_999_999_800,
         completedAt: 1_800_000_000_000,
       }],

@@ -605,6 +605,10 @@
   padding: var(--space-2) 0;
 }
 
+.agent-debug-part-head:has(.agent-debug-message-actions-inline) {
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+}
+
 .agent-debug-message-head::-webkit-details-marker {
   display: none;
 }
@@ -673,9 +677,7 @@
   max-height: 280px;
   overflow: auto;
   color: var(--text-strong);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  white-space: pre;
 }
 
 .agent-debug-execution-list {
@@ -924,16 +926,8 @@
   border-top: 1px solid var(--border-subtle);
 }
 
-.agent-debug-tool-exchange.is-error {
-  border-color: color-mix(in srgb, var(--status-danger) 35%, var(--border-subtle));
-}
-
-.agent-debug-tool-flag {
-  flex: 0 0 auto;
+.agent-debug-part-details.is-error > .agent-debug-part-head strong {
   color: var(--danger);
-  font-size: var(--font-ui-2xs);
-  font-weight: 600;
-  text-transform: uppercase;
 }
 
 .agent-debug-detail-section {
