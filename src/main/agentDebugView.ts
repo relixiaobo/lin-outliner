@@ -13,6 +13,7 @@ import type {
   AgentDebugUsage,
   Usage,
 } from '../core/agentTypes';
+import { formatAgentDebugToolResultText } from '../core/agentDebugProtocol';
 import type { AgentEvent, AgentPersistedContent, DebugRunModelInputMessage, DebugRunToolSchema } from '../core/agentEventLog';
 import type { AgentRunMetaProjection } from './agentEventStore';
 import { elideLargeBlobs, redactSecretKeyedValues, redactSecretLikeContent } from './agentSecretRedaction';
@@ -400,7 +401,7 @@ function providerContentToPersisted(value: unknown): AgentPersistedContent[] {
       .map((part) => persistedText([part]))
       .filter(Boolean)
       .join('\n');
-    return [{ type: 'text', text: callId ? `[tool_result ${callId}] ${text}`.trim() : text }];
+    return [{ type: 'text', text: formatAgentDebugToolResultText(callId, text) }];
   }
   if (type === 'tool_result') {
     const toolUseId = stringValue(value.tool_use_id) || stringValue(value.toolUseId);
@@ -408,7 +409,7 @@ function providerContentToPersisted(value: unknown): AgentPersistedContent[] {
       .map((part) => persistedText([part]))
       .filter(Boolean)
       .join('\n');
-    return [{ type: 'text', text: toolUseId ? `[tool_result ${toolUseId}] ${text}`.trim() : text }];
+    return [{ type: 'text', text: formatAgentDebugToolResultText(toolUseId, text) }];
   }
   if (type === 'input_file' || type === 'file') {
     return [{ type: 'text', text: `[file ${stringValue(value.filename) || stringValue(value.name) || 'attachment'}]` }];

@@ -1,5 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode, type RefObject } from 'react';
-import { createPortal } from 'react-dom';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react';
 import type { AgentMessageEntry, AgentTurnPhase } from '../../agent/runtime';
 import type {
   AssistantMessage,
@@ -62,7 +61,7 @@ import {
   nearestScrollContainer,
   usePendingDisclosureAnchor,
 } from '../interactions/disclosureScrollAnchor';
-import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { AgentUsageHoverCard, formatUsageCostValue } from './AgentUsageBreakdown';
 
 const USER_MESSAGE_COLLAPSED_LINES = 5;
 const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
@@ -87,7 +86,7 @@ interface AgentMessageRowProps {
   onRetry?: (nodeId: string) => void | Promise<void>;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onOpenChildRunTranscript?: (childRunId: string) => void;
-  onOpenRunDetails?: (runId: string) => void;
+  onOpenRunDetails?: (runId: string) => boolean | void;
   onDisclosureToggle?: () => void;
   onSwitchBranch?: (nodeId: string) => void | Promise<void>;
   pendingToolCallIds: ReadonlySet<string>;
@@ -313,34 +312,6 @@ function formatTokenCount(value: number | undefined): string | null {
   return new Intl.NumberFormat().format(value);
 }
 
-function formatTokenValue(value: number | undefined): string {
-  return Number.isFinite(value) && value !== undefined ? new Intl.NumberFormat().format(value) : '0';
-}
-
-function formatUsageCost(value: number | undefined): string | null {
-  if (!Number.isFinite(value) || value === undefined) return null;
-  if (value <= 0) return '$0.0000';
-  if (value < 0.01) return `$${value.toFixed(5)}`;
-  return `$${value.toFixed(4)}`;
-}
-
-function segmentStyle(value: number, total: number): CSSProperties {
-  const share = total > 0 ? value / total : 0;
-  return {
-    '--segment-size': `${Math.max(share * 100, value > 0 ? 2 : 0)}%`,
-  } as CSSProperties;
-}
-
-function formatCachedShare(input: number | undefined, cacheRead: number | undefined, cacheWrite: number | undefined): string | null {
-  const uncachedInput = input ?? 0;
-  const read = cacheRead ?? 0;
-  const write = cacheWrite ?? 0;
-  const cacheActivity = read + write;
-  const inputContext = uncachedInput + cacheActivity;
-  if (cacheActivity <= 0 || inputContext <= 0) return null;
-  return `${Math.round((read / inputContext) * 100)}%`;
-}
-
 function usageSummary(message: AssistantMessage, labels: {
   input: string;
   output: string;
@@ -366,83 +337,6 @@ function providerModelSummary(message: AssistantMessage): string | null {
   return model || provider || null;
 }
 
-function AgentMessageUsageHoverCard({
-  anchorRef,
-  usage,
-}: {
-  anchorRef: RefObject<HTMLElement | null>;
-  usage: AssistantMessage['usage'];
-}) {
-  const t = useT();
-  const cardRef = useRef<HTMLDivElement | null>(null);
-  const cost = usage.cost;
-  const cachedShare = formatCachedShare(usage.input, usage.cacheRead, usage.cacheWrite);
-  const usageRows = [
-    { kind: 'input', label: t.agent.message.tokenLabels.input, tokens: usage.input, cost: cost?.input },
-    { kind: 'output', label: t.agent.message.tokenLabels.output, tokens: usage.output, cost: cost?.output },
-    { kind: 'cache-read', label: t.agent.message.tokenLabels.cacheRead, tokens: usage.cacheRead, cost: cost?.cacheRead },
-    { kind: 'cache-write', label: t.agent.message.tokenLabels.cacheWrite, tokens: usage.cacheWrite, cost: cost?.cacheWrite },
-  ];
-  const breakdownRows = [
-    ...usageRows,
-    { kind: 'total', label: t.agent.message.tokenLabels.total, tokens: usage.totalTokens, cost: cost?.total },
-  ];
-  const style = useAnchoredOverlay(cardRef, {
-    anchorRef,
-    gap: 8,
-    layoutKey: `${usage.input}:${usage.output}:${usage.cacheRead}:${usage.cacheWrite}:${usage.totalTokens}:${cost?.total ?? 0}`,
-    maxHeight: 280,
-    placement: 'top-end',
-    width: 248,
-  });
-
-  return createPortal(
-    <div
-      className="agent-message-usage-hover-card"
-      ref={cardRef}
-      role="tooltip"
-      style={style}
-    >
-      <div className="agent-message-usage-hover-title-row">
-        <div className="agent-message-usage-hover-title">{t.agent.message.usageDetails}</div>
-        {cachedShare ? (
-          <div className="agent-message-usage-hover-meta">
-            {t.agent.message.cachedShare}: <strong>{cachedShare}</strong>
-          </div>
-        ) : null}
-      </div>
-      <div className="agent-message-usage-hover-bar" aria-hidden>
-        {usageRows.map((row) => (
-          <span
-            className={`is-${row.kind}`}
-            key={row.kind}
-            style={segmentStyle(row.tokens, usage.totalTokens)}
-          />
-        ))}
-      </div>
-      <div className="agent-message-usage-hover-breakdown" aria-label={t.agent.message.usageDetails}>
-        {breakdownRows.map((row) => {
-          const rowClassName = [
-            row.kind === 'total' ? 'is-total' : null,
-            row.tokens === 0 && !row.cost ? 'is-zero' : null,
-          ].filter(Boolean).join(' ') || undefined;
-          return (
-            <div className={rowClassName} key={row.kind}>
-              <span>
-                <i className={`is-${row.kind}`} />
-                {row.label}
-              </span>
-              <strong>{formatTokenValue(row.tokens)}</strong>
-              <strong>{formatUsageCost(row.cost) ?? t.agent.message.usageUnavailable}</strong>
-            </div>
-          );
-        })}
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
 function AgentMessageDetailsPopover({
   message,
   locale,
@@ -460,7 +354,7 @@ function AgentMessageDetailsPopover({
   const detailsRef = useRef<HTMLDivElement | null>(null);
   const providerModel = message.role === 'assistant' ? providerModelSummary(message) : null;
   const tokens = message.role === 'assistant' ? usageSummary(message, t.agent.message.tokenLabels) : null;
-  const cost = message.role === 'assistant' ? formatUsageCost(message.usage.cost?.total) : null;
+  const cost = message.role === 'assistant' ? formatUsageCostValue(message.usage.cost?.total) : null;
 
   useEffect(() => {
     function onPointerDown(event: PointerEvent) {
@@ -862,8 +756,8 @@ function AgentMessageRowComponent({
   const openAssistantDetails = () => {
     setUsageHoverOpen(false);
     if (entry.runId && onOpenRunDetails) {
-      onOpenRunDetails(entry.runId);
-      return;
+      const opened = onOpenRunDetails(entry.runId);
+      if (opened !== false) return;
     }
     setDetailsOpen(true);
   };
@@ -945,7 +839,7 @@ function AgentMessageRowComponent({
               variant="message"
             />
             {usageHoverOpen ? (
-              <AgentMessageUsageHoverCard anchorRef={detailsButtonRef} usage={usageForHover} />
+              <AgentUsageHoverCard anchorRef={detailsButtonRef} usage={usageForHover} />
             ) : null}
           </AgentMessageActions>
         ) : null}

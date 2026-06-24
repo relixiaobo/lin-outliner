@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { agentToolActionKindProfile } from '../../../core/agentPermissionModel';
+import { hasAgentDebugToolResultPrefix, stripAgentDebugToolResultPrefix } from '../../../core/agentDebugProtocol';
 import type {
   AgentDebugMessagePart,
   AgentDebugMessageRow,
@@ -18,6 +19,8 @@ import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
 import { formatBytes } from '../preview/fileNode';
 import { ReadOnlyCodeBlock } from '../editor/CodeBlockSurface';
+import { AgentUsageBreakdown, formatUsageCostValue } from './AgentUsageBreakdown';
+import { formatRunDuration, previewText } from './agentProcessTypes';
 
 // Run Details is a read-only window onto one run. Model Input shows what seeded
 // the run; Execution shows the provider calls and tools that happened inside it.
@@ -42,30 +45,6 @@ function formatTokens(tokens: number): string {
   return `${(tokens / 1000).toFixed(tokens >= 10_000 ? 0 : 1)}k`;
 }
 
-function formatCost(cost: number): string {
-  if (cost <= 0) return '$0.0000';
-  if (cost < 0.01) return `$${cost.toFixed(5)}`;
-  return `$${cost.toFixed(4)}`;
-}
-
-function formatUsageTokens(tokens: number): string {
-  return Number.isFinite(tokens) ? new Intl.NumberFormat().format(tokens) : '0';
-}
-
-function usageSegmentStyle(value: number, total: number): CSSProperties {
-  const share = total > 0 ? value / total : 0;
-  return {
-    '--segment-size': `${Math.max(share * 100, value > 0 ? 2 : 0)}%`,
-  } as CSSProperties;
-}
-
-function formatCachedShare(input: number, cacheRead: number, cacheWrite: number): string | null {
-  const cacheActivity = cacheRead + cacheWrite;
-  const inputContext = input + cacheActivity;
-  if (cacheActivity <= 0 || inputContext <= 0) return null;
-  return `${Math.round((cacheRead / inputContext) * 100)}%`;
-}
-
 function formatTimestamp(value: number | null): string {
   if (!value) return '—';
   return new Intl.DateTimeFormat(undefined, {
@@ -77,21 +56,9 @@ function formatTimestamp(value: number | null): string {
   }).format(new Date(value));
 }
 
-function formatDuration(startedAt: number | null, completedAt: number | null): string {
+function formatRunTimeSpan(startedAt: number | null, completedAt: number | null): string {
   if (!startedAt || !completedAt || completedAt < startedAt) return '—';
-  const totalSeconds = Math.round((completedAt - startedAt) / 1000);
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
-}
-
-function truncate(text: string, maxLength = 120): string {
-  const trimmed = text.replace(/\s+/g, ' ').trim();
-  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength).trim()}...` : trimmed;
+  return formatRunDuration(completedAt - startedAt);
 }
 
 function textByteLength(text: string): number {
@@ -265,7 +232,7 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
         </div>
         <div>
           <dt>{labels.runDuration}</dt>
-          <dd>{formatDuration(startedAt, completedAt)}</dd>
+          <dd>{formatRunTimeSpan(startedAt, completedAt)}</dd>
           <small>{timeRange}</small>
         </div>
         <div>
@@ -284,7 +251,7 @@ function RunSummaryHeader({ labels, run }: { labels: DebugLabels; run: AgentDebu
         {usage ? (
           <div>
             <dt>{labels.statCost}</dt>
-            <dd>{formatCost(usage.costUsd)}</dd>
+            <dd>{formatUsageCostValue(usage.costUsd) ?? '$0.0000'}</dd>
           </div>
         ) : null}
       </dl>
@@ -326,17 +293,18 @@ function RunDetail({ run, labels }: { run: AgentDebugRun; labels: DebugLabels })
 }
 
 function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDebugRun }) {
+  const resetKey = run.runId;
   return (
     <DebugPanelSection className="agent-debug-model-input-section" title={labels.modelInputTitle}>
       <div className="agent-debug-context-card">
-        <ContextDisclosure title={labels.systemPromptDisclosure}>
+        <ContextDisclosure resetKey={resetKey} title={labels.systemPromptDisclosure}>
           {run.systemPrompt ? (
             <DebugCodeBlock className="agent-debug-inline-code-block" text={run.systemPrompt} />
           ) : (
             <span className="is-muted">{labels.empty}</span>
           )}
         </ContextDisclosure>
-        <ContextDisclosure title={labels.toolsDisclosure({ count: run.tools.length })}>
+        <ContextDisclosure resetKey={resetKey} title={labels.toolsDisclosure({ count: run.tools.length })}>
           {run.tools.length === 0 ? <span className="is-muted">{labels.noTools}</span> : (
             <div className="agent-debug-tool-list">
               {run.tools.map((tool) => (
@@ -355,7 +323,7 @@ function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDeb
         {run.modelInputMessagesSource === 'legacyRequestWindow' && (
           <p className="agent-debug-inline-note">{labels.legacyInputMessagesNotice}</p>
         )}
-        <ModelInputMessageSections messages={run.modelInputMessages} labels={labels} />
+        <ModelInputMessageSections messages={run.modelInputMessages} labels={labels} resetKey={resetKey} />
       </div>
     </DebugPanelSection>
   );
@@ -363,13 +331,14 @@ function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDeb
 
 function RoundCard({ round, labels }: { round: AgentDebugRound; labels: DebugLabels }) {
   const showStatus = round.status !== 'completed';
+  const [open, setOpen] = useState(true);
   const emittedToolCallIds = new Set(
     round.responseParts
       .filter((part) => part.kind === 'toolCall')
       .map((part) => part.toolUseId),
   );
   return (
-    <details className="agent-debug-round-card" open>
+    <details className="agent-debug-round-card" onToggle={(event) => setOpen(event.currentTarget.open)} open={open}>
       <summary className="agent-debug-round-head">
         <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
         <span className="agent-debug-disclosure-title">{labels.modelCallTitle({ index: round.index + 1 })}</span>
@@ -377,32 +346,34 @@ function RoundCard({ round, labels }: { round: AgentDebugRound; labels: DebugLab
         <RoundInfoHover labels={labels} round={round} />
       </summary>
 
-      <div className="agent-debug-execution-list">
-        {round.responseParts.length === 0 && round.toolExchanges.length === 0 ? (
-          <div className="is-muted">{labels.noExecutionOutput}</div>
-        ) : null}
-        {round.responseParts.map((part, index) => (
-          <PartRow
-            className="agent-debug-execution-event"
-            index={index}
-            key={`${round.messageId}-response-${index}`}
-            labels={labels}
-            part={part}
-            rowId={`${round.messageId}:response`}
-            summaryOverride={executionEventSummary(part)}
-            titleOverride={executionEventLabel(part, labels)}
-          />
-        ))}
-        {round.toolExchanges.map((exchange, index) => (
-          <ExecutionToolExchangeRows
-            exchange={exchange}
-            includeToolCall={!emittedToolCallIds.has(exchange.toolCallId)}
-            index={index}
-            key={exchange.toolCallId}
-            labels={labels}
-          />
-        ))}
-      </div>
+      {open ? (
+        <div className="agent-debug-execution-list">
+          {round.responseParts.length === 0 && round.toolExchanges.length === 0 ? (
+            <div className="is-muted">{labels.noExecutionOutput}</div>
+          ) : null}
+          {round.responseParts.map((part, index) => (
+            <PartRow
+              className="agent-debug-execution-event"
+              index={index}
+              key={`${round.messageId}-response-${index}`}
+              labels={labels}
+              part={part}
+              rowId={`${round.messageId}:response`}
+              summaryOverride={executionEventSummary(part)}
+              titleOverride={executionEventLabel(part, labels)}
+            />
+          ))}
+          {round.toolExchanges.map((exchange, index) => (
+            <ExecutionToolExchangeRows
+              exchange={exchange}
+              includeToolCall={!emittedToolCallIds.has(exchange.toolCallId)}
+              index={index}
+              key={exchange.toolCallId}
+              labels={labels}
+            />
+          ))}
+        </div>
+      ) : null}
     </details>
   );
 }
@@ -439,56 +410,7 @@ function RoundInfoContent({ labels, round }: { labels: DebugLabels; round: Agent
     );
   }
 
-  const cachedShare = formatCachedShare(usage.input, usage.cacheRead, usage.cacheWrite);
-  const usageRows = [
-    { kind: 'input', label: t.agent.message.tokenLabels.input, tokens: usage.input, cost: usage.cost.input },
-    { kind: 'output', label: t.agent.message.tokenLabels.output, tokens: usage.output, cost: usage.cost.output },
-    { kind: 'cache-read', label: t.agent.message.tokenLabels.cacheRead, tokens: usage.cacheRead, cost: usage.cost.cacheRead },
-    { kind: 'cache-write', label: t.agent.message.tokenLabels.cacheWrite, tokens: usage.cacheWrite, cost: usage.cost.cacheWrite },
-  ];
-  const rows = [
-    ...usageRows,
-    { kind: 'total', label: t.agent.message.tokenLabels.total, tokens: usage.totalTokens, cost: usage.cost.total },
-  ];
-  return (
-    <>
-      <div className="agent-message-usage-hover-title-row">
-        <div className="agent-message-usage-hover-title">{t.agent.message.usageDetails}</div>
-        {cachedShare ? (
-          <div className="agent-message-usage-hover-meta">
-            {t.agent.message.cachedShare}: <strong>{cachedShare}</strong>
-          </div>
-        ) : null}
-      </div>
-      <div className="agent-message-usage-hover-bar" aria-hidden>
-        {usageRows.map((row) => (
-          <span
-            className={`is-${row.kind}`}
-            key={row.kind}
-            style={usageSegmentStyle(row.tokens, usage.totalTokens)}
-          />
-        ))}
-      </div>
-      <div className="agent-message-usage-hover-breakdown" aria-label={t.agent.message.usageDetails}>
-        {rows.map((row) => {
-          const rowClassName = [
-            row.kind === 'total' ? 'is-total' : null,
-            row.tokens === 0 && !row.cost ? 'is-zero' : null,
-          ].filter(Boolean).join(' ') || undefined;
-          return (
-            <div className={rowClassName} key={row.kind}>
-              <span>
-                <i className={`is-${row.kind}`} />
-                {row.label}
-              </span>
-              <strong>{formatUsageTokens(row.tokens)}</strong>
-              <strong>{formatCost(row.cost)}</strong>
-            </div>
-          );
-        })}
-      </div>
-    </>
-  );
+  return <AgentUsageBreakdown usage={usage} />;
 }
 
 function ExecutionToolExchangeRows({
@@ -623,18 +545,18 @@ function stringRecordValue(value: unknown, key: string): string | null {
 
 // --- shared bits ----------------------------------------------------------
 
-function ModelInputMessageSections({ messages, labels }: { messages: AgentDebugMessageRow[]; labels: DebugLabels }) {
+function ModelInputMessageSections({ labels, messages, resetKey }: { messages: AgentDebugMessageRow[]; labels: DebugLabels; resetKey: string }) {
   const groups = splitModelInputMessages(messages);
   if (messages.length === 0) return <span className="is-muted">{labels.empty}</span>;
   return (
     <>
       {groups.history.length > 0 ? (
-        <ContextDisclosure title={labels.inputHistoryDisclosure({ count: groups.history.length })}>
+        <ContextDisclosure resetKey={resetKey} title={labels.inputHistoryDisclosure({ count: groups.history.length })}>
           <MessageList messages={groups.history} labels={labels} />
         </ContextDisclosure>
       ) : null}
       {groups.current.length > 0 ? (
-        <ContextDisclosure defaultOpen title={labels.currentRequestDisclosure}>
+        <ContextDisclosure defaultOpen resetKey={resetKey} title={labels.currentRequestDisclosure}>
           <MessageList messages={groups.current} labels={labels} />
         </ContextDisclosure>
       ) : null}
@@ -650,7 +572,7 @@ function splitModelInputMessages(messages: AgentDebugMessageRow[]): { current: A
       break;
     }
   }
-  if (currentRequestIndex < 0) return { history: messages, current: [] };
+  if (currentRequestIndex < 0) return { history: [], current: messages };
   return {
     history: messages.slice(0, currentRequestIndex),
     current: messages.slice(currentRequestIndex),
@@ -699,7 +621,7 @@ function messageRoleLabel(message: AgentDebugMessageRow): string {
   const part = displayPartForMessage(message);
   if (part?.kind === 'toolCall') return 'call';
   if (part?.kind === 'toolResult') return 'result';
-  if (part?.kind === 'text' && message.role === 'tool' && toolResultPrefixPattern.test(part.body)) return 'result';
+  if (part?.kind === 'text' && message.role === 'tool' && hasAgentDebugToolResultPrefix(part.body)) return 'result';
   if (message.role === 'assistant') return 'asst';
   return message.role;
 }
@@ -707,7 +629,7 @@ function messageRoleLabel(message: AgentDebugMessageRow): string {
 function messageSummaryText(message: AgentDebugMessageRow): string {
   const part = displayPartForMessage(message);
   if (part && message.parts.length === 1) {
-    if (part?.kind === 'text' && message.role === 'tool' && toolResultPrefixPattern.test(part.body)) {
+    if (part?.kind === 'text' && message.role === 'tool' && hasAgentDebugToolResultPrefix(part.body)) {
       return toolResultSummary(part.body, '');
     }
     if (part?.kind === 'text' && !part.isReminder) return part.body;
@@ -727,10 +649,8 @@ function displayPartForMessage(message: AgentDebugMessageRow): AgentDebugMessage
   return message.parts[0];
 }
 
-const toolResultPrefixPattern = /^\[tool_result\s+[^\]]+\]\s*/;
-
 function toolResultSummary(body: string, toolUseId: string): string {
-  const stripped = body.replace(toolResultPrefixPattern, '').trim();
+  const stripped = stripAgentDebugToolResultPrefix(body);
   return stripped || shortId(toolUseId) || 'result';
 }
 
@@ -741,6 +661,7 @@ function shortId(value: string): string {
 
 function PartRow({
   className,
+  defaultOpen = false,
   index,
   labels,
   part,
@@ -750,6 +671,7 @@ function PartRow({
   trailing,
 }: {
   className?: string;
+  defaultOpen?: boolean;
   index: number;
   labels: DebugLabels;
   part: AgentDebugMessagePart;
@@ -761,6 +683,7 @@ function PartRow({
   const title = titleOverride ?? partTitle(part, labels);
   const summary = summaryOverride ?? part.body;
   const isError = part.kind === 'toolResult' && part.isError;
+  const [open, setOpen] = useState(defaultOpen);
   const detailsClassName = [
     'agent-debug-part-details',
     `is-${part.kind}`,
@@ -768,15 +691,20 @@ function PartRow({
     className,
   ].filter(Boolean).join(' ');
   return (
-    <details className={detailsClassName} key={`${rowId}-${index}`}>
+    <details
+      className={detailsClassName}
+      key={`${rowId}-${index}`}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      open={open}
+    >
       <summary className="agent-debug-message-head agent-debug-part-head">
         <ChevronDownIcon className="agent-debug-summary-chevron" size={ICON_SIZE.tiny} />
         <span className="agent-debug-role-label" title={title}>{title}</span>
-        <strong title={summary}>{truncate(summary, 120)}</strong>
+        <strong title={summary}>{previewText(summary, 120)}</strong>
         <code>{formatBytes(textByteLength(part.body))}</code>
         {trailing ? <span className="agent-debug-message-actions-inline">{trailing}</span> : null}
       </summary>
-      <DebugCodeBlock text={part.body} />
+      {open ? <DebugCodeBlock text={part.body} /> : null}
     </details>
   );
 }
@@ -793,13 +721,13 @@ function DebugCodeBlock({ className, text }: { className?: string; text: string 
   );
 }
 
-function ContextDisclosure(props: { children: ReactNode; copyText?: string; defaultOpen?: boolean; title: string }) {
+function ContextDisclosure(props: { children: ReactNode; copyText?: string; defaultOpen?: boolean; resetKey?: string; title: string }) {
   const labels = useT().agentDebug;
   const [open, setOpen] = useState(Boolean(props.defaultOpen));
 
   useEffect(() => {
     setOpen(Boolean(props.defaultOpen));
-  }, [props.defaultOpen, props.title]);
+  }, [props.defaultOpen, props.resetKey]);
 
   return (
     <details
@@ -821,7 +749,7 @@ function ContextDisclosure(props: { children: ReactNode; copyText?: string; defa
           />
         ) : null}
       </summary>
-      <div className="agent-debug-disclosure-body">{props.children}</div>
+      {open ? <div className="agent-debug-disclosure-body">{props.children}</div> : null}
     </details>
   );
 }
@@ -832,16 +760,6 @@ function DebugPanelSection(props: { children: ReactNode; className?: string; tit
       <DebugSectionHeader title={props.title} />
       {props.children}
     </section>
-  );
-}
-
-function DebugMetric(props: { label: string; meta?: ReactNode; value: ReactNode }) {
-  return (
-    <div className="agent-debug-metric">
-      <span>{props.label}</span>
-      <strong>{props.value}</strong>
-      {props.meta ? <small>{props.meta}</small> : null}
-    </div>
   );
 }
 

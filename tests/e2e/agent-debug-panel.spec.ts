@@ -67,8 +67,10 @@ test.describe('agent debug panel', () => {
     await expect(round).toContainText('Current outline focuses on UI work.');
     const outputRow = round.locator('.agent-debug-execution-event', { hasText: 'Current outline focuses on UI work.' }).first();
     await expect(outputRow).not.toContainText('call');
-    const successfulToolCall = round.locator('.agent-debug-execution-event', { hasText: 'git push origin main' }).first();
-    await expect(successfulToolCall).toContainText('call');
+    const successfulToolCall = round.locator('.agent-debug-execution-event', {
+      has: page.locator(':scope > summary > .agent-debug-role-label', { hasText: 'call' }),
+    }).first();
+    await expect(successfulToolCall.locator(':scope > summary > .agent-debug-role-label')).toHaveText('call');
     const successfulToolResult = round.locator('.agent-debug-tool-exchange', { hasText: 'Pushed to origin/main.' }).first();
     await expect(successfulToolResult).toContainText('result');
     await expect(successfulToolResult.locator(':scope > summary > .agent-debug-role-label')).toHaveText('result');
@@ -104,6 +106,7 @@ test.describe('agent debug panel', () => {
     await toolCallRow.locator(':scope > summary').click();
     const highlightedToolCall = toolCallRow.locator('.agent-debug-code-block pre.shiki').first();
     await expect(highlightedToolCall).toBeVisible();
+    await expect(highlightedToolCall).toContainText('git push origin main');
     await expect(highlightedToolCall.locator('span')).not.toHaveCount(0);
     const errorResultRow = round.locator('.agent-debug-tool-exchange.is-error').first();
     await expect(errorResultRow.locator(':scope > summary strong')).toContainText('permission_denied');

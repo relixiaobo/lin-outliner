@@ -20,7 +20,7 @@ interface AgentDockProps {
   railState: AgentRailState;
   userViewContext: AgentUserViewContext;
   onOpenNodeReference: AgentNodeReferenceOpenHandler;
-  onOpenRunDetailsPanel: (conversationId: string | null, runId: string | null) => void;
+  onOpenRunDetailsPanel: (conversationId: string | null, runId: string | null) => boolean | void;
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   onResizeReset: () => void;
   onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;

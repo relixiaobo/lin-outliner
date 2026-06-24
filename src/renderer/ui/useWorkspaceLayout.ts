@@ -298,6 +298,8 @@ interface UseWorkspaceLayoutOptions {
   preparePanelCount?: (nextPanelCount: number) => void;
 }
 
+export type OpenPanelResult = 'opened' | 'rejected';
+
 interface InitializedWorkspaceLayout {
   focusRootId: NodeId;
   outlinerRootIds: NodeId[];
@@ -583,13 +585,13 @@ export function useWorkspaceLayout({
     focusNode(nodeId);
   }, [canFitPanelCount, focusNode, panels, preparePanelCount, rootId]);
 
-  const openAgentRunDetailsPanel = useCallback((conversationId: string | null, runId: string | null) => {
+  const openAgentRunDetailsPanel = useCallback((conversationId: string | null, runId: string | null): OpenPanelResult => {
     const existing = panels.find((panel) => (
       panel.type === 'agent-debug' && panel.conversationId === conversationId && panel.runId === runId
     ));
     if (existing) {
       setActivePanelId(existing.id);
-      return;
+      return 'opened';
     }
 
     const reusableDebugPanel = panels.find((panel) => panel.type === 'agent-debug');
@@ -598,28 +600,29 @@ export function useWorkspaceLayout({
       setPanels((prev) => prev.map((panel) => (
         panel.id === reusableDebugPanel.id ? agentDebugPanel(panel.id, conversationId, panel.size, runId) : panel
       )));
-      return;
+      return 'opened';
     }
 
     if (panels.length >= MAX_PERSISTED_PANELS) {
       const replacePanel = [...panels].reverse().find((panel) => panel.type === 'agent-debug') ?? panels.at(-1);
-      if (!replacePanel) return;
+      if (!replacePanel) return 'rejected';
       setActivePanelId(replacePanel.id);
       setPanels((prev) => prev.map((panel) => (
         panel.id === replacePanel.id ? agentDebugPanel(panel.id, conversationId, panel.size, runId) : panel
       )));
-      return;
+      return 'opened';
     }
 
     if (!canFitPanelCount(panels.length + 1)) {
       onPanelOpenRejected?.();
-      return;
+      return 'rejected';
     }
 
     const panelId = nextId('panel');
     preparePanelCount(panels.length + 1);
     setActivePanelId(panelId);
     setPanels((prev) => [...prev, agentDebugPanel(panelId, conversationId, 1, runId)]);
+    return 'opened';
   }, [canFitPanelCount, onPanelOpenRejected, panels, preparePanelCount]);
 
   const repairMissingOutlinerRoots = useCallback((projection: DocumentProjection, nodeIds: NodeLookup): NodeId | null => {

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { formatAgentDebugToolResultText } from '../../src/core/agentDebugProtocol';
 import type { AgentActor, AgentEvent } from '../../src/core/agentEventLog';
 import {
   deriveDebugRounds,
@@ -290,7 +291,7 @@ describe('extractRunSnapshotFromPayload', () => {
       { type: 'toolCall', id: 'call-2', name: 'web_search', arguments: { query: 'Beijing weather' } },
     ]);
     expect(snapshot.messages[2]?.content).toEqual([
-      { type: 'text', text: '[tool_result call-2] Beijing: thunderstorm, 20-28C.' },
+      { type: 'text', text: formatAgentDebugToolResultText('call-2', 'Beijing: thunderstorm, 20-28C.') },
     ]);
   });
 

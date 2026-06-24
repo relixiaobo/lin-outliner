@@ -677,7 +677,7 @@ export function App() {
           railState={agentRailState}
           userViewContext={agentUserViewContext}
           onOpenNodeReference={openNodeReferenceFromAgent}
-          onOpenRunDetailsPanel={openAgentRunDetailsPanel}
+          onOpenRunDetailsPanel={(conversationId, runId) => openAgentRunDetailsPanel(conversationId, runId) === 'opened'}
           onResizeKeyDown={resizeAgentWithKeyboard}
           onResizeReset={resetAgentWidth}
           onResizeStart={beginAgentResize}

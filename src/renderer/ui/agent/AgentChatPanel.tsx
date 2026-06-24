@@ -88,7 +88,7 @@ interface AgentChatPanelProps {
   dockOpen: boolean;
   userViewContext: AgentUserViewContext;
   onOpenNodeReference: AgentNodeReferenceOpenHandler;
-  onOpenRunDetailsPanel?: (conversationId: string | null, runId: string | null) => void;
+  onOpenRunDetailsPanel?: (conversationId: string | null, runId: string | null) => boolean | void;
 }
 
 interface PendingTranscriptReveal {

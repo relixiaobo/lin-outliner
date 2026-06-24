@@ -632,10 +632,11 @@ export class AgentRuntime {
   // infer this from restore alone). Used to suppress an OS banner for a task whose
   // conversation the user is already looking at — see main.ts's notifier.
   private viewedConversationId: string | null = null;
-  // Last emitted system/tools hash per run, so the once-per-run debug snapshot
-  // ([[agent-debug-run-grounded]]) re-emits only on a real change. Keyed by runId,
-  // bounded LRU (a re-emit after eviction is just a harmless duplicate snapshot).
-  private debugRunSnapshotHashByRun = new Map<string, string>();
+  // Last emitted debug snapshot hash per run ([[agent-debug-run-grounded]]).
+  // Once a run's entry model-input window is captured we no longer include later
+  // provider-call message windows in the dedupe key, because the reader keeps
+  // the first non-empty window as the run's entry context.
+  private debugRunSnapshotByRun = new Map<string, { capturedMessages: boolean; metadataHash: string }>();
   // The debug view's caches, all bounded LRU (run ids are globally unique, so an
   // evicted entry is just re-derived; none grows across a session):
   // - conversation context (triggering messages / parent links / slimming), keyed
@@ -1425,9 +1426,13 @@ export class AgentRuntime {
   }
 
   /** Bounded-LRU record of the last-emitted debug-snapshot hash (see capture). */
-  private rememberDebugRunSnapshotHash(runId: string, combined: string) {
-    this.evictForCapacity(this.debugRunSnapshotHashByRun, runId);
-    this.debugRunSnapshotHashByRun.set(runId, combined);
+  private rememberDebugRunSnapshotHash(runId: string, metadataHash: string, capturedMessages: boolean) {
+    this.evictForCapacity(this.debugRunSnapshotByRun, runId);
+    const previous = this.debugRunSnapshotByRun.get(runId);
+    this.debugRunSnapshotByRun.set(runId, {
+      capturedMessages: previous?.capturedMessages === true || capturedMessages,
+      metadataHash,
+    });
   }
 
   async payloadText(conversationId: string, payloadId: string) {
@@ -3015,27 +3020,29 @@ export class AgentRuntime {
     const runId = runIdOverride ?? this.activeRunId(conversation);
     if (!runId) return;
     const { systemPrompt, tools, messages } = extractRunSnapshotFromPayload(payload);
-    // In-memory dedupe key (re-emit only on a real change) — derived from the
-    // content itself; the hash is never persisted on the event (no reader needs it).
-    const combined = createHash('sha256')
+    const previousSnapshot = this.debugRunSnapshotByRun.get(runId);
+    const hasCapturedMessages = previousSnapshot?.capturedMessages === true;
+    const messagesForEvent = !hasCapturedMessages && messages.length > 0 ? messages : [];
+    // In-memory dedupe key for the metadata that is allowed to update after the
+    // first provider call. The model-input message window is captured once and
+    // excluded from this hash so later provider rounds do not emit dead snapshots.
+    const metadataHash = createHash('sha256')
       .update(systemPrompt)
       .update('\0')
       .update(JSON.stringify(tools))
-      .update('\0')
-      .update(JSON.stringify(messages))
       .digest('hex');
-    if (this.debugRunSnapshotHashByRun.get(runId) === combined) return;
+    if (previousSnapshot?.metadataHash === metadataHash && messagesForEvent.length === 0) return;
     await this.appendConversationEvents(conversationId, conversation, [{
       type: 'debug.run_snapshot.created',
       actor: systemActor(),
       runId,
       systemPrompt,
       tools,
-      messages,
+      messages: messagesForEvent,
     }]);
     // Record the hash only AFTER the append succeeds — a swallowed append failure
     // must not poison the dedupe and silently drop this run's snapshot forever.
-    this.rememberDebugRunSnapshotHash(runId, combined);
+    this.rememberDebugRunSnapshotHash(runId, metadataHash, messagesForEvent.length > 0);
   }
 
   private async persistAndEmitIdle(
