@@ -54,8 +54,8 @@ Tenon owns:
 - debug and performance records
 - render projection
 - persistence and restore policy
-- self-maintenance audit events for runtime config, hooks, doctor, recovery,
-  skill write previews, skill writes, and skill rollback
+- self-maintenance audit events for hooks, recovery, skill write previews,
+  skill writes, and skill rollback
 
 ```txt
 command

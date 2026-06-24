@@ -724,9 +724,6 @@ These agent-level tools are active on top of the P0 local/document surface.
 |---|---|---:|---|---|
 | `past_chats` | local conversation/run logs | Yes | No | Search/read visible prior chats and exact raw source spans. |
 | `ask_user_question` | structured user elicitation | Yes | No | Pause a run for single-choice, multi-choice, free-text, refs/attachments, or a discuss-before-answering outcome. |
-| `runtime_status` | self-observation | Yes | No | Read redacted local runtime/provider/settings status. |
-| `config` | cc-2.1-style config tool | Yes | Reads no, writes yes | Read or update whitelisted runtime settings through runtime-owned paths. |
-| `doctor` | self-diagnostics | Yes | No | Run read-only local agent diagnostics. |
 | `skill` | local skill invocation | Yes | Usually no | Invoke installed or built-in skills; `/skillify` is the built-in user- and model-invocable authoring workflow. |
 
 `task_stop` is active because Tenon's `bash` tool supports background commands.

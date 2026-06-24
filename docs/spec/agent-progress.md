@@ -175,12 +175,12 @@ truth.
     transcript, not a model command surface
   - permission classification keeps `past_chats` as read-only
     `agent.memory.recall`; no `agent.memory.dream` action remains
-- [x] Agent M1 self-maintenance and structured input:
+- [x] Agent M1 structured input and compaction:
   - `ask_user_question` tool with pending question persistence and renderer
     resolution
-  - `runtime_status`, `config`, and `doctor` tools with permission-gated config
-    writes
   - mixed-resolution compaction source ranges for replay/render/runtime context
+  - (the `runtime_status` / `config` / `doctor` self-maintenance tools shipped in
+    M1 were later removed as over-built; runtime settings are user-managed)
 - [x] Single-agent collapse (one editable agent; conversations-only; timeline
   memory): the prior multi-agent Channel apparatus was removed and the model
   collapsed to a single user-customizable agent.

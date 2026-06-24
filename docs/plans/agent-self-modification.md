@@ -15,6 +15,15 @@ other"** is [[agent-conversation-model]]'s.
 is the later, security-sensitive surface; **escalate the capability boundary to the PM
 before building it.** (Lifecycle status lives in `docs/TASKS.md`.)
 
+> **M1 tool implementation removed (2026-06 simplification).** The `runtime_status`,
+> `config`, and `doctor` tools shipped under M1 (#153) were later removed as over-built:
+> three tools for a thin self-observation/config surface, several of whose whitelisted
+> settings (provider timeout/retry/cache) the agent rarely changes mid-task. Self-
+> configuration stays a real goal, but its implementation paradigm is being re-evaluated
+> — a dedicated `config` tool vs. an OpenClaw-style `file_edit` + config-write pipeline
+> (schema validation + last-known-good recovery). A follow-up PR reintroduces it under
+> the chosen paradigm; runtime settings are user-managed via Settings → Agent meanwhile.
+
 ## Goal
 
 Define what "self-modification" means for Lin's agent and turn it into a
@@ -76,15 +85,12 @@ Lin already has several foundations:
 - Internal hook-like extension points: `transformContext`, `beforeToolCall`, and
   `afterToolCall`.
 
-M1 shipped state (2026-06-07): Lin has `runtime_status`, read/write `config` for
-a whitelisted runtime-settings surface, read-only `doctor`, audited
-`config.change` events, and permission-gated config writes. **M2 added a fourth
-self-maintenance tool — `dream` (#164)** — a trigger-only request for a
-runtime-owned Memory Dream (the model cannot specify facts; the extractor decides
-from recorded evidence). It lives alongside the others in
-`agentSelfMaintenanceTools.ts`, is gated `agent.memory.dream` (in
-`ALLOW_FORBIDDEN_ACTIONS`, always asks), and its design is owned by the Dream /
-memory subsystem, not this plan. Remaining gaps are M2+:
+M1 shipped state (2026-06-07) and later removal: Lin shipped `runtime_status`,
+read/write `config` for a whitelisted runtime-settings surface, and read-only
+`doctor` under M1 (#153). These three tools and the `agentSelfMaintenanceTools.ts`
+module were removed in 2026-06 as over-built (see the Scope note above); the
+earlier M2 `dream` tool had already moved to the Dream/memory subsystem during the
+Dream-channel rework. Remaining design (hooks, recovery, curation) is M2+:
 
 - First-class lifecycle hooks such as `SessionStart`, `UserPromptSubmit`,
   `PreToolUse`, `PostToolUse`, `PreCompact`, or `PostCompact`.
@@ -588,9 +594,11 @@ its approval cards, version checks, and runtime write path — never the tool
 without its approval UI). Recovery (snapshots + rollback) and curation are
 **separate** complete features, not one Stage-5 bundle; a dry-run curator is a
 complete PR only if dry-run is the shipped behavior, with the live curator a later
-complete PR. **Landed (M1, #153):** Stage 1 self-observation + the Stage 3
-`config` tool. **Deferred (PM, 2026-06-09):** Stages 4–6 (prompt hooks, recovery,
-curation, command hooks).
+complete PR. **Landed then removed (M1, #153; removed 2026-06):** Stage 1
+self-observation + the Stage 3 `config` tool shipped, then were removed as
+over-built — self-configuration will be reintroduced under a re-evaluated paradigm
+(see the Scope note). **Deferred (PM, 2026-06-09):** Stages 4–6 (prompt hooks,
+recovery, curation, command hooks).
 
 ### Stage 1: Read-Only Self-Observation
 
@@ -650,6 +658,10 @@ Stage 3's permission/audit machinery.
   specific skill, or is the current global permission center enough?
 
 ## Implementation Checklist
+
+> The M1 items below shipped in #153, then the `runtime_status` / `config` /
+> `doctor` tools were removed in 2026-06 (see the Scope note); they stay checked
+> as a record of what M1 delivered, not of the current tool surface.
 
 - [x] Define protocol types for self-maintenance tools.
 - [x] Add `runtime_status`.

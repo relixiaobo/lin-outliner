@@ -152,7 +152,6 @@ import { commandBriefText, liveCommandNodeIds, selectDueCommands, type DueComman
 import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
-  updateAgentRuntimeSettings,
   getProviderApiKey,
   getBuiltInAgentProfile,
   setBuiltInAgentProfile,
@@ -259,12 +258,6 @@ import {
   askUserQuestionToolResult,
   type AgentAskUserQuestionRuntime,
 } from './agentAskUserQuestionTool';
-import {
-  normalizeRuntimeSettingPatch,
-  readRuntimeSetting,
-  type AgentSelfMaintenanceRuntime,
-  type DoctorDiagnostic,
-} from './agentSelfMaintenanceTools';
 import {
   applyAgentRenderProjectionPatch,
   buildAgentRenderProjection,
@@ -508,7 +501,7 @@ interface AgentToolFilter {
  * complete capability set and is applied verbatim by `filterAgentTools`.
  *
  * The built-in assistant (Neva) is different: its core tools — `past_chats`,
- * `node_*`, `skill`, and self-maintenance — are never part of the
+ * `node_*`, and `skill` — are never part of the
  * editable catalog (`TOOL_CATALOG`), so a strict allow-list would silently
  * strip them. A catalog restriction is therefore expressed as a *disallow-list
  * over the unchecked catalog tools*, never as an allow-list; the core tools
@@ -2492,9 +2485,6 @@ export class AgentRuntime {
           chatSourceValidator: this.createChatSourceValidator(),
           pastChats: this.createPastChatsToolRuntime(() => conversationId),
           askUserQuestion: this.createAskUserQuestionRuntime(() => conversationId, () => conversationRef.current),
-          selfMaintenance: defaultAgentId === this.agentIdentity.agentId
-            ? this.createSelfMaintenanceRuntime(() => conversationId, () => conversationRef.current)
-            : undefined,
           allowedTools: agentToolFilter.allowedTools,
           disallowedTools: agentToolFilter.disallowedTools,
           streamFn: this.options.streamFn,
@@ -2667,7 +2657,6 @@ export class AgentRuntime {
       chatSourceValidator: this.createChatSourceValidator(),
       pastChats: this.createPastChatsToolRuntime(() => conversation.eventState.conversation?.id ?? 'unknown'),
       askUserQuestion: this.createAskUserQuestionRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
-      selfMaintenance: this.createSelfMaintenanceRuntime(() => conversation.eventState.conversation?.id ?? 'unknown', () => conversation),
       allowedTools: conversation.agentToolFilter.allowedTools,
       disallowedTools: conversation.agentToolFilter.disallowedTools,
     });
@@ -4583,88 +4572,6 @@ export class AgentRuntime {
         const conversation = getConversation();
         if (!conversation) throw new Error('Agent conversation is not ready.');
         return this.askUserQuestion(getConversationId(), conversation, toolCallId, request, signal);
-      },
-    };
-  }
-
-  private createSelfMaintenanceRuntime(
-    getConversationId: () => string,
-    getConversation: () => AgentConversationState | null,
-  ): AgentSelfMaintenanceRuntime {
-    return {
-      runtimeStatus: async () => {
-        const providerConfig = await this.getActiveProviderConfig();
-        // The provider connection owns no model; report the built-in assistant's
-        // resolved model/effort (its agent-owned default over this connection).
-        const provider = providerConfig
-          ? await this.resolveBuiltInAssistantModelEffort(providerConfig)
-              .then((resolved) => ({
-                configured: true,
-                providerId: providerConfig.providerId,
-                modelId: resolved.model.id,
-                reasoningLevel: String(resolved.thinkingLevel),
-              }))
-              .catch(() => ({ configured: true, providerId: providerConfig.providerId }))
-          : { configured: false };
-        return {
-          agentId: this.agentIdentity.agentId,
-          conversationId: getConversationId(),
-          provider,
-          runtime: await this.getRuntimeSettings(),
-        };
-      },
-      readConfig: async (setting) => ({
-        operation: 'read',
-        setting,
-        value: readRuntimeSetting(await this.getRuntimeSettings(), setting),
-      }),
-      writeConfig: async (setting, value) => {
-        const conversation = getConversation();
-        if (!conversation) throw new Error('Agent conversation is not ready.');
-        const patch = normalizeRuntimeSettingPatch(setting, value);
-        await updateAgentRuntimeSettings(patch);
-        const runtimeSettings = await this.refreshRuntimeSettings(conversation);
-        const after = readRuntimeSetting(runtimeSettings, setting);
-        return { operation: 'write', setting, value: after };
-      },
-      doctor: async () => {
-        const diagnostics: DoctorDiagnostic[] = [];
-        const providerConfig = await this.getActiveProviderConfig();
-        const runtimeSettings = await this.getRuntimeSettings();
-        if (!providerConfig) {
-          diagnostics.push({
-            id: 'provider.not_configured',
-            severity: 'error',
-            message: 'No usable provider is configured.',
-            recommendation: 'Configure a provider and credential in Settings before starting agent runs.',
-          });
-        }
-        if (runtimeSettings.additionalSkillDirectories.length > 0) {
-          diagnostics.push({
-            id: 'skills.additional_directories',
-            severity: 'info',
-            message: `${runtimeSettings.additionalSkillDirectories.length} additional skill directories are configured.`,
-          });
-        }
-        if (runtimeSettings.disabledSkills?.length) {
-          diagnostics.push({
-            id: 'skills.disabled',
-            severity: 'warning',
-            message: `${runtimeSettings.disabledSkills.length} skills are disabled.`,
-            recommendation: 'Use config reads to inspect disabled skill names before relying on skills.',
-          });
-        }
-        if (runtimeSettings.disabledAgents?.length) {
-          diagnostics.push({
-            id: 'agents.disabled',
-            severity: 'warning',
-            message: `${runtimeSettings.disabledAgents.length} agents are disabled.`,
-          });
-        }
-        return {
-          ok: diagnostics.every((diagnostic) => diagnostic.severity !== 'error'),
-          diagnostics,
-        };
       },
     };
   }
@@ -7278,7 +7185,6 @@ function createConfiguredAgent(
     chatSourceValidator?: AgentToolsOptions['chatSourceValidator'];
     pastChats?: AgentToolsOptions['pastChats'];
     askUserQuestion?: AgentToolsOptions['askUserQuestion'];
-    selfMaintenance?: AgentToolsOptions['selfMaintenance'];
     localWorkspace?: AgentLocalWorkspaceContext;
     allowedTools?: readonly string[];
     disallowedTools?: readonly string[];
@@ -7313,7 +7219,6 @@ function createConfiguredAgent(
     chatSourceValidator: options.chatSourceValidator,
     pastChats: options.pastChats,
     askUserQuestion: options.askUserQuestion,
-    selfMaintenance: options.selfMaintenance,
     allowedTools: options.allowedTools,
     disallowedTools: options.disallowedTools,
   });

@@ -17,7 +17,6 @@ import { createAgentDelegationTools, type AgentDelegationRuntime } from './agent
 import { normalizeAgentToolNames } from './agentToolRules';
 import { createPastChatsTool, type PastChatsToolRuntime } from './agentPastChatsTool';
 import { createAskUserQuestionTool, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
-import { createSelfMaintenanceTools, type AgentSelfMaintenanceRuntime } from './agentSelfMaintenanceTools';
 import {
   agentToolResult,
   errorEnvelope,
@@ -215,7 +214,6 @@ export interface AgentToolsOptions {
   pastChats?: PastChatsToolRuntime;
   askUserQuestion?: AgentAskUserQuestionRuntime;
   chatSourceValidator?: ChatSourceValidator;
-  selfMaintenance?: AgentSelfMaintenanceRuntime;
   allowedTools?: readonly string[];
   disallowedTools?: readonly string[];
 }
@@ -240,7 +238,6 @@ export function createAgentTools(outliner?: OutlinerToolHost, options: AgentTool
     createWebFetchTool(scratchRoot),
     ...(options.pastChats ? [createPastChatsTool(options.pastChats)] : []),
     ...(options.askUserQuestion ? [createAskUserQuestionTool(options.askUserQuestion)] : []),
-    ...(options.selfMaintenance ? createSelfMaintenanceTools(options.selfMaintenance) : []),
     ...(options.skillRuntime && options.skillToolEnabled !== false ? [createSkillTool(options.skillRuntime)] : []),
     ...(options.delegationRuntime ? createAgentDelegationTools(options.delegationRuntime) : []),
   ];
