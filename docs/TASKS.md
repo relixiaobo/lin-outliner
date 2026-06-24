@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**; authored ratified plan agent-process-stable-disclosure #297) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -34,8 +34,16 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 **In flight (2026-06-23).** A Dream-precision + file-reader wave merged today: **#319** (Dream
 remembers-nothing + truncation gating), **#320** (manual-Dream thin-data pre-check), **#321** (file-only
 preview readers), and **#322** (`agent-pdf-tool-path`, codex-3 — native PDF `input_file` payloads on
-OpenAI Responses models; `/code-review high` gate + doc-confirmed provider contract). #322 also seeded
-the **file-ingestion-runtime-follow-up** plan, now promoted to a `draft` board item (Files & media). The
+OpenAI Responses models; `/code-review high` gate + doc-confirmed provider contract). #322 seeded the
+**file-ingestion-runtime-follow-up** plan, which then **reversed** that native-PDF slice — shipped as
+**#326** (`file_read` provider-neutral runtime ingestion; `/code-review xhigh` gate, 8 findings fixed +
+regression-tested). Also today: **#324** (`dream-channel-and-memory-retire` **PR1** — protected Dream
+channel + Dream as a top-level reflective run, codex-2; `/code-review high` gate, 2 fix rounds incl. a
+caught-and-fixed retention-prune bricking bug). **2026-06-24:** that plan **completed in full** — **#328**
+(PR2, date-window scheduling + derived cursor, `/code-review xhigh`, 8 findings fixed) and **#329** (PR3,
+retire the legacy believer-pool memory projection) merged; plan archived `done` (see *Recently completed*). Also
+**2026-06-24:** **#327** (`file-ingestion-derived-cache`, codex-3 — in-process LRU cache for runtime
+extractions; `/code-review xhigh`, 7 findings fixed) landed as a fast-track follow-up to #326. The
 **agent-goal** plan landed as a `draft` board item (plan PR **#323**, see Agent
 capabilities). **No PR open.** The agent subsystem portfolio is otherwise mature (single-agent collapse + one-Neva
 invariant, the IM-native memory/channel spine, the 2026-06-22 Codex-transcript wave); the active build
@@ -64,23 +72,20 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
 2. **`agent-model-first-picker`** (P2, *direction ratified 2026-06-23 — needs a dev one-pager*) —
    model-first model picker (merge Provider + Model Override, provider as secondary label,
    "best available" default); renderer/UX-only, no protocol change. PM-prioritized this round.
-3. **`dream-channel-and-memory-retire`** (P2, *design captured 2026-06-23 — needs a dev one-pager;
-   three PRs*) — make Dream transparent via a dedicated channel rendering each run's full-process
-   transcript + a structured date/guidance launcher (seq-watermark → legible date cursor), and
-   retire the vestigial believer-pool Settings Memory pane (finish the #302 teardown). Design in
-   `docs/plans/dream-channel-and-memory-retire.md`.
-4. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups (residual
+3. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups (residual
    `new Map(prev.byId)` + `nextRevisions` whole-map rebuild), each a small standalone PR; no design gate.
-5. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
+4. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
    `dark-mode-contrast-pass` (runs **last**, cross-cutting light+dark pass). `keyboard-a11y` shipped #273.
-6. **`focus-and-selection-polish`** (P2, build-ready, fast-track) — one renderer-only PR, four small
+5. **`focus-and-selection-polish`** (P2, build-ready, fast-track) — one renderer-only PR, four small
    ratified behaviors (diagnosis is the contract; rebase on current `main`).
-7. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
+6. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
    API-key/Claude-Pro control); presentation-only, light/dark gate.
-8. **`agent-skills-authoring` diff/preview** (P1 tail) — the remaining creative-UX; NL save-as-skill
+7. **`agent-skills-authoring` diff/preview** (P1 tail) — the remaining creative-UX; NL save-as-skill
    routing already shipped (#271).
-9. **`file-preview` PR3** (P2) — media streaming / Office / URL reader; next slice of a shipping plan,
+8. **`file-preview` PR3** (P2) — media streaming / Office / URL reader; next slice of a shipping plan,
    retires the `media-types` whole-file-read limit.
+
+`dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
 
 **Needs design / escalation before build** (not in the queue yet): `third-party-skill-import` (write
 the plan first), `launcher-provider-expansion`, the directional agent tails
@@ -192,38 +197,6 @@ before any directional/security-sensitive build.
     Note: the believer-pool store + Dream extraction substrate still ships under the hood.
     **PR3 jump-to-source UI shipped (#310, 2026-06-19)** — the whole #302 subsystem replacement
     is complete.
-- **dream-channel-and-memory-retire** (P2, *design ratified 2026-06-23 — dispatch-ready; three PRs*)
-  — see `docs/plans/dream-channel-and-memory-retire.md`. Make Dream **transparent** via a dedicated
-  channel that renders each run's **complete process** (the existing #312 transcript: `past_chats`
-  reads → reasoning → `node_*` writes → result), and retire the vestigial believer-pool Settings
-  Memory surfaces. Channels are the live universal container (every conversation is a
-  `lin-agent-channel-…` single-agent thread, General default, user-creatable), so a dedicated Dream
-  channel is in-model, not a re-introduction. The channel shows the **real transcript**, not a
-  summary; a **structured Dream launcher** (date-range picker + guidance field → serialized anchor
-  message) replaces the chat composer. **Core reframe (post code-audit + codex plan-review):** the
-  seq-watermark is not relocated but **eliminated** — `last-dreamed-through` (and `lastSuccessAt`) are
-  **derived** from the Dream channel's `dream.finished` events (`status==='completed' &&
-  trigger==='schedule'`), which makes the believer-pool **memory projection** deletable. Note: the pool
-  is the per-principal `memory/events.jsonl` projection + memory API **inside** `AgentEventStore`
-  (`:754–1037`), **not** the class (which stores all conversation/run/payload/run-meta and stays).
-  **Shape (b):**
-  - **PR1** — Dream channel + **Dream as a top-level run** (not a parentless child run — else the
-    renderer only shows a `child-run` boundary summary, not inline process); persist the run (drop
-    create→delete `agentRuntime.ts:~3659/3694`); add `window?:{start,end}` to the `dream.finished`
-    event (protocol — interface-first) + stamp it; relocate Dream history; keep trigger + watermark
-    unchanged this PR.
-  - **PR2** — date→seq translation (evidence/`past_chats` stay seq-based; local-day, inclusive, no
-    leak) + **derive cursor + `lastSuccessAt` from the channel** (drop `readDreamState`; per-due guard
-    already in run meta; keep #319 `incomplete` gating) + structured launcher (composer-swap is a *new*
-    per-channel-id branch — `usesChannelActivitySurface()` is dead code) + user-configurable frequency.
-    Depends on PR1.
-  - **PR3** — retire Settings → Memory + delete the **memory projection + memory API inside
-    `AgentEventStore`** (`:754–1037`, **keep the class**) + `agent_list_memory` (+ update/forget) +
-    memory-edit plumbing + pool-only core tests; finishes the #302 teardown. Touches `commands.ts`
-    (protocol — interface-first). **Depends on PR2** (not parallel — dream-state live until PR2 derives
-    off the channel). Pre-release: wipe `~/.lin-outliner-*`, no migration.
-  - **Ratified (PM, 2026-06-23):** auto-run kept (甲) — scheduled nightly + manual launcher override,
-    derived cursor is the auto default window. All open questions resolved. UI gate = light/dark visual.
 - **agent-goal** (P2, *design captured 2026-06-23, PM-ratified (plan PR #323 merged) — needs a dev
   build one-pager; two features*) — see `docs/plans/agent-goal.md`. Let a user hand a long-running
   objective to the agent mid-conversation and have it pursue that objective **autonomously across turns
@@ -370,14 +343,6 @@ archived `done` (see Recently completed). Remaining active work:
   window. (Feature shipped #241, archived `done`.)
 - **asset-gc** (P2, *no plan file*) — asset `index.json` rebuild + garbage
   collection for orphaned assets; drag-from-Finder ingest; inline alt-text editing.
-- **file-ingestion-runtime-follow-up** (P2, draft — *set of independent features*) — provider-neutral
-  agent file-ingestion layer: a `FileIngestionResult` representation + a single provider-capability
-  adapter so every model gets a useful fallback (text/image/metadata), not just native-document
-  models. Builds on the #322 native-PDF slice; covers per-page PDF text fallback, Office/notebook/
-  archive families, and base64-free debug visibility. Each checklist item ships as its own PR. Promoted
-  out of `archive/` after #322 merged (codex-3 staged it there since dev branches can't edit this board).
-  See `docs/plans/file-ingestion-runtime-follow-up.md`.
-
 ### Outliner & UI polish
 
 - **nodex-parity-decisions** (meta, *standing reference — not a work item*) — the
@@ -513,6 +478,73 @@ anything.
 
 ## Recently completed
 
+- **file-ingestion-derived-cache** (`codex-3/file-ingestion-derived-cache`, PR #327, codex-3, merged
+  2026-06-24) — a fast-track follow-up to #326: memoizes successful runtime extractions (MarkItDown
+  rich-doc → Markdown, PDF `pdfinfo`/`pdftotext` metadata+text) in a small in-process **LRU cache**
+  (`agentFileIngestionCache.ts`) keyed by **source SHA-256 + extractor identity + relevant options + local
+  tool environment**, so re-reading unchanged content skips the subprocess. Errors and per-read PDF
+  page-render dirs are not cached; text-file freshness + `file_edit` guards unchanged. **Gate (main):**
+  `/code-review xhigh` (7 findings) → codex-3 fix `c9119af6`: source hash now **streams** the file
+  (`fileHashing.ts` `sha256File`, no 50 MB read-to-hash buffer), the bounded-LRU eviction is one shared
+  helper (`boundedMap.ts` `setBoundedMapEntry`, also adopted by `main.ts`'s local-file cache), cached
+  values are `structuredClone`d on get/set (no caller mutation), plus a dedicated cache unit test and a
+  `beforeEach` cache reset. Verified: typecheck clean, `agentFileIngestionCache` + `agentLocalTools` 68/0.
+  Spec synced: `agent-tool-design`. Fast-track, **shape (a)** one PR, *no plan file*.
+- **dream-launcher-date-field** (codex-2, PR #330, merged 2026-06-24) — fast-track UI refinement to
+  `dream-channel-and-memory-retire`'s Dream channel. The bottom surface stops masquerading as a chat composer:
+  split into **Scheduled Dream** (next-run readout + recurrence picker reusing the shared `DateValuePicker`,
+  Dream-specific empty placeholder, Save) and a separate **Manual run** popover (date-window + optional focus).
+  `DateValuePicker` gains date-only / bounded-`maxDate` / top-anchored / recurrence-end-"Ends"-switch modes
+  (command-node schedule behavior preserved); `CalendarMonthGrid` gains `isDateDisabled` with keyboard-roving
+  fallback; `nextDateScheduleDue` added by refactoring the schedule math into one direction-parameterized core
+  shared with `mostRecentDateScheduleDue`; recurrence `until` guarded `>= anchor` at all layers. **Gate (main):**
+  `/code-review high` (9 findings fixed over 2 rounds) — incl. a **caught-and-fixed regression**: the
+  schedule-math dedup broke `mostRecentDateScheduleDue` (the live firing path) for monthly/yearly schedules
+  evaluated after `UNTIL` (the `withinUntil` short-circuit was forward-only; fixed to `continue` in the past
+  direction + covering test). Verified: typecheck clean, `test:core` 1056/0, `test:renderer` 606/0. Fast-track,
+  **shape (a)** one PR, *no plan file*.
+- **dream-channel-and-memory-retire** (codex-2, PR1 #324 + PR2 #328 + PR3 #329, merged 2026-06-23/24) —
+  makes Memory Dream **transparent** and retires the legacy believer-pool. **PR1 (#324)**: Dream runs as a
+  top-level unattended reflective turn in a persistent, protected **Dream channel** (immutable, undeletable,
+  rejects ordinary chat) so its full process is durable audit history; channel-level `includeInDreamData`
+  setting + IPC; run-meta anchored to the channel; bounded 512-run retention with parent re-rooting on
+  prune; excluded from `past_chats`. **PR2 (#328)**: Dream scope moves from the opaque seq-watermark to
+  user-legible **local-day date windows** — the cursor + `lastSuccessAt` **derive** from the channel's clean
+  completed `dream.finished.window` markers, the window translates to a **timestamp-clamped** source span
+  (seq lower bound = stream floor, `createdAt` clamp is the authority), scheduled runs cover complete days
+  only (`[cursor+1 .. yesterday]`) with a fixed-time + 3-retries-per-due cap, an in-channel structured
+  launcher (date range + guidance) replaces the composer, and `agent.runtime.dreamSchedule` is
+  user-configurable; memory writes to the source-date node; #319 incomplete-gate preserved. **PR3 (#329)**:
+  deletes the per-principal believer-pool memory projection + its memory API inside `AgentEventStore` (the
+  class stays), the dead `agentMemoryActivation`/`agentMemoryRetrieval` modules, the
+  `AgentMemoryEntry`/`AgentMemoryEvent`/`AgentDreamWatermark`/`dream.completed` types, the `agent_list_memory`
+  (+ update/forget) commands + plumbing, and the Settings → Memory entry UI; durable memory is now solely the
+  `#d-*` outline nodes + the channel's `dream.finished` audit log. **Gates (main):** PR1 `/code-review high`
+  (2 fix rounds incl. a retention-prune bricking bug); PR2 `/code-review xhigh` (8 findings fixed +
+  re-verified `274a5670`: scheduled window = *yesterday* — no same-day lockout, manual window clamps instead
+  of throwing, end clamped to today, symmetric clamp validation + tilde-escaping); PR3 xhigh (clean) +
+  rebased-stack re-verification (no dangling refs, typecheck clean, `test:core` 1051/0, `test:renderer`
+  601/0, e2e `agent-settings` 33/33). Specs synced across `agent-architecture`, `agent-delegation-runtime`,
+  `agent-event-log-rendering`, `agent-skills`, `agent-progress`. Plan archived `done`
+  (`docs/plans/archive/dream-channel-and-memory-retire.md`). Plan-track, **shape (b)** three PRs. Pre-release:
+  no migration.
+- **file-ingestion-runtime-follow-up** (`codex-3/file-ingestion-runtime`, PR #326, codex-3, merged
+  2026-06-23) — makes `file_read` a **provider-neutral** runtime ingestion boundary, **reversing** the
+  #322 native-PDF approach: deleted `agentNativePdfPayloads.ts` + the `nativePdfRead` plumbing. PDFs now
+  default to `pdfinfo` page count + `pdftotext -layout` full-document text (bounded 60k); explicit `pages`
+  renders bounded JPEG page images via `pdftoppm`; large scanned PDFs return metadata + a narrow-range
+  hint. New `src/main/agentToolProcess.ts` (shared PATH/timeout subprocess runner, SIGTERM→SIGKILL,
+  bounded capture) and `src/main/agentFileIngestion.ts` (rich-document → Markdown via optional MarkItDown:
+  `.docx/.pptx/.xlsx/.xls/.epub`, probed via `LIN_AGENT_MARKITDOWN_COMMAND` → `markitdown` →
+  `python3 -m markitdown`). Missing Poppler/MarkItDown stays a recoverable tool error (install via bash,
+  retry). **Gate (main):** `/code-review xhigh` surfaced 8 findings — pdftotext stderr false-positive
+  discarding good text, `.html/.htm` routed through MarkItDown (lost zero-dep text read + editability),
+  `pages` render aborted by missing pdftotext, dropped `%PDF-` magic-byte check, unbounded pdftotext
+  capture, per-read MarkItDown probes, capped `contentChars`, and env-command-with-args — **all fixed in
+  `09939d1a` with targeted regression tests** (HTML back on the text path; render-before-extract for
+  `pages`; cached probes; `splitCommandLine` for env args). `test:core` 1061/0, typecheck clean. Plan
+  archived `done` (`docs/plans/archive/file-ingestion-runtime-follow-up.md`). Plan-track, **shape (a)** one
+  PR.
 - **agent-pdf-tool-path** (`codex-3/agent-pdf-tool-path`, PR #322, codex-3, merged 2026-06-23) — sends
   ordinary PDF `file_read` results to OpenAI Responses models as native `input_file` payloads; keeps
   Poppler page rendering/text extraction for explicit `pages` reads and non-Responses providers. PDF

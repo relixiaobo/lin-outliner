@@ -22,7 +22,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { CalendarMonthGrid, shiftedCalendarMonth, type CalendarMonthDay } from '../primitives/CalendarMonthGrid';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
-import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useAnchoredOverlay, type OverlayPlacement } from '../primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { useT } from '../../i18n/I18nProvider';
 
@@ -40,9 +40,22 @@ interface DateValuePickerProps {
   // Whether the end-date (range) toggle is offered. Off for single-only callers
   // like the command schedule, where a range has no meaning.
   allowRange?: boolean;
+  // Whether the time toggle is offered. Off for date-only callers such as the
+  // Dream launcher, which persists strict YYYY-MM-DD windows.
+  allowTime?: boolean;
+  // Whether the recurrence selector is offered for single dates. Command
+  // schedules need it; plain date pickers do not.
+  allowRecurrence?: boolean;
+  // Optional upper bound for selectable dates, encoded as YYYY-MM-DD.
+  maxDate?: string;
+  // Composer-like callers near the viewport bottom can force the calendar above
+  // the anchor; ordinary field values keep the default bottom-start behavior.
+  popoverPlacement?: OverlayPlacement;
+  popoverGap?: number;
+  popoverMaxHeight?: number;
 }
 
-type DateFieldEdge = 'start' | 'end';
+type DateFieldEdge = 'start' | 'end' | 'until';
 
 const DEFAULT_TIME = '09:00';
 
@@ -51,47 +64,73 @@ const DEFAULT_TIME = '09:00';
 // it (Space / a calendar affordance) and owns where the picked value lands. The
 // calendar logic mirrors the reference date interaction: optional end date for a
 // range, optional time, today / clear.
-export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit, allowRange = true }: DateValuePickerProps) {
+export function DateValuePicker({
+  anchorRef,
+  value,
+  open,
+  onOpenChange,
+  onCommit,
+  allowRange = true,
+  allowTime = true,
+  allowRecurrence = true,
+  maxDate,
+  popoverPlacement = 'bottom-start',
+  popoverGap,
+  popoverMaxHeight = 520,
+}: DateValuePickerProps) {
   const td = useT().outliner.field.datePicker;
   const initial = dateDraftFromValue(value);
+  const initialStart = allowTime ? initial.start : dateFieldEndpointDate(initial.start);
+  const initialEnd = allowTime ? initial.end : dateFieldEndpointDate(initial.end);
   const today = useMemo(() => isoLocalDate(new Date()), []);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [includeEnd, setIncludeEnd] = useState(initial.includeEnd);
-  const [startDraft, setStartDraft] = useState(initial.start);
-  const [endDraft, setEndDraft] = useState(initial.end);
-  const [includeTime, setIncludeTime] = useState(initial.includeTime);
+  const [startDraft, setStartDraft] = useState(initialStart);
+  const [endDraft, setEndDraft] = useState(initialEnd);
+  const [includeTime, setIncludeTime] = useState(allowTime && initial.includeTime);
   const [startTimeDraft, setStartTimeDraft] = useState(initial.startTime || DEFAULT_TIME);
   const [endTimeDraft, setEndTimeDraft] = useState(initial.endTime || DEFAULT_TIME);
   // Recurrence (single dates only — a range never repeats). `customRule` preserves
   // an agent-authored rule no preset represents so editing the date keeps it intact.
   const [preset, setPreset] = useState<RecurrencePreset>(initial.preset);
   const [until, setUntil] = useState(initial.until);
+  const [includeUntil, setIncludeUntil] = useState(allowRecurrence && Boolean(initial.until));
   const [customRule, setCustomRule] = useState<DateRecurrenceRule | null>(initial.rule);
   const [editingEdge, setEditingEdge] = useState<DateFieldEdge>('start');
   const [hoveredDate, setHoveredDate] = useState('');
   const initialViewDate = parseIsoLocalDate(dateFieldEndpointDate(initial.start || today)) ?? new Date();
   const [viewYear, setViewYear] = useState(initialViewDate.getFullYear());
   const [viewMonth, setViewMonth] = useState(initialViewDate.getMonth());
+  const popoverLayoutKey = [
+    includeEnd ? 'range' : 'single',
+    includeTime ? 'time' : 'date',
+    allowRecurrence ? 'recurrence' : 'plain',
+    preset === 'none' ? 'no-repeat' : 'repeat',
+    includeUntil ? 'until' : 'no-until',
+  ].join(':');
   const popoverStyle = useAnchoredOverlay(popoverRef, {
     anchorRef,
     disabled: !open,
-    maxHeight: 520,
-    placement: 'bottom-start',
+    gap: popoverGap,
+    layoutKey: popoverLayoutKey,
+    maxHeight: popoverMaxHeight,
+    placement: popoverPlacement,
     width: 256,
   });
 
   useEffect(() => {
     const next = dateDraftFromValue(value);
     setIncludeEnd(next.includeEnd);
-    setStartDraft(next.start);
-    setEndDraft(next.end);
-    setIncludeTime(next.includeTime);
+    setStartDraft(allowTime ? next.start : dateFieldEndpointDate(next.start));
+    setEndDraft(allowTime ? next.end : dateFieldEndpointDate(next.end));
+    setIncludeTime(allowTime && next.includeTime);
     setStartTimeDraft(next.startTime || DEFAULT_TIME);
     setEndTimeDraft(next.endTime || DEFAULT_TIME);
-    setPreset(next.preset);
-    setUntil(next.until);
-    setCustomRule(next.rule);
-  }, [value]);
+    setPreset(allowRecurrence ? next.preset : 'none');
+    setUntil(allowRecurrence ? next.until : '');
+    setIncludeUntil(allowRecurrence && Boolean(next.until));
+    setCustomRule(allowRecurrence ? next.rule : null);
+  }, [allowRecurrence, allowTime, value]);
 
   // Re-centre the calendar on the value's month each time the popover opens.
   useEffect(() => {
@@ -135,27 +174,29 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
     nextPreset: RecurrencePreset = preset,
     nextUntil = until,
   ) => {
+    const normalizedStart = allowTime ? nextStart : dateFieldEndpointDate(nextStart);
+    const normalizedEnd = allowTime ? nextEnd : dateFieldEndpointDate(nextEnd);
     if (!nextStart && (!nextIncludeEnd || !nextEnd)) {
       onCommit('');
       return;
     }
-    if (nextIncludeEnd && (!nextStart || !nextEnd)) return;
+    if (nextIncludeEnd && (!normalizedStart || !normalizedEnd)) return;
     // A recurring single date encodes its rule into the value (`<date> RRULE:...`);
     // a range never recurs, so its branch ignores the preset.
-    if (!nextIncludeEnd && nextPreset !== 'none') {
+    if (allowRecurrence && !nextIncludeEnd && nextPreset !== 'none') {
       const recurring = buildScheduleString({
-        date: dateFieldEndpointDate(nextStart),
-        time: dateFieldEndpointTime(nextStart),
+        date: dateFieldEndpointDate(normalizedStart),
+        time: dateFieldEndpointTime(normalizedStart),
         preset: nextPreset,
-        until: nextUntil,
+        until: validRecurrenceUntil(normalizedStart, nextUntil),
         rule: customRule,
       });
       if (recurring) onCommit(recurring);
       return;
     }
     const nextValue = nextIncludeEnd
-      ? formatDateFieldInput(nextStart, nextEnd)
-      : formatDateFieldInput(nextStart, '');
+      ? formatDateFieldInput(normalizedStart, normalizedEnd)
+      : formatDateFieldInput(normalizedStart, '');
     if (!nextValue) return;
     onCommit(nextValue);
   };
@@ -168,7 +209,7 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
   };
 
   const endpointForDate = (isoDate: string, edge: DateFieldEdge) => (
-    includeTime ? formatDateFieldEndpoint(isoDate, edge === 'start' ? startTimeDraft : endTimeDraft) : isoDate
+    allowTime && includeTime ? formatDateFieldEndpoint(isoDate, edge === 'start' ? startTimeDraft : endTimeDraft) : isoDate
   );
 
   const toggleIncludeEnd = () => {
@@ -199,6 +240,14 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
   };
 
   const applySelectedDate = (edge: DateFieldEdge, isoDate: string) => {
+    if (edge === 'until') {
+      const nextUntil = dateFieldEndpointDate(isoDate);
+      if (nextUntil < dateFieldEndpointDate(startDraft)) return;
+      setViewToDate(nextUntil);
+      updateUntil(nextUntil);
+      return;
+    }
+
     const selectedEndpoint = endpointForDate(isoDate, edge);
     if (!includeEnd) {
       setStartDraft(selectedEndpoint);
@@ -232,10 +281,12 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
   };
 
   const selectDate = (isoDate: string) => {
+    if (maxDate && isoDate > maxDate) return;
     applySelectedDate(editingEdge, isoDate);
   };
 
   const updateDate = (edge: DateFieldEdge, isoDate: string) => {
+    if (maxDate && isoDate > maxDate) return;
     applySelectedDate(edge, isoDate);
   };
 
@@ -252,6 +303,7 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
     setEditingEdge('start');
     setPreset('none');
     setUntil('');
+    setIncludeUntil(false);
     setCustomRule(null);
     onCommit('');
     onOpenChange(false);
@@ -260,12 +312,34 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
   const updatePreset = (nextPreset: RecurrencePreset) => {
     setPreset(nextPreset);
     const nextUntil = nextPreset === 'none' ? '' : until;
-    if (nextPreset === 'none') setUntil('');
+    if (nextPreset === 'none') {
+      setUntil('');
+      setIncludeUntil(false);
+      if (editingEdge === 'until') setEditingEdge('start');
+    }
     commitDate(includeEnd, startDraft, endDraft, nextPreset, nextUntil);
   };
 
   const updateUntil = (nextUntil: string) => {
+    const nextValidUntil = validRecurrenceUntil(startDraft, nextUntil);
+    if (!nextValidUntil && nextUntil) return;
+    setUntil(nextValidUntil);
+    commitDate(includeEnd, startDraft, endDraft, preset, nextValidUntil);
+  };
+
+  const toggleIncludeUntil = () => {
+    const nextIncludeUntil = !includeUntil;
+    setIncludeUntil(nextIncludeUntil);
+    if (!nextIncludeUntil) {
+      setUntil('');
+      if (editingEdge === 'until') setEditingEdge('start');
+      commitDate(includeEnd, startDraft, endDraft, preset, '');
+      return;
+    }
+    const nextUntil = until || dateFieldEndpointDate(startDraft) || today;
     setUntil(nextUntil);
+    setEditingEdge('until');
+    setViewToDate(nextUntil);
     commitDate(includeEnd, startDraft, endDraft, preset, nextUntil);
   };
 
@@ -301,9 +375,13 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
   const rangePreviewEnd = includeEnd && editingEdge === 'end' && hoveredDate
     ? hoveredDate
     : dateFieldEndpointDate(endDraft);
+  const recurrenceUntilDate = allowRecurrence && !includeEnd && preset !== 'none' && includeUntil
+    ? dateFieldEndpointDate(until)
+    : '';
+  const recurrenceStartDate = dateFieldEndpointDate(startDraft);
   const selectedDates = includeEnd
     ? [dateFieldEndpointDate(startDraft), dateFieldEndpointDate(endDraft)].filter(Boolean)
-    : [dateFieldEndpointDate(startDraft)].filter(Boolean);
+    : [dateFieldEndpointDate(startDraft), recurrenceUntilDate].filter(Boolean);
   // `custom` is never freely selectable — it only appears (pre-selected) when the
   // stored rule maps to no plain preset, so the user can keep it as-is.
   const presetOptions = preset === 'custom' ? (['custom', ...SELECTABLE_PRESETS] as const) : SELECTABLE_PRESETS;
@@ -349,11 +427,32 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
             onTimeChange={(nextTime) => updateTime('end', nextTime)}
           />
         )}
+        {allowRecurrence && !includeEnd && preset !== 'none' && includeUntil && (
+          <DateSummaryRow
+            active={editingEdge === 'until'}
+            includeTime={false}
+            label={td.ends}
+            dateAriaLabel={td.ends}
+            timeAriaLabel={td.endTime}
+            time=""
+            value={until}
+            onSelect={() => {
+              setEditingEdge('until');
+              setViewToDate(until || dateFieldEndpointDate(startDraft) || today);
+            }}
+            onDateChange={updateUntil}
+            onTimeChange={() => {}}
+          />
+        )}
       </div>
       <CalendarMonthGrid
         getDayClassName={calendarDayClassName}
+        isDateDisabled={(isoDate) => Boolean(
+          (maxDate && isoDate > maxDate)
+          || (editingEdge === 'until' && recurrenceStartDate && isoDate < recurrenceStartDate),
+        )}
         month={viewMonth}
-        multiselectable={includeEnd}
+        multiselectable={includeEnd || Boolean(recurrenceUntilDate)}
         onDayMouseEnter={(day) => setHoveredDate(day.isoDate)}
         onDayMouseLeave={() => setHoveredDate('')}
         onMoveMonth={moveMonth}
@@ -366,9 +465,14 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
         {allowRange && (
           <DateSettingRow label={td.endDateToggle} checked={includeEnd} onToggle={toggleIncludeEnd} />
         )}
-        <DateSettingRow label={td.includeTimeToggle} checked={includeTime} onToggle={toggleIncludeTime} />
+        {allowTime && (
+          <DateSettingRow label={td.includeTimeToggle} checked={includeTime} onToggle={toggleIncludeTime} />
+        )}
+        {allowRecurrence && !includeEnd && preset !== 'none' && (
+          <DateSettingRow label={td.ends} checked={includeUntil} onToggle={toggleIncludeUntil} />
+        )}
       </div>
-      {!includeEnd && (
+      {allowRecurrence && !includeEnd && (
         // Recurrence is a single-date concept; a range never repeats.
         <div className="typed-field-date-recurrence">
           <label className="typed-field-date-recurrence-row">
@@ -383,18 +487,6 @@ export function DateValuePicker({ anchorRef, value, open, onOpenChange, onCommit
               ))}
             </select>
           </label>
-          {preset !== 'none' && (
-            <label className="typed-field-date-recurrence-row">
-              <span>{td.ends}</span>
-              <input
-                className="typed-field-date-recurrence-until"
-                type="date"
-                value={until}
-                min={dateFieldEndpointDate(startDraft) || undefined}
-                onChange={(event) => updateUntil(event.target.value)}
-              />
-            </label>
-          )}
         </div>
       )}
       <div className="typed-field-date-actions">
@@ -563,6 +655,13 @@ function applyTimeMode(endpoint: string, includeTime: boolean, time: string): st
   const date = dateFieldEndpointDate(endpoint);
   if (!date) return '';
   return includeTime ? formatDateFieldEndpoint(date, time || DEFAULT_TIME) : date;
+}
+
+function validRecurrenceUntil(start: string, until: string): string {
+  if (!until) return '';
+  const startDate = dateFieldEndpointDate(start);
+  if (startDate && until < startDate) return '';
+  return until;
 }
 
 function editableDateDisplay(endpoint: string): string {

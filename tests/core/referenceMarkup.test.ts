@@ -151,6 +151,90 @@ describe('reference markup', () => {
     ]);
   });
 
+  test('formats and parses date-clamped chat source reference markers', () => {
+    const target = {
+      kind: 'chat-source',
+      stream: 'conversation',
+      streamId: 'lin-agent-1',
+      range: {
+        fromSeqExclusive: 12,
+        throughSeq: 18,
+        throughEventId: 'event-18',
+        fromCreatedAtInclusive: 1_800_000_000_000,
+        throughCreatedAtExclusive: 1_800_086_400_000,
+      },
+    } as const;
+    const marker = formatChatSourceReferenceMarker('source chat', target);
+
+    expect(marker).toBe('[[chat:source chat^conversation:lin-agent-1@12-18:event-18~1800000000000-1800086400000]]');
+    expect(parseReferenceMarkers(marker)).toEqual([{
+      end: marker.length,
+      label: 'source chat',
+      raw: marker,
+      start: 0,
+      target,
+    }]);
+  });
+
+  test('keeps legacy chat event ids that contain a tilde', () => {
+    const marker = '[[chat:source chat^conversation:lin-agent-1@12-18:event~18]]';
+
+    expect(parseReferenceMarkers(marker)).toEqual([{
+      end: marker.length,
+      label: 'source chat',
+      raw: marker,
+      start: 0,
+      target: {
+        kind: 'chat-source',
+        stream: 'conversation',
+        streamId: 'lin-agent-1',
+        range: {
+          fromSeqExclusive: 12,
+          throughSeq: 18,
+          throughEventId: 'event~18',
+        },
+      },
+    }]);
+  });
+
+  test('encodes chat event id tildes so created-at clamps stay unambiguous', () => {
+    const target = {
+      kind: 'chat-source',
+      stream: 'conversation',
+      streamId: 'lin-agent-1',
+      range: {
+        fromSeqExclusive: 12,
+        throughSeq: 18,
+        throughEventId: 'event~18-19',
+      },
+    } as const;
+    const marker = formatChatSourceReferenceMarker('source chat', target);
+
+    expect(marker).toBe('[[chat:source chat^conversation:lin-agent-1@12-18:event%7E18-19]]');
+    expect(parseReferenceMarkers(marker)[0]?.target).toEqual(target);
+  });
+
+  test('does not treat a legacy chat event id suffix as a created-at clamp', () => {
+    const marker = '[[chat:source chat^conversation:lin-agent-1@12-18:event~18-19]]';
+
+    expect(parseReferenceMarkers(marker)).toEqual([{
+      end: marker.length,
+      label: 'source chat',
+      raw: marker,
+      start: 0,
+      target: {
+        kind: 'chat-source',
+        stream: 'conversation',
+        streamId: 'lin-agent-1',
+        range: {
+          fromSeqExclusive: 12,
+          throughSeq: 18,
+          throughEventId: 'event~18-19',
+        },
+      },
+    }]);
+  });
+
   test('does not parse labels containing raw square brackets', () => {
     const text = 'Keep [[node:[Alpha^node-alpha]] plain';
     expect(parseReferenceMarkers(text)).toEqual([]);

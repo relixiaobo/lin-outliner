@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
+import { DEFAULT_DREAM_CHANNEL_ID, DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
 import {
   commandCalls,
   e2eProjection,
@@ -96,6 +96,28 @@ async function pendingQuestionMetrics(page: Page) {
   });
 }
 
+async function datePickerGapAboveTrigger(page: Page, triggerSelector: string): Promise<number> {
+  return page.evaluate((selector) => {
+    const picker = document.querySelector('.typed-field-date-popover');
+    const trigger = document.querySelector(selector);
+    if (!(picker instanceof HTMLElement) || !(trigger instanceof HTMLElement)) return -1;
+    const pickerBox = picker.getBoundingClientRect();
+    const triggerBox = trigger.getBoundingClientRect();
+    return triggerBox.top - pickerBox.bottom;
+  }, triggerSelector);
+}
+
+async function datePickerLargestGapFromTrigger(page: Page, triggerSelector: string): Promise<number> {
+  return page.evaluate((selector) => {
+    const picker = document.querySelector('.typed-field-date-popover');
+    const trigger = document.querySelector(selector);
+    if (!(picker instanceof HTMLElement) || !(trigger instanceof HTMLElement)) return -1;
+    const pickerBox = picker.getBoundingClientRect();
+    const triggerBox = trigger.getBoundingClientRect();
+    return Math.max(triggerBox.top - pickerBox.bottom, pickerBox.top - triggerBox.bottom);
+  }, triggerSelector);
+}
+
 test.describe('agent composer controls', () => {
   test.beforeEach(async ({ page }) => {
     await openMockedApp(page);
@@ -178,16 +200,17 @@ test.describe('agent composer controls', () => {
     });
   });
 
-  test('shows #General, every configured agent DM, and opens DMs without creating one', async ({ page }) => {
+  test('shows default Channels and opens existing conversations without creating one', async ({ page }) => {
     await page.getByRole('button', { name: 'Show conversations' }).click();
     const menu = page.getByRole('dialog', { name: 'Channels' });
     await expect(menu).toBeVisible();
-    await expect(menu.getByText('Direct Messages')).toBeVisible();
-    await expect(menu.getByRole('button', { name: 'New agent' })).toBeVisible();
+    await expect(menu.getByText('Direct Messages')).toHaveCount(0);
+    await expect(menu.getByRole('button', { name: 'New agent' })).toHaveCount(0);
     await expect(menu.getByRole('button', { name: 'New Channel' })).toBeVisible();
     await expect(menu.getByRole('button', { name: /Neva/ })).toBeVisible();
     await expect(menu.getByRole('button', { name: /self/ })).toBeVisible();
     await expect(menu.getByText('General', { exact: true })).toBeVisible();
+    await expect(menu.getByText('Dream', { exact: true })).toBeVisible();
     await expect(menu.getByText('Planning Channel')).toBeVisible();
     const headerBorders = await menu.locator('.agent-conversation-menu-header').evaluateAll((headers) => (
       headers.map((header) => {
@@ -200,24 +223,20 @@ test.describe('agent composer controls', () => {
     ));
     expect(headerBorders.every((border) => border.borderTopWidth === '0px' && border.borderBottomWidth === '0px')).toBe(true);
     await expect(menu.locator('.agent-conversation-menu-header').nth(0)).toContainText('Channels');
-    await expect(menu.locator('.agent-conversation-menu-header').nth(1)).toContainText('Direct Messages');
+    await expect(menu.locator('.agent-conversation-menu-header')).toHaveCount(1);
     const channelsList = menu.locator('.agent-conversation-list').first();
-    const dmList = menu.locator('.agent-conversation-list').nth(1);
-    await expect(dmList.locator('.agent-conversation-meta')).toHaveCount(0);
-    await expect(dmList.locator('.agent-conversation-members')).toHaveCount(0);
     await expect(channelsList.locator('.agent-conversation-meta')).toHaveCount(0);
     await expect(channelsList.locator('.agent-conversation-members')).toHaveCount(0);
-    await expect(channelsList.locator('.agent-conversation-channel-icon')).toHaveCount(2);
+    await expect(channelsList.locator('.agent-conversation-channel-icon')).toHaveCount(5);
     const generalRow = channelsList.locator('.agent-conversation-row', { hasText: 'General' }).first();
     await expect(channelsList.locator('.agent-conversation-row').first()).toContainText('General');
-    await expect(generalRow.getByRole('button', { name: 'Channel options' })).toHaveCount(0);
+    await expect(generalRow.getByRole('button', { name: 'Channel options' })).toHaveCount(1);
     await expect(channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).locator('.agent-conversation-unread')).toHaveText('3');
 
     await menu.getByRole('button', { name: /self/ }).click();
     await expect(page.locator('.agent-dock-title')).toHaveText('self');
     await expect(page.locator('.agent-dock-subtitle')).toHaveCount(0);
-    await expect(page.locator('.agent-dock-title-button .agent-identity-avatar')).toHaveCount(1);
-    await expect(page.locator('.agent-dock-title-button .agent-dock-title-icon')).toHaveCount(0);
+    await expect(page.locator('.agent-dock-title-button .agent-identity-avatar')).toHaveCount(0);
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
@@ -231,41 +250,118 @@ test.describe('agent composer controls', () => {
     }).toEqual({ created: false, restoredSelf: true });
   });
 
-  test('opens New agent from the Direct Messages section action', async ({ page }) => {
+  test('separates Scheduled Dream settings from manual Dream runs', async ({ page }) => {
     await page.getByRole('button', { name: 'Show conversations' }).click();
     const menu = page.getByRole('dialog', { name: 'Channels' });
-    await menu.getByRole('button', { name: 'New agent' }).click();
-    await expect(menu).toHaveCount(0);
+    const channelsList = menu.locator('.agent-conversation-list').first();
+    await channelsList.locator('.agent-conversation-row', { hasText: 'Dream' }).getByRole('button', { name: /Dream/ }).click();
 
+    await expect(page.locator('.agent-dock-title')).toHaveText('Dream');
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
-    }).toMatchObject({ mode: 'create' });
+      return calls.findLast((call) => call.cmd === 'agent_restore_conversation')?.args.conversationId;
+    }).toBe(DEFAULT_DREAM_CHANNEL_ID);
+
+    const launcher = page.locator('.dream-launcher');
+    await expect(launcher).toBeVisible();
+    await expect(launcher.locator('.dream-launcher-surface')).toHaveClass(/agent-composer-surface/);
+    await expect(launcher.locator('.dream-schedule-title')).toHaveText('Scheduled Dream');
+    await expect(launcher.locator('.dream-schedule-next')).toContainText('Next');
+    await expect(launcher.locator('.dream-schedule-trigger')).toContainText('Daily');
+    await expect(launcher.locator('.dream-schedule-trigger')).toContainText('03:00');
+    await expect(launcher.getByRole('button', { name: 'Manual run' })).toBeVisible();
+    await expect(launcher.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await expect(launcher.locator('.dream-launcher-guidance')).toHaveCount(0);
+    await expect(launcher.locator('.agent-composer-action-button')).toHaveCount(0);
+    await expect(launcher.locator('.dream-launcher-date-part')).toHaveCount(0);
+    await expect(launcher.locator('input[type="date"]')).toHaveCount(0);
+
+    const metrics = await launcher.evaluate((element) => {
+      const surface = element.querySelector('.dream-launcher-surface');
+      const scheduleTrigger = element.querySelector('.dream-schedule-trigger');
+      const manualButton = element.querySelector('.dream-manual-open');
+      const saveButton = element.querySelector('.dream-schedule-save');
+      if (
+        !(surface instanceof HTMLElement)
+        || !(scheduleTrigger instanceof HTMLElement)
+        || !(manualButton instanceof HTMLElement)
+        || !(saveButton instanceof HTMLElement)
+      ) return null;
+      const triggerStyle = getComputedStyle(scheduleTrigger);
+      return {
+        surfaceUsesComposer: surface.classList.contains('agent-composer-surface'),
+        manualButtonText: manualButton.textContent?.trim(),
+        saveButtonText: saveButton.textContent?.trim(),
+        triggerBackground: triggerStyle.backgroundColor,
+        triggerBorder: triggerStyle.borderTopWidth,
+        triggerWhiteSpace: triggerStyle.whiteSpace,
+      };
+    });
+    expect(metrics).toMatchObject({
+      surfaceUsesComposer: true,
+      manualButtonText: 'Manual run',
+      saveButtonText: 'Save',
+      triggerBackground: 'rgba(0, 0, 0, 0)',
+      triggerBorder: '0px',
+      triggerWhiteSpace: 'normal',
+    });
+
+    await launcher.locator('.dream-schedule-trigger').click();
+    const picker = page.locator('.typed-field-date-popover');
+    await expect(picker).toBeVisible();
+    await expect(picker.locator('.typed-field-date-summary-row')).toHaveCount(1);
+    await expect(picker.locator('.typed-field-date-recurrence-select')).toHaveCount(1);
+    await expect(picker.getByRole('switch', { name: 'Include time' })).toHaveCount(1);
+    await expect(picker.getByRole('switch', { name: 'Ends' })).toHaveAttribute('aria-checked', 'false');
+    await expect(picker.getByRole('switch', { name: 'End date' })).toHaveCount(0);
+    await picker.getByRole('switch', { name: 'Ends' }).click();
+    await expect(picker.locator('.typed-field-date-summary-row')).toHaveCount(2);
+    await expect(picker.getByRole('textbox', { name: 'Ends' })).toHaveValue('2026/01/01');
+    await expect.poll(async () => datePickerGapAboveTrigger(page, '.dream-schedule-trigger')).toBeGreaterThanOrEqual(8);
+    await page.keyboard.press('Escape');
+    await expect(picker).toHaveCount(0);
+    await launcher.locator('.dream-schedule-trigger').click();
+    await expect(picker).toBeVisible();
+    await picker.getByRole('button', { name: 'Clear' }).click();
+    await expect(picker).toHaveCount(0);
+    await expect(launcher.locator('.dream-schedule-trigger')).toContainText('Choose Dream schedule');
+    await expect(launcher.locator('.dream-schedule-trigger')).not.toContainText('Press Space');
+
+    await launcher.getByRole('button', { name: 'Manual run' }).click();
+    const manualDialog = page.getByRole('dialog', { name: 'Run Dream manually' });
+    await expect(manualDialog).toBeVisible();
+    await expect(manualDialog.locator('.dream-manual-date-trigger')).toContainText('2026-06-24');
+    await expect(manualDialog.locator('.dream-manual-guidance')).toHaveAttribute('placeholder', /pay attention/);
+    await expect(manualDialog.getByRole('button', { name: 'Run Dream' })).toBeVisible();
+
+    await manualDialog.locator('.dream-manual-date-trigger').click();
+    await expect(picker).toBeVisible();
+    await expect(picker.locator('.typed-field-date-summary-row')).toHaveCount(1);
+    await expect(picker.locator('.typed-field-date-recurrence-select')).toHaveCount(0);
+    await expect(picker.getByRole('switch', { name: 'Include time' })).toHaveCount(0);
+    await expect.poll(async () => datePickerLargestGapFromTrigger(page, '.dream-manual-date-trigger')).toBeGreaterThanOrEqual(6);
+    await picker.getByRole('switch', { name: 'End date' }).click();
+    await expect(picker.locator('.typed-field-date-summary-row')).toHaveCount(2);
+    await expect.poll(async () => datePickerLargestGapFromTrigger(page, '.dream-manual-date-trigger')).toBeGreaterThanOrEqual(6);
+
+    await manualDialog.locator('.dream-manual-guidance').fill('Focus on project decisions');
+    await manualDialog.getByRole('button', { name: 'Run Dream' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_run_dream_now')?.args.guidance;
+    }).toBe('Focus on project decisions');
+  });
+
+  test('does not expose the retired New agent conversation action', async ({ page }) => {
+    await page.getByRole('button', { name: 'Show conversations' }).click();
+    const menu = page.getByRole('dialog', { name: 'Channels' });
+    await expect(menu.getByRole('button', { name: 'New Channel' })).toBeVisible();
+    await expect(menu.getByRole('button', { name: 'New agent' })).toHaveCount(0);
   });
 
   test('opens row configuration from the conversation More affordance', async ({ page }) => {
     await page.getByRole('button', { name: 'Show conversations' }).click();
-    let menu = page.getByRole('dialog', { name: 'Channels' });
-    const dmList = menu.locator('.agent-conversation-list').nth(1);
-    const selfRow = dmList.locator('.agent-conversation-row', { hasText: 'self' }).first();
-    const selfActions = selfRow.locator('.agent-conversation-row-actions');
-    const agentMore = selfRow.getByRole('button', { name: 'Agent options' });
-
-    await expect.poll(async () => selfActions.evaluate((element) => getComputedStyle(element).opacity)).toBe('0');
-    await selfRow.hover();
-    await expect.poll(async () => selfActions.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
-    await agentMore.click();
-    const agentMenu = page.getByRole('menu', { name: 'Agent options' });
-    await expect(agentMenu).toBeVisible();
-    await agentMenu.getByRole('menuitem', { name: 'Configure agent' }).click();
-    await expect(menu).toHaveCount(0);
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'open_agent_config')?.args;
-    }).toMatchObject({ agentId: 'user:mock:self', mode: 'configure' });
-
-    await page.getByRole('button', { name: 'Show conversations' }).click();
-    menu = page.getByRole('dialog', { name: 'Channels' });
+    const menu = page.getByRole('dialog', { name: 'Channels' });
     const channelsList = menu.locator('.agent-conversation-list').first();
     const channelRow = channelsList.locator('.agent-conversation-row', { hasText: 'Planning Channel' }).first();
     const channelActions = channelRow.locator('.agent-conversation-row-actions');

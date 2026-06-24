@@ -1,10 +1,12 @@
 import {
+  DEFAULT_DREAM_CHANNEL_ID,
+} from '../core/agentChannel';
+import {
   conversationIdOfRun,
   getAgentEventVisibleTranscript,
   type AgentEvent,
   samePrincipal,
   type AgentEventMessageRecord,
-  type AgentMemoryEpisode,
   type AgentMemorySource,
   type AgentMemoryStreamSource,
   type AgentPrincipal,
@@ -71,6 +73,8 @@ export interface PastChatsStreamSourceInput {
     fromSeqExclusive: number;
     throughSeq?: number;
     throughEventId?: string | null;
+    fromCreatedAtInclusive?: number;
+    throughCreatedAtExclusive?: number;
   };
 }
 
@@ -162,7 +166,6 @@ export interface PastChatsSourceResult {
 export interface PastChatsEvidenceReadResult {
   mode: 'evidence';
   source: AgentMemorySource;
-  episode?: AgentMemoryEpisode;
   conversation?: { id: string; title: string | null; createdAt: string; updatedAt: string };
   messages: PastChatsEvidenceMessage[];
   totalChars: number;
@@ -413,52 +416,11 @@ export class AgentPastChatsService {
     if (!samePrincipal(params.principal, params.reader)) {
       return pastChatsError(
         'CROSS_PRINCIPAL_EVIDENCE',
-        'Raw memory evidence is only available for the reader principal that owns the memory pool.',
+        'Raw memory evidence is only available for the reader principal that owns the source.',
       );
     }
     const source = params.source;
-    if ('episodeId' in source) {
-      return this.readEpisodeMemorySourceEvidence(params);
-    }
     return this.readStreamMemorySourceEvidence(source, params.maxChars, source);
-  }
-
-  private async readEpisodeMemorySourceEvidence(params: PastChatsEvidenceParams): Promise<PastChatsEvidenceResult> {
-    const source = params.source;
-    if (!('episodeId' in source)) {
-      return pastChatsError('SOURCE_NOT_FOUND', 'Memory source is not an episode source.');
-    }
-    const episode = await this.eventStore.getMemoryEpisode(params.principal, source.episodeId);
-    if (!episode) {
-      return pastChatsError('SOURCE_NOT_FOUND', `No memory episode was found for ${source.episodeId}.`);
-    }
-    const maxChars = clampInteger(params.maxChars, DEFAULT_EVIDENCE_CHARS, 1, MAX_READ_CHARS);
-    let remainingChars = Math.max(0, maxChars - episode.gist.length);
-    const messages: PastChatsEvidenceMessage[] = [];
-    let totalChars = 0;
-    let outputTruncated = remainingChars === 0 && episode.sources.length > 0;
-    for (const rawSource of episode.sources) {
-      if (remainingChars <= 0) {
-        outputTruncated = true;
-        break;
-      }
-      const evidence = await this.readStreamMemorySourceEvidence(rawSource, remainingChars, source);
-      if (evidence.mode !== 'evidence') {
-        continue;
-      }
-      messages.push(...evidence.messages);
-      totalChars += evidence.totalChars;
-      outputTruncated ||= evidence.outputTruncated;
-      remainingChars = Math.max(0, remainingChars - evidence.totalChars);
-    }
-    return {
-      mode: 'evidence',
-      source: { ...source },
-      episode,
-      messages,
-      totalChars,
-      outputTruncated,
-    };
   }
 
   private async readStreamMemorySourceEvidence(
@@ -482,6 +444,7 @@ export class AgentPastChatsService {
     const evidence = extractMemoryStreamEvidence(events, {
       fromSeqExclusive: rawSource.range.fromSeqExclusive,
       throughSeq: rawSource.range.throughSeq,
+      createdAtRange: createdAtRangeFromSource(rawSource),
     });
     if (!evidence) {
       return pastChatsError('SOURCE_NOT_FOUND', `No evidence messages were found for ${rawSource.stream} ${rawSource.streamId}.`);
@@ -516,7 +479,9 @@ export class AgentPastChatsService {
   }
 
   private async conversationMetaById(): Promise<Map<string, AgentConversationIndexEntry>> {
-    return new Map((await this.eventStore.listConversationIndexEntries()).map((entry) => [entry.id, entry]));
+    return new Map((await this.eventStore.listConversationIndexEntries())
+      .filter((entry) => entry.id !== DEFAULT_DREAM_CHANNEL_ID)
+      .map((entry) => [entry.id, entry]));
   }
 
   private async concreteStreamSource(input: PastChatsStreamSourceInput): Promise<AgentMemoryStreamSource | null> {
@@ -538,6 +503,7 @@ export class AgentPastChatsService {
         fromSeqExclusive: Math.max(0, Math.trunc(input.range.fromSeqExclusive)),
         throughSeq: throughSeq ?? tail.seq,
         throughEventId,
+        ...normalizeSourceCreatedAtRange(input.range),
       },
     };
   }
@@ -563,6 +529,40 @@ export class AgentPastChatsService {
     this.visibleConversationCache.set(conversationId, next);
     return next;
   }
+}
+
+function createdAtRangeFromSource(source: AgentMemoryStreamSource): { fromInclusive: number; throughExclusive: number } | undefined {
+  return createdAtRangeFromRange(source.range);
+}
+
+function createdAtRangeFromRange(range: {
+  fromCreatedAtInclusive?: number;
+  throughCreatedAtExclusive?: number;
+}): { fromInclusive: number; throughExclusive: number } | undefined {
+  const fromInclusive = normalizeFiniteTimestamp(range.fromCreatedAtInclusive);
+  const throughExclusive = normalizeFiniteTimestamp(range.throughCreatedAtExclusive);
+  return fromInclusive !== null && throughExclusive !== null && throughExclusive > fromInclusive
+    ? { fromInclusive, throughExclusive }
+    : undefined;
+}
+
+function normalizeSourceCreatedAtRange(range: {
+  fromCreatedAtInclusive?: number;
+  throughCreatedAtExclusive?: number;
+}): Pick<AgentMemoryStreamSource['range'], 'fromCreatedAtInclusive' | 'throughCreatedAtExclusive'> {
+  const normalized = createdAtRangeFromRange(range);
+  return normalized
+    ? {
+      fromCreatedAtInclusive: normalized.fromInclusive,
+      throughCreatedAtExclusive: normalized.throughExclusive,
+    }
+    : {};
+}
+
+function normalizeFiniteTimestamp(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.trunc(value))
+    : null;
 }
 
 export function pastChatsError(

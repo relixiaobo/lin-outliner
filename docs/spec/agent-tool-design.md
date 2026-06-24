@@ -1651,7 +1651,7 @@ type FileReadData =
   | FileReadTextData
   | FileReadImageData
   | FileReadPdfData
-  | FileReadPdfPartsData
+  | FileReadMarkdownData
   | FileReadNotebookData
   | FileReadUnchangedData;
 
@@ -1685,16 +1685,10 @@ interface FileReadPdfData {
   file: {
     filePath: string;
     originalSize: number;
-    mode: "native";
-    mimeType: "application/pdf";
-  };
-}
-
-interface FileReadPdfPartsData {
-  type: "parts";
-  file: {
-    filePath: string;
-    originalSize: number;
+    totalPages: number;
+    // Runtime-selected representation summary. This is not a file_read input,
+    // and it is kept out of the model-visible projection.
+    representation: "text" | "images" | "text_and_images" | "metadata";
     pages: {
       firstPage: number;
       lastPage: number;
@@ -1703,8 +1697,22 @@ interface FileReadPdfPartsData {
       chars: number;
       truncated: boolean;
     };
-    count: number;
-    outputDir: string;
+    renderedImages?: {
+      count: number;
+      outputDir: string;
+    };
+  };
+}
+
+interface FileReadMarkdownData {
+  type: "markdown";
+  file: {
+    filePath: string;
+    content: string;
+    converter: "markitdown";
+    contentChars: number;
+    truncated: boolean;
+    originalSize: number;
   };
 }
 
@@ -1743,32 +1751,60 @@ Result behavior:
 - Image reads return dimensions when they can be determined, attach the image
   block for the model to inspect, and omit base64 from the model-visible JSON so
   text output stays compact.
-- On OpenAI Responses-family models, reading a PDF without `pages` returns
-  `FileReadPdfData` for PDFs up to 20 MB and persists the PDF bytes as a source
-  payload. The runtime rehydrates that payload into an OpenAI `input_file`
-  document block immediately before the provider request, so normal PDF analysis
-  does not depend on Poppler and base64 never enters the tool-result JSON or
-  debug run snapshot. If a later request uses a model without native PDF support,
-  the runtime shows a readable PDF attachment notice instead of sending the
-  private payload marker.
-- PDF reads with `pages` ranges such as `"3"` and `"1-5"` use the local
-  page-extraction path, with a maximum of 20 pages per request. `pdfinfo`
-  determines page count, `pdftoppm` renders selected pages as JPEGs, and those
-  page images are attached to the tool result for visual layout inspection. If
-  `pdftotext` is available and the selected pages contain embedded text, that
-  extracted text is attached as a text part before the page images. Scanned PDFs
-  therefore still work through images, while text PDFs remain searchable and
-  token-efficient.
+- The model-visible `content[0].text` JSON is a compact metadata projection.
+  Runtime-extracted document bodies are attached as additional tool-result parts:
+  PDF text and rich-document Markdown use text parts, and rendered PDF pages use
+  image parts. Ordinary text/source files keep their bounded text directly in the
+  JSON because the file itself is already text.
+- Rich non-PDF documents use a runtime-owned Markdown path. Supported formats are
+  `.docx`, `.pptx`, `.xlsx`, `.xls`, and `.epub`; the model still passes only
+  `file_path`, while the runtime converts the document to bounded Markdown and
+  attaches that Markdown as a text content part. `.html` and `.htm` stay on the
+  ordinary text path so they remain zero-dependency readable and editable.
+- MarkItDown is the Markdown backend for rich documents. The runtime probes
+  `LIN_AGENT_MARKITDOWN_COMMAND`, then `markitdown`, then
+  `python3 -m markitdown`. `LIN_AGENT_MARKITDOWN_COMMAND` may be a bare
+  executable path or a command with arguments such as `python3 -m markitdown`.
+  Successful command resolution is cached for the process; failed resolution is
+  not cached so installing MarkItDown and retrying can succeed. Plugins, cloud
+  backends, and LLM-assisted extraction are not enabled by the runtime. Missing
+  MarkItDown returns a recoverable tool error that tells the agent to install a
+  local Python/uv backend through `bash` and retry the same `file_read` call; the
+  file tool does not install packages itself and does not assume Homebrew.
+- MarkItDown output is capped. Truncated Markdown sets `status: "partial"`,
+  records `truncated: true` and the emitted `contentChars` count in the runtime
+  data, and marks the attached Markdown text part as truncated.
+- Runtime ingestion keeps a small in-process derived-result cache for expensive
+  text extraction. Cache keys include the source file hash, extractor identity,
+  relevant options such as PDF page range, and the local tool environment. The
+  cache is disposable and never becomes truth: errors are not cached, ordinary
+  text-file freshness still comes from the per-run read record, and rendered PDF
+  page image directories remain per-read scratch outputs.
+- PDF reads are provider-neutral. `file_read` never sends the original PDF bytes
+  to the model as a provider-native document block; the runtime extracts local
+  text and/or page images first, then attaches those model-readable parts to the
+  tool result.
+- Reading a PDF without `pages` uses `pdfinfo` for page count and `pdftotext`
+  for embedded text extraction over the full document, capped by the PDF text
+  limit. Text PDFs therefore stay searchable and token-efficient on every model.
+  If no embedded text is available and the PDF has at most 10 pages, the runtime
+  renders the pages as JPEG images automatically; larger scanned PDFs return
+  metadata plus instructions to call `file_read` again with a narrower `pages`
+  range.
+- PDF reads with `pages` ranges such as `"3"` and `"1-5"` render the selected
+  pages with `pdftoppm`, with a maximum of 20 pages per request. When
+  `pdftotext` extracts text for that range, the text part is attached before the
+  page images so visual layout inspection and text search both work. Missing
+  `pdftotext` does not block an explicit page-image read when `pdftoppm` is
+  available.
 - If Poppler is missing for page rendering or PDF conversion, the tool returns a
   recoverable error that tells the agent to use `bash` to detect an available
   package manager and install Poppler. The recovery path must not assume
   Homebrew: it can use an installed manager such as Homebrew, MacPorts, apt, dnf,
   or pacman, then retry the same `file_read` or `file_convert` call. If no
   supported package manager is available, the agent reports that Poppler must be
-  installed so `pdfinfo` and `pdftoppm` are on `PATH`. The file tools never
-  install system packages themselves.
-- Models that do not support the native PDF payload path keep using the
-  Poppler-backed page-rendering path.
+  installed so `pdfinfo`, `pdftotext`, and `pdftoppm` are on `PATH`. The file
+  tools never install system packages themselves.
 - Notebook reads parse `.ipynb` cells and outputs into a compact text rendering
   plus structured cell metadata.
 - Binary files should return a typed result only when Lin supports the media
@@ -2415,18 +2451,25 @@ outline; fabricated or stale coordinates fail loudly.
 Runtime Dream is a private built-in skill, `memory-dream`. It is runtime-only:
 not model-invocable, and not exposed as `/dream` or a foreground `dream` tool.
 The scheduled-routines path is at-most-once per daily due occurrence; Settings
-also exposes a manual run button that uses the same restricted child path and is
-not blocked by the scheduled due gate. The manual button first calls a read-only
+also exposes a manual run button that uses the same restricted Dream-channel path
+and is not blocked by the scheduled due gate. The manual button first calls a read-only
 `agent_dream_readiness` pre-check (new evidence since the watermark vs. the
 scheduled volume bar); below the bar it advises that there is little new chat
 since the last Dream (a run would mostly reconcile existing memory rather than
 capture new conversations) and offers a "Dream anyway" override instead of
 running — the advisory flags thin new-chat volume, not "nothing to do", since a
 sub-bar manual run is still a valid consolidate-only reconciliation. A run computes per-stream seq ranges from
-the Dream watermark, renders the skill, and forks an unattended child run with
-only `past_chats`, `node_search`, `node_read`, `node_create`, `node_edit`, and
-`node_delete`.
-The child first reads today's journal node. When the run yields durable memory
+the Dream watermark, renders the skill, appends a manual or scheduled anchor to
+the protected Dream channel, and starts an unattended top-level run with a
+Dream-only profile whose tools are only `past_chats`, `node_search`, `node_read`,
+`node_create`, `node_edit`, and `node_delete`. The Dream channel does not accept
+ordinary chat messages, is excluded from Dream evidence, and supplies no prior
+active path to the Dream agent; its transcript is visible audit history rather
+than model context for later Dreams. That audit history is bounded to the newest
+512 Dream-channel runs; older run ledgers, launch anchors, `dream.finished`
+markers, and search-index entries are pruned while durable outline memory and the
+Dream watermark remain intact.
+The run first reads today's journal node. When it yields durable memory
 worth writing, it creates or reuses exactly one direct `#d-memory` container under
 it and updates that container's generated daily memory headline in place; when
 nothing is worth remembering it writes nothing and a clean run still completes,
@@ -2435,27 +2478,26 @@ recording `dream.completed` with zero changes and advancing the watermark. It us
 prior `#d-memory` / `#d-episode` / `#d-belief` / `#d-question` / `#d-guidance`
 nodes and user-authored outline context for the topics extracted from the raw
 chat spans. Manual `consolidate_only` runs may have no new chat sources; then the
-child consolidates from today's outline, prior Dream memory, and relevant
+run consolidates from today's outline, prior Dream memory, and relevant
 user-authored outline context. Prior Dream results are treated as current
 beliefs, tensions, and guidance to reconcile, not as evidence that can reinforce
 itself. User-authored outline nodes may be cited with normal `[[node:...]]`
-references when they materially inform the memory. The child may update, merge,
+references when they materially inform the memory. The run may update, merge,
 move, or delete ordinary outline nodes when consolidation warrants it; `node_delete`
-moves nodes to Trash. The child follows a single
+moves nodes to Trash. The run follows a single
 human-dream cycle: replay salient fragments, associate them with outline context,
 reconcile prior memory, abstract stable patterns, expose unresolved tensions as
 optional `#d-question`, simulate future behavior as optional `#d-guidance`, and
-downselect weak evidence. The run brief gives the child exact `past_chats` source
-objects and the corresponding `[[chat:...]]` marker templates. The child applies
+downselect weak evidence. The run brief gives exact `past_chats` source
+objects and the corresponding `[[chat:...]]` marker templates. The run applies
 the valuable-memory filter, keeps the target coordinates intact, and replaces the
 visible marker label with a short phrase that reads as part of the memory
 sentence when a visible citation is useful. It does not cite every line
-mechanically. After the child completes cleanly, the runtime records
+mechanically. After the run completes cleanly, the runtime records
 `dream.completed` with the processed ranges and advances the watermark; the memory
-nodes themselves are the durable model-readable result. A child that ends
-`completed` but was actually cut off mid-work — the delegation run hit its
-`maxTurns` cap while still streaming, or an unresolved context overflow truncated
-it — is flagged `incomplete` on its result; a zero-write `incomplete` run is
+nodes themselves are the durable model-readable result. A run that ends
+`completed` but was actually cut off mid-work by an unresolved context overflow
+is flagged `incomplete` on its result; a zero-write `incomplete` run is
 treated as a failure (no `dream.completed`, watermark unchanged) so the span is
 retried rather than dropped. (A truncated run that already committed memory writes
 keeps them and still completes, since the work is durable.)
@@ -2482,8 +2524,11 @@ Modes:
 The current conversation is excluded by default from `recent`, `search`, and
 `message_id` reads. The model may opt into `include_current_conversation` only
 when it is recovering compacted current-conversation content that is no longer
-in the active context. Source reads are explicit coordinates and are not
-current-conversation filtered.
+in the active context. The protected Dream channel is excluded from all
+`past_chats` modes, including explicit conversation-id filters and source
+coordinates, so Dream reasoning/tool transcript stays user-visible audit history
+rather than ordinary recall material. Source reads are explicit coordinates and
+are otherwise not current-conversation filtered.
 
 Tool results use the shared envelope and expose only the slim model-visible
 projection:

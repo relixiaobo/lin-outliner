@@ -208,6 +208,8 @@ export type ReferenceTarget =
         fromSeqExclusive: number;
         throughSeq: number;
         throughEventId?: string | null;
+        fromCreatedAtInclusive?: number;
+        throughCreatedAtExclusive?: number;
       };
     };
 
@@ -755,35 +757,13 @@ export interface AgentConversationListMeta {
   title: string | null;
   members: AgentPrincipal[];
   goal?: string;
+  settings?: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
   messageCount: number;
   lastMessageSnippet?: string | null;
   lastMessageAt?: number | null;
   unreadCount?: number;
-}
-
-export type AgentMemorySourceView =
-  | {
-      stream: 'conversation' | 'run';
-      streamId: string;
-      range: {
-        fromSeqExclusive: number;
-        throughSeq: number;
-        throughEventId: string | null;
-      };
-    }
-  | { episodeId: string };
-
-export interface AgentMemoryEntryView {
-  id: string;
-  /** The pool this fact lives in — its owner/believer (whose self-model). */
-  principal: AgentPrincipal;
-  fact: string;
-  originWorkspace?: string;
-  sources: AgentMemorySourceView[];
-  status: 'active' | 'invalidated';
-  createdAt: number;
 }
 
 export type AgentReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
@@ -801,6 +781,7 @@ export interface AgentRuntimeSettings {
   automaticSkillsEnabled: boolean;
   slashSkillsEnabled: boolean;
   compactEnabled: boolean;
+  dreamSchedule?: string;
   additionalSkillDirectories: string[];
   providerTimeoutMs: number | null;
   providerMaxRetries: number | null;
@@ -816,6 +797,7 @@ export interface AgentRuntimeSettingsInput {
   automaticSkillsEnabled?: boolean;
   slashSkillsEnabled?: boolean;
   compactEnabled?: boolean;
+  dreamSchedule?: string;
   additionalSkillDirectories?: string[];
   providerTimeoutMs?: number | null;
   providerMaxRetries?: number | null;
@@ -1023,7 +1005,9 @@ export function referenceTargetsEqual(left: ReferenceTarget, right: ReferenceTar
       && left.streamId === chatRight.streamId
       && left.range.fromSeqExclusive === chatRight.range.fromSeqExclusive
       && left.range.throughSeq === chatRight.range.throughSeq
-      && (left.range.throughEventId ?? null) === (chatRight.range.throughEventId ?? null);
+      && (left.range.throughEventId ?? null) === (chatRight.range.throughEventId ?? null)
+      && (left.range.fromCreatedAtInclusive ?? null) === (chatRight.range.fromCreatedAtInclusive ?? null)
+      && (left.range.throughCreatedAtExclusive ?? null) === (chatRight.range.throughCreatedAtExclusive ?? null);
   }
   const localRight = right as Extract<ReferenceTarget, { kind: 'local-file' }>;
   return left.path === localRight.path && left.entryKind === localRight.entryKind;
@@ -1032,7 +1016,7 @@ export function referenceTargetsEqual(left: ReferenceTarget, right: ReferenceTar
 export function referenceTargetSortKey(target: ReferenceTarget): string {
   if (target.kind === 'node') return `node:${target.nodeId}`;
   if (target.kind === 'chat-source') {
-    return `chat:${target.stream}:${target.streamId}:${target.range.fromSeqExclusive}:${target.range.throughSeq}:${target.range.throughEventId ?? ''}`;
+    return `chat:${target.stream}:${target.streamId}:${target.range.fromSeqExclusive}:${target.range.throughSeq}:${target.range.throughEventId ?? ''}:${target.range.fromCreatedAtInclusive ?? ''}:${target.range.throughCreatedAtExclusive ?? ''}`;
   }
   return `file:${target.entryKind}:${target.path}`;
 }

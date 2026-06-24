@@ -89,7 +89,7 @@ export function buildScheduleString(form: ScheduleForm): string | null {
       recurrence = undefined;
   }
   if (recurrence) {
-    if (form.until) recurrence.until = form.until;
+    if (form.until && form.until >= dateFieldEndpointDate(form.date)) recurrence.until = form.until;
     else delete recurrence.until;
   }
   return formatDateSchedule({ anchor, recurrence });

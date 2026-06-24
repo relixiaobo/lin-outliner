@@ -13,10 +13,25 @@ import {
 
 export const DEFAULT_GENERAL_CHANNEL_ID = 'lin-agent-channel-general';
 export const DEFAULT_GENERAL_CHANNEL_TITLE = 'General';
+export const DEFAULT_DREAM_CHANNEL_ID = 'lin-agent-channel-dream';
+export const DEFAULT_DREAM_CHANNEL_TITLE = 'Dream';
+export const CHANNEL_INCLUDE_IN_DREAM_DATA_SETTING = 'includeInDreamData';
 
 /** Runtime Channel identity is carried by the stable conversation id namespace. */
 export function isChannelConversationId(conversationId: string | null | undefined): boolean {
   return conversationId?.startsWith('lin-agent-channel-') ?? false;
+}
+
+export function defaultChannelIncludeInDreamData(conversationId: string): boolean {
+  return conversationId !== DEFAULT_DREAM_CHANNEL_ID;
+}
+
+export function channelIncludesInDreamData(
+  conversationId: string,
+  settings: Readonly<Record<string, unknown>> | null | undefined,
+): boolean {
+  const value = settings?.[CHANNEL_INCLUDE_IN_DREAM_DATA_SETTING];
+  return typeof value === 'boolean' ? value : defaultChannelIncludeInDreamData(conversationId);
 }
 
 /**
@@ -76,4 +91,3 @@ export function channelMessageOwner(
   if (record.actor.type === 'agent') return { type: 'agent', agentId: record.actor.agentId };
   return { type: 'agent', agentId: mainAgentId };
 }
-

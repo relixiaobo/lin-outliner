@@ -97,8 +97,7 @@ export type AgentPersistedContent =
   | { type: 'image'; imageRef: AgentPayloadRef; alt?: string }
   | { type: 'payload_ref'; payload: AgentPayloadRef; label?: string };
 
-// M0 target data-model contracts. These describe the planned conversation/run/memory
-// logs while the current flat conversation event log remains the runtime format below.
+// Agent identity + event-log contracts.
 export type AgentSourceKind = 'built-in' | 'user' | 'project';
 export type AgentId = `${AgentSourceKind}:${string}:${string}`;
 
@@ -109,9 +108,8 @@ export type AgentPrincipal =
 /**
  * Stable string key for a principal: `user:<userId>` / `agent:<agentId>`. Used
  * as a Map/Record key and stored in derived indexes; it is NOT an on-disk path
- * segment — every principal's pool directory lives under `principals/` with a
- * filesystem-encoded name (`agent-<agentId>` / `user-<userId>`), resolved by
- * the store's `memoryPaths`.
+ * segment — every principal's sidecar directory lives under `principals/` with
+ * a filesystem-encoded name (`agent-<agentId>` / `user-<userId>`).
  */
 export function principalKey(principal: AgentPrincipal): string {
   return principal.type === 'user' ? `user:${principal.userId}` : `agent:${principal.agentId}`;
@@ -217,10 +215,10 @@ export interface AgentRunFingerprint {
 
 /**
  * Where a run's record belongs. A conversation anchor places the run in a conversation's
- * timeline. A principal anchor marks a reflective run as maintaining that principal's pool
+ * timeline. A principal anchor marks a reflective run as maintaining that principal's model
  * (its self-model) — the SUBJECT of the maintenance, not the executor. `AgentRunMeta.agentId`
  * stays the executor; the two are different questions and different fields ([[agent-data-model]]
- * §4: the user-Dream is executed by the main agent but maintains the user principal's pool).
+ * §4: the user-Dream is executed by the main agent but maintains the user principal's model).
  */
 export type AgentRunAnchor =
   | { type: 'conversation'; agentId: AgentId; conversationId: string }
@@ -433,6 +431,8 @@ export interface AgentMemorySourceRange {
   fromSeqExclusive: number;
   throughSeq: number;
   throughEventId: string | null;
+  fromCreatedAtInclusive?: number;
+  throughCreatedAtExclusive?: number;
 }
 
 /**
@@ -446,67 +446,15 @@ export interface AgentMemoryStreamSource {
   range: AgentMemorySourceRange;
 }
 
-export interface AgentMemoryEpisodeSource {
-  episodeId: string;
-}
-
-export type AgentMemorySource = AgentMemoryStreamSource | AgentMemoryEpisodeSource;
-
-export interface AgentMemoryEpisode {
-  id: string;
-  principal: AgentPrincipal;
-  gist: string;
-  originWorkspace?: string;
-  sources: AgentMemoryStreamSource[];
-  createdAt: number;
-}
-
-export interface AgentMemoryEntry {
-  id: string;
-  /**
-   * The pool this fact lives in — its owner/believer (whose self-model), and therefore the
-   * fact's elided subject ([[agent-memory-realignment]] D-1). NOT "any subject the fact is
-   * about": a believer's knowledge of others lives in the believer's own pool as relational
-   * facts; the write paths have always been believer-keyed.
-   */
-  principal: AgentPrincipal;
-  fact: string;
-  originWorkspace?: string;
-  sources: AgentMemorySource[];
-  status: 'active' | 'invalidated';
-  createdAt: number;
-}
-
-export type AgentMemoryAccessVia = 'briefing' | 'recall';
-
-export interface AgentMemoryAccessedEntry {
-  entryId: string;
-  /**
-   * Live access events use count=1; compaction can fold older access events into
-   * the same shape without inventing stored strength fields on MemoryEntry.
-   */
-  count: number;
-  /** Defaults to the event createdAt; compaction sets the per-entry last access time. */
-  accessedAt?: number;
-}
+export type AgentMemorySource = AgentMemoryStreamSource;
 
 export type AgentDreamTrigger = 'schedule' | 'manual';
 
-/**
- * ONE consolidation-frontier cursor shape for every stream (a conversation log
- * or a delegated run's ledger): the last digested `{seq, eventId}` in that
- * stream's own seq space. The positional `{messageCount, payloadId}` agent-run
- * variant died with the transcript-snapshot representation (run unification).
- */
-export interface AgentDreamWatermarkCursor {
-  seq: number;
-  eventId: string | null;
-}
-
-export interface AgentDreamWatermark {
-  conversations: Record<string, AgentDreamWatermarkCursor>;
-  /** Delegated-run ledgers, keyed by runId. */
-  runs?: Record<string, AgentDreamWatermarkCursor>;
+export interface AgentDreamWindow {
+  /** Inclusive ISO local date. */
+  start: string;
+  /** Inclusive ISO local date. */
+  end: string;
 }
 
 export interface AgentDreamProcessedConversation {
@@ -533,55 +481,13 @@ export interface AgentDreamCompletedChanges {
   skipped: number;
 }
 
-export interface AgentMemoryEventBase {
-  v: typeof AGENT_EVENT_VERSION;
-  eventId: string;
-  seq: number;
-  /** Identifies the pool this event belongs to (the subject's self-model). */
-  principal: AgentPrincipal;
-  type: AgentMemoryEventType;
-  createdAt: number;
+export interface AgentDreamProcessed {
+  conversations: Record<string, AgentDreamProcessedConversation>;
+  runs?: Record<string, AgentDreamProcessedRun>;
+  totalMessageCount: number;
+  totalCharCount: number;
+  consolidateOnly: boolean;
 }
-
-export type AgentMemoryEventType =
-  | 'memory.episode_recorded'
-  | 'memory.entry_added'
-  | 'memory.entry_updated'
-  | 'memory.entry_removed'
-  | 'memory.accessed'
-  | 'dream.completed';
-
-export type AgentMemoryEvent =
-  | (AgentMemoryEventBase & { type: 'memory.episode_recorded'; episode: AgentMemoryEpisode })
-  | (AgentMemoryEventBase & { type: 'memory.entry_added'; entry: AgentMemoryEntry })
-  | (AgentMemoryEventBase & {
-      type: 'memory.entry_updated';
-      entryId: string;
-      patch: Partial<Pick<AgentMemoryEntry, 'fact' | 'sources' | 'status' | 'originWorkspace'>>;
-    })
-  | (AgentMemoryEventBase & { type: 'memory.entry_removed'; entryId: string; reason?: string })
-  | (AgentMemoryEventBase & {
-      type: 'memory.accessed';
-      via: AgentMemoryAccessVia;
-      accesses: AgentMemoryAccessedEntry[];
-    })
-  | (AgentMemoryEventBase & {
-      type: 'dream.completed';
-      dreamId: string;
-      runId: string;
-      trigger: AgentDreamTrigger;
-      startedAt: number;
-      completedAt: number;
-      watermark: AgentDreamWatermark;
-      processed: {
-        conversations: Record<string, AgentDreamProcessedConversation>;
-        runs?: Record<string, AgentDreamProcessedRun>;
-        totalMessageCount: number;
-        totalCharCount: number;
-        consolidateOnly: boolean;
-      };
-      changes: AgentDreamCompletedChanges;
-    });
 
 export interface AgentTextDelta {
   type: 'text_delta';
@@ -1041,10 +947,11 @@ export interface DreamFinishedEvent extends AgentEventBase {
   agentId: string;
   runId?: string;
   trigger: AgentDreamTrigger;
+  window?: AgentDreamWindow;
   status: AgentDreamMarkerStatus;
   startedAt: number;
   completedAt: number;
-  processed?: Extract<AgentMemoryEvent, { type: 'dream.completed' }>['processed'];
+  processed?: AgentDreamProcessed;
   changes?: AgentDreamCompletedChanges;
   errorMessage?: string;
 }
@@ -1226,10 +1133,11 @@ export interface AgentDreamRecord {
   agentId: string;
   runId?: string;
   trigger: AgentDreamTrigger;
+  window?: AgentDreamWindow;
   status: AgentDreamMarkerStatus;
   startedAt: number;
   completedAt: number;
-  processed?: Extract<AgentMemoryEvent, { type: 'dream.completed' }>['processed'];
+  processed?: AgentDreamProcessed;
   changes?: AgentDreamCompletedChanges;
   errorMessage?: string;
   createdAt: number;
@@ -1749,6 +1657,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         agentId: event.agentId,
         runId: event.runId,
         trigger: event.trigger,
+        window: event.window,
         status: event.status,
         startedAt: event.startedAt,
         completedAt: event.completedAt,

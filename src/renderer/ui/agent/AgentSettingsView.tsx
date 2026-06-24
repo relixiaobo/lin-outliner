@@ -6,7 +6,6 @@ import type {
   AgentProviderSettingsView,
   AgentDefinitionView,
   AgentDreamReadiness,
-  AgentMemoryEntryView,
   AgentRenderDreamTaskEntity,
   AgentToolPermissionSettingsView,
   SkillDefinition,
@@ -18,17 +17,13 @@ import {
   BrainIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  CheckIcon,
-  CloseIcon,
   DatabaseIcon,
   FolderIcon,
   ICON_SIZE,
   LoaderIcon,
   PasswordIcon,
-  PencilIcon,
   SettingsIcon,
   SkillIcon,
-  TrashIcon,
   WarningIcon,
 } from '../icons';
 import type { ThemeMode } from '../../../core/theme';
@@ -73,6 +68,7 @@ interface DraftConfig {
   automaticSkillsEnabled: boolean;
   slashSkillsEnabled: boolean;
   compactEnabled: boolean;
+  dreamSchedule: string;
   additionalSkillDirectoriesText: string;
   disabledSkills: string[];
   disabledAgents: string[];
@@ -156,6 +152,7 @@ const EMPTY_DRAFT: DraftConfig = {
   automaticSkillsEnabled: true,
   slashSkillsEnabled: true,
   compactEnabled: true,
+  dreamSchedule: '',
   additionalSkillDirectoriesText: '',
   disabledSkills: [],
   disabledAgents: [],
@@ -235,8 +232,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   const [skillTrustBusy, setSkillTrustBusy] = useState(false);
   const [allAgents, setAllAgents] = useState<AgentDefinitionView[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
-  const [memoryEntries, setMemoryEntries] = useState<AgentMemoryEntryView[]>([]);
-  const [loadingMemory, setLoadingMemory] = useState(false);
   const [dreamHistory, setDreamHistory] = useState<AgentRenderDreamTaskEntity[]>([]);
   const [loadingDreams, setLoadingDreams] = useState(false);
   const [dreamRunBusy, setDreamRunBusy] = useState(false);
@@ -244,9 +239,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   // readiness here and surface an advisory + a "Dream anyway" override instead of
   // running. Cleared once the user forces a run or new data clears the bar.
   const [dreamAdvisory, setDreamAdvisory] = useState<AgentDreamReadiness | null>(null);
-  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
-  const [memoryDraftFact, setMemoryDraftFact] = useState('');
-  const [memorySavingId, setMemorySavingId] = useState<string | null>(null);
   // The per-row ⋯ actions menu (only one open at a time, keyed by providerId). The
   // per-provider config opens in its own native window, not an in-renderer sheet.
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
@@ -482,19 +474,8 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
         });
     } else if (category === 'memory') {
       const id = beginRequest('section');
-      setLoadingMemory(true);
       setError(null);
       setNotice(null);
-      api.agentListMemory({ includeInvalidated: true, limit: 200 })
-        .then((entries) => {
-          if (isCurrentRequest('section', id)) setMemoryEntries(entries);
-        })
-        .catch((caught) => {
-          if (isCurrentRequest('section', id)) setError(caught instanceof Error ? caught.message : String(caught));
-        })
-        .finally(() => {
-          if (isCurrentRequest('section', id)) setLoadingMemory(false);
-        });
       setLoadingDreams(true);
       api.agentListDreamHistory({ limit: 50 })
         .then((entries) => {
@@ -637,6 +618,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
         automaticSkillsEnabled: draft.automaticSkillsEnabled,
         slashSkillsEnabled: draft.slashSkillsEnabled,
         compactEnabled: draft.compactEnabled,
+        dreamSchedule: draft.dreamSchedule,
         additionalSkillDirectories: parseDirectoryListInput(draft.additionalSkillDirectoriesText),
         disabledSkills: draft.disabledSkills,
         disabledAgents: draft.disabledAgents,
@@ -732,65 +714,6 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     });
   };
 
-  function startEditMemory(entry: AgentMemoryEntryView) {
-    if (entry.status !== 'active') return;
-    setEditingMemoryId(entry.id);
-    setMemoryDraftFact(entry.fact);
-    setError(null);
-    setNotice(null);
-  }
-
-  function cancelEditMemory() {
-    setEditingMemoryId(null);
-    setMemoryDraftFact('');
-  }
-
-  async function saveMemory(entry: AgentMemoryEntryView) {
-    const fact = memoryDraftFact.trim();
-    if (!fact) {
-      setError(t.settings.memory.emptyFactError);
-      return;
-    }
-    setMemorySavingId(entry.id);
-    setError(null);
-    setNotice(null);
-    try {
-      const updated = await api.agentUpdateMemory(entry.id, fact);
-      if (!updated) {
-        setError(t.settings.memory.notFoundError);
-      } else {
-        setMemoryEntries((current) => current.map((item) => item.id === updated.id ? updated : item));
-        setEditingMemoryId(null);
-        setMemoryDraftFact('');
-        setNotice(t.settings.memory.updatedNotice);
-      }
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setMemorySavingId(null);
-    }
-  }
-
-  async function forgetMemory(entry: AgentMemoryEntryView) {
-    setMemorySavingId(entry.id);
-    setError(null);
-    setNotice(null);
-    try {
-      const forgotten = await api.agentForgetMemory(entry.id);
-      if (!forgotten) {
-        setError(t.settings.memory.notFoundError);
-      } else {
-        setMemoryEntries((current) => current.map((item) => item.id === forgotten.id ? forgotten : item));
-        if (editingMemoryId === entry.id) cancelEditMemory();
-        setNotice(t.settings.memory.forgottenNotice);
-      }
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setMemorySavingId(null);
-    }
-  }
-
   async function runDreamNow(options?: { force?: boolean }) {
     const requestId = beginRequest('dream');
     setDreamRunBusy(true);
@@ -809,13 +732,9 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
         }
       }
       setDreamAdvisory(null);
-      const [dreams, memories] = await Promise.all([
-        api.agentRunDreamNow({ limit: 50 }),
-        api.agentListMemory({ includeInvalidated: true, limit: 200 }),
-      ]);
+      const dreams = await api.agentRunDreamNow({ limit: 50 });
       if (!isCurrentRequest('dream', requestId)) return;
       setDreamHistory(dreams);
-      setMemoryEntries(memories);
       setNotice(t.settings.memory.dreamRunNotice);
     } catch (caught) {
       if (isCurrentRequest('dream', requestId)) setError(caught instanceof Error ? caught.message : String(caught));
@@ -1152,83 +1071,19 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
               </section>
             ) : category === 'memory' ? (
               <section className="agent-settings-section settings-memory-section" aria-label={t.settings.memory.sectionAriaLabel}>
-                {loadingMemory ? (
-                  <EmptyState className="agent-settings-empty" icon={LoaderIcon} loading role="status" size="inline" title={t.settings.memory.loading} />
-                ) : memoryEntries.length === 0 ? (
-                  <EmptyState className="agent-settings-empty" size="inline" title={t.settings.memory.empty} />
-                ) : (
-                  <InsetGroup ariaLabel={t.settings.memory.entriesAriaLabel} label={t.settings.memory.entriesGroup}>
-                    {memoryEntries.map((entry) => {
-                      const isEditing = editingMemoryId === entry.id;
-                      const isSavingMemory = memorySavingId === entry.id;
-                      const disabled = entry.status !== 'active';
-                      return (
-                        <InsetRow
-                          disabled={disabled}
-                          key={entry.id}
-                          label={isEditing ? (
-                            <textarea
-                              aria-label={t.settings.memory.editFactLabel}
-                              className="settings-memory-editor"
-                              onChange={(event) => setMemoryDraftFact(event.target.value)}
-                              rows={3}
-                              value={memoryDraftFact}
-                            />
-                          ) : (
-                            <span className="settings-memory-fact">{entry.fact}</span>
-                          )}
-                          sublabel={(
-                            <span className="settings-memory-meta">
-                              <span className="settings-chip">{memoryStatusLabel(entry, t)}</span>
-                              <span>{t.settings.memory.createdAt({ date: formatSettingsDate(entry.createdAt) })}</span>
-                            </span>
-                          )}
-                          trailing={disabled ? undefined : isEditing ? (
-                            <span className="settings-memory-actions">
-                              <IconButton
-                                disabled={isSavingMemory}
-                                icon={CheckIcon}
-                                iconSize={ICON_SIZE.menu}
-                                label={t.settings.memory.saveEdit}
-                                onClick={() => void saveMemory(entry)}
-                                variant="panel"
-                              />
-                              <IconButton
-                                disabled={isSavingMemory}
-                                icon={CloseIcon}
-                                iconSize={ICON_SIZE.menu}
-                                label={t.settings.memory.cancelEdit}
-                                onClick={cancelEditMemory}
-                                variant="panel"
-                              />
-                            </span>
-                          ) : (
-                            <span className="settings-memory-actions">
-                              <IconButton
-                                disabled={isSavingMemory}
-                                icon={PencilIcon}
-                                iconSize={ICON_SIZE.menu}
-                                label={t.settings.memory.editEntry}
-                                onClick={() => startEditMemory(entry)}
-                                variant="panel"
-                              />
-                              <IconButton
-                                disabled={isSavingMemory}
-                                icon={TrashIcon}
-                                iconSize={ICON_SIZE.menu}
-                                label={t.settings.memory.forgetEntry}
-                                onClick={() => void forgetMemory(entry)}
-                                variant="panel"
-                              />
-                            </span>
-                          )}
-                          wrap
-                        />
-                      );
-                    })}
-                  </InsetGroup>
-                )}
                 <InsetGroup ariaLabel={t.settings.memory.dreamControlsAriaLabel} label={t.settings.memory.dreamControlsGroup}>
+                  <InsetRow
+                    label={t.settings.memory.dreamScheduleLabel}
+                    sublabel={t.settings.memory.dreamScheduleSublabel}
+                    trailing={(
+                      <input
+                        className="settings-sheet-row-input"
+                        value={draft.dreamSchedule}
+                        onChange={(event) => setDraft((current) => ({ ...current, dreamSchedule: event.currentTarget.value }))}
+                      />
+                    )}
+                    wrap
+                  />
                   <InsetRow
                     label={t.settings.memory.dreamRunNowLabel}
                     sublabel={t.settings.memory.dreamRunNowSublabel}
@@ -1557,10 +1412,6 @@ function providerStatusLabel(provider: ProviderChoice, t: Messages): string {
   return provider.active ? s.active : s.ready;
 }
 
-function memoryStatusLabel(entry: AgentMemoryEntryView, t: Messages): string {
-  return entry.status === 'active' ? t.settings.memory.activeStatus : t.settings.memory.invalidatedStatus;
-}
-
 function permissionRuleLabel(rule: string, t: Messages): string {
   if (rule.startsWith('Scope(')) return t.settings.permissions.scopeGrantLabel;
   if (rule.startsWith('External(')) return t.settings.permissions.externalGrantLabel;
@@ -1602,12 +1453,13 @@ function providerToDraft(provider: AgentProviderConfigView, settings: AgentProvi
 
 function runtimeSettingsToDraft(settings: AgentProviderSettingsView): Pick<
   DraftConfig,
-  'automaticSkillsEnabled' | 'slashSkillsEnabled' | 'compactEnabled' | 'additionalSkillDirectoriesText'
+  'automaticSkillsEnabled' | 'slashSkillsEnabled' | 'compactEnabled' | 'dreamSchedule' | 'additionalSkillDirectoriesText'
 > {
   return {
     automaticSkillsEnabled: settings.agent.automaticSkillsEnabled,
     slashSkillsEnabled: settings.agent.slashSkillsEnabled,
     compactEnabled: settings.agent.compactEnabled,
+    dreamSchedule: settings.agent.dreamSchedule ?? '',
     additionalSkillDirectoriesText: settings.agent.additionalSkillDirectories.join(', '),
   };
 }
@@ -1617,6 +1469,7 @@ function hasRuntimeDraftChanged(draft: DraftConfig, settings: AgentProviderSetti
   return draft.automaticSkillsEnabled !== runtime.automaticSkillsEnabled
     || draft.slashSkillsEnabled !== runtime.slashSkillsEnabled
     || draft.compactEnabled !== runtime.compactEnabled
+    || draft.dreamSchedule !== runtime.dreamSchedule
     || draft.additionalSkillDirectoriesText !== runtime.additionalSkillDirectoriesText
     || !sameStringSet(draft.disabledSkills, settings.agent.disabledSkills ?? [])
     || !sameStringSet(draft.disabledAgents, settings.agent.disabledAgents ?? []);

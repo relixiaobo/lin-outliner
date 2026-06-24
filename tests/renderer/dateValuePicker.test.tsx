@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { act } from 'react';
+import { act, type ComponentProps } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import { DateValuePicker } from '../../src/renderer/ui/outliner/DateValuePicker';
@@ -90,8 +90,38 @@ describe('DateValuePicker', () => {
 
     const repeat = selectControl(rendered, 'typed-field-date-recurrence-select');
     expect(repeat.value).toBe('daily');
-    // The "Ends" date input is present once a rule is set.
-    expect(rendered.document.querySelector('.typed-field-date-recurrence-until')).toBeTruthy();
+    expect(button(rendered, 'Ends').getAttribute('aria-checked')).toBe('false');
+    expect(rendered.document.querySelectorAll('.typed-field-date-summary-row')).toHaveLength(1);
+  });
+
+  test('initializes and edits recurrence end dates behind the Ends switch', async () => {
+    const rendered = renderDatePicker('2026-05-20T09:00 RRULE:FREQ=DAILY;UNTIL=2026-06-20');
+
+    expect(button(rendered, 'Ends').getAttribute('aria-checked')).toBe('true');
+    expect(untilInput(rendered).value).toBe('2026/06/20');
+
+    await changeInput(rendered, untilInput(rendered), '2026/06/21');
+    expect(lastCommit(rendered)).toBe('2026-05-20T09:00 RRULE:FREQ=DAILY;UNTIL=2026-06-21');
+
+    await click(rendered, button(rendered, 'Ends'));
+    expect(lastCommit(rendered)).toBe('2026-05-20T09:00 RRULE:FREQ=DAILY');
+    expect(rendered.document.querySelectorAll('.typed-field-date-summary-row')).toHaveLength(1);
+  });
+
+  test('turns recurrence end dates on with a valid default', async () => {
+    const rendered = renderDatePicker('2026-05-20 RRULE:FREQ=DAILY');
+
+    await click(rendered, button(rendered, 'Ends'));
+
+    expect(untilInput(rendered).value).toBe('2026/05/20');
+    expect(lastCommit(rendered)).toBe('2026-05-20 RRULE:FREQ=DAILY;UNTIL=2026-05-20');
+    expect(button(rendered, 'Select 2026-05-19').disabled).toBe(true);
+
+    await changeInput(rendered, untilInput(rendered), '2026/05/19');
+    expect(lastCommit(rendered)).toBe('2026-05-20 RRULE:FREQ=DAILY;UNTIL=2026-05-20');
+
+    await click(rendered, button(rendered, 'Select 2026-05-21'));
+    expect(lastCommit(rendered)).toBe('2026-05-20 RRULE:FREQ=DAILY;UNTIL=2026-05-21');
   });
 
   test('hides the repeat control for date ranges (a range never recurs)', () => {
@@ -107,9 +137,26 @@ describe('DateValuePicker', () => {
 
     expect(lastCommit(rendered)).toBe('2026-05-21 RRULE:FREQ=DAILY');
   });
+
+  test('supports date-only picker mode for bounded launchers', async () => {
+    const rendered = renderDatePicker('2026-05-20', {
+      allowTime: false,
+      allowRecurrence: false,
+      maxDate: '2026-05-20',
+    });
+
+    expect(rendered.document.querySelectorAll('.typed-field-date-summary-row')).toHaveLength(1);
+    expect(textButtonMaybe(rendered, 'Include time')).toBeNull();
+    expect(rendered.document.querySelector('.typed-field-date-recurrence-select')).toBeNull();
+    expect(button(rendered, 'Select 2026-05-21').disabled).toBe(true);
+
+    await click(rendered, button(rendered, 'Select 2026-05-19'));
+
+    expect(lastCommit(rendered)).toBe('2026-05-19');
+  });
 });
 
-function renderDatePicker(value: string): RenderedDateField {
+function renderDatePicker(value: string, props: Partial<ComponentProps<typeof DateValuePicker>> = {}): RenderedDateField {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
 
@@ -125,6 +172,7 @@ function renderDatePicker(value: string): RenderedDateField {
         open
         onOpenChange={() => {}}
         onCommit={(nextValue) => commits.push(nextValue)}
+        {...props}
       />,
     );
   });
@@ -178,10 +226,14 @@ function button(rendered: RenderedDateField, ariaLabel: string): HTMLButtonEleme
 }
 
 function textButton(rendered: RenderedDateField, text: string): HTMLButtonElement {
-  const found = Array.from(rendered.document.querySelectorAll<HTMLButtonElement>('button'))
-    .find((candidate) => candidate.textContent?.trim() === text);
+  const found = textButtonMaybe(rendered, text);
   if (!found) throw new Error(`Missing text button: ${text}`);
   return found;
+}
+
+function textButtonMaybe(rendered: RenderedDateField, text: string): HTMLButtonElement | null {
+  return Array.from(rendered.document.querySelectorAll<HTMLButtonElement>('button'))
+    .find((candidate) => candidate.textContent?.trim() === text) ?? null;
 }
 
 function input(rendered: RenderedDateField, ariaLabel: string): HTMLInputElement {
@@ -193,6 +245,12 @@ function input(rendered: RenderedDateField, ariaLabel: string): HTMLInputElement
 function selectControl(rendered: RenderedDateField, className: string): HTMLSelectElement {
   const found = rendered.document.querySelector<HTMLSelectElement>(`select.${className}`);
   if (!found) throw new Error(`Missing select: ${className}`);
+  return found;
+}
+
+function untilInput(rendered: RenderedDateField): HTMLInputElement {
+  const found = rendered.document.querySelector<HTMLInputElement>('input[aria-label="Ends"]');
+  if (!found) throw new Error('Missing recurrence until input');
   return found;
 }
 

@@ -39,6 +39,7 @@ import {
 import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
 import { ASSET_URL_SCHEME } from '../core/assets';
 import { handlePreviewCommand } from './previewSource';
+import { setBoundedMapEntry } from './boundedMap';
 import {
   LIN_AGENT_OAUTH_EVENT_CHANNEL,
   LIN_DOCUMENT_EVENT_CHANNEL,
@@ -2252,13 +2253,7 @@ function localFilePathRank(filePath: string, query: string): number {
 // clearing would drop ids that prepare/preview still need for the visible
 // results, leaving recently surfaced files unselectable mid-session.
 function setBoundedLocalFileCache<V>(cache: Map<string, V>, key: string, value: V): void {
-  if (cache.has(key)) cache.delete(key);
-  cache.set(key, value);
-  while (cache.size > LOCAL_FILE_CACHE_LIMIT) {
-    const oldest = cache.keys().next().value;
-    if (oldest === undefined) break;
-    cache.delete(oldest);
-  }
+  setBoundedMapEntry(cache, key, value, LOCAL_FILE_CACHE_LIMIT);
 }
 
 function cacheLocalFileSearchPath(filePath: string): string {
@@ -2465,24 +2460,21 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentRuntime.listConversations();
     case 'agent_rename_conversation':
       return agentRuntime.renameConversation(conversationId(), String(args.title ?? ''));
+    case 'agent_set_conversation_include_in_dream_data':
+      return agentRuntime.setConversationIncludeInDreamData(conversationId(), args.includeInDreamData === true);
     case 'agent_delete_conversation':
       return agentRuntime.deleteConversation(conversationId());
-    case 'agent_list_memory':
-      return agentRuntime.listMemory({
-        includeInvalidated: args.includeInvalidated === true,
-        limit: typeof args.limit === 'number' ? args.limit : undefined,
-      });
     case 'agent_list_dream_history':
       return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
     case 'agent_dream_readiness':
       return agentRuntime.previewDreamReadiness();
     case 'agent_run_dream_now':
-      await agentRuntime.runDreamNow();
+      await agentRuntime.runDreamNow({
+        startDate: typeof args.startDate === 'string' ? args.startDate : undefined,
+        endDate: typeof args.endDate === 'string' ? args.endDate : undefined,
+        guidance: typeof args.guidance === 'string' ? args.guidance : undefined,
+      });
       return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
-    case 'agent_update_memory':
-      return agentRuntime.updateMemory(String(args.memoryId), String(args.fact ?? ''));
-    case 'agent_forget_memory':
-      return agentRuntime.forgetMemory(String(args.memoryId));
     case 'agent_debug_view':
       return agentRuntime.agentDebugView(conversationId());
     case 'agent_debug_run':

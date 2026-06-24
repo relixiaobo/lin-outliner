@@ -319,6 +319,80 @@ describe('agent past chats', () => {
     });
   });
 
+  test('reads memory source evidence through created-at clamps inside a wider sequence range', async () => {
+    await withStore(async (store, service) => {
+      const conversationId = 'conversation-memory-evidence-clamped';
+      const windowStart = 1_800_010_000_000;
+      const windowEnd = windowStart + 10_000;
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Clamped memory evidence' },
+        {
+          ...base(conversationId, 2, 'user_message.created', userActor),
+          createdAt: windowStart - 1,
+          messageId: 'user-before-window',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'This stale preference should not be included.' }],
+        },
+        {
+          ...base(conversationId, 3, 'user_message.created', userActor),
+          createdAt: windowStart,
+          messageId: 'user-inside-window',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'The windowed preference is source-date journaling.' }],
+        },
+        {
+          ...base(conversationId, 4, 'assistant_message.started', agentActor),
+          createdAt: windowStart + 1,
+          runId: 'run-clamped',
+          messageId: 'assistant-inside-window',
+          parentMessageId: 'user-inside-window',
+          providerId: 'test',
+          modelId: 'test',
+        },
+        {
+          ...base(conversationId, 5, 'assistant_message.completed', agentActor),
+          createdAt: windowStart + 2,
+          messageId: 'assistant-inside-window',
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'Source-date journaling remains in the evidence window.' }],
+        },
+        {
+          ...base(conversationId, 6, 'user_message.created', userActor),
+          createdAt: windowEnd,
+          messageId: 'user-after-window',
+          parentMessageId: 'assistant-inside-window',
+          content: [{ type: 'text', text: 'This later preference should not be included.' }],
+        },
+      ]);
+
+      const source: AgentMemorySource = {
+        stream: 'conversation',
+        streamId: conversationId,
+        range: {
+          fromSeqExclusive: 1,
+          throughSeq: 6,
+          throughEventId: `${conversationId}-event-6`,
+          fromCreatedAtInclusive: windowStart,
+          throughCreatedAtExclusive: windowEnd,
+        },
+      };
+      const evidence = await service.readMemorySourceEvidence({
+        principal: memoryPrincipal,
+        reader: memoryPrincipal,
+        source,
+        maxChars: 400,
+      });
+
+      expect(evidence.mode).toBe('evidence');
+      if (evidence.mode !== 'evidence') throw new Error('Expected evidence result');
+      expect(evidence.source).toEqual(source);
+      expect(evidence.messages.map((message) => message.messageId)).toEqual(['user-inside-window', 'assistant-inside-window']);
+      expect(evidence.messages.map((message) => message.text).join('\n')).toContain('source-date journaling');
+      expect(evidence.messages.map((message) => message.text).join('\n')).not.toContain('stale preference');
+      expect(evidence.messages.map((message) => message.text).join('\n')).not.toContain('later preference');
+    });
+  });
+
   test('refuses cross-principal memory evidence at the service boundary', async () => {
     await withStore(async (_store, service) => {
       const evidence = await service.readMemorySourceEvidence({
@@ -340,82 +414,6 @@ describe('agent past chats', () => {
         mode: 'error',
         code: 'CROSS_PRINCIPAL_EVIDENCE',
       });
-    });
-  });
-
-  test('episode evidence keeps the durable gist when raw sources are gone', async () => {
-    await withStore(async (store, service) => {
-      const episode = await store.recordMemoryEpisode(memoryPrincipal, {
-        id: 'episode-missing-raw',
-        gist: 'Durable gist: the user prefers recall to survive raw transcript loss.',
-        sources: [{
-          stream: 'conversation',
-          streamId: 'missing-conversation',
-          range: {
-            fromSeqExclusive: 1,
-            throughSeq: 2,
-            throughEventId: 'missing-event-2',
-          },
-        }],
-        createdAt: 20,
-      });
-
-      const evidence = await service.readMemorySourceEvidence({
-        principal: memoryPrincipal,
-        reader: memoryPrincipal,
-        source: { episodeId: episode.id },
-        maxChars: 200,
-      });
-
-      expect(evidence.mode).toBe('evidence');
-      if (evidence.mode !== 'evidence') throw new Error('Expected evidence result');
-      expect(evidence.episode?.gist).toBe('Durable gist: the user prefers recall to survive raw transcript loss.');
-      expect(evidence.messages).toEqual([]);
-      expect(evidence.outputTruncated).toBe(false);
-    });
-  });
-
-  test('episode evidence reserves character budget for the durable gist before raw spans', async () => {
-    await withStore(async (store, service) => {
-      const conversationId = 'conversation-episode-budget';
-      const gist = 'G'.repeat(40);
-      const rawText = 'R'.repeat(100);
-      await store.appendEvents(conversationId, [
-        { ...base(conversationId, 1, 'conversation.created'), title: 'Episode budget' },
-        {
-          ...base(conversationId, 2, 'user_message.created', userActor),
-          messageId: 'user-raw-budget',
-          parentMessageId: null,
-          content: [{ type: 'text', text: rawText }],
-        },
-      ]);
-      const episode = await store.recordMemoryEpisode(memoryPrincipal, {
-        id: 'episode-budget',
-        gist,
-        sources: [{
-          stream: 'conversation',
-          streamId: conversationId,
-          range: {
-            fromSeqExclusive: 1,
-            throughSeq: 2,
-            throughEventId: `${conversationId}-event-2`,
-          },
-        }],
-        createdAt: 21,
-      });
-
-      const evidence = await service.readMemorySourceEvidence({
-        principal: memoryPrincipal,
-        reader: memoryPrincipal,
-        source: { episodeId: episode.id },
-        maxChars: 70,
-      });
-
-      expect(evidence.mode).toBe('evidence');
-      if (evidence.mode !== 'evidence') throw new Error('Expected evidence result');
-      expect(evidence.episode?.gist).toBe(gist);
-      expect(evidence.messages.map((message) => message.text)).toEqual(['R'.repeat(30)]);
-      expect(evidence.outputTruncated).toBe(true);
     });
   });
 

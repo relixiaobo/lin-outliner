@@ -209,7 +209,6 @@ export type { ToolEnvelope } from './agentToolEnvelope';
 export interface AgentToolsOptions {
   localFileRoot?: string;
   localWorkspace?: AgentLocalWorkspaceContext;
-  nativePdfRead?: boolean;
   skillRuntime?: AgentSkillRuntime;
   skillToolEnabled?: boolean;
   delegationRuntime?: AgentDelegationRuntime;
@@ -235,7 +234,6 @@ export function createAgentTools(outliner?: OutlinerToolHost, options: AgentTool
     ...createLocalTools({
       localRoot: options.localFileRoot,
       workspace: options.localWorkspace,
-      nativePdfRead: options.nativePdfRead,
       skillRuntime: options.skillRuntime,
     }),
     createWebSearchTool(),

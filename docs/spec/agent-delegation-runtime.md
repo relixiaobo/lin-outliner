@@ -17,8 +17,9 @@
 > structurally unrepresentable); `contextMode` is always `'fork'`; the registry
 > loads only the built-in Neva and never scans `~/.agents/agents` or
 > `<workspace>/.agents/agents`; a fork runs AS Neva (`executingAgentId` /
-> `memoryOwnerAgentId` are always the parent = Neva). `/research`, runtime Dream, and
-> background self-work are forks. The cross-agent "fresh" run, the by-name agent
+> `memoryOwnerAgentId` are always the parent = Neva). `/research` and background
+> self-work are forks; runtime Dream uses the protected Dream channel's restricted
+> top-level run profile instead. The cross-agent "fresh" run, the by-name agent
 > registry scan, the `additionalAgentDirectories` setting, and the cross-principal
 > memory redaction are all removed as dead code. Read the `fresh` material below
 > as historical design context, not current behavior.
@@ -494,15 +495,11 @@ Every child run writes a separate transcript. The parent conversation stores onl
 This is required so child runs reduce parent-context pressure rather than moving
 tool noise into the main conversation.
 
-The sidechain transcript is still durable evidence. Fresh child run transcripts
-are Dream evidence for the called agent's `memoryOwnerAgentId`; fork transcripts
-are Dream evidence for the parent agent. Dream reads only events past the
-structural boundary (the ledger's first `run.started`), so parent history is
-never reprocessed as fork evidence — and a `tool_result.replaced` that slims an
-INHERITED fork-prefix result never re-enters the window (replacements are lossy
-artifacts of existing messages, not new content). When a fork ledger is
-compacted, the post-compact summary message is fresh ledger content past the
-watermark and is Dreamed like any other evidence (§13.18).
+The sidechain transcript is still durable for run inspection and debug replay,
+but it is no longer a separate Dream evidence stream. Runtime Dream reads member
+conversation event streams; child-run work enters memory only through the
+visible parent-conversation boundary, result, or summary content that survives in
+that conversation stream.
 
 ## Model-Facing Tools
 
@@ -858,15 +855,16 @@ debug, and continuation. Spawn ordering is ledger-seed first, conversation
 marker second: a crash inside the spawn window leaves an invisible orphan ledger
 directory, never an un-resumable phantom run in the conversation.
 
-Dream raw sources address the run stream directly as
-`{stream: 'run', streamId: <runId>, range: {fromSeqExclusive, throughSeq, throughEventId}}`.
-The durable memory fact cites its memory episode by `{episodeId}`; the episode
-keeps the gist and raw run/conversation stream sources. Evidence expansion
-replays the ledger's visible transcript, so provenance stays stable across
-later compactions. The Dream watermark cursor records the SCANNED TAIL seq (not
-the last evidence seq) so an already-digested terminal run is skipped on later
-passes from its run-meta alone, without re-reading the ledger. The parent model
-only receives the `Agent` tool result projection.
+Dream raw sources address conversation streams through `past_chats` source
+objects such as
+`{stream: 'conversation', streamId: <conversationId>, range: {fromSeqExclusive, throughSeq, throughEventId}}`.
+Runtime Dream writes durable memory as ordinary `#d-*` outline nodes with
+`[[chat:...]]` inline citations back to the source stream range. Evidence
+expansion replays the visible transcript, so provenance stays stable across
+later compactions. The Dream cursor is derived from clean completed
+`dream.finished.window.end` markers in the protected Dream channel; there is no
+principal memory episode projection to read. The parent model only receives the
+`Agent` tool result projection.
 
 ## Compaction And Resume
 
@@ -911,7 +909,7 @@ representations: the conversation gets `child_run.updated{failed}` and the run's
 own ledger gets a mirrored `run.failed` (without it the run stream would
 self-describe as running forever). It can still be continued through `AgentSend`.
 
-A delegated-run ledger uses the memory log's torn-tail policy, not the
+A delegated-run ledger uses the tolerant sidecar torn-tail policy, not the
 conversation log's strict one: a half-written FINAL line (crash artifact of an
 interrupted append) is dropped on read and truncated by the next append's
 repair; mid-file corruption still fails loudly. Restore-time reconciliation is
@@ -1037,9 +1035,8 @@ Implemented.
 - `Agent` without `agent_type` forks from the current parent context.
 - The fork uses the parent system prompt, parent messages, a fork directive, and
   placeholder results for unresolved tool calls.
-- Fork runs keep the parent `executingAgentId` and `memoryOwnerAgentId`, and
-  Dream treats only the persisted fork boundary plus child-side transcript as new
-  agent-run evidence.
+- Fork runs keep the parent `executingAgentId` and `memoryOwnerAgentId`; their
+  ledgers are not crawled directly by Dream.
 - A runtime-owned read-only isolated restriction can further narrow a child run
   catalog. `/research` uses this to keep generic investigation inside the
   current agent's DM/Channel identity while removing mutation and delegation

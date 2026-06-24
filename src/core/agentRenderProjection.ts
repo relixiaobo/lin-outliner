@@ -15,6 +15,7 @@ import {
   type AgentRunStatus,
 } from './agentEventLog';
 import {
+  DEFAULT_DREAM_CHANNEL_ID,
   agentMentionToken,
 } from './agentChannel';
 
@@ -172,6 +173,7 @@ export interface AgentRenderDreamEntity {
   agentId: string;
   runId?: string;
   trigger: AgentDreamRecord['trigger'];
+  window?: AgentDreamRecord['window'];
   status: AgentDreamRecord['status'];
   startedAt: number;
   completedAt: number;
@@ -217,7 +219,8 @@ export interface AgentRenderDreamTaskEntity {
   kind: 'dream';
   status: AgentRenderTaskStatus;
   trigger: 'manual' | 'schedule';
-  /** The pool this Dream maintains (run anchor subject), so the panel can label whose Dream. */
+  window?: AgentDreamRecord['window'];
+  /** The principal model this Dream maintains (run anchor subject), so the panel can label whose Dream. */
   principal: AgentPrincipal;
   startedAt: number;
   updatedAt: number;
@@ -233,14 +236,18 @@ export interface AgentRenderDreamTaskEntity {
 
 /**
  * A cheap, read-only pre-check for the manual "Dream now" control: how much new
- * evidence has accrued since the last Dream watermark, and whether it clears the
+ * evidence exists in the default manual Dream window, and whether it clears the
  * same volume bar the scheduled path uses. Computed without running the model, so
  * the UI can advise "probably nothing new to consolidate" and offer a forced run.
  */
 export interface AgentDreamReadiness {
-  /** New evidence messages since the Dream watermark, across member conversations. */
+  /** The default manual Dream window the launcher should prefill. */
+  window?: AgentDreamRecord['window'];
+  /** Latest clean completed Dream window end, derived from the Dream channel. */
+  lastDreamedThrough?: string | null;
+  /** New evidence messages in the default Dream window, across member conversations. */
   newMessageCount: number;
-  /** New evidence characters since the Dream watermark. */
+  /** New evidence characters in the default Dream window. */
   newCharCount: number;
   /** The volume bar the scheduled Dream uses to decide a run is worthwhile. */
   thresholdChars: number;
@@ -493,7 +500,7 @@ function buildTranscriptRows(
       continue;
     }
     const dream = dreamForMessage(state, entry.message);
-    if (dream) {
+    if (dream && state.conversation?.id !== DEFAULT_DREAM_CHANNEL_ID) {
       appendDreamRow(rows, entities, state, entry.message, dream, entry.archived);
       continue;
     }
@@ -577,7 +584,7 @@ function appendActiveRow(
     return;
   }
   const dream = dreamForMessage(state, message);
-  if (dream) {
+  if (dream && state.conversation?.id !== DEFAULT_DREAM_CHANNEL_ID) {
     appendDreamRow(rows, entities, state, message, dream, false);
     return;
   }
@@ -754,6 +761,7 @@ function toRenderDreamEntity(record: AgentDreamRecord): AgentRenderDreamEntity {
     agentId: record.agentId,
     runId: record.runId,
     trigger: record.trigger,
+    window: record.window,
     status: record.status,
     startedAt: record.startedAt,
     completedAt: record.completedAt,

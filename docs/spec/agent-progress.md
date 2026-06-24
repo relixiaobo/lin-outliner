@@ -3,7 +3,7 @@
 This document is the working checklist for Lin's local agent integration. Keep
 it current whenever a meaningful agent milestone lands or a priority changes.
 
-Last updated: 2026-06-18
+Last updated: 2026-06-23
 
 ## Current Direction
 
@@ -57,14 +57,17 @@ truth.
   - `bash`
   - `task_stop`
 - [x] Local tool capability parity pass:
-  - `file_read` image dimensions, OpenAI Responses native PDF payloads,
-    PDF text extraction via `pdftotext`, PDF page rendering via `pdftoppm`, and
+  - `file_read` image dimensions, runtime PDF text extraction via `pdftotext`,
+    PDF page rendering via `pdftoppm`, provider-neutral PDF tool results, and
     notebook parsing
+  - `file_read` rich-document Markdown ingestion through optional MarkItDown for
+    `.docx`, `.pptx`, `.xlsx`, `.xls`, and `.epub`
   - local tool subprocesses use the app environment plus
     `LIN_AGENT_EXTRA_TOOL_PATH` and common macOS Homebrew/system binary paths, so
     GUI-launched app processes can still find installed tools like Poppler and
-    ripgrep; missing-Poppler PDF errors point the agent to `brew install
-    poppler` or `apt-get install poppler-utils`, then retry
+    ripgrep; missing Poppler or MarkItDown errors tell the agent to use `bash`
+    to detect available local tooling, install the dependency without assuming
+    Homebrew, then retry the same file tool call
   - `file_glob` and `file_grep` return local-root-relative paths
   - `file_grep` backed by ripgrep with paginated output modes
   - `file_edit` narrowed to exact non-empty replacements after a full read
@@ -134,7 +137,7 @@ truth.
   - skill `execution: isolated` routed through the delegation runtime
   - provider overflow detection, response debug capture, stream option pass-through,
     and session resource cleanup via pi-ai
-- [x] Agent memory foundation (one believer-keyed first-person pool):
+- [x] Agent memory foundation (timeline outline memory):
   - durable memory is ordinary timeline outline content: per-day `#d-memory`
     containers with generated daily headlines, `#d-episode` source episodes, and
     `#d-belief` durable beliefs, with optional `#d-question` unresolved tensions
@@ -146,23 +149,30 @@ truth.
     conversation/run seq ranges
   - write-time validation dereferences every `chat-source` marker before
     mutating nodes, so fabricated or stale raw-source coordinates fail loudly
-  - runtime-owned Dream write-back is a private `memory-dream` skill run with
-    only `past_chats` and `node_*` memory tools; scheduled runs are at most once
-    per daily due, while Settings can trigger a manual run; both paths read
-    sources since the Dream watermark when sources exist, gather relevant prior
-    memory/workspace context with `node_search` / `node_read`, apply the
+  - runtime-owned Dream write-back is a private `memory-dream` skill run in the
+    protected Dream channel with only `past_chats` and `node_*` memory tools;
+    scheduled runs use the fixed runtime schedule and retry a due at most three
+    times, while Settings can trigger a manual date-window run; both paths read
+    date-clamped sources derived from Dream-channel completed windows when
+    sources exist, while the Dream channel itself rejects ordinary chat messages,
+    is forced out of Dream evidence, and contributes no prior active-path transcript
+    to later Dream model context; the Dream channel retains the newest 512 run
+    transcripts and prunes older run ledgers, anchors, terminal markers, and
+    search entries; runs gather relevant prior memory/workspace context with `node_search` /
+    `node_read`, apply the
     human-dream cycle and valuable-memory filter, and — when the filter leaves
-    memory worth writing — update today's single `#d-memory` container, write
+    memory worth writing — update the source-date `#d-memory` container, write
     optional `#d-episode` / `#d-belief` / `#d-question` / `#d-guidance` nodes, and
     may delete obsolete nodes with `node_delete`; a run that finds nothing worth
-    remembering writes nothing, and a clean run records `dream.completed` and
-    advances the watermark either way — but a run cut off mid-work (`maxTurns`
-    abort while streaming, or unresolved context overflow) is flagged `incomplete`
-    and, with zero writes, is retried instead of advancing; manual
+    remembering writes nothing, and a clean run records a windowed
+    `dream.finished` marker either way — but a run cut off mid-work by unresolved
+    context overflow is flagged `incomplete` and, with zero writes, is retried
+    instead of recording a completed window; manual
     consolidate-only runs can reconcile outline/prior Dream context without new
     chat spans
   - `/dream` and the foreground `dream` tool are removed; Dream history remains
-    a runtime task/history projection, not a model command surface
+    a runtime task/history projection plus the protected Dream channel
+    transcript, not a model command surface
   - permission classification keeps `past_chats` as read-only
     `agent.memory.recall`; no `agent.memory.dream` action remains
 - [x] Agent M1 self-maintenance and structured input:
@@ -171,8 +181,8 @@ truth.
   - `runtime_status`, `config`, and `doctor` tools with permission-gated config
     writes
   - mixed-resolution compaction source ranges for replay/render/runtime context
-- [x] Single-agent collapse (one editable agent; conversations-only; one memory
-  pool): the prior multi-agent Channel apparatus was removed and the model
+- [x] Single-agent collapse (one editable agent; conversations-only; timeline
+  memory): the prior multi-agent Channel apparatus was removed and the model
   collapsed to a single user-customizable agent.
   - **One editable agent, Neva** — `built-in:tenon:assistant` (handle
     `assistant`), edited in Settings → Agent via a stored overlay; no

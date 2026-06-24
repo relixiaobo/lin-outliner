@@ -15,7 +15,7 @@ import type {
   AgentUserViewContext,
 } from '../../../core/agentTypes';
 import { nodeReferenceMarkersToText } from '../../../core/referenceMarkup';
-import { DEFAULT_GENERAL_CHANNEL_ID, agentMentionToken } from '../../../core/agentChannel';
+import { DEFAULT_DREAM_CHANNEL_ID, DEFAULT_GENERAL_CHANNEL_ID, agentMentionToken } from '../../../core/agentChannel';
 import type {
   AgentRenderMemberView,
 } from '../../../core/agentRenderProjection';
@@ -51,6 +51,7 @@ import { AgentCompactionBoundary } from './AgentCompactionBoundary';
 import { AgentDreamBoundary } from './AgentDreamBoundary';
 import { AgentChildRunBoundary } from './AgentChildRunBoundary';
 import { AgentComposer } from './AgentComposer';
+import { DreamLauncher } from './DreamLauncher';
 import type { AgentComposerNodeReference } from './AgentComposerEditor';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentMessageRow } from './AgentMessageRow';
@@ -1265,17 +1266,16 @@ export function AgentChatPanel({
                 <EmptyState className="agent-conversation-empty" size="inline" title={t.agent.chat.noConversations} />
               ) : channelRows.map((conversation) => {
                 const isCurrent = conversation.id === conversationId;
-                const isDefaultGeneral = conversation.id === DEFAULT_GENERAL_CHANNEL_ID;
                 const title = readableConversationTitle(conversation.title, t.common.untitled);
                 const unread = isCurrent ? 0 : conversation.unreadCount ?? unreadByConversationId.get(conversation.id) ?? 0;
                 const actionMenuKey = `channel:${conversation.id}`;
                 const channelActions: ConversationRowMenuAction[] = [
-                  ...(isDefaultGeneral ? [] : [{
+                  {
                     disabled: anyRunActive,
                     id: 'configure-channel',
                     label: t.agent.chat.configureChannel,
                     onSelect: () => handleConfigureChannel(conversation.id),
-                  } satisfies ConversationRowMenuAction]),
+                  },
                 ];
                 return (
                   <div
@@ -1397,29 +1397,39 @@ export function AgentChatPanel({
       </div>
 
       <div className="agent-composer-region">
-        <AgentComposer
-          currentNodeId={composerCurrentNodeId(userViewContext, index)}
-          focusToken={composerFocusToken}
-          index={index}
-          isStreaming={runActive}
-          members={[]}
-          onNodeReferenceOpen={onOpenNodeReference}
-          onCancelSteer={handleCancelSteer}
-          onSend={sendMessage}
-          onStop={stop}
-          onSteer={handleSteerMessage}
-          onResolveApproval={handleResolveApproval}
-          onResolveUserQuestion={resolveUserQuestion}
-          pendingApproval={pendingApproval}
-          pendingUserQuestion={pendingUserQuestion}
-          settings={providerSettings}
-          agentModel={typeof builtInDefinition?.model === 'string' ? builtInDefinition.model : ''}
-          agentEffort={typeof builtInDefinition?.effort === 'string' ? builtInDefinition.effort : ''}
-          onModelChange={builtInDefinition ? handleAgentModelChange : undefined}
-          onEffortChange={builtInDefinition ? handleAgentEffortChange : undefined}
-          slashCommands={slashCommands}
-          steeringNote={steeringNote}
-        />
+        {conversationId === DEFAULT_DREAM_CHANNEL_ID ? (
+          <DreamLauncher
+            dreamSchedule={providerSettings?.agent.dreamSchedule}
+            isStreaming={runActive}
+            onSettingsChanged={() => {
+              void loadProviderSettings();
+            }}
+          />
+        ) : (
+          <AgentComposer
+            currentNodeId={composerCurrentNodeId(userViewContext, index)}
+            focusToken={composerFocusToken}
+            index={index}
+            isStreaming={runActive}
+            members={[]}
+            onNodeReferenceOpen={onOpenNodeReference}
+            onCancelSteer={handleCancelSteer}
+            onSend={sendMessage}
+            onStop={stop}
+            onSteer={handleSteerMessage}
+            onResolveApproval={handleResolveApproval}
+            onResolveUserQuestion={resolveUserQuestion}
+            pendingApproval={pendingApproval}
+            pendingUserQuestion={pendingUserQuestion}
+            settings={providerSettings}
+            agentModel={typeof builtInDefinition?.model === 'string' ? builtInDefinition.model : ''}
+            agentEffort={typeof builtInDefinition?.effort === 'string' ? builtInDefinition.effort : ''}
+            onModelChange={builtInDefinition ? handleAgentModelChange : undefined}
+            onEffortChange={builtInDefinition ? handleAgentEffortChange : undefined}
+            slashCommands={slashCommands}
+            steeringNote={steeringNote}
+          />
+        )}
       </div>
       <AgentChildRunDetailsPanel
         onClose={() => setSelectedChildRunId(null)}

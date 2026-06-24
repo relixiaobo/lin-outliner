@@ -1445,7 +1445,7 @@ export function visibleChildRunResult(data: AgentDelegateToolData): unknown {
   return visible;
 }
 
-function recordNodeToolChanges(
+export function recordNodeToolChanges(
   changes: AgentChildRunNodeChanges,
   toolName: string,
   result: unknown,

@@ -59,6 +59,8 @@ describe('outliner inlineReference toDOM', () => {
       chatStreamId: 'general',
       chatFromSeqExclusive: 1,
       chatThroughSeq: 2,
+      chatFromCreatedAtInclusive: 1_800_000_000_000,
+      chatThroughCreatedAtExclusive: 1_800_086_400_000,
       displayName: 'when the user asked in Chinese',
     });
     const [, attrs, iconSpec, labelSpec] = spec as [
@@ -69,6 +71,8 @@ describe('outliner inlineReference toDOM', () => {
     ];
 
     expect(attrs['data-inline-ref-kind']).toBe('chat-source');
+    expect(attrs['data-inline-ref-chat-from-created-at-inclusive']).toBe('1800000000000');
+    expect(attrs['data-inline-ref-chat-through-created-at-exclusive']).toBe('1800086400000');
     expect(iconSpec[1].class).toBe('inline-ref-chat-icon');
     expect(labelSpec[1].class).toBe('inline-ref-chat-label');
     expect(labelSpec[2]).toBe('when the user asked in Chinese');
@@ -84,6 +88,21 @@ describe('targetFromInlineReferenceElement', () => {
         inlineRefChatStreamId: 'conversation-1',
         inlineRefChatFromSeqExclusive: '',
         inlineRefChatThroughSeq: '5',
+      },
+    } as unknown as HTMLElement;
+
+    expect(targetFromInlineReferenceElement(element)).toBeNull();
+  });
+
+  test('rejects one-sided chat source created-at clamps', () => {
+    const element = {
+      dataset: {
+        inlineRefKind: 'chat-source',
+        inlineRefChatStream: 'conversation',
+        inlineRefChatStreamId: 'conversation-1',
+        inlineRefChatFromSeqExclusive: '1',
+        inlineRefChatThroughSeq: '5',
+        inlineRefChatFromCreatedAtInclusive: '1800000000000',
       },
     } as unknown as HTMLElement;
 

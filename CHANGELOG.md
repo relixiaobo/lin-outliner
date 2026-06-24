@@ -10,7 +10,125 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Changed
+
+- **`file_read` is now a provider-neutral runtime ingestion boundary (PR #326, codex-3)** — reverses the
+  native-PDF payload approach from PR #322 (above): `src/main/agentNativePdfPayloads.ts` and the
+  `nativePdfRead` plumbing are removed, so no provider-native PDF blocks or raw PDF bytes/base64 are sent
+  as the canonical path. The model still passes a local path; the runtime picks the representation. PDFs
+  default to `pdfinfo` page count + `pdftotext -layout` full-document text (bounded to 60k chars);
+  explicit `pages` renders bounded JPEG page images with `pdftoppm`; oversized scanned PDFs return
+  metadata plus a hint to request a narrower range. Rich documents (`.docx`, `.pptx`, `.xlsx`, `.xls`,
+  `.epub`) convert to Markdown through optional **MarkItDown**, probed locally via
+  `LIN_AGENT_MARKITDOWN_COMMAND` (accepts an executable path **or** a command line like
+  `python3 -m markitdown`), then `markitdown`, then `python3 -m markitdown` — no plugins/cloud/LLM
+  backends, no self-install. Local extractors share one subprocess runner
+  (`src/main/agentToolProcess.ts`: `LIN_AGENT_EXTRA_TOOL_PATH` + common GUI/system PATH segments,
+  SIGTERM→SIGKILL escalation, bounded stdout/stderr capture). Missing Poppler or MarkItDown stays a
+  recoverable tool error — the agent installs the dependency via `bash` under the normal permission/audit
+  path and retries the same call. `.html`/`.htm` stay on the plain-text read path (no MarkItDown
+  dependency, still editable). **Gate (main):** `/code-review xhigh` (8 findings fixed + regression-tested
+  in `09939d1a`: pdftotext stderr false-positive, `pages` render-before-extract, restored `%PDF-`
+  magic-byte check, bounded pdftotext capture, cached MarkItDown probes, accurate truncation char counts,
+  env-command-with-args). `test:core` 1061/0, typecheck clean. Spec synced: `agent-tool-design`,
+  `agent-progress`.
+- **`file_read` derived-ingestion results are now cached in-process (PR #327, codex-3)** — a direct
+  follow-up to PR #326. Successful expensive runtime extractions (MarkItDown rich-document → Markdown and
+  PDF `pdfinfo`/`pdftotext` metadata+text) are memoized in a small bounded **LRU cache**
+  (`src/main/agentFileIngestionCache.ts`), so re-reading unchanged content skips the subprocess. Entries
+  key on **source SHA-256 + extractor identity + relevant options + local tool environment** (PATH /
+  extra-tool path), so a changed file, a different extractor, or a different toolchain all miss correctly.
+  Errors are **not** cached, and per-read PDF page-render output directories remain per-read scratch (not
+  cached). Ordinary text-file freshness and `file_edit` guards are unchanged. The source hash is computed
+  by **streaming** the file (`src/main/fileHashing.ts` `sha256File`), so hashing a near-limit document no
+  longer buffers it whole in memory; the bounded-LRU eviction is now a single shared helper
+  (`src/main/boundedMap.ts`), and cached values are `structuredClone`d on get/set so a caller can never
+  mutate a cached entry. **Gate (main):** `/code-review xhigh` (7 findings) → codex-3 fix `c9119af6`:
+  streaming hash (no 50 MB read-to-hash buffer), shared `setBoundedMapEntry`, `structuredClone` isolation,
+  a dedicated cache unit test, and a `beforeEach` cache reset to remove cross-test pollution. Verified:
+  typecheck clean, `agentFileIngestionCache` + `agentLocalTools` 68/0 (2 skip). Spec synced:
+  `agent-tool-design`.
+- **Dream channel launcher reworked into scheduled settings + a separate manual run (PR #330, codex-2)** —
+  a fast-track follow-up to `dream-channel-and-memory-retire`. The bottom-of-channel surface no longer looks
+  like a chat composer: it splits into **Scheduled Dream** (a "next run" readout + a recurrence picker reusing
+  the shared `DateValuePicker`, with a Dream-specific empty placeholder and a Save action) and a separate
+  **Manual run** popover (date-window + optional focus text). The shared date picker gains date-only,
+  bounded (`maxDate`), top-anchored (`popoverPlacement`/`popoverGap`), and recurrence end-date ("Ends" switch)
+  modes needed by Dream while preserving the command-node schedule behavior; `CalendarMonthGrid` gains an
+  `isDateDisabled` predicate with keyboard-roving fallback to the nearest enabled date, and
+  `nextDateScheduleDue` is added by refactoring the schedule math into one direction-parameterized core shared
+  with `mostRecentDateScheduleDue`. Recurrence `until` is now guarded `>= anchor` at every layer
+  (`buildScheduleString`, the picker commit path, and the calendar). **Gate (main):** `/code-review high`
+  (9 findings fixed across 2 rounds) — including a **caught-and-fixed regression** where the schedule-math
+  dedup broke `mostRecentDateScheduleDue` (the live firing path) for monthly/yearly schedules evaluated after
+  their `UNTIL`; the `withinUntil` short-circuit was sound only for the forward search, fixed to `continue` in
+  the past direction with a covering test. Verified: typecheck clean, `test:core` 1056/0, `test:renderer`
+  606/0.
+
+### Removed
+
+- **Legacy believer-pool memory projection retired (PR #329, codex-2)** — the third and final PR of
+  `dream-channel-and-memory-retire`, finishing the #302 teardown now that PR #328 derives the Dream cursor
+  and `lastSuccessAt` from the channel. Deletes the per-principal believer-pool **memory projection + its
+  memory API inside `AgentEventStore`** (`recordMemoryEpisode` / `listMemoryEntries` / `updateMemoryEntry` /
+  `removeMemoryEntry` / `readDreamState` / `appendDreamCompleted`), the now-dead
+  `agentMemoryActivation` / `agentMemoryRetrieval` modules, the
+  `AgentMemoryEntry` / `AgentMemoryEvent` / `AgentDreamWatermark` / `dream.completed` types, the
+  `agent_list_memory` (+ `agent_update_memory` / `agent_forget_memory`) commands and their renderer/main
+  plumbing, and the **Settings → Memory** entry-management UI. The `AgentEventStore` **class stays** — it
+  still stores every conversation's events, run streams, payloads, run-meta, and index. Durable
+  model-readable memory is now solely the `#d-*` outline timeline nodes; Dream run history is the protected
+  Dream channel's `dream.finished` audit log. Pool-only core tests removed with the code. **Gate (main):**
+  `/code-review xhigh` (clean) + rebased-stack re-verification — no dangling references, typecheck clean,
+  `test:core` 1051/0, `test:renderer` 601/0, e2e `agent-settings` 33/33. Specs synced: `agent-architecture`,
+  `agent-delegation-runtime`, `agent-event-log-rendering`, `agent-progress`. Pre-release: no migration (wipe
+  `~/.lin-outliner-*`).
+
 ### Added
+
+- **Dream date-window scheduling + derived cursor (PR #328, codex-2)** — the second PR of
+  `dream-channel-and-memory-retire`. Memory Dream's scope moves from the opaque seq-watermark to
+  user-legible **local-day date windows**. The "last dreamed through" cursor and `lastSuccessAt` are now
+  **derived** from the protected Dream channel's clean completed `dream.finished.window` markers (no
+  stored dream-state read), and a date window is translated to a **timestamp-clamped** source span — the
+  seq lower bound is the stream floor and the `createdAt` clamp is the authority, so out-of-order or
+  day-straddling seqs cannot pull an out-of-window message in. Dream writes memory to the **source-date**
+  daily node, so a multi-day catch-up files each day's findings under that day's `#d-memory` container.
+  Scheduled runs cover **complete days only** (`[cursor+1 .. yesterday]`) at the user-configurable
+  `agent.runtime.dreamSchedule` fixed local time, with a **fixed-time + 3-retries-per-due** cap replacing
+  the at-most-once gate; a clean manual run suppresses the scheduled Dream for already-covered days. The
+  in-channel **structured Dream launcher** (start/end date pickers + guidance → serialized anchor)
+  replaces the chat composer on the Dream channel; the `#319` incomplete-gate is preserved. Adds the
+  `window?:{start,end}` field to `dream.finished` together with its first reader/writer (the PR1
+  deviation), and a `fromCreatedAtInclusive`/`throughCreatedAtExclusive` clamp on chat-source references
+  threaded through markup/loro/pmSchema/editor/tool layers. **Gate (main):** `/code-review xhigh` — 8
+  findings fixed + re-verified (`274a5670`): scheduled window ends at *yesterday* (no same-day lockout
+  permanently skipping the day still in progress), manual default window clamps instead of throwing (so
+  Settings "Run Dream now" stays valid once the cursor reaches today), manual end date clamped to today
+  (no future-cursor scheduler stall), redundant seq lower-bound dropped in favor of the timestamp clamp,
+  symmetric clamp validation + tilde-escaping across all reference codecs, pmSchema clamp round-trip, and
+  the manual-suppression test isolated from the retry-cap path. typecheck clean; affected `test:core` +
+  `test:renderer` suites green. Specs synced: `agent-skills`, `agent-progress`,
+  `agent-event-log-rendering`; plan updated.
+
+- **Protected Dream channel — Memory Dream runs as a transparent top-level turn (PR #324, codex-2)** —
+  the first PR of `dream-channel-and-memory-retire`. Memory Dream no longer runs as a hidden
+  create→delete child conversation; it runs as a top-level **unattended reflective turn** inside a new
+  persistent, protected **Dream** channel (`lin-agent-channel-dream`), so each run's full process is
+  durable audit history. The Dream channel has an immutable title, cannot be renamed/deleted, and rejects
+  ordinary chat messages; General and Dream now share one table-driven `PROTECTED_DEFAULT_CHANNELS`
+  mechanism. Channels gain a `includeInDreamData` setting (Channel-config checkbox + the
+  `agent_set_conversation_include_in_dream_data` command) controlling whether a channel feeds Dream
+  evidence; the Dream channel is force-excluded from its own evidence and from `past_chats`. Dream run
+  metadata is anchored to the channel (reflective run kind/fingerprint) so replay joins the run ledger,
+  and the channel's run history is bounded to the most recent 512 runs (pruning re-roots retained anchors
+  so replay stays consistent). Trigger + seq-watermark behavior are unchanged this PR (date→cursor
+  derivation is PR2). **Gate (main):** `/code-review high` across two fix rounds — terminal
+  `dream.finished`/run-meta consistency, truncation-signal accuracy, helper/channel-machinery dedup, and a
+  caught-and-fixed retention-prune bricking bug (dangling parent after prune) were all fixed and
+  regression-tested. `test:core` 1065/0, typecheck clean, `docs:check` OK on the integrated tree. Specs
+  synced: `agent-architecture`, `agent-event-log-rendering`, `agent-tool-design`, `agent-skills`,
+  `agent-progress`, `agent-pi-mono-implementation`.
 
 - **Native PDF payloads for OpenAI Responses models (PR #322, codex-3)** — an ordinary `file_read` of a
   PDF (no `pages`) on an OpenAI Responses model now sends the PDF to the model as a native `input_file`

@@ -69,6 +69,240 @@
   background: var(--fill-2);
 }
 
+.dream-launcher {
+  display: block;
+  position: relative;
+}
+
+.dream-launcher-surface {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.dream-schedule-head,
+.dream-schedule-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin-inline: calc(-1 * (var(--agent-content-x) - var(--space-3)));
+  padding-inline: var(--agent-content-x);
+}
+
+.dream-schedule-head {
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.dream-schedule-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-hairline);
+}
+
+.dream-schedule-title {
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  font-weight: 650;
+  line-height: var(--line-ui-sm-tight);
+}
+
+.dream-schedule-next {
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dream-schedule-row {
+  gap: var(--space-3);
+}
+
+.dream-schedule-field {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.dream-schedule-trigger {
+  display: inline-flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  padding: 0;
+  transition: color var(--motion-fast);
+}
+
+.dream-schedule-trigger > svg {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  transition: color var(--motion-fast);
+}
+
+.dream-schedule-trigger:hover,
+.dream-schedule-trigger:focus-visible,
+.dream-schedule-trigger.is-open {
+  color: var(--text-strong);
+}
+
+.dream-schedule-trigger:focus-visible {
+  box-shadow: var(--underline-focus-shadow);
+}
+
+.dream-schedule-trigger:hover > svg,
+.dream-schedule-trigger:focus-visible > svg,
+.dream-schedule-trigger.is-open > svg {
+  color: var(--text-strong);
+}
+
+.dream-schedule-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dream-schedule-trigger.is-empty {
+  color: var(--text-faint);
+}
+
+.dream-manual-open {
+  flex: 0 0 auto;
+}
+
+.dream-schedule-save {
+  flex: 0 0 auto;
+}
+
+.dream-manual-popover {
+  position: absolute;
+  right: calc(var(--agent-content-x) - var(--space-3));
+  bottom: calc(100% + var(--space-3));
+  z-index: var(--z-popover);
+  display: flex;
+  width: min(420px, calc(100% - var(--space-8) - var(--space-8)));
+  max-height: min(70vh, 520px);
+  min-width: 280px;
+  flex-direction: column;
+  gap: var(--space-4);
+  overflow: auto;
+  border-radius: var(--radius-overlay-sm);
+  background: var(--overlay-bg);
+  box-shadow: var(--overlay-shadow-level-1), var(--outline-subtle);
+  padding: var(--space-6);
+}
+
+.dream-manual-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dream-manual-title {
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  font-weight: 650;
+  line-height: var(--line-ui-sm-tight);
+}
+
+.dream-manual-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.dream-manual-label {
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
+}
+
+.dream-manual-date-trigger {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-window);
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  padding: 0 var(--space-3);
+  transition: border-color var(--motion-fast), box-shadow var(--motion-fast);
+}
+
+.dream-manual-date-trigger:focus-visible,
+.dream-manual-date-trigger.is-open {
+  border-color: var(--focus-ring);
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.dream-manual-date-trigger > svg {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.dream-manual-date-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dream-manual-date-value.is-empty {
+  color: var(--text-faint);
+}
+
+.dream-manual-guidance {
+  min-height: 84px;
+  min-width: 0;
+  resize: vertical;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: var(--bg-window);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  padding: var(--space-3);
+}
+
+.dream-manual-guidance:focus-visible {
+  border-color: var(--focus-ring);
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.dream-manual-guidance::placeholder {
+  color: var(--text-faint);
+}
+
+.dream-manual-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.dream-launcher-error {
+  margin-bottom: 0;
+}
+
 .agent-composer-drop-overlay {
   position: absolute;
   inset: 6px;

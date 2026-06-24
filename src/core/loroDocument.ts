@@ -895,7 +895,16 @@ function normalizeReferenceTarget(value: unknown): RichText['inlineRefs'][number
     const throughEventId = typeof range.throughEventId === 'string'
       ? range.throughEventId
       : range.throughEventId === null ? null : undefined;
-    if (fromSeqExclusive !== null && throughSeq !== null && throughSeq > fromSeqExclusive) {
+    const fromCreatedAtInclusive = numberInteger(range.fromCreatedAtInclusive);
+    const throughCreatedAtExclusive = numberInteger(range.throughCreatedAtExclusive);
+    const createdAtClamp = normalizeCreatedAtClamp(fromCreatedAtInclusive, throughCreatedAtExclusive);
+    if (
+      fromSeqExclusive !== null
+      && fromSeqExclusive >= 0
+      && throughSeq !== null
+      && throughSeq > fromSeqExclusive
+      && ((fromCreatedAtInclusive === null && throughCreatedAtExclusive === null) || createdAtClamp)
+    ) {
       return {
         kind: 'chat-source',
         stream: record.stream,
@@ -904,6 +913,7 @@ function normalizeReferenceTarget(value: unknown): RichText['inlineRefs'][number
           fromSeqExclusive,
           throughSeq,
           ...(throughEventId !== undefined ? { throughEventId } : {}),
+          ...(createdAtClamp ?? {}),
         },
       };
     }
@@ -913,6 +923,22 @@ function normalizeReferenceTarget(value: unknown): RichText['inlineRefs'][number
 
 function numberInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
+}
+
+function normalizeCreatedAtClamp(
+  fromCreatedAtInclusive: number | null,
+  throughCreatedAtExclusive: number | null,
+): { fromCreatedAtInclusive: number; throughCreatedAtExclusive: number } | null {
+  if (fromCreatedAtInclusive === null && throughCreatedAtExclusive === null) return null;
+  if (
+    fromCreatedAtInclusive !== null
+    && fromCreatedAtInclusive >= 0
+    && throughCreatedAtExclusive !== null
+    && throughCreatedAtExclusive > fromCreatedAtInclusive
+  ) {
+    return { fromCreatedAtInclusive, throughCreatedAtExclusive };
+  }
+  return null;
 }
 
 function stringifyRecord(value: object): Record<string, string> {

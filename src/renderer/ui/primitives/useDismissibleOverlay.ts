@@ -4,6 +4,7 @@ const EMPTY_IGNORE_REFS: Array<RefObject<HTMLElement | null>> = [];
 
 interface DismissibleOverlayOptions {
   disabled?: boolean;
+  ignoreTarget?: (target: Node) => boolean;
   ignoreRefs?: Array<RefObject<HTMLElement | null>>;
   // Leave Escape to a more specific owner (e.g. `useMenuKeyboard`, which scopes ESC
   // to the focused surface and restores focus). When false, this hook only handles
@@ -16,13 +17,16 @@ export function useDismissibleOverlay(
   onDismiss: () => void,
   options: DismissibleOverlayOptions = {},
 ) {
+  const disabled = options.disabled;
   const escape = options.escape ?? true;
   const ignoreRefs = options.ignoreRefs ?? EMPTY_IGNORE_REFS;
+  const ignoreTarget = options.ignoreTarget;
   useEffect(() => {
-    if (options.disabled) return undefined;
+    if (disabled) return undefined;
     const closeOnOutsidePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (ref.current?.contains(target)) return;
+      if (ignoreTarget?.(target)) return;
       if (ignoreRefs.some((ignoreRef) => ignoreRef.current?.contains(target))) return;
       onDismiss();
     };
@@ -35,5 +39,5 @@ export function useDismissibleOverlay(
       document.removeEventListener('pointerdown', closeOnOutsidePointerDown, true);
       if (escape) document.removeEventListener('keydown', closeOnEscape);
     };
-  }, [escape, ignoreRefs, onDismiss, options.disabled, ref]);
+  }, [disabled, escape, ignoreRefs, ignoreTarget, onDismiss, ref]);
 }
