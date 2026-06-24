@@ -36,6 +36,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Search nodes excluded from references (PR #335, codex; follow-up PR #336, main)** — saved-search
+  nodes and their query internals no longer count as reference sources in a target node's References
+  footer or the relevance reference-authority graph. Excluded: materialized search-result references,
+  direct references and plain-text mentions on `search` nodes, and query operand references/mentions
+  inside `queryCondition` subtrees (e.g. a "field is [node]" operand, which is materialized as a
+  default-role `reference` under the condition and previously polluted the operand's backlinks).
+  Real user-authored references in ordinary child content — including manual children placed under a
+  search node and their reference grandchildren — stay fully counted. Implemented via a cached
+  `searchReferenceSourcePredicate` (node is `search`-typed, a result `reference` attached directly to a
+  search node, or inside a `queryCondition` subtree) applied across the backlink, inline-ref, and
+  unlinked-mention branches. #336 closed an asymmetry from the original review: the backlink branch
+  excluded a reference via its parent while the inline-ref scan keyed off the node itself, so a result
+  ref carrying inline content could leak — both branches are now symmetric. Spec synced in
+  `ui-behavior.md` + `search-query-grammar.md`. **Gate (main):** manual review + full verification —
+  typecheck clean, `references.test` 11/0, `test:core` 1056/0, `docs:check` OK.
+
 - **Native focus rings + agent transcript polish (PR #332, codex-2)** — focus rings on text controls
   (`input` / `textarea` / `select`) are now **keyboard-only**: a renderer-level `:root[data-input-modality]`
   attribute (set by a capturing pointerdown/keydown tracker) gates the neutral ring so ordinary clicks no

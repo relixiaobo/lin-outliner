@@ -486,6 +486,17 @@ anything.
 
 ## Recently completed
 
+- **search-reference-sources** (`codex/search-reference-sources`, PR #335, codex, merged 2026-06-24;
+  follow-up `fix/references-search-inline-exclusion`, PR #336, main, merged 2026-06-24) — excludes
+  saved-search nodes and `queryCondition` internals from the backlink graph + relevance
+  reference-authority signal: materialized result refs, `search`-node references/mentions, and query
+  operand references/mentions no longer pollute a target's References footer; manual children under a
+  search node stay counted. Implemented via a cached `searchReferenceSourcePredicate` across the
+  backlink / inline-ref / unlinked-mention branches. #336 closed the review-flagged asymmetry (backlink
+  branch checked the parent, inline-ref branch the node itself → a result ref with inline content could
+  leak) so both branches are symmetric, with a regression test. **Gate (main):** manual review + full
+  verification — typecheck clean, `references.test` 11/0, `test:core` 1056/0, `docs:check` OK. Specs
+  synced: `ui-behavior`, `search-query-grammar`. Fast-track, **shape (a)** + a follow-up fix, *no plan file*.
 - **native-focus-policy** (`codex-2/native-focus-policy`, PR #332, codex-2, merged 2026-06-24) — makes text-control
   focus rings **keyboard-only** via a renderer `:root[data-input-modality]` attribute (capturing
   pointerdown/keydown tracker), so pointer clicks stop painting web-form boxes while keyboard nav (Tab /
