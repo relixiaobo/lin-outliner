@@ -1,6 +1,6 @@
 import { useLayoutEffect, useState, type CSSProperties, type RefObject } from 'react';
 
-type OverlayPlacement =
+export type OverlayPlacement =
   | 'bottom-start'
   | 'bottom-center'
   | 'bottom-end'

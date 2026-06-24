@@ -88,6 +88,36 @@ export function mostRecentDateScheduleDue(input: DateSchedule | string, now = ne
   }
 }
 
+export function nextDateScheduleDue(input: DateSchedule | string, now = new Date()): Date | null {
+  const schedule = typeof input === 'string' ? parseDateSchedule(input) : input;
+  if (!schedule) return null;
+
+  const anchor = dateFromScheduleEndpoint(schedule.anchor);
+  const nowMs = now.getTime();
+  if (!schedule.recurrence) return anchor.getTime() >= nowMs ? anchor : null;
+
+  const untilEnd = schedule.recurrence.until ? dateEndpointInclusiveEnd(schedule.recurrence.until) : null;
+  if (untilEnd && anchor.getTime() > untilEnd.getTime()) return null;
+  if (anchor.getTime() >= nowMs) return withinUntil(anchor, untilEnd) ? anchor : null;
+
+  let due: Date | null = null;
+  switch (schedule.recurrence.frequency) {
+    case 'daily':
+      due = nextDailyDue(anchor, schedule.recurrence.interval, now);
+      break;
+    case 'weekly':
+      due = nextWeeklyDue(anchor, schedule.recurrence, now);
+      break;
+    case 'monthly':
+      due = nextMonthlyDue(anchor, schedule.recurrence.interval, now, untilEnd);
+      break;
+    case 'yearly':
+      due = nextYearlyDue(anchor, schedule.recurrence.interval, now, untilEnd);
+      break;
+  }
+  return due && withinUntil(due, untilEnd) ? due : null;
+}
+
 export function shouldFireDateSchedule(
   input: DateSchedule | string,
   now = new Date(),
@@ -159,6 +189,56 @@ function mostRecentYearlyDue(anchor: Date, interval: number, limit: Date): Date 
   return null;
 }
 
+function nextDailyDue(anchor: Date, interval: number, now: Date): Date {
+  const elapsedDays = calendarDayIndex(now) - calendarDayIndex(anchor);
+  const baseOffset = Math.max(0, Math.floor(elapsedDays / interval) * interval);
+  const candidate = addDaysWithAnchorTime(anchor, baseOffset);
+  return candidate.getTime() >= now.getTime()
+    ? candidate
+    : addDaysWithAnchorTime(anchor, baseOffset + interval);
+}
+
+function nextWeeklyDue(anchor: Date, rule: DateRecurrenceRule, now: Date): Date | null {
+  const anchorWeekStart = startOfMondayWeek(anchor);
+  const nowWeekStart = startOfMondayWeek(now);
+  const elapsedWeeks = Math.max(0, Math.floor((calendarDayIndex(nowWeekStart) - calendarDayIndex(anchorWeekStart)) / 7));
+  const firstWeekOffset = Math.floor(elapsedWeeks / rule.interval) * rule.interval;
+  const byDay = rule.byDay?.length ? rule.byDay : [JS_DAY_TO_WEEKDAY[anchor.getDay()]!];
+
+  for (let weekOffset = firstWeekOffset; weekOffset <= firstWeekOffset + rule.interval * 2; weekOffset += rule.interval) {
+    for (const weekday of [...byDay].sort((left, right) => WEEKDAY_TO_WEEK_OFFSET[left] - WEEKDAY_TO_WEEK_OFFSET[right])) {
+      const day = addDaysWithAnchorTime(anchorWeekStart, weekOffset * 7 + WEEKDAY_TO_WEEK_OFFSET[weekday]);
+      const occurrence = withAnchorTime(day, anchor);
+      if (occurrence.getTime() >= now.getTime() && occurrence.getTime() >= anchor.getTime()) return occurrence;
+    }
+  }
+  return null;
+}
+
+function nextMonthlyDue(anchor: Date, interval: number, now: Date, untilEnd: Date | null): Date | null {
+  const elapsedMonths = (now.getFullYear() - anchor.getFullYear()) * 12 + (now.getMonth() - anchor.getMonth());
+  const firstOffset = Math.max(0, Math.floor(elapsedMonths / interval) * interval);
+  for (let offset = firstOffset; offset <= firstOffset + interval * 120; offset += interval) {
+    const candidate = localDateOrNull(anchor.getFullYear(), anchor.getMonth() + offset, anchor.getDate(), anchor.getHours(), anchor.getMinutes());
+    if (!candidate) continue;
+    if (!withinUntil(candidate, untilEnd)) return null;
+    if (candidate.getTime() >= now.getTime() && candidate.getTime() >= anchor.getTime()) return candidate;
+  }
+  return null;
+}
+
+function nextYearlyDue(anchor: Date, interval: number, now: Date, untilEnd: Date | null): Date | null {
+  const elapsedYears = now.getFullYear() - anchor.getFullYear();
+  const firstOffset = Math.max(0, Math.floor(elapsedYears / interval) * interval);
+  for (let offset = firstOffset; offset <= firstOffset + interval * 200; offset += interval) {
+    const candidate = localDateOrNull(anchor.getFullYear() + offset, anchor.getMonth(), anchor.getDate(), anchor.getHours(), anchor.getMinutes());
+    if (!candidate) continue;
+    if (!withinUntil(candidate, untilEnd)) return null;
+    if (candidate.getTime() >= now.getTime() && candidate.getTime() >= anchor.getTime()) return candidate;
+  }
+  return null;
+}
+
 function addDaysWithAnchorTime(anchor: Date, days: number): Date {
   const date = addLocalDays(anchor, days);
   return withAnchorTime(date, anchor);
@@ -175,6 +255,10 @@ function startOfMondayWeek(date: Date): Date {
 
 function calendarDayIndex(date: Date): number {
   return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000);
+}
+
+function withinUntil(date: Date, untilEnd: Date | null): boolean {
+  return !untilEnd || date.getTime() <= untilEnd.getTime();
 }
 
 function localDateOrNull(year: number, monthIndex: number, day: number, hour: number, minute: number): Date | null {

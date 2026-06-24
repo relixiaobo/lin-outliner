@@ -15,6 +15,7 @@ interface CalendarMonthGridProps {
   className?: string;
   getDayAriaLabel?: (day: CalendarMonthDay) => string;
   getDayClassName?: (day: CalendarMonthDay) => string;
+  isDateDisabled?: (isoDate: string) => boolean;
   month: number;
   // True when the grid can hold more than one selected cell at a time (e.g. a
   // date range's two endpoints), so it advertises `aria-multiselectable`.
@@ -34,6 +35,7 @@ export function CalendarMonthGrid({
   className,
   getDayAriaLabel,
   getDayClassName,
+  isDateDisabled,
   month,
   multiselectable = false,
   onDayMouseEnter,
@@ -66,12 +68,12 @@ export function CalendarMonthGrid({
   const pendingFocus = useRef(false);
 
   const defaultRovingIso = useMemo(() => {
-    const firstSelected = calendarDays.find((day) => selectedDates.has(day.isoDate));
+    const firstSelected = calendarDays.find((day) => selectedDates.has(day.isoDate) && !isDateDisabled?.(day.isoDate));
     if (firstSelected) return firstSelected.isoDate;
-    const today = calendarDays.find((day) => day.isoDate === todayIsoDate && day.inMonth);
+    const today = calendarDays.find((day) => day.isoDate === todayIsoDate && day.inMonth && !isDateDisabled?.(day.isoDate));
     if (today) return today.isoDate;
-    return calendarDays.find((day) => day.inMonth)?.isoDate ?? calendarDays[0]?.isoDate ?? null;
-  }, [calendarDays, selectedDates, todayIsoDate]);
+    return calendarDays.find((day) => day.inMonth && !isDateDisabled?.(day.isoDate))?.isoDate ?? calendarDays[0]?.isoDate ?? null;
+  }, [calendarDays, isDateDisabled, selectedDates, todayIsoDate]);
 
   // A keyboard target that fell outside the current month window resolves to the
   // default once the new month renders (graceful fallback if the overlap missed).
@@ -88,6 +90,7 @@ export function CalendarMonthGrid({
   }, [rovingIso]);
 
   function moveRovingTo(targetIso: string) {
+    if (isDateDisabled?.(targetIso)) return;
     setFocusIso(targetIso);
     pendingFocus.current = true;
     if (!calendarDays.some((day) => day.isoDate === targetIso)) {
@@ -194,28 +197,33 @@ export function CalendarMonthGrid({
                 ? () => onDayMouseLeave(day)
                 : undefined;
               const isSelected = selectedDates.has(day.isoDate);
+              const isDisabled = Boolean(isDateDisabled?.(day.isoDate));
               return (
                 <ButtonControl
                   aria-current={day.isoDate === todayIsoDate ? 'date' : undefined}
                   aria-label={getDayAriaLabel?.(day) ?? t.calendar.selectDate({ isoDate: day.isoDate })}
+                  aria-disabled={isDisabled || undefined}
                   aria-selected={isSelected}
                   className={cx(
                     'calendar-month-day',
                     !day.inMonth && 'is-outside-month',
                     day.isoDate === todayIsoDate && 'is-today',
                     isSelected && 'is-selected',
+                    isDisabled && 'is-disabled',
                     getDayClassName?.(day),
                   )}
                   data-iso={day.isoDate}
+                  disabled={isDisabled}
                   key={day.isoDate}
                   onClick={() => {
+                    if (isDisabled) return;
                     setFocusIso(day.isoDate);
                     onSelectDate(day.isoDate);
                   }}
                   onMouseEnter={handleMouseEnter}
                   onMouseLeave={handleMouseLeave}
                   role="gridcell"
-                  tabIndex={day.isoDate === rovingIso ? 0 : -1}
+                  tabIndex={!isDisabled && day.isoDate === rovingIso ? 0 : -1}
                 >
                   <span>{day.date.getDate()}</span>
                 </ButtonControl>

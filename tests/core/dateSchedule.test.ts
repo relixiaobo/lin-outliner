@@ -6,6 +6,7 @@ import {
   formatDateSchedule,
   isWeekdayPreset,
   mostRecentDateScheduleDue,
+  nextDateScheduleDue,
   parseDateRecurrenceRule,
   parseDateSchedule,
   shouldFireDateSchedule,
@@ -148,10 +149,39 @@ describe('date schedules', () => {
       reason: 'already_fired',
     });
   });
+
+  test('computes the next daily occurrence from the fixed local time', () => {
+    const schedule = '2026-05-20T09:00 RRULE:FREQ=DAILY';
+    expect(formatNext(schedule, localDate(2026, 5, 20, 8, 59))).toBe('2026-05-20T09:00');
+    expect(formatNext(schedule, localDate(2026, 5, 20, 9, 0))).toBe('2026-05-20T09:00');
+    expect(formatNext(schedule, localDate(2026, 5, 20, 9, 1))).toBe('2026-05-21T09:00');
+  });
+
+  test('computes the next weekly occurrence from eligible weekdays', () => {
+    const schedule = '2026-05-20T09:00 RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR';
+    expect(formatNext(schedule, localDate(2026, 5, 22, 8, 59))).toBe('2026-05-22T09:00');
+    expect(formatNext(schedule, localDate(2026, 5, 22, 9, 1))).toBe('2026-06-01T09:00');
+  });
+
+  test('computes the next monthly and yearly occurrence across skipped dates', () => {
+    expect(formatNext('2026-01-31T09:00 RRULE:FREQ=MONTHLY', localDate(2026, 2, 1, 12))).toBe('2026-03-31T09:00');
+    expect(formatNext('2024-02-29T09:00 RRULE:FREQ=YEARLY', localDate(2027, 3, 1, 12))).toBe('2028-02-29T09:00');
+  });
+
+  test('returns no next occurrence after the inclusive until endpoint', () => {
+    const schedule = '2026-05-20T09:00 RRULE:FREQ=DAILY;UNTIL=2026-05-22';
+    expect(formatNext(schedule, localDate(2026, 5, 22, 8, 59))).toBe('2026-05-22T09:00');
+    expect(formatNext(schedule, localDate(2026, 5, 22, 9, 1))).toBeNull();
+  });
 });
 
 function formatDue(schedule: string, now: Date): string | null {
   const due = mostRecentDateScheduleDue(schedule, now);
+  return due ? isoLocalDateTime(due) : null;
+}
+
+function formatNext(schedule: string, now: Date): string | null {
+  const due = nextDateScheduleDue(schedule, now);
   return due ? isoLocalDateTime(due) : null;
 }
 

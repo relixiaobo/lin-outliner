@@ -1406,7 +1406,13 @@ export function AgentChatPanel({
 
       <div className="agent-composer-region">
         {conversationId === DEFAULT_DREAM_CHANNEL_ID ? (
-          <DreamLauncher isStreaming={runActive} />
+          <DreamLauncher
+            dreamSchedule={providerSettings?.agent.dreamSchedule}
+            isStreaming={runActive}
+            onSettingsChanged={() => {
+              void loadProviderSettings();
+            }}
+          />
         ) : (
           <AgentComposer
             currentNodeId={composerCurrentNodeId(userViewContext, index)}
