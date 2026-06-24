@@ -223,10 +223,14 @@ before any directional/security-sensitive build.
 - **agent-self-modification** (P1, M1–M3, **slimmed by the reorg**) — controlled
   self-maintenance: self-observation (`runtime_status` / doctor), the cc-2.1-style
   `config` tool (single-agent self-configuration), **hooks** (untrusted consumer of the
-  program event bus), config recovery. **Skills moved to `agent-skills-authoring`; memory
-  is `agent-conversation-model`'s.** Directional/security-sensitive — escalate the
-  capability boundary to the PM before building. See
-  `docs/plans/agent-self-modification.md`.
+  program event bus), config recovery. **M1 shipped (#153) then removed (#333)** as
+  over-built (three tools for a thin, mostly-unreachable surface); self-configuration
+  **stays a goal** but its paradigm (dedicated `config` tool vs. `file_edit` + validated
+  config-write pipeline with last-known-good recovery) is being re-evaluated and returns in
+  a follow-up PR — runtime settings stay user-managed via Settings → Agent meanwhile.
+  **Skills moved to `agent-skills-authoring`; memory is `agent-conversation-model`'s.**
+  Directional/security-sensitive — escalate the capability boundary to the PM before
+  building. See `docs/plans/agent-self-modification.md`.
 - **agent-import-skill** (P1, M1–M2 consumer, plan ratified, PR #98) — agent data-import capability:
   bundled deterministic adapters (Tana reference, validated against the real
   10,627-node export) for known formats + agent-authored parsers for unknown ones;

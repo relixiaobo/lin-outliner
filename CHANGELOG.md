@@ -10,6 +10,30 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Removed
+
+- **Agent self-maintenance tools `runtime_status` / `config` / `doctor` (PR #333, cc-2)** —
+  removed all three M1 self-maintenance tools (originally shipped in #153) as over-built for
+  their current value: `runtime_status` and `doctor` are self-*observation* (and `doctor`'s
+  strongest check — "provider not configured" — is unreachable, since the agent can't run a
+  tool without a configured provider), while `config`'s write whitelist was mostly network
+  tuning the agent never changes mid-task. Deleted the `agentSelfMaintenanceTools.ts` module
+  + its test, `createSelfMaintenanceRuntime` and both wiring sites in `agentRuntime.ts`, the
+  `selfMaintenance` option/mount in `agentTools.ts`, and the four
+  `agent.{runtime.status,config.read,config.write,doctor.run}` permission action kinds with
+  their descriptor / alias / tool-profile / restricted-base / control-classifier entries.
+  **Default agent tool count 26 → 23** (sub-agents never mounted these and are unchanged).
+  Self-configuration **stays a goal** — its implementation paradigm (dedicated tool vs. an
+  `file_edit` + validated config-write pipeline with last-known-good recovery) is being
+  re-evaluated and returns in a follow-up PR; runtime settings stay user-managed via
+  Settings → Agent meanwhile. Pre-release, no migration: a remembered grant keyed on a
+  removed `agent.*` kind becomes inert (acceptable per the no-back-compat rule). **Gate
+  (main):** `/code-review high` → one comment-only finding (a stale "self-maintenance"
+  mention in the tool-filter doc comment) fixed in `21ca8bf5`. Verified: typecheck clean,
+  `test:core` 1054/0, `test:renderer` 607/0, `docs:check` OK. Specs synced: `agent-tool-design`,
+  `agent-progress`, `agent-pi-mono-implementation`, `agent-event-log-rendering`; plan
+  `agent-self-modification` updated to record M1 shipped-then-removed.
+
 ### Changed
 
 - **Native focus rings + agent transcript polish (PR #332, codex-2)** — focus rings on text controls
