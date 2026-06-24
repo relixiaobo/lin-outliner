@@ -171,6 +171,7 @@ export interface AgentRenderDreamEntity {
   agentId: string;
   runId?: string;
   trigger: AgentDreamRecord['trigger'];
+  window?: AgentDreamRecord['window'];
   status: AgentDreamRecord['status'];
   startedAt: number;
   completedAt: number;
@@ -216,6 +217,7 @@ export interface AgentRenderDreamTaskEntity {
   kind: 'dream';
   status: AgentRenderTaskStatus;
   trigger: 'manual' | 'schedule';
+  window?: AgentDreamRecord['window'];
   /** The pool this Dream maintains (run anchor subject), so the panel can label whose Dream. */
   principal: AgentPrincipal;
   startedAt: number;
@@ -232,14 +234,18 @@ export interface AgentRenderDreamTaskEntity {
 
 /**
  * A cheap, read-only pre-check for the manual "Dream now" control: how much new
- * evidence has accrued since the last Dream watermark, and whether it clears the
+ * evidence exists in the default manual Dream window, and whether it clears the
  * same volume bar the scheduled path uses. Computed without running the model, so
  * the UI can advise "probably nothing new to consolidate" and offer a forced run.
  */
 export interface AgentDreamReadiness {
-  /** New evidence messages since the Dream watermark, across member conversations. */
+  /** The default manual Dream window the launcher should prefill. */
+  window?: AgentDreamRecord['window'];
+  /** Latest clean completed Dream window end, derived from the Dream channel. */
+  lastDreamedThrough?: string | null;
+  /** New evidence messages in the default Dream window, across member conversations. */
   newMessageCount: number;
-  /** New evidence characters since the Dream watermark. */
+  /** New evidence characters in the default Dream window. */
   newCharCount: number;
   /** The volume bar the scheduled Dream uses to decide a run is worthwhile. */
   thresholdChars: number;
@@ -752,6 +758,7 @@ function toRenderDreamEntity(record: AgentDreamRecord): AgentRenderDreamEntity {
     agentId: record.agentId,
     runId: record.runId,
     trigger: record.trigger,
+    window: record.window,
     status: record.status,
     startedAt: record.startedAt,
     completedAt: record.completedAt,

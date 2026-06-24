@@ -319,6 +319,80 @@ describe('agent past chats', () => {
     });
   });
 
+  test('reads memory source evidence through created-at clamps inside a wider sequence range', async () => {
+    await withStore(async (store, service) => {
+      const conversationId = 'conversation-memory-evidence-clamped';
+      const windowStart = 1_800_010_000_000;
+      const windowEnd = windowStart + 10_000;
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Clamped memory evidence' },
+        {
+          ...base(conversationId, 2, 'user_message.created', userActor),
+          createdAt: windowStart - 1,
+          messageId: 'user-before-window',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'This stale preference should not be included.' }],
+        },
+        {
+          ...base(conversationId, 3, 'user_message.created', userActor),
+          createdAt: windowStart,
+          messageId: 'user-inside-window',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'The windowed preference is source-date journaling.' }],
+        },
+        {
+          ...base(conversationId, 4, 'assistant_message.started', agentActor),
+          createdAt: windowStart + 1,
+          runId: 'run-clamped',
+          messageId: 'assistant-inside-window',
+          parentMessageId: 'user-inside-window',
+          providerId: 'test',
+          modelId: 'test',
+        },
+        {
+          ...base(conversationId, 5, 'assistant_message.completed', agentActor),
+          createdAt: windowStart + 2,
+          messageId: 'assistant-inside-window',
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'Source-date journaling remains in the evidence window.' }],
+        },
+        {
+          ...base(conversationId, 6, 'user_message.created', userActor),
+          createdAt: windowEnd,
+          messageId: 'user-after-window',
+          parentMessageId: 'assistant-inside-window',
+          content: [{ type: 'text', text: 'This later preference should not be included.' }],
+        },
+      ]);
+
+      const source: AgentMemorySource = {
+        stream: 'conversation',
+        streamId: conversationId,
+        range: {
+          fromSeqExclusive: 1,
+          throughSeq: 6,
+          throughEventId: `${conversationId}-event-6`,
+          fromCreatedAtInclusive: windowStart,
+          throughCreatedAtExclusive: windowEnd,
+        },
+      };
+      const evidence = await service.readMemorySourceEvidence({
+        principal: memoryPrincipal,
+        reader: memoryPrincipal,
+        source,
+        maxChars: 400,
+      });
+
+      expect(evidence.mode).toBe('evidence');
+      if (evidence.mode !== 'evidence') throw new Error('Expected evidence result');
+      expect(evidence.source).toEqual(source);
+      expect(evidence.messages.map((message) => message.messageId)).toEqual(['user-inside-window', 'assistant-inside-window']);
+      expect(evidence.messages.map((message) => message.text).join('\n')).toContain('source-date journaling');
+      expect(evidence.messages.map((message) => message.text).join('\n')).not.toContain('stale preference');
+      expect(evidence.messages.map((message) => message.text).join('\n')).not.toContain('later preference');
+    });
+  });
+
   test('refuses cross-principal memory evidence at the service boundary', async () => {
     await withStore(async (_store, service) => {
       const evidence = await service.readMemorySourceEvidence({

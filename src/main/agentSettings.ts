@@ -24,6 +24,7 @@ import type {
   AgentProviderSettingsView,
   ProviderAuthView,
 } from '../core/types';
+import { parseDateSchedule } from '../core/dateSchedule';
 import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile, writeJsonFile } from './jsonFileStore';
 import { compareModels } from './modelRanking';
 
@@ -102,10 +103,12 @@ function getProviderAuthKind(providerId: string): AgentProviderAuthKind {
 
 const AGENT_REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 const AGENT_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
+export const DEFAULT_DREAM_SCHEDULE = '2026-01-01T03:00 RRULE:FREQ=DAILY';
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   automaticSkillsEnabled: true,
   slashSkillsEnabled: true,
   compactEnabled: true,
+  dreamSchedule: DEFAULT_DREAM_SCHEDULE,
   additionalSkillDirectories: [],
   providerTimeoutMs: null,
   providerMaxRetries: null,
@@ -462,6 +465,7 @@ function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null
     automaticSkillsEnabled: booleanOrDefault(input?.automaticSkillsEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.automaticSkillsEnabled),
     slashSkillsEnabled: booleanOrDefault(input?.slashSkillsEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.slashSkillsEnabled),
     compactEnabled: booleanOrDefault(input?.compactEnabled, DEFAULT_AGENT_RUNTIME_SETTINGS.compactEnabled),
+    dreamSchedule: normalizeDreamSchedule(input?.dreamSchedule, DEFAULT_DREAM_SCHEDULE),
     additionalSkillDirectories: normalizeStringList(input?.additionalSkillDirectories),
     providerTimeoutMs: normalizeNullablePositiveInteger(input?.providerTimeoutMs, DEFAULT_AGENT_RUNTIME_SETTINGS.providerTimeoutMs),
     providerMaxRetries: normalizeNullableNonNegativeInteger(input?.providerMaxRetries, DEFAULT_AGENT_RUNTIME_SETTINGS.providerMaxRetries),
@@ -479,6 +483,12 @@ function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null
 
 function booleanOrDefault(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
+}
+
+function normalizeDreamSchedule(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return trimmed && parseDateSchedule(trimmed) ? trimmed : fallback;
 }
 
 function normalizeStringList(value: unknown): string[] {

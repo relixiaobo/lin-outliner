@@ -34,11 +34,11 @@ future-useful updates.
   - `#d-guidance` for a future handling note that should improve later help.
 - `#d-belief`, `#d-question`, and `#d-guidance` are optional children. Do not
   force every episode to contain all three; add each only when it is useful.
-- There is at most one `#d-memory` container under today's journal node, and you
-  create it only on a run that actually has memory worth writing. Reuse it for
-  every scheduled or manual Dream run that writes to today; never create multiple
-  same-day memory containers, and never leave the container with nothing
-  meaningful inside it.
+- There is at most one `#d-memory` container under each source-date journal node,
+  and you create it only on a run that actually has memory worth writing for that
+  date. Reuse it for every scheduled or manual Dream run that writes to the same
+  source date; never create multiple same-day memory containers, and never leave
+  the container with nothing meaningful inside it.
 - The `#d-memory` title is a concise daily memory headline generated from the
   day's consolidated topics, not the fixed word `Memory`.
 - Memory is fallible. Write beliefs as concise statements Neva currently holds,
@@ -98,10 +98,10 @@ thing that happened is that Neva handled a transient request, remember nothing.
 After reading any raw chat spans, extract the useful search terms: project names,
 node titles, file names, tools, durable decisions, explicit preferences, and
 recurring workflow phrases. On `consolidate_only: true` runs with no raw chat
-sources, start from today's journal node plus existing `#d-*` memory nodes and
-use their titles/tags as search terms. Use those terms with `node_search`, then
-`node_read` only the best matching nodes. Keep this bounded; do not scan the
-whole outline.
+sources, start from the run brief's source-date journal nodes plus existing
+`#d-*` memory nodes and use their titles/tags as search terms. Use those terms
+with `node_search`, then `node_read` only the best matching nodes. Keep this
+bounded; do not scan the whole outline.
 
 Gather two kinds of outline context:
 
@@ -161,19 +161,20 @@ label that reads like a detached footnote.
 
 ## Node Shape
 
-Read today's journal node first. Only on a run that has durable memory worth
-writing, create or reuse exactly one direct child `#d-memory` container under it
-(when nothing is worth writing, create no container and end):
+Read each source-date journal node before writing for that date. Only on a run
+that has durable memory worth writing for a source date, create or reuse exactly
+one direct child `#d-memory` container under that date's journal node (when
+nothing is worth writing for a date, create no container for that date):
 
 ```text
 - <daily memory headline> #d-memory
 ```
 
 Good daily memory headlines are short topical summaries such as `Chengdu weather
-preference` or `Apple 5 data cleanup and PPT feedback`. If today's `#d-memory`
-container already exists, including from an earlier manual Dream, update that
-node's title in place when the new Dream changes the best headline; do not add
-another `#d-memory` sibling.
+preference` or `Apple 5 data cleanup and PPT feedback`. If that source date's
+`#d-memory` container already exists, including from an earlier manual Dream,
+update that node's title in place when the new Dream changes the best headline;
+do not add another `#d-memory` sibling.
 
 For each topical segment worth remembering, create an episode under the memory
 container. Add child nodes only when the content calls for them:
@@ -221,17 +222,19 @@ disambiguation.
 2. For each listed source, call `past_chats` with `source` and read the raw span.
    If there are no sources and `consolidate_only` is true, skip `past_chats`.
 3. Extract candidate topics, entities, and project/workflow terms from the raw
-   spans, or from today's/prior `#d-*` memory nodes for consolidate-only runs.
-4. Use `node_read` on today's journal node, then `node_search` / `node_read` for
-   relevant prior `#d-*` memory nodes and related user-authored outline context.
+   spans, or from source-date/prior `#d-*` memory nodes for consolidate-only
+   runs.
+4. Use `node_read` on the source-date journal nodes, then `node_search` /
+   `node_read` for relevant prior `#d-*` memory nodes and related user-authored
+   outline context.
 5. Apply the Dream Cycle, Valuable Memory Filter, Citation Discipline, and
    Synthesis Rules, then segment the remaining evidence into a small number of
    topical episodes. Skip thin, repetitive, operational, or low-confidence
    material. If nothing survives the filter, write nothing this run and stop — do
    not create a container or a placeholder episode.
-6. Use `node_create` only when today's `#d-memory` container or a needed episode
-   or child memory node is missing.
-7. Use `node_edit` to update today's memory headline and matching beliefs,
+6. Use `node_create` only when a source-date `#d-memory` container or a needed
+   episode or child memory node is missing.
+7. Use `node_edit` to update source-date memory headlines and matching beliefs,
    episodes, questions, guidance, or related outline nodes in place. Use
    `node_delete` when a node should be forgotten or removed during consolidation.
 8. Keep the final assistant result short: report counts of episodes created,

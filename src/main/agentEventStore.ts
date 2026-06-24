@@ -3336,7 +3336,21 @@ function normalizeMemorySourceRange(value: unknown): AgentMemoryStreamSource['ra
     throughEventId: typeof value.throughEventId === 'string' || value.throughEventId === null
       ? value.throughEventId
       : null,
+    ...normalizeCreatedAtClamp(value),
   };
+}
+
+function normalizeCreatedAtClamp(value: Record<string, unknown>): Pick<AgentMemoryStreamSource['range'], 'fromCreatedAtInclusive' | 'throughCreatedAtExclusive'> {
+  const fromCreatedAtInclusive = numberOrNull(value.fromCreatedAtInclusive);
+  const throughCreatedAtExclusive = numberOrNull(value.throughCreatedAtExclusive);
+  return fromCreatedAtInclusive !== null
+    && throughCreatedAtExclusive !== null
+    && throughCreatedAtExclusive > fromCreatedAtInclusive
+    ? {
+      fromCreatedAtInclusive: Math.trunc(fromCreatedAtInclusive),
+      throughCreatedAtExclusive: Math.trunc(throughCreatedAtExclusive),
+    }
+    : {};
 }
 
 function normalizeMemoryFact(value: unknown): string | null {

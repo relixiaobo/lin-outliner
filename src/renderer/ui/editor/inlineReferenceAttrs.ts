@@ -16,6 +16,8 @@ export function inlineRefTargetAttrs(target: ReferenceTarget): Record<string, un
       chatFromSeqExclusive: target.range.fromSeqExclusive,
       chatThroughSeq: target.range.throughSeq,
       chatThroughEventId: target.range.throughEventId ?? '',
+      chatFromCreatedAtInclusive: target.range.fromCreatedAtInclusive ?? '',
+      chatThroughCreatedAtExclusive: target.range.throughCreatedAtExclusive ?? '',
     };
   }
   return {
@@ -42,7 +44,18 @@ export function targetFromInlineReferenceAttrs(attrs: Record<string, unknown>): 
     const fromSeqExclusive = Number(attrs.chatFromSeqExclusive);
     const throughSeq = Number(attrs.chatThroughSeq);
     const throughEventId = String(attrs.chatThroughEventId ?? '');
-    if (!stream || !streamId || !Number.isSafeInteger(fromSeqExclusive) || !Number.isSafeInteger(throughSeq) || throughSeq <= fromSeqExclusive) return null;
+    const fromCreatedAtInclusive = optionalSafeInteger(attrs.chatFromCreatedAtInclusive);
+    const throughCreatedAtExclusive = optionalSafeInteger(attrs.chatThroughCreatedAtExclusive);
+    const createdAtClamp = createdAtClampFromAttrs(fromCreatedAtInclusive, throughCreatedAtExclusive);
+    if (
+      !stream
+      || !streamId
+      || !Number.isSafeInteger(fromSeqExclusive)
+      || fromSeqExclusive < 0
+      || !Number.isSafeInteger(throughSeq)
+      || throughSeq <= fromSeqExclusive
+      || ((fromCreatedAtInclusive !== null || throughCreatedAtExclusive !== null) && !createdAtClamp)
+    ) return null;
     return {
       kind: 'chat-source',
       stream,
@@ -51,10 +64,28 @@ export function targetFromInlineReferenceAttrs(attrs: Record<string, unknown>): 
         fromSeqExclusive,
         throughSeq,
         ...(throughEventId ? { throughEventId } : {}),
+        ...(createdAtClamp ?? {}),
       },
     };
   }
   return null;
+}
+
+function createdAtClampFromAttrs(
+  fromCreatedAtInclusive: number | null,
+  throughCreatedAtExclusive: number | null,
+): { fromCreatedAtInclusive: number; throughCreatedAtExclusive: number } | null {
+  if (fromCreatedAtInclusive === null && throughCreatedAtExclusive === null) return null;
+  if (fromCreatedAtInclusive === null || throughCreatedAtExclusive === null) return null;
+  return throughCreatedAtExclusive > fromCreatedAtInclusive
+    ? { fromCreatedAtInclusive, throughCreatedAtExclusive }
+    : null;
+}
+
+function optionalSafeInteger(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : null;
 }
 
 function numberFromDatasetValue(value: string | undefined): number {
@@ -72,6 +103,8 @@ export function targetFromInlineReferenceElement(element: HTMLElement): Referenc
     chatFromSeqExclusive: numberFromDatasetValue(element.dataset.inlineRefChatFromSeqExclusive),
     chatThroughSeq: numberFromDatasetValue(element.dataset.inlineRefChatThroughSeq),
     chatThroughEventId: element.dataset.inlineRefChatThroughEventId ?? '',
+    chatFromCreatedAtInclusive: numberFromDatasetValue(element.dataset.inlineRefChatFromCreatedAtInclusive),
+    chatThroughCreatedAtExclusive: numberFromDatasetValue(element.dataset.inlineRefChatThroughCreatedAtExclusive),
   });
 }
 

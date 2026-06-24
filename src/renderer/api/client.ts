@@ -324,7 +324,7 @@ export const api = {
     command<AgentRenderDreamTaskEntity[]>('agent_list_dream_history', options),
   agentDreamReadiness: () =>
     command<AgentDreamReadiness>('agent_dream_readiness', {}),
-  agentRunDreamNow: (options: { limit?: number } = {}) =>
+  agentRunDreamNow: (options: { limit?: number; startDate?: string; endDate?: string; guidance?: string } = {}) =>
     command<AgentRenderDreamTaskEntity[]>('agent_run_dream_now', options),
   agentUpdateMemory: (memoryId: string, fact: string) =>
     command<AgentMemoryEntryView | null>('agent_update_memory', { memoryId, fact }),

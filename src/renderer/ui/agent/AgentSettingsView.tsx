@@ -73,6 +73,7 @@ interface DraftConfig {
   automaticSkillsEnabled: boolean;
   slashSkillsEnabled: boolean;
   compactEnabled: boolean;
+  dreamSchedule: string;
   additionalSkillDirectoriesText: string;
   disabledSkills: string[];
   disabledAgents: string[];
@@ -156,6 +157,7 @@ const EMPTY_DRAFT: DraftConfig = {
   automaticSkillsEnabled: true,
   slashSkillsEnabled: true,
   compactEnabled: true,
+  dreamSchedule: '',
   additionalSkillDirectoriesText: '',
   disabledSkills: [],
   disabledAgents: [],
@@ -637,6 +639,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
         automaticSkillsEnabled: draft.automaticSkillsEnabled,
         slashSkillsEnabled: draft.slashSkillsEnabled,
         compactEnabled: draft.compactEnabled,
+        dreamSchedule: draft.dreamSchedule,
         additionalSkillDirectories: parseDirectoryListInput(draft.additionalSkillDirectoriesText),
         disabledSkills: draft.disabledSkills,
         disabledAgents: draft.disabledAgents,
@@ -1230,6 +1233,18 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                 )}
                 <InsetGroup ariaLabel={t.settings.memory.dreamControlsAriaLabel} label={t.settings.memory.dreamControlsGroup}>
                   <InsetRow
+                    label={t.settings.memory.dreamScheduleLabel}
+                    sublabel={t.settings.memory.dreamScheduleSublabel}
+                    trailing={(
+                      <input
+                        className="settings-sheet-row-input"
+                        value={draft.dreamSchedule}
+                        onChange={(event) => setDraft((current) => ({ ...current, dreamSchedule: event.currentTarget.value }))}
+                      />
+                    )}
+                    wrap
+                  />
+                  <InsetRow
                     label={t.settings.memory.dreamRunNowLabel}
                     sublabel={t.settings.memory.dreamRunNowSublabel}
                     trailing={(
@@ -1602,12 +1617,13 @@ function providerToDraft(provider: AgentProviderConfigView, settings: AgentProvi
 
 function runtimeSettingsToDraft(settings: AgentProviderSettingsView): Pick<
   DraftConfig,
-  'automaticSkillsEnabled' | 'slashSkillsEnabled' | 'compactEnabled' | 'additionalSkillDirectoriesText'
+  'automaticSkillsEnabled' | 'slashSkillsEnabled' | 'compactEnabled' | 'dreamSchedule' | 'additionalSkillDirectoriesText'
 > {
   return {
     automaticSkillsEnabled: settings.agent.automaticSkillsEnabled,
     slashSkillsEnabled: settings.agent.slashSkillsEnabled,
     compactEnabled: settings.agent.compactEnabled,
+    dreamSchedule: settings.agent.dreamSchedule ?? '',
     additionalSkillDirectoriesText: settings.agent.additionalSkillDirectories.join(', '),
   };
 }
@@ -1617,6 +1633,7 @@ function hasRuntimeDraftChanged(draft: DraftConfig, settings: AgentProviderSetti
   return draft.automaticSkillsEnabled !== runtime.automaticSkillsEnabled
     || draft.slashSkillsEnabled !== runtime.slashSkillsEnabled
     || draft.compactEnabled !== runtime.compactEnabled
+    || draft.dreamSchedule !== runtime.dreamSchedule
     || draft.additionalSkillDirectoriesText !== runtime.additionalSkillDirectoriesText
     || !sameStringSet(draft.disabledSkills, settings.agent.disabledSkills ?? [])
     || !sameStringSet(draft.disabledAgents, settings.agent.disabledAgents ?? []);

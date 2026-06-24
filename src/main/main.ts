@@ -2479,7 +2479,11 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     case 'agent_dream_readiness':
       return agentRuntime.previewDreamReadiness();
     case 'agent_run_dream_now':
-      await agentRuntime.runDreamNow();
+      await agentRuntime.runDreamNow({
+        startDate: typeof args.startDate === 'string' ? args.startDate : undefined,
+        endDate: typeof args.endDate === 'string' ? args.endDate : undefined,
+        guidance: typeof args.guidance === 'string' ? args.guidance : undefined,
+      });
       return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
     case 'agent_update_memory':
       return agentRuntime.updateMemory(String(args.memoryId), String(args.fact ?? ''));
