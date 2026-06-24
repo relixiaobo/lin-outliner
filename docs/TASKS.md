@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**; authored ratified plan agent-process-stable-disclosure #297) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -41,7 +41,9 @@ regression-tested). Also today: **#324** (`dream-channel-and-memory-retire` **PR
 channel + Dream as a top-level reflective run, codex-2; `/code-review high` gate, 2 fix rounds incl. a
 caught-and-fixed retention-prune bricking bug). **2026-06-24:** that plan **completed in full** — **#328**
 (PR2, date-window scheduling + derived cursor, `/code-review xhigh`, 8 findings fixed) and **#329** (PR3,
-retire the legacy believer-pool memory projection) merged; plan archived `done` (see *Recently completed*). The
+retire the legacy believer-pool memory projection) merged; plan archived `done` (see *Recently completed*). Also
+**2026-06-24:** **#327** (`file-ingestion-derived-cache`, codex-3 — in-process LRU cache for runtime
+extractions; `/code-review xhigh`, 7 findings fixed) landed as a fast-track follow-up to #326. The
 **agent-goal** plan landed as a `draft` board item (plan PR **#323**, see Agent
 capabilities). **No PR open.** The agent subsystem portfolio is otherwise mature (single-agent collapse + one-Neva
 invariant, the IM-native memory/channel spine, the 2026-06-22 Codex-transcript wave); the active build
@@ -476,6 +478,18 @@ anything.
 
 ## Recently completed
 
+- **file-ingestion-derived-cache** (`codex-3/file-ingestion-derived-cache`, PR #327, codex-3, merged
+  2026-06-24) — a fast-track follow-up to #326: memoizes successful runtime extractions (MarkItDown
+  rich-doc → Markdown, PDF `pdfinfo`/`pdftotext` metadata+text) in a small in-process **LRU cache**
+  (`agentFileIngestionCache.ts`) keyed by **source SHA-256 + extractor identity + relevant options + local
+  tool environment**, so re-reading unchanged content skips the subprocess. Errors and per-read PDF
+  page-render dirs are not cached; text-file freshness + `file_edit` guards unchanged. **Gate (main):**
+  `/code-review xhigh` (7 findings) → codex-3 fix `c9119af6`: source hash now **streams** the file
+  (`fileHashing.ts` `sha256File`, no 50 MB read-to-hash buffer), the bounded-LRU eviction is one shared
+  helper (`boundedMap.ts` `setBoundedMapEntry`, also adopted by `main.ts`'s local-file cache), cached
+  values are `structuredClone`d on get/set (no caller mutation), plus a dedicated cache unit test and a
+  `beforeEach` cache reset. Verified: typecheck clean, `agentFileIngestionCache` + `agentLocalTools` 68/0.
+  Spec synced: `agent-tool-design`. Fast-track, **shape (a)** one PR, *no plan file*.
 - **dream-channel-and-memory-retire** (codex-2, PR1 #324 + PR2 #328 + PR3 #329, merged 2026-06-23/24) —
   makes Memory Dream **transparent** and retires the legacy believer-pool. **PR1 (#324)**: Dream runs as a
   top-level unattended reflective turn in a persistent, protected **Dream channel** (immutable, undeletable,

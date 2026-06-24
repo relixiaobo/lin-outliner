@@ -32,6 +32,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   magic-byte check, bounded pdftotext capture, cached MarkItDown probes, accurate truncation char counts,
   env-command-with-args). `test:core` 1061/0, typecheck clean. Spec synced: `agent-tool-design`,
   `agent-progress`.
+- **`file_read` derived-ingestion results are now cached in-process (PR #327, codex-3)** — a direct
+  follow-up to PR #326. Successful expensive runtime extractions (MarkItDown rich-document → Markdown and
+  PDF `pdfinfo`/`pdftotext` metadata+text) are memoized in a small bounded **LRU cache**
+  (`src/main/agentFileIngestionCache.ts`), so re-reading unchanged content skips the subprocess. Entries
+  key on **source SHA-256 + extractor identity + relevant options + local tool environment** (PATH /
+  extra-tool path), so a changed file, a different extractor, or a different toolchain all miss correctly.
+  Errors are **not** cached, and per-read PDF page-render output directories remain per-read scratch (not
+  cached). Ordinary text-file freshness and `file_edit` guards are unchanged. The source hash is computed
+  by **streaming** the file (`src/main/fileHashing.ts` `sha256File`), so hashing a near-limit document no
+  longer buffers it whole in memory; the bounded-LRU eviction is now a single shared helper
+  (`src/main/boundedMap.ts`), and cached values are `structuredClone`d on get/set so a caller can never
+  mutate a cached entry. **Gate (main):** `/code-review xhigh` (7 findings) → codex-3 fix `c9119af6`:
+  streaming hash (no 50 MB read-to-hash buffer), shared `setBoundedMapEntry`, `structuredClone` isolation,
+  a dedicated cache unit test, and a `beforeEach` cache reset to remove cross-test pollution. Verified:
+  typecheck clean, `agentFileIngestionCache` + `agentLocalTools` 68/0 (2 skip). Spec synced:
+  `agent-tool-design`.
 
 ### Removed
 
