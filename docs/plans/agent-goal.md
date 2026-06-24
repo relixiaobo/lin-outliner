@@ -36,9 +36,12 @@ completion audit passes, instead of ending when the model stops.
   aliases over it (see *Tool surface*).
 - **No standing/persistent team object.** A team is the set of a persistent run's
   child runs, grouped and dissolved by it — never a durable roster like a Channel.
-- **No large built-in role library in this plan.** The multi-role *mechanism*
-  already exists (`fresh` child runs keyed by `agent_type`). A minimal seed set of
-  roles is the only authored content here; a rich library is follow-up.
+- **No large built-in role library in this plan.** Within the **one-Neva
+  invariant** (post-#300: the `Agent` tool is fork-only — a fork is Neva in an
+  isolated context, never a second agent), a "role" is a **Neva fork with a
+  narrowed tool/permission profile** (`restrictAgentDefinitionTools` +
+  `allowedTools`), not a separate agent. A minimal seed set of fork profiles is
+  the only authored content here; a rich library is follow-up.
 - **No global retirement of the `background` run kind in one shot.** The framing
   (`background` ≡ "a detached run pursuing an objective") is recorded as the
   target model; the derivation cleanup lands incrementally and is not a precondition.
@@ -58,7 +61,7 @@ Each is independently shippable and verifiable:
   run self-continues to a verified completion within an optional budget. Useful
   alone; it is the most common case (mid-conversation hand-off).
 - **Feature B — Goal-as-team (referee + executors).** When a goal is large, the
-  pursuing run spawns role-diverse `fresh` child runs and acts as referee. Builds
+  pursuing run spawns role-diverse narrowed Neva forks and acts as referee. Builds
   on A + existing delegation.
 
 (Feature A is the foundation per A7, but is itself a complete feature, not a
@@ -117,19 +120,21 @@ and the whole point of "keep going until done" is that the loop lives **outside 
 single turn**. So a goal cannot *be* a skill. The loop is the `persistent`
 continuation of a run; the skill's job is only *when* and *how* to launch one.
 
-### Roles via existing spawned child runs
+### Roles within the one-Neva invariant
 
-Child runs already distinguish roles (`src/main/agentDelegation.ts`):
+Post-#300 the `Agent` tool is **fork-only** (`src/main/agentDelegation.ts:593`,
+`contextMode = 'fork'`): a fork is **Neva in an isolated context**, inheriting the
+parent's executing and memory-owner identity (`:605-608`) — never a second agent,
+no `agent_type`, no own memory line. The only narrowing knob is
+`restrictAgentDefinitionTools(createForkAgentDefinition(), params.allowedTools)`
+(`:594`).
 
-- `fork` (no `agent_type`) — the same agent continues with the conversation
-  context; inherits the parent's identity and memory owner.
-- `fresh` (`agent_type` set) — a specialized agent definition with its own
-  identity, model, skills, and memory line.
-
-The executor team is exactly **a persistent run's `fresh` child runs of varied
-`agent_type`**. The mechanism exists; only a seed role set is authored here. A
-role is *just a Principal with a narrower tool/permission profile* — not a new
-axis.
+So a **role is a Neva fork with a narrowed tool/permission profile** (an
+`allowedTools` preset) — the *same* Principal in an isolated context, not a new
+Principal and not a new axis. The executor team is exactly **a persistent run's
+narrowed Neva forks**. The mechanism exists; only a seed set of fork profiles is
+authored here. (Reintroducing specialized executor agents would reverse the
+one-Neva invariant — explicitly out of scope for this plan.)
 
 ## Tool surface
 
@@ -144,23 +149,25 @@ visibleTools(run) = catalog.filter(t => t.precondition(run.principal, run.attend
 
 No role enum, no driver switch, no "capability layer". Adding a schedule trigger
 or a new executor role changes only which facts a run has — never the filter.
-`buildTools` (`src/main/agentRuntime.ts`, the single tool-assembly point today)
-moves from "return a fixed list" to "filter the catalog".
+`createAgentTools` (`src/main/agentRuntime.ts`, called by `buildTools` — the
+actual tool-assembly point) moves from "return a fixed list" to "filter the
+catalog".
 
 ### Catalog (six categories)
 
 | Cat | Tools | Precondition | vs today |
 |---|---|---|---|
-| **A — sense** | `file_read`, `web_search`, `web_fetch`, `recall` | Principal has read/web family | unchanged |
+| **A — sense** | `file_read`, `web_search`, `web_fetch`, `past_chats` | Principal has read/web family | unchanged |
 | **B — mutate doc** | node create/move/edit … | Principal has write family **and** action ∈ permission scope | unchanged |
-| **C — spawn / manage runs** | `spawn(objective, {…})`, `runs_status(…)`, **run-control** (`cancel` · `steer` · `resume` · `set_budget`) | Principal has spawn family; the `detach`+`persistent`+*new-scope* path **also requires `attended`**; run-control requires *owning the target* (ancestor / same conversation) | `Agent`+`set_goal` **merge**; `AgentStatus`→`runs_status`; cancel/steer newly exposed as tools |
+| **C — spawn / manage runs** | `spawn(objective, {…})`, `runs_status(…)`, **run-control** (`cancel` · `steer` · `resume` · `set_budget`) | Principal has spawn family; the `detach`+`persistent`+*new-scope* path **also requires `attended`**; run-control requires *owning the target* (ancestor / same conversation) | `Agent`+`set_goal` **merge**; `AgentStatus`/`AgentSend`/`AgentStop` already model tools — only `set_budget` is new + goal semantics on `steer` |
 | **D — drive a persistent run** | `request_complete()` → triggers audit; `report_blocked(reason)` | `continuation == persistent` (this run is itself persistent) | folded from would-be `update_goal` |
 | **E — ask the user** | `ask_user_question` | **`attended`** (strictly the foreground conversation turn) | tool unchanged; gated by `attended` |
 | **F — load procedure** | `skill` | none | unchanged; it teaches *when* to spawn persistent/detached |
 
 The current set (file_read / web / node / skill / `ask_user_question` /
-`Agent`+`AgentStatus` / recall) is **fully preserved**. Net change: C merges &
-gains run-control tools; D is folded out of the persistent mode; A/B/E/F unchanged.
+`Agent`+`AgentStatus`+`AgentSend`+`AgentStop` / past_chats) is **fully
+preserved**. Net change: C merges spawn + adds `set_budget`; D is folded out of
+the persistent mode; A/B/E/F unchanged.
 
 ### The unified spawn (the heart)
 
@@ -169,7 +176,7 @@ spawn(objective, {
   persistent?: <completion condition>,  // omit = single-shot; set = self-continue until the audit on this passes
   detach?:     boolean,                 // false = await in-turn; true = walk away, notify on completion
   scope?:      <permission scope>,      // required when detach && persistent (authorize the unattended pursuit up front)
-  agent?:      <agent type>,            // omit = inherit the parent Principal; set = a specialized executor
+  allowedTools?: <narrowed tool set>,   // omit = full Neva fork; set = a role-narrowed fork (existing allowedTools)
 })
 ```
 
@@ -203,18 +210,20 @@ engine, not by a tool (see *loop*).
 
 ### Run-control on existing runs (the grounded delta)
 
-The core commands already exist: `agent_child_run_status`, `agent_child_run_send`
-(send/steer), `agent_child_run_stop` (cancel) (`src/core/commands.ts`). Today
-only *status* is a model tool (`AgentStatus`). The delta is to expose the rest as
-model tools with goal semantics, callable by the **owner** of the target run (its
-ancestor, or the conversation it surfaces in):
+Run-control is **mostly already shipped as model tools**: `AgentStatus`
+(`agent_child_run_status`), `AgentSend` (`agent_child_run_send`), and `AgentStop`
+(`agent_child_run_stop`) are registered in the catalog and the system prompt
+already guides their use (`src/main/agentDelegation.ts:51-52,687,1252,1266`). So
+the delta is **small**: one genuinely new tool (`set_budget`) plus *goal
+semantics* layered on the existing ones, and generalizing their callable range to
+the **owner** of the target run (its ancestor, or the conversation it surfaces in):
 
-| Tool | backed by | semantics |
+| Goal use | maps to | what is new |
 |---|---|---|
-| `cancel(run)` | `agent_child_run_stop` | terminal `stopped`; dissolves a team subtree |
-| `steer(run, amendment)` | `agent_child_run_send` | **append an objective-amendment event** to a running persistent run (event-sourced, not a hidden side-channel) |
-| `resume(run, …)` | `agent_child_run_send` | re-engage a `paused`/`blocked` run after the user resolves it |
-| `set_budget(run, …)` | *new* | adjust the goal-tree budget ceiling |
+| cancel a run | `AgentStop` | nothing — terminal `stopped`; dissolves a team subtree |
+| steer a run | `AgentSend` | **goal semantics**: a send to a persistent run is an *objective-amendment event* (event-sourced, not a hidden side-channel) |
+| resume a paused/blocked run | `AgentSend` | nothing — re-engage after the user resolves it |
+| adjust the goal-tree budget | — | **new** `set_budget` |
 
 This is also what lets the **attended conversation** introspect and steer a
 detached goal ("how's the monitor going?" / "also watch Y" / "stop watching X").
@@ -346,7 +355,7 @@ When the objective is large, the persistent run is the **referee**:
 
 ```
 persistent run (referee: holds objective + goal-tree budget + audit + continue/stop)
-  ├─ spawn fresh child runs (varied agent_type) = executor team (within scope)
+  ├─ spawn narrowed Neva forks (per-role allowedTools) = executor team (within scope)
   ├─ executors do work single-shot, do NOT self-audit, report back over the existing bus
   ├─ referee integrates results, runs the completion audit
   └─ audit passes → cancel/finish the team (existing stop-scope) → notify; team dissolves
@@ -360,17 +369,19 @@ persistent run (referee: holds objective + goal-tree budget + audit + continue/s
   `self-audit (small) → referee-audits-executors (default) → dedicated fresh judge
   (high-stakes)`. Do not force a team for small goals — Feature A's single agent
   is both executor and referee.
-- **Seed roles** (the only authored content): `referee` = Neva (existing);
-  `researcher`, `implementer`, `verifier` as `fresh` agent definitions.
+- **Seed roles** (the only authored content): the referee is the persistent run
+  itself (full Neva); `researcher`, `implementer`, `verifier` are **named
+  `allowedTools` presets for Neva forks** (e.g. researcher = read/web only),
+  not separate agent definitions.
 
 ### Reuse map
 
 | Need | Existing piece | New? |
 |---|---|---|
-| Spawn a pursuit / executors | delegation `fork`/`fresh` child runs (`Agent`) | reuse (generalized to `spawn`) |
-| Multi-role executors | `agent_type` → agent definition, own memory line | reuse |
-| Observe spawned runs | `agent_child_run_status` / `AgentStatus` | reuse (→ `runs_status`) |
-| Cancel / steer / resume a run | `agent_child_run_stop` / `agent_child_run_send` | reuse (expose as model tools) |
+| Spawn a pursuit / executors | delegation `fork` child runs (`Agent`, fork-only) | reuse (generalized to `spawn`) |
+| Role-shaped executors | Neva forks narrowed via `restrictAgentDefinitionTools` + `allowedTools` | reuse (one-Neva) |
+| Observe spawned runs | `AgentStatus` (`agent_child_run_status`) | reuse (→ `runs_status`) |
+| Cancel / steer / resume a run | `AgentStop` / `AgentSend` (already model tools) | reuse (+ goal semantics on `steer`) |
 | Completion → notify originating thread | "background run completed → notify idle parent" | reuse |
 | Budget accounting | fold over the goal-tree usage events | reuse (new fold) |
 | Milestone/steer/peek delivery | Channel whole-utterance + result-first + drill-in | reuse |
@@ -455,9 +466,10 @@ Directional calls for PM ratification (recommendation given):
 
 - **Protocol surface (A4/A10).** Touches `src/core/commands.ts` /
   `src/core/types.ts` (the `spawn` persistent/detach/scope params, run terminal
-  status + objective/budget fields, `set_budget`, exposing cancel/steer/resume as
-  tools). Land the interface as a coordinated, **interface-first** step before
-  building the loop.
+  status + objective/budget fields, `set_budget`, and `AgentSend`'s
+  objective-amendment semantics — `AgentStop`/`AgentSend`/`AgentStatus` already
+  exist as tools). Land the interface as a coordinated, **interface-first** step
+  before building the loop.
 - **Autonomy safety.** A self-continuing, budget-spending run is the highest-blast
   capability in the agent surface. The commit-as-scope-authorization gate, the
   four-exit stops, and `ask`-strict are load-bearing; the completion audit must be
@@ -483,16 +495,17 @@ Result: **no overlap.**
 
 ### Feature A — DM goal (single agent)
 
-- [ ] Interface-first: generalize `Agent`→`spawn` (`persistent`/`detach`/`scope`
-      params), run terminal status (`complete`/`blocked`/`budget-exhausted`/
-      `stopped`) + objective/budget fields, `set_budget`, and expose
-      cancel/steer/resume as model tools (`commands.ts`/`types.ts`), coordinated.
+- [ ] Interface-first: generalize `Agent`→`spawn` (`persistent`/`detach`/`scope`/
+      `allowedTools` params), run terminal status (`complete`/`blocked`/
+      `budget-exhausted`/`stopped`) + objective/budget fields, `set_budget`, and
+      `AgentSend`'s objective-amendment semantics (`commands.ts`/`types.ts`),
+      coordinated. (`AgentStop`/`AgentSend`/`AgentStatus` already exist.)
 - [ ] `persistent` continuation in the runtime: the four-exit loop, goal-tree
       budget fold, per-round compaction.
 - [ ] Port `continuation.md` as the audit/continuation instruction content.
 - [ ] Warm start from the originating conversation; evidence-first later rounds.
-- [ ] `buildTools` → precondition filter over (Principal, attended, lineage,
-      continuation); `ask_user_question` gated to `attended`.
+- [ ] `createAgentTools` (via `buildTools`) → precondition filter over (Principal,
+      attended, lineage, continuation); `ask_user_question` gated to `attended`.
 - [ ] `/goal` command + one-tap "make this a goal"; spawn-with-commit = scope
       authorization in the attended turn; D-tools `request_complete`/`report_blocked`.
 - [ ] Launching skill (when/how) authored.
@@ -503,13 +516,15 @@ Result: **no overlap.**
 
 ### Feature B — Goal-as-team (referee + executors)
 
-- [ ] Persistent run as referee: spawn `fresh` executor child runs; integrate; audit.
+- [ ] Persistent run as referee: spawn narrowed Neva forks as executors;
+      integrate; audit.
 - [ ] Derived team: tag executor children with the root run id; team view =
       grouping; dissolution via existing stop-scope on completion.
 - [ ] Scope inheritance down the subtree; goal-tree budget shared.
 - [ ] Referee-independence spectrum (self → referee → dedicated judge), scaled to
       stakes; default referee-audits-executors.
-- [ ] Seed roles authored: `researcher`, `implementer`, `verifier` (referee = Neva).
+- [ ] Seed fork profiles (`allowedTools` presets) authored: `researcher` /
+      `implementer` / `verifier`; referee = the persistent run (full Neva).
 - [ ] Verify: a large goal fans out a role-diverse team, integrates, audits, and
       dissolves the team on completion.
 
