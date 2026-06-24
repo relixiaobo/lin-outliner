@@ -857,7 +857,6 @@ commandPalette: {
       dreamLauncherBusy: 'Dreaming…',
       dreamAutoSchedule: ({ summary }: { summary: string }) => `Auto ${summary}`,
       dreamNextRun: ({ time }: { time: string }) => `Next ${time}`,
-      dreamScheduleSettingsLabel: 'Open Dream schedule settings',
       dreamScheduleTitle: 'Scheduled Dream',
       dreamSchedulePlaceholder: 'Choose Dream schedule…',
       dreamScheduleSave: 'Save',

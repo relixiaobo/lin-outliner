@@ -9,7 +9,6 @@ interface RenderedDateField {
   commits: string[];
   container: HTMLElement;
   document: Document;
-  openChanges: boolean[];
   window: Window;
 }
 
@@ -116,6 +115,10 @@ describe('DateValuePicker', () => {
 
     expect(untilInput(rendered).value).toBe('2026/05/20');
     expect(lastCommit(rendered)).toBe('2026-05-20 RRULE:FREQ=DAILY;UNTIL=2026-05-20');
+    expect(button(rendered, 'Select 2026-05-19').disabled).toBe(true);
+
+    await changeInput(rendered, untilInput(rendered), '2026/05/19');
+    expect(lastCommit(rendered)).toBe('2026-05-20 RRULE:FREQ=DAILY;UNTIL=2026-05-20');
 
     await click(rendered, button(rendered, 'Select 2026-05-21'));
     expect(lastCommit(rendered)).toBe('2026-05-20 RRULE:FREQ=DAILY;UNTIL=2026-05-21');
@@ -140,7 +143,6 @@ describe('DateValuePicker', () => {
       allowTime: false,
       allowRecurrence: false,
       maxDate: '2026-05-20',
-      closeOnCommit: true,
     });
 
     expect(rendered.document.querySelectorAll('.typed-field-date-summary-row')).toHaveLength(1);
@@ -151,7 +153,6 @@ describe('DateValuePicker', () => {
     await click(rendered, button(rendered, 'Select 2026-05-19'));
 
     expect(lastCommit(rendered)).toBe('2026-05-19');
-    expect(rendered.openChanges).toEqual([false]);
   });
 });
 
@@ -162,7 +163,6 @@ function renderDatePicker(value: string, props: Partial<ComponentProps<typeof Da
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
   const commits: string[] = [];
-  const openChanges: boolean[] = [];
   const root = createRoot(container);
   act(() => {
     root.render(
@@ -170,7 +170,7 @@ function renderDatePicker(value: string, props: Partial<ComponentProps<typeof Da
         anchorRef={{ current: container }}
         value={value}
         open
-        onOpenChange={(open) => openChanges.push(open)}
+        onOpenChange={() => {}}
         onCommit={(nextValue) => commits.push(nextValue)}
         {...props}
       />,
@@ -184,7 +184,6 @@ function renderDatePicker(value: string, props: Partial<ComponentProps<typeof Da
     commits,
     container,
     document,
-    openChanges,
     window,
   } satisfies RenderedDateField & { root?: Root };
   mounted.push(rendered);

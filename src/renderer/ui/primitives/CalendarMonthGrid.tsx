@@ -89,8 +89,10 @@ export function CalendarMonthGrid({
     grid.querySelector<HTMLElement>(`[data-iso="${rovingIso}"]`)?.focus();
   }, [rovingIso]);
 
-  function moveRovingTo(targetIso: string) {
-    if (isDateDisabled?.(targetIso)) return;
+  function moveRovingTo(targetIso: string, disabledFallbackStep: -1 | 0 | 1 = 0) {
+    const resolvedIso = enabledIsoOrFallback(targetIso, disabledFallbackStep);
+    if (!resolvedIso) return;
+    targetIso = resolvedIso;
     setFocusIso(targetIso);
     pendingFocus.current = true;
     if (!calendarDays.some((day) => day.isoDate === targetIso)) {
@@ -106,6 +108,18 @@ export function CalendarMonthGrid({
     }
   }
 
+  function enabledIsoOrFallback(targetIso: string, fallbackStep: -1 | 0 | 1): string | null {
+    if (!isDateDisabled?.(targetIso)) return targetIso;
+    if (fallbackStep === 0) return null;
+    const target = parseIsoLocalDate(targetIso);
+    if (!target) return null;
+    for (let offset = fallbackStep; Math.abs(offset) <= calendarDays.length; offset += fallbackStep) {
+      const candidate = isoLocalDate(addLocalDays(target, offset));
+      if (!isDateDisabled?.(candidate)) return candidate;
+    }
+    return null;
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const focusedIso = (event.target as HTMLElement | null)?.closest('[data-iso]')?.getAttribute('data-iso')
       ?? rovingIso;
@@ -115,40 +129,40 @@ export function CalendarMonthGrid({
     switch (event.key) {
       case 'ArrowRight':
         event.preventDefault();
-        moveRovingTo(isoLocalDate(addLocalDays(current, 1)));
+        moveRovingTo(isoLocalDate(addLocalDays(current, 1)), -1);
         return;
       case 'ArrowLeft':
         event.preventDefault();
-        moveRovingTo(isoLocalDate(addLocalDays(current, -1)));
+        moveRovingTo(isoLocalDate(addLocalDays(current, -1)), 1);
         return;
       case 'ArrowDown':
         event.preventDefault();
-        moveRovingTo(isoLocalDate(addLocalDays(current, DAYS_PER_WEEK)));
+        moveRovingTo(isoLocalDate(addLocalDays(current, DAYS_PER_WEEK)), -1);
         return;
       case 'ArrowUp':
         event.preventDefault();
-        moveRovingTo(isoLocalDate(addLocalDays(current, -DAYS_PER_WEEK)));
+        moveRovingTo(isoLocalDate(addLocalDays(current, -DAYS_PER_WEEK)), 1);
         return;
       case 'Home': {
         // Start of the week (Monday-based, matching the grid layout).
         event.preventDefault();
         const weekday = (current.getDay() + 6) % 7;
-        moveRovingTo(isoLocalDate(addLocalDays(current, -weekday)));
+        moveRovingTo(isoLocalDate(addLocalDays(current, -weekday)), 1);
         return;
       }
       case 'End': {
         event.preventDefault();
         const weekday = (current.getDay() + 6) % 7;
-        moveRovingTo(isoLocalDate(addLocalDays(current, DAYS_PER_WEEK - 1 - weekday)));
+        moveRovingTo(isoLocalDate(addLocalDays(current, DAYS_PER_WEEK - 1 - weekday)), -1);
         return;
       }
       case 'PageUp':
         event.preventDefault();
-        moveRovingTo(shiftIsoByMonths(current, -1));
+        moveRovingTo(shiftIsoByMonths(current, -1), 1);
         return;
       case 'PageDown':
         event.preventDefault();
-        moveRovingTo(shiftIsoByMonths(current, 1));
+        moveRovingTo(shiftIsoByMonths(current, 1), -1);
         return;
       default:
         return;

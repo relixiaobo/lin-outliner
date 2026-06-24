@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { nextDateScheduleDue } from '../../../core/dateSchedule';
 import { api } from '../../api/client';
-import { dateFieldEndpointDate, formatDateFieldInput, parseDateFieldValue } from '../../api/types';
+import { dateFieldEndpointDate, formatDateFieldInput, isoLocalDate, parseDateFieldValue } from '../../api/types';
 import { useI18n } from '../../i18n/I18nProvider';
 import { CalendarIcon, LoaderIcon } from '../icons';
 import { DateValuePicker } from '../outliner/DateValuePicker';
 import { scheduleChipSummary } from '../outliner/dateRecurrence';
 import { Button } from '../primitives/Button';
+import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
 
 interface DreamLauncherProps {
   dreamSchedule?: string;
@@ -14,33 +15,28 @@ interface DreamLauncherProps {
   onSettingsChanged?: () => void;
 }
 
-interface DreamReadinessWindow {
-  start: string;
-  end: string;
-}
-
 export function DreamLauncher({ dreamSchedule, isStreaming, onSettingsChanged }: DreamLauncherProps) {
   const { locale, t } = useI18n();
   const [scheduleDraft, setScheduleDraft] = useState(dreamSchedule ?? '');
-  const [manualStartDate, setManualStartDate] = useState(() => todayInputValue());
-  const [manualEndDate, setManualEndDate] = useState(() => todayInputValue());
+  const [manualStartDate, setManualStartDate] = useState(() => isoLocalDate(new Date()));
+  const [manualEndDate, setManualEndDate] = useState(() => isoLocalDate(new Date()));
   const [manualGuidance, setManualGuidance] = useState('');
   const [manualOpen, setManualOpen] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [runningManual, setRunningManual] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
-  const today = todayInputValue();
+  const today = isoLocalDate(new Date());
   const savedSchedule = dreamSchedule ?? '';
   const scheduleSummary = useMemo(() => scheduleDraft ? scheduleChipSummary(scheduleDraft, t.outliner.field.datePicker) : '', [
     scheduleDraft,
     t.outliner.field.datePicker,
   ]);
+  const nextRun = useMemo(() => (scheduleDraft ? nextDateScheduleDue(scheduleDraft, now) : null), [now, scheduleDraft]);
+  const nextRunTime = nextRun?.getTime() ?? null;
   const nextRunLabel = useMemo(() => {
-    if (!scheduleDraft) return '';
-    const next = nextDateScheduleDue(scheduleDraft, now);
-    return next ? t.agent.chat.dreamNextRun({ time: formatDreamNextRun(next, locale) }) : '';
-  }, [locale, now, scheduleDraft, t]);
+    return nextRun ? t.agent.chat.dreamNextRun({ time: formatDreamNextRun(nextRun, locale) }) : '';
+  }, [locale, nextRun, t]);
 
   useEffect(() => {
     setScheduleDraft(dreamSchedule ?? '');
@@ -51,7 +47,8 @@ export function DreamLauncher({ dreamSchedule, isStreaming, onSettingsChanged }:
     api.agentDreamReadiness()
       .then((readiness) => {
         if (cancelled || !readiness.window) return;
-        setManualWindow(readiness.window, setManualStartDate, setManualEndDate);
+        setManualStartDate(readiness.window.start);
+        setManualEndDate(readiness.window.end);
       })
       .catch(() => undefined);
     return () => {
@@ -60,9 +57,14 @@ export function DreamLauncher({ dreamSchedule, isStreaming, onSettingsChanged }:
   }, []);
 
   useEffect(() => {
+    if (scheduleDraft) setNow(new Date());
+  }, [scheduleDraft]);
+
+  useEffect(() => {
+    if (nextRunTime === null) return undefined;
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [nextRunTime]);
 
   async function saveSchedule() {
     if (!scheduleDraft || savingSchedule) return;
@@ -238,18 +240,14 @@ function ManualRunPopover({
   const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const ignoreDatePopover = useCallback((target: Node) => (
+    target instanceof Element && Boolean(target.closest('.typed-field-date-popover'))
+  ), []);
 
-  useEffect(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (panelRef.current?.contains(target)) return;
-      if (target instanceof Element && target.closest('.typed-field-date-popover')) return;
-      onCancel();
-    };
-    document.addEventListener('pointerdown', onPointerDown, true);
-    return () => document.removeEventListener('pointerdown', onPointerDown, true);
-  }, [onCancel]);
+  useDismissibleOverlay(panelRef, onCancel, {
+    escape: false,
+    ignoreTarget: ignoreDatePopover,
+  });
 
   useEffect(() => {
     textareaRef.current?.focus({ preventScroll: true });
@@ -312,9 +310,14 @@ interface DreamManualDateFieldProps {
 
 function DreamManualDateField({ endDate, maxDate, onChange, startDate }: DreamManualDateFieldProps) {
   const [open, setOpen] = useState(false);
+  const [rangeMode, setRangeMode] = useState(startDate !== endDate);
   const anchorRef = useRef<HTMLButtonElement>(null);
-  const value = formatDreamDatePickerValue(startDate, endDate);
+  const value = formatDreamDatePickerValue(startDate, endDate, rangeMode);
   const label = formatDreamDateValue(startDate, endDate);
+
+  useEffect(() => {
+    if (startDate && endDate && startDate !== endDate) setRangeMode(true);
+  }, [endDate, startDate]);
 
   return (
     <>
@@ -338,16 +341,19 @@ function DreamManualDateField({ endDate, maxDate, onChange, startDate }: DreamMa
         onOpenChange={setOpen}
         onCommit={(nextValue) => {
           if (!nextValue) {
+            setRangeMode(false);
             onChange('', '');
             return;
           }
           const parsed = parseDateFieldValue(nextValue);
           if (parsed?.kind === 'range') {
+            setRangeMode(true);
             onChange(dateFieldEndpointDate(parsed.start), dateFieldEndpointDate(parsed.end));
             return;
           }
           if (parsed?.kind === 'single') {
             const selectedDate = dateFieldEndpointDate(parsed.date);
+            setRangeMode(false);
             onChange(selectedDate, selectedDate);
           }
         }}
@@ -361,15 +367,6 @@ function DreamManualDateField({ endDate, maxDate, onChange, startDate }: DreamMa
   );
 }
 
-function setManualWindow(
-  window: DreamReadinessWindow,
-  setStartDate: (date: string) => void,
-  setEndDate: (date: string) => void,
-): void {
-  setStartDate(window.start);
-  setEndDate(window.end);
-}
-
 function formatDreamNextRun(value: Date, locale: string): string {
   return new Intl.DateTimeFormat(locale, {
     weekday: 'short',
@@ -380,8 +377,8 @@ function formatDreamNextRun(value: Date, locale: string): string {
   }).format(value);
 }
 
-function formatDreamDatePickerValue(startDate: string, endDate: string): string {
-  if (startDate && endDate && startDate === endDate) return formatDateFieldInput(startDate, '');
+function formatDreamDatePickerValue(startDate: string, endDate: string, includeRange: boolean): string {
+  if (startDate && endDate && startDate === endDate && !includeRange) return formatDateFieldInput(startDate, '');
   return formatDateFieldInput(startDate, endDate);
 }
 
@@ -389,12 +386,4 @@ function formatDreamDateValue(startDate: string, endDate: string): string {
   if (!startDate && !endDate) return '';
   if (!startDate || !endDate || startDate === endDate) return startDate || endDate;
   return `${startDate}/${endDate}`;
-}
-
-function todayInputValue(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
 }

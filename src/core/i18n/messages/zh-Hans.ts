@@ -790,7 +790,6 @@ commandPalette: {
       dreamLauncherBusy: 'Dream 中…',
       dreamAutoSchedule: ({ summary }) => `自动 ${summary}`,
       dreamNextRun: ({ time }) => `下次 ${time}`,
-      dreamScheduleSettingsLabel: '打开 Dream 定时设置',
       dreamScheduleTitle: '定时 Dream',
       dreamSchedulePlaceholder: '选择 Dream 定时…',
       dreamScheduleSave: '保存',

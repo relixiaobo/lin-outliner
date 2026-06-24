@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 // May 2026, today the 15th, the 20th selected.
-function renderGrid(opts: { multiselectable?: boolean } = {}): Rendered {
+function renderGrid(opts: { isDateDisabled?: (isoDate: string) => boolean; multiselectable?: boolean } = {}): Rendered {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
   const container = document.getElementById('root');
@@ -31,6 +31,7 @@ function renderGrid(opts: { multiselectable?: boolean } = {}): Rendered {
       <CalendarMonthGrid
         year={2026}
         month={4}
+        isDateDisabled={opts.isDateDisabled}
         multiselectable={opts.multiselectable}
         todayIsoDate="2026-05-15"
         selectedIsoDates={['2026-05-20']}
@@ -87,6 +88,17 @@ describe('CalendarMonthGrid ARIA + roving', () => {
     const r = renderGrid();
     pressKey(r, '2026-06-01', 'PageDown');
     expect(r.moves).toEqual([2]);
+  });
+
+  test('keyboard navigation falls back to the nearest enabled date at a disabled boundary', () => {
+    const r = renderGrid({ isDateDisabled: (isoDate) => isoDate > '2026-05-20' });
+
+    pressKey(r, '2026-05-20', 'ArrowRight');
+    expect(cell(r, '2026-05-20')?.getAttribute('tabindex')).toBe('0');
+
+    pressKey(r, '2026-05-20', 'PageDown');
+    expect(cell(r, '2026-05-20')?.getAttribute('tabindex')).toBe('0');
+    expect(r.moves).toEqual([]);
   });
 
   test('advertises aria-multiselectable only when the grid can hold multiple', () => {
