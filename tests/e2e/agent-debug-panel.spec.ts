@@ -117,6 +117,14 @@ test.describe('agent debug panel', () => {
         whiteSpace: getComputedStyle(pre).whiteSpace,
       };
     })).toEqual({ scrollsHorizontally: true, whiteSpace: 'pre' });
+    await expect.poll(async () => errorResultRow.locator('.agent-debug-code-block pre').first().evaluate((node) => {
+      const pre = node as HTMLElement;
+      const block = pre.closest<HTMLElement>('.agent-debug-code-block');
+      if (!block) return false;
+      const preRect = pre.getBoundingClientRect();
+      const blockRect = block.getBoundingClientRect();
+      return blockRect.right - preRect.right <= 4;
+    })).toBe(true);
     await round.locator('summary.agent-debug-round-head').click();
     await expect(outputRow).not.toBeVisible();
     await round.locator('summary.agent-debug-round-head').click();

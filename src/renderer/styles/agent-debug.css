@@ -667,7 +667,7 @@
 
 .agent-debug-code-block .agent-debug-code-body {
   min-width: 0;
-  padding-right: calc(var(--code-block-content-inset) + var(--control-size-xl));
+  padding-right: 0;
 }
 
 .agent-debug-code-block.agent-code-block pre {
@@ -677,6 +677,7 @@
   max-height: 280px;
   overflow: auto;
   color: var(--text-strong);
+  padding-right: calc(var(--code-block-content-inset) + var(--control-size-xl));
   white-space: pre;
 }
 
