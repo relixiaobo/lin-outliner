@@ -12,12 +12,12 @@ import type {
 } from '../../../core/agentTypes';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
-import { BlockIcon, CheckIcon, ChevronDownIcon, CopyIcon, InfoIcon, RefreshIcon, ICON_SIZE, LoaderIcon } from '../icons';
-import { highlightCode, plainCodeHtml } from '../editor/shikiHighlighter';
+import { BlockIcon, ChevronDownIcon, CopyIcon, InfoIcon, ICON_SIZE, LoaderIcon } from '../icons';
+import { PanelStickyBreadcrumb } from '../PanelShared';
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
-import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
 import { formatBytes } from '../preview/fileNode';
+import { ReadOnlyCodeBlock } from '../editor/CodeBlockSurface';
 
 // Run Details is a read-only window onto one run. Model Input shows what seeded
 // the run; Execution shows the provider calls and tools that happened inside it.
@@ -25,8 +25,12 @@ import { formatBytes } from '../preview/fileNode';
 // old conversation-level debug timeline.
 
 interface AgentDebugPanelProps {
+  canGoBack: boolean;
   conversationId: string | null;
+  onBack: () => void;
+  onClose: () => void;
   runId: string | null;
+  showClose: boolean;
 }
 
 type DebugLabels = ReturnType<typeof useT>['agentDebug'];
@@ -173,43 +177,62 @@ function useRunDetail(conversationId: string | null, runId: string | null) {
     return () => { if (timer) clearTimeout(timer); unlisten?.(); };
   }, [refresh, conversationId, runId]);
 
-  return { detail, error, loading, refresh };
+  return { detail, error, loading };
 }
 
 // --- top-level panel ------------------------------------------------------
 
-export function AgentDebugPanel({ conversationId, runId }: AgentDebugPanelProps) {
-  const labels = useT().agentDebug;
-  const { detail, error, loading, refresh } = useRunDetail(conversationId, runId);
+export function AgentDebugPanel({
+  canGoBack,
+  conversationId,
+  onBack,
+  onClose,
+  runId,
+  showClose,
+}: AgentDebugPanelProps) {
+  const t = useT();
+  const labels = t.agentDebug;
+  const stickyBreadcrumbRef = useRef<HTMLDivElement | null>(null);
+  const { detail, error, loading } = useRunDetail(conversationId, runId);
+  const renderShell = (children: ReactNode) => (
+    <main className="main-panel agent-debug-panel">
+      <PanelStickyBreadcrumb
+        breadcrumbAriaLabel={t.nodePanel.breadcrumbAriaLabel}
+        canGoBack={canGoBack}
+        closeLabel={t.nodePanel.closePanel}
+        currentTitle={labels.title}
+        origin={null}
+        onBack={onBack}
+        onClose={onClose}
+        previousPageLabel={t.nodePanel.previousPage}
+        showClose={showClose}
+        stickyRef={stickyBreadcrumbRef}
+        titleDocked={false}
+      >
+        <span className="panel-breadcrumb-segment panel-breadcrumb-current agent-debug-breadcrumb-title">
+          <span className="panel-breadcrumb-current-label" data-current-page-title>
+            {labels.title}
+          </span>
+        </span>
+      </PanelStickyBreadcrumb>
+      <div className="panel-inner agent-debug-content">
+        {children}
+      </div>
+    </main>
+  );
 
   if (!conversationId || !runId) {
-    return (
-      <div className="agent-debug-panel">
-        <EmptyState className="agent-debug-empty" title={labels.noRunSelected} />
-      </div>
+    return renderShell(
+      <EmptyState className="agent-debug-empty" title={labels.noRunSelected} />
     );
   }
 
-  return (
-    <div className="agent-debug-panel">
-      <header className="agent-debug-header">
-        <div>
-          <h2>{labels.title}</h2>
-        </div>
-        <IconButton
-          className="agent-debug-icon-button"
-          icon={RefreshIcon}
-          label={labels.refreshLabel}
-          onClick={() => void refresh()}
-          title={labels.refreshTitle}
-          variant="panel"
-        />
-      </header>
-
+  return renderShell(
+    <>
       {loading && !detail ? <EmptyState icon={LoaderIcon} loading role="status" title={labels.loadingRun} /> : null}
       {error ? <ErrorState message={error} /> : null}
       {detail ? <RunDetail run={detail} labels={labels} /> : (!loading && !error ? <div className="agent-debug-card is-muted">{labels.noRuntimeData}</div> : null)}
-    </div>
+    </>
   );
 }
 
@@ -306,8 +329,12 @@ function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDeb
   return (
     <DebugPanelSection className="agent-debug-model-input-section" title={labels.modelInputTitle}>
       <div className="agent-debug-context-card">
-        <ContextDisclosure copyText={run.systemPrompt ?? ''} title={labels.systemPromptDisclosure}>
-          {run.systemPrompt ? <pre>{run.systemPrompt}</pre> : <span className="is-muted">{labels.empty}</span>}
+        <ContextDisclosure title={labels.systemPromptDisclosure}>
+          {run.systemPrompt ? (
+            <DebugCodeBlock className="agent-debug-inline-code-block" text={run.systemPrompt} />
+          ) : (
+            <span className="is-muted">{labels.empty}</span>
+          )}
         </ContextDisclosure>
         <ContextDisclosure title={labels.toolsDisclosure({ count: run.tools.length })}>
           {run.tools.length === 0 ? <span className="is-muted">{labels.noTools}</span> : (
@@ -319,7 +346,7 @@ function RunContextSection({ labels, run }: { labels: DebugLabels; run: AgentDeb
                     <code>{tool.name}</code>
                     <span>{tool.description || labels.noDescription}</span>
                   </summary>
-                  <pre>{tool.schema}</pre>
+                  <DebugCodeBlock className="agent-debug-inline-code-block" text={tool.schema} />
                 </details>
               ))}
             </div>
@@ -754,57 +781,15 @@ function PartRow({
   );
 }
 
-function DebugCodeBlock({ text }: { text: string }) {
-  const t = useT();
-  const [copied, setCopied] = useState(false);
-  const resetTimerRef = useRef<number | null>(null);
+function DebugCodeBlock({ className, text }: { className?: string; text: string }) {
   const language = useMemo(() => debugCodeLanguage(text), [text]);
-  const [html, setHtml] = useState(() => plainCodeHtml(text));
-  const CopyStateIcon = copied ? CheckIcon : CopyIcon;
-  const copyLabel = t.agent.markdown.copyCode;
-
-  useEffect(() => {
-    let cancelled = false;
-    setHtml(plainCodeHtml(text));
-    void highlightCode(text, language).then((next) => {
-      if (!cancelled) setHtml(next);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [language, text]);
-
-  useEffect(() => () => {
-    if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
-  }, []);
-
-  const copyCode = useCallback(() => {
-    if (!text) return;
-    void navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
-      resetTimerRef.current = window.setTimeout(() => {
-        setCopied(false);
-        resetTimerRef.current = null;
-      }, 1200);
-    });
-  }, [text]);
-
   return (
-    <div className="agent-code-block agent-debug-code-block">
-      <div className="agent-code-header agent-debug-code-header">
-        <ButtonControl
-          aria-label={copyLabel}
-          className="agent-code-copy"
-          disabled={!text}
-          onClick={copyCode}
-          title={copyLabel}
-        >
-          <CopyStateIcon size={ICON_SIZE.menu} />
-        </ButtonControl>
-      </div>
-      <div className="agent-code-body agent-debug-code-body" dangerouslySetInnerHTML={{ __html: html }} />
-    </div>
+    <ReadOnlyCodeBlock
+      className={className ? `agent-debug-code-block ${className}` : 'agent-debug-code-block'}
+      code={text}
+      language={language}
+      showLanguageLabel={false}
+    />
   );
 }
 

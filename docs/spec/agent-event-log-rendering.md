@@ -1210,7 +1210,10 @@ Rules:
 The run-details surface is a read-only **view of one concrete run**. It is opened
 with `(conversationId, runId)` from a specific assistant reply, then loads that
 run through `agent_debug_run`; it does not render the old conversation-level
-debug timeline or a selector over every run in the conversation.
+debug timeline or a selector over every run in the conversation. Its pane chrome
+uses the shared pane breadcrumb/close layout used by node and file panes. The
+projection is loaded on open and refreshed from agent runtime events; there is no
+separate manual refresh button in the pane toolbar.
 
 The pane groups the run projection by inspection task:
 

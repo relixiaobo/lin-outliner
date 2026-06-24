@@ -550,6 +550,26 @@ test.describe('agent process disclosure', () => {
     await expect(page.locator('.agent-tool-call-section-title').filter({ hasText: 'Output' })).toBeVisible();
     await expect(page.getByText('"outline": "design system"')).toBeVisible();
     await expect(page.getByText('3 matches: Agent System')).toBeVisible();
+    const searchToolCall = page.locator('.agent-tool-call').filter({ has: searchTool }).first();
+    const searchToolPanel = searchToolCall.locator('.agent-tool-call-panel');
+    await expect(searchToolPanel.locator('.agent-code-block.agent-tool-code')).toHaveCount(2);
+    await expect(searchToolPanel.locator('.agent-code-copy')).toHaveCount(2);
+    const toolCodeMetrics = await searchToolPanel.locator('.agent-code-block pre').first().evaluate((node) => {
+      const pre = node as HTMLElement;
+      const block = pre.closest<HTMLElement>('.agent-code-block');
+      if (!block) return null;
+      const preRect = pre.getBoundingClientRect();
+      const blockRect = block.getBoundingClientRect();
+      return {
+        bottomInset: blockRect.bottom - preRect.bottom,
+        rightInset: blockRect.right - preRect.right,
+        whiteSpace: getComputedStyle(pre).whiteSpace,
+      };
+    });
+    expect(toolCodeMetrics).not.toBeNull();
+    expect(toolCodeMetrics!.bottomInset).toBeLessThanOrEqual(4);
+    expect(toolCodeMetrics!.rightInset).toBeLessThanOrEqual(4);
+    expect(toolCodeMetrics!.whiteSpace).toBe('pre');
   });
 
   test('collapses a sealed turn to a "Worked for {duration}" header when run timing is known', async ({ page }) => {
@@ -646,7 +666,7 @@ test.describe('agent process disclosure', () => {
     const beforeBox = await processToggle.boundingBox();
     expect(beforeBox).toBeTruthy();
     await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
-    await expect(process.locator('.agent-process-title').first()).toHaveText('Checking the selected outline node.');
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Working');
 
     await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
@@ -715,7 +735,7 @@ test.describe('agent process disclosure', () => {
     const processToggle = process.locator('.agent-process-toggle').first();
     await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(processToggle).not.toBeDisabled();
-    await expect(process.locator('.agent-process-title').first()).toHaveText('Read the source node before answering.');
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Working');
     // Collapsed: no timeline body rendered.
     await expect(process.locator('.agent-process-timeline')).toHaveCount(0);
     await expect(page.getByText('The final answer is now streaming below the process.')).toBeVisible();

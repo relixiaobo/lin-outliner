@@ -10,7 +10,9 @@ test.describe('agent debug panel', () => {
     await openMockRunDetailsFromAssistantDetailsButton(page);
 
     const debugPanel = page.locator('.outline-panel-surface.is-agent-debug');
-    await expect(debugPanel.getByRole('heading', { name: 'Run Details' })).toBeVisible();
+    await expect(debugPanel.locator('.panel-sticky-breadcrumb')).toContainText('Run Details');
+    await expect(debugPanel.locator('.agent-debug-panel.main-panel')).toBeVisible();
+    await expect(debugPanel.getByRole('button', { name: 'Refresh agent debug' })).toHaveCount(0);
     await expect(debugPanel).toHaveCSS('background-color', 'rgb(255, 255, 255)');
 
     await expect(debugPanel.locator('.agent-debug-run-summary')).toContainText('gpt-5.4');
@@ -33,7 +35,13 @@ test.describe('agent debug panel', () => {
     await expect(systemPrompt).toBeHidden();
     await systemPromptDisclosure.locator('summary').click();
     await expect(systemPrompt).toBeVisible();
-    await expect.poll(async () => systemPrompt.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+    await expect.poll(async () => systemPrompt.evaluate((node) => {
+      const pre = node as HTMLElement;
+      return {
+        scrollsHorizontally: pre.scrollWidth > pre.clientWidth,
+        whiteSpace: getComputedStyle(pre).whiteSpace,
+      };
+    })).toEqual({ scrollsHorizontally: true, whiteSpace: 'pre' });
     await expect(context.getByText('Tools · 1')).toBeVisible();
     await expect(context.getByText('Message window · 3')).toHaveCount(0);
     const history = context.locator('details.agent-debug-disclosure', { hasText: 'History · 2' });
@@ -70,7 +78,7 @@ test.describe('agent debug panel', () => {
     const outputCodeBlock = outputRow.locator('.agent-debug-code-block').first();
     await expect(outputCodeBlock.locator('pre.shiki')).toBeVisible();
     const outputCopyButton = outputCodeBlock.getByRole('button', { name: 'Copy code' });
-    const outputCodeHeader = outputCodeBlock.locator('.agent-debug-code-header');
+    const outputCodeHeader = outputCodeBlock.locator('.agent-code-header');
     await expect(outputCopyButton).toBeVisible();
     await page.mouse.move(0, 0);
     await expect(outputCodeHeader).toHaveCSS('opacity', '0');
@@ -197,7 +205,7 @@ test.describe('agent debug panel', () => {
     await openMockRunDetailsFromAssistantDetailsButton(page);
 
     const debugPanel = page.locator('.outline-panel-surface.is-agent-debug');
-    await expect(debugPanel.getByRole('heading', { name: 'Run Details' })).toBeVisible();
+    await expect(debugPanel.locator('.panel-sticky-breadcrumb')).toContainText('Run Details');
     await expect(debugPanel.getByRole('heading', { name: 'Summary' })).toBeVisible();
     await expect(debugPanel.getByRole('heading', { name: 'Model Input', exact: true })).toBeVisible();
     await expect(debugPanel.getByText('System prompt')).toBeVisible();

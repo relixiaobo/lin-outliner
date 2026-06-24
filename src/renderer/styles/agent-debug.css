@@ -1,57 +1,11 @@
 .agent-debug-panel {
   container-type: inline-size;
+}
+
+.agent-debug-content {
   display: flex;
-  height: auto;
-  min-height: 0;
-  min-width: 0;
-  flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-6);
-  background: var(--surface);
-  overflow: auto;
-  padding: calc(var(--space-8) + var(--space-1)) calc(var(--space-8) + var(--space-1)) calc(var(--space-lg) + var(--space-2));
-  scrollbar-gutter: stable;
-}
-
-.agent-debug-header {
-  display: flex;
-  min-height: 34px;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-6);
-  padding-right: 26px;
-}
-
-.agent-debug-header h2 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: var(--font-heading-lg);
-  font-weight: 650;
-  line-height: var(--line-content);
-}
-
-.agent-debug-header p {
-  margin: var(--space-1) 0 0;
-  color: var(--text-faint);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
-}
-
-.agent-debug-icon-button {
-  display: inline-flex;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 26px;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  color: var(--text-soft);
-}
-
-.agent-debug-icon-button:hover {
-  background: var(--control-hover);
-  color: var(--text-strong);
 }
 
 .agent-debug-card {
@@ -290,27 +244,6 @@
   font-weight: 650;
 }
 
-.agent-debug-card pre,
-.agent-debug-disclosure-body pre,
-.agent-debug-tool-row pre {
-  box-sizing: border-box;
-  min-width: 0;
-  max-width: 100%;
-  max-height: 280px;
-  overflow: auto;
-  margin: 0;
-  border-radius: var(--radius-sm);
-  background: var(--fill-1);
-  color: var(--text-strong);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-meta-tight);
-  padding: var(--space-5);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
 .agent-debug-tool-row {
   display: flex;
   min-width: 0;
@@ -355,11 +288,6 @@
   line-height: var(--line-meta-tight);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.agent-debug-tool-row pre {
-  margin: 0 0 var(--space-3) var(--space-6);
-  max-height: 220px;
 }
 
 .agent-debug-cost {
@@ -656,24 +584,8 @@
   margin: 0 0 var(--space-3) var(--space-6);
 }
 
-.agent-debug-code-header {
-  max-width: none;
-}
-
-.agent-debug-code-block .agent-debug-code-body {
-  min-width: 0;
-  padding-right: 0;
-}
-
-.agent-debug-code-block.agent-code-block pre {
-  box-sizing: border-box;
-  min-width: 0;
-  max-width: 100%;
-  max-height: 280px;
-  overflow: auto;
-  color: var(--text-strong);
-  padding-right: calc(var(--code-block-content-inset) + var(--control-size-xl));
-  white-space: pre;
+.agent-debug-inline-code-block {
+  margin-left: 0;
 }
 
 .agent-debug-execution-list {
@@ -724,7 +636,6 @@
   color: var(--danger);
 }
 
-.agent-debug-icon-button:focus-visible,
 .agent-debug-copy-button:focus-visible,
 .agent-debug-block-button:focus-visible,
 .agent-debug-usage-info-button:focus-visible {

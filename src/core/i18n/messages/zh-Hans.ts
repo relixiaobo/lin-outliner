@@ -1291,8 +1291,6 @@ commandPalette: {
   agentDebug: {
     noRunSelected: '未选择运行。',
     title: '运行详情',
-    refreshTitle: '刷新',
-    refreshLabel: '刷新 agent 调试',
     loadingRun: '正在加载运行详情…',
     noRuntimeData: '尚未捕获任何运行。',
     noModelCallsYet: '尚未捕获任何模型调用。',

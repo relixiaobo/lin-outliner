@@ -1,6 +1,5 @@
 import {
   memo,
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -15,10 +14,7 @@ import remend from 'remend';
 import { basenameForPath, splitReferenceMarkers } from '../../../core/referenceMarkup';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
-import { CheckIcon, CopyIcon, ICON_SIZE } from '../icons';
-import { ButtonControl } from '../primitives/ButtonControl';
 import { useT } from '../../i18n/I18nProvider';
-import { highlightCode, plainCodeHtml } from '../editor/shikiHighlighter';
 import { InlineFileReference } from '../editor/InlineFileReference';
 import {
   localFileReferenceFromHref,
@@ -34,6 +30,7 @@ import {
   type AgentNodeReferenceOpenHandler,
 } from './AgentInlineReferenceText';
 import { AgentChatSourceReference } from './AgentChatSourceReference';
+import { ReadOnlyCodeBlock } from '../editor/CodeBlockSurface';
 
 interface AgentMarkdownProps {
   index?: DocumentIndex;
@@ -61,63 +58,6 @@ function splitMarkdownBlocks(text: string): string[] {
   } catch {
     return [text];
   }
-}
-
-function AgentCodeBlock({
-  code,
-  lang,
-}: {
-  code: string;
-  lang: string;
-}) {
-  const t = useT();
-  const [copied, setCopied] = useState(false);
-  const resetTimerRef = useRef<number | null>(null);
-  const [html, setHtml] = useState(() => plainCodeHtml(code));
-  const CopyStateIcon = copied ? CheckIcon : CopyIcon;
-
-  useEffect(() => {
-    let cancelled = false;
-    void highlightCode(code, lang).then((next) => {
-      if (!cancelled) setHtml(next);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [code, lang]);
-
-  useEffect(() => () => {
-    if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
-  }, []);
-
-  const copyCode = useCallback(() => {
-    if (!code) return;
-    void navigator.clipboard.writeText(code).then(() => {
-      setCopied(true);
-      if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
-      resetTimerRef.current = window.setTimeout(() => {
-        setCopied(false);
-        resetTimerRef.current = null;
-      }, 1200);
-    });
-  }, [code]);
-
-  return (
-    <div className="agent-code-block">
-      <div className="agent-code-header">
-        <span>{lang || t.agent.markdown.codeLanguageFallback}</span>
-        <ButtonControl
-          aria-label={t.agent.markdown.copyCode}
-          className="agent-code-copy"
-          disabled={!code}
-          onClick={copyCode}
-        >
-          <CopyStateIcon size={ICON_SIZE.menu} />
-        </ButtonControl>
-      </div>
-      <div className="agent-code-body" dangerouslySetInnerHTML={{ __html: html }} />
-    </div>
-  );
 }
 
 function remarkNodeReferences() {
@@ -262,9 +202,9 @@ function useMarkdownComponents(
       const lang = className?.match(/language-(\S+)/)?.[1] ?? '';
       if (lang || rawCode.includes('\n')) {
         return (
-          <AgentCodeBlock
+          <ReadOnlyCodeBlock
             code={rawCode.replace(/\n$/, '')}
-            lang={lang}
+            language={lang}
           />
         );
       }

@@ -31,13 +31,13 @@ import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
-import { highlightCode, plainCodeHtml } from '../editor/shikiHighlighter';
 import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
 import { requestInsertFileIntoOutliner } from '../../agent/agentFileInsert';
 import {
   AgentInlineReferenceText,
   type AgentNodeReferenceOpenHandler,
 } from './AgentInlineReferenceText';
+import { PlainReadOnlyCodeBlock, ReadOnlyCodeBlock } from '../editor/CodeBlockSurface';
 import { AgentToolCallDisclosure } from './AgentToolCallDisclosure';
 
 interface AgentToolCallBlockProps {
@@ -330,31 +330,29 @@ function ChildRunInlineDetails({
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">{t.agent.childRun.name}</div>
           </div>
-          <pre>
+          <PlainReadOnlyCodeBlock className="agent-tool-code" code={childRun.name}>
             <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={childRun.name} />
-          </pre>
+          </PlainReadOnlyCodeBlock>
         </section>
       ) : null}
       {prompt ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">{t.agent.childRun.prompt}</div>
-            <ToolCopyButton ariaLabel={t.agent.childRun.copyPrompt} text={childRun.prompt} />
           </div>
-          <pre>
+          <PlainReadOnlyCodeBlock className="agent-tool-code" code={prompt} copyLabel={t.agent.childRun.copyPrompt}>
             <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={prompt} />
-          </pre>
+          </PlainReadOnlyCodeBlock>
         </section>
       ) : null}
       {result ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">{t.agent.childRun.result}</div>
-            <ToolCopyButton ariaLabel={t.agent.childRun.copyResult} text={childRun.result ?? ''} />
           </div>
-          <pre>
+          <PlainReadOnlyCodeBlock className="agent-tool-code" code={result} copyLabel={t.agent.childRun.copyResult}>
             <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={result} />
-          </pre>
+          </PlainReadOnlyCodeBlock>
         </section>
       ) : null}
       {error ? (
@@ -364,11 +362,10 @@ function ChildRunInlineDetails({
               {t.agent.childRun.error}
               <span>{t.agent.toolCall.errorBadge}</span>
             </div>
-            <ToolCopyButton ariaLabel={t.agent.childRun.copyError} text={childRun.error ?? ''} />
           </div>
-          <pre>
+          <PlainReadOnlyCodeBlock className="agent-tool-code" code={error} copyLabel={t.agent.childRun.copyError}>
             <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={error} />
-          </pre>
+          </PlainReadOnlyCodeBlock>
         </section>
       ) : null}
       <div className="agent-child-run-inline-actions">
@@ -440,21 +437,8 @@ function isJsonText(text: string): boolean {
   }
 }
 
-// Read-only highlighted code surface for tool input/output. Renders plain text
-// first, then upgrades to the shared Shiki highlight once the grammar resolves
-// (json is preloaded; diff loads lazily on first file-tool render).
 function HighlightedCode({ code, lang }: { code: string; lang: string }) {
-  const [html, setHtml] = useState(() => plainCodeHtml(code));
-  useEffect(() => {
-    let cancelled = false;
-    void highlightCode(code, lang).then((next) => {
-      if (!cancelled) setHtml(next);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [code, lang]);
-  return <div className="agent-tool-code" dangerouslySetInnerHTML={{ __html: html }} />;
+  return <ReadOnlyCodeBlock className="agent-tool-code" code={code} language={lang} />;
 }
 
 function HighlightedJson({ code }: { code: string }) {
@@ -821,9 +805,9 @@ function PersistedToolOutput({
         <span>{payload.summary || t.agent.toolCall.storedOutput}</span>
         <small>{formatBytes(payload.byteLength)}</small>
       </div>
-      <pre>
+      <PlainReadOnlyCodeBlock className="agent-tool-code" code={visible.text} copyLabel={t.agent.toolCall.copyFullOutput}>
         <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={visible.text} />
-      </pre>
+      </PlainReadOnlyCodeBlock>
       <div className="agent-tool-persisted-actions">
         <ButtonControl
           className="agent-tool-persisted-load"
@@ -942,7 +926,6 @@ export function AgentToolCallBlock({
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">{t.agent.toolCall.changes}</div>
-            <ToolCopyButton ariaLabel={t.agent.toolCall.copyChanges} text={fileOutput.diff} />
           </div>
           <HighlightedCode code={fileOutput.diff} lang="diff" />
         </section>
@@ -951,7 +934,6 @@ export function AgentToolCallBlock({
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">{t.agent.toolCall.input}</div>
-            <ToolCopyButton ariaLabel={t.agent.toolCall.copyInput} text={inputText} />
           </div>
           <HighlightedJson code={inputText} />
         </section>
@@ -963,7 +945,6 @@ export function AgentToolCallBlock({
               {t.agent.toolCall.output}
               {result.isError ? <span>{t.agent.toolCall.errorBadge}</span> : null}
             </div>
-            <ToolCopyButton ariaLabel={t.agent.toolCall.copyOutput} text={outputText} />
           </div>
           {parts.map((part, partIndex) =>
             part.type === 'imagePlaceholder' ? (
@@ -983,9 +964,14 @@ export function AgentToolCallBlock({
             ) : isJsonText(part.text) ? (
               <HighlightedJson code={part.text} key={`text-${partIndex}`} />
             ) : (
-              <pre key={`text-${partIndex}`}>
+              <PlainReadOnlyCodeBlock
+                className="agent-tool-code"
+                code={part.text}
+                copyLabel={t.agent.toolCall.copyOutput}
+                key={`text-${partIndex}`}
+              >
                 <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={part.text} />
-              </pre>
+              </PlainReadOnlyCodeBlock>
             ),
           )}
         </section>

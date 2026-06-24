@@ -29,6 +29,7 @@ import {
   normalizeCodeLanguage,
   plainCodeHtml,
 } from '../editor/shikiHighlighter';
+import { useCodeBlockCopy } from '../editor/CodeBlockSurface';
 import { useT } from '../../i18n/I18nProvider';
 
 const INDENT = '  ';
@@ -76,10 +77,9 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
   const pendingSelectionRef = useRef<PendingSelection | null>(null);
   const [value, setValue] = useState(props.text);
   const [highlightedHtml, setHighlightedHtml] = useState(() => plainCodeHtml(props.text));
-  const [copied, setCopied] = useState(false);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
-  const copyTimerRef = useRef<number | null>(null);
   const languageTriggerRef = useRef<HTMLButtonElement>(null);
+  const { copied, copyCode } = useCodeBlockCopy(value);
 
   propsRef.current = props;
   // Fall back to Plain text for fence info strings Shiki can't highlight (e.g.
@@ -118,10 +118,6 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
     if (Array.isArray(selection)) textarea.setSelectionRange(selection[0], selection[1]);
     else textarea.setSelectionRange(selection, selection);
   }, [value]);
-
-  useEffect(() => () => {
-    if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
-  }, []);
 
   const commitValue = useCallback((next: string, selection?: PendingSelection) => {
     if (selection !== undefined) pendingSelectionRef.current = selection;
@@ -282,19 +278,6 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
       }
     }
   };
-
-  const copyCode = useCallback(() => {
-    const code = textareaRef.current?.value ?? '';
-    if (!code) return;
-    void navigator.clipboard.writeText(code).then(() => {
-      setCopied(true);
-      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
-      copyTimerRef.current = window.setTimeout(() => {
-        setCopied(false);
-        copyTimerRef.current = null;
-      }, 1200);
-    });
-  }, []);
 
   // Keep the highlight layer aligned with the textarea as it scrolls long
   // lines horizontally (the layers don't wrap).

@@ -1407,8 +1407,6 @@ commandPalette: {
   agentDebug: {
     noRunSelected: 'No run selected.',
     title: 'Run Details',
-    refreshTitle: 'Refresh',
-    refreshLabel: 'Refresh agent debug',
     loadingRun: 'Loading run detail...',
     noRuntimeData: 'No runs captured yet.',
     noModelCallsYet: 'No model calls captured yet.',
