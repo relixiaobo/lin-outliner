@@ -37,6 +37,11 @@ describe('buildScheduleString', () => {
       .toBe('2026-06-09T09:00 RRULE:FREQ=MONTHLY;UNTIL=2026-12-31');
   });
 
+  test('drops recurrence until dates earlier than the anchor', () => {
+    expect(buildScheduleString({ date: '2026-06-09', time: '09:00', preset: 'daily', until: '2026-06-08' }))
+      .toBe('2026-06-09T09:00 RRULE:FREQ=DAILY');
+  });
+
   test('returns null without a date', () => {
     expect(buildScheduleString({ date: '', time: '09:00', preset: 'daily', until: '' })).toBeNull();
   });
