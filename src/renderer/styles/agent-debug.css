@@ -654,11 +654,6 @@
 
 .agent-debug-code-block {
   margin: 0 0 var(--space-3) var(--space-6);
-  border-color: transparent;
-  border-radius: var(--radius-sm);
-  background: var(--fill-1);
-  --code-block-content-inset: var(--space-5);
-  --code-block-scrollbar-gutter: var(--space-4);
 }
 
 .agent-debug-code-header {
