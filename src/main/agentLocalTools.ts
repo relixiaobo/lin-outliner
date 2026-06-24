@@ -2,7 +2,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { copyFile, mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import {
@@ -2338,18 +2338,6 @@ function selectPdfPageRange(totalPages: number, requestedPages: string | undefin
   const pageCount = range.lastPage - range.firstPage + 1;
   if (pageCount > PDF_MAX_PAGES_PER_READ) {
     throw new LocalToolFailure('pdf_page_limit_exceeded', `Page range "${requestedPages}" exceeds ${PDF_MAX_PAGES_PER_READ} pages.`, 'Use a smaller pages range.');
-  }
-  if (range.firstPage > totalPages) {
-    throw new LocalToolFailure('pdf_page_range_empty', `Page range "${requestedPages}" starts after the PDF ends.`, `Use pages between 1 and ${totalPages}.`);
-  }
-  return { firstPage: range.firstPage, lastPage: Math.min(range.lastPage, totalPages) };
-}
-
-function selectPdfConversionPageRange(totalPages: number, requestedPages: string | undefined): PdfPageRange {
-  if (!requestedPages) return { firstPage: 1, lastPage: totalPages };
-  const range = parsePdfPageRange(requestedPages);
-  if (!range) {
-    throw new LocalToolFailure('invalid_pdf_pages', `Invalid PDF page range: ${requestedPages}`, 'Use page ranges like "3", "1-5", or "10-20".');
   }
   if (range.firstPage > totalPages) {
     throw new LocalToolFailure('pdf_page_range_empty', `Page range "${requestedPages}" starts after the PDF ends.`, `Use pages between 1 and ${totalPages}.`);
