@@ -44,7 +44,8 @@ caught-and-fixed retention-prune bricking bug). **2026-06-24:** that plan **comp
 retire the legacy believer-pool memory projection) merged; plan archived `done` (see *Recently completed*). Also
 **2026-06-24:** **#327** (`file-ingestion-derived-cache`, codex-3 — in-process LRU cache for runtime
 extractions; `/code-review xhigh`, 7 findings fixed) landed as a fast-track follow-up to #326. The
-**agent-goal** plan landed as a `draft` board item (plan PR **#323**, see Agent
+**agent-goal** plan landed as a `draft` board item (plan PR **#323**; **revised 2026-06-24
+by #334** to the unified Run model + one-Neva reconciliation, still `draft`, see Agent
 capabilities). **No PR open.** The agent subsystem portfolio is otherwise mature (single-agent collapse + one-Neva
 invariant, the IM-native memory/channel spine, the 2026-06-22 Codex-transcript wave); the active build
 frontier remains the **command-surface / performance / UI-quality / files** lanes in the **Backlog** —
@@ -197,18 +198,21 @@ before any directional/security-sensitive build.
     Note: the believer-pool store + Dream extraction substrate still ships under the hood.
     **PR3 jump-to-source UI shipped (#310, 2026-06-19)** — the whole #302 subsystem replacement
     is complete.
-- **agent-goal** (P2, *design captured 2026-06-23, PM-ratified (plan PR #323 merged) — needs a dev
-  build one-pager; two features*) — see `docs/plans/agent-goal.md`. Let a user hand a long-running
-  objective to the agent mid-conversation and have it pursue that objective **autonomously across turns
-  until a completion audit passes** — not until the model decides to stop. The one genuinely new
-  behavior is **a run that self-continues until a completion audit passes**; everything else reuses
-  delegation child runs, completion notification, usage accounting, Channel delivery, and the permission
-  gate. **No new primitive** (goal = a run behavior + launching skill + run-resident state, not an 8th
-  primitive and not a `Skill`); *committing* a goal (spending budget on autonomous action) routes
-  through the existing ask-gate. **Shape (b):** **Feature A** — DM goal (single agent self-continues to
-  a verified completion within an optional budget); **Feature B** — goal-as-team (a large goal spawns
-  role-diverse `fresh` child runs and the pursuing run acts as **referee**, dissolving the team on
-  completion; builds on A + existing delegation). Directional / autonomy-sensitive — escalate the
+- **agent-goal** (P2, *design captured 2026-06-23 (#323), revised 2026-06-24 (#334) to the unified
+  Run model + one-Neva reconciliation — PM-ratified at plan level, 7 open questions pending; needs a
+  dev build one-pager; two features*) — see `docs/plans/agent-goal.md`. Let a user hand a long-running
+  objective to the agent mid-conversation and have it pursue that objective **autonomously across rounds
+  until a completion audit passes** — not until the model decides to stop. The one new **atom** is
+  **`persistent` continuation** (a run that self-continues until a completion audit passes); everything
+  else — goal / team / delegation / turn — is a **projection** over `Run = Principal + objective +
+  lineage + continuation`, and goal/delegation unify on one parameterized `spawn`. Reuses delegation
+  (fork-only) child runs, completion notification, usage accounting, Channel delivery, and the permission
+  gate. **No new primitive**; *committing* a detached goal (spending budget on autonomous action) routes
+  through the existing ask-gate as scope authorization. **Shape (b):** **Feature A** — DM goal (single
+  agent self-continues to a verified completion within an optional budget); **Feature B** — goal-as-team
+  (a large goal spawns role-diverse **narrowed Neva forks** — roles are `allowedTools`-restricted forks
+  under the one-Neva invariant, not new agents — and the pursuing run acts as **referee**, dissolving the
+  team on completion; builds on A + existing delegation). Directional / autonomy-sensitive — escalate the
   capability + budget boundary before building.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
