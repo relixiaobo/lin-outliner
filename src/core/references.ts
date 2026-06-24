@@ -163,7 +163,15 @@ function searchReferenceSourcePredicate(
   const cache = new Map<NodeId, boolean>();
   return (nodeId) => {
     const node = byId.get(nodeId);
-    return node?.type === 'search' || nodeIsInQueryConditionSubtree(byId, cache, nodeId);
+    if (!node) return false;
+    if (node.type === 'search') return true;
+    // A reference node attached directly to the search node (a materialized
+    // result ref) is part of the search machinery, not user content. The
+    // backlink branch already drops it via its parent; mirror that here so its
+    // own inline refs are excluded too — keeps both branches symmetric without
+    // touching manual (non-reference) children placed under a search node.
+    if (node.type === 'reference' && node.parentId && byId.get(node.parentId)?.type === 'search') return true;
+    return nodeIsInQueryConditionSubtree(byId, cache, nodeId);
   };
 }
 
