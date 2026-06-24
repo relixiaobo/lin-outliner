@@ -33,6 +33,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   env-command-with-args). `test:core` 1061/0, typecheck clean. Spec synced: `agent-tool-design`,
   `agent-progress`.
 
+### Removed
+
+- **Legacy believer-pool memory projection retired (PR #329, codex-2)** — the third and final PR of
+  `dream-channel-and-memory-retire`, finishing the #302 teardown now that PR #328 derives the Dream cursor
+  and `lastSuccessAt` from the channel. Deletes the per-principal believer-pool **memory projection + its
+  memory API inside `AgentEventStore`** (`recordMemoryEpisode` / `listMemoryEntries` / `updateMemoryEntry` /
+  `removeMemoryEntry` / `readDreamState` / `appendDreamCompleted`), the now-dead
+  `agentMemoryActivation` / `agentMemoryRetrieval` modules, the
+  `AgentMemoryEntry` / `AgentMemoryEvent` / `AgentDreamWatermark` / `dream.completed` types, the
+  `agent_list_memory` (+ `agent_update_memory` / `agent_forget_memory`) commands and their renderer/main
+  plumbing, and the **Settings → Memory** entry-management UI. The `AgentEventStore` **class stays** — it
+  still stores every conversation's events, run streams, payloads, run-meta, and index. Durable
+  model-readable memory is now solely the `#d-*` outline timeline nodes; Dream run history is the protected
+  Dream channel's `dream.finished` audit log. Pool-only core tests removed with the code. **Gate (main):**
+  `/code-review xhigh` (clean) + rebased-stack re-verification — no dangling references, typecheck clean,
+  `test:core` 1051/0, `test:renderer` 601/0, e2e `agent-settings` 33/33. Specs synced: `agent-architecture`,
+  `agent-delegation-runtime`, `agent-event-log-rendering`, `agent-progress`. Pre-release: no migration (wipe
+  `~/.lin-outliner-*`).
+
 ### Added
 
 - **Dream date-window scheduling + derived cursor (PR #328, codex-2)** — the second PR of
