@@ -540,10 +540,6 @@ export function deriveAgentToolActionDescriptors(input: {
     return deriveBashActionDescriptors(getStringArg(input.args, 'command'), input.args, input.policy);
   }
 
-  if (toolName === 'file_convert') {
-    return deriveFileConvertActionDescriptors(input.args, input.policy);
-  }
-
   const pathArgName = toolPathArgumentName(toolName);
   if (pathArgName) {
     return [derivePathToolActionDescriptor(toolName, input.args, input.policy, input.access, pathArgName)];
@@ -758,60 +754,6 @@ export function deriveAgentToolActionDescriptors(input: {
   })];
 }
 
-function deriveFileConvertActionDescriptors(
-  args: unknown,
-  policy: AgentPermissionPolicy,
-): DerivedToolActionDescriptor[] {
-  const descriptors: DerivedToolActionDescriptor[] = [];
-  descriptors.push(deriveFileConvertPathDescriptor({
-    rawPath: getStringArg(args, 'input_path'),
-    policy,
-    access: 'read',
-    role: 'input',
-  }));
-
-  const outputPath = getStringArg(args, 'output_path');
-  const outputDir = getStringArg(args, 'output_dir');
-  if (outputPath) {
-    descriptors.push(deriveFileConvertPathDescriptor({
-      rawPath: outputPath,
-      policy,
-      access: 'write',
-      role: 'output',
-    }));
-  } else if (outputDir) {
-    descriptors.push(deriveFileConvertPathDescriptor({
-      rawPath: outputDir,
-      policy,
-      access: 'write',
-      role: 'output directory',
-    }));
-  } else {
-    descriptors.push(deriveFileConvertPathDescriptor({
-      rawPath: null,
-      policy,
-      access: 'write',
-      role: 'output',
-    }));
-  }
-  return descriptors;
-}
-
-function deriveFileConvertPathDescriptor(input: {
-  rawPath: string | null;
-  policy: AgentPermissionPolicy;
-  access: 'read' | 'write';
-  role: string;
-}): DerivedToolActionDescriptor {
-  return derivePathDescriptor({
-    toolName: 'file_convert',
-    rawPath: input.rawPath,
-    policy: input.policy,
-    access: input.access,
-    copy: fileConvertPathDescriptorCopy(input.access, input.role),
-  });
-}
-
 function derivePathToolActionDescriptor(
   toolName: string,
   args: unknown,
@@ -975,27 +917,6 @@ function defaultPathDescriptorCopy(access: PathDescriptorAccess): PathDescriptor
     sensitiveConsequence: (resolved) => `This would ${action} a sensitive local path: ${resolved}`,
     outsideTitle: isWrite ? 'outside-area file write' : 'outside-area file read',
     outsideSummary: (resolved) => `${isWrite ? 'Write' : 'Read'} ${resolved} outside the allowed file area.`,
-    outsideConsequence: (resolved) => `This would ${action} outside the allowed file area: ${resolved}`,
-  };
-}
-
-function fileConvertPathDescriptorCopy(access: PathDescriptorAccess, role: string): PathDescriptorCopy {
-  const isWrite = access === 'write';
-  const action = isWrite ? 'write' : 'read';
-  const pathAction = isWrite ? 'Write converted output to' : 'Read conversion input from';
-  return {
-    localTitle: `local file conversion ${role}`,
-    missingSummary: `${isWrite ? 'Write' : 'Read'} conversion ${role} in the allowed file area.`,
-    localSummary: (resolved) => `${pathAction} ${resolved}.`,
-    localConsequence: isWrite ? 'This creates converted output inside the allowed file area.' : 'This reads a local source file for conversion.',
-    hardBlockTitle: 'sensitive conversion output',
-    hardBlockSummary: (resolved) => `Write converted output to sensitive local path ${resolved}.`,
-    hardBlockConsequence: (resolved) => `Blocked converted output to a credential, persistence, git-internal, or permission configuration path: ${resolved}`,
-    sensitiveTitle: `sensitive conversion ${role}`,
-    sensitiveSummary: (resolved) => `${pathAction} sensitive local path ${resolved}.`,
-    sensitiveConsequence: (resolved) => `This would ${action} a sensitive local path: ${resolved}`,
-    outsideTitle: `outside-area conversion ${role}`,
-    outsideSummary: (resolved) => `${pathAction} ${resolved} outside the allowed file area.`,
     outsideConsequence: (resolved) => `This would ${action} outside the allowed file area: ${resolved}`,
   };
 }
@@ -1700,9 +1621,6 @@ function fileActionKind(
   isWrite: boolean,
   scope: 'allowed_file_area' | 'outside_allowed_file_area' | 'sensitive_local_path',
 ): AgentToolActionKind {
-  if (toolName === 'file_convert') {
-    return `file.convert.${scope}` as AgentToolActionKind;
-  }
   if (isWrite) {
     if (scope === 'allowed_file_area') {
       if (toolName === 'file_delete') return 'file.delete.allowed_file_area';
@@ -2126,7 +2044,7 @@ function toolPathArgumentName(toolName: string): string | null {
 function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
   if (toolName === 'task_stop' || toolName === 'agent' || toolName === 'agent_status' || toolName === 'agent_send' || toolName === 'agent_stop' || toolName === 'skill' || toolName === 'ask_user_question' || toolName === 'runtime_status' || toolName === 'config' || toolName === 'doctor') return 'control';
-  if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'file_convert' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete') return 'write';
+  if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete') return 'write';
   if (toolName === 'operation_history') {
     return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';
   }

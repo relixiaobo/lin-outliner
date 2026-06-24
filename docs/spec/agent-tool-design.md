@@ -1471,8 +1471,6 @@ document. The design keeps dedicated tools for each local file role:
 - `file_read` inspects file content.
 - `file_edit` applies exact replacements.
 - `file_write` creates files or rewrites already-read files.
-- `file_convert` converts office/presentation files to PDF, PDF pages to PNG/JPEG
-  images, and images to PDF/PNG/JPEG through typed non-shell converters.
 - `file_glob` lists matching files.
 - `file_grep` searches file content.
 
@@ -1493,8 +1491,6 @@ files, and reserve `bash` for commands that actually need a shell.
 Path rules:
 
 - Concrete file tools use `file_path`.
-- `file_convert` uses `input_path`, plus `output_path` for one output file or
-  `output_dir` for PDF page-image output.
 - Search tools use `path` as an optional search root.
 - Model-facing `file_path` input values should be absolute paths. Search outputs
   such as `file_glob.filenames` and `file_grep.filenames` are local-root-relative
@@ -1502,19 +1498,14 @@ Path rules:
 - TypeScript must enforce the configured local file root unless the user
   explicitly hands Tenon a broader root.
 
-`file_convert` is the preferred surface for common conversion workflows that
-previously pushed agents toward shell commands. The runtime invokes converter
-executables directly with `spawn(file, argv, { shell: false })` and returns a
-structured audit payload: input path, output format, output files with sizes and
-MIME types, executable, argv, cwd, shell flag, exit code, stdout, and stderr.
-LibreOffice-compatible `soffice`/`libreoffice` handles office and presentation
-files to PDF; Poppler `pdftoppm` handles PDF page images; macOS `sips` handles
-image format conversion. Outputs default to the workdir, explicit outputs must
-resolve through the same handed-scope rules as the other file tools, and
-existing output files are refused rather than overwritten. PDF-to-image
-conversion renders every page when `pages` is omitted; unlike `file_read`, it is
-not capped by the inline PDF page limit because the result is written to files
-instead of attached to the model response.
+Document and image conversion is not a dedicated tool. It runs through `bash`
+invoking the installed converter binaries directly — LibreOffice-compatible
+`soffice`/`libreoffice` for office and presentation files to PDF, Poppler
+`pdftoppm` for PDF page images, and macOS `sips` for image format conversion.
+These binaries are already default-allowed by the shell floor, and `bash` runs
+in the same process environment (`buildAgentLocalToolProcessEnv` PATH, env, and
+workdir cwd) as the other local tools, so no separate conversion surface is
+needed. The `bash` tool description points the agent at these binaries.
 
 ## Per-Turn Context And Attachments
 
@@ -1801,7 +1792,7 @@ Result behavior:
   recoverable error that tells the agent to use `bash` to detect an available
   package manager and install Poppler. The recovery path must not assume
   Homebrew: it can use an installed manager such as Homebrew, MacPorts, apt, dnf,
-  or pacman, then retry the same `file_read` or `file_convert` call. If no
+  or pacman, then retry the same `file_read` call. If no
   supported package manager is available, the agent reports that Poppler must be
   installed so `pdfinfo`, `pdftotext`, and `pdftoppm` are on `PATH`. The file
   tools never install system packages themselves.
@@ -1986,7 +1977,7 @@ Result behavior:
   guards **skills only** (`.agents/skills`) — agent-definition (`AGENT.md`) writes
   are no longer a self-definition surface (`single-agent-finish-collapse`): the one
   agent (Neva) is a built-in, not a file, so a dropped `.agents/agents/*` file is
-  an inert workspace file. `file_convert` cannot target self-definition outputs.
+  an inert workspace file.
 
 ## Shell Tools
 
@@ -2587,7 +2578,7 @@ Runtime control tools are not file tools:
   `permission-mode: restricted`, validates strict frontmatter/body shape, rejects
   support files, deletes, trusted permission mode, reserved built-in names, and
   unsafe metadata, and hot-reloads live agent registries on success. Shell writes
-  and `file_convert` are not self-definition authoring routes.
+  are not self-definition authoring routes.
 
 ## Mapping to Current Lin Commands
 
