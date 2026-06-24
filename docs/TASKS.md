@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**; authored ratified plan agent-process-stable-disclosure #297) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -478,6 +478,22 @@ anything.
 
 ## Recently completed
 
+- **native-focus-policy** (`codex-2/native-focus-policy`, PR #332, codex-2, merged 2026-06-24) — makes text-control
+  focus rings **keyboard-only** via a renderer `:root[data-input-modality]` attribute (capturing
+  pointerdown/keydown tracker), so pointer clicks stop painting web-form boxes while keyboard nav (Tab /
+  arrows / number-stepper ↑↓) keeps a visible neutral ring (B8). The agent rail slide is **sibling-stable**
+  (opening the dock reflows only the agent rail, never the sidebar — new `clampAgentRailForPanelFloor` mode),
+  and a content-triggered chat-source reveal **defers its scroll/highlight until the rail finishes opening**
+  (transitionend + motion-duration fallback), cleared on a conversation switch mid-transition. Centered
+  transcript **time separators removed**; `will-change` dropped from both rails. **Gate (main):**
+  `/code-review high` (8 findings) → codex-2 fix `c6076e89`: global keyboard ring rewritten to a
+  low-specificity `:where()` form so component `box-shadow: none` suppressions (`.input-bare`,
+  `.code-block-textarea`, `.inset-card .settings-sheet-row-input`) win instead of re-exposing clipped/boxed
+  rings (locked by a new `inputModalityCss` guard test); `.definition-text-input` paint gated behind keyboard
+  modality; deferred reveal cleared on conversation change; `clampAgentRailForPanelFloor` de-duplicated onto a
+  shared `allowSidebarRelief` mode; both-rails-change reflow no longer skips sidebar relief; dead launcher
+  modality install removed. Verified at gate on the branch head: typecheck clean, `test:renderer` 615/0. Spec
+  synced: `design-system`. Fast-track polish, **shape (a)** one PR, *no plan file*.
 - **file-convert-removal** (`cc-2/file-convert-removal`, PR #331, cc-2, merged 2026-06-24) — removes the
   typed `file_convert` local tool as redundant with `bash`: both spawned the same converter binaries
   (`soffice`/`libreoffice`, `pdftoppm`, macOS `sips`) through the same process environment

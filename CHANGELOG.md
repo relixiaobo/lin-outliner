@@ -12,6 +12,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Native focus rings + agent transcript polish (PR #332, codex-2)** — focus rings on text controls
+  (`input` / `textarea` / `select`) are now **keyboard-only**: a renderer-level `:root[data-input-modality]`
+  attribute (set by a capturing pointerdown/keydown tracker) gates the neutral ring so ordinary clicks no
+  longer paint web-form boxes, while keyboard navigation (Tab, arrows, number-stepper ↑↓) still shows it.
+  The agent rail slide is **sibling-stable** — opening the dock reflows only the agent rail (never resizes
+  or repaints the sidebar), and a content-triggered chat-source reveal now **defers its scroll/highlight
+  until the rail finishes opening** (transitionend or a motion-duration fallback), guarded against
+  conversation switches mid-transition. Centered transcript **time separators are removed** (timestamps
+  stay in the message Details popover). `will-change` dropped from both rails. **Gate (main):**
+  `/code-review high` (8 findings) → codex-2 fix `c6076e89`: the global keyboard ring moved to a
+  low-specificity `:where()` form so component `box-shadow: none` suppressions (`.input-bare`,
+  `.code-block-textarea`, `.inset-card .settings-sheet-row-input`) win again instead of re-exposing
+  clipped/boxed rings; `.definition-text-input` focus paint gated behind keyboard modality (with a CSS
+  guard test); deferred reveal cleared on conversation change; `clampAgentRailForPanelFloor` de-duplicated
+  onto a shared `allowSidebarRelief` mode; both-rails-change reflow no longer skips sidebar relief; dead
+  launcher modality install removed. Verified: typecheck clean, `test:renderer` 615/0. Spec synced:
+  `design-system`.
 - **Response Run Details pane reworked + shared read-only code blocks (PR #325, codex)** — the assistant
   reply info button now opens a **run-scoped** Run Details pane (one concrete response run; an already-open
   pane retargets when another reply's info button is clicked, and falls back to the inline details popover
