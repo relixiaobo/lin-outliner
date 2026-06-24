@@ -23,9 +23,11 @@
   background: var(--bg-elevated);
   box-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
   padding: 0;
+  transform: translate3d(0, 0, 0);
   transition:
     transform var(--motion-layout),
     opacity var(--motion-layout);
+  will-change: transform, opacity;
 }
 
 /* Collapsed: the rail slides out past the RIGHT window edge and fades; the content
@@ -34,7 +36,7 @@
    window edge. The rail keeps its open width/position — only the transform + opacity
    change — so the slide is a rigid GPU layer move with no panel reflow. */
 .agent-dock.agent-dock-collapsed {
-  transform: translateX(calc(100% + var(--layout-gap) + 4px));
+  transform: translate3d(calc(100% + var(--layout-gap) + 4px), 0, 0);
   opacity: 0;
   pointer-events: none;
 }

@@ -122,27 +122,6 @@
   line-height: var(--line-meta);
 }
 
-.agent-message-time-separator {
-  display: grid;
-  width: 100%;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-4);
-  margin: var(--space-2) 0 var(--space-5);
-  color: var(--text-faint);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
-  user-select: none;
-}
-
-.agent-message-time-separator::before,
-.agent-message-time-separator::after {
-  height: 1px;
-  min-width: 0;
-  background: var(--border-subtle);
-  content: "";
-}
-
 .agent-compaction-boundary {
   display: grid;
   width: 100%;

@@ -157,7 +157,7 @@
   color: var(--text-strong);
 }
 
-.select-popup-input:focus-visible {
+:root[data-input-modality="keyboard"] .select-popup-input:focus-visible {
   background: var(--fill-2);
   outline: none;
   box-shadow: var(--focus-ring-shadow);

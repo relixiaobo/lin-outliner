@@ -144,7 +144,7 @@
   outline: none;
 }
 
-.agent-profile-prompt-editor:focus-visible {
+:root[data-input-modality="keyboard"] .agent-profile-prompt-editor:focus-visible {
   box-shadow: var(--outline-focus);
 }
 

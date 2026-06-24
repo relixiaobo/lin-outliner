@@ -1028,7 +1028,6 @@ commandPalette: {
         cacheWrite: 'cache write',
         total: 'total',
       },
-      timeSeparatorToday: ({ time }: { time: string }) => `Today ${time}`,
     },
     // The collapsible thinking/tool process block + compaction boundary.
     process: {

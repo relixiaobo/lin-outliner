@@ -108,3 +108,19 @@ export function clampRailWidthsForPanelFloor(
 
   return next;
 }
+
+export function clampAgentRailForPanelFloor(
+  metrics: WorkspaceLayoutMetrics,
+  rails: ResponsiveRailState,
+  panelCount: number,
+) {
+  const next = clampRailWidthsToLimits(rails);
+  const nextRails = { ...rails, ...next };
+  const deficit = panelFloorWidth(metrics, panelCount) - availablePanelWidth(metrics, nextRails);
+
+  if (deficit > 0 && rails.agentOpen) {
+    next.agentWidth -= Math.min(deficit, next.agentWidth - MIN_AGENT_WIDTH);
+  }
+
+  return next;
+}

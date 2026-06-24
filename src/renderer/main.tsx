@@ -13,10 +13,12 @@ import { AgentConfigWindow } from './ui/agent/AgentConfigWindow';
 import { ChannelConfigWindow } from './ui/agent/ChannelConfigWindow';
 import { I18nProvider } from './i18n/I18nProvider';
 import { installRendererDiagnostics } from './diagnostics';
+import { installInputModalityTracking } from './ui/focus/inputModality';
 import './styles/index.css';
 import './styles/outliner.css';
 
 installRendererDiagnostics();
+installInputModalityTracking();
 
 // The same bundle serves the main window and the dedicated settings window; the
 // surface is selected by a ?surface= query param the main process sets.

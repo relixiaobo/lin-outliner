@@ -1449,7 +1449,7 @@
   color: color-mix(in srgb, var(--text) 28%, transparent);
 }
 
-.typed-field-input:focus-visible {
+:root[data-input-modality="keyboard"] .typed-field-input:focus-visible {
   box-shadow: var(--underline-focus-shadow);
 }
 

@@ -4,6 +4,7 @@ import {
   MAX_SIDEBAR_WIDTH,
   MIN_AGENT_WIDTH,
   MIN_SIDEBAR_WIDTH,
+  clampAgentRailForPanelFloor,
   clampRailWidthsForPanelFloor,
   panelCountFitsAtMinimumRails,
   type ResponsiveRailState,
@@ -59,6 +60,31 @@ describe('workspace responsive layout', () => {
     expect(next).toEqual({
       sidebarWidth: MAX_SIDEBAR_WIDTH,
       agentWidth: 308,
+    });
+  });
+
+  test('agent reveal opening preserves the sidebar width while shrinking only the agent rail', () => {
+    const next = clampAgentRailForPanelFloor(baseMetrics, {
+      ...openRails,
+      sidebarWidth: MAX_SIDEBAR_WIDTH,
+      agentWidth: MAX_AGENT_WIDTH,
+    }, 1);
+
+    expect(next).toEqual({
+      sidebarWidth: MAX_SIDEBAR_WIDTH,
+      agentWidth: 308,
+    });
+  });
+
+  test('agent reveal opening does not use the sidebar as overflow relief', () => {
+    const next = clampAgentRailForPanelFloor({
+      ...baseMetrics,
+      canvasWidth: 760,
+    }, openRails, 1);
+
+    expect(next).toEqual({
+      sidebarWidth: openRails.sidebarWidth,
+      agentWidth: MIN_AGENT_WIDTH,
     });
   });
 

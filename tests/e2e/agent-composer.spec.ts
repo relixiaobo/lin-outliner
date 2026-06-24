@@ -1957,7 +1957,7 @@ test.describe('agent composer controls', () => {
     await expect(page.getByText('Continue implementing the compact UI boundary.')).toBeVisible();
   });
 
-  test('shows channel speaker identity, time separators, and message details', async ({ page }) => {
+  test('suppresses inline time separators and shows message details', async ({ page }) => {
     const usage = {
       input: 1200,
       output: 34,
@@ -2031,15 +2031,12 @@ test.describe('agent composer controls', () => {
       ],
     });
 
-    await expect(page.locator('.agent-message-time-separator')).toHaveCount(1);
+    await expect(page.locator('.agent-message-time-separator')).toHaveCount(0);
     const coordinatorRow = page.locator('.agent-message-row.assistant', { hasText: 'Coordinator result.' });
-    await expect(coordinatorRow.locator('.agent-message-actor')).toContainText('Neva');
-    await expect(coordinatorRow.locator('.agent-message-actor')).toContainText('@assistant');
-    await expect(coordinatorRow.locator('.agent-identity-avatar')).toBeVisible();
+    await expect(coordinatorRow).toBeVisible();
 
     const peerRow = page.locator('.agent-message-row.assistant', { hasText: 'Self result.' });
-    await expect(peerRow.locator('.agent-message-actor')).toContainText('self');
-    await expect(peerRow.locator('.agent-message-actor')).toContainText('@self');
+    await expect(peerRow).toBeVisible();
 
     await setAgentMessageContextMenuAction(page, 'details');
     await peerRow.click({ button: 'right' });

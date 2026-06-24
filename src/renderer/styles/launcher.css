@@ -80,15 +80,26 @@ body {
 }
 
 .launcher-input {
+  appearance: none;
+  -webkit-appearance: none;
   flex: 1 1 auto;
   min-width: 0;
+  border: 0;
+  background: transparent;
   color: var(--text);
+  outline: none;
   padding: 0;
   font-size: var(--font-heading-lg);
   line-height: var(--line-heading-lg);
   /* The one selectable surface — it is the user's text, not chrome. */
   user-select: text;
   -webkit-user-select: text;
+}
+
+.launcher-input:focus,
+.launcher-input:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 .launcher-input::placeholder {

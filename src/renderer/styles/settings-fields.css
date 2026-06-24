@@ -29,7 +29,7 @@
   background: var(--fill-1);
 }
 
-.agent-settings-checkbox:focus-within .checkbox-mark {
+:root[data-input-modality="keyboard"] .agent-settings-checkbox:focus-within .checkbox-mark {
   box-shadow: var(--focus-ring-shadow);
 }
 

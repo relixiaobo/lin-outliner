@@ -795,10 +795,17 @@ scale font size with viewport width.
 - **What animates:** state and layout transitions. Content does not animate in;
   the first frame is the working surface (startup rule), not an entrance.
 - **Rail slide (agent open/close).** The agent rail opens and closes by sliding,
-  mirroring the sidebar: collapsing animates `transform: translateX` off the
+  mirroring the sidebar: collapsing animates `transform: translate3d(...)` off the
   right window edge plus `opacity`, over `--motion-layout`. Only transform and
   opacity animate, so the rail moves as one GPU-composited layer and its
   transcript + composer ride along rigidly — they never re-wrap mid-animation.
+  Rail slides are sibling-stable: opening or closing one floating rail must not
+  mutate, resize, or repaint the opposite rail as part of the same reveal.
+  Content-triggered reveals (for example, an outliner chat-source inline
+  reference) follow the same choreography as the rail toggle: open the rail
+  first, then scroll/highlight transcript content only after the rail reaches the
+  open state. A collapsed, off-screen rail must not perform hidden scroll work
+  during the opening frame.
   (Animating width/inset to "grow from the toggle" would reflow the panel body
   every frame; a content-bearing rail can't afford that, which is why it slides
   like the sidebar rather than unfurling.) The rail keeps its open width/position
@@ -847,7 +854,7 @@ Per-component contracts only note deviations from this table.
 | Hover | Region/row controls: `--fill-1` (subtle) or `--fill-2`. Icon-only controls: deepen the glyph colour (`--text-secondary` → `--text-primary`), no fill. Layout must not shift; cursor stays default on rows. |
 | Pressed / active | `--fill-4`. |
 | Selected | `--selection-bg` (`--fill-3`); multi-select / range uses `--selection-soft` (`--fill-2`). |
-| Focus (keyboard) | `--outline-focus` + `--focus-ring-shadow`. Always visible, neutral — never brand or system accent. Text controls (`input` / `textarea` / `select`) carry the same neutral ring as buttons: the outer `--focus-ring-shadow` by default, or — for a borderless input inside a clipped inset card — the inset `--outline-focus` on the **row** (`:focus-within`), since an outer ring would be cropped by the card's `overflow:hidden`. |
+| Focus (keyboard) | `--outline-focus` + `--focus-ring-shadow`. Always visible, neutral — never brand or system accent. Text controls (`input` / `textarea` / `select`) carry that ring only after keyboard navigation (`:root[data-input-modality="keyboard"]`); pointer focus relies on the caret or local editing affordance so ordinary clicks do not turn into web-form boxes. Borderless inputs inside clipped inset cards move the keyboard ring to the **row** (`:focus-within`) because an outer ring would be cropped by the card's `overflow:hidden`. |
 | Disabled | `--text-disabled` / `--text-quaternary`; no hover; reduced-intensity fill. |
 | Loading | Reserve one measured slot so the label and size do not jump; spinner uses `--text-secondary`. |
 | Error / destructive | `--status-danger` text/outline marks the resting destructive affordance. Its **hover stays neutral** (`--control-hover`), not a status tint — functional state is neutral (B3); the status colour rides on the label, not the hover fill. |
@@ -1272,9 +1279,10 @@ category history; see "Settings window".)
   indicated with text underline plus color deepening instead of a boxed control.
   Clicking a row drills into that run's detail view and closes the menu. Row hover
   remains neutral fill.
-- Message metadata is quiet by default. Time separators appear only at meaningful
-  transcript gaps; right-click opens the native message menu, whose Details action
-  shows timestamp, speaker, model, and token usage in a small anchored popover.
+- Message metadata is quiet by default. The transcript does not insert centered
+  time separators; right-click opens the native message menu, whose Details
+  action shows timestamp, speaker, model, and token usage in a small anchored
+  popover.
 - Process summaries, thinking rows, and tool summaries use
   `--font-meta / --line-meta`.
 - Process and tool-call disclosures use one measured disclosure/status slot so
