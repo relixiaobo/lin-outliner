@@ -79,7 +79,9 @@ values are searchable, but they do not outrank exact primary text. Default
 relevance also applies a conservative, capped reference-authority boost from the
 document's distinct linked inbound source nodes (tree references, inline node
 references, and reference field values; trashed/internal metadata references do
-not count). Because this signal is derived from document state, it is safe for
+not count). Search nodes and their query internals also stay out of this graph:
+search result references, search titles, and query operand references are
+executable/view state, not authority signals. Because this signal is derived from document state, it is safe for
 saved search materialization. If a saved search has an explicit sort, that sort
 remains primary and relevance is only a tie-breaker; `sys:refCount` sorts by the
 same linked reference count displayed by the References system field.
