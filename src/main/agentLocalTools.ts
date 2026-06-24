@@ -2,7 +2,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync, realpathSync, statSync } from 'node:fs';
-import { copyFile, mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import {
@@ -238,38 +238,6 @@ interface FileDeleteData {
   kind: 'file' | 'directory' | 'other';
 }
 
-type FileConvertOutputFormat = 'pdf' | 'png' | 'jpeg';
-
-interface FileConvertParams {
-  input_path: string;
-  output_format: FileConvertOutputFormat;
-  output_path?: string;
-  output_dir?: string;
-  pages?: string;
-}
-
-interface FileConvertOutput {
-  filePath: string;
-  format: FileConvertOutputFormat;
-  mimeType: string;
-  sizeBytes: number;
-}
-
-interface FileConvertData {
-  inputPath: string;
-  outputFormat: FileConvertOutputFormat;
-  outputs: FileConvertOutput[];
-  command: {
-    executable: string;
-    args: string[];
-    cwd: string;
-    shell: false;
-    exitCode: number | null;
-  };
-  stdout: string;
-  stderr: string;
-}
-
 interface Hunk {
   oldStart: number;
   oldLines: number;
@@ -469,13 +437,12 @@ const PDF_TEXT_TRUNCATION_MARKER = '\n[PDF text truncated]';
 const PDF_TEXT_CAPTURE_CHARS = PDF_TEXT_MAX_CHARS + 1;
 const PDF_INFO_CACHE_EXTRACTOR = 'pdfinfo:v1';
 const PDF_TEXT_CACHE_EXTRACTOR = 'pdftotext-layout:v1';
-const CONVERT_TIMEOUT_MS = 180_000;
 export const POPPLER_RECOVERY_INSTRUCTIONS = [
   'Poppler is required for PDF metadata, text extraction, page rendering, and conversion.',
   'Run bash to detect an available package manager and install Poppler.',
   'Do not assume Homebrew is available: use an installed manager such as `brew install poppler`, `sudo port install poppler`, `sudo apt-get update && sudo apt-get install -y poppler-utils`, `sudo dnf install -y poppler-utils`, or `sudo pacman -S --noconfirm poppler`.',
   'If no supported package manager is available, report that Poppler must be installed so pdfinfo, pdftotext, and pdftoppm are on PATH.',
-  'After installation, retry the same file_read or file_convert call.',
+  'After installation, retry the same file_read call.',
 ].join(' ');
 const IGNORED_DIRECTORIES = new Set(['.agent-trash', '.git', '.svn', '.hg', '.bzr', '.jj', '.sl', 'node_modules', 'dist', 'out', 'release', 'target']);
 const IMAGE_MEDIA_TYPES = new Map<string, FileReadImageData['file']['type']>([
@@ -485,28 +452,6 @@ const IMAGE_MEDIA_TYPES = new Map<string, FileReadImageData['file']['type']>([
   ['.gif', 'image/gif'],
   ['.webp', 'image/webp'],
 ]);
-const OFFICE_CONVERTIBLE_EXTENSIONS = new Set([
-  '.doc',
-  '.docx',
-  '.odp',
-  '.ods',
-  '.odt',
-  '.ppt',
-  '.pptx',
-  '.rtf',
-  '.xls',
-  '.xlsx',
-]);
-const CONVERT_FORMAT_EXTENSIONS: Record<FileConvertOutputFormat, string> = {
-  pdf: '.pdf',
-  png: '.png',
-  jpeg: '.jpg',
-};
-const CONVERT_FORMAT_MIME_TYPES: Record<FileConvertOutputFormat, string> = {
-  pdf: 'application/pdf',
-  png: 'image/png',
-  jpeg: 'image/jpeg',
-};
 const SILENT_COMMANDS = new Set(['mv', 'cp', 'rm', 'mkdir', 'rmdir', 'chmod', 'chown', 'chgrp', 'touch', 'ln', 'cd', 'export', 'unset', 'wait']);
 const DISALLOWED_AUTO_BACKGROUND_COMMANDS = new Set(['sleep']);
 
@@ -585,19 +530,6 @@ const FILE_DELETE_PARAMETERS = {
   },
 };
 
-const FILE_CONVERT_PARAMETERS = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['input_path', 'output_format'],
-  properties: {
-    input_path: { type: 'string', minLength: 1, description: 'The absolute path to the source file to convert.' },
-    output_format: { type: 'string', enum: ['pdf', 'png', 'jpg', 'jpeg'], description: 'Target format. Office documents and images can become pdf; PDFs can become png or jpeg page images; images can become png, jpeg, or pdf.' },
-    output_path: { type: 'string', minLength: 1, description: 'Exact output file path for single-file conversions. Defaults to the workdir with the source basename and target extension.' },
-    output_dir: { type: 'string', minLength: 1, description: 'Output directory for PDF page-image conversions. Defaults to a new directory in the workdir. Do not combine with output_path.' },
-    pages: { type: 'string', description: 'Page range for PDF-to-image conversion, for example "1-5", "3", or "10-20". Omit it to convert every page.' },
-  },
-};
-
 const BASH_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
@@ -635,7 +567,6 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
     createFileGrepTool(workspace),
     createFileEditTool(workspace),
     createFileWriteTool(workspace),
-    createFileConvertTool(workspace),
     createFileDeleteTool(workspace),
     createBashTool(workspace),
     createTaskStopTool(),
@@ -1299,47 +1230,6 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
   };
 }
 
-function createFileConvertTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileConvertData>> {
-  return {
-    name: 'file_convert',
-    label: 'File Convert',
-    description: [
-      'Converts local files with typed, non-shell converters.',
-      'Use this instead of bash for common document and image conversions.',
-      'Supported conversions: office documents and presentations to PDF, PDF pages to PNG/JPEG images, and images to PDF/PNG/JPEG.',
-      'Input and output paths must be inside the allowed file area or an explicitly handed scope.',
-      'The tool refuses to overwrite existing outputs.',
-    ].join('\n'),
-    parameters: FILE_CONVERT_PARAMETERS,
-    executionMode: 'sequential',
-    execute: async (_toolCallId, rawParams: unknown) => {
-      const started = Date.now();
-      try {
-        const params = normalizeFileConvertParams(rawParams);
-        const inputPath = resolveWorkspacePath(workspace, params.input_path, 'read');
-        const inputStat = await stat(inputPath).catch((error: unknown) => {
-          throw localFsError(error, inputPath);
-        });
-        if (inputStat.isDirectory()) {
-          throw new LocalToolFailure('is_directory', `Path is a directory: ${inputPath}`, 'Pass a file path to file_convert.');
-        }
-
-        const data = await convertFile(workspace, inputPath, params);
-        await notifySuccessfulFileTouch(workspace, inputPath);
-        for (const output of data.outputs) {
-          await notifySuccessfulFileTouch(workspace, output.filePath);
-        }
-        return agentToolResult(successEnvelope('file_convert', data, {
-          instructions: `Converted ${path.basename(inputPath)} to ${data.outputs.map((output) => output.filePath).join(', ')}.`,
-          metrics: metrics(started, data),
-        }), visibleFileConvert(data));
-      } catch (error) {
-        return localErrorResult('file_convert', error, started);
-      }
-    },
-  };
-}
-
 function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelope<FileDeleteData>> {
   return {
     name: 'file_delete',
@@ -1400,7 +1290,8 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
     label: 'Bash',
     description: [
       'Executes a shell command in the default file area.',
-      'Use file_read, file_edit, file_write, file_convert, file_delete, file_glob, and file_grep for filesystem operations when possible.',
+      'Use file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.',
+      'For document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).',
       'Use run_in_background for long-running commands. You do not need to append "&"; use task_stop if the task needs to be stopped.',
       'Commands should include a clear description of what they do in active voice.',
     ].join('\n'),
@@ -1544,36 +1435,6 @@ function normalizeFileWriteParams(rawParams: unknown): FileWriteParams {
   };
 }
 
-function normalizeFileConvertParams(rawParams: unknown): FileConvertParams {
-  const input = asRecord(rawParams);
-  const inputPath = requiredLocalString(input.input_path, 'input_path');
-  const outputFormat = normalizeConvertOutputFormat(input.output_format);
-  const outputPath = optionalNormalizedString(input.output_path);
-  const outputDir = optionalNormalizedString(input.output_dir);
-  const pages = typeof input.pages === 'string' ? input.pages : undefined;
-  const extension = path.extname(inputPath).toLowerCase();
-  const isPdfToImage = (outputFormat === 'png' || outputFormat === 'jpeg') && extension === '.pdf';
-  if (outputPath && outputDir) {
-    throw new LocalToolFailure('invalid_args', 'output_path and output_dir cannot be used together.', 'Use output_path for one output file, or output_dir for PDF page images.');
-  }
-  if (pages !== undefined && !isPdfToImage) {
-    throw new LocalToolFailure('invalid_args', 'pages is only valid when converting PDF pages to images.', 'Remove pages or convert a PDF to png/jpeg.');
-  }
-  if (outputDir && !isPdfToImage) {
-    throw new LocalToolFailure('invalid_args', 'output_dir is only valid for PDF page-image conversions.', 'Use output_path for single-file output.');
-  }
-  if (outputPath && isPdfToImage) {
-    throw new LocalToolFailure('invalid_args', 'output_path is not supported for PDF page-image conversions.', 'Use output_dir so multiple page outputs can be returned.');
-  }
-  return {
-    input_path: inputPath,
-    output_format: outputFormat,
-    output_path: outputPath,
-    output_dir: outputDir,
-    pages,
-  };
-}
-
 function normalizeFileDeleteParams(rawParams: unknown): FileDeleteParams {
   const input = asRecord(rawParams);
   return {
@@ -1596,270 +1457,6 @@ function normalizeBashParams(rawParams: unknown): BashParams {
 function normalizeTaskStopParams(rawParams: unknown): TaskStopParams {
   const input = asRecord(rawParams);
   return { task_id: requiredLocalString(input.task_id, 'task_id') };
-}
-
-function normalizeConvertOutputFormat(value: unknown): FileConvertOutputFormat {
-  if (typeof value !== 'string') {
-    throw new LocalToolFailure('invalid_args', 'output_format is required.');
-  }
-  const normalized = value.trim().toLowerCase();
-  if (normalized === 'jpg') return 'jpeg';
-  if (normalized === 'pdf' || normalized === 'png' || normalized === 'jpeg') return normalized;
-  throw new LocalToolFailure('unsupported_conversion', `Unsupported output_format: ${value}`, 'Use pdf, png, jpg, or jpeg.');
-}
-
-async function convertFile(
-  workspace: WorkspaceContext,
-  inputPath: string,
-  params: FileConvertParams,
-): Promise<FileConvertData> {
-  const extension = path.extname(inputPath).toLowerCase();
-  if (params.output_format === 'pdf') {
-    const outputPath = resolveSingleConvertOutputPath(workspace, inputPath, params);
-    await assertOutputPathAvailable(outputPath, inputPath);
-    if (IMAGE_MEDIA_TYPES.has(extension)) {
-      return await convertImageWithSips(inputPath, outputPath, params.output_format);
-    }
-    if (OFFICE_CONVERTIBLE_EXTENSIONS.has(extension)) {
-      return await convertOfficeToPdf(workspace, inputPath, outputPath);
-    }
-  }
-
-  if ((params.output_format === 'png' || params.output_format === 'jpeg') && extension === '.pdf') {
-    return await convertPdfToImages(workspace, inputPath, params);
-  }
-
-  if ((params.output_format === 'png' || params.output_format === 'jpeg') && IMAGE_MEDIA_TYPES.has(extension)) {
-    const outputPath = resolveSingleConvertOutputPath(workspace, inputPath, params);
-    await assertOutputPathAvailable(outputPath, inputPath);
-    return await convertImageWithSips(inputPath, outputPath, params.output_format);
-  }
-
-  throw new LocalToolFailure(
-    'unsupported_conversion',
-    `Unsupported conversion from ${extension || 'unknown file type'} to ${params.output_format}.`,
-    'Use office/presentation files to PDF, PDF to PNG/JPEG pages, or images to PDF/PNG/JPEG.',
-  );
-}
-
-function resolveSingleConvertOutputPath(
-  workspace: WorkspaceContext,
-  inputPath: string,
-  params: FileConvertParams,
-): string {
-  const fallback = path.join(
-    workspace.root,
-    `${path.basename(inputPath, path.extname(inputPath))}${CONVERT_FORMAT_EXTENSIONS[params.output_format]}`,
-  );
-  const outputPath = resolveWorkspacePath(workspace, params.output_path ?? fallback, 'write');
-  assertNotSelfDefinitionConvertOutput(workspace, outputPath);
-  return outputPath;
-}
-
-function assertNotSelfDefinitionConvertOutput(workspace: WorkspaceContext, outputPath: string): void {
-  if (!isSelfDefinitionWritePath(workspace, outputPath)) return;
-  throw new LocalToolFailure(
-    'self_definition_convert_output_not_supported',
-    'file_convert cannot write skill or agent definition content.',
-    'Use file_write or file_edit so self-definition content is validated and hot-reloaded.',
-  );
-}
-
-async function assertOutputPathAvailable(outputPath: string, inputPath: string): Promise<void> {
-  if (path.resolve(outputPath) === path.resolve(inputPath)) {
-    throw new LocalToolFailure('output_overwrites_input', 'Output path must differ from the input path.', 'Choose a distinct output_path.');
-  }
-  try {
-    await stat(outputPath);
-    throw new LocalToolFailure('output_exists', `Output path already exists: ${outputPath}`, 'Choose a new output_path or delete the existing output first.');
-  } catch (error) {
-    if (error instanceof LocalToolFailure) throw error;
-    if (isNodeError(error) && error.code === 'ENOENT') return;
-    throw localFsError(error, outputPath);
-  }
-}
-
-async function convertOfficeToPdf(
-  workspace: WorkspaceContext,
-  inputPath: string,
-  outputPath: string,
-): Promise<FileConvertData> {
-  const tempDir = path.join(toolOutputDir(workspace), `convert-office-${randomUUID()}`);
-  await mkdir(tempDir, { recursive: true });
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  const args = ['--headless', '--convert-to', 'pdf', '--outdir', tempDir, inputPath];
-  const attempted: string[] = [];
-  try {
-    for (const executable of ['soffice', 'libreoffice']) {
-      attempted.push(executable);
-      const result = await runProcess(executable, args, path.dirname(inputPath), CONVERT_TIMEOUT_MS);
-      if (result.error && isNodeError(result.error) && result.error.code === 'ENOENT') continue;
-      if (result.error) {
-        throw new LocalToolFailure('converter_failed', result.error.message, 'Check that LibreOffice can run on this system.');
-      }
-      if (result.exitCode !== 0) {
-        throw new LocalToolFailure('converter_failed', result.stderr.trim() || 'LibreOffice conversion failed.', 'Check that the source file is valid and supported.');
-      }
-      const generatedPath = await findSingleConvertedFile(tempDir, '.pdf');
-      await moveFile(generatedPath, outputPath);
-      await rm(tempDir, { recursive: true, force: true });
-      return await convertedData(inputPath, 'pdf', [outputPath], executable, args, path.dirname(inputPath), result);
-    }
-  } catch (error) {
-    await rm(tempDir, { recursive: true, force: true });
-    throw error;
-  }
-  await rm(tempDir, { recursive: true, force: true });
-  throw new LocalToolFailure(
-    'converter_unavailable',
-    `Could not find LibreOffice converter (${attempted.join(', ')}).`,
-    'Install LibreOffice so soffice or libreoffice is available on PATH.',
-  );
-}
-
-async function convertPdfToImages(
-  workspace: WorkspaceContext,
-  inputPath: string,
-  params: FileConvertParams,
-): Promise<FileConvertData> {
-  const totalPages = await getPdfPageCount(inputPath);
-  const range = selectPdfConversionPageRange(totalPages, params.pages);
-  const outputDir = resolveWorkspacePath(
-    workspace,
-    params.output_dir ?? path.join(workspace.root, `${path.basename(inputPath, path.extname(inputPath))}-pages-${randomUUID().slice(0, 8)}`),
-    'write',
-  );
-  assertNotSelfDefinitionConvertOutput(workspace, outputDir);
-  await ensureDirectoryOutput(outputDir);
-
-  const formatFlag = params.output_format === 'png' ? '-png' : '-jpeg';
-  const extension = params.output_format === 'png' ? '.png' : '.jpg';
-  const basename = path.basename(inputPath, path.extname(inputPath));
-  const prefix = path.join(outputDir, basename);
-  await assertNoPageOutputs(outputDir, basename, extension);
-  const args = [
-    formatFlag,
-    '-r',
-    '144',
-    '-f',
-    String(range.firstPage),
-    '-l',
-    String(range.lastPage),
-    inputPath,
-    prefix,
-  ];
-  const result = await runProcess('pdftoppm', args, path.dirname(inputPath), CONVERT_TIMEOUT_MS);
-  if (result.error) {
-    throw new LocalToolFailure('converter_unavailable', result.error.message, POPPLER_RECOVERY_INSTRUCTIONS);
-  }
-  if (result.exitCode !== 0) {
-    throw pdfPageRenderFailure(
-      result.stderr,
-      'converter_failed',
-      'pdftoppm conversion failed.',
-      'Check that the PDF and page range are valid.',
-    );
-  }
-  const outputs = (await readdir(outputDir))
-    .filter((entry) => entry.startsWith(`${basename}-`) && entry.endsWith(extension))
-    .sort(naturalCompare)
-    .map((entry) => path.join(outputDir, entry));
-  if (!outputs.length) {
-    throw new LocalToolFailure('converter_failed', 'pdftoppm produced no page images.', 'Check that the PDF is valid and retry.');
-  }
-  return await convertedData(inputPath, params.output_format, outputs, 'pdftoppm', args, path.dirname(inputPath), result);
-}
-
-async function convertImageWithSips(
-  inputPath: string,
-  outputPath: string,
-  outputFormat: FileConvertOutputFormat,
-): Promise<FileConvertData> {
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  const args = ['-s', 'format', outputFormat, inputPath, '--out', outputPath];
-  const result = await runProcess('sips', args, path.dirname(inputPath), CONVERT_TIMEOUT_MS);
-  if (result.error) {
-    throw new LocalToolFailure('converter_unavailable', result.error.message, 'Use macOS sips or convert this file through an installed image converter.');
-  }
-  if (result.exitCode !== 0) {
-    throw new LocalToolFailure('converter_failed', result.stderr.trim() || 'sips conversion failed.', 'Check that the source image is valid and supported.');
-  }
-  return await convertedData(inputPath, outputFormat, [outputPath], 'sips', args, path.dirname(inputPath), result);
-}
-
-async function ensureDirectoryOutput(outputDir: string): Promise<void> {
-  try {
-    const outputStat = await stat(outputDir);
-    if (!outputStat.isDirectory()) {
-      throw new LocalToolFailure('not_directory', `Output path is not a directory: ${outputDir}`, 'Choose another output_dir.');
-    }
-  } catch (error) {
-    if (error instanceof LocalToolFailure) throw error;
-    if (isNodeError(error) && error.code === 'ENOENT') {
-      await mkdir(outputDir, { recursive: true });
-      return;
-    }
-    throw localFsError(error, outputDir);
-  }
-}
-
-async function assertNoPageOutputs(outputDir: string, basename: string, extension: string): Promise<void> {
-  const existing = (await readdir(outputDir)).find((entry) => entry.startsWith(`${basename}-`) && entry.endsWith(extension));
-  if (existing) {
-    throw new LocalToolFailure('output_exists', `Output page already exists: ${path.join(outputDir, existing)}`, 'Choose an empty output_dir or remove existing page images first.');
-  }
-}
-
-async function findSingleConvertedFile(tempDir: string, extension: string): Promise<string> {
-  const files = (await readdir(tempDir)).filter((entry) => entry.toLowerCase().endsWith(extension));
-  if (files.length !== 1) {
-    throw new LocalToolFailure('converter_failed', `Expected one ${extension} output, found ${files.length}.`, 'Check the converter output and retry with an explicit output_path.');
-  }
-  return path.join(tempDir, files[0]!);
-}
-
-async function moveFile(source: string, destination: string): Promise<void> {
-  try {
-    await rename(source, destination);
-  } catch (error) {
-    if (isNodeError(error) && error.code === 'EXDEV') {
-      await copyFile(source, destination);
-      await unlink(source);
-      return;
-    }
-    throw localFsError(error, destination);
-  }
-}
-
-async function convertedData(
-  inputPath: string,
-  outputFormat: FileConvertOutputFormat,
-  outputPaths: readonly string[],
-  executable: string,
-  args: string[],
-  cwd: string,
-  result: ProcessResult,
-): Promise<FileConvertData> {
-  const outputs = await Promise.all(outputPaths.map(async (filePath): Promise<FileConvertOutput> => ({
-    filePath,
-    format: outputFormat,
-    mimeType: CONVERT_FORMAT_MIME_TYPES[outputFormat],
-    sizeBytes: (await stat(filePath)).size,
-  })));
-  return {
-    inputPath,
-    outputFormat,
-    outputs,
-    command: {
-      executable,
-      args,
-      cwd,
-      shell: false,
-      exitCode: result.exitCode,
-    },
-    stdout: result.stdout,
-    stderr: result.stderr,
-  };
 }
 
 async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Promise<FileGrepData> {
@@ -2748,18 +2345,6 @@ function selectPdfPageRange(totalPages: number, requestedPages: string | undefin
   return { firstPage: range.firstPage, lastPage: Math.min(range.lastPage, totalPages) };
 }
 
-function selectPdfConversionPageRange(totalPages: number, requestedPages: string | undefined): PdfPageRange {
-  if (!requestedPages) return { firstPage: 1, lastPage: totalPages };
-  const range = parsePdfPageRange(requestedPages);
-  if (!range) {
-    throw new LocalToolFailure('invalid_pdf_pages', `Invalid PDF page range: ${requestedPages}`, 'Use page ranges like "3", "1-5", or "10-20".');
-  }
-  if (range.firstPage > totalPages) {
-    throw new LocalToolFailure('pdf_page_range_empty', `Page range "${requestedPages}" starts after the PDF ends.`, `Use pages between 1 and ${totalPages}.`);
-  }
-  return { firstPage: range.firstPage, lastPage: Math.min(range.lastPage, totalPages) };
-}
-
 function pdfPageRenderFailure(
   stderrInput: string,
   fallbackCode: string,
@@ -3032,14 +2617,6 @@ function visibleFileWrite(data: FileWriteData) {
     filePath: data.filePath,
     structuredPatch: data.structuredPatch,
     ...(data.skillWrite ? { skillWrite: visibleSkillWrite(data.skillWrite) } : {}),
-  };
-}
-
-function visibleFileConvert(data: FileConvertData) {
-  return {
-    inputPath: data.inputPath,
-    outputFormat: data.outputFormat,
-    outputs: data.outputs,
   };
 }
 

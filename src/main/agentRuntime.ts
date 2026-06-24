@@ -341,7 +341,6 @@ const LOCAL_FILE_TOOL_NAMES = new Set([
   'file_grep',
   'file_edit',
   'file_write',
-  'file_convert',
   'file_delete',
 ]);
 const LOCAL_USER_ID = 'local-user';
