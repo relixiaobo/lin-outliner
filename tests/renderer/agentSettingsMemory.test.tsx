@@ -90,7 +90,7 @@ describe('Settings → Agent Dream history group', () => {
       runId: 'dream-run-2',
     };
     const chips = dreamMetaChips(minimal, DEFAULT_MESSAGES, fmtDate);
-    expect(chips).toEqual(['Manual', 'Running', 'Created at 200']);
+    expect(chips).toEqual(['Manual', 'Running', 'Started at 200']);
   });
 });
 

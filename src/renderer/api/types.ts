@@ -21,7 +21,6 @@ export type {
   AgentConversation,
   AgentCreateConversationOptions,
   AgentConversationListMeta,
-  AgentMemoryEntryView,
   Backlink,
   BatchMoveNodeInput,
   CommandResult,

@@ -285,20 +285,13 @@ test.describe('agent settings window', () => {
     }).toMatchObject({ agentId: 'create' });
   });
 
-  test('lets users view, edit, and forget agent memory entries', async ({ page }) => {
+  test('lets users view Dream controls and run Dream from Memory settings', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: /^Memory/ }).click();
 
-    await expect(settings.getByRole('list', { name: 'Remembered facts' })).toBeVisible();
-    await expect(settings.getByText('Prefer concise, direct implementation notes')).toBeVisible();
-    await expect(settings.getByText('Use the old conversation vocabulary')).toBeVisible();
-    // Exact: "Inactive" contains "active" as a case-insensitive substring, so a loose
-    // getByText('Active') would match both status chips.
-    await expect(settings.getByText('Active', { exact: true })).toBeVisible();
-    await expect(settings.getByText('Inactive', { exact: true })).toBeVisible();
-
     const dreamControls = settings.getByRole('list', { name: 'Dream controls' });
     await expect(dreamControls).toBeVisible();
+    await expect(dreamControls).toContainText('Schedule');
     await expect(dreamControls).toContainText('Run Dream now');
     await dreamControls.getByRole('button', { name: 'Run' }).click();
     await expect.poll(async () => {
@@ -306,32 +299,7 @@ test.describe('agent settings window', () => {
       return calls.findLast((call) => call.cmd === 'agent_run_dream_now')?.args;
     }).toMatchObject({ limit: 50 });
     await expect(settings.getByText('Dream completed')).toBeVisible();
-
-    await settings.getByRole('button', { name: 'Edit memory' }).click();
-    const editor = settings.getByLabel('Memory fact');
-    await expect(editor).toBeVisible();
-    await editor.fill('Prefer concise, direct implementation notes with explicit verification.');
-    await settings.getByRole('button', { name: 'Save memory' }).click();
-
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'agent_update_memory')?.args;
-    }).toMatchObject({
-      memoryId: 'memory-active',
-      fact: 'Prefer concise, direct implementation notes with explicit verification.',
-    });
-    await expect(settings.getByText('Memory updated')).toBeVisible();
-    await expect(settings.getByText('Prefer concise, direct implementation notes with explicit verification.')).toBeVisible();
-
-    await settings.getByRole('button', { name: 'Forget memory' }).click();
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'agent_forget_memory')?.args;
-    }).toMatchObject({ memoryId: 'memory-active' });
-    await expect(settings.getByText('Memory marked inactive')).toBeVisible();
-    await expect(settings.locator('.settings-chip', { hasText: 'Inactive' })).toHaveCount(2);
-    await expect(settings.getByRole('button', { name: 'Edit memory' })).toHaveCount(0);
-    await expect(settings.getByRole('button', { name: 'Forget memory' })).toHaveCount(0);
+    await expect(settings.getByRole('list', { name: 'Dream history' })).toBeVisible();
   });
 
   test('groups providers by credential and reads status on each row', async ({ page }) => {
@@ -420,7 +388,7 @@ test.describe('agent and Channel config windows', () => {
     const config = await openChannelConfig(page, 'lin-agent-channel-planning');
     await expect(config.getByRole('heading', { name: 'Channel settings' })).toBeVisible();
     await expect(config.getByRole('button', { name: 'Cancel' })).toBeVisible();
-    await expect(config.getByRole('button', { name: 'Save name' })).toBeVisible();
+    await expect(config.getByRole('button', { name: 'Save settings' })).toBeVisible();
     await expect(config.locator('.settings-sheet-avatar .settings-sheet-icon-avatar')).toBeVisible();
 
     const actions = await config.locator('.settings-sheet-actions').evaluate((element) => {

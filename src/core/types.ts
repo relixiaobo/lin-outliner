@@ -766,31 +766,6 @@ export interface AgentConversationListMeta {
   unreadCount?: number;
 }
 
-export type AgentMemorySourceView =
-  | {
-      stream: 'conversation' | 'run';
-      streamId: string;
-      range: {
-        fromSeqExclusive: number;
-        throughSeq: number;
-        throughEventId: string | null;
-        fromCreatedAtInclusive?: number;
-        throughCreatedAtExclusive?: number;
-      };
-    }
-  | { episodeId: string };
-
-export interface AgentMemoryEntryView {
-  id: string;
-  /** The pool this fact lives in — its owner/believer (whose self-model). */
-  principal: AgentPrincipal;
-  fact: string;
-  originWorkspace?: string;
-  sources: AgentMemorySourceView[];
-  status: 'active' | 'invalidated';
-  createdAt: number;
-}
-
 export type AgentReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 /**
  * The reasoning ladder, lowest → highest. The single ordered source for effort

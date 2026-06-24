@@ -218,7 +218,7 @@ export interface AgentRenderDreamTaskEntity {
   status: AgentRenderTaskStatus;
   trigger: 'manual' | 'schedule';
   window?: AgentDreamRecord['window'];
-  /** The pool this Dream maintains (run anchor subject), so the panel can label whose Dream. */
+  /** The principal model this Dream maintains (run anchor subject), so the panel can label whose Dream. */
   principal: AgentPrincipal;
   startedAt: number;
   updatedAt: number;

@@ -315,6 +315,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       videoDurationMs?: number;
     }>();
     const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+    const dreamHistory: unknown[] = [];
     const agentListeners: Array<(event: unknown) => void> = [];
     const documentListeners: Array<(event: unknown) => void> = [];
     const oauthListeners: Array<(envelope: unknown) => void> = [];
@@ -710,36 +711,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         lastMessageSnippet: 'Coordinate the launch plan.',
         lastMessageAt: now - 60_000,
         unreadCount: 3,
-      },
-    ];
-    // Memory entries are principal-keyed (the pool they belong to); the Settings pane
-    // groups/labels by `principal`, so one agent-pool fact and one user-pool fact.
-    const agentMemoryEntries = [
-      {
-        id: 'memory-active',
-        principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
-        fact: 'Prefer concise, direct implementation notes in agent review work.',
-        originWorkspace: '/mock/local-root',
-        sources: [{
-          conversationId: 'mock-agent-conversation',
-          runId: 'run-memory-e2e',
-          eventId: 'event-memory-e2e',
-        }],
-        status: 'active',
-        createdAt: now - 4_000,
-      },
-      {
-        id: 'memory-forgotten',
-        principal: { type: 'user', userId: 'local-user' },
-        fact: 'Use the old conversation vocabulary in public UI.',
-        originWorkspace: '/mock/local-root',
-        sources: [{
-          conversationId: 'mock-agent-conversation',
-          runId: 'run-memory-old',
-          eventId: 'event-memory-old',
-        }],
-        status: 'invalidated',
-        createdAt: now - 8_000,
       },
     ];
 
@@ -1926,28 +1897,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_list_all_definitions') {
           return clone(agentDefinitions) as T;
         }
-        if (cmd === 'agent_list_memory') {
-          const includeInvalidated = args.includeInvalidated === true;
-          const limit = typeof args.limit === 'number' ? args.limit : agentMemoryEntries.length;
-          return clone(agentMemoryEntries
-            .filter((entry) => includeInvalidated || entry.status === 'active')
-            .slice(0, limit)) as T;
-        }
-        if (cmd === 'agent_update_memory') {
-          const memoryId = String(args.memoryId ?? '');
-          const fact = String(args.fact ?? '').trim();
-          const entry = agentMemoryEntries.find((item) => item.id === memoryId && item.status === 'active');
-          if (!entry) return clone(null) as T;
-          entry.fact = fact;
-          return clone(entry) as T;
-        }
-        if (cmd === 'agent_forget_memory') {
-          const memoryId = String(args.memoryId ?? '');
-          const entry = agentMemoryEntries.find((item) => item.id === memoryId);
-          if (!entry) return clone(null) as T;
-          entry.status = 'invalidated';
-          return clone(entry) as T;
-        }
         if (cmd === 'agent_update_tool_permission_settings') {
           const next = args.settings as { grants?: string[]; blocks?: string[]; softBlockAllows?: string[] };
           agentToolPermissions.grants = Array.isArray(next.grants) ? next.grants.map(String) : [];
@@ -2123,7 +2072,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_queue_follow_up') return clone({ queued: true }) as T;
         if (cmd === 'agent_steer_conversation') return clone({ queued: true }) as T;
-        if (cmd === 'agent_list_dream_history') return clone([]) as T;
+        if (cmd === 'agent_list_dream_history') return clone(dreamHistory) as T;
         // Above the volume bar so the manual "Dream now" pre-check passes through
         // to agent_run_dream_now instead of showing the thin-data advisory.
         if (cmd === 'agent_dream_readiness') {
@@ -2134,7 +2083,32 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             belowThreshold: false,
           }) as T;
         }
-        if (cmd === 'agent_run_dream_now') return clone([]) as T;
+        if (cmd === 'agent_run_dream_now') {
+          const entry = {
+            id: 'dream-e2e-1',
+            kind: 'dream',
+            status: 'completed',
+            trigger: 'manual',
+            principal: { type: 'agent', agentId: MAIN_AGENT_ID },
+            startedAt: now,
+            updatedAt: now + 500,
+            completedAt: now + 500,
+            runId: 'dream-run-e2e-1',
+            processed: {
+              totalMessageCount: 12,
+              totalCharCount: 4000,
+              consolidateOnly: false,
+            },
+            changes: {
+              added: 1,
+              updated: 0,
+              forgotten: 0,
+              skipped: 0,
+            },
+          };
+          dreamHistory.splice(0, dreamHistory.length, entry);
+          return clone(dreamHistory) as T;
+        }
         if (cmd.startsWith('agent_')) return clone(undefined) as T;
         if (cmd === 'init_workspace' || cmd === 'get_projection') return clone(projectionSnapshot());
         if (cmd === 'ingest_asset') {
