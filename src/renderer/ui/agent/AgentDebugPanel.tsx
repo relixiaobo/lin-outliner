@@ -12,8 +12,10 @@ import type {
 } from '../../../core/agentTypes';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
-import { BlockIcon, ChevronDownIcon, CopyIcon, InfoIcon, RefreshIcon, ICON_SIZE, LoaderIcon } from '../icons';
+import { BlockIcon, CheckIcon, ChevronDownIcon, CopyIcon, InfoIcon, RefreshIcon, ICON_SIZE, LoaderIcon } from '../icons';
+import { highlightCode, plainCodeHtml } from '../editor/shikiHighlighter';
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { IconButton } from '../primitives/IconButton';
 import { formatBytes } from '../preview/fileNode';
 
@@ -90,6 +92,19 @@ function truncate(text: string, maxLength = 120): string {
 
 function textByteLength(text: string): number {
   return new TextEncoder().encode(text).byteLength;
+}
+
+function debugCodeLanguage(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      JSON.parse(trimmed);
+      return 'json';
+    } catch {
+      return 'text';
+    }
+  }
+  return 'text';
 }
 
 function statusLabel(status: AgentDebugTurnStatus, labels: DebugLabels): string {
@@ -729,20 +744,64 @@ function PartRow({
         <span className="agent-debug-role-label" title={title}>{title}</span>
         <strong title={summary}>{truncate(summary, 120)}</strong>
         <code>{formatBytes(textByteLength(part.body))}</code>
-        <span className="agent-debug-message-actions-inline">
-          {trailing}
-          <IconButton
-            className="agent-debug-copy-button"
-            icon={CopyIcon}
-            iconSize={ICON_SIZE.tiny}
-            label={labels.copyTitle({ title })}
-            onClick={(event) => { event.preventDefault(); event.stopPropagation(); void copyText(part.body); }}
-            variant="panel"
-          />
-        </span>
+        {trailing ? <span className="agent-debug-message-actions-inline">{trailing}</span> : null}
       </summary>
-      <pre>{part.body}</pre>
+      <DebugCodeBlock text={part.body} />
     </details>
+  );
+}
+
+function DebugCodeBlock({ text }: { text: string }) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+  const resetTimerRef = useRef<number | null>(null);
+  const language = useMemo(() => debugCodeLanguage(text), [text]);
+  const [html, setHtml] = useState(() => plainCodeHtml(text));
+  const CopyStateIcon = copied ? CheckIcon : CopyIcon;
+  const copyLabel = t.agent.markdown.copyCode;
+
+  useEffect(() => {
+    let cancelled = false;
+    setHtml(plainCodeHtml(text));
+    void highlightCode(text, language).then((next) => {
+      if (!cancelled) setHtml(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [language, text]);
+
+  useEffect(() => () => {
+    if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
+  }, []);
+
+  const copyCode = useCallback(() => {
+    if (!text) return;
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
+      resetTimerRef.current = window.setTimeout(() => {
+        setCopied(false);
+        resetTimerRef.current = null;
+      }, 1200);
+    });
+  }, [text]);
+
+  return (
+    <div className="agent-code-block agent-debug-code-block">
+      <div className="agent-code-header agent-debug-code-header">
+        <ButtonControl
+          aria-label={copyLabel}
+          className="agent-code-copy"
+          disabled={!text}
+          onClick={copyCode}
+          title={copyLabel}
+        >
+          <CopyStateIcon size={ICON_SIZE.menu} />
+        </ButtonControl>
+      </div>
+      <div className="agent-code-body agent-debug-code-body" dangerouslySetInnerHTML={{ __html: html }} />
+    </div>
   );
 }
 
