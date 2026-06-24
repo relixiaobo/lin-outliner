@@ -48,6 +48,22 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   a dedicated cache unit test, and a `beforeEach` cache reset to remove cross-test pollution. Verified:
   typecheck clean, `agentFileIngestionCache` + `agentLocalTools` 68/0 (2 skip). Spec synced:
   `agent-tool-design`.
+- **Dream channel launcher reworked into scheduled settings + a separate manual run (PR #330, codex-2)** —
+  a fast-track follow-up to `dream-channel-and-memory-retire`. The bottom-of-channel surface no longer looks
+  like a chat composer: it splits into **Scheduled Dream** (a "next run" readout + a recurrence picker reusing
+  the shared `DateValuePicker`, with a Dream-specific empty placeholder and a Save action) and a separate
+  **Manual run** popover (date-window + optional focus text). The shared date picker gains date-only,
+  bounded (`maxDate`), top-anchored (`popoverPlacement`/`popoverGap`), and recurrence end-date ("Ends" switch)
+  modes needed by Dream while preserving the command-node schedule behavior; `CalendarMonthGrid` gains an
+  `isDateDisabled` predicate with keyboard-roving fallback to the nearest enabled date, and
+  `nextDateScheduleDue` is added by refactoring the schedule math into one direction-parameterized core shared
+  with `mostRecentDateScheduleDue`. Recurrence `until` is now guarded `>= anchor` at every layer
+  (`buildScheduleString`, the picker commit path, and the calendar). **Gate (main):** `/code-review high`
+  (9 findings fixed across 2 rounds) — including a **caught-and-fixed regression** where the schedule-math
+  dedup broke `mostRecentDateScheduleDue` (the live firing path) for monthly/yearly schedules evaluated after
+  their `UNTIL`; the `withinUntil` short-circuit was sound only for the forward search, fixed to `continue` in
+  the past direction with a covering test. Verified: typecheck clean, `test:core` 1056/0, `test:renderer`
+  606/0.
 
 ### Removed
 

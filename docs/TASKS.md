@@ -490,6 +490,19 @@ anything.
   values are `structuredClone`d on get/set (no caller mutation), plus a dedicated cache unit test and a
   `beforeEach` cache reset. Verified: typecheck clean, `agentFileIngestionCache` + `agentLocalTools` 68/0.
   Spec synced: `agent-tool-design`. Fast-track, **shape (a)** one PR, *no plan file*.
+- **dream-launcher-date-field** (codex-2, PR #330, merged 2026-06-24) — fast-track UI refinement to
+  `dream-channel-and-memory-retire`'s Dream channel. The bottom surface stops masquerading as a chat composer:
+  split into **Scheduled Dream** (next-run readout + recurrence picker reusing the shared `DateValuePicker`,
+  Dream-specific empty placeholder, Save) and a separate **Manual run** popover (date-window + optional focus).
+  `DateValuePicker` gains date-only / bounded-`maxDate` / top-anchored / recurrence-end-"Ends"-switch modes
+  (command-node schedule behavior preserved); `CalendarMonthGrid` gains `isDateDisabled` with keyboard-roving
+  fallback; `nextDateScheduleDue` added by refactoring the schedule math into one direction-parameterized core
+  shared with `mostRecentDateScheduleDue`; recurrence `until` guarded `>= anchor` at all layers. **Gate (main):**
+  `/code-review high` (9 findings fixed over 2 rounds) — incl. a **caught-and-fixed regression**: the
+  schedule-math dedup broke `mostRecentDateScheduleDue` (the live firing path) for monthly/yearly schedules
+  evaluated after `UNTIL` (the `withinUntil` short-circuit was forward-only; fixed to `continue` in the past
+  direction + covering test). Verified: typecheck clean, `test:core` 1056/0, `test:renderer` 606/0. Fast-track,
+  **shape (a)** one PR, *no plan file*.
 - **dream-channel-and-memory-retire** (codex-2, PR1 #324 + PR2 #328 + PR3 #329, merged 2026-06-23/24) —
   makes Memory Dream **transparent** and retires the legacy believer-pool. **PR1 (#324)**: Dream runs as a
   top-level unattended reflective turn in a persistent, protected **Dream channel** (immutable, undeletable,
