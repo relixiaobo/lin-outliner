@@ -150,6 +150,15 @@ describe('date schedules', () => {
     });
   });
 
+  test('finds the last monthly or yearly occurrence when evaluating after UNTIL', () => {
+    expect(formatDue('2026-01-15T09:00 RRULE:FREQ=MONTHLY;UNTIL=2026-03-10', localDate(2026, 3, 20, 12)))
+      .toBe('2026-02-15T09:00');
+    expect(formatDue('2026-01-31T09:00 RRULE:FREQ=MONTHLY;UNTIL=2026-03-15', localDate(2026, 4, 1, 12)))
+      .toBe('2026-01-31T09:00');
+    expect(formatDue('2024-06-15T09:00 RRULE:FREQ=YEARLY;UNTIL=2026-03-01', localDate(2026, 4, 1, 12)))
+      .toBe('2025-06-15T09:00');
+  });
+
   test('computes the next daily occurrence from the fixed local time', () => {
     const schedule = '2026-05-20T09:00 RRULE:FREQ=DAILY';
     expect(formatNext(schedule, localDate(2026, 5, 20, 8, 59))).toBe('2026-05-20T09:00');

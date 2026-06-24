@@ -212,7 +212,10 @@ function monthlyDue(
   ) {
     const candidate = localDateOrNull(anchor.getFullYear(), anchor.getMonth() + offset, anchor.getDate(), anchor.getHours(), anchor.getMinutes());
     if (!candidate) continue;
-    if (!withinUntil(candidate, untilEnd)) return null;
+    if (!withinUntil(candidate, untilEnd)) {
+      if (direction === 'future') return null;
+      continue;
+    }
     if (
       (direction === 'past' ? candidate.getTime() <= boundary.getTime() : candidate.getTime() >= boundary.getTime())
       && candidate.getTime() >= anchor.getTime()
@@ -239,7 +242,10 @@ function yearlyDue(
   ) {
     const candidate = localDateOrNull(anchor.getFullYear() + offset, anchor.getMonth(), anchor.getDate(), anchor.getHours(), anchor.getMinutes());
     if (!candidate) continue;
-    if (!withinUntil(candidate, untilEnd)) return null;
+    if (!withinUntil(candidate, untilEnd)) {
+      if (direction === 'future') return null;
+      continue;
+    }
     if (
       (direction === 'past' ? candidate.getTime() <= boundary.getTime() : candidate.getTime() >= boundary.getTime())
       && candidate.getTime() >= anchor.getTime()
