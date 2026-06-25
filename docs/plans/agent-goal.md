@@ -18,11 +18,18 @@ small executes it. The same unit covers arbitrary depth.
 
 > **The whole design adds ZERO new fact objects.** "Goal/Task" is not a stored
 > entity — it is the **objective of a (root or tracked) `Run`**. We enrich the
-> existing `Run` (objective + acceptance criteria + scope + budget-slice + a fuller
-> status lifecycle), formalize the recursive control behavior on the **existing run
-> tree** (`parentRunId` / `rootRunId` already exist), and reuse the existing
-> execution machinery (fork delegation, `agent_child_run_*` controls, completion
-> notification, usage accounting, the permission gate) for everything else.
+> existing `Run` (objective + acceptance criteria + scope + budget-slice + a dual
+> status), formalize the recursive control behavior on the **existing run tree**
+> (`parentRunId` already exists; `rootRunId` is a **new** denormalized field — see
+> below), and reuse the existing execution machinery (fork delegation,
+> `agent_child_run_*` controls, completion notification, usage accounting, the
+> permission gate) for everything else.
+>
+> The durable-intent concept (identity, budget, criteria, amendment, attempt history)
+> is **not eliminated — it is merged onto a `Run` in *controller* role**: a controller
+> Run is **persistent and never re-spawned**, so its `runId` *is* the stable task
+> identity. There is no new table, but controller Runs are first-class (persistent,
+> identity-bearing, dual-status) — that discipline is the price of one object type.
 
 ## The model in one picture
 
@@ -138,9 +145,10 @@ worker) recurses with the structure — every parent verifies its children — a
 ## Non-goals
 
 - **No new fact object.** `Goal` is **not** added to `types.ts`. The durable intent
-  lives as a `Run`'s `objective` + `criteria`; the durability that "outlives a single
-  attempt" is provided by the **parent re-spawning a failed child** (and Neva
-  re-spawning a failed root), not by a separate object.
+  lives as a **controller `Run`'s** `objective` + `criteria`; the durability that
+  "outlives a single attempt" is the **controller persisting and re-spawning its failed
+  workers** (the controller itself is never re-spawned, so its `runId` is the stable
+  identity), not a separate object.
 - **No new execution primitive, no second scheduler / workflow DSL.** The control
   loop is **what an internal Run does** (iterate its children); we do not add a
   Goal-runtime, a scheduler, or Alma-style `harness/sprint/mission` orchestration.
@@ -151,8 +159,9 @@ worker) recurses with the structure — every parent verifies its children — a
   over the facts, never stored entities — and `kind` is **physically removed** in
   this cut.
 - **One persistent self (one-Neva).** Exactly one identity — Neva: the HMI, the
-  memory owner, and the **durable root supervisor** (she holds the user's standing
-  objective and re-spawns the root). Workers and verifiers are **not selves** — they
+  memory owner, and the **durable root supervisor** (she authorizes the root controller,
+  receives its result, and re-decides at the top — she does not swap out a running root).
+  Workers and verifiers are **not selves** — they
   are stateless **Runs** Neva (or a parent Run) operates; they read Neva's memory as a
   resource, own none (`agent_type` / file-backed agents stay gone). Differentiation is
   by **function / context / capability / model — never identity**. (Reverses nothing
@@ -174,14 +183,20 @@ RunEvent   (one thing that happened inside a Run)                ← unchanged
 
 - **"goal/task" = a Run's `objective`.** The user's task = the **root** Run's
   objective + criteria. There is no separate Goal row.
-- **A Run is a single attempt at the objective its parent gave it.** A leaf attempts
-  by executing; an internal Run attempts by decomposing and supervising children.
-  Either way it makes **one** submission, which its parent verifies and **re-spawns on
-  failure**. So "Run = single attempt" holds at every parent↔child contract; the only
-  loop is **a parent iterating its children** — never a hidden continuation mode on a
-  Run.
-- **`role`** (worker | verifier) is **derived from the Run's position in the tree**
-  (a verifier is a Run a parent spawned to audit a sibling's submission), never a
+- **Two kinds of Run, by tree position:**
+  - a **controller Run** (internal / root) is a **persistent, runtime-owned
+    supervisor** — it decomposes, dispatches workers, verifies their submissions,
+    re-spawns the failures, integrates, and on its *own* verification failure
+    **re-plans in place**. It is **never re-spawned**, so its `runId` is the stable
+    task identity (the budget ceiling, owner-control target, panel entry, amendment
+    target, attempt-history owner).
+  - a **worker Run** (leaf) is an **ephemeral single attempt** at one objective; on
+    failure its parent **spawns a fresh worker** (a new `runId`) for that sub-objective.
+- So "Run = single attempt" is a property of **workers**; a **controller** persists and
+  loops over its workers. The only loop is **a controller iterating its workers** —
+  never a hidden continuation mode on a worker.
+- **`role`** (controller | worker | verifier) is **derived from the Run's position in
+  the tree** (a verifier is a Run a controller spawned to audit a submission), never a
   stored identity.
 
 ### The write model (the existing 6 facts; ZERO new)
@@ -226,12 +241,13 @@ view is a rendering of a fact object.
 
 - **Core noun names stay** — no fact-object rename.
 - **The real changes:** **enrich `Run`** (objective + acceptance criteria + scope +
-  budget-slice + a fuller status lifecycle + the control-loop behavior on internal
-  nodes); **RENAME the `Agent` delegate tool → `spawn`**; rename the owner/parent
-  controls to the uniform `run_status` / `run_send` / `run_stop`; **physically remove
-  `kind`**; demote `trigger` to provenance only. **Do NOT add** a `Goal` object, a
-  `type` field, a `trigger: goal`, or `Execution` / `Invocation` / `Round` /
-  `Capability Lease` / `Workspace`.
+  budget-slice + `rootRunId` + a second status axis `objectiveStatus` + the controller
+  behavior on internal nodes); **RENAME the `Agent` delegate tool → `spawn`**; rename the
+  owner/parent controls to the uniform `run_status` / `run_send` / `run_stop`;
+  **physically remove `kind`**; demote `trigger` to provenance only. **Do NOT add** a
+  `Goal` object, a `type` field, a `trigger: goal`, a `GoalStatus`, a `supersedesRunId` /
+  `objectiveGroupId`, or `Execution` / `Invocation` / `Round` / `Capability Lease` /
+  `Workspace`.
 - **Automation words are the teaching lens, not identifiers.**
 
 ## How it runs
@@ -269,38 +285,59 @@ verifier (the real decorrelation lever) is an **owner-gated opt-in for high stak
 multi-voter / human-acceptance are further tiers. Affordable because a verifier fires
 only on a submission, not every step.
 
-### Re-spawn = persistence (intent outlives an attempt)
+### Persistence — controllers persist, workers re-spawn
 
-If a child's submission fails its verifier, the parent does **not** let the child
-self-correct in place — it **spawns a fresh child Run** for that sub-objective,
-carrying the gap as feedback. Each child is therefore a single attempt; multi-attempt
-persistence is the **parent's control loop**. The **root's** persistence is **Neva's**:
-if the root fails verification, Neva re-spawns a fresh root from the user's objective.
-This is "the assignment outlives the employee" — without a separate object.
+A **controller Run is runtime-owned supervisor state, not a long-lived chat process**:
+its decompose / decide / integrate / dispatch-verify steps are discrete, **bounded LLM
+calls whose outputs are checkpointed as RunEvents**; between steps no process holds
+context. That is what lets a controller persist (and resume after a crash) cheaply, and
+it is why "no scheduler / no new primitive" holds — the controller is just durable
+`Run` state the runtime steps.
 
-### Run status lifecycle (the one object carries it all)
+So persistence has two shapes, and **nothing that carries a stable identity is ever
+re-spawned**:
+
+- a **worker** (leaf) that fails its verifier is **replaced** — its controller spawns a
+  fresh worker (a new `runId`) for that sub-objective, carrying the gap as feedback. A
+  worker is therefore a single attempt; the multi-attempt loop is the controller's. Only
+  the controller references a worker's id, so a new id on retry costs nothing.
+- a **controller** (incl. the **root**) is **never replaced** — on its own verification
+  failure it **re-plans in place** (the gap feeds back, it re-decomposes / re-dispatches),
+  **keeping its `runId`**. The root controller persists across the whole task; Neva
+  supervises it but never swaps it out.
+
+This is "the assignment outlives the employee" — the controller (assignment) persists,
+the worker (employee) is replaced — **without a separate object**, because the persistent
+thing already has a `runId`, and that id is the stable task identity.
+
+### Two status axes on a Run (no new object, no overloaded enum)
+
+A `Run` carries **two orthogonal status axes** — keeping the existing process enum
+untouched, and expressing the new control/verification lifecycle separately:
+
+- **`executionStatus`** — the existing `running | completed | failed | cancelled`,
+  **unchanged**. Process/ledger semantics: is this Run's own work in progress, done,
+  errored, aborted? Every existing consumer (running-detection, Dream skip, projections)
+  keeps reading this; nothing regresses.
+- **`objectiveStatus`** — **new**, on controller / tracked Runs only:
+  `verifying | verified | blocked | budget_exhausted | stopped`. The control /
+  verification lifecycle of the objective this Run owns.
 
 ```
-                 (authorized in the attended turn = a creation precondition)
-                          │ spawn(objective, {criteria, …})
-                          ▼
-        ┌──────────────► running ───────────────┐
-        │   (leaf: executing /                   │ report_blocked / needs scope
-        │    internal: supervising children)     │ / gap-signature repeats N×
-   parent's verifier      │ request_complete     ▼
-   fails → parent          ▼                   blocked ──► (owner/parent resolves
-   re-spawns a          verifying                            → a fresh Run)
-   fresh sibling           │ parent's verifier passes
-   (this Run → failed)     ▼
-                        complete ───────────────► result folds up
-   budget reserve denied & over ceiling → budget_exhausted
-   owner/parent stop (any state)        → stopped
+  executionStatus:  running ──► completed / failed / cancelled        (existing, untouched)
+  objectiveStatus:  (worker submits) ──► verifying
+                                            │ parent's verifier passes ──► verified ──► folds up
+                                            │ fails ──► controller re-plans / re-spawns the worker
+                                            ├─ report_blocked / needs scope / gap repeats N× ──► blocked
+                                            ├─ budget reserve denied & over ceiling ──► budget_exhausted
+                                            └─ owner/parent stop ──► stopped
 ```
 
-`Run` keeps a **single** lifecycle (no parallel `GoalStatus`): `running | verifying |
-complete | blocked | budget_exhausted | stopped | failed`. The **four terminal
-outcomes** that matter to the owner are the **root** Run's `complete` (verified) /
-`blocked` / `budget_exhausted` / `stopped`. Only `complete` is success.
+The **four terminal outcomes** that matter to the owner are the **root** controller's
+`objectiveStatus`: `verified` (success) / `blocked` / `budget_exhausted` / `stopped`.
+Only `verified` is success. A worker that fails verification ends with
+`executionStatus: completed` but is simply not accepted upward — the failure is the
+controller's `objectiveStatus`, never a corrupted execution state.
 
 ### Livelock guard — convergence is designed
 
@@ -432,30 +469,39 @@ The precise shapes the one cut commits to.
 
 ```
 Run {
-  runId
-  conversationId          // home for delivery + owner controls
+  runId                    // primary key; for a controller this IS the stable task identity
+  conversationId           // home for delivery + owner controls
   objective: string        // the why (= this level's "goal"); always present
   criteria?: string[]      // the contract its parent verifies it against (root = the user's);
                            //   absent → an unverified single pass
   provenance               // was `trigger`: message | schedule | parent-decomposition (NOT "goal")
-  parentRunId?, rootRunId  // lineage (exists today) = the recursion structure
-  role                     // worker | verifier — DERIVED from lineage, not stored as identity
+  parentRunId?             // exists today
+  rootRunId?               // NEW (denormalized; derivable from the parent chain), stored + indexed
+                           //   for the hot tree / budget / panel queries; points at the root controller
+  role                     // controller | worker | verifier — DERIVED from tree position, not stored
   scope                    // capability ∩ scope; inherits down, narrow-only
-  budget { reserved, spent } // tree ceiling; admission-controlled (root holds the ceiling)
-  status                   // running | verifying | complete | blocked | budget_exhausted | stopped | failed
-  childRunIds: RunId[]      // workers + verifiers it spawned
+  budget { reserved, spent } // tree ceiling; admission-controlled (the root controller holds it)
+  executionStatus          // running | completed | failed | cancelled — EXISTING, unchanged
+  objectiveStatus?         // NEW (controller / tracked only): verifying | verified | blocked
+                           //   | budget_exhausted | stopped
+  childRunIds: RunId[]      // workers + verifiers it spawned (a worker's id may change across attempts)
   latestGap?: { signature, detail }  // last verifier gap; drives the livelock guard
-  result?                  // terminal payload on `complete`
+  result?                  // terminal payload on `objectiveStatus: verified`
   createdAt, updatedAt
 }
 ```
 
-- **No `Goal` object, no `type` field, no stored `kind`, no `trigger: goal`.**
-- The parent's **control-loop state** (which sub-objectives are pending/done, retry
-  counts, per-sub-objective `latestGap`) lives in the parent's **RunEvents**, not a new
-  object.
-- **Status** unifies what was previously split across `GoalStatus` and `AgentRunStatus`
-  — there is one lifecycle on the one object.
+- **No `Goal` object, no `type` field, no stored `kind`, no `trigger: goal`.** The
+  durable-intent semantics (identity, budget, criteria, amendment, attempt history) ride
+  a **controller Run**, which is persistent and never re-spawned, so its `runId` is the
+  stable task key — no separate grouping object (`supersedesRunId` / `objectiveGroupId`)
+  is needed, because a controller is never replaced.
+- **Two status axes, not one overloaded enum:** `executionStatus` (the existing process
+  enum, untouched) + `objectiveStatus` (new, controller/tracked only). This preserves
+  every existing consumer of run status and keeps "Goal" out of the execution enum.
+- The controller's **control-loop state** (which sub-objectives are pending/done, retry
+  counts, per-sub-objective `latestGap`) lives in the controller's **RunEvents**, not a
+  new object.
 - **Verifier evidence** is runtime-assembled (above); the verifier result schema is
   `{ verdict: pass | fail, gaps: [{ signature, criterion, detail }] }`, mapped to
   `latestGap` + the livelock counter.
@@ -481,16 +527,18 @@ Run {
 **(a) ONE complete feature in one PR.** "foundation → consumers" is **build-order
 within the PR** (A7), not separate releases. Build-order:
 
-1. **Interface** — enrich `Run` (objective / criteria / scope / budget / fuller
-   status; `provenance` replacing `trigger`'s why-role; `role` derivation);
-   `spawn(objective, {criteria, …})` (the `Agent`→`spawn` rename + the `context` knob);
-   the `run_status/run_send/run_stop` rename; `set_budget`; the precondition-catalog
-   tool layer. (Touches `commands.ts` / `types.ts` — coordinate per A4/A10.)
-2. **Recursive control + verifier** — leaf execute vs internal control loop; the parent
-   verifies each child via a runtime-spawned `context:'none'` **verifier Run**
-   (runtime-assembled evidence pack + `continuation.md` rubric, read-only, no actuation);
-   re-spawn on failure; the Run status transitions; the livelock guard; budget admission
-   control + hard backstops; event-sourced resume.
+1. **Interface** — enrich `Run` (objective / criteria / scope / budget; `rootRunId` new
+   field; `executionStatus` kept + `objectiveStatus` new; `provenance` replacing
+   `trigger`'s why-role; `role` derivation); `spawn(objective, {criteria, …})` (the
+   `Agent`→`spawn` rename + the `context` knob); the `run_status/run_send/run_stop`
+   rename; `set_budget`; the precondition-catalog tool layer. (Touches `commands.ts` /
+   `types.ts` — coordinate per A4/A10.)
+2. **Recursive control + verifier** — leaf worker vs persistent controller (runtime-owned
+   supervisor state); the controller verifies each worker via a runtime-spawned
+   `context:'none'` **verifier Run** (runtime-assembled evidence pack + `continuation.md`
+   rubric, read-only, no actuation); re-spawn the failed worker / controller re-plans in
+   place; the `objectiveStatus` transitions; the livelock guard; budget admission control
+   + hard backstops; event-sourced resume.
 3. **Depth + governors** — recursion to arbitrary depth; scope-narrows-only; shared tree
    budget folding; a verifier at every level; no owner approval gate.
 4. **Delivery / UI** — `/goal` + one-tap "make this a goal"; Neva as the root supervisor
@@ -512,16 +560,23 @@ Genuinely open, all build-time-reversible:
    budget / hard-backstop values; tune against the dev probe.
 
 **Decided (not open):**
-- **ZERO new fact objects** — `Goal` is a Run's `objective`, not a stored entity.
+- **ZERO new fact objects (no new table)** — `Goal` is a Run's `objective`; the
+  durable-intent semantics ride a **controller Run** (first-class: persistent,
+  identity-bearing, dual-status).
 - **One self-similar unit (Run); the parent verifies the child, recursively.**
+- **Controller Runs persist (never re-spawned; their `runId` is the stable identity);
+  only leaf workers re-spawn.** `rootRunId` is a new denormalized field; no
+  `supersedesRunId` / `objectiveGroupId` needed.
+- **Two status axes:** `executionStatus` (existing, untouched) + `objectiveStatus` (new,
+  controller/tracked only). No overloaded single enum, no separate `GoalStatus`.
+- **Controller Run = runtime-owned supervisor state**, not a long-lived process; its
+  steps are bounded LLM calls checkpointed as RunEvents.
 - **`spawn` + uniform `run_status/run_send/run_stop`**; recursion = a Run calls `spawn`.
 - **Achievement only; no `maintenance`, no `type` field.**
 - **Verifier default = same model, fresh `none` context, adversarial framing**;
   different-model is the owner-gated high-stakes opt-in.
 - **Budget mandatory + admission-controlled**; over-ceiling → `blocked` (or
   `budget_exhausted`). Unbounded is not a default.
-- **Each Run is a single attempt; persistence = the parent re-spawns** (Neva re-spawns
-  the root).
 - **`kind` physically removed; `trigger` demoted to provenance.**
 - Workers/verifiers are **Runs, not identities** (one-Neva); team formation needs **no
   owner approval**.
@@ -529,10 +584,10 @@ Genuinely open, all build-time-reversible:
 ## Risks
 
 - **Protocol + prompt surface (A4/A10).** Touches `src/core/types.ts` /
-  `agentEventLog.ts` / `commands.ts` (the `Run` enrichment, the status lifecycle,
-  `spawn` params, the `run_*` renames, `set_budget`) and the model-facing `Agent`→`spawn`
-  rename (tool-name constant + prompt text). Land the interface as the first build-order
-  step.
+  `agentEventLog.ts` / `commands.ts` (the `Run` enrichment, `rootRunId`, the dual status
+  axes, `spawn` params, the `run_*` renames, `set_budget`) and the model-facing
+  `Agent`→`spawn` rename (tool-name constant + prompt text). Land the interface as the
+  first build-order step.
 - **Autonomy safety.** A self-recursing, budget-spending tree is the highest-blast
   capability. Load-bearing guards, all in this cut: commit-as-scope-authorization, the
   Run terminal outcomes, ask-strict, the **parent-verifies-child rule** (runtime-spawned,
@@ -559,15 +614,16 @@ Result: **no overlap.**
 
 ## Build checklist (one PR, build-order within it)
 
-- [ ] **Interface** — enrich `Run` (objective / criteria / scope / budget / status
-      lifecycle; `provenance` replacing `trigger`'s why-role; derived `role`);
-      `spawn(objective, {criteria, scope?, budget?, context?, detach?})` (rename
-      `Agent`→`spawn`); rename controls to `run_status` / `run_send` / `run_stop`;
-      `set_budget`; the precondition-catalog tool layer.
-- [ ] **Recursive control** — leaf execute vs internal control loop over children;
-      re-spawn on verifier failure; the Run status transitions; new-attempt-per-spawn
-      tracked via `childRunIds` + parent RunEvents; event-sourced resume (decisions
-      checkpointed before side effects).
+- [ ] **Interface** — enrich `Run` (objective / criteria / scope / budget; `rootRunId`
+      new field; `executionStatus` kept + `objectiveStatus` new; `provenance` replacing
+      `trigger`'s why-role; derived `role`); `spawn(objective, {criteria, scope?, budget?,
+      context?, detach?})` (rename `Agent`→`spawn`); rename controls to `run_status` /
+      `run_send` / `run_stop`; `set_budget`; the precondition-catalog tool layer.
+- [ ] **Recursive control** — leaf worker vs persistent controller (runtime-owned
+      supervisor state); controller re-spawns a failed worker / re-plans in place on its
+      own failure; the `objectiveStatus` transitions; attempts tracked via `childRunIds` +
+      controller RunEvents; event-sourced resume (decisions checkpointed before side
+      effects).
 - [ ] **Parent-verifies-child** — runtime-spawned `context:'none'` verifier Run;
       runtime-built evidence pack (changed nodes/files, tool refs, run ids, full trace) +
       read-only inspection tools, no actuation; port `continuation.md`; verifier result
