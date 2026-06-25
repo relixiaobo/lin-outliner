@@ -204,12 +204,16 @@ governor is a one-level-local rule; its tree-wide property is the **emergent** s
 | Governor | Local rule at one edge | Emergent tree-wide property |
 |---|---|---|
 | **budget** | the parent reserves a fixed **slice** for each child; a child spends only within its slice, never a sibling's | "tree budget" = the recursive sum of slices — held by nobody, read by no one |
-| **scope** | a child inherits a **narrowed subset** of the parent's scope; needing more **escalates** | authority only ever shrinks downward — no global scope table |
+| **scope** | a child inherits a **narrowed subset** of the parent's scope (set at spawn); needing more is **never granted in place** — stop + re-spawn wider (⊆ parent), or **escalate** | authority only ever shrinks downward — no global scope table |
 | **verification** | the **parent** verifies its **direct** child before accepting | "verified at every level" falls out of every edge doing it |
 
-A child that needs more budget or scope does **not** consult a global ceiling — it
-**stops with that note in its output**; its parent reads it and either re-slices locally
-(a `run_amend`, then re-spawns) or escalates further. **Depth needs no separate cap:** each nesting
+A child that needs more does **not** consult a global ceiling — it **stops with that note
+in its output** and its parent reads it. The two resources resolve **differently**, by
+design: more **budget** is a `run_amend` (headroom, in place); more **scope** is **never
+granted in place** — the parent must `run_stop` + re-`spawn` with a wider (still ⊆ its own)
+scope, or, if the need exceeds the parent's own scope, escalate. Root-level scope expansion
+returns to the **attended ask-gate** (the user re-authorizes), per *No silent autonomy*.
+**Depth needs no separate cap:** each nesting
 reserves from a finite parent slice, so infinite depth would need infinite budget,
 which local admission already forbids — an explicit depth limit is only a legibility
 soft-stop, not an independent safety mechanism.
@@ -273,9 +277,15 @@ RunEvent   (one thing that happened inside a Run)                ← unchanged
 - So "Run = single attempt" is a property of **workers**; a **controller** persists and
   loops over its workers. The only loop is **a controller iterating its workers** —
   never a hidden continuation mode on a worker.
-- **`role`** (controller | worker | verifier) is **derived from the Run's position in
-  the tree** (a verifier is a Run a controller spawned to audit a submission), never a
-  stored identity.
+- **`role`** (controller | worker | verifier) is **mostly derived** from tree position —
+  *controller* = has children, *worker* = leaf — but **`verifier` must be persisted**, not
+  derived. A verifier is a leaf a controller spawned to audit a submission, so it is
+  **structurally identical to a leaf worker** (`parentRunId` + no children); its
+  load-bearing safety contract (`context:'none'`, read-only, no actuation, output consumed
+  as a `VerifierVerdict`) has to **survive a restart**, which a pure tree-position
+  derivation cannot guarantee. So a Run carries a persistent **`purpose: 'work' | 'verify'`**
+  (execution metadata, **not** a new fact object), set by the runtime at spawn; `verifier`
+  is read from it. Identity is still never stored — `purpose` is a safety class, not a self.
 
 ### The write model (the existing 6 facts; ZERO new)
 
@@ -332,8 +342,8 @@ view is a rendering of a fact object.
 
 - **Core noun names stay** — no fact-object rename.
 - **The real changes:** **enrich `Run`** (objective + acceptance criteria + scope +
-  budget-slice + persistent `disposition` + a second status axis
-  `objectiveStatus` + the controller behavior on internal nodes); **RENAME the `Agent`
+  budget-slice + persistent `disposition` + persistent `purpose` (work / verify) + a second
+  status axis `objectiveStatus` + the controller behavior on internal nodes); **RENAME the `Agent`
   delegate tool → `spawn`**; rename the owner/parent controls to the uniform
   `run_status` / `run_steer` / `run_amend` / `run_stop`; **derive then physically remove `kind`** (gated
   on `disposition` + consumer migration). `trigger` stays as-is (already pure provenance).
@@ -371,6 +381,19 @@ the model stays uniform — Runs all the way down, including verifiers:
   "uncertain or indirect evidence = not achieved". Codex runs it as self-audit; we run
   it via an **independent** verifier, which control theory (sensor ≠ actuator) and
   principal–agent (moral hazard) make strictly stronger.
+
+> **Evidence-pack contract (the load-bearing input — pinned, not build-time).** The pack
+> is assembled from **three sources**, so it never depends on a worker's word: (1) **node /
+> doc** changes from the run's **command RunEvents** (already event-sourced, authoritative);
+> (2) **direct file** changes from the `file.edit` / `file.write` / `file.delete`
+> tool-call records (the existing action-kind profiles); (3) **indirect file** changes —
+> when a worker writes via `shell` / a script, the tool trace does **not** name what
+> changed, so the runtime captures a **before/after diff over the run's allowed file
+> area** (a working-set snapshot bracketing the run). The verifier receives a **normalized
+> changeset** `{ nodes, files+diffs, tool_call↔tool_result refs, run ids, full trace }`.
+> Any change the runtime **cannot attribute** (outside the allowed area, or untracked) is
+> surfaced **as unattributed**, never silently dropped — an unverifiable change is a `fail`,
+> consistent with "uncertain evidence = not achieved".
 
 The **root** is verified by Neva against the user's **fixed** criteria (optionally via
 a verifier Run she spawns). Moral hazard at any internal level is caught one level up,
@@ -438,13 +461,61 @@ untouched, and expressing the new control/verification lifecycle separately:
                       ├─ controller classifies (needs owner/scope · gap repeats N×) ──► blocked
                       ├─ budget reserve denied & over ceiling ──► budget_exhausted
                       └─ owner/parent stop ──► stopped
+
+   blocked / budget_exhausted ──(owner un-blocks: run_amend budget · ask-gate scope)──► active
+                                  (same runId; executionStatus stays `running`, never resurrected)
 ```
 
 The **four terminal outcomes** that matter to the owner are the **root** controller's
 `objectiveStatus`: `verified` (success) / `blocked` / `budget_exhausted` / `stopped`.
-Only `verified` is success. A worker that fails verification ends with
-`executionStatus: completed` but is simply not accepted upward — the failure is the
-controller's `objectiveStatus`, never a corrupted execution state.
+Only `verified` is success. These are terminal on the **objective axis** — the owner-facing
+notify endpoints — but **`blocked` / `budget_exhausted` are NOT terminal on the execution
+axis**: the run stays `running` (parked awaiting the owner) and is resumable, so the owner
+can un-block it (extend budget / re-authorize) on the *same* run. A worker that fails
+verification ends with `executionStatus: completed` but is simply not accepted upward — the
+failure is the controller's `objectiveStatus`, never a corrupted execution state.
+
+#### A controller's `executionStatus` — closing the process/objective mapping
+
+A controller is **one** event-sourced Run (never re-spawned), so its `executionStatus`
+tracks **the lifecycle of that run as a whole**, and the objective detail rides
+`objectiveStatus`:
+
+| Controller is… | `executionStatus` | `objectiveStatus` |
+|---|---|---|
+| pursuing its objective (running a step **or parked** waiting on children/verifier) | `running` | `active` / `verifying` |
+| **parked awaiting the owner** (blocked / budget exhausted — **resumable**, not terminal) | `running` | `blocked` / `budget_exhausted` |
+| objective verified | `completed` | `verified` |
+| owner gave up, or a **hard backstop** fired (e.g. max-wall-clock) | `completed` | (last value) |
+| owner/parent `run_stop` | `cancelled` | `stopped` |
+| the controller run itself crashed/errored | `failed` | (last value) |
+
+The subtle row is **blocked / budget_exhausted = parked *awaiting the owner***: structurally
+the same as parked-awaiting-children, so it stays **`running`**, not `completed`. This is
+load-bearing for the never-re-spawned / stable-`runId` invariant — **un-block is an
+`objectiveStatus: blocked → active` transition on the *same* run**, never a `completed →
+running` resurrection (which the ledger treats as terminal), and it is what makes a
+`run_amend`-budget on a blocked goal physically possible (you cannot amend a `completed`
+run). Execution-axis terminal is reserved for the genuinely terminal: `verified → completed`,
+owner-give-up / hard backstop `→ completed`, `run_stop → cancelled`, crash `→ failed`; an
+abandoned blocked goal is eventually collected by the **max-wall-clock backstop**.
+
+So `executionStatus: running` for a controller means **"this objective is live"** (pursuing
+*or* parked, awaiting children or the owner). **"Is a step in flight *right now*"** is a
+*transient* condition (any in-flight child/verifier step), **derivable, never a persisted
+ledger state** — there is no new enum value. Consumers split cleanly:
+
+- **active-run detection** reads `executionStatus = running` → unchanged (a parked
+  controller IS active — tracked + restored on restart). A blocked controller stays in this
+  set *awaiting the owner* (it is not force-advanced — that is the `objectiveStatus`'s job).
+- **Dream/reflective skip** must **switch to the in-flight-step signal**, not raw
+  `running` — else a long parked controller would suppress reflection indefinitely.
+- **UI busy/spinner** reads `objectiveStatus` (`active`/`verifying`) **plus** the
+  in-flight-step flag — never raw `running` — so a parked controller shows "working on a
+  goal", not a spinning "thinking now".
+
+These three are the consumers the build-order step 1 migration must touch; everything else
+keeps reading `executionStatus` as today.
 
 ### Livelock guard — convergence is designed, locally
 
@@ -464,9 +535,10 @@ stall (see the cost note under *Reused autonomy rules*).
 Budget (token/time) is enforced **per edge, before the spend**: when a parent spawns a
 child Run (worker or verifier), it **reserves a fixed slice of *its own* budget** for
 that child; the child spends only within its slice and sub-reserves from it for any
-children of its own. A child that needs more does not read a global pool — it
-**terminates leaving that note in its output**; its parent reads it and either re-slices
-(a `run_amend` + re-spawn) or escalates. If a reservation can't be met, that branch goes `budget_exhausted` (or
+children of its own. A child that needs more **budget** does not read a global pool — it
+**terminates leaving that note in its output**; its parent reads it and either grants more
+headroom (a `run_amend` for a live controller child, or a re-`spawn` with a bigger slice
+for a terminated worker) or escalates. If a reservation can't be met, that branch goes `budget_exhausted` (or
 `blocked` awaiting extension); on completion the reservation **settles** against real
 usage. Because each child is bounded by its own slice (not a shared pool), concurrent
 fan-out cannot overshoot — a sibling's idle budget is not borrowable without an
@@ -492,8 +564,10 @@ decision is freshly computed. Neva resumes supervising the persisted root.
   in its output**, and its parent (sensing the termination) classifies the result as
   `blocked` and escalates async (resolved in a fresh attended turn; an awaited parent
   may relay). (Preserves *subagents-never-ask-user*.)
-- **Scope** is granted at the root, **inherits down the tree** (narrow-only); needing
-  more authority escalates (`blocked`).
+- **Scope** is granted at the root, **inherits down the tree** (narrow-only), and is set
+  only **at spawn**. It is **never widened in place** (no `run_amend` for scope): more
+  authority within the parent's own scope = stop + re-spawn wider; beyond it = escalate;
+  a **root** scope expansion returns to the **attended ask-gate** for re-authorization.
 - **Budget** is a per-edge slice the parent reserves (above); the tree total is the
   emergent sum, not a pool any level reads.
 
@@ -526,8 +600,11 @@ vendor `AgentTool` type, nor touch each tool factory:
 visibleTools(run) = catalog.filter(entry => entry.precondition(principal, attended, lineage))
 ```
 
-`role` (worker / verifier) is **derived inside the predicate** from `lineage`, never
-a persisted axis.
+`role` is computed inside the predicate: **controller vs worker** from `lineage` (has
+children vs leaf), but **`verifier` from the persisted `purpose`** field — a verifier is
+structurally identical to a leaf worker, so its read-only / no-actuation contract cannot be
+re-derived from tree position and must be stored (set by the runtime at spawn, recoverable
+across restart).
 
 > **Scope reuses the existing capability taxonomy — no parallel enum.** Both this
 > catalog and `scope`-narrowing speak the **existing `AgentToolActionKind`**
@@ -594,8 +671,8 @@ identity:**
 | **persona / name** | ≈0 epistemic value | **cosmetic — a UI role label only**, never a stored identity |
 
 Role labels (`researcher` / `implementer` / `verifier`) are **function tags for the
-UI**, derived from tree position — the "tasks" view renders a Run's children by
-function, never as "N Nevas".
+UI**, derived from tree position (with `verifier` read from the persisted `purpose`) — the
+"tasks" view renders a Run's children by function, never as "N Nevas".
 
 **No owner approval gate.** The owner controls the **outcome and the bounds** (criteria
 + scope + budget + the verifier gate + escalation), never the process — they do not
@@ -631,7 +708,11 @@ Run {
   parentRunId?             // exists today; a Run knows only ONE level up. No rootRunId —
                            //   "everything under root R" is a walk over parentRunId / childRunIds,
                            //   or a pure denormalized index added later only if that query gets hot
-  role                     // controller | worker | verifier — DERIVED from tree position, not stored
+  purpose                  // NEW persistent exec metadata: 'work' | 'verify' (default 'work'). 'verify' is set by the
+                           //   runtime at spawn and CANNOT be re-derived — a verifier is structurally a leaf worker;
+                           //   its context:'none' / read-only / no-actuation contract must survive restart
+  role                     // controller | worker | verifier — controller/worker DERIVED (children vs leaf);
+                           //   VERIFIER is read from `purpose`, not tree position
   scope                    // capability ∩ scope; inherits down, narrow-only
   budget { reserved, spent } // this Run's OWN slice; the parent reserves it at spawn (local admission)
   executionStatus          // running | completed | failed | cancelled — EXISTING, unchanged
@@ -688,7 +769,8 @@ spawn({
                                                //   false = inline (resolves within the turn).
   model?:     string,                          // optional; a known model alias (e.g. opus / sonnet / haiku), validated against the
                                                //   registry. Omit to let the loop choose (the default).
-}) -> { runId: RunId, objectiveStatus?: ObjectiveStatus }   // the handle; objectiveStatus present iff verified (tracked)
+}) -> { runId: RunId, objectiveStatus?: ObjectiveStatus }   // the handle; objectiveStatus present iff TRACKED
+                                                            //   (criteria given / verify true) — initial value 'active', NOT 'verified'
 
 // NO upward tool. The child→parent feedback is the run's OWN lifecycle: when its run reaches a
 // terminal executionStatus (completed | failed) it leaves its result + a note on the "wire"; the
@@ -737,8 +819,8 @@ ScopeSpec = {
 VerifierVerdict = { verdict: 'pass' | 'fail', gaps: { signature, criterion, detail }[] }
 ```
 
-**Preconditions** (the catalog filter), keyed on **`role`** (derived from lineage, never
-stored): `spawn` needs spawn capability (a controller / decomposing Run, and Neva at the
+**Preconditions** (the catalog filter), keyed on **`role`** (controller/worker derived from
+lineage; `verifier` from the persisted `purpose`): `spawn` needs spawn capability (a controller / decomposing Run, and Neva at the
 root); `run_status` / `run_steer` / `run_amend` / `run_stop` require **owning the target**
 (Neva over a root; a controller over its child); `ask_user_question` requires
 **`attended`**. There is
@@ -787,7 +869,10 @@ independently verified.*
   invalidates a verdict.
 
 **`run_amend`** — *Change a running Run's contract (objective / criteria) or its budget.*
-- *When:* the requirement genuinely changed, or a Run needs more budget / scope headroom.
+- *When:* the requirement genuinely changed, or a Run needs more **budget** headroom.
+- *Not scope:* `run_amend` does **not** carry scope — widening scope in place is forbidden.
+  More scope = `run_stop` + re-`spawn` with a wider (still ⊆ parent) scope, or escalate;
+  root-level scope expansion returns to the attended ask-gate.
 - *When NOT:* for a mere hint (use `run_steer`). **Amending objective or criteria
   invalidates any verifier verdict and re-opens verification** — deliberate, not
   micro-management. Amending budget alone does not invalidate a verdict.
@@ -823,8 +908,9 @@ before the goal loop is layered on. Build-order:
    `disposition: attended | detached` field and **migrate `kind`'s ~17 consumers**
    (delegation/conversation indexing, `reflective` Dream-skip, `turn` debug count) to the
    `provenance + lineage + disposition` derivation, **then remove `kind`**. In the same
-   step: enrich `Run` (objective / criteria / scope / budget;
-   `executionStatus` kept + `objectiveStatus` new); `spawn(objective, {criteria, …})` (the
+   step: enrich `Run` (objective / criteria / scope / budget; persistent `purpose` (work /
+   verify); `executionStatus` kept + `objectiveStatus` new + the controller process↔objective
+   mapping); `spawn(objective, {criteria, …})` (the
    `Agent`→`spawn` rename + `verify` default + the `context` knob); the
    `run_status/run_steer/run_amend/run_stop` controls (`run_steer` = the old `send`;
    **`run_amend` is the new command surface**); the precondition-catalog tool layer
@@ -876,7 +962,15 @@ Genuinely open, all build-time-reversible:
   stopped`; `active` is the hub state, non-null ⟺ tracked). No overloaded single enum, no
   separate `GoalStatus`.
 - **Controller Run = runtime-owned supervisor state**, not a long-lived process; its
-  steps are bounded LLM calls checkpointed as RunEvents.
+  steps are bounded LLM calls checkpointed as RunEvents. Its `executionStatus = running`
+  means "objective live" (even while parked); the process↔objective mapping + the three
+  consumers that must change (Dream-skip, UI-busy; active-run unchanged) are pinned above.
+- **`verifier` is persisted** via `purpose: 'work' | 'verify'` (exec metadata, not a fact
+  object) — a verifier is structurally a leaf worker, so its safety contract can't be
+  re-derived from tree position. controller/worker stay derived.
+- **Scope is set at spawn, never widened in place** — more scope = stop + re-spawn (⊆
+  parent) or escalate; root expansion → attended ask-gate. `run_amend` carries
+  objective/criteria/budget only, **not** scope.
 - **`spawn` + uniform `run_status/run_steer/run_amend/run_stop`**; recursion = a Run calls
   `spawn`. **All are downward (controller → its plant).** `criteria` is required unless an
   explicit `verify:false`; `run_steer` (soft) and `run_amend` (hard, invalidates verdicts)
@@ -933,8 +1027,9 @@ Result: **no overlap.**
 
 - [ ] **Protocol & naming interface (first)** — land persistent `disposition: attended |
       detached`; migrate `kind`'s ~17 consumers to `provenance + lineage + disposition`,
-      then remove `kind`; enrich `Run` (objective / criteria / scope / budget; `anchor`
-      reused; `executionStatus` kept + `objectiveStatus` new); `provenance`
+      then remove `kind`; enrich `Run` (objective / criteria / scope / budget; persistent
+      `purpose` work/verify; `anchor` reused; `executionStatus` kept + `objectiveStatus` new
+      + the controller process↔objective mapping; migrate Dream-skip + UI-busy to it); `provenance`
       = the existing `trigger`; derived `role`; `spawn({objective, criteria?, verify?, scope?,
       budget?, context?, detach?, model?})` (rename `Agent`→`spawn`; `criteria` required unless
       `verify:false`); controls `run_status` / `run_steer` (old `send`) / **`run_amend` (new
