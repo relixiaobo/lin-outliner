@@ -17,6 +17,96 @@ the existing execution machinery (Runs, fork delegation, completion notification
 usage accounting, the `agent_child_run_*` controls, the permission gate) for
 everything else.
 
+## Architecture at a glance
+
+**Outside — one self, one black box.** The owner hands a contract down and ever
+only three things come back up.
+
+```
+        ┌─────────────────────────────────────────────────────┐
+        │  NEVA — the one persistent self                      │
+        │  HMI (you talk here) · memory owner · supervisor     │
+        └─────────────────────────────────────────────────────┘
+              │                                      ▲
+              │  ↓ CONTRACT                          │  ↑ RETURNS (only ever 3)
+              │    objective + criteria              │    • verified result
+              │    + scope + budget + type           │    • escalation (blocked)
+              │                                      │    • status (on query)
+              ▼                                      │
+        ╔═══════════════════════════════════════════════════════╗
+        ║  THE BLACK BOX  =  one Goal                            ║
+        ║  an autonomous control loop · detached from the chat   ║
+        ║  self-audits · owner is ON the loop, never IN it       ║
+        ╚═══════════════════════════════════════════════════════╝
+```
+
+**Inside — one control loop, two kinds of block.**
+
+```
+  reference = objective + criteria   ← fixed by the contract (no moving goalposts)
+       │
+       ▼
+  ┌─────────────────────── one control cycle ──────────────────────┐
+  │                                                                │
+  │   PLAN ──► ACT ──► SENSE ──► AUDIT ──► DECIDE                   │
+  │  decompose  run    gather    SENSOR     │                      │
+  │     ▲     workers  artifacts  block     │                      │
+  │     │       │              (clean +     │                      │
+  │     │       │            adversarial)   │                      │
+  │     └───────┴── adjust / reassign ◄──────┤                     │
+  └──────────────────────────────────────────┼─────────────────────┘
+                                             │
+                        DECIDE branches → ───┤
+                          verified         ──► COMPLETE → result   ↑ up
+                          not, budget>0    ──► loop again (adjust)
+                          needs owner/scope──► BLOCKED  → escalate  ↑ up
+                          budget=0 / cancel──► STOPPED  → notify    ↑ up
+
+  Two functional blocks the loop operates (both stateless; read Neva's memory,
+  own none — see Team formation):
+    WORKER   = actuator.  config = (function · context · capability∩scope · model)
+                          context ∈ { full = inherit chat | brief | none }
+    VERIFIER = sensor.    independent BY CONSTRUCTION — a fresh run, input is
+                          ONLY artifacts + criteria, adversarial framing.
+                          it is the COMPLETION GATE; done is never self-declared.
+```
+
+**The boundary — what crosses it (and the tool behind each).**
+
+```
+direction          what crosses the boundary                tool
+─────────────────  ───────────────────────────────────────  ─────────────────────
+↓ set a Goal       objective + criteria + scope + budget     set_goal / spawn(objective,
+                   + type                                     {context, scope, budget…})
+↓ mid-flight       status query                              AgentStatus
+                   steer (amend objective)                   AgentSend (amendment)
+                   cancel / abandon                          AgentStop
+                   reassign                                  stop Run, Goal re-spawns
+                   set_budget                                (new)
+↑ returns          verified result | escalation              delivered to the
+                   | status | terminal notify                 conversation
+```
+
+**Recursion — a black box within a black box.** A worker whose subtask is itself
+goal-shaped becomes another box (a sub-Goal) running the SAME loop — self-similar,
+governed by three things that flow with the nesting.
+
+```
+    Goal ┐
+      ├─ worker block
+      ├─ worker block
+      ├─ SUB-GOAL ┐              three governors flow with the nesting:
+      │    ├─ worker block         • ONE shared tree budget — sliced down,
+      │    ├─ SUB-GOAL ┐             folds back up (depth can't outrun spend)
+      │    │    └─ ...  │           • scope only NARROWS down (need more → escalate)
+      │    └─ sensor    │           • a SENSOR block at EVERY level
+      └─ sensor block ──┘         + soft depth limit (budget = hard backstop)
+```
+
+> **The box never hands verification back to the owner** — it self-checks via an
+> independent sensor block; the owner sees only a result, an escalation, or status.
+> That is what separates it from open-loop-with-a-lie.
+
 ## Non-goals
 
 - **No new execution primitive.** `Run` is unchanged and stays single-attempt.
@@ -449,7 +539,7 @@ Result: **no overlap.**
 ### On ship
 
 - [ ] Fold the **concept model** (7 facts, 0 projections; Goal ▷ Run ▷ RunEvent;
-      control-loop framing; independent verifier) into
+      control-loop framing; independent verifier; the **at-a-glance diagrams**) into
       `docs/spec/agent-architecture.md`; note the `kind`-demotion and the
       `background`-kind reframe.
 - [ ] Mark the `docs/TASKS.md` item `done`; move this plan to `docs/plans/archive/`.
