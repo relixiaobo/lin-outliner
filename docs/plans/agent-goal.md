@@ -320,17 +320,24 @@ untouched, and expressing the new control/verification lifecycle separately:
   errored, aborted? Every existing consumer (running-detection, Dream skip, projections)
   keeps reading this; nothing regresses.
 - **`objectiveStatus`** — **new**, on controller / tracked Runs only:
-  `verifying | verified | blocked | budget_exhausted | stopped`. The control /
-  verification lifecycle of the objective this Run owns.
+  `active | verifying | verified | blocked | budget_exhausted | stopped`. The control /
+  verification lifecycle of the objective this Run owns. **`active` is the hub state** —
+  a tracked Run that has accepted its objective and is still working toward its
+  submission (a controller: decomposing / dispatching / waiting on workers /
+  integrating / re-planning; a leaf: executing). Its mere presence (non-null) means
+  "this is a tracked objective", which is how the panel / owner controls tell an active
+  controller from an untracked Run **without** leaning on `executionStatus`.
 
 ```
   executionStatus:  running ──► completed / failed / cancelled        (existing, untouched)
-  objectiveStatus:  (worker submits) ──► verifying
-                                            │ parent's verifier passes ──► verified ──► folds up
-                                            │ fails ──► controller re-plans / re-spawns the worker
-                                            ├─ report_blocked / needs scope / gap repeats N× ──► blocked
-                                            ├─ budget reserve denied & over ceiling ──► budget_exhausted
-                                            └─ owner/parent stop ──► stopped
+  objectiveStatus:  active ◄─────────────────────┐
+                      │ submits (request_complete)│ verifier fails, budget remains
+                      ▼                           │ (controller re-plans / re-spawns worker)
+                   verifying ──────────────────────┘
+                      │ parent's verifier passes ──► verified ──► folds up
+                      ├─ report_blocked / needs scope / gap repeats N× ──► blocked
+                      ├─ budget reserve denied & over ceiling ──► budget_exhausted
+                      └─ owner/parent stop ──► stopped
 ```
 
 The **four terminal outcomes** that matter to the owner are the **root** controller's
@@ -482,8 +489,8 @@ Run {
   scope                    // capability ∩ scope; inherits down, narrow-only
   budget { reserved, spent } // tree ceiling; admission-controlled (the root controller holds it)
   executionStatus          // running | completed | failed | cancelled — EXISTING, unchanged
-  objectiveStatus?         // NEW (controller / tracked only): verifying | verified | blocked
-                           //   | budget_exhausted | stopped
+  objectiveStatus?         // NEW (controller / tracked only): active | verifying | verified
+                           //   | blocked | budget_exhausted | stopped; non-null ⟺ tracked
   childRunIds: RunId[]      // workers + verifiers it spawned (a worker's id may change across attempts)
   latestGap?: { signature, detail }  // last verifier gap; drives the livelock guard
   result?                  // terminal payload on `objectiveStatus: verified`
@@ -568,7 +575,9 @@ Genuinely open, all build-time-reversible:
   only leaf workers re-spawn.** `rootRunId` is a new denormalized field; no
   `supersedesRunId` / `objectiveGroupId` needed.
 - **Two status axes:** `executionStatus` (existing, untouched) + `objectiveStatus` (new,
-  controller/tracked only). No overloaded single enum, no separate `GoalStatus`.
+  controller/tracked only: `active | verifying | verified | blocked | budget_exhausted |
+  stopped`; `active` is the hub state, non-null ⟺ tracked). No overloaded single enum, no
+  separate `GoalStatus`.
 - **Controller Run = runtime-owned supervisor state**, not a long-lived process; its
   steps are bounded LLM calls checkpointed as RunEvents.
 - **`spawn` + uniform `run_status/run_send/run_stop`**; recursion = a Run calls `spawn`.
