@@ -277,9 +277,12 @@ RunEvent   (one thing that happened inside a Run)                ← unchanged
 - So "Run = single attempt" is a property of **workers**; a **controller** persists and
   loops over its workers. The only loop is **a controller iterating its workers** —
   never a hidden continuation mode on a worker.
-- **`role`** (controller | worker | verifier) is **mostly derived** from tree position —
-  *controller* = has children, *worker* = leaf — but **`verifier` must be persisted**, not
-  derived. A verifier is a leaf a controller spawned to audit a submission, so it is
+- **`role`** (controller | worker | verifier) is a **display label**, not a gate.
+  *controller* = has children, *worker* = leaf — a **post-hoc** description, never the basis
+  for the `spawn` gate (a tracked Run has no children before its first `spawn`; gating spawn
+  on "is-a-controller" would deadlock it — see *Preconditions*). The `spawn` gate is the
+  **`agent.delegate.spawn` capability** in `scope`. And **`verifier` must be persisted**, not
+  derived: a verifier is a leaf a controller spawned to audit a submission, so it is
   **structurally identical to a leaf worker** (`parentRunId` + no children); its
   load-bearing safety contract (`context:'none'`, read-only, no actuation, output consumed
   as a `VerifierVerdict`) has to **survive a restart**, which a pure tree-position
@@ -438,9 +441,12 @@ A `Run` carries **two orthogonal status axes** — keeping the existing process 
 untouched, and expressing the new control/verification lifecycle separately:
 
 - **`executionStatus`** — the existing `running | completed | failed | cancelled`,
-  **unchanged**. Process/ledger semantics: is this Run's own work in progress, done,
-  errored, aborted? Every existing consumer (running-detection, Dream skip, projections)
-  keeps reading this; nothing regresses.
+  **unchanged** as a field. Process/ledger semantics: is this Run's own work in progress,
+  done, errored, aborted? **Process/ledger consumers** (running/active-run detection,
+  projections) keep reading it unchanged; the **two consumers that conflate `running` with
+  "a step is in flight" — Dream/reflective skip and UI-busy — migrate** to the
+  in-flight-step / `objectiveStatus` signal (enumerated under *A controller's
+  `executionStatus`* below). Not "every consumer is untouched".
 - **`objectiveStatus`** — **new**, on controller / tracked Runs only:
   `active | verifying | verified | blocked | budget_exhausted | stopped`. The control /
   verification lifecycle of the objective this Run owns. **`active` is the hub state** —
@@ -484,21 +490,29 @@ tracks **the lifecycle of that run as a whole**, and the objective detail rides
 | Controller is… | `executionStatus` | `objectiveStatus` |
 |---|---|---|
 | pursuing its objective (running a step **or parked** waiting on children/verifier) | `running` | `active` / `verifying` |
-| **parked awaiting the owner** (blocked / budget exhausted — **resumable**, not terminal) | `running` | `blocked` / `budget_exhausted` |
+| **parked awaiting the owner** (blocked, or a soft budget pause — **resumable**) | `running` | `blocked` / `budget_exhausted` |
 | objective verified | `completed` | `verified` |
-| owner gave up, or a **hard backstop** fired (e.g. max-wall-clock) | `completed` | (last value) |
-| owner/parent `run_stop` | `cancelled` | `stopped` |
-| the controller run itself crashed/errored | `failed` | (last value) |
+| a **hard backstop** fired (max-wall-clock / max-attempts) — terminal | `completed` | **`budget_exhausted`** (set explicitly) |
+| owner `run_stop` (incl. owner give-up) | `cancelled` | **`stopped`** (set explicitly) |
+| the controller run itself crashed/errored | `failed` | (last value — error path) |
 
-The subtle row is **blocked / budget_exhausted = parked *awaiting the owner***: structurally
+> **Invariant — no `completed`/`cancelled` with a non-terminal objective.** Whenever
+> `executionStatus` goes terminal, `objectiveStatus` is **first resolved to a terminal
+> value** (`verified` / `blocked` / `budget_exhausted` / `stopped`) — it is **never left at
+> `active` / `verifying`**. So a hard backstop sets `budget_exhausted` (not "last value"),
+> and owner give-up is a `run_stop` → `stopped`. (`failed` is the crash/error path —
+> recovered on restart, not an owner notify endpoint, so "last value" is acceptable there.)
+
+The subtle row is **blocked / soft budget pause = parked *awaiting the owner***: structurally
 the same as parked-awaiting-children, so it stays **`running`**, not `completed`. This is
 load-bearing for the never-re-spawned / stable-`runId` invariant — **un-block is an
 `objectiveStatus: blocked → active` transition on the *same* run**, never a `completed →
 running` resurrection (which the ledger treats as terminal), and it is what makes a
 `run_amend`-budget on a blocked goal physically possible (you cannot amend a `completed`
-run). Execution-axis terminal is reserved for the genuinely terminal: `verified → completed`,
-owner-give-up / hard backstop `→ completed`, `run_stop → cancelled`, crash `→ failed`; an
-abandoned blocked goal is eventually collected by the **max-wall-clock backstop**.
+run). **`budget_exhausted` is disambiguated by the execution axis:** `+ running` = soft
+pause, resumable on an owner budget extension; `+ completed` = a hard backstop tripped,
+terminal. An abandoned blocked goal is eventually collected by the **max-wall-clock
+backstop** → `completed` (terminal), its `objectiveStatus` resolved to `budget_exhausted`.
 
 So `executionStatus: running` for a controller means **"this objective is live"** (pursuing
 *or* parked, awaiting children or the owner). **"Is a step in flight *right now*"** is a
@@ -819,17 +833,22 @@ ScopeSpec = {
 VerifierVerdict = { verdict: 'pass' | 'fail', gaps: { signature, criterion, detail }[] }
 ```
 
-**Preconditions** (the catalog filter), keyed on **`role`** (controller/worker derived from
-lineage; `verifier` from the persisted `purpose`): `spawn` needs spawn capability (a controller / decomposing Run, and Neva at the
-root); `run_status` / `run_steer` / `run_amend` / `run_stop` require **owning the target**
-(Neva over a root; a controller over its child); `ask_user_question` requires
+**Preconditions** (the catalog filter): **`spawn` is gated on the `agent.delegate.spawn`
+capability being in the Run's `scope`** — **not** on a structural "is-a-controller (has
+children)" check. That distinction matters: a freshly-created tracked controller has **no
+children before its first `spawn`**, so a children-based gate would deadlock it into
+`worker` and deny it `spawn` (a bootstrap loop). Capability-gating sidesteps it entirely —
+Neva grants `agent.delegate.spawn` to any Run meant to decompose; `controller` vs `worker`
+remains a **post-hoc display label** (has children vs leaf), never the gate. The other
+controls — `run_status` / `run_steer` / `run_amend` / `run_stop` — require **owning the
+target** (Neva over a root; a controller over its child); `ask_user_question` requires
 **`attended`**. There is
 **no upward tool to gate** — the child→parent feedback is the run's own termination +
 output, which the parent senses; "stopping" needs no capability. So **every gated tool is
-downward** (controller → its plant). The **verifier** gets none of them — not `spawn`, not
-the downward control family (sensor ≠ actuator); it only reads its runtime-pinned evidence
-pack and returns a `VerifierVerdict`, the **base case**, so verification never itself
-bottoms out into more verification (no infinite regress).
+downward** (controller → its plant). The **verifier** gets none of them — its `purpose:
+'verify'` scope omits `agent.delegate.spawn` and the whole write family (sensor ≠ actuator);
+it only reads its runtime-pinned evidence pack and returns a `VerifierVerdict`, the **base
+case**, so verification never itself bottoms out into more verification (no infinite regress).
 
 ### Tool descriptions (model-facing) — authored now, not deferred
 
@@ -1014,10 +1033,10 @@ Genuinely open, all build-time-reversible:
 
 ## Collision self-check
 
-- `gh pr list` (2026-06-25): only **#338** (codex, schema-definition / trash actions)
-  open — no overlap with runs / delegation / commands.
-- `docs/TASKS.md`: the **agent-goal** item is `draft`; no other run-tree / control-loop
-  item in flight.
+- `gh pr list` (2026-06-25, latest): **no open PRs** (the plan PRs #340 / #341 are merged;
+  #338 closed). Nothing in flight touches runs / delegation / commands.
+- `docs/TASKS.md`: the **agent-goal** item is pre-implementation; no other run-tree /
+  control-loop item in flight.
 - Protocol-surface files (`types.ts` / `agentEventLog.ts` / `commands.ts`) + the
   `Agent`→`spawn` / `run_*` renames land in the interface build-order step first.
 
