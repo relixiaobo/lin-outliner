@@ -1,8 +1,10 @@
 import type { NodeId, NodeProjection } from '../../api/types';
+import { TRASH_ID } from '../../../core/types';
 import { projectFieldConfig } from '../../../core/configProjection';
 import { isInternalConfigNode } from '../../../core/configSchema';
 import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
 import { textMatchRank } from './candidateRanking';
+import { isNodeInSubtree } from './nodeLocation';
 
 export interface FieldOption {
   id: NodeId;
@@ -46,9 +48,11 @@ function resolveOptionsFromSourceSupertag(
 ): NodeProjection[] {
   const sourceSupertag = projectFieldConfig(byId, field).sourceSupertag;
   if (!sourceSupertag) return [];
+  if (isNodeInSubtree(byId, sourceSupertag, TRASH_ID)) return [];
   return [...byId.values()].filter((node) => (
     node.id !== field.id
     && (!node.type || node.type === 'codeBlock')
+    && !isNodeInSubtree(byId, node.id, TRASH_ID)
     && node.tags.includes(sourceSupertag)
   ));
 }

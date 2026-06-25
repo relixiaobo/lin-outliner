@@ -25,6 +25,7 @@ import { FieldTypeIcon } from '../outliner/fieldTypePresentation';
 import { useT } from '../../i18n/I18nProvider';
 import type { CommandRunner } from '../shared';
 import { textOf } from '../shared';
+import { isNodeInTrash } from '../interactions/nodeLocation';
 import { resolveTagColor } from '../tags/tagColors';
 import {
   definitionConfigItems,
@@ -61,6 +62,25 @@ export function definitionConfigLabels(t: ReturnType<typeof useT>): DefinitionCo
   };
 }
 
+export function buildDefinitionTagOptions(
+  index: DocumentIndex,
+  excludedTagId: NodeId,
+  untitledLabel: string,
+): TagOption[] {
+  return index.projection.nodes
+    .filter((candidate) => (
+      candidate.type === 'tagDef'
+      && candidate.id !== excludedTagId
+      && !isNodeInTrash(index, candidate.id)
+    ))
+    .map((candidate) => ({
+      color: resolveTagColor(candidate, index.byId).text,
+      id: candidate.id,
+      label: textOf(candidate) || untitledLabel,
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }));
+}
+
 export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPanelProps) {
   const t = useT();
   // config-as-nodes: definition config is read from the defConfig subtree via
@@ -75,15 +95,8 @@ export function DefinitionConfigPanel({ node, index, run }: DefinitionConfigPane
     doneStateEnabled: tagConfig?.doneStateEnabled,
   }, definitionConfigLabels(t));
   const tagOptions = useMemo(
-    () => index.projection.nodes
-      .filter((candidate) => candidate.type === 'tagDef' && candidate.id !== node.id)
-      .map((candidate) => ({
-        color: resolveTagColor(candidate, index.byId).text,
-        id: candidate.id,
-        label: textOf(candidate) || t.common.untitled,
-      }))
-      .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' })),
-    [index.projection.nodes, index.byId, node.id, t.common.untitled],
+    () => buildDefinitionTagOptions(index, node.id, t.common.untitled),
+    [index, node.id, t.common.untitled],
   );
 
   const updateTag = (patch: TagConfigPatch) => {

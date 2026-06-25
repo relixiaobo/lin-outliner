@@ -2,6 +2,7 @@ import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { textMatchRank } from './candidateRanking';
 import { clampMenuIndex } from './menuNavigation';
+import { isNodeInTrash } from './nodeLocation';
 
 export type TagSelectorItem =
   | { type: 'existing'; tag: NodeProjection }
@@ -37,7 +38,9 @@ export function tagSelectorItems(params: {
   const query = params.query.trim();
   const normalizedQuery = query.toLowerCase();
   const existing = new Set(params.existingTagIds);
-  const tags = params.index.projection.nodes.filter((node) => node.type === 'tagDef');
+  const tags = params.index.projection.nodes.filter((node) => (
+    node.type === 'tagDef' && !isNodeInTrash(params.index, node.id)
+  ));
   const exactTagExists = Boolean(normalizedQuery)
     && tags.some((tag) => normalizedTagLabel(tag) === normalizedQuery);
   const matches = tags

@@ -1,5 +1,6 @@
 import type { NodeId, NodeProjection } from '../../api/types';
 import { SYSTEM_FIELD_CHOICES } from '../../../core/systemFields';
+import { isNodeInSubtree } from './nodeLocation';
 
 // A field the user can reuse for the entry they are naming. `user` candidates are
 // real `fieldDef` nodes (reuse = relink the entry to that def). `system`
@@ -23,12 +24,13 @@ export interface FieldReuseCandidate {
  */
 export function buildUserFieldReuseCandidates(
   byId: Map<NodeId, NodeProjection>,
-  options: { excludeDefId?: string } = {},
+  options: { excludeDefId?: string; trashId?: NodeId } = {},
 ): FieldReuseCandidate[] {
   const candidates: FieldReuseCandidate[] = [];
   for (const node of byId.values()) {
     if (node.type !== 'fieldDef') continue;
     if (node.id === options.excludeDefId) continue;
+    if (options.trashId && isNodeInSubtree(byId, node.id, options.trashId)) continue;
     const label = node.content.text.trim();
     if (!label) continue;
     candidates.push({ id: node.id, label, section: 'Fields', kind: 'user' });

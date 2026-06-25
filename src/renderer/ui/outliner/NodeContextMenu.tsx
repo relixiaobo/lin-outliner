@@ -11,6 +11,7 @@ import {
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { isDescendantOf, isNodeInTrash } from '../interactions/nodeLocation';
 import { tagSelectorItemLabel, tagSelectorItems } from '../interactions/tagSelector';
+import { permanentDeleteCandidateIds, trashRootChildIds } from '../interactions/trashActions';
 import {
   idsAllowedForDuplicate,
   idsAllowedForMoveTo,
@@ -41,6 +42,7 @@ import {
   TrashIcon,
 } from '../icons';
 import { Button } from '../primitives/Button';
+import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { Input } from '../primitives/Input';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
@@ -70,6 +72,15 @@ interface NodeContextMenuProps {
   onClose: () => void;
 }
 
+type PendingDeleteConfirmation =
+  | {
+    kind: 'deleteForever';
+    nodeIds: NodeId[];
+    title: string;
+    message: string;
+    confirmLabel: string;
+  };
+
 async function writeClipboardText(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
@@ -91,6 +102,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const tc = t.outliner.contextMenu;
   const [mode, setMode] = useState<'main' | 'tag' | 'move'>('main');
   const [query, setQuery] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<PendingDeleteConfirmation | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuAnchor = useMemo(() => overlayAnchorFromPoint(props.x, props.y), [props.x, props.y]);
   const menuStyle = useAnchoredOverlay(menuRef, {
@@ -103,7 +115,14 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const target = props.index.byId.get(props.targetId) ?? props.node;
   const pinned = props.isPinned;
   const view = readViewConfig(target, props.index.byId);
-  const trashed = isNodeInTrash(props.index, props.node.id);
+  const trashId = props.index.projection.trashId;
+  const isTrashRoot = props.node.id === trashId;
+  const trashed = !isTrashRoot && isNodeInTrash(props.index, props.node.id);
+  const trashChildIds = useMemo(() => trashRootChildIds(props.index), [props.index]);
+  const emptyTrashDeleteIds = useMemo(
+    () => permanentDeleteCandidateIds({ ids: trashChildIds, index: props.index }),
+    [props.index, trashChildIds],
+  );
   const activeSelection = useMemo(() => resolveActiveNodeSelection({
     nodeId: props.node.id,
     targetId: props.targetId,
@@ -138,6 +157,10 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       byId: props.index.byId,
     }),
     [actionPanelRootId, activeNodeIds, props.index.byId],
+  );
+  const activePermanentDeleteIds = useMemo(
+    () => permanentDeleteCandidateIds({ ids: activeNodeIds, index: props.index }),
+    [activeNodeIds, props.index],
   );
   const activeDuplicateIds = useMemo(
     () => idsAllowedForDuplicate({
@@ -201,7 +224,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
 
   // Outside-pointer dismissal only — Escape is owned by `useMenuKeyboard` (below),
   // which scopes it to the focused surface and keeps the in-menu keyboard model.
-  useDismissibleOverlay(menuRef, props.onClose, { escape: false });
+  useDismissibleOverlay(menuRef, props.onClose, { disabled: pendingDelete !== null, escape: false });
   // `main` is a true menu (roving Arrow/Home/End); the tag / move submodes are
   // heterogeneous search popovers (focus-trap). The menu carries
   // `data-preserve-selection`, so focusing an item never trips the
@@ -244,21 +267,55 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     });
   };
 
+  const confirmDeleteForever = (nodeIds: NodeId[]) => {
+    if (nodeIds.length === 0) return;
+    setPendingDelete({
+      kind: 'deleteForever',
+      nodeIds,
+      title: nodeIds.length > 1 ? tc.deleteForeverTitleMultiple({ count: nodeIds.length }) : tc.deleteForeverTitle,
+      message: nodeIds.length > 1 ? tc.deleteForeverMessageMultiple : tc.deleteForeverMessage,
+      confirmLabel: tc.deleteForeverConfirm,
+    });
+  };
+
+  const confirmEmptyTrash = () => {
+    if (emptyTrashDeleteIds.length === 0) return;
+    setPendingDelete({
+      kind: 'deleteForever',
+      nodeIds: emptyTrashDeleteIds,
+      title: tc.emptyTrashTitle,
+      message: tc.emptyTrashMessage,
+      confirmLabel: tc.emptyTrashConfirm,
+    });
+  };
+
+  const runPendingDelete = async () => {
+    const pending = pendingDelete;
+    if (!pending) return;
+    setPendingDelete(null);
+    props.onClose();
+    for (const nodeId of pending.nodeIds) {
+      const result = await props.run(() => api.deleteNode(nodeId), { applyFocus: false });
+      if (!result) break;
+    }
+  };
+
   const item = (
     label: string,
     icon: ReactNode,
     onClick: () => void,
     disabled = false,
+    options: { danger?: boolean; close?: boolean } = {},
   ) => (
     <MenuItem
-      className="node-context-item"
+      className={`node-context-item ${options.danger ? 'is-danger' : ''}`}
       disabled={disabled}
       icon={icon}
       label={label}
       onClick={() => {
         if (disabled) return;
         onClick();
-        props.onClose();
+        if (options.close !== false) props.onClose();
       }}
       role="menuitem"
     />
@@ -338,8 +395,21 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       {item(tc.copyText, <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(textOf(target, t.common.untitled)))}
       {item(tc.copyNodeId, <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(props.targetId))}
       <div className="node-context-separator" role="separator" />
-      {trashed
-        ? item(tc.restore, <RestoreIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.restoreNode(props.node.id)))
+      {isTrashRoot
+        ? item(tc.emptyTrash, <TrashIcon size={ICON_SIZE.menu} />, confirmEmptyTrash, emptyTrashDeleteIds.length === 0, { close: false, danger: true })
+        : trashed
+          ? (
+            <>
+              {item(tc.restore, <RestoreIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.restoreNode(props.node.id)))}
+              {item(
+                tc.deleteForever({ prefix: activeLabelPrefix }),
+                <TrashIcon size={ICON_SIZE.menu} />,
+                () => confirmDeleteForever(activePermanentDeleteIds),
+                activePermanentDeleteIds.length === 0,
+                { close: false, danger: true },
+              )}
+            </>
+          )
         : item(tc.trash({ prefix: activeLabelPrefix }), <TrashIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionDelete({
           ids: activeDeleteIds,
           panelRootId: actionPanelRootId,
@@ -436,22 +506,34 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       : tc.moveNode;
 
   return createPortal(
-    <MenuSurface
-      ref={menuRef}
-      aria-label={modeLabel}
-      className="node-context-menu"
-      preserveSelection
-      role={mode === 'main' ? 'menu' : 'dialog'}
-      style={menuStyle}
-      onKeyDown={onKeyDown}
-      onMouseDown={(event) => event.stopPropagation()}
-    >
-      {mode === 'main'
-        ? renderMain()
-        : mode === 'tag'
-          ? renderTagMode()
-          : renderMoveMode()}
-    </MenuSurface>,
+    <>
+      <MenuSurface
+        ref={menuRef}
+        aria-label={modeLabel}
+        className="node-context-menu"
+        preserveSelection
+        role={mode === 'main' ? 'menu' : 'dialog'}
+        style={menuStyle}
+        onKeyDown={onKeyDown}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        {mode === 'main'
+          ? renderMain()
+          : mode === 'tag'
+            ? renderTagMode()
+            : renderMoveMode()}
+      </MenuSurface>
+      {pendingDelete ? (
+        <ConfirmDialog
+          danger
+          title={pendingDelete.title}
+          message={pendingDelete.message}
+          confirmLabel={pendingDelete.confirmLabel}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => void runPendingDelete()}
+        />
+      ) : null}
+    </>,
     document.body,
   );
 }
