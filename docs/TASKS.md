@@ -502,6 +502,15 @@ anything.
 
 ## Recently completed
 
+- **epub-file-preview** (`codex-3/epub-file-preview`, PR #339, codex-3, merged 2026-06-25) — inline
+  `foliate-js` EPUB reader for `.epub` attachments/local files (summary = first section; expanded =
+  wheel-scrolled sections + spine). Bytes via capped `preview_read_bytes`; `frame-src blob:` added while
+  packaged `script-src 'self'` stays strict (blob iframe inherits → book scripts CSP-blocked; foliate
+  renders via same-origin parent DOM; iframe sandboxed w/o top-nav/popups). Dev CSP admits only Vite's
+  hashed preamble. In-book links via http(s)-only gate; MIME magic-byte precedence preserved; adds
+  `foliate-js`. **Gate (main):** code + security review; typecheck + build + `test:core` 1062 +
+  `test:renderer` 617 + EPUB e2e green on `59c9afa5`; packaged-CSP runtime smoke = confirmatory follow-up.
+  Fast-track, **shape (a)**, *no plan file*.
 - **trashed-schema-definitions** (`codex/schema-definition-availability`, PR #338, codex, merged
   2026-06-25) — treats trashed tag/field definitions as inactive across core commands + renderer pickers
   (no reuse for new tags/fields or `options_from_supertag`; existing "deleted" badges stay), and adds

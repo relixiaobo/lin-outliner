@@ -10,6 +10,23 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Added
+
+- **EPUB file preview (PR #339, codex-3)** — `.epub` attachments and local files now render in an inline
+  `foliate-js` reader instead of the metadata fallback. Summary previews the first section; the expanded
+  reader advances through scrolled sections + spine items via wheel/trackpad. Book bytes load only through
+  the capped `preview_read_bytes` API. EPUB sections render in `blob:` iframes, so the renderer CSP is
+  widened to `frame-src blob:` while **packaged `script-src 'self'` stays strict** — the blob iframe
+  inherits it, so scripted EPUB content is CSP-blocked (foliate renders via same-origin parent DOM
+  manipulation, not in-iframe scripts), and the content iframe is additionally sandboxed without
+  top-navigation/popups/forms. Dev CSP admits only Vite's hashed React-refresh preamble and widens
+  `connect-src` for HMR. Remote in-book links route through the http(s)-only external-open gate. MIME
+  sniffing keeps magic-byte precedence so a renamed PDF/PNG can't masquerade as EPUB, and a generic `.zip`
+  stays metadata-only. Adds `foliate-js`. **Gate (main):** code + manual security review (CSP inheritance +
+  iframe sandbox + external-link gate verified against foliate's iframe model); typecheck + build +
+  `test:core` 1062 + `test:renderer` 617 + EPUB e2e (inline reader, capped bytes, wheel section-advance)
+  green on `59c9afa5`. Packaged-CSP runtime smoke left as a confirmatory follow-up.
+
 ### Fixed
 
 - **Trashed schema definitions treated as inactive + Trash permanent-delete actions (PR #338, codex)** —
