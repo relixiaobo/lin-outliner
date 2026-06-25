@@ -370,6 +370,7 @@ export const en = {
       modified: ({ date }: { date: string }) => `Modified ${date}`,
       itemCount: ({ count }: { count: number }) => `${count} items`,
       imageAlt: ({ name }: { name: string }) => `${name} preview`,
+      epubPreviewAlt: ({ name }: { name: string }) => `${name} EPUB reader`,
       sourceLocalFile: 'Local file',
       sourceAsset: 'Asset',
       sourceAgentPayload: 'Agent output',

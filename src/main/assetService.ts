@@ -230,6 +230,7 @@ const MIME_TO_EXT: Record<string, string> = {
   'image/bmp': '.bmp',
   'image/heic': '.heic',
   'application/pdf': '.pdf',
+  'application/epub+zip': '.epub',
   'audio/mpeg': '.mp3',
   'audio/mp4': '.m4a',
   'audio/ogg': '.ogg',
@@ -254,6 +255,7 @@ const EXT_TO_MIME: Record<string, string> = {
   '.bmp': 'image/bmp',
   '.heic': 'image/heic',
   '.pdf': 'application/pdf',
+  '.epub': 'application/epub+zip',
   '.mp3': 'audio/mpeg',
   '.m4a': 'audio/mp4',
   '.oga': 'audio/ogg',
@@ -283,6 +285,7 @@ function extensionForMime(mimeType: string, filename?: string): string {
 
 /** Sniff a MIME type from magic bytes, falling back to the filename extension. */
 export function sniffMimeType(bytes: Uint8Array, filename?: string): string | undefined {
+  const filenameMimeType = filename ? EXT_TO_MIME[extname(filename)] : undefined;
   if (bytes.length >= 8
     && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
@@ -305,9 +308,11 @@ export function sniffMimeType(bytes: Uint8Array, filename?: string): string | un
     && bytes[8] === 0x57 && bytes[9] === 0x41 && bytes[10] === 0x56 && bytes[11] === 0x45) return 'audio/wav';
   if (bytes.length >= 3 && bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return 'audio/mpeg';
   if (bytes.length >= 4 && bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) return 'audio/ogg';
-  if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) return 'application/zip';
+  if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) {
+    return filenameMimeType === 'application/epub+zip' ? filenameMimeType : 'application/zip';
+  }
   if (looksLikeSvg(bytes)) return 'image/svg+xml';
-  return filename ? EXT_TO_MIME[extname(filename)] : undefined;
+  return filenameMimeType;
 }
 
 function looksLikeSvg(bytes: Uint8Array): boolean {

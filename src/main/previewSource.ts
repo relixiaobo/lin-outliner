@@ -297,6 +297,7 @@ function extensionForMimeType(mimeType: string): string {
   if (normalized === 'image/webp') return '.webp';
   if (normalized === 'image/svg+xml') return '.svg';
   if (normalized === 'application/pdf') return '.pdf';
+  if (normalized === 'application/epub+zip') return '.epub';
   return '';
 }
 

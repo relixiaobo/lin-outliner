@@ -1049,6 +1049,37 @@ test.describe('file attachments', () => {
     });
   });
 
+  test('EPUB files render through the inline reader instead of metadata fallback', async ({ page }) => {
+    const epubPreview = await pasteClipboardFileAndOpenPreview(page, {
+      name: 'preview-book.epub',
+      mimeType: 'application/epub+zip',
+      text: 'epub bytes',
+    });
+
+    await expect(epubPreview.locator('.file-preview-epub--summary')).toBeVisible();
+    await expect(epubPreview.locator('.file-preview-epub-host')).toHaveAttribute('aria-label', 'preview-book.epub EPUB reader');
+    await expect(epubPreview.locator('.file-preview-epub-host')).toHaveAttribute('aria-hidden', 'false');
+    await expect(epubPreview.locator('.file-preview-epub-view')).toHaveCount(1);
+    await expect(epubPreview.locator('.file-preview-metadata')).toHaveCount(0);
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.some((call) => call.cmd === 'preview_read_bytes');
+    }).toBe(true);
+
+    const epubBody = page.locator('.file-node-row-preview > .file-node-body').last();
+    await epubBody.locator('.file-preview-pill-primary').click();
+    const fullReader = epubBody.locator('.file-node-preview.expanded .file-preview-epub--full .file-preview-epub-host');
+    await expect(fullReader).toHaveAttribute('data-epub-scroll-reader', 'true');
+    await expect(fullReader).toHaveAttribute('data-epub-section', '1');
+
+    const readerBox = await fullReader.boundingBox();
+    if (!readerBox) throw new Error('Missing EPUB reader bounds');
+    await page.mouse.move(readerBox.x + readerBox.width / 2, readerBox.y + readerBox.height / 2);
+    await page.mouse.wheel(0, 20000);
+    await page.mouse.wheel(0, 20000);
+    await expect(fullReader).toHaveAttribute('data-epub-section', '2');
+  });
+
   test('unsupported file previews keep the same bottom action location as previewable files', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();

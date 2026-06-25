@@ -1419,6 +1419,7 @@ function inferMimeType(name: string): string {
   if (lowerName.endsWith('.heic')) return 'image/heic';
   if (lowerName.endsWith('.tif') || lowerName.endsWith('.tiff')) return 'image/tiff';
   if (lowerName.endsWith('.pdf')) return 'application/pdf';
+  if (lowerName.endsWith('.epub')) return 'application/epub+zip';
   if (lowerName.endsWith('.doc')) return 'application/msword';
   if (lowerName.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   if (lowerName.endsWith('.json')) return 'application/json';

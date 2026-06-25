@@ -779,6 +779,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
       return bytes.buffer;
     };
+    const previewEpubBytes = () => {
+      const base64 = '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';
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      return bytes.buffer;
+    };
     const previewPngBytes = () => {
       // A 600×360 solid-color PNG — intrinsically wider than the inline cap, so the
       // image renders at its max width and tests the overlay pinning to its real edge.
@@ -1067,6 +1074,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       if (lower.endsWith('.png')) return 'image/png';
       if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
       if (lower.endsWith('.pdf')) return 'application/pdf';
+      if (lower.endsWith('.epub')) return 'application/epub+zip';
       if (lower.endsWith('.wav')) return 'audio/wav';
       if (lower.endsWith('.mp4')) return 'video/mp4';
       if (lower.endsWith('.md')) return 'text/markdown';
@@ -2190,7 +2198,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const name = path.split('/').filter(Boolean).at(-1) ?? 'file';
           const mimeType = name.endsWith('.png') || name.endsWith('.jpg')
             ? 'image/png'
-            : name.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream';
+            : name.endsWith('.pdf') ? 'application/pdf'
+              : name.endsWith('.epub') ? 'application/epub+zip' : 'application/octet-stream';
           return clone(createAsset({ mimeType, originalFilename: name, byteSize: 4096 })) as T;
         }
         if (cmd === 'lookup_asset') return clone(assets.get(String(args.id)) ?? null) as T;
@@ -2329,6 +2338,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             || (target?.kind === 'agent-payload' && target.payloadId?.toLowerCase().endsWith('pdf'))
           ) {
             return { bytes: previewPdfBytes(), mimeType: 'application/pdf' } as T;
+          }
+          if (target?.kind === 'asset' && target.assetId && assets.get(target.assetId)?.mimeType === 'application/epub+zip') {
+            return { bytes: previewEpubBytes(), mimeType: 'application/epub+zip' } as T;
           }
           const imageAsset = target?.kind === 'asset' && target.assetId ? assets.get(target.assetId) : undefined;
           if (imageAsset?.mimeType?.startsWith('image/')) {
