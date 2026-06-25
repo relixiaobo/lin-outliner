@@ -5,7 +5,10 @@ import {
   definitionKind,
   definitionOutlinerLabel,
 } from '../../src/renderer/ui/definition/definitionConfig';
-import { definitionConfigLabels } from '../../src/renderer/ui/definition/DefinitionConfigPanel';
+import {
+  buildDefinitionTagOptions,
+  definitionConfigLabels,
+} from '../../src/renderer/ui/definition/DefinitionConfigPanel';
 import { getMessages } from '../../src/core/i18n';
 
 // The pure registry takes localized labels; exercise the canonical English tree.
@@ -73,5 +76,20 @@ describe('definition config registry', () => {
     expect(definitionOutlinerLabel(makeNode({ type: 'tagDef' }), {}, labels.outliner)).toBe('Default content');
     expect(definitionOutlinerLabel(makeNode({ type: 'fieldDef' }), { fieldType: 'options' }, labels.outliner)).toBe('Pre-determined options');
     expect(definitionOutlinerLabel(makeNode({ type: 'fieldDef' }), { fieldType: 'plain' }, labels.outliner)).toBeNull();
+  });
+
+  test('definition tag selectors exclude tags in Trash', () => {
+    const nodes = [
+      makeNode({ id: 'current', type: 'tagDef', content: { text: 'Current', marks: [], inlineRefs: [] } }),
+      makeNode({ id: 'active', type: 'tagDef', content: { text: 'Active', marks: [], inlineRefs: [] } }),
+      makeNode({ id: 'trash', content: { text: 'Trash', marks: [], inlineRefs: [] }, children: ['deleted'] }),
+      makeNode({ id: 'deleted', type: 'tagDef', parentId: 'trash', content: { text: 'Deleted', marks: [], inlineRefs: [] } }),
+    ];
+    const index = {
+      byId: new Map(nodes.map((node) => [node.id, node])),
+      projection: { nodes, trashId: 'trash' },
+    } as any;
+
+    expect(buildDefinitionTagOptions(index, 'current', 'Untitled').map((option) => option.id)).toEqual(['active']);
   });
 });

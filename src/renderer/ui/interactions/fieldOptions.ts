@@ -4,6 +4,7 @@ import { projectFieldConfig } from '../../../core/configProjection';
 import { isInternalConfigNode } from '../../../core/configSchema';
 import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
 import { textMatchRank } from './candidateRanking';
+import { isNodeInSubtree } from './nodeLocation';
 
 export interface FieldOption {
   id: NodeId;
@@ -47,28 +48,13 @@ function resolveOptionsFromSourceSupertag(
 ): NodeProjection[] {
   const sourceSupertag = projectFieldConfig(byId, field).sourceSupertag;
   if (!sourceSupertag) return [];
-  if (nodeIsInSubtree(byId, sourceSupertag, TRASH_ID)) return [];
+  if (isNodeInSubtree(byId, sourceSupertag, TRASH_ID)) return [];
   return [...byId.values()].filter((node) => (
     node.id !== field.id
     && (!node.type || node.type === 'codeBlock')
-    && !nodeIsInSubtree(byId, node.id, TRASH_ID)
+    && !isNodeInSubtree(byId, node.id, TRASH_ID)
     && node.tags.includes(sourceSupertag)
   ));
-}
-
-function nodeIsInSubtree(
-  byId: Map<NodeId, NodeProjection>,
-  nodeId: NodeId,
-  ancestorId: NodeId,
-): boolean {
-  let current = byId.get(nodeId);
-  const visited = new Set<NodeId>();
-  while (current && !visited.has(current.id)) {
-    if (current.id === ancestorId) return true;
-    visited.add(current.id);
-    current = current.parentId ? byId.get(current.parentId) : undefined;
-  }
-  return false;
 }
 
 function dedupeOptions(options: FieldOption[]): FieldOption[] {

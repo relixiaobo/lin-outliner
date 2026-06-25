@@ -119,6 +119,10 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const isTrashRoot = props.node.id === trashId;
   const trashed = !isTrashRoot && isNodeInTrash(props.index, props.node.id);
   const trashChildIds = useMemo(() => trashRootChildIds(props.index), [props.index]);
+  const emptyTrashDeleteIds = useMemo(
+    () => permanentDeleteCandidateIds({ ids: trashChildIds, index: props.index }),
+    [props.index, trashChildIds],
+  );
   const activeSelection = useMemo(() => resolveActiveNodeSelection({
     nodeId: props.node.id,
     targetId: props.targetId,
@@ -275,10 +279,10 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   };
 
   const confirmEmptyTrash = () => {
-    if (trashChildIds.length === 0) return;
+    if (emptyTrashDeleteIds.length === 0) return;
     setPendingDelete({
       kind: 'deleteForever',
-      nodeIds: trashChildIds,
+      nodeIds: emptyTrashDeleteIds,
       title: tc.emptyTrashTitle,
       message: tc.emptyTrashMessage,
       confirmLabel: tc.emptyTrashConfirm,
@@ -392,7 +396,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       {item(tc.copyNodeId, <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(props.targetId))}
       <div className="node-context-separator" role="separator" />
       {isTrashRoot
-        ? item(tc.emptyTrash, <TrashIcon size={ICON_SIZE.menu} />, confirmEmptyTrash, trashChildIds.length === 0, { close: false, danger: true })
+        ? item(tc.emptyTrash, <TrashIcon size={ICON_SIZE.menu} />, confirmEmptyTrash, emptyTrashDeleteIds.length === 0, { close: false, danger: true })
         : trashed
           ? (
             <>

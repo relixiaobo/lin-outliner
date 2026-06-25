@@ -1,5 +1,6 @@
 import type { NodeId, NodeProjection } from '../../api/types';
 import { SYSTEM_FIELD_CHOICES } from '../../../core/systemFields';
+import { isNodeInSubtree } from './nodeLocation';
 
 // A field the user can reuse for the entry they are naming. `user` candidates are
 // real `fieldDef` nodes (reuse = relink the entry to that def). `system`
@@ -29,27 +30,12 @@ export function buildUserFieldReuseCandidates(
   for (const node of byId.values()) {
     if (node.type !== 'fieldDef') continue;
     if (node.id === options.excludeDefId) continue;
-    if (options.trashId && nodeIsInSubtree(byId, node.id, options.trashId)) continue;
+    if (options.trashId && isNodeInSubtree(byId, node.id, options.trashId)) continue;
     const label = node.content.text.trim();
     if (!label) continue;
     candidates.push({ id: node.id, label, section: 'Fields', kind: 'user' });
   }
   return candidates;
-}
-
-function nodeIsInSubtree(
-  byId: Map<NodeId, NodeProjection>,
-  nodeId: NodeId,
-  ancestorId: NodeId,
-): boolean {
-  let current = byId.get(nodeId);
-  const visited = new Set<NodeId>();
-  while (current && !visited.has(current.id)) {
-    if (current.id === ancestorId) return true;
-    visited.add(current.id);
-    current = current.parentId ? byId.get(current.parentId) : undefined;
-  }
-  return false;
 }
 
 /**

@@ -553,6 +553,7 @@ describe('row interaction resolvers', () => {
     } as any;
 
     expect(trashRootChildIds(index)).toEqual(['deleted-parent', 'locked-deleted']);
+    expect(permanentDeleteCandidateIds({ ids: trashRootChildIds(index), index })).toEqual(['deleted-parent']);
     expect(permanentDeleteCandidateIds({
       ids: ['trash', 'deleted-parent', 'deleted-child', 'locked-deleted', 'live'],
       index,
