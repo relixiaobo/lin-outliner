@@ -55,17 +55,18 @@ user's goal/task ──────────────►  NEVA  (the root'
                                 └─ Run sub3 ── small → leaf: execute
 ```
 
-**Every Run makes exactly one verified submission to its parent.** It reaches that
-submission one of two ways:
+**Every Run's result is verified by its parent before it is accepted.** A Run reaches
+that result one of two ways:
 
-- **leaf** — execute the objective directly → submit;
-- **internal** — decompose → spawn child Runs → verify each child's submission →
-  re-spawn the failures → integrate the verified children → submit.
+- **leaf** — execute the objective directly → finish;
+- **internal** — decompose → spawn child Runs → verify each child's result →
+  re-spawn the failures → integrate the verified children → finish.
 
-**A Run never declares its own success.** When a Run submits, its **parent** verifies
-the submission (by spawning a fresh, clean-context **verifier Run**) before accepting
-it. The **root** is verified by Neva against the user's fixed criteria. Verified
-results fold up; **the root verified = the whole task complete.**
+**A Run never declares its own success.** When a Run **finishes** (its run terminates,
+leaving its result), its **parent** senses that and verifies the result (by spawning a
+fresh, clean-context **verifier Run**) before accepting it — there is no "I'm done" tool;
+the child only stops. The **root** is verified by Neva against the user's fixed criteria.
+Verified results fold up; **the root verified = the whole task complete.**
 
 ## The frame — a nested supervisory control system
 
@@ -140,10 +141,10 @@ mechanism:
         ┌──────────────┐
         │ CHILD Run    │  works on X
         └──────────────┘
-              │ ② request_complete(result)        ◄ child claims done
-              ▼
+              │ ② run terminates (+ output)       ◄ child just STOPS; it never "claims done"
+              ▼                                       (parent senses the termination — the wire)
         ┌──────────────┐
-        │ VERIFIER Run │  fresh context:'none'; audits result vs criteria
+        │ VERIFIER Run │  fresh context:'none'; audits raw evidence vs criteria
         └──────────────┘
               │ ③ verdict
         ┌─────┴─────┐
@@ -167,9 +168,9 @@ sub-objectives, becoming the parent of its own triangle:
      ├─ spawn(X.a, {criteria_a}) ─▶ child.a ─▶ [child verifies a]
      ├─ spawn(X.b, {criteria_b}) ─▶ child.b ─▶ [child verifies b]
      │
-     │  only once a, b pass does the child request_complete(result for X)
+     │  only once a, b pass does the child finish (its run terminates)
      ▼
-   parent's verifier audits X
+   parent senses it → parent's verifier audits X
 ```
 
 So the whole tree is **the same triangle stacked** — there is no "tree code", only
@@ -207,8 +208,8 @@ governor is a one-level-local rule; its tree-wide property is the **emergent** s
 | **verification** | the **parent** verifies its **direct** child before accepting | "verified at every level" falls out of every edge doing it |
 
 A child that needs more budget or scope does **not** consult a global ceiling — it
-`report_blocked(needs: 'budget' | 'scope')` to its parent, who re-slices locally (a
-`run_send` amend) or escalates further. **Depth needs no separate cap:** each nesting
+**stops with that note in its output**; its parent reads it and either re-slices locally
+(a `run_send` amend, then re-spawns) or escalates further. **Depth needs no separate cap:** each nesting
 reserves from a finite parent slice, so infinite depth would need infinite budget,
 which local admission already forbids — an explicit depth limit is only a legibility
 soft-stop, not an independent safety mechanism.
@@ -345,8 +346,10 @@ view is a rendering of a fact object.
 
 ### The one rule: a parent verifies its child (recursively)
 
-> When a Run submits a result, its **parent** verifies it **before** accepting it, by
-> spawning a fresh **verifier Run**. Completion is never self-declared, at any level.
+> When a Run's attempt **finishes** (its run terminates, leaving its result on the
+> wire), its **parent** verifies it **before** accepting it, by spawning a fresh
+> **verifier Run**. Completion is never self-declared, at any level — the child only
+> **stops**; the parent decides. There is no "I'm done" tool to call.
 
 The **verifier is the one exception to the rule — the base case**: its verdict is
 consumed directly and it is **not itself re-verified** (otherwise the recursion would
@@ -427,11 +430,12 @@ untouched, and expressing the new control/verification lifecycle separately:
 ```
   executionStatus:  running ──► completed / failed / cancelled        (existing, untouched)
   objectiveStatus:  active ◄─────────────────────┐
-                      │ submits (request_complete)│ verifier fails, budget remains
-                      ▼                           │ (controller re-plans / re-spawns worker)
+                      │ child run terminates       │ verifier fails, budget remains
+                      │   (parent SENSES it)       │ (controller re-plans / re-spawns worker)
+                      ▼                           │
                    verifying ──────────────────────┘
                       │ parent's verifier passes ──► verified ──► folds up
-                      ├─ report_blocked / needs scope / gap repeats N× ──► blocked
+                      ├─ controller classifies (needs owner/scope · gap repeats N×) ──► blocked
                       ├─ budget reserve denied & over ceiling ──► budget_exhausted
                       └─ owner/parent stop ──► stopped
 ```
@@ -458,8 +462,8 @@ Budget (token/time) is enforced **per edge, before the spend**: when a parent sp
 child Run (worker or verifier), it **reserves a fixed slice of *its own* budget** for
 that child; the child spends only within its slice and sub-reserves from it for any
 children of its own. A child that needs more does not read a global pool — it
-`report_blocked(needs: 'budget')` and the parent re-slices (a `run_send` amend) or
-escalates. If a reservation can't be met, that branch goes `budget_exhausted` (or
+**terminates leaving that note in its output**; its parent reads it and either re-slices
+(a `run_send` amend + re-spawn) or escalates. If a reservation can't be met, that branch goes `budget_exhausted` (or
 `blocked` awaiting extension); on completion the reservation **settles** against real
 usage. Because each child is bounded by its own slice (not a shared pool), concurrent
 fan-out cannot overshoot — a sibling's idle budget is not borrowable without an
@@ -481,9 +485,10 @@ decision is freshly computed. Neva resumes supervising the persisted root.
 ### Reused autonomy rules
 
 - **Ask only in the attended conversation turn.** No Run asks — it self-resolves
-  reversible locals and `report_blocked` on directional choices or scope expansion.
-  (Preserves *subagents-never-ask-user*.) A detached branch's block escalates async,
-  resolved in a fresh turn; an awaited parent may relay.
+  reversible locals; on a directional choice or scope expansion it **stops with a note
+  in its output**, and its parent (sensing the termination) classifies the result as
+  `blocked` and escalates async (resolved in a fresh attended turn; an awaited parent
+  may relay). (Preserves *subagents-never-ask-user*.)
 - **Scope** is granted at the root, **inherits down the tree** (narrow-only); needing
   more authority escalates (`blocked`).
 - **Budget** is a per-edge slice the parent reserves (above); the tree total is the
@@ -508,8 +513,8 @@ a persisted axis.
 |---|---|---|
 | sense | `file_read`, `web_search`, `web_fetch`, `past_chats` | unchanged |
 | mutate doc / local | node + file write family | unchanged (in-scope only) |
-| spawn / manage runs | `spawn(objective, {criteria?, scope?, budget?, context?, detach?})`, `run_status`, `run_send`, `run_stop` | **`Agent` → `spawn`**; recursion = a Run calls `spawn`; `criteria` present → a verified contract, absent → an unverified single pass; the controls are uniformly **`run_*`** (renamed from `AgentStatus`/`AgentSend`/`AgentStop`); **new:** the `context` knob + `run_send` amend (objective / criteria / **budget** — `set_budget` folds in here) |
-| run self-management | `request_complete()` (→ parent's verifier) · `report_blocked(reason)` | new; submit / escalate |
+| spawn / manage runs (↓ all downward) | `spawn(objective, {criteria?, scope?, budget?, context?, detach?})`, `run_status`, `run_send`, `run_stop` | **`Agent` → `spawn`**; recursion = a Run calls `spawn`; `criteria` present → a verified contract, absent → an unverified single pass; the controls are uniformly **`run_*`** (renamed from `AgentStatus`/`AgentSend`/`AgentStop`); **new:** the `context` knob + `run_send` amend (objective / criteria / **budget** — `set_budget` folds in here) |
+| run feedback (↑) | **— no tool** | the child→parent signal is the run's **own termination + output** (the "wire"); the parent senses it (completion notification) and classifies via the verifier + re-plan. **Removes `request_complete` / `report_blocked`** — a child never self-declares done or blocked (a self-classifying sensor is the very thing the verifier removes) |
 | ask user | `ask_user_question` | unchanged tool; precondition-gated to `attended` |
 | load procedure | `skill` | unchanged |
 
@@ -633,19 +638,17 @@ their current contracts). `RunId = string`; every result is the existing
 spawn(objective: string, opts?: {
   criteria?:  string[],                       // acceptance contract (⇒ objectiveStatus, verifier gate)
   scope?:     ScopeSpec,                       // capability ∩ scope; must be ⊆ caller's (narrow-only)
-  budget?:    { tokens?: number, wallClockMs?: number },  // tree slice; REQUIRED at a detached root
+  budget?:    { tokens?: number, wallClockMs?: number },  // the slice the parent reserves; REQUIRED at a detached root (the top ceiling)
   context?:   'full' | 'brief' | 'none',       // default 'brief' detached / 'full' explicit continuation
   detach?:    boolean,                         // detached (tracked, notifies) vs inline
   model?:     string,                          // optional per-block model (loop-chosen by default)
 }) -> { runId: RunId, objectiveStatus?: ObjectiveStatus }   // the handle; tracked-only objectiveStatus
 
-// submit up — this Run's result goes to its parent's verifier (worker or controller). Ends this Run.
-request_complete(opts?: { result?: Json, note?: string })
-  -> { submitted: true, runId: RunId }          // verdict is the PARENT's, async to this Run
-
-// escalate — needs owner / more scope / a directional decision. Sets objectiveStatus = blocked.
-report_blocked(reason: string, opts?: { needs?: 'owner-decision' | 'scope' | 'budget' })
-  -> { blocked: true, runId: RunId }
+// NO upward tool. The child→parent feedback is the run's OWN lifecycle: when its run reaches a
+// terminal executionStatus (completed | failed) it leaves its result + a note on the "wire"; the
+// parent SENSES that (completion notification), runs the verifier on raw evidence, and classifies
+// the outcome itself — pass → fold up; fail+gap → re-spawn the worker, or controller → blocked +
+// notify owner. A child never self-declares done or blocked. (Removes request_complete / report_blocked.)
 
 // owner/parent controls — require OWNING the target (ancestor / same conversation)
 run_status(runId: RunId) -> {
@@ -673,16 +676,14 @@ VerifierVerdict = { verdict: 'pass' | 'fail', gaps: { signature, criterion, deta
 
 **Preconditions** (the catalog filter), keyed on **`role`** (derived from lineage, never
 stored): `spawn` needs spawn capability (a controller / decomposing Run, and Neva at the
-root); `request_complete` / `report_blocked` are visible on **any objective Run —
-controller, worker, *or* root** (a worker submits its leaf result; a controller submits its
-folded-up result; the root submits to Neva, who verifies against the user's criteria) — note
-this is **role, not `tracked`**: a worker carries no `objectiveStatus` yet is the primary
-caller of `request_complete`; `run_status` / `run_send` / `run_stop` require **owning the
-target** (Neva over a root; a controller over its child); `ask_user_question` requires
-**`attended`**. The **verifier** is the single role excluded from all of these — not
-`spawn`, not the submit/escalate family (sensor ≠ actuator). It only reads its
-runtime-pinned evidence pack and returns a `VerifierVerdict`; it is the **base case**, so
-verification never itself bottoms out into more verification (no infinite regress).
+root); `run_status` / `run_send` / `run_stop` require **owning the target** (Neva over a
+root; a controller over its child); `ask_user_question` requires **`attended`**. There is
+**no upward tool to gate** — the child→parent feedback is the run's own termination +
+output, which the parent senses; "stopping" needs no capability. So **every gated tool is
+downward** (controller → its plant). The **verifier** gets none of them — not `spawn`, not
+the downward control family (sensor ≠ actuator); it only reads its runtime-pinned evidence
+pack and returns a `VerifierVerdict`, the **base case**, so verification never itself
+bottoms out into more verification (no infinite regress).
 
 ## Theory & prior art (design against these)
 
@@ -760,6 +761,11 @@ Genuinely open, all build-time-reversible:
 - **Controller Run = runtime-owned supervisor state**, not a long-lived process; its
   steps are bounded LLM calls checkpointed as RunEvents.
 - **`spawn` + uniform `run_status/run_send/run_stop`**; recursion = a Run calls `spawn`.
+  **All four are downward (controller → its plant).**
+- **No upward tool.** The child→parent feedback is the run's own termination + output,
+  sensed by the parent (no `request_complete` / `report_blocked`). A child never
+  self-declares done or blocked; the parent classifies via the verifier + re-plan (a
+  self-classifying sensor is exactly what the verifier exists to remove).
 - **Achievement only; no `maintenance`, no `type` field.**
 - **Verifier default = same model, fresh `none` context, adversarial framing**;
   different-model is the owner-gated high-stakes opt-in.
