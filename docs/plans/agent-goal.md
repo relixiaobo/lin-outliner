@@ -162,8 +162,8 @@ worker) recurses with the structure — every parent verifies its children — a
   wake-up/trigger source, which is the schedule-driver work held out of scope below.
 - **No projection objects.** `Turn / Task / Team / Channel / Step / kind` are views
   over the facts, never stored entities — `kind` **becomes derived** (its physical
-  removal is gated on landing `disposition` + migrating its consumers; whether that
-  ships in this cut or a separate interface PR is the *Shape* decision).
+  removal is gated on landing `disposition` + migrating its consumers, sequenced as the
+  **first build-order step** of this one PR — see *Shape*).
 - **One persistent self (one-Neva).** Exactly one identity — Neva: the HMI, the
   memory owner, and the **durable root supervisor** (she authorizes the root controller,
   receives its result, and re-decides at the top — she does not swap out a running root).
@@ -253,20 +253,21 @@ view is a rendering of a fact object.
 > persistent Run field**, then migrating `kind`'s ~17 load-bearing consumers
 > (`agentEventStore.ts` delegation/conversation indexing, the `reflective` Dream-skip
 > in `agentRuntime.ts`, the `turn` count in `agentDebugView.ts`). It is **orthogonal
-> to the goal capability**; whether it ships in this cut or as a separate interface PR
-> is the packaging decision under *Shape*.
+> to the goal capability**, so it ships **as the first build-order step** of this one PR
+> (the risky interface settled before the goal loop) — see *Shape*.
 
 ### Keep / drop / rename verdicts
 
 - **Core noun names stay** — no fact-object rename.
 - **The real changes:** **enrich `Run`** (objective + acceptance criteria + scope +
-  budget-slice + `rootRunId` + a second status axis `objectiveStatus` + the controller
-  behavior on internal nodes); **RENAME the `Agent` delegate tool → `spawn`**; rename the
-  owner/parent controls to the uniform `run_status` / `run_send` / `run_stop`;
-  **physically remove `kind`**; demote `trigger` to provenance only. **Do NOT add** a
-  `Goal` object, a `type` field, a `trigger: goal`, a `GoalStatus`, a `supersedesRunId` /
-  `objectiveGroupId`, or `Execution` / `Invocation` / `Round` / `Capability Lease` /
-  `Workspace`.
+  budget-slice + `rootRunId` + persistent `disposition` + a second status axis
+  `objectiveStatus` + the controller behavior on internal nodes); **RENAME the `Agent`
+  delegate tool → `spawn`**; rename the owner/parent controls to the uniform
+  `run_status` / `run_send` / `run_stop`; **derive then physically remove `kind`** (gated
+  on `disposition` + consumer migration). `trigger` stays as-is (already pure provenance).
+  **Do NOT add** a `Goal` object, a `type` field, a `trigger: goal`, a `GoalStatus`, a
+  `supersedesRunId` / `objectiveGroupId`, or `Execution` / `Invocation` / `Round` /
+  `Capability Lease` / `Workspace`.
 - **Automation words are the teaching lens, not identifiers.**
 
 ## How it runs
@@ -559,14 +560,21 @@ Run {
 ## Shape
 
 **(a) ONE complete feature in one PR.** "foundation → consumers" is **build-order
-within the PR** (A7), not separate releases. Build-order:
+within the PR** (A7), not separate releases. The PM has **ratified the single-PR shape**
+over the gate's split recommendation; the accepted trade is a large blast radius,
+**mitigated by landing the risky orthogonal interface (disposition + `kind` migration,
+the renames) as the first build-order step** so the protocol/naming churn is settled
+before the goal loop is layered on. Build-order:
 
-1. **Interface** — enrich `Run` (objective / criteria / scope / budget; `rootRunId` new
-   field; `executionStatus` kept + `objectiveStatus` new; `provenance` replacing
-   `trigger`'s why-role; `role` derivation); `spawn(objective, {criteria, …})` (the
+1. **Protocol & naming interface (first, A4/A10).** Land the persistent
+   `disposition: attended | detached` field and **migrate `kind`'s ~17 consumers**
+   (delegation/conversation indexing, `reflective` Dream-skip, `turn` debug count) to the
+   `provenance + lineage + disposition` derivation, **then remove `kind`**. In the same
+   step: enrich `Run` (objective / criteria / scope / budget; `rootRunId` new field;
+   `executionStatus` kept + `objectiveStatus` new); `spawn(objective, {criteria, …})` (the
    `Agent`→`spawn` rename + the `context` knob); the `run_status/run_send/run_stop`
    rename; `set_budget`; the precondition-catalog tool layer. (Touches `commands.ts` /
-   `types.ts` — coordinate per A4/A10.)
+   `types.ts` / `agentEventLog.ts`.)
 2. **Recursive control + verifier** — leaf worker vs persistent controller (runtime-owned
    supervisor state); the controller verifies each worker via a runtime-spawned
    `context:'none'` **verifier Run** (runtime-assembled evidence pack + `continuation.md`
@@ -614,8 +622,8 @@ Genuinely open, all build-time-reversible:
 - **Budget mandatory + admission-controlled**; over-ceiling → `blocked` (or
   `budget_exhausted`). Unbounded is not a default.
 - **`kind` becomes derived** (physical removal gated on landing `disposition` +
-  migrating consumers; packaging is the Shape decision); `trigger` stays provenance
-  (add no `goal` variant — it is already pure provenance).
+  migrating consumers, sequenced as the first build-order step of the single PR);
+  `trigger` stays provenance (add no `goal` variant — it is already pure provenance).
 - Workers/verifiers are **Runs, not identities** (one-Neva); team formation needs **no
   owner approval**.
 
@@ -652,9 +660,11 @@ Result: **no overlap.**
 
 ## Build checklist (one PR, build-order within it)
 
-- [ ] **Interface** — enrich `Run` (objective / criteria / scope / budget; `rootRunId`
-      new field; `executionStatus` kept + `objectiveStatus` new; `provenance` replacing
-      `trigger`'s why-role; derived `role`); `spawn(objective, {criteria, scope?, budget?,
+- [ ] **Protocol & naming interface (first)** — land persistent `disposition: attended |
+      detached`; migrate `kind`'s ~17 consumers to `provenance + lineage + disposition`,
+      then remove `kind`; enrich `Run` (objective / criteria / scope / budget; `anchor`
+      reused; `rootRunId` new; `executionStatus` kept + `objectiveStatus` new); `provenance`
+      = the existing `trigger`; derived `role`; `spawn(objective, {criteria, scope?, budget?,
       context?, detach?})` (rename `Agent`→`spawn`); rename controls to `run_status` /
       `run_send` / `run_stop`; `set_budget`; the precondition-catalog tool layer.
 - [ ] **Recursive control** — leaf worker vs persistent controller (runtime-owned
