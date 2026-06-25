@@ -315,8 +315,9 @@ A **controller Run is runtime-owned supervisor state, not a long-lived chat proc
 its decompose / decide / integrate / dispatch-verify steps are discrete, **bounded LLM
 calls whose outputs are checkpointed as RunEvents**; between steps no process holds
 context. That is what lets a controller persist (and resume after a crash) cheaply, and
-it is why "no scheduler / no new primitive" holds — the controller is just durable
-`Run` state the runtime steps.
+it is why **no new scheduler and no separate object** are needed — the new execution
+mode is just durable `Run` state the runtime steps (the controller of *The frame*),
+not a standalone runtime.
 
 So persistence has two shapes, and **nothing that carries a stable identity is ever
 re-spawned**:
@@ -542,8 +543,62 @@ Run {
   `latestGap` + the livelock counter.
 - **Amendment invalidation:** an owner `run_send` amendment to a Run's objective/criteria
   **invalidates any prior or in-flight verifier verdict** for it; amending while
-  `verifying` **aborts the current verifier**. A `complete` verdict never carries across
+  `verifying` **aborts the current verifier**. A `verified` verdict never carries across
   a criteria change.
+
+**Tool contracts (params + returns) — pinned now, not at build time.** The new/changed
+tools' exact shapes (the unchanged sense/mutate/`skill`/`ask_user_question` tools keep
+their current contracts). `RunId = string`; every result is the existing
+`ToolEnvelope<…>` (`{ ok, data | error }`), shown here as the `data` payload.
+
+```
+// create — a Run spawns a Run (root or child). criteria present ⇒ tracked + verified.
+spawn(objective: string, opts?: {
+  criteria?:  string[],                       // acceptance contract (⇒ objectiveStatus, verifier gate)
+  scope?:     ScopeSpec,                       // capability ∩ scope; must be ⊆ caller's (narrow-only)
+  budget?:    { tokens?: number, wallClockMs?: number },  // tree slice; REQUIRED at a detached root
+  context?:   'full' | 'brief' | 'none',       // default 'brief' detached / 'full' explicit continuation
+  detach?:    boolean,                         // detached (tracked, notifies) vs inline
+  model?:     string,                          // optional per-block model (loop-chosen by default)
+}) -> { runId: RunId, objectiveStatus?: ObjectiveStatus }   // the handle; tracked-only objectiveStatus
+
+// submit up — this Run's result goes to its parent's verifier (worker or controller). Ends this Run.
+request_complete(opts?: { result?: Json, note?: string })
+  -> { submitted: true, runId: RunId }          // verdict is the PARENT's, async to this Run
+
+// escalate — needs owner / more scope / a directional decision. Sets objectiveStatus = blocked.
+report_blocked(reason: string, opts?: { needs?: 'owner-decision' | 'scope' | 'budget' })
+  -> { blocked: true, runId: RunId }
+
+// owner/parent controls — require OWNING the target (ancestor / same conversation)
+run_status(runId: RunId) -> {
+  runId, role: Role, objective: string,
+  executionStatus: ExecutionStatus,            // running | completed | failed | cancelled
+  objectiveStatus?: ObjectiveStatus,           // active | verifying | verified | blocked | budget_exhausted | stopped
+  budget: { reserved: number, spent: number },
+  children?: { runId, role, objectiveStatus, executionStatus }[],   // a controller's subtree (one level)
+  latestGap?: { signature: string, detail: string },
+  result?: Json,                               // present iff objectiveStatus = verified
+  blockedReason?: string,                      // present iff blocked
+}
+run_send(runId: RunId, opts: {                 // steer; an `amend` is an objective-amendment event
+  message?: string,
+  amend?:   { objective?: string, criteria?: string[] },   // bumps criteriaRevision, invalidates verdicts
+}) -> { runId: RunId, objectiveStatus?: ObjectiveStatus }
+run_stop(runId: RunId, opts?: { reason?: string })
+  -> { runId: RunId, objectiveStatus: 'stopped' }          // stops the Run and its subtree
+set_budget(runId: RunId, budget: { tokens?: number, wallClockMs?: number })
+  -> { runId: RunId, budget: { reserved: number, spent: number } }
+
+// verifier result (internal — produced by the verifier Run, consumed by the controller)
+VerifierVerdict = { verdict: 'pass' | 'fail', gaps: { signature, criterion, detail }[] }
+```
+
+**Preconditions** (the catalog filter): `spawn` needs spawn capability (controllers /
+decomposing Runs); `request_complete` / `report_blocked` are visible only on a **non-root
+Run inside a tracked tree**; `run_status` / `run_send` / `run_stop` / `set_budget` require
+**owning the target**; `ask_user_question` requires **`attended`**. The **verifier Run**
+gets none of `spawn` / the write family (sensor ≠ actuator).
 
 ## Theory & prior art (design against these)
 
@@ -575,14 +630,18 @@ before the goal loop is layered on. Build-order:
    `Agent`→`spawn` rename + the `context` knob); the `run_status/run_send/run_stop`
    rename; `set_budget`; the precondition-catalog tool layer. (Touches `commands.ts` /
    `types.ts` / `agentEventLog.ts`.)
-2. **Recursive control + verifier** — leaf worker vs persistent controller (runtime-owned
-   supervisor state); the controller verifies each worker via a runtime-spawned
-   `context:'none'` **verifier Run** (runtime-assembled evidence pack + `continuation.md`
-   rubric, read-only, no actuation); re-spawn the failed worker / controller re-plans in
-   place; the `objectiveStatus` transitions; the livelock guard; budget admission control
-   + hard backstops; event-sourced resume.
-3. **Depth + governors** — recursion to arbitrary depth; scope-narrows-only; shared tree
-   budget folding; a verifier at every level; no owner approval gate.
+2. **Control + verifier, capped at depth/fan-out = 1 (early end-to-end point).** Build
+   and **verify the whole loop end-to-end at the minimal tree** — root controller → one
+   worker → `context:'none'` **verifier Run** (runtime-assembled evidence pack +
+   `continuation.md` rubric, read-only, no actuation) → re-spawn-the-failed-worker /
+   controller-re-plans-in-place → the `objectiveStatus` transitions → livelock guard →
+   budget admission control + hard backstops → event-sourced resume → the four terminal
+   outcomes. Capping depth/fan-out = 1 gives an early end-to-end verification point for
+   the highest-blast capability **inside the single PR** (a safety cushion suggested by
+   the gate), before recursion is unlocked.
+3. **Uncap → depth + governors.** Remove the depth/fan-out cap (a worker may itself be a
+   controller — the same code path); recursion to arbitrary depth; scope-narrows-only;
+   shared tree budget folding; a verifier at every level; no owner approval gate.
 4. **Delivery / UI** — `/goal` + one-tap "make this a goal"; Neva as the root supervisor
    holding the user's objective; the "tasks" panel renders root Runs (children grouped by
    function label, never "N Nevas"); the four root outcomes notify; steering via
@@ -667,11 +726,12 @@ Result: **no overlap.**
       = the existing `trigger`; derived `role`; `spawn(objective, {criteria, scope?, budget?,
       context?, detach?})` (rename `Agent`→`spawn`); rename controls to `run_status` /
       `run_send` / `run_stop`; `set_budget`; the precondition-catalog tool layer.
-- [ ] **Recursive control** — leaf worker vs persistent controller (runtime-owned
-      supervisor state); controller re-spawns a failed worker / re-plans in place on its
-      own failure; the `objectiveStatus` transitions; attempts tracked via `childRunIds` +
-      controller RunEvents; event-sourced resume (decisions checkpointed before side
-      effects).
+- [ ] **Control + verifier @ depth/fan-out = 1 (early end-to-end)** — leaf worker vs
+      persistent controller (runtime-owned supervisor state); controller re-spawns a failed
+      worker / re-plans in place on its own failure; the `objectiveStatus` transitions;
+      attempts tracked via `childRunIds` + controller RunEvents; event-sourced resume
+      (decisions checkpointed before side effects). **Verify end-to-end here** before
+      uncapping.
 - [ ] **Parent-verifies-child** — runtime-spawned `context:'none'` verifier Run;
       runtime-built evidence pack (changed nodes/files, tool refs, run ids, full trace) +
       read-only inspection tools, no actuation; port `continuation.md`; verifier result
@@ -679,8 +739,9 @@ Result: **no overlap.**
 - [ ] **Livelock guard** — gap-signature; `N` consecutive no-progress repeats → `blocked`.
 - [ ] **Budget** — admission control (reserve before spawn, settle on completion) +
       runtime hard backstops (wall-clock / max-attempts / max-depth / max-concurrent).
-- [ ] **Depth + governors** — recursion to arbitrary depth; scope-narrows-only; shared
-      tree budget folding; a verifier at every level; no owner approval gate.
+- [ ] **Uncap → depth + governors** — remove the depth/fan-out cap (a worker may itself be
+      a controller, same code path); recursion to arbitrary depth; scope-narrows-only;
+      shared tree budget folding; a verifier at every level; no owner approval gate.
 - [ ] **Delivery / UI** — `/goal` + one-tap; Neva as root supervisor; "tasks" panel
       renders root Runs (children by function label); the four root outcomes notify;
       steering via `run_send`. (light + dark.)
