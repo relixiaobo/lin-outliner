@@ -529,6 +529,18 @@ visibleTools(run) = catalog.filter(entry => entry.precondition(principal, attend
 `role` (worker / verifier) is **derived inside the predicate** from `lineage`, never
 a persisted axis.
 
+> **Scope reuses the existing capability taxonomy — no parallel enum.** Both this
+> catalog and `scope`-narrowing speak the **existing `AgentToolActionKind`**
+> (`agentPermissionModel.ts`, ~40 fine-grained kinds) that already drives the A3
+> permission gate, `isReadOnlyActionKind`, and the research read-only set — *not* a new
+> coarse `'read' | 'write' | …` enum. A coarse vocabulary would be both **parallel**
+> (needing a hand-maintained, drift-prone mapping to action-kinds) and **lossy** (a single
+> `'read'` cannot express "may read the project area but not sensitive paths", a
+> distinction the gate already makes). So `scope ⊆ caller's` is set intersection over
+> action-kinds, and every scope→gate decision stays authoritative on that one taxonomy.
+> The `run_amend` control (the new command) adds one new kind, **`agent.delegate.amend`**,
+> alongside the existing `agent.delegate.spawn / status / send / stop`.
+
 | Category | Tools | Note vs today |
 |---|---|---|
 | sense | `file_read`, `web_search`, `web_fetch`, `past_chats` | unchanged |
@@ -713,9 +725,13 @@ run_stop(runId: RunId, opts?: { reason?: string })
 // shared shapes
 Budget    = { tokens?: number, wallClockMinutes?: number }    // natural units — ms would invite magnitude errors
 ScopeSpec = {
-  capabilities: Capability[],   // allowed tool families: 'read' | 'write-doc' | 'write-file' | 'web' | 'spawn' | 'skill'
-  resources?:  { docs?: DocId[], paths?: string[] },   // optional allow-list of docs / paths it may touch (default: caller's)
-}   // must be ⊆ the caller's ScopeSpec — narrow-only
+  capabilities: AgentToolActionKind[],   // the allowed action-kinds — REUSES the EXISTING fine-grained
+                                         //   taxonomy in agentPermissionModel.ts (file.read.allowed_file_area /
+                                         //   file.read.sensitive_local_path / file.edit.* / shell.* / agent.delegate.* /
+                                         //   web.* / agent.skill.invoke …), NOT a new coarse enum. Must be ⊆ caller's.
+  resources?:  { docs?: DocId[], paths?: string[] },   // optional further narrowing of the concrete allowed area (default: caller's)
+}   // narrow-only. The scope→A3-gate boundary runs entirely on AgentToolActionKind, so the
+    // permission gate's allow/deny + isReadOnlyActionKind stay the single authority — no parallel taxonomy
 
 // verifier result (internal — produced by the verifier Run, consumed by the controller)
 VerifierVerdict = { verdict: 'pass' | 'fail', gaps: { signature, criterion, detail }[] }
@@ -811,8 +827,11 @@ before the goal loop is layered on. Build-order:
    `executionStatus` kept + `objectiveStatus` new); `spawn(objective, {criteria, …})` (the
    `Agent`→`spawn` rename + `verify` default + the `context` knob); the
    `run_status/run_steer/run_amend/run_stop` controls (`run_steer` = the old `send`;
-   **`run_amend` is the new command surface**); the precondition-catalog tool layer.
-   (Touches `commands.ts` / `types.ts` / `agentEventLog.ts`.)
+   **`run_amend` is the new command surface**); the precondition-catalog tool layer
+   (built on the **existing `AgentToolActionKind`**, not a new enum — `scope` speaks the
+   same taxonomy). (Touches `commands.ts` / `types.ts` / `agentEventLog.ts` /
+   `agentPermissionModel.ts` — the action-kind profile keys follow the tool rename
+   (`Agent`→`spawn`, `AgentSend`→`run_steer`) and gain `agent.delegate.amend`.)
 2. **Control + verifier, capped at depth/fan-out = 1 (early end-to-end point).** Build
    and **verify the whole loop end-to-end at the minimal tree** — root controller → one
    worker → `context:'none'` **verifier Run** (runtime-assembled evidence pack +
