@@ -47,9 +47,10 @@ extractions; `/code-review xhigh`, 7 findings fixed) landed as a fast-track foll
 **agent-goal** plan landed as a `draft` board item (plan PR **#323**; revised by **#334** / **#337**,
 then recast **2026-06-25 by #340** to a **self-similar Run tree with zero new fact objects** — `Goal`
 is a Run's `objective`, durable intent rides a persistent **controller Run**, gated by the
-**parent-verifies-child** rule; **#341** then hardened the build contracts (persistent verifier
-`purpose`, controller `executionStatus`↔`objectiveStatus` mapping, scope-never-widened-in-place,
-verifier evidence-pack, `blocked` = parked-running). Still `draft`, see Agent capabilities). **No PR open.** The agent subsystem portfolio is otherwise mature (single-agent collapse + one-Neva
+**parent-verifies-child** rule; **#341–#342** then hardened the build contracts (codex r2/r3 reviews:
+persistent verifier `purpose`, controller `executionStatus`↔`objectiveStatus` mapping + terminal
+invariant, `spawn` capability-gating + role-bootstrap fix, scope-never-widened-in-place, verifier
+evidence-pack, `blocked` = parked-running). Still `draft`, see Agent capabilities). **No PR open.** The agent subsystem portfolio is otherwise mature (single-agent collapse + one-Neva
 invariant, the IM-native memory/channel spine, the 2026-06-22 Codex-transcript wave); the active build
 frontier remains the **command-surface / performance / UI-quality / files** lanes in the **Backlog** —
 start at *Top of queue*. The full shipped history is in **Recently completed**; small unclaimed
