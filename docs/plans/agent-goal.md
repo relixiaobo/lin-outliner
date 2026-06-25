@@ -209,7 +209,7 @@ governor is a one-level-local rule; its tree-wide property is the **emergent** s
 
 A child that needs more budget or scope does **not** consult a global ceiling — it
 **stops with that note in its output**; its parent reads it and either re-slices locally
-(a `run_send` amend, then re-spawns) or escalates further. **Depth needs no separate cap:** each nesting
+(a `run_amend`, then re-spawns) or escalates further. **Depth needs no separate cap:** each nesting
 reserves from a finite parent slice, so infinite depth would need infinite budget,
 which local admission already forbids — an explicit depth limit is only a legibility
 soft-stop, not an independent safety mechanism.
@@ -335,7 +335,7 @@ view is a rendering of a fact object.
   budget-slice + persistent `disposition` + a second status axis
   `objectiveStatus` + the controller behavior on internal nodes); **RENAME the `Agent`
   delegate tool → `spawn`**; rename the owner/parent controls to the uniform
-  `run_status` / `run_send` / `run_stop`; **derive then physically remove `kind`** (gated
+  `run_status` / `run_steer` / `run_amend` / `run_stop`; **derive then physically remove `kind`** (gated
   on `disposition` + consumer migration). `trigger` stays as-is (already pure provenance).
   **Do NOT add** a `Goal` object, a `type` field, a `trigger: goal`, a `GoalStatus`, a
   `supersedesRunId` / `objectiveGroupId`, or `Execution` / `Invocation` / `Round` /
@@ -466,7 +466,7 @@ child Run (worker or verifier), it **reserves a fixed slice of *its own* budget*
 that child; the child spends only within its slice and sub-reserves from it for any
 children of its own. A child that needs more does not read a global pool — it
 **terminates leaving that note in its output**; its parent reads it and either re-slices
-(a `run_send` amend + re-spawn) or escalates. If a reservation can't be met, that branch goes `budget_exhausted` (or
+(a `run_amend` + re-spawn) or escalates. If a reservation can't be met, that branch goes `budget_exhausted` (or
 `blocked` awaiting extension); on completion the reservation **settles** against real
 usage. Because each child is bounded by its own slice (not a shared pool), concurrent
 fan-out cannot overshoot — a sibling's idle budget is not borrowable without an
@@ -533,15 +533,16 @@ a persisted axis.
 |---|---|---|
 | sense | `file_read`, `web_search`, `web_fetch`, `past_chats` | unchanged |
 | mutate doc / local | node + file write family | unchanged (in-scope only) |
-| spawn / manage runs (↓ all downward) | `spawn(objective, {criteria?, scope?, budget?, context?, detach?})`, `run_status`, `run_send`, `run_stop` | **`Agent` → `spawn`**; recursion = a Run calls `spawn`; `criteria` present → a verified contract, absent → an unverified single pass; the controls are uniformly **`run_*`** (renamed from `AgentStatus`/`AgentSend`/`AgentStop`); **new:** the `context` knob + `run_send` amend (objective / criteria / **budget** — `set_budget` folds in here) |
+| spawn / manage runs (↓ all downward) | `spawn(...)`, `run_status`, `run_steer`, `run_amend`, `run_stop` | **`Agent` → `spawn`**; recursion = a Run calls `spawn`; `criteria` is **required unless `verify:false`** (no silent unverified downgrade); controls are uniformly **`run_*`** (renamed from `AgentStatus`/`AgentSend`/`AgentStop`); **new:** the `context` knob, plus the steer/amend split — `run_steer` (soft, no verdict impact) vs `run_amend` (hard: objective / criteria / **budget**; subsumes `set_budget`) |
 | run feedback (↑) | **— no tool** | the child→parent signal is the run's **own termination + output** (the "wire"); the parent senses it (completion notification) and classifies via the verifier + re-plan. **Removes `request_complete` / `report_blocked`** — a child never self-declares done or blocked (a self-classifying sensor is the very thing the verifier removes) |
 | ask user | `ask_user_question` | unchanged tool; precondition-gated to `attended` |
 | load procedure | `skill` | unchanged |
 
-Because everything is a Run, `spawn` + `run_status/run_send/run_stop` is internally
-consistent (no `goal_*` vs `run_*` split). The underlying commands
-`agent_child_run_status/send/stop` (`commands.ts`) already share the `run` stem, so the
-tool rename does not require a command-layer rename.
+Because everything is a Run, `spawn` + `run_status/run_steer/run_amend/run_stop` is
+internally consistent (no `goal_*` vs `run_*` split). The existing commands
+`agent_child_run_status/send/stop` (`commands.ts`) already share the `run` stem and cover
+status / steer (the old `send`) / stop; **`run_amend` is the one new command surface**
+(amend objective / criteria / budget), which the protocol step adds.
 
 The `context` knob makes the fork/fresh axis explicit: a code **fork inherits the
 whole conversation** (`context: 'full'`); `'brief'` passes a distilled brief; `'none'`
@@ -550,9 +551,10 @@ is a clean slate. The **verifier Run is runtime-pinned to `none`**; a worker pic
 `'none'`.
 
 Owner/parent controls require **owning the target** (ancestor / same conversation):
-`status` ← `run_status`; `steer` / `amend` / `extend budget` ← `run_send` (a send is a
-soft steer or a hard amend of objective / criteria / budget); `cancel`/`abandon` ←
-`run_stop`; `reassign` = stop a child Run, the parent re-spawns.
+`status` ← `run_status`; **soft** `steer` (a hint, no verdict impact) ← `run_steer`;
+**hard** `amend` / `extend budget` (objective / criteria / budget; invalidates verdicts on
+objective/criteria) ← `run_amend`; `cancel`/`abandon` ← `run_stop`; `reassign` = stop a
+child Run, the parent re-spawns.
 
 ## Team formation & recursion — functional blocks, not a cast of selves
 
@@ -609,7 +611,8 @@ Run {
                            //   reflective stays principal-anchored
   objective: string        // the why (= this level's "goal"); always present
   criteria?: string[]      // the contract its parent verifies it against (root = the user's);
-                           //   absent → an unverified single pass
+                           //   required for a verified objective — the only unverified path is an
+                           //   explicit `verify:false` spawn, never a silent omission
   provenance               // EXISTING `trigger` (already pure provenance); add no `goal` variant
   disposition              // NEW persistent field: attended | detached — the home for turn↔background
                            //   once `kind` is derived (currently only a `spawn` param / debug `kind`)
@@ -643,10 +646,11 @@ Run {
 - **Verifier evidence** is runtime-assembled (above); the verifier result schema is
   `{ verdict: pass | fail, gaps: [{ signature, criterion, detail }] }`, mapped to
   `latestGap` + the livelock counter.
-- **Amendment invalidation:** an owner `run_send` amendment to a Run's objective/criteria
+- **Amendment invalidation:** an owner `run_amend` to a Run's objective/criteria
   **invalidates any prior or in-flight verifier verdict** for it; amending while
   `verifying` **aborts the current verifier**. A `verified` verdict never carries across
-  a criteria change.
+  a criteria change. (A `run_steer` message never invalidates a verdict — that is the
+  whole reason the two are separate tools.)
 
 **Tool contracts (params + returns) — pinned now, not at build time.** The new/changed
 tools' exact shapes (the unchanged sense/mutate/`skill`/`ask_user_question` tools keep
@@ -654,15 +658,25 @@ their current contracts). `RunId = string`; every result is the existing
 `ToolEnvelope<…>` (`{ ok, data | error }`), shown here as the `data` payload.
 
 ```
-// create — a Run spawns a Run (root or child). criteria present ⇒ tracked + verified.
-spawn(objective: string, opts?: {
-  criteria?:  string[],                       // acceptance contract (⇒ objectiveStatus, verifier gate)
-  scope?:     ScopeSpec,                       // capability ∩ scope; must be ⊆ caller's (narrow-only)
-  budget?:    { tokens?: number, wallClockMs?: number },  // the slice the parent reserves; REQUIRED at a detached root (the top ceiling)
-  context?:   'full' | 'brief' | 'none',       // default 'brief' detached / 'full' explicit continuation
-  detach?:    boolean,                         // detached (tracked, notifies) vs inline
-  model?:     string,                          // optional per-block model (loop-chosen by default)
-}) -> { runId: RunId, objectiveStatus?: ObjectiveStatus }   // the handle; tracked-only objectiveStatus
+// create — Neva spawns the root goal, or a controller spawns a child. The model sees ONE
+// flat params object (objective + the named opts below), not a positional arg + opts.
+spawn({
+  objective:  string,                          // WHAT to pursue, in prose. NOT the acceptance test — that is `criteria`.
+  criteria?:  string[],                        // the acceptance contract the parent verifies it against (root = the user's).
+                                               //   REQUIRED unless verify:false; each item = one independently-checkable condition.
+  verify?:    boolean,                         // default TRUE. Pass false ONLY for a throwaway, fire-and-forget single pass
+                                               //   (then no criteria, no verifier). Omitting criteria while verify:true is an
+                                               //   ERROR, never a silent downgrade to unverified.
+  scope?:     ScopeSpec,                       // capability ∩ resource scope; must be ⊆ caller's (narrow-only). Default = caller's.
+  budget?:    Budget,                          // the slice the parent reserves for this child. REQUIRED at a detached root
+                                               //   (the top ceiling); on a child it defaults to a parent-chosen slice of its headroom.
+  context?:   'full' | 'brief' | 'none',       // how much conversation the child inherits: 'full' = whole thread (continuation),
+                                               //   'brief' = distilled brief, 'none' = clean slate. Default: 'brief' if detach, else 'full'.
+  detach?:    boolean,                         // default false. true = detached (tracked, runs past the turn, notifies on outcome);
+                                               //   false = inline (resolves within the turn).
+  model?:     string,                          // optional; a known model alias (e.g. opus / sonnet / haiku), validated against the
+                                               //   registry. Omit to let the loop choose (the default).
+}) -> { runId: RunId, objectiveStatus?: ObjectiveStatus }   // the handle; objectiveStatus present iff verified (tracked)
 
 // NO upward tool. The child→parent feedback is the run's OWN lifecycle: when its run reaches a
 // terminal executionStatus (completed | failed) it leaves its result + a note on the "wire"; the
@@ -681,14 +695,27 @@ run_status(runId: RunId) -> {
   result?: Json,                               // present iff objectiveStatus = verified
   blockedReason?: string,                      // present iff blocked
 }
-run_send(runId: RunId, opts: {                 // steer (soft) OR amend (hard) — one "modify a running tree" verb
-  message?: string,                            // soft steer: inject guidance; does NOT invalidate verdicts
-  amend?:   { objective?: string, criteria?: string[], budget?: { tokens?, wallClockMs? } },
-}) -> { runId: RunId, objectiveStatus?: ObjectiveStatus, budget?: { reserved, spent } }
-  // amend.objective/criteria bump criteriaRevision + invalidate verdicts; amend.budget does NOT
-  // (it is admission-control headroom, not a goalpost). `set_budget` is folded in here.
+// run_steer — SOFT: inject guidance into a running Run WITHOUT moving its goalposts.
+//   Changes nothing on the contract and NEVER invalidates a verifier verdict.
+run_steer(runId: RunId, message: string)
+  -> { runId: RunId, objectiveStatus?: ObjectiveStatus }
+
+// run_amend — HARD: change a running Run's contract or headroom. Use sparingly.
+//   Amending objective/criteria bumps criteriaRevision and INVALIDATES any prior or in-flight
+//   verdict (amending while `verifying` aborts the current verifier); amending budget does NOT
+//   (it is admission-control headroom, not a goalpost). Subsumes the old set_budget.
+run_amend(runId: RunId, changes: { objective?: string, criteria?: string[], budget?: Budget })
+  -> { runId: RunId, objectiveStatus?: ObjectiveStatus, budget?: { reserved, spent } }
+
 run_stop(runId: RunId, opts?: { reason?: string })
   -> { runId: RunId, objectiveStatus: 'stopped' }          // stops the Run and its subtree
+
+// shared shapes
+Budget    = { tokens?: number, wallClockMinutes?: number }    // natural units — ms would invite magnitude errors
+ScopeSpec = {
+  capabilities: Capability[],   // allowed tool families: 'read' | 'write-doc' | 'write-file' | 'web' | 'spawn' | 'skill'
+  resources?:  { docs?: DocId[], paths?: string[] },   // optional allow-list of docs / paths it may touch (default: caller's)
+}   // must be ⊆ the caller's ScopeSpec — narrow-only
 
 // verifier result (internal — produced by the verifier Run, consumed by the controller)
 VerifierVerdict = { verdict: 'pass' | 'fail', gaps: { signature, criterion, detail }[] }
@@ -696,14 +723,64 @@ VerifierVerdict = { verdict: 'pass' | 'fail', gaps: { signature, criterion, deta
 
 **Preconditions** (the catalog filter), keyed on **`role`** (derived from lineage, never
 stored): `spawn` needs spawn capability (a controller / decomposing Run, and Neva at the
-root); `run_status` / `run_send` / `run_stop` require **owning the target** (Neva over a
-root; a controller over its child); `ask_user_question` requires **`attended`**. There is
+root); `run_status` / `run_steer` / `run_amend` / `run_stop` require **owning the target**
+(Neva over a root; a controller over its child); `ask_user_question` requires
+**`attended`**. There is
 **no upward tool to gate** — the child→parent feedback is the run's own termination +
 output, which the parent senses; "stopping" needs no capability. So **every gated tool is
 downward** (controller → its plant). The **verifier** gets none of them — not `spawn`, not
 the downward control family (sensor ≠ actuator); it only reads its runtime-pinned evidence
 pack and returns a `VerifierVerdict`, the **base case**, so verification never itself
 bottoms out into more verification (no infinite regress).
+
+### Tool descriptions (model-facing) — authored now, not deferred
+
+The prompt text each new/changed tool ships with (lifted into its `prompt.ts` at build).
+Each follows one template: a line of *what*, then *when to use* / *when NOT*, then
+per-param guidance. (The unchanged sense / mutate / `skill` / `ask_user_question` tools
+keep today's text.)
+
+**`spawn`** — *Hand an objective to a fresh Run that pursues it autonomously and is
+independently verified.*
+- *When:* a self-contained objective worth delegating — a long goal the user hands off, or
+  a sub-objective you (a controller) want done **and checked** before folding it into your
+  own result.
+- *When NOT:* a one-line lookup you can do yourself this turn (just do it); work you must
+  keep in your own context (don't delegate understanding).
+- *Params:* `objective` is the **what**, in prose; `criteria` is the **acceptance test** (a
+  list of independently-checkable conditions) — **always provide it** unless you
+  deliberately want an unverified throwaway, then pass `verify:false`. `detach` for a goal
+  that outlives this turn; narrow `scope` to the least authority the work needs; set
+  `budget` at a detached root.
+- *Example:* `spawn({ objective: "Migrate the auth module off the deprecated SDK",
+  criteria: ["every call site uses the new client", "the test suite passes", "no reference
+  to the old package remains"], detach: true, budget: { wallClockMinutes: 90 } })`.
+
+**`run_status`** — *Read one Run's current state and its direct children (one level).*
+- *When:* you own a Run and want its progress / verdict / budget, or the runIds of its
+  children to drill down.
+- *When NOT:* to "check on" a detached child out of impatience — you are notified on its
+  outcome; poll only with a reason.
+- *Returns:* both status axes, budget, one level of children (recurse via their runIds),
+  the latest gap, and the result once verified.
+
+**`run_steer`** — *Inject a hint into a running Run without changing its goal.*
+- *When:* nudge approach or priority ("prefer the existing util", "start with the API
+  layer") while leaving the objective and acceptance test exactly as they were.
+- *When NOT:* to change what "done" means — that is `run_amend`. A steer **never**
+  invalidates a verdict.
+
+**`run_amend`** — *Change a running Run's contract (objective / criteria) or its budget.*
+- *When:* the requirement genuinely changed, or a Run needs more budget / scope headroom.
+- *When NOT:* for a mere hint (use `run_steer`). **Amending objective or criteria
+  invalidates any verifier verdict and re-opens verification** — deliberate, not
+  micro-management. Amending budget alone does not invalidate a verdict.
+
+**`run_stop`** — *Cancel a Run and its whole subtree.*
+- *When:* the objective is abandoned / superseded / going wrong; or to reassign (stop the
+  child, then re-`spawn`). Give a `reason` so the record explains why.
+- *When NOT:* to pause for input — there is no pause; either steer/amend and let it
+  continue, or stop it.
 
 ## Theory & prior art (design against these)
 
@@ -732,9 +809,10 @@ before the goal loop is layered on. Build-order:
    `provenance + lineage + disposition` derivation, **then remove `kind`**. In the same
    step: enrich `Run` (objective / criteria / scope / budget;
    `executionStatus` kept + `objectiveStatus` new); `spawn(objective, {criteria, …})` (the
-   `Agent`→`spawn` rename + the `context` knob); the `run_status/run_send/run_stop`
-   rename (`run_send` carries the amend incl. budget); the precondition-catalog tool
-   layer. (Touches `commands.ts` / `types.ts` / `agentEventLog.ts`.)
+   `Agent`→`spawn` rename + `verify` default + the `context` knob); the
+   `run_status/run_steer/run_amend/run_stop` controls (`run_steer` = the old `send`;
+   **`run_amend` is the new command surface**); the precondition-catalog tool layer.
+   (Touches `commands.ts` / `types.ts` / `agentEventLog.ts`.)
 2. **Control + verifier, capped at depth/fan-out = 1 (early end-to-end point).** Build
    and **verify the whole loop end-to-end at the minimal tree** — root controller → one
    worker → `context:'none'` **verifier Run** (runtime-assembled evidence pack +
@@ -751,7 +829,7 @@ before the goal loop is layered on. Build-order:
 4. **Delivery / UI** — `/goal` + one-tap "make this a goal"; Neva as the root supervisor
    holding the user's objective; the "tasks" panel renders root Runs (children grouped by
    function label, never "N Nevas"); the four root outcomes notify; steering via
-   `run_send`.
+   `run_steer` / `run_amend`.
 
 ## Open questions
 
@@ -780,8 +858,10 @@ Genuinely open, all build-time-reversible:
   separate `GoalStatus`.
 - **Controller Run = runtime-owned supervisor state**, not a long-lived process; its
   steps are bounded LLM calls checkpointed as RunEvents.
-- **`spawn` + uniform `run_status/run_send/run_stop`**; recursion = a Run calls `spawn`.
-  **All four are downward (controller → its plant).**
+- **`spawn` + uniform `run_status/run_steer/run_amend/run_stop`**; recursion = a Run calls
+  `spawn`. **All are downward (controller → its plant).** `criteria` is required unless an
+  explicit `verify:false`; `run_steer` (soft) and `run_amend` (hard, invalidates verdicts)
+  are split so a nudge can't accidentally move the goalposts.
 - **No upward tool.** The child→parent feedback is the run's own termination + output,
   sensed by the parent (no `request_complete` / `report_blocked`). A child never
   self-declares done or blocked; the parent classifies via the verifier + re-plan (a
@@ -801,7 +881,7 @@ Genuinely open, all build-time-reversible:
 
 - **Protocol + prompt surface (A4/A10).** Touches `src/core/types.ts` /
   `agentEventLog.ts` / `commands.ts` (the `Run` enrichment, the dual status
-  axes, `spawn` params, the `run_*` renames incl. `run_send` amend) and the model-facing
+  axes, `spawn` params, the `run_*` controls incl. the **new `run_amend` command**) and the model-facing
   `Agent`→`spawn` rename (tool-name constant + prompt text). Land the interface as the
   first build-order step.
 - **Autonomy safety.** A self-recursing, budget-spending tree is the highest-blast
@@ -836,9 +916,10 @@ Result: **no overlap.**
       detached`; migrate `kind`'s ~17 consumers to `provenance + lineage + disposition`,
       then remove `kind`; enrich `Run` (objective / criteria / scope / budget; `anchor`
       reused; `executionStatus` kept + `objectiveStatus` new); `provenance`
-      = the existing `trigger`; derived `role`; `spawn(objective, {criteria, scope?, budget?,
-      context?, detach?})` (rename `Agent`→`spawn`); rename controls to `run_status` /
-      `run_send` (carries amend incl. budget) / `run_stop`; the precondition-catalog tool layer.
+      = the existing `trigger`; derived `role`; `spawn({objective, criteria?, verify?, scope?,
+      budget?, context?, detach?, model?})` (rename `Agent`→`spawn`; `criteria` required unless
+      `verify:false`); controls `run_status` / `run_steer` (old `send`) / **`run_amend` (new
+      command)** / `run_stop`; the precondition-catalog tool layer.
 - [ ] **Control + verifier @ depth/fan-out = 1 (early end-to-end)** — leaf worker vs
       persistent controller (runtime-owned supervisor state); controller re-spawns a failed
       worker / re-plans in place on its own failure; the `objectiveStatus` transitions;
@@ -859,7 +940,7 @@ Result: **no overlap.**
       — no tree-wide supervisor, no owner approval gate.
 - [ ] **Delivery / UI** — `/goal` + one-tap; Neva as root supervisor; "tasks" panel
       renders root Runs (children by function label); the four root outcomes notify;
-      steering via `run_send`. (light + dark.)
+      steering via `run_steer` / `run_amend`. (light + dark.)
 - [ ] **Launching skill** (when/how to set a goal) authored.
 - [ ] **Verify in the dev app** — set a goal mid-DM; confirm it self-decomposes into a Run
       tree, each child is independently verified by its parent before folding up, the
