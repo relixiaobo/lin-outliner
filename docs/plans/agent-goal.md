@@ -27,10 +27,14 @@ everything else.
   `TaskOutput`; all work happens in Runs.
 - **No projection objects.** `Turn / Task / Team / Channel / Step / kind` are
   views over the fact objects, never stored entities.
-- **One-Neva invariant preserved.** A "role" is a **narrowed Neva fork**
-  (`restrictAgentDefinitionTools` + `allowedTools`), not a second agent. No
-  `agent_type`, no own memory line. (Reintroducing specialized executor agents
-  would reverse the post-#300 invariant — out of scope.)
+- **One persistent self (one-Neva), stated positively.** The system has exactly
+  one identity — Neva: the user's interlocutor (HMI), the memory owner (where all
+  learning accrues), and the durable workflow state. Workers and the verifier are
+  **not selves and not "second agents"** — they are stateless functional blocks
+  Neva operates (they read her memory as a resource, own none; `agent_type` /
+  file-backed agents stay gone). Differentiation is by **function / context /
+  capability / model — never identity**. (Reintroducing persistent specialized
+  agents reverses the post-#300 invariant — out of scope.)
 - **No second scheduler / workflow DSL.** The control loop stays thin; we do not
   rebuild Alma-style `harness/sprint/mission` orchestration.
 - **No schedule-driver work.** Time-triggered runs stay a separate trigger source;
@@ -125,6 +129,10 @@ is created.
 
 (Content world, orthogonal: `Document` / `Node` / `Command`.)
 
+**`Agent` is the single persistent self (Neva).** A Run's worker/verifier are
+**functional blocks**, not Agents — stateless, identity-less, owning no memory of
+their own (see *Team formation*).
+
 Fields:
 
 ```
@@ -166,7 +174,7 @@ is a rendering of a fact object.
 ```
 reference  (objective + acceptance criteria — fixed by the owner up front)
   → plan   (the loop designs/decomposes the approach)
-  → act    (spawn a Run = one attempt; may fan out to a team of narrowed Neva forks)
+  → act    (spawn a Run = one attempt; may fan out to parallel worker blocks)
   → sense  (gather artifacts + current world state)
   → audit  (an INDEPENDENT verifier Run checks artifacts vs the fixed criteria)
   → decide:
@@ -185,10 +193,11 @@ result, never the engine and never the auditor.
 This is the load-bearing safety property (the "lying sensor"):
 
 - `request_complete()` is a worker **claim**, not a fiat. It triggers an
-  **independent verifier Run**: a fresh-context Neva fork that sees **only** the
-  artifacts + the owner's fixed acceptance criteria + an anti-early-exit rubric +
-  an adversarial *"prove it is NOT done"* framing — never the worker's own
-  reasoning. Verified → `complete`; not → the gap returns to the worker.
+  **independent verifier Run** — a **sensor block**: a *fresh run* (clean, isolated
+  context — **not** a context-inheriting fork) that sees **only** the artifacts +
+  the owner's fixed acceptance criteria + an anti-early-exit rubric + an adversarial
+  *"prove it is NOT done"* framing — never the worker's own reasoning. Verified →
+  `complete`; not → the gap returns to the worker.
 - **Reuse Codex's `continuation.md` as the verifier's rubric.** It is an excellent
   requirement-by-requirement audit checklist ("treat completion as unproven";
   "uncertain or indirect evidence = not achieved"; "the audit must prove
@@ -230,38 +239,53 @@ A `type` field on the Goal, set at assignment, decides the audit semantics:
   authority escalates (`blocked`).
 - **budget** (token/time) is **per goal-tree**, a fold over the subtree's usage.
 
-### Team formation, temporary profiles & recursion
+### Team formation — functional blocks, not a cast of selves
 
-Worker/executor **and** verifier are all narrowed **Neva forks**
-(`agentDelegation.ts:593` is fork-only; `:594` narrows via
-`restrictAgentDefinitionTools` + `allowedTools`; `:605-608` inherits Neva's
-identity/memory). A "team" is not a standing org — it is **one cycle's fan-out of
-single-shot forks**, created by the loop's `plan`/`act` step and dissolved when the
-cycle's results return. No owner approval gates it: the **owner controls the
-outcome and the bounds (criteria + scope + budget + the verifier gate +
-escalation), never the process** — they do not ratify who is on the team.
+Inside the loop there is **no team of agents**, only functional blocks Neva
+operates; the one identity is Neva (above). A human team differentiates *by person*
+because a person bundles identity+memory+capability+reasoning into one atom — LLMs
+**unbundle** these, so importing "different member = different identity" imports a
+constraint we don't have (and is why "all Neva" *and* "different identities" both
+feel wrong: a block is neither). So:
 
-- **Temporary least-privilege profiles.** Each worker fork gets a profile *derived
-  for its subtask*: `allowedTools` ∩ the subtask's `scope` subset, via
-  `restrictAgentDefinitionTools`. The profile is computed per subtask and dies with
-  the worker — there is **no fixed role library**. `researcher` / `implementer` are
-  shorthand defaults for common tool subsets, not entities.
-- **The verifier is the one distinct profile-kind.** Its independence is structural
-  (fresh context + adversarial framing + artifacts-and-criteria only — **not** a
-  different identity), so it is the single profile we name and reuse deliberately;
-  a different model is its high-stakes upgrade.
-- **Topology: star.** Workers are mutually invisible and consult the loop (the
-  referee), which integrates. (Mesh / goal-scoped Channel stays an open question.)
-- **Recursion is allowed.** A subtask that is itself goal-shaped is promoted to a
-  **sub-Goal** with its own full loop and its own independent verifier — the nested
-  unit. Kept safe by three governors, not by an approval gate:
-  1. **one shared tree budget** — the parent allocates a slice; the whole subtree
-     folds back into the single ceiling, so depth cannot outrun spend;
-  2. **scope only narrows** — a sub-Goal inherits a subset; needing *more* authority
-     **escalates** up, never self-grants;
-  3. **an independent verifier at every level** — completion is never self-declared
-     at any depth.
-  A **soft depth limit** keeps the tree legible; the budget is the hard backstop.
+- **A worker is a stateless actuator block** = (function, isolated context,
+  capability ∩ scope, model). No self, no memory of its own; it reads Neva's memory
+  as a resource and writes none. (Exactly a Temporal *activity*: stateless, the
+  workflow holds the state.) It is a **fork** in the code sense
+  (`agentDelegation.ts:594`, fork-only), but the load-bearing facts are the four
+  knobs below, not "it is Neva."
+- **The verifier is a sensor block** — independent *by construction*: a separate
+  block whose input is **only** artifacts + criteria (never the actuator's internal
+  state), with adversarial framing. Its distinctness is functional, not an identity.
+
+**The only differentiation knobs are function / context / capability / model — not
+identity**, ranked by how much independence each buys:
+
+| Knob | What it buys | Use |
+|---|---|---|
+| **context isolation** | the block can't be biased by what it shouldn't see | structural; **required** for the verifier (`context: 'none'`) |
+| **model** | decorrelates errors at the reasoning *substrate* | the real, optional independence upgrade (esp. high-stakes verify) |
+| **framing** | steers behavior (e.g. adversarial audit) | part of a block's prompt/config |
+| **persona / name** | ≈0 epistemic value | **cosmetic — a UI role label only**, never a stored identity |
+
+Role labels (`researcher` / `implementer` / `verifier`) are **function tags for the
+UI**, not entities — the "tasks" view renders a goal's blocks by function, never as
+"N Nevas".
+
+**No owner approval gate.** The owner controls the **outcome and the bounds**
+(criteria + scope + budget + the verifier gate + escalation), never the process —
+they do not ratify which blocks run.
+
+**Recursion is allowed.** A goal-shaped subtask is promoted to a **sub-Goal** — the
+same unit one level down, with its own loop and its own sensor block. Kept safe by
+three governors, not an approval gate:
+1. **one shared tree budget** — the parent allocates a slice; the whole subtree
+   folds back into the single ceiling, so depth cannot outrun spend;
+2. **scope only narrows** — a sub-Goal inherits a subset; needing *more* authority
+   **escalates** up, never self-grants;
+3. **an independent sensor block at every level** — completion is never
+   self-declared at any depth.
+A **soft depth limit** keeps the tree legible; the budget is the hard backstop.
 
 ## Tool surface
 
@@ -277,7 +301,7 @@ visibleTools(run) = catalog.filter(t => t.precondition(principal, attended, line
 |---|---|---|
 | sense | `file_read`, `web_search`, `web_fetch`, `past_chats` | unchanged |
 | mutate doc | node create/move/edit … | unchanged (write family + in-scope) |
-| spawn / manage runs | `spawn(objective, {detach?, scope?, allowedTools?})`, `AgentStatus`, `AgentSend`, `AgentStop`, `set_budget` | `Agent`+(would-be `set_goal`) merge into `spawn`; **`AgentStatus`/`AgentSend`/`AgentStop` already model tools** (`agentDelegation.ts:51-52,687,1252,1266`) — only `set_budget` is new + objective-amendment semantics on `AgentSend` |
+| spawn / manage runs | `spawn(objective, {context?, detach?, scope?, allowedTools?})`, `AgentStatus`, `AgentSend`, `AgentStop`, `set_budget` | `context` = the fork/fresh axis (see below); `Agent`+(would-be `set_goal`) merge into `spawn`; **`AgentStatus`/`AgentSend`/`AgentStop` already model tools** (`agentDelegation.ts:51-52,687,1252,1266`) — only `set_budget` + `context` are new + objective-amendment semantics on `AgentSend` |
 | goal self-management | `request_complete()` (→ triggers the independent verifier) · `report_blocked(reason)` | new; visible only inside the loop |
 | ask user | `ask_user_question` | unchanged tool; gated to `attended` |
 | load procedure | `skill` | unchanged; teaches *when* to set a Goal |
@@ -288,6 +312,13 @@ objective-amendment event); `cancel`/`abandon` ← `AgentStop`; `reassign` = sto
 current Run, Goal spawns a new one; `set_budget` is new. All require **owning the
 target** (ancestor / same conversation).
 
+The `context` knob makes the fork/fresh axis explicit. A code **fork inherits the
+whole conversation** (`agentDelegation.ts:1288` clones every parent message; `:1353`
+"inherits the current conversation context"), so it is `context: 'full'`. `'brief'`
+passes a distilled brief; `'none'` is a clean slate. The **verifier block is always
+`none`** (independence); a worker picks `full` only when the goal directly continues
+the thread, else `'brief'` / `'none'` to scope down and save tokens.
+
 ## Theory & prior art (design against these)
 
 | Theory | Maps to | Borrowed mechanism |
@@ -296,8 +327,8 @@ target** (ancestor / same conversation).
 | **BDI + goal lifecycle** | committed intention vs plan execution | **achievement vs maintenance** goal types; goal state machine; commitment/reconsideration |
 | **OTP supervision trees** | Goal = supervisor; child Run = worker | restart strategy on executor failure; task outlives the worker |
 | **HTN planning (hierarchical task networks)** | the `plan` step decomposes a compound objective into sub-tasks / sub-Goals | recursive method decomposition → the nested unit; compound task ↔ sub-Goal, primitive task ↔ a worker Run |
-| **Contract Net Protocol** | the loop (manager) announces a subtask and awards it to a forked worker (contractor) | task announce → award allocation; the referee assigns and the award's least-privilege scope **is** the worker's temporary profile (we borrow allocation, not competitive bidding) |
-| **Principal–agent** | owner = principal; Neva fork = agent | audit = anti-moral-hazard; **independent verification**; scope = bounded discretion |
+| **Contract Net Protocol** | the loop (manager) announces a subtask and awards it to a forked worker (contractor) | task announce → award allocation; the referee assigns and the award's least-privilege capability ∩ scope **is** the worker block's config (we borrow allocation, not competitive bidding) |
+| **Principal–agent** | owner = principal; a worker block = agent (a role, not a self) | audit = anti-moral-hazard; **independent verification**; scope = bounded discretion |
 | **Control theory / MAPE-K / cybernetics** | Goal = setpoint+controller; audit = sensor+comparator | the closed loop; **sensor ≠ actuator** |
 | **Event sourcing / CQRS** | facts = write model; Turn/Task/Team = read models | projections are read-only views, never write models |
 
@@ -309,11 +340,12 @@ target** (ancestor / same conversation).
   Goal; the control loop pursues it via Neva-fork Runs; **completion is gated by an
   independent verifier Run**; terminal outcomes notify. Complete and useful alone.
 - **Feature B — Goal-as-team (with recursion).** When the objective is large, the
-  loop's `plan` step decomposes and fans out to single-shot Neva-fork workers on
-  **temporary least-privilege profiles** (referee = the loop), with the same
-  independent verifier gate; a goal-shaped subtask is promoted to a **sub-Goal**
-  (the nested unit), bounded by the shared tree budget + narrow-only scope + a
-  verifier at every level. Builds on A + existing fork delegation.
+  loop's `plan` step decomposes and fans out to **stateless worker blocks**
+  (function + isolated `context` + capability ∩ scope + model; referee = the loop),
+  with the same independent **sensor block** (verifier) gate; a goal-shaped subtask
+  is promoted to a **sub-Goal** (the nested unit), bounded by the shared tree budget
+  + narrow-only scope + a sensor block at every level. Builds on A + existing fork
+  delegation.
 
 ## Open questions
 
@@ -333,14 +365,18 @@ target** (ancestor / same conversation).
    incremental and off the critical path.
 6. **Composer placement** of `/goal` and the one-tap affordance — settle at build
    time (reversible).
-7. **Per-profile model selection.** May a derived worker profile (or the verifier)
-   pick a cheaper/stronger model per subtask, and is that an owner bound or a loop
+7. **Per-block model selection.** May a worker block (or the verifier) pick a
+   cheaper/stronger model per subtask, and is that an owner bound or a loop
    decision? **Recommend** loop-chosen by default; the verifier's different-model
-   upgrade is owner-gated for high stakes.
+   upgrade (the real independence lever) is owner-gated for high stakes.
+8. **`context` default.** Default a worker block to `full` (continue the thread) or
+   `brief` (scoped slate)? **Recommend** `brief` for detached goals, `full` only
+   when the goal is an explicit continuation; the verifier is always `none`.
 
-(Decided, not open: team formation needs **no owner approval**; recursion into
+(Decided, not open: workers/verifier are **functional blocks, not identities** (one
+persistent self = Neva); team formation needs **no owner approval**; recursion into
 sub-Goals **is allowed**, governed by the shared tree budget + narrow-only scope +
-a verifier at every level.)
+a sensor block at every level.)
 
 ## Risks
 
@@ -378,9 +414,9 @@ Result: **no overlap.**
       `AgentStop` already exist.)
 - [ ] The control loop in the runtime: plan → act → sense → audit → decide, with
       the four exits and the per-goal-tree budget fold.
-- [ ] **Independent verifier Run** gating `complete`: fresh-context Neva fork,
-      artifacts + fixed criteria + adversarial rubric only; port `continuation.md`
-      as that rubric.
+- [ ] **Independent verifier Run** gating `complete`: a fresh-run **sensor block**
+      (clean/isolated context, not a context-inheriting fork), artifacts + fixed
+      criteria + adversarial rubric only; port `continuation.md` as that rubric.
 - [ ] `createAgentTools` (via `buildTools`) → precondition filter;
       `ask_user_question` gated to `attended`; goal self-management tools
       (`request_complete` / `report_blocked`) visible only inside the loop.
@@ -396,20 +432,19 @@ Result: **no overlap.**
 
 ### Feature B — Goal-as-team
 
-- [ ] Loop `plan` decomposes; `act` fans out single-shot Neva-fork workers on
-      **temporary least-privilege profiles** (tools ∩ subtask-scope, derived per
-      subtask, dissolved with the worker); referee = the loop. No owner approval gate.
-- [ ] Derived team: tag worker Runs with the Goal/root id; team view = grouping;
-      dissolution via existing stop-scope on completion.
+- [ ] Loop `plan` decomposes; `act` fans out **stateless worker blocks** (function
+      + `context` + capability ∩ scope + model; no self, no own memory — read Neva's,
+      write none); referee = the loop. No owner approval gate.
+- [ ] `spawn` gains the `context: 'full' | 'brief' | 'none'` knob (a code fork =
+      `full`); the verifier block is pinned to `none`.
+- [ ] Derived team: tag worker Runs with the Goal/root id; the view groups blocks by
+      **function label** (never "N Nevas"); dissolution via existing stop-scope.
 - [ ] Scope inheritance down the tree (narrow-only; expand → escalate); shared tree
-      budget with a soft depth limit; same independent verifier gate at every level.
+      budget with a soft depth limit; an independent sensor block at every level.
 - [ ] **Recursion:** promote a goal-shaped subtask to a sub-Goal (its own loop +
-      verifier), governed by the shared tree budget.
-- [ ] Only the **verifier** profile is named/reused; worker profiles are derived per
-      subtask, not a fixed library.
-- [ ] Verify: a large Goal fans out workers on derived profiles, recurses on a
-      goal-shaped subtask, integrates, is independently verified at each level, and
-      dissolves teams on completion.
+      sensor block), governed by the shared tree budget.
+- [ ] Verify: a large Goal fans out worker blocks, recurses on a goal-shaped subtask,
+      integrates, is independently verified at each level, and dissolves on completion.
 
 ### On ship
 
