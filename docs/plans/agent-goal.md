@@ -149,15 +149,21 @@ worker) recurses with the structure — every parent verifies its children — a
   "outlives a single attempt" is the **controller persisting and re-spawning its failed
   workers** (the controller itself is never re-spawned, so its `runId` is the stable
   identity), not a separate object.
-- **No new execution primitive, no second scheduler / workflow DSL.** The control
-  loop is **what an internal Run does** (iterate its children); we do not add a
-  Goal-runtime, a scheduler, or Alma-style `harness/sprint/mission` orchestration.
+- **No second scheduler / workflow DSL / Goal-runtime.** We do **not** add a
+  scheduler, a workflow DSL, a separate Goal object, or Alma-style
+  `harness/sprint/mission` orchestration. **We do add one new execution *mode* on
+  `Run`** — the **controller** (a resumable, runtime-owned supervision loop). Stated
+  openly: this is an **explicit reversal** of the old version's "persistence is the
+  Goal's loop, not a Run continuation mode" — here persistence **is** a Run controller
+  mode. That is the one genuinely new runtime mechanism; the trade is that it lives on
+  `Run`, not on a new object.
 - **Achievement only.** A Run audits an **end-state**; passing → `complete`. There is
   **no `maintenance` type and no `type` field** — "monitor X forever" needs a
   wake-up/trigger source, which is the schedule-driver work held out of scope below.
 - **No projection objects.** `Turn / Task / Team / Channel / Step / kind` are views
-  over the facts, never stored entities — and `kind` is **physically removed** in
-  this cut.
+  over the facts, never stored entities — `kind` **becomes derived** (its physical
+  removal is gated on landing `disposition` + migrating its consumers; whether that
+  ships in this cut or a separate interface PR is the *Shape* decision).
 - **One persistent self (one-Neva).** Exactly one identity — Neva: the HMI, the
   memory owner, and the **durable root supervisor** (she authorizes the root controller,
   receives its result, and re-decides at the top — she does not swap out a running root).
@@ -207,7 +213,7 @@ RunEvent   (one thing that happened inside a Run)                ← unchanged
 | **Message** | Who said what? | exists |
 | **Principal** | Who is the responsibility/identity subject? | exists |
 | **Agent** | Who executes, with what persona/tools? | one-Neva = Neva |
-| **Run** | What did the agent attempt — and, recursively, what did its children attempt? | exists (`AgentRunTrigger` + `parentRunId`/`rootRunId` lineage); **enriched here** |
+| **Run** | What did the agent attempt — and, recursively, what did its children attempt? | exists (`AgentRunTrigger` + `parentRunId` lineage + `anchor: AgentRunAnchor`); **enriched here** (`rootRunId` is new) |
 | **RunEvent** | What happened inside a Run? | exists |
 
 These are the write-model facts of execution + communication; they are **not** the
@@ -215,19 +221,21 @@ spec's seven *primitives* (`agent-architecture.md`), which also count **Memory /
 Skill / Permission gate** on an orthogonal axis. (Content world, also orthogonal:
 `Document` / `Node` / `Command`.)
 
-### `trigger` is provenance, not "the why"
+### `objective` is the why; `trigger` stays provenance
 
-Today `Run.trigger` conflates two things: *what caused the Run* (a message, a
-schedule, a parent's decomposition) and *what it is driving toward*. Split them:
-**`objective` is the why (always present); `trigger`/provenance is only the cause.**
-There is **no `trigger: goal`** — every Run's why is its objective; some objectives
-are tracked (root / detached), most are not.
+`Run.trigger` (`AgentRunTrigger`) is **already pure provenance** today
+(message / node / parent-run / schedule / manual / system) — it never encoded "what
+the Run drives toward". So the change here is small and honest: **add no `goal`
+trigger variant**, optionally rename the field to `provenance` for clarity, and carry
+the why in the **new `objective` field**. (Not "un-conflating" — `trigger` was never
+the why; `objective` is simply new.) Some objectives are tracked (a controller),
+most are not.
 
 ### Projections dissolve — no projection concepts
 
 | Old projection word | Becomes | It is just |
 |---|---|---|
-| `kind` (turn/background/…) | **deleted (physically, this cut)** | derived from provenance + lineage |
+| `kind` (turn/background/…) | **deleted (derived)** | derived from `provenance` + lineage + **`disposition`** |
 | `Task` | = a **root/tracked Run** | the "tasks" panel renders root Runs |
 | `Team` | = a Run's **child Runs** | the run tree under a Run |
 | `Channel` | = **Conversation** | a (multi-member) Conversation |
@@ -236,6 +244,17 @@ are tracked (root / detached), most are not.
 
 So the core write model has **6 fact objects, 0 new, 0 projection concepts**; every UI
 view is a rendering of a fact object.
+
+> **`kind` removal has a precondition and real blast radius.** `delegation` /
+> `scheduled` / `reflective` derive from lineage + provenance, but **`turn` vs
+> `background` = attended vs detached**, which is in *neither* trigger nor lineage —
+> the old version carried a `disposition(await|detach)` Run field for exactly this.
+> So physical removal **requires first landing `disposition: attended | detached` as a
+> persistent Run field**, then migrating `kind`'s ~17 load-bearing consumers
+> (`agentEventStore.ts` delegation/conversation indexing, the `reflective` Dream-skip
+> in `agentRuntime.ts`, the `turn` count in `agentDebugView.ts`). It is **orthogonal
+> to the goal capability**; whether it ships in this cut or as a separate interface PR
+> is the packaging decision under *Shape*.
 
 ### Keep / drop / rename verdicts
 
@@ -256,6 +275,10 @@ view is a rendering of a fact object.
 
 > When a Run submits a result, its **parent** verifies it **before** accepting it, by
 > spawning a fresh **verifier Run**. Completion is never self-declared, at any level.
+
+The **verifier is the one exception to the rule — the base case**: its verdict is
+consumed directly and it is **not itself re-verified** (otherwise the recursion would
+never bottom out). A verifier is a leaf by construction.
 
 The verifier Run is **independent by construction** and is **itself just a Run**, so
 the model stays uniform — Runs all the way down, including verifiers:
@@ -477,11 +500,15 @@ The precise shapes the one cut commits to.
 ```
 Run {
   runId                    // primary key; for a controller this IS the stable task identity
-  conversationId           // home for delivery + owner controls
+  anchor: AgentRunAnchor   // EXISTING discriminated union (conversation | principal); a tracked /
+                           //   detached root is conversation-anchored for delivery + owner controls,
+                           //   reflective stays principal-anchored
   objective: string        // the why (= this level's "goal"); always present
   criteria?: string[]      // the contract its parent verifies it against (root = the user's);
                            //   absent → an unverified single pass
-  provenance               // was `trigger`: message | schedule | parent-decomposition (NOT "goal")
+  provenance               // EXISTING `trigger` (already pure provenance); add no `goal` variant
+  disposition              // NEW persistent field: attended | detached — the home for turn↔background
+                           //   once `kind` is derived (currently only a `spawn` param / debug `kind`)
   parentRunId?             // exists today
   rootRunId?               // NEW (denormalized; derivable from the parent chain), stored + indexed
                            //   for the hot tree / budget / panel queries; points at the root controller
@@ -586,7 +613,9 @@ Genuinely open, all build-time-reversible:
   different-model is the owner-gated high-stakes opt-in.
 - **Budget mandatory + admission-controlled**; over-ceiling → `blocked` (or
   `budget_exhausted`). Unbounded is not a default.
-- **`kind` physically removed; `trigger` demoted to provenance.**
+- **`kind` becomes derived** (physical removal gated on landing `disposition` +
+  migrating consumers; packaging is the Shape decision); `trigger` stays provenance
+  (add no `goal` variant — it is already pure provenance).
 - Workers/verifiers are **Runs, not identities** (one-Neva); team formation needs **no
   owner approval**.
 
