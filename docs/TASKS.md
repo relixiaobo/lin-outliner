@@ -493,6 +493,14 @@ anything.
 
 ## Recently completed
 
+- **trashed-schema-definitions** (`codex/schema-definition-availability`, PR #338, codex, merged
+  2026-06-25) — treats trashed tag/field definitions as inactive across core commands + renderer pickers
+  (no reuse for new tags/fields or `options_from_supertag`; existing "deleted" badges stay), and adds
+  Trash **Delete forever** / **Empty Trash** context actions behind the shared confirm dialog. **Gate
+  (main):** 2 review rounds (3 findings fixed — supertag picker excludes trashed, shared `isNodeInSubtree`,
+  Empty Trash shares the locked/in-trash filter); typecheck + `test:core` 1060 + `test:renderer` 621 +
+  `docs:check` green; visual = danger token + existing ConfirmDialog (token-level light/dark). Fast-track,
+  **shape (a)**, *no plan file*.
 - **packaged-userdata-pinning** (main, direct-to-`main`, 2026-06-25) — pins the packaged app's
   `userData` directory **explicitly** to `<appData>/Tenon` (`resolveUserDataDir`,
   `src/main/userDataPath.ts`) instead of relying on Electron's `app.getName()` default, which derives

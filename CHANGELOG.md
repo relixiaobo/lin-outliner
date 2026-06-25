@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Trashed schema definitions treated as inactive + Trash permanent-delete actions (PR #338, codex)** —
+  deleting a tag/field definition moved it to Trash, but the app still let it be reused for new tags,
+  fields, and `options_from_supertag` derivation. Core commands and renderer pickers now reject trashed
+  `tagDef`/`fieldDef` nodes everywhere (apply tag, create tagged node, reuse field def, configure
+  `extends` / `childSupertag` / `sourceSupertag`, option-from-supertag selection, template/extends
+  chains, name-based lookup) while existing on-row "deleted" badges stay visible; typing the same name
+  creates a fresh active definition under Schema. Trash also gains **Delete forever** (per trashed
+  subtree) and **Empty Trash** (root) context actions, both behind the shared confirmation dialog and
+  the `permanentDeleteCandidateIds` locked/in-trash filter. Specs (`commands.md`, `ui-behavior.md`)
+  synced. **Gate (main):** two review rounds (3 findings fixed — DefinitionConfigPanel supertag picker
+  now excludes trashed, shared `isNodeInSubtree` extracted, Empty Trash shares the locked filter);
+  typecheck + `test:core` 1060 + `test:renderer` 621 + `docs:check` green; the only new visual is the
+  `--status-danger` menu-item color + the existing `ConfirmDialog` (token-level light/dark review).
 - **Packaged `userData` directory pinned to `…/Tenon` (main, infra)** — the packaged app now resolves
   its `userData` directory **explicitly** to `<appData>/Tenon` instead of relying on Electron's
   `app.getName()` default. Electron derives that default from the bundled package.json `name`
