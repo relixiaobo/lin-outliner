@@ -341,6 +341,27 @@ describe('Core', () => {
     });
   });
 
+  test('tag commands reject trashed definitions and recreate by name', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const tagId = mustFocus(core.createTag('project'));
+    const nodeId = mustFocus(core.createNode(today, null, 'Launch'));
+
+    core.trashNode(tagId);
+
+    expect(core.state().nodes[tagId]?.parentId).toBe(TRASH_ID);
+    expect(() => core.applyTag(nodeId, tagId)).toThrow('expected an active tag definition');
+    expect(() => core.batchApplyTag([nodeId], tagId)).toThrow('expected an active tag definition');
+    expect(() => core.createTaggedNode(today, plainText('Tagged'), tagId)).toThrow('expected an active tag definition');
+
+    const replacementTagId = mustFocus(core.createTag('project'));
+    expect(replacementTagId).not.toBe(tagId);
+    expect(core.state().nodes[replacementTagId]?.parentId).toBe(SCHEMA_ID);
+
+    core.applyTag(nodeId, replacementTagId);
+    expect(core.state().nodes[nodeId].tags).toEqual([replacementTagId]);
+  });
+
   test('creates a rich text node in one core command', () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -759,6 +780,21 @@ describe('Core', () => {
     expect(() => core.reuseFieldDefinition(entry, plain)).toThrow();
   });
 
+  test('reusing rejects a trashed field definition target', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const keepEntry = mustFocus(core.createInlineField(today, null, 'Status', 'plain'));
+    const keepDef = core.state().nodes[keepEntry].fieldDefId!;
+    const draftEntry = mustFocus(core.createInlineField(today, null, '', 'plain'));
+    const draftDef = core.state().nodes[draftEntry].fieldDefId!;
+
+    core.trashNode(keepDef);
+
+    expect(core.state().nodes[keepDef]?.parentId).toBe(TRASH_ID);
+    expect(() => core.reuseFieldDefinition(draftEntry, keepDef)).toThrow('expected an active field definition');
+    expect(core.state().nodes[draftEntry].fieldDefId).toBe(draftDef);
+  });
+
   test('reusing a read-only system field drops the entry\'s stored value children', () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -982,6 +1018,36 @@ describe('Core', () => {
     expect(isDone()).toBe(false);
   });
 
+  test('done-state mapping ignores options whose field definition is in Trash', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const tagId = mustFocus(core.createTag('Task'));
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Status', 'options'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    const doneOption = mustFocus(core.registerCollectedOption(fieldDefId, 'Done'));
+    core.setTagConfig(tagId, {
+      showCheckbox: true,
+      doneStateEnabled: true,
+      doneMapChecked: [doneOption],
+    });
+
+    core.trashNode(fieldDefId);
+    const nodeId = mustFocus(core.createNode(today, null, 'Task node'));
+    core.applyTag(nodeId, tagId);
+
+    expect(core.state().nodes[nodeId].children.some((childId) => {
+      const child = core.state().nodes[childId];
+      return child.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+    })).toBe(false);
+
+    core.toggleDone(nodeId);
+
+    expect(core.state().nodes[nodeId].children.some((childId) => {
+      const child = core.state().nodes[childId];
+      return child.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+    })).toBe(false);
+  });
+
   test('options from supertag selects tagged nodes instead of field children', () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -1001,6 +1067,24 @@ describe('Core', () => {
     expect(core.state().nodes[valueId].type).toBe('reference');
     expect(core.state().nodes[valueId].targetId).toBe(chengduId);
     expect(() => core.registerCollectedOption(fieldDefId, 'Beijing')).toThrow('direct options');
+  });
+
+  test('options from supertag rejects selections after the source tag is trashed', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const sourceTagId = mustFocus(core.createTag('City'));
+    const fieldEntryId = mustFocus(core.createInlineField(today, null, 'Destination', 'options_from_supertag'));
+    const fieldDefId = core.state().nodes[fieldEntryId].fieldDefId!;
+    core.setFieldConfig(fieldDefId, {
+      fieldType: 'options_from_supertag',
+      sourceSupertag: sourceTagId,
+    });
+    const chengduId = mustFocus(core.createNode(today, null, 'Chengdu'));
+    core.applyTag(chengduId, sourceTagId);
+
+    core.trashNode(sourceTagId);
+
+    expect(() => core.selectFieldOption(fieldEntryId, chengduId)).toThrow('option does not match this field source tag');
   });
 
   test('field config validates constraints and clears type-specific settings', () => {

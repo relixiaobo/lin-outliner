@@ -49,6 +49,12 @@ renderer can't supply the source metadata. See [`launcher.md`](launcher.md).
 ### Document — done state and trash
 `toggle_done`, `cycle_done_state`, `trash_node`, `restore_node`, `delete_node`.
 
+`trash_node` / `batch_trash_nodes` move live nodes into Trash and preserve a
+restore location. `restore_node` moves one trashed node back to that remembered
+location when possible. `delete_node` is the permanent removal command: the UI
+exposes it only from Trash affordances such as **Delete forever** and **Empty
+Trash**, both guarded by confirmation.
+
 ### Document — node presentation
 `set_node_checkbox_visible`, `set_node_icon`, `set_node_banner`,
 `create_image_node`, `set_node_image`, `create_attachment_node`.
@@ -75,6 +81,13 @@ here because they use the image-node commands.
 `create_field_def`, `create_inline_field`, `create_inline_field_after_node`,
 `reuse_field_definition`, `register_collected_option`,
 `create_collected_field_option`, `select_field_option`, `clear_field_value`.
+
+User tag and field definitions are reusable only while they are active: the
+definition node must exist, have the expected `tagDef` / `fieldDef` type, and not
+live in the Trash subtree. Applying a tag, creating a tagged node, reusing a field
+definition, configuring definitions, and selecting `options_from_supertag` values
+all reject trashed definitions. Name-based creation ignores trashed same-name
+definitions and creates a fresh active definition under Schema.
 
 `reuse_field_definition(entryId, targetDefId)` repoints a field entry at an
 existing definition instead of the throwaway draft `>` minted, dropping the now

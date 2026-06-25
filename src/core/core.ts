@@ -562,7 +562,7 @@ export class Core {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
-      if (state.nodes[tagId]?.type !== 'tagDef') throw CoreError.nodeNotFound(tagId);
+      ensureTagDefinition(state, tagId);
       const id = this.createRichTextNodeDirect(parentId, null, content);
       this.applyChildTagsDirect(parentId, id);
       this.applyTagDirect(id, tagId);
@@ -1421,7 +1421,7 @@ export class Core {
   batchApplyTag(nodeIds: string[], tagId: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
-      if (state.nodes[tagId]?.type !== 'tagDef') throw CoreError.nodeNotFound(tagId);
+      ensureTagDefinition(state, tagId);
       for (const nodeId of nodeIds) {
         if (!this.snapshot().nodes[nodeId]) continue;
         this.applyTagDirect(nodeId, tagId);
@@ -1606,7 +1606,7 @@ export class Core {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureParentMutable(state, tagId);
-      if (state.nodes[tagId]?.type !== 'tagDef') throw CoreError.invalidOperation('field templates belong under tags');
+      ensureTagDefinition(state, tagId);
       const fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, normalized, fieldType);
       const templateEntryId = this.insertFieldEntryNodeDirect(tagId, undefined, fieldDefId);
       for (const taggedNodeId of findNodesWithTag(state, tagId)) {
@@ -1670,10 +1670,7 @@ export class Core {
       // field definition.
       const isSystemField = isSystemFieldDefId(targetDefId);
       if (!isSystemField) {
-        const targetDef = requiredNode(state, targetDefId);
-        if (targetDef.type !== 'fieldDef') {
-          throw CoreError.invalidOperation('relink target must be a field definition');
-        }
+        ensureFieldDefinition(state, targetDefId);
       }
       const previousDefId = entry.fieldDefId;
       const focusOutcome = focus(entryId, { parentId: entry.parentId, surface: 'field-name', placement: { kind: 'all' } });
@@ -2086,8 +2083,8 @@ export class Core {
   ensureTagSearch(tagId: string): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
+      ensureTagDefinition(state, tagId);
       const tag = requiredNode(state, tagId);
-      if (tag.type !== 'tagDef') throw CoreError.invalidOperation('tag search target must be a tag');
       const existing = Object.values(state.nodes).find((node) =>
         !isInTrash(state, node.id)
         && node.type === 'search'
@@ -2999,8 +2996,11 @@ export class Core {
     const state = this.snapshot();
     const tagIds = state.nodes[parentId]?.tags ?? [];
     for (const tagId of tagIds) {
+      if (!isActiveTagDefinition(state, tagId)) continue;
       const childSupertag = configRefTarget(state, tagId, 'childSupertag');
-      if (childSupertag) this.applyTagDirect(childId, childSupertag);
+      if (childSupertag && isActiveTagDefinition(state, childSupertag)) {
+        this.applyTagDirect(childId, childSupertag);
+      }
     }
   }
 
@@ -3012,7 +3012,7 @@ export class Core {
 
   private applyTagNoHistoryDirect(nodeId: string, tagId: string) {
     const state = this.snapshot();
-    if (state.nodes[tagId]?.type !== 'tagDef') throw CoreError.nodeNotFound(tagId);
+    ensureTagDefinition(state, tagId);
     const node = clone(requiredNode(state, nodeId));
     if (node.tags.includes(tagId)) return;
     node.tags.push(tagId);
@@ -3619,11 +3619,17 @@ function ensureNodeMovable(state: DocumentState, nodeId: string) {
 }
 
 function ensureTagDefinition(state: DocumentState, tagId: string) {
-  if (requiredNode(state, tagId).type !== 'tagDef') throw CoreError.invalidOperation('expected a tag definition');
+  const node = requiredNode(state, tagId);
+  if (node.type !== 'tagDef' || isInTrash(state, tagId)) {
+    throw CoreError.invalidOperation('expected an active tag definition');
+  }
 }
 
 function ensureFieldDefinition(state: DocumentState, fieldId: string) {
-  if (requiredNode(state, fieldId).type !== 'fieldDef') throw CoreError.invalidOperation('expected a field definition');
+  const node = requiredNode(state, fieldId);
+  if (node.type !== 'fieldDef' || isInTrash(state, fieldId)) {
+    throw CoreError.invalidOperation('expected an active field definition');
+  }
 }
 
 function ensureValidHideFieldMode(mode: string) {
@@ -3836,6 +3842,14 @@ function isInTrash(state: DocumentState, nodeId: string) {
   return nodeId === TRASH_ID || isDescendant(state, nodeId, TRASH_ID);
 }
 
+function isActiveTagDefinition(state: DocumentState, nodeId: string) {
+  return state.nodes[nodeId]?.type === 'tagDef' && !isInTrash(state, nodeId);
+}
+
+function isActiveFieldDefinition(state: DocumentState, nodeId: string) {
+  return state.nodes[nodeId]?.type === 'fieldDef' && !isInTrash(state, nodeId);
+}
+
 const LEGACY_PARA_NODE_NAMES = new Map([
   [PROJECTS_ID, 'Projects'],
   [AREAS_ID, 'Areas'],
@@ -3941,6 +3955,7 @@ function tagShowsCheckboxOf(state: DocumentState, tagDefId: string): boolean {
   const visited = new Set<string>();
   let current: string | undefined = tagDefId;
   while (current && !visited.has(current)) {
+    if (!isActiveTagDefinition(state, current)) return false;
     visited.add(current);
     if (configScalarBool(state, current, 'showCheckbox')) return true;
     current = configRefTarget(state, current, 'extends');
@@ -3967,6 +3982,7 @@ function tagExtendsChainSelf(state: DocumentState, tagDefId: string): string[] {
   const visited = new Set<string>();
   let current: string | undefined = tagDefId;
   while (current && !visited.has(current)) {
+    if (!isActiveTagDefinition(state, current)) break;
     visited.add(current);
     chain.push(current);
     current = configRefTarget(state, current, 'extends');
@@ -4006,8 +4022,9 @@ function getDoneStateMappings(state: DocumentState, node: Node): DoneStateFieldM
   const seenTags = new Set<string>();
   const addOptions = (optionIds: string[], key: 'checked' | 'unchecked') => {
     for (const optionId of optionIds) {
+      if (isInTrash(state, optionId)) continue;
       const fieldDefId = state.nodes[optionId]?.parentId;
-      if (!fieldDefId || state.nodes[fieldDefId]?.type !== 'fieldDef') continue;
+      if (!fieldDefId || !isActiveFieldDefinition(state, fieldDefId)) continue;
       let entry = byField.get(fieldDefId);
       if (!entry) byField.set(fieldDefId, (entry = { checked: [], unchecked: [] }));
       if (!entry[key].includes(optionId)) entry[key].push(optionId);
@@ -4079,6 +4096,7 @@ function getExtendsChain(state: DocumentState, tagId: string): string[] {
   const visited = new Set<string>();
   let current: string | undefined = tagId;
   while (current && !visited.has(current)) {
+    if (!isActiveTagDefinition(state, current)) break;
     visited.add(current);
     chain.push(current);
     current = configRefTarget(state, current, 'extends');
@@ -4091,7 +4109,12 @@ function getTemplateFieldDefs(state: DocumentState, tagId: string): TemplateFiel
   const seen = new Set<string>();
   for (const childId of state.nodes[tagId]?.children ?? []) {
     const child = state.nodes[childId];
-    if (child?.type === 'fieldEntry' && child.fieldDefId && !seen.has(child.fieldDefId)) {
+    if (
+      child?.type === 'fieldEntry'
+      && child.fieldDefId
+      && isActiveFieldDefinition(state, child.fieldDefId)
+      && !seen.has(child.fieldDefId)
+    ) {
       seen.add(child.fieldDefId);
       result.push({ fieldDefId: child.fieldDefId, templateOriginId: childId });
     }
@@ -4107,19 +4130,22 @@ function getTemplateContentNodes(state: DocumentState, tagId: string) {
 }
 
 function findNodesWithTag(state: DocumentState, tagId: string) {
-  return Object.values(state.nodes).filter((node) => node.tags.includes(tagId)).map((node) => node.id);
+  return Object.values(state.nodes)
+    .filter((node) => node.tags.includes(tagId) && !isInTrash(state, node.id))
+    .map((node) => node.id);
 }
 
 function findTagByName(state: DocumentState, name: string) {
   const needle = name.trim().toLowerCase();
   return Object.values(state.nodes).find((node) =>
-    node.type === 'tagDef' && node.content.text.trim().toLowerCase() === needle)?.id;
+    isActiveTagDefinition(state, node.id)
+    && node.content.text.trim().toLowerCase() === needle)?.id;
 }
 
 function findFieldDefByName(state: DocumentState, name: string) {
   const needle = name.trim().toLowerCase();
   return Object.values(state.nodes).find((node) =>
-    node.type === 'fieldDef'
+    isActiveFieldDefinition(state, node.id)
     && node.parentId === SCHEMA_ID
     && node.content.text.trim().toLowerCase() === needle)?.id;
 }
@@ -4153,8 +4179,8 @@ function tagExtendsWouldCycle(state: DocumentState, tagId: string, parentTagId: 
 }
 
 function ensureOptionsFieldDef(state: DocumentState, fieldDefId: string) {
+  ensureFieldDefinition(state, fieldDefId);
   const fieldDef = requiredNode(state, fieldDefId);
-  if (fieldDef.type !== 'fieldDef') throw CoreError.invalidOperation('options belong to field definitions');
   const fieldType = fieldTypeOf(state, fieldDefId);
   if (fieldType !== 'options' && fieldType !== 'options_from_supertag') {
     throw CoreError.invalidOperation('field definition is not an options field');
@@ -4163,8 +4189,8 @@ function ensureOptionsFieldDef(state: DocumentState, fieldDefId: string) {
 }
 
 function ensureReferenceFieldDef(state: DocumentState, fieldDefId: string) {
+  ensureFieldDefinition(state, fieldDefId);
   const fieldDef = requiredNode(state, fieldDefId);
-  if (fieldDef.type !== 'fieldDef') throw CoreError.invalidOperation('references belong to field definitions');
   if (fieldTypeOf(state, fieldDefId) !== 'reference') {
     throw CoreError.invalidOperation('field definition is not a reference field');
   }
@@ -4193,8 +4219,10 @@ function ensureOptionBelongsToField(state: DocumentState, fieldDefId: string, op
     const sourceSupertag = configRefTarget(state, fieldDef.id, 'sourceSupertag');
     if (
       sourceSupertag
+      && isActiveTagDefinition(state, sourceSupertag)
       && (!optionNode.type || optionNode.type === 'codeBlock')
       && optionNode.tags.includes(sourceSupertag)
+      && !isInTrash(state, optionNode.id)
     ) {
       return;
     }

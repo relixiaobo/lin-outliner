@@ -46,6 +46,13 @@ keyboard or pointer change should be checked against this matrix.
   be renamed but not moved, deleted, or reparented. The functional system
   sections (Daily notes, Library, Schema, Saved searches, Trash, Settings) and
   other locked pages (e.g. day pages) keep read-only titles.
+- Trash is a recoverable holding area, not a normal editable bucket. The Trash
+  root's context menu offers **Empty Trash** when it has children; the action
+  confirms first and then permanently deletes each direct trashed subtree.
+  Context menus for nodes inside Trash offer both **Restore** and **Delete
+  forever**. Permanent delete confirms first and removes the selected trashed
+  root rows (and their children); it is distinct from normal Delete/Backspace,
+  which still moves live rows to Trash.
 - The root scope always renders a trailing input so typing can continue at the
   end of the page.
 - Field entries are ordinary outline rows with field-specific value rendering.
@@ -109,12 +116,16 @@ The live `#` tag trigger stays active only while the query after `#` contains
 bare tag characters (Unicode letters/numbers, `_`, and `-`). Punctuation such as
 `.` ends the tag query instead of keeping the dropdown open for text that cannot
 be written as a bare tag.
+Tag suggestions include only active tag definitions: a `tagDef` in Trash remains
+visible on rows that already carry it as a deleted badge, but it is not offered
+for new tagging. Typing the same label creates a new active tag definition
+instead of reusing the trashed one.
 
 ## Field Row Matrix
 
 | Interaction | Expected behavior |
 | --- | --- |
-| Type in field name | Show a reuse popover of matching existing fields ("Fields") and built-in system fields ("System fields"). Nothing is highlighted by default. Fields already present on the same owner node are excluded — a node may not carry the same field twice. |
+| Type in field name | Show a reuse popover of matching active existing fields ("Fields") and built-in system fields ("System fields"). Field definitions in Trash are excluded. Nothing is highlighted by default. Fields already present on the same owner node are excluded — a node may not carry the same field twice. |
 | `Space` on an empty field name | Summon the full reuse picker (every reusable field + system field, alphabetical) without typing a leading space. Once the name has text, `Space` types normally. |
 | `ArrowDown` + `Enter` (or click) in the reuse popover | Reuse that definition: relink the entry to it (`reuse_field_definition`) and drop the throwaway draft def. |
 | `Enter` in field name | With no popover candidate highlighted, commit the typed name as a new field and create/focus a sibling row after the field entry. |
@@ -190,6 +201,10 @@ persisted as a free-text value (it is purely the search query). This is the
 editable peer of the read-only References / Owner / Day system fields above: same
 reference-row presentation, but the value set is user-managed rather than
 computed.
+
+For `options_from_supertag` fields, the source supertag must be an active tag
+definition. If the source tag is moved to Trash, the field's value picker no
+longer derives candidates from nodes carrying that deleted tag.
 
 ## NodePanel References Footer
 

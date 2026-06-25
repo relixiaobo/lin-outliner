@@ -230,6 +230,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     entryId: props.entryId,
     parentId: props.parentId,
     draftDefId: field?.id,
+    trashId: props.index.projection.trashId,
     nameDraft,
     disabled: Boolean(systemFieldId),
   });

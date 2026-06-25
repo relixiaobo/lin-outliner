@@ -15,6 +15,7 @@ interface UseFieldNameReuseArgs {
   parentId: NodeId;
   /** The draft def the entry currently points at — excluded from its own list. */
   draftDefId: NodeId | undefined;
+  trashId: NodeId;
   nameDraft: string;
   /** A system field's name is fixed, so it never offers reuse. */
   disabled: boolean;
@@ -46,7 +47,7 @@ export interface FieldNameReuse {
 }
 
 export function useFieldNameReuse(args: UseFieldNameReuseArgs): FieldNameReuse {
-  const { byId, entryId, parentId, draftDefId, nameDraft, disabled } = args;
+  const { byId, entryId, parentId, draftDefId, trashId, nameDraft, disabled } = args;
   const [focused, setFocused] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [forceOpen, setForceOpen] = useState(false);
@@ -64,7 +65,7 @@ export function useFieldNameReuse(args: UseFieldNameReuseArgs): FieldNameReuse {
         ownerDefIds.add(child.fieldDefId);
       }
     }
-    const userAll = buildUserFieldReuseCandidates(byId, { excludeDefId: draftDefId })
+    const userAll = buildUserFieldReuseCandidates(byId, { excludeDefId: draftDefId, trashId })
       .filter((candidate) => !ownerDefIds.has(candidate.id));
     const systemAll = buildSystemFieldReuseCandidates()
       .filter((candidate) => !ownerDefIds.has(candidate.id));
@@ -75,7 +76,7 @@ export function useFieldNameReuse(args: UseFieldNameReuseArgs): FieldNameReuse {
       ...filterFieldReuseCandidates(userAll, nameDraft),
       ...filterFieldReuseCandidates(systemAll, nameDraft),
     ];
-  }, [focused, disabled, forceOpen, nameDraft, draftDefId, byId, parentId, entryId]);
+  }, [focused, disabled, forceOpen, nameDraft, draftDefId, trashId, byId, parentId, entryId]);
 
   return {
     open: focused && !dismissed && candidates.length > 0,

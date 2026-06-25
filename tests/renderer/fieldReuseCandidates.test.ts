@@ -7,8 +7,13 @@ import {
   sortFieldReuseCandidatesByLabel,
 } from '../../src/renderer/ui/interactions/fieldReuseCandidates';
 
-function node(id: string, type: string, text: string): NodeProjection {
-  return { id, type, content: { text, inlineRefs: [] }, children: [] } as unknown as NodeProjection;
+function node(
+  id: string,
+  type: string,
+  text: string,
+  overrides: Partial<NodeProjection> = {},
+): NodeProjection {
+  return { id, type, content: { text, inlineRefs: [] }, children: [], ...overrides } as unknown as NodeProjection;
 }
 
 function byId(...nodes: NodeProjection[]): Map<NodeId, NodeProjection> {
@@ -27,6 +32,16 @@ describe('buildUserFieldReuseCandidates', () => {
     const result = buildUserFieldReuseCandidates(map, { excludeDefId: 'self' });
     expect(result.map((c) => c.id).sort()).toEqual(['a', 'b']);
     expect(result.every((c) => c.kind === 'user' && c.section === 'Fields')).toBe(true);
+  });
+
+  test('skips field definitions in Trash when a trash root is provided', () => {
+    const map = byId(
+      node('trash', 'node', 'Trash'),
+      node('a', 'fieldDef', 'Status'),
+      node('deleted', 'fieldDef', 'Archived', { parentId: 'trash' }),
+    );
+    const result = buildUserFieldReuseCandidates(map, { trashId: 'trash' });
+    expect(result.map((c) => c.id)).toEqual(['a']);
   });
 });
 

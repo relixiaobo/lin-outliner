@@ -26,6 +26,10 @@ import {
   commonTagIdsForTargets,
   resolveActiveNodeSelection,
 } from '../../src/renderer/ui/interactions/contextMenuSelection';
+import {
+  permanentDeleteCandidateIds,
+  trashRootChildIds,
+} from '../../src/renderer/ui/interactions/trashActions';
 import { resolveSelectionKeyboardAction } from '../../src/renderer/ui/interactions/selectionKeyboard';
 import {
   matchesShortcutEvent,
@@ -534,6 +538,28 @@ describe('row interaction resolvers', () => {
     expect(commonTagIdsForTargets(['first', 'second'], byId)).toEqual(['tag-b']);
   });
 
+  test('resolves Trash permanent-delete candidates from selected root rows', () => {
+    const byId = new Map<string, any>([
+      ['root', makeNode('root', 'Root', { children: ['trash', 'live'] })],
+      ['trash', makeNode('trash', 'Trash', { parentId: 'root', locked: true, children: ['deleted-parent', 'locked-deleted'] })],
+      ['deleted-parent', makeNode('deleted-parent', 'Deleted parent', { parentId: 'trash', children: ['deleted-child'] })],
+      ['deleted-child', makeNode('deleted-child', 'Deleted child', { parentId: 'deleted-parent' })],
+      ['locked-deleted', makeNode('locked-deleted', 'Locked deleted', { parentId: 'trash', locked: true })],
+      ['live', makeNode('live', 'Live', { parentId: 'root' })],
+    ]);
+    const index = {
+      byId,
+      projection: { trashId: 'trash' },
+    } as any;
+
+    expect(trashRootChildIds(index)).toEqual(['deleted-parent', 'locked-deleted']);
+    expect(permanentDeleteCandidateIds({
+      ids: ['trash', 'deleted-parent', 'deleted-child', 'locked-deleted', 'live'],
+      index,
+    })).toEqual(['deleted-parent']);
+    expect(permanentDeleteCandidateIds({ ids: ['deleted-child'], index })).toEqual(['deleted-child']);
+  });
+
   test('pre-expands target parents before indenting nodes', () => {
     const root = {
       id: 'root',
@@ -964,6 +990,43 @@ describe('row interaction resolvers', () => {
     expect(tagSelectorItemLabel({ type: 'create', name: 'project' })).toBe('Create project');
   });
 
+  test('excludes tag selector candidates in Trash and allows same-label creation', () => {
+    const nodes = [
+      makeNode('root', 'Root', { children: ['schema', 'trash'] }),
+      makeNode('schema', 'Schema', { parentId: 'root', children: ['tag-active'] }),
+      makeNode('trash', 'Trash', { parentId: 'root', children: ['tag-deleted'] }),
+      makeNode('tag-active', 'active', { type: 'tagDef', parentId: 'schema' }),
+      makeNode('tag-deleted', 'deleted', { type: 'tagDef', parentId: 'trash' }),
+    ];
+    const index = {
+      projection: {
+        workspaceId: 'root',
+        rootId: 'root',
+        libraryId: 'root',
+        dailyNotesId: 'daily',
+        schemaId: 'schema',
+        searchesId: 'searches',
+        recentsId: 'recents',
+        trashId: 'trash',
+        settingsId: 'settings',
+        todayId: 'today',
+        nodes,
+      },
+      byId: new Map(nodes.map((node) => [node.id, node])),
+    };
+
+    expect(tagSelectorItems({
+      query: '',
+      index: index as any,
+      existingTagIds: [],
+    }).map((item) => item.type === 'existing' ? item.tag.id : `create:${item.name}`)).toEqual(['tag-active']);
+    expect(tagSelectorItems({
+      query: 'deleted',
+      index: index as any,
+      existingTagIds: [],
+    }).map((item) => item.type === 'existing' ? item.tag.id : `create:${item.name}`)).toEqual(['create:deleted']);
+  });
+
   test('parses indented multiline paste into an outliner tree', () => {
     expect(parsePlainTextOutlinerPaste('Parent\n  Child\n    Grandchild\nSibling')).toEqual([
       {
@@ -1338,6 +1401,34 @@ describe('row interaction resolvers', () => {
       autoCollected: false,
       targetId: 'node_chengdu',
     }]);
+  });
+
+  test('returns no options-from-supertag candidates when the source tag is in Trash', () => {
+    const field = makeNode('field_city', 'City', {
+      type: 'fieldDef',
+      children: ['field_city::cfg:fieldType', 'cfg_source'],
+    });
+    const byId = new Map<string, any>([
+      [field.id, field],
+      ...fieldTypeConfigEntries('field_city', 'options_from_supertag'),
+      ['trash', makeNode('trash', 'Trash', { children: ['tag_city'] })],
+      ['tag_city', makeNode('tag_city', 'city', { type: 'tagDef', parentId: 'trash' })],
+      ['cfg_source', makeNode('cfg_source', 'Supertag', {
+        type: 'defConfig',
+        configKey: 'sourceSupertag',
+        parentId: 'field_city',
+        children: ['cfg_source_value'],
+      })],
+      ['cfg_source_value', makeNode('cfg_source_value', '', {
+        type: 'reference',
+        refRole: 'config',
+        parentId: 'cfg_source',
+        targetId: 'tag_city',
+      })],
+      ['node_chengdu', makeNode('node_chengdu', 'Chengdu', { tags: ['tag_city'] })],
+    ]);
+
+    expect(resolveFieldOptions(field as any, byId)).toEqual([]);
   });
 
   test('blocks tree reference candidates that would create display cycles', () => {
