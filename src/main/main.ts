@@ -142,18 +142,29 @@ import {
 } from './agentLocalRoot';
 import { DiagnosticLogStore } from './diagnosticLog';
 import { NodeAccessStore } from './nodeAccessStore';
+import { resolveUserDataDir } from './userDataPath';
 import type { NodeAccessSource } from '../core/nodeAccessRanking';
 
-if (process.env.ELECTRON_USER_DATA_DIR) {
-  app.setPath('userData', process.env.ELECTRON_USER_DATA_DIR);
-} else if (!app.isPackaged) {
-  // Running from source (electron-vite dev) with no explicit override. Never
-  // share the installed prod app's default userData, so a bare `bun run dev`
-  // can't read or clobber daily-use documents, agent conversations, or assets. The
-  // clone-specific dev scripts still set ELECTRON_USER_DATA_DIR for per-clone
-  // isolation; this is the catch-all for runs that forget to.
-  app.setPath('userData', join(app.getPath('home'), '.lin-outliner-dev'));
-}
+// App identity for menus / "About" / notifications. Kept deliberately separate
+// from the userData directory, which we resolve EXPLICITLY below instead of
+// letting Electron derive it from `app.getName()`.
+app.setName(APP_NAME);
+
+// Resolve userData explicitly (see userDataPath.ts) so the packaged data
+// directory is pinned to `<appData>/Tenon` and can never drift with how the asar
+// package.json is generated. `home`/`appData` are app-name-independent, so reading
+// them here is safe regardless of setName ordering.
+const resolvedUserDataDir = resolveUserDataDir({
+  envOverride: process.env.ELECTRON_USER_DATA_DIR,
+  isPackaged: app.isPackaged,
+  home: app.getPath('home'),
+  appData: app.getPath('appData'),
+  appName: APP_NAME,
+});
+app.setPath('userData', resolvedUserDataDir);
+// Cheap safety net: record the resolved directory at boot so a future "lost data"
+// report can be diagnosed from the log instead of reverse-engineering it via lsof.
+console.log(`[startup] userData directory: ${resolvedUserDataDir}`);
 
 const diagnosticLog = new DiagnosticLogStore(app.getPath('userData'));
 
@@ -219,7 +230,6 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const APP_ICON_PNG_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icon.png')
   : join(__dirname, '../../build/icon.png');
-app.setName(APP_NAME);
 const documentService = new DocumentService();
 const nodeAccessStore = new NodeAccessStore(join(app.getPath('userData'), 'node-access-stats.json'), {
   onError: (error, operation) => reportError({

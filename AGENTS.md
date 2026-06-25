@@ -303,7 +303,13 @@ reads it:
 1. `ELECTRON_USER_DATA_DIR` if set (verbatim).
 2. Else from source (`!app.isPackaged`) → `$HOME/.lin-outliner-dev` (so a bare
    `bun run dev` can never touch the installed prod app's data).
-3. Else (packaged) → Electron's default path (the daily-use prod data).
+3. Else (packaged) → **explicitly** `<appData>/Tenon` (the daily-use prod data) —
+   pinned via `resolveUserDataDir` (`src/main/userDataPath.ts`), NOT derived from
+   Electron's `app.getName()` default. The default keys off the bundled
+   package.json `name` (`lin-outliner`), not electron-builder's
+   `build.productName` (`Tenon`), so a rebuild that drops `productName` from the
+   asar would silently move the data dir and look like data loss. Pinning the path
+   keeps it stable across builds.
 
 Use the clone's `dev:*` script so each stays isolated: `dev:main` →
 `$HOME/.lin-outliner-main`, `dev:cc` → `…-cc`, `dev:cc-2`, `dev:codex`,

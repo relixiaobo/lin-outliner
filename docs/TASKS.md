@@ -493,6 +493,15 @@ anything.
 
 ## Recently completed
 
+- **packaged-userdata-pinning** (main, direct-to-`main`, 2026-06-25) — pins the packaged app's
+  `userData` directory **explicitly** to `<appData>/Tenon` (`resolveUserDataDir`,
+  `src/main/userDataPath.ts`) instead of relying on Electron's `app.getName()` default, which derives
+  from the bundled package.json `name` (`lin-outliner`) and could silently drift the data dir on a
+  rebuild that dropped `build.productName`. Moved `app.setName(APP_NAME)` ahead of the first `userData`
+  read; boot-logs the resolved dir. Dev/env-override precedence unchanged; AGENTS.md "Dev environment"
+  synced. **Gate (main):** typecheck clean, `test:core` 1060/0 (4 new `resolveUserDataDir` cases). A
+  pre-existing `…/lin-outliner` (756M, older builds) is left in place pending a separate cleanup decision
+  (PM-ratified 2026-06-25: Tenon authoritative). Fast-track, **shape (a)**, *no plan file*.
 - **search-reference-sources** (`codex/search-reference-sources`, PR #335, codex, merged 2026-06-24;
   follow-up `fix/references-search-inline-exclusion`, PR #336, main, merged 2026-06-24) — excludes
   saved-search nodes and `queryCondition` internals from the backlink graph + relevance

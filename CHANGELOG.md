@@ -10,6 +10,22 @@ Entries reference the pull request that introduced them.
 
 Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
+### Fixed
+
+- **Packaged `userData` directory pinned to `…/Tenon` (main, infra)** — the packaged app now resolves
+  its `userData` directory **explicitly** to `<appData>/Tenon` instead of relying on Electron's
+  `app.getName()` default. Electron derives that default from the bundled package.json `name`
+  (`lin-outliner`), NOT electron-builder's `build.productName` (`Tenon`), so a rebuild whose asar
+  package.json lacked `productName` could silently move the data directory from `…/Tenon` to
+  `…/lin-outliner` and look like data loss. Extracted the resolution into a pure, unit-tested
+  `resolveUserDataDir` (`src/main/userDataPath.ts`), moved `app.setName(APP_NAME)` ahead of the first
+  `userData` read, and boot-log the resolved directory for future diagnosis. Precedence is unchanged
+  (`ELECTRON_USER_DATA_DIR` verbatim → `$HOME/.lin-outliner-dev` from source → packaged `…/Tenon`).
+  AGENTS.md "Dev environment" synced. **Gate (main):** typecheck clean, `test:core` 1060/0 (incl. 4 new
+  `resolveUserDataDir` cases). Note: a pre-existing `…/lin-outliner` (756M, from older builds) is
+  intentionally left in place pending a separate cleanup decision (PM-ratified 2026-06-25: Tenon is
+  authoritative).
+
 ### Removed
 
 - **Agent self-maintenance tools `runtime_status` / `config` / `doctor` (PR #333, cc-2)** —
