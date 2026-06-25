@@ -454,7 +454,10 @@ failing criterion + gap). A parent watches **its own** child's signatures: if th
 one recurs for **N consecutive attempts with no progress**, the parent sets that branch
 `blocked` (escalate) instead of re-spawning again — a purely local decision, no
 cross-level scan. Budget is the backstop; the gap-signature is the primary
-non-convergence exit.
+non-convergence exit. This guard is also what makes removing the upward `report_blocked`
+tool safe: a worker that is *genuinely* stuck but does not surface it gracefully
+degrades into a repeating gap, which trips here at `N` — bounded waste, never a silent
+stall (see the cost note under *Reused autonomy rules*).
 
 ### Budget is local admission control at each edge
 
@@ -493,6 +496,23 @@ decision is freshly computed. Neva resumes supervising the persisted root.
   more authority escalates (`blocked`).
 - **Budget** is a per-edge slice the parent reserves (above); the tree total is the
   emergent sum, not a pool any level reads.
+
+> **The cost of having no upward tool — named honestly.** `done` and `blocked` are *not*
+> symmetric in their failure mode. `done`'s hazard is a **false positive** (a worker
+> claims "complete" to stop working) — which is exactly why an independent verifier
+> exists. `blocked`'s real hazard is a **false negative** (a worker is genuinely stuck —
+> missing credentials / scope — and hands up a poor result instead of signalling).
+> Removing the structured `report_blocked` creates *no new* false-positive risk, but it
+> does remove the worker's cheap **first-round** path to surface "I need X": the
+> controller must now infer it from the worker's terminal note. **Known cost:** a
+> truly-blocked worker escalates only after its gap repeats — `fail, gap='no auth'` →
+> re-spawn → same gap → … → the **livelock guard** trips at `N` → `blocked` → owner
+> notified. So a real block can burn up to `N` retries (+ their budget) before
+> escalating, where `report_blocked` would have escalated on round 1. **Why we accept
+> it:** the degradation is **graceful, never silent** — a missed soft-report is always
+> caught by the livelock guard (gap-signature repeat) or the budget backstop, so the
+> worst case is *wasted retries, never a stalled tree*. The worker's terminal-note
+> output-contract keeps the common case to ≈1 round; `N` + budget is the bounded tail.
 
 ## Tool surface
 
@@ -788,8 +808,10 @@ Genuinely open, all build-time-reversible:
   capability. Load-bearing guards, all in this cut: commit-as-scope-authorization, the
   Run terminal outcomes, ask-strict, the **parent-verifies-child rule** (runtime-spawned,
   runtime-assembled evidence, no actuation), the **livelock guard**, and **budget
-  admission control + runtime hard backstops** (wall-clock / attempts / depth /
-  concurrency) independent of the loop's own accounting.
+  admission control + runtime hard backstops** (wall-clock / attempts / concurrency)
+  independent of the loop's own accounting. (Depth is **not** an independent backstop —
+  it is bounded by budget locality; an explicit `max-depth` is only a legibility
+  soft-stop.)
 - **Verifier cost & calibration.** Affordable (fires on submissions); but same-model
   default is de-biasing, not decorrelation — document the limit so the different-model
   upgrade is reached for when stakes warrant.
