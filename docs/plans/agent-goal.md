@@ -1,4 +1,4 @@
-# Agent Goal — a self-similar Run tree, independently verified at every level
+# Agent Goal — one verified edge, recursed into a self-similar Run tree
 
 ## Goal
 
@@ -16,12 +16,20 @@ Stated precisely, this is a **nested supervisory control system** that is
 objective is large becomes a controller over child Runs; a Run whose objective is
 small executes it. The same unit covers arbitrary depth.
 
+**The design has exactly one moving part: a single *verified edge*** (parent → child →
+verifier → accept/retry). The tree is not designed — it **emerges** when that edge
+nests inside itself. Every Run reasons only one level down; no code ever takes "the
+tree" as input. That locality is the whole reason the model stays small while depth
+stays unbounded — and it is exactly how a control system works: each loop governs only
+the segment it directly touches, and global behavior is the emergent sum.
+
 > **The whole design adds ZERO new fact objects.** "Goal/Task" is not a stored
 > entity — it is the **objective of a (root or tracked) `Run`**. We enrich the
 > existing `Run` (objective + acceptance criteria + scope + budget-slice + a dual
 > status), formalize the recursive control behavior on the **existing run tree**
-> (`parentRunId` already exists; `rootRunId` is a **new** denormalized field — see
-> below), and reuse the existing execution machinery (fork delegation,
+> (`parentRunId` already exists and is **all the lineage we need** — a Run reasons only
+> one level up/down, so there is **no `rootRunId`**), and reuse the existing execution
+> machinery (fork delegation,
 > `agent_child_run_*` controls, completion notification, usage accounting, the
 > permission gate) for everything else.
 >
@@ -116,31 +124,94 @@ The owner hands a contract to Neva and only ever three things come back up.
 > verifier Runs at every level; the owner sees only a result, an escalation, or
 > status. That is what separates it from open-loop-with-a-lie.
 
-### Nesting — the whole system is one unit, recursively
+### The unit is the edge — design one hop, the tree emerges
 
-The control unit is self-similar: a Run whose objective is goal-shaped becomes a
-controller over child Runs, each of which is the same unit again. The minimal
-structure never changes; only the depth does. So `turn / goal / sub-goal / team /
-worker` are **the same unit (a Run) at different levels**, which is why the model
-stays small while depth stays unbounded (cascaded-SCADA / VSM recursion, proven in
-industry).
-
-Two signals run along the nesting and are the whole inter-level contract:
-**down** = objective + acceptance criteria + `scope` (may only narrow) + a `budget`
-slice; **up** = a result that has passed *that level's* independent verifier, or an
-escalation when the level needs to exceed its contract. The honesty rule (verifier ≠
-worker) recurses with the structure — every parent verifies its children — and one
-**shared tree budget** is the single ceiling that bounds the recursion.
+The control unit is not "the tree" — it is **one verified hop (one edge)**: a parent
+spawns a child against `criteria`, the child submits, the parent verifies it via a
+fresh verifier Run, and accepts or re-spawns. That single triangle **is** the entire
+mechanism:
 
 ```
-    Run(root) ┐
-      ├─ worker Run                three governors flow with the nesting:
-      ├─ worker Run                  • ONE shared tree budget — sliced down,
-      ├─ Run(internal) ┐              folds back up (depth can't outrun spend)
-      │    ├─ worker Run│            • scope only NARROWS down (need more → escalate)
-      │    └─ ...       │            • the PARENT verifies each child, at EVERY level
-      └─ (parent verifies each) ┘   + soft depth limit (budget = hard backstop)
+        ┌─────────────────────────────────────────────┐
+        │ PARENT Run — "do X until it meets criteria"  │
+        └─────────────────────────────────────────────┘
+              │ ① spawn(X, { criteria })          ◄ parent sets the setpoint
+              ▼
+        ┌──────────────┐
+        │ CHILD Run    │  works on X
+        └──────────────┘
+              │ ② request_complete(result)        ◄ child claims done
+              ▼
+        ┌──────────────┐
+        │ VERIFIER Run │  fresh context:'none'; audits result vs criteria
+        └──────────────┘
+              │ ③ verdict
+        ┌─────┴─────┐
+        ▼           ▼
+      pass        fail + gap
+        │           │
+     accept,     ④ re-spawn the child with the gap
+     fold up        (retry loop, until budget / attempts run out)
 ```
+
+**Recursion is not a second mechanism — it is the same edge nested.** A child that
+finds its objective too large gets no new tools; it runs the *same* edge over its
+sub-objectives, becoming the parent of its own triangle:
+
+```
+   parent
+     │ spawn(X, {criteria_X})
+     ▼
+   child  ◄── X is large, so the child becomes a parent and runs the same edge:
+     │
+     ├─ spawn(X.a, {criteria_a}) ─▶ child.a ─▶ [child verifies a]
+     ├─ spawn(X.b, {criteria_b}) ─▶ child.b ─▶ [child verifies b]
+     │
+     │  only once a, b pass does the child request_complete(result for X)
+     ▼
+   parent's verifier audits X
+```
+
+So the whole tree is **the same triangle stacked** — there is no "tree code", only
+"edge code", invoked at each level by whoever is the parent there:
+
+```
+                  NEVA (root owner)
+                    │
+                    △   ◄ edge: Neva verifies R against the *user's* criteria
+                    │
+                    R
+                  / │ \
+                 △  △  △   ◄ edge: R verifies its three direct children
+               R.a R.b R.c
+               / \
+              △   △   ◄ edge: R.a verifies its two direct children
+          R.a.1 R.a.2
+```
+
+**Every Run reasons only one level down.** `R` does not know `R.a.1` exists — only its
+direct children `R.a / R.b / R.c`; `R.a.1` is `R.a`'s concern. No Run holds a model of
+the whole tree, and **no function ever takes "the tree" as input.** This locality is
+what keeps the model small while depth stays unbounded: local rules at each edge,
+global structure emergent (cascaded-SCADA / VSM recursion, proven in industry).
+
+### Three governors, each enforced locally at the edge
+
+The recursion is kept safe **at each edge**, never by a tree-wide supervisor. Each
+governor is a one-level-local rule; its tree-wide property is the **emergent** sum:
+
+| Governor | Local rule at one edge | Emergent tree-wide property |
+|---|---|---|
+| **budget** | the parent reserves a fixed **slice** for each child; a child spends only within its slice, never a sibling's | "tree budget" = the recursive sum of slices — held by nobody, read by no one |
+| **scope** | a child inherits a **narrowed subset** of the parent's scope; needing more **escalates** | authority only ever shrinks downward — no global scope table |
+| **verification** | the **parent** verifies its **direct** child before accepting | "verified at every level" falls out of every edge doing it |
+
+A child that needs more budget or scope does **not** consult a global ceiling — it
+`report_blocked(needs: 'budget' | 'scope')` to its parent, who re-slices locally (a
+`run_send` amend) or escalates further. **Depth needs no separate cap:** each nesting
+reserves from a finite parent slice, so infinite depth would need infinite budget,
+which local admission already forbids — an explicit depth limit is only a legibility
+soft-stop, not an independent safety mechanism.
 
 ## Non-goals
 
@@ -213,7 +284,7 @@ RunEvent   (one thing that happened inside a Run)                ← unchanged
 | **Message** | Who said what? | exists |
 | **Principal** | Who is the responsibility/identity subject? | exists |
 | **Agent** | Who executes, with what persona/tools? | one-Neva = Neva |
-| **Run** | What did the agent attempt — and, recursively, what did its children attempt? | exists (`AgentRunTrigger` + `parentRunId` lineage + `anchor: AgentRunAnchor`); **enriched here** (`rootRunId` is new) |
+| **Run** | What did the agent attempt — and, recursively, what did its children attempt? | exists (`AgentRunTrigger` + `parentRunId` lineage + `anchor: AgentRunAnchor`); **enriched here** (objective / criteria / scope / budget / dual status — no new lineage field) |
 | **RunEvent** | What happened inside a Run? | exists |
 
 These are the write-model facts of execution + communication; they are **not** the
@@ -260,7 +331,7 @@ view is a rendering of a fact object.
 
 - **Core noun names stay** — no fact-object rename.
 - **The real changes:** **enrich `Run`** (objective + acceptance criteria + scope +
-  budget-slice + `rootRunId` + persistent `disposition` + a second status axis
+  budget-slice + persistent `disposition` + a second status axis
   `objectiveStatus` + the controller behavior on internal nodes); **RENAME the `Agent`
   delegate tool → `spawn`**; rename the owner/parent controls to the uniform
   `run_status` / `run_send` / `run_stop`; **derive then physically remove `kind`** (gated
@@ -371,25 +442,32 @@ Only `verified` is success. A worker that fails verification ends with
 `executionStatus: completed` but is simply not accepted upward — the failure is the
 controller's `objectiveStatus`, never a corrupted execution state.
 
-### Livelock guard — convergence is designed
+### Livelock guard — convergence is designed, locally
 
 Worker↔verifier oscillation (submit → reject → re-spawn → reject …) must not silently
-burn the tree budget. Each verifier rejection yields a **gap-signature** (normalized
-failing criterion + gap). If the same signature recurs for **N consecutive attempts
-with no progress** on a sub-objective, the parent sets that branch `blocked`
-(escalate) instead of re-spawning again. Budget is the backstop; the gap-signature is
-the primary non-convergence exit.
+burn a parent's slice. Each verifier rejection yields a **gap-signature** (normalized
+failing criterion + gap). A parent watches **its own** child's signatures: if the same
+one recurs for **N consecutive attempts with no progress**, the parent sets that branch
+`blocked` (escalate) instead of re-spawning again — a purely local decision, no
+cross-level scan. Budget is the backstop; the gap-signature is the primary
+non-convergence exit.
 
-### Budget is admission control, not a post-hoc fold
+### Budget is local admission control at each edge
 
-Budget (token/time) is a single ceiling **per tree**, enforced as **pre-spend
-admission control**: before spawning any child Run (worker or verifier), the parent
-**reserves** a slice from the tree budget; if the reservation is denied and the tree
-is over ceiling, the branch goes `budget_exhausted` (or `blocked` awaiting
-extension). On completion the reservation is **settled** against real usage.
-Concurrent fan-out competes for one ceiling through the same gate, so parallelism
-cannot overshoot. Independent **runtime hard backstops**, regardless of the loop's own
-accounting: **max wall-clock, max-attempts, max-depth, max-concurrent-children**.
+Budget (token/time) is enforced **per edge, before the spend**: when a parent spawns a
+child Run (worker or verifier), it **reserves a fixed slice of *its own* budget** for
+that child; the child spends only within its slice and sub-reserves from it for any
+children of its own. A child that needs more does not read a global pool — it
+`report_blocked(needs: 'budget')` and the parent re-slices (a `run_send` amend) or
+escalates. If a reservation can't be met, that branch goes `budget_exhausted` (or
+`blocked` awaiting extension); on completion the reservation **settles** against real
+usage. Because each child is bounded by its own slice (not a shared pool), concurrent
+fan-out cannot overshoot — a sibling's idle budget is not borrowable without an
+explicit re-slice. The **root's** slice is the only top-level ceiling; every level below
+is recursive sub-allocation, so the "tree budget" is emergent, not a counter anyone
+reads. Independent **runtime hard backstops**, regardless of the loop's own accounting:
+**max wall-clock, max-attempts, max-concurrent-children** (depth is bounded by budget
+locality — an explicit `max-depth` is only a legibility soft-stop).
 
 ### Resume, not deterministic replay
 
@@ -408,7 +486,8 @@ decision is freshly computed. Neva resumes supervising the persisted root.
   resolved in a fresh turn; an awaited parent may relay.
 - **Scope** is granted at the root, **inherits down the tree** (narrow-only); needing
   more authority escalates (`blocked`).
-- **Budget** is per tree (above).
+- **Budget** is a per-edge slice the parent reserves (above); the tree total is the
+  emergent sum, not a pool any level reads.
 
 ## Tool surface
 
@@ -483,15 +562,13 @@ function, never as "N Nevas".
 + scope + budget + the verifier gate + escalation), never the process — they do not
 ratify which Runs spawn.
 
-**Recursion is the mechanism, kept safe by three governors, not an approval gate:**
-1. **one shared tree budget** — the parent reserves a slice; the subtree folds into the
-   single ceiling, so depth cannot outrun spend;
-2. **scope only narrows** — a child inherits a subset; needing *more* authority
-   **escalates**, never self-grants;
-3. **the parent verifies every child** — completion is never self-declared at any
-   depth.
-A **soft depth limit** keeps the tree legible; the budget (and `max-depth`) is the hard
-backstop.
+**Recursion is the mechanism, kept safe by the three *local* governors (see "Three
+governors, each enforced locally"), not an approval gate.** Each parent reserves a
+budget **slice** per child, grants a **narrowed** scope subset, and **verifies** its
+direct child — all one-level-local rules. The tree-wide guarantees (bounded spend,
+shrinking authority, verified-at-every-level) are the **emergent** sum, with no
+tree-wide supervisor and no owner approval gate. Depth is bounded by budget locality;
+a soft depth limit is legibility only.
 
 ## Engineering contracts
 
@@ -511,12 +588,12 @@ Run {
   provenance               // EXISTING `trigger` (already pure provenance); add no `goal` variant
   disposition              // NEW persistent field: attended | detached — the home for turn↔background
                            //   once `kind` is derived (currently only a `spawn` param / debug `kind`)
-  parentRunId?             // exists today
-  rootRunId?               // NEW (denormalized; derivable from the parent chain), stored + indexed
-                           //   for the hot tree / budget / panel queries; points at the root controller
+  parentRunId?             // exists today; a Run knows only ONE level up. No rootRunId —
+                           //   "everything under root R" is a walk over parentRunId / childRunIds,
+                           //   or a pure denormalized index added later only if that query gets hot
   role                     // controller | worker | verifier — DERIVED from tree position, not stored
   scope                    // capability ∩ scope; inherits down, narrow-only
-  budget { reserved, spent } // tree ceiling; admission-controlled (the root controller holds it)
+  budget { reserved, spent } // this Run's OWN slice; the parent reserves it at spawn (local admission)
   executionStatus          // running | completed | failed | cancelled — EXISTING, unchanged
   objectiveStatus?         // NEW (controller / tracked only): active | verifying | verified
                            //   | blocked | budget_exhausted | stopped; non-null ⟺ tracked
@@ -632,7 +709,7 @@ before the goal loop is layered on. Build-order:
    `disposition: attended | detached` field and **migrate `kind`'s ~17 consumers**
    (delegation/conversation indexing, `reflective` Dream-skip, `turn` debug count) to the
    `provenance + lineage + disposition` derivation, **then remove `kind`**. In the same
-   step: enrich `Run` (objective / criteria / scope / budget; `rootRunId` new field;
+   step: enrich `Run` (objective / criteria / scope / budget;
    `executionStatus` kept + `objectiveStatus` new); `spawn(objective, {criteria, …})` (the
    `Agent`→`spawn` rename + the `context` knob); the `run_status/run_send/run_stop`
    rename (`run_send` carries the amend incl. budget); the precondition-catalog tool
@@ -646,9 +723,10 @@ before the goal loop is layered on. Build-order:
    outcomes. Capping depth/fan-out = 1 gives an early end-to-end verification point for
    the highest-blast capability **inside the single PR** (a safety cushion suggested by
    the gate), before recursion is unlocked.
-3. **Uncap → depth + governors.** Remove the depth/fan-out cap (a worker may itself be a
-   controller — the same code path); recursion to arbitrary depth; scope-narrows-only;
-   shared tree budget folding; a verifier at every level; no owner approval gate.
+3. **Uncap → arbitrary depth.** Remove the depth/fan-out cap (a worker may itself be a
+   controller — the *same edge code*, nothing new); recursion to arbitrary depth, kept
+   safe by the three **local** governors (slice reservation, narrowing scope, parent
+   verifies child) — no tree-wide supervisor, no owner approval gate.
 4. **Delivery / UI** — `/goal` + one-tap "make this a goal"; Neva as the root supervisor
    holding the user's objective; the "tasks" panel renders root Runs (children grouped by
    function label, never "N Nevas"); the four root outcomes notify; steering via
@@ -673,8 +751,8 @@ Genuinely open, all build-time-reversible:
   identity-bearing, dual-status).
 - **One self-similar unit (Run); the parent verifies the child, recursively.**
 - **Controller Runs persist (never re-spawned; their `runId` is the stable identity);
-  only leaf workers re-spawn.** `rootRunId` is a new denormalized field; no
-  `supersedesRunId` / `objectiveGroupId` needed.
+  only leaf workers re-spawn.** Lineage is `parentRunId` (one level up) + `childRunIds`
+  (one level down) only — **no `rootRunId`**, no `supersedesRunId` / `objectiveGroupId`.
 - **Two status axes:** `executionStatus` (existing, untouched) + `objectiveStatus` (new,
   controller/tracked only: `active | verifying | verified | blocked | budget_exhausted |
   stopped`; `active` is the hub state, non-null ⟺ tracked). No overloaded single enum, no
@@ -696,7 +774,7 @@ Genuinely open, all build-time-reversible:
 ## Risks
 
 - **Protocol + prompt surface (A4/A10).** Touches `src/core/types.ts` /
-  `agentEventLog.ts` / `commands.ts` (the `Run` enrichment, `rootRunId`, the dual status
+  `agentEventLog.ts` / `commands.ts` (the `Run` enrichment, the dual status
   axes, `spawn` params, the `run_*` renames incl. `run_send` amend) and the model-facing
   `Agent`→`spawn` rename (tool-name constant + prompt text). Land the interface as the
   first build-order step.
@@ -729,7 +807,7 @@ Result: **no overlap.**
 - [ ] **Protocol & naming interface (first)** — land persistent `disposition: attended |
       detached`; migrate `kind`'s ~17 consumers to `provenance + lineage + disposition`,
       then remove `kind`; enrich `Run` (objective / criteria / scope / budget; `anchor`
-      reused; `rootRunId` new; `executionStatus` kept + `objectiveStatus` new); `provenance`
+      reused; `executionStatus` kept + `objectiveStatus` new); `provenance`
       = the existing `trigger`; derived `role`; `spawn(objective, {criteria, scope?, budget?,
       context?, detach?})` (rename `Agent`→`spawn`); rename controls to `run_status` /
       `run_send` (carries amend incl. budget) / `run_stop`; the precondition-catalog tool layer.
@@ -744,11 +822,13 @@ Result: **no overlap.**
       read-only inspection tools, no actuation; port `continuation.md`; verifier result
       schema → `latestGap`. Root verified by Neva against the user's criteria.
 - [ ] **Livelock guard** — gap-signature; `N` consecutive no-progress repeats → `blocked`.
-- [ ] **Budget** — admission control (reserve before spawn, settle on completion) +
-      runtime hard backstops (wall-clock / max-attempts / max-depth / max-concurrent).
-- [ ] **Uncap → depth + governors** — remove the depth/fan-out cap (a worker may itself be
-      a controller, same code path); recursion to arbitrary depth; scope-narrows-only;
-      shared tree budget folding; a verifier at every level; no owner approval gate.
+- [ ] **Budget** — local admission control at each edge (parent reserves a child's slice
+      before spawn, settles on completion) + runtime hard backstops (wall-clock /
+      max-attempts / max-concurrent; depth is bounded by budget locality).
+- [ ] **Uncap → arbitrary depth** — remove the depth/fan-out cap (a worker may itself be
+      a controller, the *same edge code*); recursion to arbitrary depth, kept safe by the
+      three **local** governors (slice reservation / narrowing scope / parent-verifies-child)
+      — no tree-wide supervisor, no owner approval gate.
 - [ ] **Delivery / UI** — `/goal` + one-tap; Neva as root supervisor; "tasks" panel
       renders root Runs (children by function label); the four root outcomes notify;
       steering via `run_send`. (light + dark.)
