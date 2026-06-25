@@ -429,7 +429,7 @@ a persisted axis.
 |---|---|---|
 | sense | `file_read`, `web_search`, `web_fetch`, `past_chats` | unchanged |
 | mutate doc / local | node + file write family | unchanged (in-scope only) |
-| spawn / manage runs | `spawn(objective, {criteria?, scope?, budget?, context?, detach?})`, `run_status`, `run_send`, `run_stop`, `set_budget` | **`Agent` → `spawn`**; recursion = a Run calls `spawn`; `criteria` present → a verified contract, absent → an unverified single pass; the controls are uniformly **`run_*`** (renamed from `AgentStatus`/`AgentSend`/`AgentStop`, which become `run_status`/`run_send`/`run_stop`); **new:** `set_budget`, the `context` knob, `run_send` objective-amendment semantics |
+| spawn / manage runs | `spawn(objective, {criteria?, scope?, budget?, context?, detach?})`, `run_status`, `run_send`, `run_stop` | **`Agent` → `spawn`**; recursion = a Run calls `spawn`; `criteria` present → a verified contract, absent → an unverified single pass; the controls are uniformly **`run_*`** (renamed from `AgentStatus`/`AgentSend`/`AgentStop`); **new:** the `context` knob + `run_send` amend (objective / criteria / **budget** — `set_budget` folds in here) |
 | run self-management | `request_complete()` (→ parent's verifier) · `report_blocked(reason)` | new; submit / escalate |
 | ask user | `ask_user_question` | unchanged tool; precondition-gated to `attended` |
 | load procedure | `skill` | unchanged |
@@ -446,9 +446,9 @@ is a clean slate. The **verifier Run is runtime-pinned to `none`**; a worker pic
 `'none'`.
 
 Owner/parent controls require **owning the target** (ancestor / same conversation):
-`status` ← `run_status`; `steer` ← `run_send` (a send is an objective-amendment
-event); `cancel`/`abandon` ← `run_stop`; `reassign` = stop a child Run, the parent
-re-spawns; `set_budget` is new.
+`status` ← `run_status`; `steer` / `amend` / `extend budget` ← `run_send` (a send is a
+soft steer or a hard amend of objective / criteria / budget); `cancel`/`abandon` ←
+`run_stop`; `reassign` = stop a child Run, the parent re-spawns.
 
 ## Team formation & recursion — functional blocks, not a cast of selves
 
@@ -581,24 +581,25 @@ run_status(runId: RunId) -> {
   result?: Json,                               // present iff objectiveStatus = verified
   blockedReason?: string,                      // present iff blocked
 }
-run_send(runId: RunId, opts: {                 // steer; an `amend` is an objective-amendment event
-  message?: string,
-  amend?:   { objective?: string, criteria?: string[] },   // bumps criteriaRevision, invalidates verdicts
-}) -> { runId: RunId, objectiveStatus?: ObjectiveStatus }
+run_send(runId: RunId, opts: {                 // steer (soft) OR amend (hard) — one "modify a running tree" verb
+  message?: string,                            // soft steer: inject guidance; does NOT invalidate verdicts
+  amend?:   { objective?: string, criteria?: string[], budget?: { tokens?, wallClockMs? } },
+}) -> { runId: RunId, objectiveStatus?: ObjectiveStatus, budget?: { reserved, spent } }
+  // amend.objective/criteria bump criteriaRevision + invalidate verdicts; amend.budget does NOT
+  // (it is admission-control headroom, not a goalpost). `set_budget` is folded in here.
 run_stop(runId: RunId, opts?: { reason?: string })
   -> { runId: RunId, objectiveStatus: 'stopped' }          // stops the Run and its subtree
-set_budget(runId: RunId, budget: { tokens?: number, wallClockMs?: number })
-  -> { runId: RunId, budget: { reserved: number, spent: number } }
 
 // verifier result (internal — produced by the verifier Run, consumed by the controller)
 VerifierVerdict = { verdict: 'pass' | 'fail', gaps: { signature, criterion, detail }[] }
 ```
 
 **Preconditions** (the catalog filter): `spawn` needs spawn capability (controllers /
-decomposing Runs); `request_complete` / `report_blocked` are visible only on a **non-root
-Run inside a tracked tree**; `run_status` / `run_send` / `run_stop` / `set_budget` require
-**owning the target**; `ask_user_question` requires **`attended`**. The **verifier Run**
-gets none of `spawn` / the write family (sensor ≠ actuator).
+decomposing Runs); `request_complete` / `report_blocked` are visible on **any tracked Run**
+(the root submits to Neva, who verifies against the user's criteria); `run_status` /
+`run_send` / `run_stop` require **owning the target** (Neva over a root; a controller over
+its child); `ask_user_question` requires **`attended`**. The **verifier Run** gets none of
+`spawn` / the write family (sensor ≠ actuator).
 
 ## Theory & prior art (design against these)
 
@@ -628,8 +629,8 @@ before the goal loop is layered on. Build-order:
    step: enrich `Run` (objective / criteria / scope / budget; `rootRunId` new field;
    `executionStatus` kept + `objectiveStatus` new); `spawn(objective, {criteria, …})` (the
    `Agent`→`spawn` rename + the `context` knob); the `run_status/run_send/run_stop`
-   rename; `set_budget`; the precondition-catalog tool layer. (Touches `commands.ts` /
-   `types.ts` / `agentEventLog.ts`.)
+   rename (`run_send` carries the amend incl. budget); the precondition-catalog tool
+   layer. (Touches `commands.ts` / `types.ts` / `agentEventLog.ts`.)
 2. **Control + verifier, capped at depth/fan-out = 1 (early end-to-end point).** Build
    and **verify the whole loop end-to-end at the minimal tree** — root controller → one
    worker → `context:'none'` **verifier Run** (runtime-assembled evidence pack +
@@ -690,7 +691,7 @@ Genuinely open, all build-time-reversible:
 
 - **Protocol + prompt surface (A4/A10).** Touches `src/core/types.ts` /
   `agentEventLog.ts` / `commands.ts` (the `Run` enrichment, `rootRunId`, the dual status
-  axes, `spawn` params, the `run_*` renames, `set_budget`) and the model-facing
+  axes, `spawn` params, the `run_*` renames incl. `run_send` amend) and the model-facing
   `Agent`→`spawn` rename (tool-name constant + prompt text). Land the interface as the
   first build-order step.
 - **Autonomy safety.** A self-recursing, budget-spending tree is the highest-blast
@@ -725,7 +726,7 @@ Result: **no overlap.**
       reused; `rootRunId` new; `executionStatus` kept + `objectiveStatus` new); `provenance`
       = the existing `trigger`; derived `role`; `spawn(objective, {criteria, scope?, budget?,
       context?, detach?})` (rename `Agent`→`spawn`); rename controls to `run_status` /
-      `run_send` / `run_stop`; `set_budget`; the precondition-catalog tool layer.
+      `run_send` (carries amend incl. budget) / `run_stop`; the precondition-catalog tool layer.
 - [ ] **Control + verifier @ depth/fan-out = 1 (early end-to-end)** — leaf worker vs
       persistent controller (runtime-owned supervisor state); controller re-spawns a failed
       worker / re-plans in place on its own failure; the `objectiveStatus` transitions;
