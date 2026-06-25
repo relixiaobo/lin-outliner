@@ -10,6 +10,10 @@ import {
   type AgentId,
   type AgentPersistedContent,
   type AgentRunKind,
+  type AgentObjectiveStatus,
+  type AgentRunBudget,
+  type AgentRunPurpose,
+  type AgentRunScope,
   type AgentRunLogEventType,
   type AgentRunStatus,
 } from '../core/agentEventLog';
@@ -57,6 +61,12 @@ export interface AgentRunLedgerStartInput {
   /** The delegating run; absent for runs spawned outside any run (system-triggered). */
   parentRunId?: string;
   kind?: AgentRunKind;
+  objective?: string;
+  criteria?: string[];
+  objectiveStatus?: AgentObjectiveStatus;
+  purpose?: AgentRunPurpose;
+  scope?: AgentRunScope;
+  budget?: AgentRunBudget;
   actor: AgentActor;
   /** Inherited context (the fork prefix) — appended BEFORE `run.started`, excluded from Dream evidence. */
   contextMessages: readonly AgentMessage[];
@@ -112,6 +122,12 @@ export class AgentRunLedgerWriter {
         agentId: input.agentId,
         anchor: { type: 'conversation', agentId: input.agentId, conversationId: run.conversationId },
         kind: input.kind ?? 'delegation',
+        objective: input.objective,
+        criteria: input.criteria,
+        objectiveStatus: input.objectiveStatus,
+        purpose: input.purpose,
+        scope: input.scope,
+        budget: input.budget,
         trigger: input.parentRunId ? { type: 'parent-run', parentRunId: input.parentRunId } : { type: 'system' },
       }));
       for (const message of input.evidenceMessages) {
@@ -202,7 +218,14 @@ export class AgentRunLedgerWriter {
   async statusChanged(
     runId: string,
     status: AgentRunStatus,
-    options: { actor: AgentActor; errorMessage?: string; agentId: AgentId; parentRunId?: string },
+    options: {
+      actor: AgentActor;
+      errorMessage?: string;
+      agentId: AgentId;
+      parentRunId?: string;
+      objectiveStatus?: AgentObjectiveStatus;
+      budget?: AgentRunBudget;
+    },
   ): Promise<void> {
     const run = this.requireRun(runId);
     await this.enqueue(runId, run, async () => {
@@ -221,6 +244,8 @@ export class AgentRunLedgerWriter {
             actor: options.actor,
             runId,
             errorMessage: options.errorMessage,
+            objectiveStatus: options.objectiveStatus,
+            budget: options.budget,
           });
       await this.options.store().appendRunStreamEvents(run.conversationId, runId, [event]);
     });

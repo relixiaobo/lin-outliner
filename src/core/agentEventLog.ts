@@ -197,6 +197,26 @@ export type AgentConversationEvent =
 
 export type AgentRunKind = 'turn' | 'background' | 'delegation' | 'scheduled' | 'reflective';
 export type AgentRunRetention = 'hot' | 'cold-archived' | 'summarized-only' | 'deleted';
+export type AgentRunPurpose = 'work' | 'verify';
+export type AgentObjectiveStatus = 'active' | 'verifying' | 'verified' | 'blocked' | 'budget_exhausted' | 'stopped';
+export type AgentRunContextMode = 'full' | 'brief' | 'none' | 'fork';
+
+export interface AgentRunBudget {
+  tokens?: number;
+  wallClockMinutes?: number;
+  reservedTokens?: number;
+  spentTokens?: number;
+  startedAt?: number;
+  deadlineAt?: number;
+}
+
+export interface AgentRunScope {
+  capabilities?: string[];
+  resources?: {
+    docs?: string[];
+    paths?: string[];
+  };
+}
 
 export type AgentRunTrigger =
   | { type: 'message'; messageId: string }
@@ -232,6 +252,12 @@ export interface AgentRunMeta {
   parentRunId?: string;
   kind: AgentRunKind;
   status: AgentRunStatus;
+  objective?: string;
+  criteria?: string[];
+  objectiveStatus?: AgentObjectiveStatus;
+  purpose?: AgentRunPurpose;
+  scope?: AgentRunScope;
+  budget?: AgentRunBudget;
   trigger: AgentRunTrigger;
   usage?: Usage;
   fingerprint: AgentRunFingerprint;
@@ -882,6 +908,12 @@ export interface RunStartedEvent extends AgentEventBase {
   agentId?: AgentId;
   anchor?: AgentRunAnchor;
   kind?: AgentRunKind;
+  objective?: string;
+  criteria?: string[];
+  objectiveStatus?: AgentObjectiveStatus;
+  purpose?: AgentRunPurpose;
+  scope?: AgentRunScope;
+  budget?: AgentRunBudget;
   trigger?: AgentRunTrigger;
   fingerprint?: AgentRunFingerprint;
   retention?: AgentRunRetention;
@@ -891,6 +923,8 @@ export interface RunTerminalEvent extends AgentEventBase {
   type: 'run.completed' | 'run.failed' | 'run.cancelled';
   runId: string;
   errorMessage?: string;
+  objectiveStatus?: AgentObjectiveStatus;
+  budget?: AgentRunBudget;
   usage?: Usage;
 }
 
@@ -915,9 +949,15 @@ export interface ChildRunStartedEvent extends AgentEventBase {
   name?: string;
   description: string;
   prompt: string;
+  objective?: string;
+  criteria?: string[];
+  objectiveStatus?: AgentObjectiveStatus;
+  purpose?: AgentRunPurpose;
+  scope?: AgentRunScope;
+  budget?: AgentRunBudget;
   agentType: string;
   /** Always 'fork': a child run is the current agent in an isolated context, never a different agent. */
-  contextMode: 'fork';
+  contextMode: AgentRunContextMode;
   /** Persisted so a cross-restart resume honors the unattended approval policy. */
   unattended?: boolean;
 }
@@ -926,9 +966,12 @@ export interface ChildRunUpdatedEvent extends AgentEventBase {
   type: 'child_run.updated';
   childRunId: string;
   status: AgentRunStatus;
+  objectiveStatus?: AgentObjectiveStatus;
+  budget?: AgentRunBudget;
   completedAt?: number;
   result?: string;
   error?: string;
+  blockedReason?: string;
 }
 
 export interface CompactionCompletedEvent extends AgentEventBase {
@@ -1088,9 +1131,15 @@ export interface DelegationDetail {
   name?: string;
   description: string;
   prompt: string;
+  objective?: string;
+  criteria?: string[];
+  objectiveStatus?: AgentObjectiveStatus;
+  purpose?: AgentRunPurpose;
+  scope?: AgentRunScope;
+  budget?: AgentRunBudget;
   agentType: string;
   /** Always 'fork': a child run is the current agent in an isolated context, never a different agent. */
-  contextMode: 'fork';
+  contextMode: AgentRunContextMode;
   parentRunId?: string;
   executingAgentId: string;
   parentAgentId: string;
@@ -1102,6 +1151,7 @@ export interface DelegationDetail {
   completedAt?: number;
   result?: string;
   error?: string;
+  blockedReason?: string;
   parentToolCallId?: string;
   /**
    * Run with no interactive approval channel (a tool needing approval is denied
@@ -1593,6 +1643,12 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         name: event.name,
         description: event.description,
         prompt: event.prompt,
+        objective: event.objective,
+        criteria: event.criteria,
+        objectiveStatus: event.objectiveStatus,
+        purpose: event.purpose,
+        scope: event.scope,
+        budget: event.budget,
         agentType: event.agentType,
         contextMode: event.contextMode,
         parentRunId: event.parentRunId,
@@ -1616,9 +1672,12 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       // dropping it would hide the resumed run from Dream's running-skip,
       // crash-recovery's interrupted scan, and the projection.
       run.status = event.status;
+      run.objectiveStatus = event.objectiveStatus ?? run.objectiveStatus;
+      run.budget = event.budget ?? run.budget;
       run.completedAt = event.completedAt;
       run.result = event.result;
       run.error = event.error;
+      run.blockedReason = event.blockedReason;
       run.updatedAt = event.createdAt;
       return;
     }

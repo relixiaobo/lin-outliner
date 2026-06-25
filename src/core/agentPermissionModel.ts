@@ -73,6 +73,7 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [
   'agent.delegate.spawn',
   'agent.delegate.status',
   'agent.delegate.send',
+  'agent.delegate.amend',
   'agent.delegate.stop',
   'agent.permission.modify',
   'payment.purchase',
@@ -113,6 +114,7 @@ const READ_ONLY_ACTION_KIND_FLAGS = {
   'agent.delegate.spawn': false,
   'agent.delegate.status': true,
   'agent.delegate.send': false,
+  'agent.delegate.amend': false,
   'agent.delegate.stop': false,
   'agent.permission.modify': false,
   'payment.purchase': false,
@@ -181,6 +183,11 @@ export const AGENT_TOOL_ACTION_KIND_PROFILES = {
   AgentStatus: ['agent.delegate.status'],
   AgentSend: ['agent.delegate.send'],
   AgentStop: ['agent.delegate.stop'],
+  spawn: ['agent.delegate.spawn'],
+  run_status: ['agent.delegate.status'],
+  run_steer: ['agent.delegate.send'],
+  run_amend: ['agent.delegate.amend'],
+  run_stop: ['agent.delegate.stop'],
   skill: ['agent.skill.invoke'],
 } satisfies Record<string, readonly AgentToolActionKind[]>;
 

@@ -141,12 +141,7 @@ export function toolActivityKind(name: string): ToolActivityKind {
 }
 
 export function getToolIcon(toolCall: ToolCall) {
-  if (
-    toolCall.name === 'Agent'
-    || toolCall.name === 'AgentStatus'
-    || toolCall.name === 'AgentSend'
-    || toolCall.name === 'AgentStop'
-  ) return AgentIcon;
+  if (isRunControlTool(toolCall.name)) return AgentIcon;
   if (toolCall.name === 'node_create') return NodeCreateToolIcon;
   if (toolCall.name === 'node_read') return FileTextIcon;
   if (toolCall.name === 'node_edit') return NodeEditToolIcon;
@@ -201,13 +196,14 @@ function withSubject(verb: string, subject: string | null, labels: ToolCallLabel
 
 export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels: ToolCallLabels): string {
   const verbs = labels.verbs;
-  if (toolCall.name === 'Agent') {
-    const subject = pickSubject(toolCall.arguments, 'description', 'agent_type');
+  if (toolCall.name === 'Agent' || toolCall.name === 'spawn') {
+    const subject = pickSubject(toolCall.arguments, 'description', 'objective', 'agent_type');
     return withSubject(verbByStatus(verbs.runChildAgent, status, labels), subject, labels);
   }
-  if (toolCall.name === 'AgentStatus') return verbByStatus(verbs.checkChildAgent, status, labels);
-  if (toolCall.name === 'AgentSend') return verbByStatus(verbs.messageChildAgent, status, labels);
-  if (toolCall.name === 'AgentStop') return verbByStatus(verbs.stopChildRun, status, labels);
+  if (toolCall.name === 'AgentStatus' || toolCall.name === 'run_status') return verbByStatus(verbs.checkChildAgent, status, labels);
+  if (toolCall.name === 'AgentSend' || toolCall.name === 'run_steer') return verbByStatus(verbs.messageChildAgent, status, labels);
+  if (toolCall.name === 'AgentStop' || toolCall.name === 'run_stop') return verbByStatus(verbs.stopChildRun, status, labels);
+  if (toolCall.name === 'run_amend') return verbByStatus(verbs.messageChildAgent, status, labels);
   const args = toolCall.arguments;
   if (toolCall.name === 'recall') {
     return withSubject(verbByStatus(verbs.recallMemory, status, labels), pickSubject(args, 'query'), labels);
@@ -264,6 +260,18 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
     status,
     labels,
   );
+}
+
+function isRunControlTool(toolName: string): boolean {
+  return toolName === 'Agent'
+    || toolName === 'AgentStatus'
+    || toolName === 'AgentSend'
+    || toolName === 'AgentStop'
+    || toolName === 'spawn'
+    || toolName === 'run_status'
+    || toolName === 'run_steer'
+    || toolName === 'run_amend'
+    || toolName === 'run_stop';
 }
 
 export function childRunToolStatus(childRun: AgentRenderChildRunEntity): ToolStatus {

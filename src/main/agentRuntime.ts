@@ -1233,6 +1233,13 @@ export class AgentRuntime {
         insertText: '/compact ',
       });
     }
+    commands.push({
+      id: 'goal',
+      kind: 'runtime',
+      label: '/goal',
+      description: 'Start a persistent goal run',
+      insertText: '/goal ',
+    });
 
     if (runtimeSettings.slashSkillsEnabled) {
       const skills = await conversation.skillRuntime.listUserInvocableSkills();
@@ -1908,6 +1915,28 @@ export class AgentRuntime {
         outlinerContext,
         userViewReminderText,
       ]);
+      const goalCommand = attachments.length === 0 ? parseGoalSlashCommand(messageText) : null;
+      if (goalCommand) {
+        const prompt = buildUserPromptMessage(messageText, [], {
+          outlinerContext,
+          userViewContextReminder: userViewReminderText,
+          referencedFilesReminder: null,
+          skillListingReminder: null,
+          agentListingReminder: null,
+        }, now);
+        await this.appendUserPromptEvent(conversationId, conversation, prompt);
+        userViewContextReminder.commit();
+        await conversation.delegationRuntime.invokeAgent({
+          objective: goalCommand.objective,
+          criteria: goalCommand.criteria,
+          context: 'brief',
+          detach: true,
+          description: truncateForGoalDescription(goalCommand.objective),
+          budget: { wallClockMinutes: 30 },
+          name: goalCommand.name,
+        });
+        return;
+      }
       const userSkillPrompt = attachments.length === 0 && runtimeSettings.slashSkillsEnabled
         ? await createUserSkillPrompt(conversation.skillRuntime, messageText, turnContextReminder)
         : null;
@@ -2822,6 +2851,12 @@ export class AgentRuntime {
       runId: snapshot.id,
       agentId: snapshot.executingAgentId as AgentId,
       parentRunId: snapshot.parentRunId,
+      objective: snapshot.objective,
+      criteria: snapshot.criteria,
+      objectiveStatus: snapshot.objectiveStatus,
+      purpose: snapshot.purpose,
+      scope: snapshot.scope,
+      budget: snapshot.budget,
       actor,
       contextMessages: seed.contextMessages,
       evidenceMessages: seed.evidenceMessages,
@@ -2839,6 +2874,12 @@ export class AgentRuntime {
       name: snapshot.name,
       description: snapshot.description,
       prompt: snapshot.prompt,
+      objective: snapshot.objective,
+      criteria: snapshot.criteria,
+      objectiveStatus: snapshot.objectiveStatus,
+      purpose: snapshot.purpose,
+      scope: snapshot.scope,
+      budget: snapshot.budget,
       agentType: snapshot.agentType,
       contextMode: snapshot.contextMode,
       unattended: snapshot.unattended,
@@ -2856,15 +2897,20 @@ export class AgentRuntime {
       actor: this.childRunActor(snapshot),
       childRunId: snapshot.id,
       status: snapshot.status,
+      objectiveStatus: snapshot.objectiveStatus,
+      budget: snapshot.budget,
       completedAt: snapshot.completedAt,
       result: snapshot.result,
       error: snapshot.error,
+      blockedReason: snapshot.blockedReason,
     }]);
     await this.runLedger.statusChanged(snapshot.id, snapshot.status, {
       actor: this.childRunActor(snapshot),
       errorMessage: snapshot.error,
       agentId: snapshot.executingAgentId as AgentId,
       parentRunId: snapshot.parentRunId,
+      objectiveStatus: snapshot.objectiveStatus,
+      budget: snapshot.budget,
     });
     this.emitProjection(conversationId, 'child_run.updated', 'coalesce');
   }
@@ -8039,6 +8085,36 @@ function slashCommandDescription(displayName: string | undefined, description: s
   const detail = description.split('\n').map((line) => line.trim()).find(Boolean) ?? '';
   if (!displayName || displayName === detail) return detail;
   return detail ? `${displayName} - ${detail}` : displayName;
+}
+
+function parseGoalSlashCommand(input: string): { objective: string; criteria: string[]; name?: string } | null {
+  const match = /^\/goal(?:\s+([\s\S]*))?$/i.exec(input.trim());
+  if (!match) return null;
+  const body = (match[1] ?? '').trim();
+  if (!body) throw new Error('/goal requires an objective.');
+  const nameMatch = /\s--name\s+([^\n]+)$/i.exec(body);
+  const bodyWithoutName = nameMatch ? body.slice(0, nameMatch.index).trim() : body;
+  const criteriaIndex = bodyWithoutName.search(/\s--criteria\s+/i);
+  const objective = criteriaIndex >= 0
+    ? bodyWithoutName.slice(0, criteriaIndex).trim()
+    : bodyWithoutName;
+  const criteriaText = criteriaIndex >= 0
+    ? bodyWithoutName.slice(criteriaIndex).replace(/^\s*--criteria\s+/i, '').trim()
+    : '';
+  const criteria = criteriaText
+    ? criteriaText.split(/\s*(?:\n+|;\s*)/).map((item) => item.replace(/^[-*\d.)\s]+/, '').trim()).filter(Boolean)
+    : [objective];
+  if (!objective) throw new Error('/goal requires an objective before --criteria.');
+  return {
+    objective,
+    criteria,
+    name: nameMatch?.[1]?.trim(),
+  };
+}
+
+function truncateForGoalDescription(objective: string): string {
+  const compact = objective.replace(/\s+/g, ' ').trim();
+  return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
 }
 
 function rendererProjectionEventFromDomain(event: RendererProjectionDomainEvent): AgentRuntimeEvent {

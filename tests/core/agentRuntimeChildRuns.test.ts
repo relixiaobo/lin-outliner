@@ -243,9 +243,10 @@ describe('agent runtime childRuns', () => {
       [
         // Parent forks its OWN context (no agent_type) — the fork runs AS the parent agent.
         fauxAssistantMessage([
-          fauxToolCall('Agent', {
+          fauxToolCall('spawn', {
             description: 'fork to inspect config',
-            prompt: 'Inspect the local config.',
+            objective: 'Inspect the local config.',
+            verify: false,
           }, { id: 'tool-agent-fork' }),
         ], { stopReason: 'toolUse' }),
         // The fork hits a soft-blocked capability.
@@ -314,9 +315,10 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('Agent', {
+          fauxToolCall('spawn', {
             description: 'fork check',
-            prompt: 'Inspect inherited context.',
+            objective: 'Inspect inherited context.',
+            verify: false,
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
         (context) => {
@@ -366,9 +368,10 @@ describe('agent runtime childRuns', () => {
       }
       if (text.includes('Spawn a fork') && !text.includes('tool-agent-fork-owner')) {
         return fauxAssistantMessage([
-          fauxToolCall('Agent', {
+          fauxToolCall('spawn', {
             description: 'fork owned by Neva',
-            prompt: 'Do the fork work.',
+            objective: 'Do the fork work.',
+            verify: false,
             run_in_background: true,
             name: 'fork-owner',
           }, { id: 'tool-agent-fork-owner' }),
@@ -414,9 +417,10 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('Agent', {
+          fauxToolCall('spawn', {
             description: 'large output',
-            prompt: 'Run a large-output tool call, then continue.',
+            objective: 'Run a large-output tool call, then continue.',
+            verify: false,
           }, { id: 'tool-agent-large-output' }),
         ], { stopReason: 'toolUse' }),
         (context) => {
@@ -473,9 +477,10 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('Agent', {
+          fauxToolCall('spawn', {
             description: 'compact sidechain',
-            prompt: 'Run large tool output, then continue after compaction.',
+            objective: 'Run large tool output, then continue after compaction.',
+            verify: false,
           }, { id: 'tool-agent-compact-output' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage(
@@ -549,9 +554,10 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('Agent', {
+          fauxToolCall('spawn', {
             description: 'reactive compact',
-            prompt: 'Run until a context error, then recover.',
+            objective: 'Run until a context error, then recover.',
+            verify: false,
           }, { id: 'tool-agent-reactive-compact' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage([], {
@@ -604,7 +610,128 @@ describe('agent runtime childRuns', () => {
     expect(retriedContext).toContain('Reactive child run compact summary.');
   });
 
-  test('tracks a background child run through AgentStatus', async () => {
+  test('verifies a child run result and retries once on verifier failure', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-verifier-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-verifier-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const childContexts: string[] = [];
+    const verifierContexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('spawn', {
+            description: 'verified child',
+            objective: 'Produce a verified child result.',
+            criteria: ['The final result must include the phrase verified result.'],
+          }, { id: 'tool-agent-verified-child' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage([
+          fauxToolCall('file_write', {
+            file_path: path.join(localRoot, 'verified-child.txt'),
+            content: 'first draft',
+          }, { id: 'tool-file-write-verified-child' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('first incomplete result')),
+        (context) => {
+          verifierContexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('{"verdict":"fail","gap":"missing required phrase"}'));
+        },
+        (context) => {
+          childContexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('verified result'));
+        },
+        fauxAssistantMessage(fauxText('{"verdict":"pass","gap":""}')),
+        fauxAssistantMessage(fauxText('Parent accepted verified child.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn verified child work.', sink);
+
+    expect(script.pendingCount()).toBe(0);
+    expect(childContexts.join('\n')).toContain('missing required phrase');
+    expect(verifierContexts.join('\n')).toContain('File changes');
+    expect(verifierContexts.join('\n')).toContain('verified-child.txt');
+    expect(verifierContexts.join('\n')).toContain('Tool trace');
+    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
+    const childRuns = Object.values(replay.childRuns);
+    const worker = childRuns.find((run) => run.description === 'verified child');
+    const verifier = childRuns.find((run) => run.purpose === 'verify');
+    expect(worker?.objectiveStatus).toBe('verified');
+    expect(worker?.result).toBe('verified result');
+    expect(verifier?.contextMode).toBe('none');
+  });
+
+  test('/goal starts a detached child run with persisted objective and criteria', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-goal-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-goal-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage(fauxText('Goal run result.')),
+        fauxAssistantMessage(fauxText('{"verdict":"pass","gap":""}')),
+        fauxAssistantMessage(fauxText('Parent consumed goal notification.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(
+      conversation.conversationId,
+      '/goal Write the release note --criteria Mention the verified result; Mention any blockers',
+    );
+    await waitFor(() => script.pendingCount() === 0);
+
+    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
+    const goalRun = Object.values(replay.childRuns).find((run) => run.objective === 'Write the release note');
+    expect(goalRun).toMatchObject({
+      description: 'Write the release note',
+      contextMode: 'brief',
+      objective: 'Write the release note',
+      criteria: ['Mention the verified result', 'Mention any blockers'],
+      objectiveStatus: 'verified',
+      status: 'completed',
+    });
+  });
+
+  test('tracks a background child run through run_status', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-background-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-background-data-'));
     roots.push(localRoot, dataRoot);
@@ -613,16 +740,17 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('Agent', {
+          fauxToolCall('spawn', {
             description: 'background check',
-            prompt: 'Run in background.',
+            objective: 'Run in background.',
+            verify: false,
             run_in_background: true,
             name: 'bg-check',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage(fauxText('Background result.')),
         fauxAssistantMessage([
-          fauxToolCall('AgentStatus', {
+          fauxToolCall('run_status', {
             name: 'bg-check',
             wait: true,
           }, { id: 'tool-agent-status-1' }),
@@ -670,9 +798,10 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('Agent', {
+          fauxToolCall('spawn', {
             description: 'background notify',
-            prompt: 'Run in background.',
+            objective: 'Run in background.',
+            verify: false,
             run_in_background: true,
             name: 'bg-notify',
           }, { id: 'tool-agent-1' }),
@@ -751,9 +880,10 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('Agent', {
+          fauxToolCall('spawn', {
             description: 'background command',
-            prompt: 'Run in background.',
+            objective: 'Run in background.',
+            verify: false,
             run_in_background: true,
             name: 'command-bg',
           }, { id: 'tool-agent-1' }),
@@ -820,9 +950,10 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('Agent', {
+          fauxToolCall('spawn', {
             description: 'stoppable background',
-            prompt: 'Run until stopped.',
+            objective: 'Run until stopped.',
+            verify: false,
             run_in_background: true,
             name: 'stoppable-bg',
           }, { id: 'tool-agent-1' }),
@@ -1007,16 +1138,17 @@ describe('agent runtime childRuns', () => {
     const firstScript = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('Agent', {
+          fauxToolCall('spawn', {
             description: 'background restore',
-            prompt: 'Run in background.',
+            objective: 'Run in background.',
+            verify: false,
             run_in_background: true,
             name: 'restored-bg',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage(fauxText('Restored background result.')),
         fauxAssistantMessage([
-          fauxToolCall('AgentStatus', {
+          fauxToolCall('run_status', {
             name: 'restored-bg',
             wait: true,
           }, { id: 'tool-agent-status-1' }),
@@ -1059,7 +1191,7 @@ describe('agent runtime childRuns', () => {
     const secondScript = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('AgentStatus', {
+          fauxToolCall('run_status', {
             name: 'restored-bg',
             wait: true,
           }, { id: 'tool-agent-status-restored' }),
@@ -1119,9 +1251,10 @@ describe('agent runtime childRuns', () => {
     const firstScript = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('Agent', {
+          fauxToolCall('spawn', {
             description: 'interruptible background',
-            prompt: 'Run until the app dies.',
+            objective: 'Run until the app dies.',
+            verify: false,
             run_in_background: true,
             name: 'interrupted-bg',
           }, { id: 'tool-agent-1' }),
@@ -1215,9 +1348,10 @@ describe('agent runtime childRuns', () => {
     const firstScript = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('Agent', {
+          fauxToolCall('spawn', {
             description: 'background seed',
-            prompt: 'Run in background.',
+            objective: 'Run in background.',
+            verify: false,
             run_in_background: true,
             name: 'seed-bg',
           }, { id: 'tool-agent-1' }),
@@ -1343,9 +1477,10 @@ describe('agent runtime childRuns', () => {
       }
       if (text.includes('Spawn a child') && !text.includes('tool-agent-1')) {
         return fauxAssistantMessage([
-          fauxToolCall('Agent', {
+          fauxToolCall('spawn', {
             description: 'completes then fails on resume',
-            prompt: 'Do the first pass.',
+            objective: 'Do the first pass.',
+            verify: false,
             run_in_background: true,
             name: 'resume-fail',
           }, { id: 'tool-agent-1' }),
@@ -1414,9 +1549,10 @@ describe('agent runtime childRuns', () => {
       }
       if (text.includes('Spawn a child') && !text.includes('tool-agent-1')) {
         return fauxAssistantMessage([
-          fauxToolCall('Agent', {
+          fauxToolCall('spawn', {
             description: 'completes then is stopped on resume',
-            prompt: 'Do the first pass.',
+            objective: 'Do the first pass.',
+            verify: false,
             run_in_background: true,
             name: 'resume-stop',
           }, { id: 'tool-agent-1' }),

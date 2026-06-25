@@ -7,9 +7,23 @@ import {
   coerceString,
   parsePositiveInteger,
 } from '../core/agentMarkdown';
-import type { AgentMessage, AgentChildRunActionResult, AgentChildRunNodeChanges } from '../core/agentTypes';
+import type {
+  AgentMessage,
+  AgentChildRunActionResult,
+  AgentChildRunFileChanges,
+  AgentChildRunNodeChanges,
+} from '../core/agentTypes';
 import { systemReminder } from '../core/agentAttachments';
-import type { AgentChildRunRecord, DelegationDetail, AgentPayloadRef } from '../core/agentEventLog';
+import type {
+  AgentChildRunRecord,
+  AgentRunContextMode,
+  AgentObjectiveStatus,
+  AgentRunBudget,
+  AgentRunPurpose,
+  AgentRunScope,
+  DelegationDetail,
+  AgentPayloadRef,
+} from '../core/agentEventLog';
 import type { ErrorReport } from '../core/errorObservability';
 import type { AgentPermissionMode, AgentReasoningLevel, AgentRuntimeSettings, AgentDefinition } from '../core/types';
 import { normalizeAgentToolNames } from './agentToolRules';
@@ -46,17 +60,18 @@ import {
 } from './agentDelegationIdentity';
 import { readOnlyAgentToolNames } from '../core/agentPermissionModel';
 
-export const AGENT_DELEGATE_TOOL_NAME = 'Agent';
-export const AGENT_STATUS_TOOL_NAME = 'AgentStatus';
-export const AGENT_SEND_TOOL_NAME = 'AgentSend';
-export const AGENT_STOP_TOOL_NAME = 'AgentStop';
+export const AGENT_DELEGATE_TOOL_NAME = 'spawn';
+export const AGENT_STATUS_TOOL_NAME = 'run_status';
+export const AGENT_SEND_TOOL_NAME = 'run_steer';
+export const AGENT_AMEND_TOOL_NAME = 'run_amend';
+export const AGENT_STOP_TOOL_NAME = 'run_stop';
 
 const AGENT_LISTING_CONTEXT_PERCENT = 0.01;
 const CHARS_PER_TOKEN = 4;
 const DEFAULT_AGENT_LISTING_CHAR_BUDGET = 8_000;
 const MAX_LISTING_DESCRIPTION_CHARS = 250;
 const MAX_CONCURRENT_CHILD_RUNS = 4;
-const DEFAULT_MAX_DELEGATION_DEPTH = 3;
+const DEFAULT_MAX_DELEGATION_DEPTH = 12;
 const FORK_AGENT_TYPE = 'fork';
 const FORK_BOILERPLATE_TAG = 'lin-fork-child';
 const FORK_PLACEHOLDER_RESULT = 'Fork started - processing in background.';
@@ -68,22 +83,74 @@ const MAX_CHILD_RUN_AUTO_COMPACT_FAILURES = 3;
 const CHILD_RUN_POST_COMPACT_MAX_FILES_TO_RESTORE = 5;
 const CHILD_RUN_POST_COMPACT_MAX_CHARS_PER_FILE = 20_000;
 const CHILD_RUN_POST_COMPACT_TOTAL_RESTORED_FILE_CHARS = 200_000;
+const DEFAULT_VERIFIER_RETRY_LIMIT = 2;
+const DEFAULT_CHILD_WALL_CLOCK_MINUTES = 30;
+const DEFAULT_VERIFIER_LIVELOCK_REPEAT_LIMIT = 2;
+const MAX_RECORDED_TOOL_TRACE_ENTRIES = 40;
 
 const AGENT_TOOL_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
-  required: ['description', 'prompt'],
+  required: ['objective'],
   properties: {
+    objective: {
+      type: 'string',
+      minLength: 1,
+      description: 'The objective for the new Run to pursue. This is the work, not the acceptance criteria.',
+    },
+    criteria: {
+      type: 'array',
+      items: { type: 'string', minLength: 1 },
+      description: 'Independent acceptance criteria the parent will verify. Required unless verify is false.',
+    },
+    verify: {
+      type: 'boolean',
+      description: 'Defaults to true. Set false only for an explicitly unverified throwaway run.',
+    },
+    scope: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        capabilities: { type: 'array', items: { type: 'string', minLength: 1 } },
+        resources: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            docs: { type: 'array', items: { type: 'string', minLength: 1 } },
+            paths: { type: 'array', items: { type: 'string', minLength: 1 } },
+          },
+        },
+      },
+      description: 'Optional narrowed capability/resource scope. It cannot widen the caller.',
+    },
+    budget: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tokens: { type: 'integer', minimum: 1 },
+        wallClockMinutes: { type: 'integer', minimum: 1 },
+      },
+      description: 'Optional budget slice. Detached root goals should provide a ceiling.',
+    },
+    context: {
+      type: 'string',
+      enum: ['full', 'brief', 'none'],
+      description: 'How much parent context the Run receives. Verifiers are always none.',
+    },
+    detach: {
+      type: 'boolean',
+      description: 'Run past the current turn and notify on outcome.',
+    },
     description: {
       type: 'string',
       minLength: 1,
       maxLength: 200,
-      description: 'A short 3-5 word description of the task.',
+      description: 'Optional short 3-5 word description for the task panel.',
     },
     prompt: {
       type: 'string',
       minLength: 1,
-      description: 'The task for the agent to perform.',
+      description: 'Legacy alias for objective. Prefer objective.',
     },
     model: {
       type: 'string',
@@ -92,7 +159,7 @@ const AGENT_TOOL_PARAMETERS = {
     },
     run_in_background: {
       type: 'boolean',
-      description: 'Set to true to run this agent in the background. Use AgentStatus, AgentSend, or AgentStop with the returned agent_id.',
+      description: 'Legacy alias for detach.',
     },
     name: {
       type: 'string',
@@ -107,8 +174,9 @@ const AGENT_STATUS_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    agent_id: { type: 'string', minLength: 1, description: 'The agent id returned by Agent.' },
-    name: { type: 'string', minLength: 1, description: 'The same-session agent name passed to Agent.' },
+    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn.' },
+    agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
+    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn.' },
     wait: { type: 'boolean', description: 'If true, wait briefly for a running background agent to finish.' },
     timeout_ms: { type: 'integer', minimum: 1, maximum: 120000, description: 'Maximum wait time when wait is true. Default 30000.' },
   },
@@ -119,9 +187,10 @@ const AGENT_SEND_PARAMETERS = {
   additionalProperties: false,
   required: ['message'],
   properties: {
-    agent_id: { type: 'string', minLength: 1, description: 'The agent id returned by Agent.' },
-    name: { type: 'string', minLength: 1, description: 'The same-session agent name passed to Agent.' },
-    message: { type: 'string', minLength: 1, description: 'Message to send to the existing background agent.' },
+    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn.' },
+    agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
+    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn.' },
+    message: { type: 'string', minLength: 1, description: 'Soft steering message to send to the existing background run.' },
   },
 };
 
@@ -129,8 +198,28 @@ const AGENT_STOP_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    agent_id: { type: 'string', minLength: 1, description: 'The agent id returned by Agent.' },
-    name: { type: 'string', minLength: 1, description: 'The same-session agent name passed to Agent.' },
+    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn.' },
+    agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
+    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn.' },
+  },
+};
+
+const AGENT_AMEND_PARAMETERS = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['changes'],
+  properties: {
+    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn.' },
+    agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
+    changes: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        objective: { type: 'string', minLength: 1 },
+        criteria: { type: 'array', items: { type: 'string', minLength: 1 } },
+        budget: AGENT_TOOL_PARAMETERS.properties.budget,
+      },
+    },
   },
 };
 
@@ -278,11 +367,17 @@ interface DelegationRunState extends DelegationDetail {
   detached: boolean;
   terminalNotificationSent: boolean;
   turnCount: number;
+  verify: boolean;
+  verificationAttempts: number;
+  verifierRunIds: string[];
   /** Set when a 'completed' run was actually cut off (maxTurns / unresolved overflow). */
   incomplete?: boolean;
   preapprovedToolRules?: string[];
   toolResultBudgetState: ToolResultBudgetState;
   nodeChanges: AgentChildRunNodeChanges;
+  fileChanges: AgentChildRunFileChanges;
+  toolTrace: AgentChildRunToolTraceEntry[];
+  verifierGapSignatures: string[];
   autoCompactConsecutiveFailures: number;
   autoCompactInProgress: boolean;
   skillRuntime?: AgentSkillRuntime;
@@ -290,6 +385,13 @@ interface DelegationRunState extends DelegationDetail {
 }
 
 type RunningSlotReservation = () => void;
+
+interface AgentChildRunToolTraceEntry {
+  toolName: string;
+  isError: boolean;
+  status?: string;
+  summary?: string;
+}
 
 /**
  * The IPC-facing view of a delegated run — the {@link DelegationDetail} verbatim
@@ -299,14 +401,23 @@ type RunningSlotReservation = () => void;
 export type AgentChildRunSnapshot = DelegationDetail;
 
 interface AgentToolParams {
+  objective: string;
+  criteria?: string[];
+  verify: boolean;
   description: string;
   prompt: string;
+  purpose: AgentRunPurpose;
+  scope?: AgentRunScope;
+  budget?: AgentRunBudget;
+  context: AgentRunContextMode;
+  detach?: boolean;
   model?: string;
   effort?: string;
   run_in_background?: boolean;
   name?: string;
   allowedTools?: string[];
   preapprovedToolRules?: string[];
+  parentRunId?: string;
   /**
    * Run with no interactive approval channel: a tool needing approval is denied
    * (and surfaced) instead of waiting for a human. Set for unattended scheduled
@@ -449,8 +560,14 @@ export class AgentDelegationRuntime {
         detached: false,
         terminalNotificationSent: true,
         turnCount: 0,
+        verify: false,
+        verificationAttempts: 0,
+        verifierRunIds: [],
         toolResultBudgetState: createToolResultBudgetState(),
         nodeChanges: {},
+        fileChanges: {},
+        toolTrace: [],
+        verifierGapSignatures: [],
         autoCompactConsecutiveFailures: 0,
         autoCompactInProgress: false,
       };
@@ -478,8 +595,13 @@ export class AgentDelegationRuntime {
     const releaseStartupSlot = this.reserveRunningSlot();
     try {
       return await this.startAgent({
+        objective: input.renderedContent,
+        criteria: undefined,
+        verify: false,
         description: compactInlineText(input.description) || `skill ${input.skillName}`,
         prompt: input.renderedContent,
+        purpose: 'work',
+        context: 'none',
         model: input.model,
         effort: input.effort,
         run_in_background: false,
@@ -533,7 +655,9 @@ export class AgentDelegationRuntime {
       // being stranded as `running` with no agent and its result wiped.
       await this.ensureLiveAgent(run);
       run.status = 'running';
+      run.objectiveStatus = 'active';
       run.error = undefined;
+      run.blockedReason = undefined;
       // Clear the prior terminal's salvaged/completed result so a resumed run
       // that stops or fails again cannot surface the previous run's stale output.
       run.result = undefined;
@@ -555,11 +679,34 @@ export class AgentDelegationRuntime {
     }
   }
 
+  async amend(rawParams: unknown): Promise<AgentDelegateToolData> {
+    const params = normalizeAmendParams(rawParams);
+    const run = this.resolveRun({ agent_id: params.runId });
+    if (params.changes.objective !== undefined) {
+      run.objective = params.changes.objective;
+      run.prompt = buildObjectivePrompt(run.objective, run.criteria);
+      run.description = compactInlineText(run.objective).slice(0, 200) || run.description;
+    }
+    if (params.changes.criteria !== undefined) run.criteria = params.changes.criteria;
+    if (params.changes.budget !== undefined) {
+      run.budget = normalizeRunBudget(params.changes.budget, run.budget, Date.now());
+    }
+    run.objectiveStatus = 'active';
+    run.blockedReason = undefined;
+    run.updatedAt = Date.now();
+    await this.host.childRunStatusChanged(snapshotRun(run));
+    return {
+      ...runToToolData(run),
+      instructions: 'Run objective metadata was amended. Existing verifier conclusions are invalidated; use run_steer to provide execution guidance if needed.',
+    };
+  }
+
   async stop(rawParams: unknown): Promise<AgentDelegateToolData> {
     const params = normalizeRunSelector(rawParams);
     const run = this.resolveRun(params);
     if (run.status === 'running') {
       run.status = 'cancelled';
+      run.objectiveStatus = 'stopped';
       run.completedAt = Date.now();
       run.updatedAt = run.completedAt;
       // Salvage whatever the CURRENT live span produced before we abort, so the
@@ -589,12 +736,10 @@ export class AgentDelegationRuntime {
     signal?: AbortSignal,
     parentToolCallId?: string,
   ): Promise<AgentDelegateToolData> {
-    // The one-Neva invariant: the agent tool is fork-only — a fork is the current
-    // agent (Neva) working in an isolated context, never a second agent.
-    const contextMode = 'fork';
-    const definition = restrictAgentDefinitionTools(createForkAgentDefinition(), params.allowedTools);
+    const contextMode = params.context;
+    const scopedAllowedTools = scopedAllowedToolNames(params.allowedTools, params.scope);
+    const definition = restrictAgentDefinitionTools(createForkAgentDefinition(), scopedAllowedTools);
 
-    this.assertCanFork();
     this.assertCanDescend(definition.name);
     const name = params.name?.trim();
     if (name && this.names.has(name)) throw new Error(`Agent name is already in use in this session: ${name}`);
@@ -630,12 +775,13 @@ export class AgentDelegationRuntime {
     // prefix lands BEFORE `run.started` and is excluded from Dream evidence; the
     // fork directive lands after it — the boundary `dreamEvidenceStartMessageIndex`
     // expresses positionally.
-    const contextMessages = buildForkContextMessages(this.host.getParentMessages());
-    const evidenceMessages = [createHiddenUserMessage(buildForkDirective(params.prompt))];
+    const contextMessages = buildRunContextMessages(this.host.getParentMessages(), contextMode);
+    const evidenceMessages = [createHiddenUserMessage(buildRunDirective(params))];
     const promptMessages = [...contextMessages, ...evidenceMessages];
 
-    const background = params.run_in_background === true || definition.background === true;
+    const background = params.detach === true || params.run_in_background === true || definition.background === true;
     const now = Date.now();
+    const budget = normalizeRunBudget(params.budget, undefined, now);
     const ledgerSeededMessages = new WeakSet<AgentMessage>();
     for (const message of promptMessages) ledgerSeededMessages.add(message);
     run = {
@@ -643,12 +789,18 @@ export class AgentDelegationRuntime {
       name,
       description: params.description,
       prompt: params.prompt,
+      objective: params.objective,
+      criteria: params.criteria,
+      objectiveStatus: params.verify ? 'active' : undefined,
+      purpose: params.purpose,
+      scope: params.scope,
+      budget,
       agentType: definition.name,
       contextMode,
       definition,
       executingAgentId,
       parentAgentId,
-      parentRunId: this.host.getActiveRunId() ?? undefined,
+      parentRunId: params.parentRunId ?? this.host.getActiveRunId() ?? undefined,
       memoryOwnerAgentId,
       memoryOriginWorkspace,
       status: 'running',
@@ -662,11 +814,17 @@ export class AgentDelegationRuntime {
       detached: background,
       terminalNotificationSent: false,
       turnCount: 0,
+      verify: params.verify,
+      verificationAttempts: 0,
+      verifierRunIds: [],
       parentToolCallId,
       preapprovedToolRules: params.preapprovedToolRules,
       unattended: params.unattended,
       toolResultBudgetState: createToolResultBudgetState(),
       nodeChanges: {},
+      fileChanges: {},
+      toolTrace: [],
+      verifierGapSignatures: [],
       autoCompactConsecutiveFailures: 0,
       autoCompactInProgress: false,
       skillRuntime,
@@ -684,7 +842,7 @@ export class AgentDelegationRuntime {
       return {
         ...runToToolData(run),
         status: 'async_launched',
-        instructions: `The agent is running in the background. Tenon will notify you automatically when it finishes. Use ${AGENT_STATUS_TOOL_NAME} with agent_id "${run.id}" only when you need an explicit progress check, ${AGENT_SEND_TOOL_NAME} to continue it, or ${AGENT_STOP_TOOL_NAME} to stop it.`,
+        instructions: `The run is running in the background. Tenon will notify you automatically when it finishes. Use ${AGENT_STATUS_TOOL_NAME} with agent_id "${run.id}" only when you need an explicit progress check, ${AGENT_SEND_TOOL_NAME} to steer it, ${AGENT_AMEND_TOOL_NAME} to change objective/criteria/budget, or ${AGENT_STOP_TOOL_NAME} to stop it.`,
       };
     }
 
@@ -862,12 +1020,36 @@ export class AgentDelegationRuntime {
     if (!run.agent) throw new Error(`Agent ${run.id} is not live in this process.`);
     const agent = run.agent;
     const abort = () => agent.abort();
+    let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+    const budgetDelayMs = remainingBudgetMs(run);
     if (signal && !detached) {
       if (signal.aborted) abort();
       signal.addEventListener('abort', abort, { once: true });
     }
+    if (budgetDelayMs !== null) {
+      if (budgetDelayMs <= 0) {
+        run.status = 'failed';
+        run.objectiveStatus = 'budget_exhausted';
+        run.error = 'Run budget exhausted before execution could start.';
+        run.blockedReason = run.error;
+        run.completedAt = Date.now();
+        run.updatedAt = run.completedAt;
+        agent.abort();
+      } else {
+        budgetTimer = setTimeout(() => {
+          if (run.agent !== agent || run.status !== 'running') return;
+          run.status = 'failed';
+          run.objectiveStatus = 'budget_exhausted';
+          run.error = 'Run wall-clock budget exhausted.';
+          run.blockedReason = run.error;
+          run.completedAt = Date.now();
+          run.updatedAt = run.completedAt;
+          agent.abort();
+        }, budgetDelayMs);
+      }
+    }
     try {
-      await agent.prompt(messages);
+      if (run.status === 'running') await agent.prompt(messages);
       if (run.agent !== agent) return;
       const terminalAssistant = lastAssistantMessage(agent.state.messages as AgentMessage[]);
       if (terminalAssistant && isContextOverflow(terminalAssistant, agent.state.model.contextWindow)) {
@@ -877,7 +1059,7 @@ export class AgentDelegationRuntime {
           if (run.agent !== agent) return;
         }
       }
-      if (run.status !== 'cancelled') {
+      if (run.status === 'running') {
         const errorMessage = agent.state.errorMessage;
         if (errorMessage) {
           run.status = 'failed';
@@ -900,21 +1082,112 @@ export class AgentDelegationRuntime {
         run.completedAt = Date.now();
         run.updatedAt = run.completedAt;
       }
+      if (run.agent === agent && run.status === 'completed') {
+        await this.verifyCompletedRun(run, signal, detached);
+      }
     } catch (error) {
       if (run.agent !== agent) return;
-      if (run.status !== 'cancelled') {
+      if (run.status === 'running') {
         run.status = 'failed';
         run.error = error instanceof Error ? error.message : String(error);
         run.completedAt = Date.now();
         run.updatedAt = run.completedAt;
       }
     } finally {
+      if (budgetTimer) clearTimeout(budgetTimer);
       if (signal && !detached) signal.removeEventListener('abort', abort);
       if (run.agent === agent) {
         await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
         if (detached) void this.notifyTerminalRun(run).catch(() => undefined);
       }
     }
+  }
+
+  private async verifyCompletedRun(
+    run: DelegationRunState,
+    signal: AbortSignal | undefined,
+    detached: boolean,
+  ): Promise<void> {
+    if (run.purpose === 'verify') {
+      run.objectiveStatus = 'verified';
+      run.updatedAt = Date.now();
+      return;
+    }
+    if (!run.verify) return;
+    if (!run.criteria || run.criteria.length === 0) {
+      run.objectiveStatus = 'blocked';
+      run.blockedReason = 'Run verification is enabled but no acceptance criteria were provided.';
+      run.updatedAt = Date.now();
+      return;
+    }
+    if (run.objectiveStatus === 'verified') return;
+    run.objectiveStatus = 'verifying';
+    run.updatedAt = Date.now();
+    await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+
+    run.verificationAttempts += 1;
+    const releaseStartupSlot = this.reserveRunningSlot();
+    let verifier: AgentDelegateToolData;
+    try {
+      verifier = await this.startAgent({
+        objective: buildVerifierObjective(run),
+        criteria: ['Return a JSON verdict that independently checks every acceptance criterion.'],
+        verify: false,
+        description: `verify ${run.description}`,
+        prompt: buildVerifierObjective(run),
+        purpose: 'verify',
+        context: 'none',
+        scope: { capabilities: readOnlyAgentToolNames() },
+        budget: { wallClockMinutes: Math.min(DEFAULT_CHILD_WALL_CLOCK_MINUTES, run.budget?.wallClockMinutes ?? DEFAULT_CHILD_WALL_CLOCK_MINUTES) },
+        run_in_background: false,
+        allowedTools: readOnlyAgentToolNames(),
+        parentRunId: run.id,
+        unattended: true,
+      }, releaseStartupSlot, signal);
+    } catch (error) {
+      releaseStartupSlot();
+      run.objectiveStatus = 'blocked';
+      run.blockedReason = `Verifier failed to start: ${errorMessage(error)}`;
+      run.updatedAt = Date.now();
+      return;
+    }
+
+    run.verifierRunIds.push(verifier.agent_id);
+    const verdict = parseVerifierVerdict(verifier.result ?? verifier.error ?? '');
+    if (verdict.verdict === 'pass') {
+      run.objectiveStatus = 'verified';
+      run.blockedReason = undefined;
+      run.verifierGapSignatures = [];
+      run.updatedAt = Date.now();
+      return;
+    }
+
+    const gapSignature = verifierGapSignature(verdict.gap);
+    run.verifierGapSignatures.push(gapSignature);
+    if (sameTailCount(run.verifierGapSignatures, gapSignature) >= DEFAULT_VERIFIER_LIVELOCK_REPEAT_LIMIT) {
+      run.objectiveStatus = 'blocked';
+      run.blockedReason = `Verifier repeated the same gap: ${verdict.gap || 'unspecified gap'}`;
+      run.updatedAt = Date.now();
+      return;
+    }
+
+    if (run.verificationAttempts <= DEFAULT_VERIFIER_RETRY_LIMIT && run.status === 'completed' && remainingBudgetMs(run) !== 0) {
+      const retryMessage = createUserMessage(buildVerifierRetryMessage(run, verdict.gap));
+      run.status = 'running';
+      run.objectiveStatus = 'active';
+      run.completedAt = undefined;
+      run.result = undefined;
+      run.error = undefined;
+      run.blockedReason = undefined;
+      run.updatedAt = Date.now();
+      await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+      await this.runChildAgent(run, [retryMessage], signal, detached);
+      return;
+    }
+
+    run.objectiveStatus = remainingBudgetMs(run) === 0 ? 'budget_exhausted' : 'blocked';
+    run.blockedReason = verdict.gap || 'Verifier rejected the run result.';
+    run.updatedAt = Date.now();
   }
 
   private async notifyTerminalRun(run: DelegationRunState): Promise<void> {
@@ -934,10 +1207,12 @@ export class AgentDelegationRuntime {
     toolCallId: string,
     toolName: string,
     result: unknown,
-    isError: boolean,
-  ): Promise<AfterToolCallResult | undefined> {
-    recordNodeToolChanges(run.nodeChanges, toolName, result, isError);
-    if (!isPlainRecord(result) || !Array.isArray(result.content)) return undefined;
+  isError: boolean,
+): Promise<AfterToolCallResult | undefined> {
+  recordNodeToolChanges(run.nodeChanges, toolName, result, isError);
+  recordFileToolChanges(run.fileChanges, toolName, result, isError);
+  recordToolTrace(run.toolTrace, toolName, result, isError);
+  if (!isPlainRecord(result) || !Array.isArray(result.content)) return undefined;
     const text = piToolResultTextContent(result.content as Array<TextContent | ImageContent>);
     if (!text || text.length <= DEFAULT_MAX_TOOL_RESULT_CHARS) return undefined;
 
@@ -1123,6 +1398,9 @@ export class AgentDelegationRuntime {
     run.skillRuntime = skillRuntime;
     run.localWorkspace = localWorkspace;
     run.nodeChanges = {};
+    run.fileChanges = {};
+    run.toolTrace = [];
+    run.verifierGapSignatures = [];
     this.subscribeToChild(run);
     this.installRunContextTransform(run);
   }
@@ -1197,15 +1475,7 @@ export class AgentDelegationRuntime {
     if (this.depth >= this.maxDepth) {
       throw new Error(`Child run nesting limit reached (${this.maxDepth}). Complete the task directly.`);
     }
-    if (this.ancestry.includes(nextAgentName)) {
-      throw new Error(`Recursive child run cycle detected for '${nextAgentName}'. Complete the task directly.`);
-    }
-  }
-
-  private assertCanFork(): void {
-    if (this.ancestry.includes(FORK_AGENT_TYPE) || parentMessagesContainForkTag(this.host.getParentMessages())) {
-      throw new Error('Fork is not available inside a forked agent. Complete the task directly.');
-    }
+    void nextAgentName;
   }
 
   private hostConversationPrefix(): string {
@@ -1217,12 +1487,12 @@ export function createAgentDelegationTools(runtime: AgentDelegationRuntime): Age
   return [
     {
       name: AGENT_DELEGATE_TOOL_NAME,
-      label: 'Agent',
+      label: 'Spawn Run',
       description: [
-        'Fork the current conversation context into an isolated worker for a focused task.',
-        'A fork is yourself working in a separate context — not a different agent.',
-        'Launch multiple agents in the same turn when independent work can run in parallel.',
-        'For long work, set run_in_background and use AgentStatus, AgentSend, or AgentStop with the returned agent_id.',
+        'Spawn an isolated child Run for a focused objective with explicit acceptance criteria.',
+        'Use context to choose full, brief, or no inherited parent context.',
+        'Launch multiple runs in the same turn when independent work can run in parallel.',
+        `For long work, set detach and use ${AGENT_STATUS_TOOL_NAME}, ${AGENT_SEND_TOOL_NAME}, ${AGENT_AMEND_TOOL_NAME}, or ${AGENT_STOP_TOOL_NAME} with the returned runId.`,
       ].join('\n'),
       parameters: AGENT_TOOL_PARAMETERS,
       executionMode: 'parallel',
@@ -1236,8 +1506,8 @@ export function createAgentDelegationTools(runtime: AgentDelegationRuntime): Age
     },
     {
       name: AGENT_STATUS_TOOL_NAME,
-      label: 'Agent Status',
-      description: 'Check a same-session background child run by agent_id or name.',
+      label: 'Run Status',
+      description: 'Check a same-session background run by runId or name.',
       parameters: AGENT_STATUS_PARAMETERS,
       executionMode: 'parallel',
       execute: async (_toolCallId, rawParams) => {
@@ -1250,8 +1520,8 @@ export function createAgentDelegationTools(runtime: AgentDelegationRuntime): Age
     },
     {
       name: AGENT_SEND_TOOL_NAME,
-      label: 'Agent Send',
-      description: 'Send a follow-up message to an existing same-session background child run.',
+      label: 'Run Steer',
+      description: 'Send a soft steering message to an existing same-session background run without changing its objective or criteria.',
       parameters: AGENT_SEND_PARAMETERS,
       executionMode: 'parallel',
       execute: async (_toolCallId, rawParams) => {
@@ -1263,9 +1533,23 @@ export function createAgentDelegationTools(runtime: AgentDelegationRuntime): Age
       },
     },
     {
+      name: AGENT_AMEND_TOOL_NAME,
+      label: 'Run Amend',
+      description: 'Hard-amend an existing run objective, acceptance criteria, or budget. This invalidates prior verifier conclusions.',
+      parameters: AGENT_AMEND_PARAMETERS,
+      executionMode: 'parallel',
+      execute: async (_toolCallId, rawParams) => {
+        try {
+          return delegateToolResult(AGENT_AMEND_TOOL_NAME, await runtime.amend(rawParams));
+        } catch (error) {
+          return agentToolResult(errorEnvelope(AGENT_AMEND_TOOL_NAME, 'agent_amend_failed', errorMessage(error)));
+        }
+      },
+    },
+    {
       name: AGENT_STOP_TOOL_NAME,
-      label: 'Agent Stop',
-      description: 'Stop a running same-session background child run.',
+      label: 'Run Stop',
+      description: 'Stop a running same-session background run.',
       parameters: AGENT_STOP_PARAMETERS,
       executionMode: 'parallel',
       execute: async (_toolCallId, rawParams) => {
@@ -1299,6 +1583,12 @@ export function buildForkContextMessages(parentMessages: readonly AgentMessage[]
     } satisfies ToolResultMessage);
   }
   return messages;
+}
+
+function buildRunContextMessages(parentMessages: readonly AgentMessage[], contextMode: AgentRunContextMode): AgentMessage[] {
+  if (contextMode === 'none') return [];
+  if (contextMode === 'brief') return buildBriefRunContextMessages(parentMessages);
+  return buildForkContextMessages(parentMessages);
 }
 
 export { normalizeAgentToolNames } from './agentToolRules';
@@ -1372,22 +1662,109 @@ export function createTenonAssistantAgentDefinition(): AgentDefinition {
   };
 }
 
-function buildForkDirective(directive: string): string {
+function buildBriefRunContextMessages(parentMessages: readonly AgentMessage[]): AgentMessage[] {
+  const excerpts = parentMessages
+    .slice(-8)
+    .map((message) => {
+      const text = compactInlineText(messageTextParts(message).join('\n'));
+      if (!text) return null;
+      return `${message.role}: ${truncate(text, 600)}`;
+    })
+    .filter((entry): entry is string => entry !== null);
+  if (excerpts.length === 0) return [];
+  return [createHiddenUserMessage([
+    'Brief parent context for this child Run:',
+    '',
+    ...excerpts,
+  ].join('\n'))];
+}
+
+function buildRunDirective(params: AgentToolParams): string {
+  if (params.purpose === 'verify') return params.prompt;
+  const criteria = params.criteria?.length
+    ? params.criteria.map((criterion, index) => `${index + 1}. ${criterion}`).join('\n')
+    : 'No acceptance criteria were provided because verify is false.';
+  const budget = formatRunBudgetForPrompt(params.budget);
+  const scope = formatRunScopeForPrompt(params.scope);
   return [
     `<${FORK_BOILERPLATE_TAG}>`,
     'STOP. READ THIS FIRST.',
     '',
-    'You are a forked Tenon worker. You inherited the parent conversation context, but your execution is isolated from the parent context.',
+    'You are a Tenon child Run. You may decompose your objective by spawning child Runs when that is the most reliable way to finish.',
     '',
-    'Rules:',
-    '1. Do not fork again.',
-    '2. Stay strictly within the directive.',
-    '3. Use tools directly when useful.',
-    '4. Do not ask the user questions.',
-    '5. Keep the final report factual and concise.',
+    'Controller rules:',
+    '1. Stay strictly within the objective and acceptance criteria.',
+    `2. When spawning child Runs, use ${AGENT_DELEGATE_TOOL_NAME} with explicit objective and criteria.`,
+    '3. Verify child results before accepting them as done; spawn replacement work for rejected child results when budget remains.',
+    '4. Do not ask the user questions from this child Run; block with a concise reason if owner input is genuinely required.',
+    '5. Keep the final report factual and concise, naming what was verified and any residual gaps.',
     `</${FORK_BOILERPLATE_TAG}>`,
     '',
-    `Directive: ${directive}`,
+    `Objective:\n${params.objective}`,
+    '',
+    `Acceptance criteria:\n${criteria}`,
+    '',
+    `Context mode: ${params.context}`,
+    budget ? `Budget:\n${budget}` : '',
+    scope ? `Scope:\n${scope}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+function buildObjectivePrompt(objective: string, criteria?: readonly string[]): string {
+  if (!criteria?.length) return objective;
+  return [
+    objective,
+    '',
+    'Acceptance criteria:',
+    ...criteria.map((criterion, index) => `${index + 1}. ${criterion}`),
+  ].join('\n');
+}
+
+function buildVerifierObjective(run: DelegationRunState): string {
+  const nodeChanges = compactNodeChanges(run.nodeChanges) ?? {};
+  const fileChanges = compactFileChanges(run.fileChanges) ?? {};
+  return [
+    'You are an independent verifier Run. Inspect the submitted child Run result and return only compact JSON with this exact shape:',
+    '{"verdict":"pass"|"fail","gap":"short reason when fail"}',
+    '',
+    'Rules:',
+    '1. Do not accept claims without evidence in the result or inspectable state.',
+    '2. Use only read-only tools when inspection is needed.',
+    '3. Fail if any acceptance criterion is incomplete, ambiguous, or unverifiable.',
+    '',
+    `Run id: ${run.id}`,
+    `Objective:\n${run.objective ?? run.prompt}`,
+    '',
+    'Acceptance criteria:',
+    ...(run.criteria ?? []).map((criterion, index) => `${index + 1}. ${criterion}`),
+    '',
+    `Execution status: ${run.status}`,
+    `Objective status before verification: ${run.objectiveStatus ?? 'unknown'}`,
+    run.incomplete ? 'The worker was marked incomplete.' : '',
+    run.error ? `Worker error:\n${run.error}` : '',
+    '',
+    `Worker result:\n${run.result ?? 'No text result.'}`,
+    '',
+    `Node changes:\n${JSON.stringify(nodeChanges, null, 2)}`,
+    '',
+    `File changes:\n${JSON.stringify(fileChanges, null, 2)}`,
+    '',
+    `Tool trace:\n${JSON.stringify(run.toolTrace, null, 2)}`,
+  ].filter(Boolean).join('\n');
+}
+
+function buildVerifierRetryMessage(run: DelegationRunState, gap: string): string {
+  return [
+    'Your previous submission did not pass independent verification.',
+    '',
+    `Verifier gap: ${gap || 'The verifier rejected the result without a detailed gap.'}`,
+    '',
+    'Continue the same objective. Address the verifier gap directly, then submit a concise final result that maps to the acceptance criteria.',
+    '',
+    `Objective:\n${run.objective ?? run.prompt}`,
+    '',
+    'Acceptance criteria:',
+    ...(run.criteria ?? []).map((criterion, index) => `${index + 1}. ${criterion}`),
   ].join('\n');
 }
 
@@ -1406,10 +1783,6 @@ function collectUnresolvedToolCalls(messages: readonly AgentMessage[]): Array<{ 
     }
   }
   return unresolved;
-}
-
-function parentMessagesContainForkTag(messages: readonly AgentMessage[]): boolean {
-  return messages.some((message) => messageTextParts(message).some((text) => text.includes(`<${FORK_BOILERPLATE_TAG}>`)));
 }
 
 function lastAssistantMessage(messages: readonly AgentMessage[]): AssistantMessage | null {
@@ -1440,6 +1813,8 @@ export function visibleChildRunResult(data: AgentDelegateToolData): unknown {
     agent_id: data.agent_id,
   };
   if (data.name) visible.name = data.name;
+  if (data.objective_status) visible.objective_status = data.objective_status;
+  if (data.blocked_reason) visible.blocked_reason = data.blocked_reason;
   if (data.result !== undefined) visible.result = data.result;
   if (data.error !== undefined) visible.error = data.error;
   return visible;
@@ -1475,6 +1850,59 @@ export function recordNodeToolChanges(
   appendUniqueNodeIds(changes, 'updatedNodeIds', changedExisting);
 }
 
+function recordFileToolChanges(
+  changes: AgentChildRunFileChanges,
+  toolName: string,
+  result: unknown,
+  isError: boolean,
+): void {
+  if (isError) return;
+  if (toolName !== 'file_edit' && toolName !== 'file_write' && toolName !== 'file_delete') return;
+  const details = isPlainRecord(result) ? result.details : undefined;
+  if (!isToolEnvelope(details) || !details.ok || details.status === 'unchanged' || !isPlainRecord(details.data)) return;
+
+  const filePath = coerceString(details.data.filePath);
+  if (!filePath) return;
+  if (toolName === 'file_delete') {
+    appendUniqueStrings(changes, 'deletedPaths', [filePath]);
+    appendFilePatch(changes, {
+      filePath,
+      operation: 'delete',
+      trashPath: coerceString(details.data.trashPath),
+      kind: coerceString(details.data.kind),
+    });
+    return;
+  }
+
+  const operation = toolName === 'file_write' && details.data.type === 'create' ? 'create' : 'update';
+  appendUniqueStrings(changes, operation === 'create' ? 'createdPaths' : 'updatedPaths', [filePath]);
+  appendFilePatch(changes, {
+    filePath,
+    operation,
+    structuredPatch: normalizeStructuredPatch(details.data.structuredPatch),
+  });
+}
+
+function recordToolTrace(
+  trace: AgentChildRunToolTraceEntry[],
+  toolName: string,
+  result: unknown,
+  isError: boolean,
+): void {
+  const details = isPlainRecord(result) ? result.details : undefined;
+  const entry: AgentChildRunToolTraceEntry = { toolName, isError };
+  if (isToolEnvelope(details)) {
+    entry.status = details.status;
+    entry.summary = summarizeToolEnvelopeForVerifier(details);
+  } else if (isPlainRecord(result) && Array.isArray(result.content)) {
+    entry.summary = truncate(piToolResultTextContent(result.content as Array<TextContent | ImageContent>) ?? '', 500);
+  }
+  trace.push(entry);
+  if (trace.length > MAX_RECORDED_TOOL_TRACE_ENTRIES) {
+    trace.splice(0, trace.length - MAX_RECORDED_TOOL_TRACE_ENTRIES);
+  }
+}
+
 function compactNodeChanges(changes: AgentChildRunNodeChanges): AgentChildRunNodeChanges | undefined {
   const compacted: AgentChildRunNodeChanges = {};
   if (changes.createdNodeIds?.length) compacted.createdNodeIds = changes.createdNodeIds;
@@ -1483,8 +1911,59 @@ function compactNodeChanges(changes: AgentChildRunNodeChanges): AgentChildRunNod
   return Object.keys(compacted).length ? compacted : undefined;
 }
 
+function compactFileChanges(changes: AgentChildRunFileChanges): AgentChildRunFileChanges | undefined {
+  const compacted: AgentChildRunFileChanges = {};
+  if (changes.createdPaths?.length) compacted.createdPaths = changes.createdPaths;
+  if (changes.updatedPaths?.length) compacted.updatedPaths = changes.updatedPaths;
+  if (changes.deletedPaths?.length) compacted.deletedPaths = changes.deletedPaths;
+  if (changes.patches?.length) compacted.patches = changes.patches;
+  return Object.keys(compacted).length ? compacted : undefined;
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.length > 0) : [];
+}
+
+function normalizeStructuredPatch(value: unknown): unknown {
+  if (!Array.isArray(value)) return undefined;
+  return value.slice(0, 50).map((entry) => isPlainRecord(entry) ? { ...entry } : entry);
+}
+
+function summarizeToolEnvelopeForVerifier(details: ToolEnvelope): string | undefined {
+  if (details.error) return truncate(`${details.error.code}: ${details.error.message}`, 500);
+  if (!isPlainRecord(details.data)) return undefined;
+  const summary: Record<string, unknown> = {};
+  for (const key of ['filePath', 'trashPath', 'type', 'kind', 'status', 'nodeId', 'createdNodeIds', 'affectedNodeIds', 'deletedNodeIds', 'restoredNodeIds']) {
+    if (details.data[key] !== undefined) summary[key] = details.data[key];
+  }
+  if (Array.isArray(details.data.structuredPatch)) summary.structuredPatch = details.data.structuredPatch.slice(0, 10);
+  return Object.keys(summary).length ? truncate(JSON.stringify(summary), 1_000) : undefined;
+}
+
+function appendUniqueStrings(
+  changes: AgentChildRunFileChanges,
+  key: 'createdPaths' | 'updatedPaths' | 'deletedPaths',
+  values: readonly string[],
+): void {
+  if (values.length === 0) return;
+  const current = changes[key] ?? [];
+  const existing = new Set(current);
+  const next = [...current];
+  for (const value of values) {
+    if (existing.has(value)) continue;
+    existing.add(value);
+    next.push(value);
+  }
+  changes[key] = next;
+}
+
+function appendFilePatch(
+  changes: AgentChildRunFileChanges,
+  patch: NonNullable<AgentChildRunFileChanges['patches']>[number],
+): void {
+  changes.patches ??= [];
+  changes.patches.push(patch);
+  if (changes.patches.length > 50) changes.patches.splice(0, changes.patches.length - 50);
 }
 
 function appendUniqueNodeIds(
@@ -1506,12 +1985,20 @@ function appendUniqueNodeIds(
 
 function runToToolData(run: DelegationRunState): AgentDelegateToolData {
   const nodeChanges = compactNodeChanges(run.nodeChanges);
+  const fileChanges = compactFileChanges(run.fileChanges);
   return {
     status: run.status,
     agent_id: run.id,
     name: run.name,
     description: run.description,
     prompt: run.prompt,
+    objective: run.objective,
+    criteria: run.criteria,
+    objective_status: run.objectiveStatus,
+    purpose: run.purpose,
+    scope: run.scope,
+    budget: run.budget,
+    blocked_reason: run.blockedReason,
     agent_type: run.agentType,
     context_mode: run.contextMode,
     executing_agent_id: run.executingAgentId,
@@ -1524,6 +2011,7 @@ function runToToolData(run: DelegationRunState): AgentDelegateToolData {
     completed_at: run.completedAt,
     transcript_message_count: run.messages.length,
     ...(nodeChanges ? { node_changes: nodeChanges } : {}),
+    ...(fileChanges ? { file_changes: fileChanges } : {}),
     ...(run.incomplete ? { incomplete: true } : {}),
   };
 }
@@ -1534,6 +2022,12 @@ function snapshotRun(run: DelegationRunState): AgentChildRunSnapshot {
     name: run.name,
     description: run.description,
     prompt: run.prompt,
+    objective: run.objective,
+    criteria: run.criteria,
+    objectiveStatus: run.objectiveStatus,
+    purpose: run.purpose,
+    scope: run.scope,
+    budget: run.budget,
     agentType: run.agentType,
     contextMode: run.contextMode,
     executingAgentId: run.executingAgentId,
@@ -1547,6 +2041,7 @@ function snapshotRun(run: DelegationRunState): AgentChildRunSnapshot {
     completedAt: run.completedAt,
     result: run.result,
     error: run.error,
+    blockedReason: run.blockedReason,
     parentToolCallId: run.parentToolCallId,
     unattended: run.unattended,
   };
@@ -1614,16 +2109,29 @@ function replaceToolResultText(message: ToolResultMessage, text: string): void {
 
 function normalizeAgentToolParams(raw: unknown): AgentToolParams {
   if (!isPlainRecord(raw)) throw new Error('Agent input must be an object.');
-  const description = coerceString(raw.description)?.trim();
-  const prompt = coerceString(raw.prompt)?.trim();
-  if (!description) throw new Error('Agent input requires description.');
-  if (!prompt) throw new Error('Agent input requires prompt.');
+  const objective = coerceString(raw.objective)?.trim() || coerceString(raw.prompt)?.trim();
+  if (!objective) throw new Error('spawn input requires objective.');
+  const verify = raw.verify !== false;
+  const criteria = coerceStringArray(raw.criteria);
+  if (verify && (!criteria || criteria.length === 0)) {
+    throw new Error('spawn input requires at least one criterion unless verify is false.');
+  }
+  const description = coerceString(raw.description)?.trim() || truncate(compactInlineText(objective), 120);
+  const prompt = coerceString(raw.prompt)?.trim() || buildObjectivePrompt(objective, criteria);
   const allowedTools = Array.isArray(raw.allowedTools)
     ? normalizeAgentToolNames(raw.allowedTools) ?? []
     : undefined;
   return {
+    objective,
+    criteria,
+    verify,
     description,
     prompt,
+    purpose: normalizeRunPurpose(raw.purpose),
+    scope: normalizeRunScope(raw.scope),
+    budget: normalizeRunBudgetInput(raw.budget),
+    context: normalizeRunContext(raw.context),
+    detach: raw.detach === true,
     model: coerceString(raw.model),
     run_in_background: raw.run_in_background === true,
     name: coerceString(raw.name),
@@ -1631,6 +2139,130 @@ function normalizeAgentToolParams(raw: unknown): AgentToolParams {
     preapprovedToolRules: coerceStringArray(raw.preapprovedToolRules),
     unattended: raw.unattended === true,
   };
+}
+
+function normalizeRunPurpose(value: unknown): AgentRunPurpose {
+  return value === 'verify' ? 'verify' : 'work';
+}
+
+function normalizeRunContext(value: unknown): AgentRunContextMode {
+  return value === 'none' || value === 'brief' || value === 'full' ? value : 'full';
+}
+
+function normalizeRunScope(value: unknown): AgentRunScope | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const capabilities = coerceStringArray(value.capabilities);
+  const resources = isPlainRecord(value.resources) ? {
+    docs: coerceStringArray(value.resources.docs),
+    paths: coerceStringArray(value.resources.paths),
+  } : undefined;
+  const compactResources = resources && (resources.docs?.length || resources.paths?.length)
+    ? resources
+    : undefined;
+  return capabilities?.length || compactResources
+    ? { capabilities, resources: compactResources }
+    : undefined;
+}
+
+function normalizeRunBudgetInput(value: unknown): AgentRunBudget | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const tokens = parsePositiveInteger(value.tokens);
+  const wallClockMinutes = parsePositiveInteger(value.wallClockMinutes);
+  return tokens || wallClockMinutes ? { tokens, wallClockMinutes } : undefined;
+}
+
+function normalizeRunBudget(
+  next: AgentRunBudget | undefined,
+  existing: AgentRunBudget | undefined,
+  now: number,
+): AgentRunBudget | undefined {
+  const budget = { ...existing, ...next };
+  if (!budget.tokens && !budget.wallClockMinutes && !budget.reservedTokens && !budget.spentTokens) return undefined;
+  budget.startedAt ??= now;
+  if (budget.wallClockMinutes) {
+    budget.deadlineAt = budget.startedAt + budget.wallClockMinutes * 60_000;
+  }
+  return budget;
+}
+
+function scopedAllowedToolNames(allowedTools: readonly string[] | undefined, scope: AgentRunScope | undefined): string[] | undefined {
+  const scopeTools = normalizeAgentToolNames(scope?.capabilities) ?? undefined;
+  if (!allowedTools) return scopeTools;
+  if (!scopeTools || scopeTools.length === 0) return [...allowedTools];
+  const scopeSet = new Set(scopeTools);
+  return allowedTools.filter((toolName) => scopeSet.has(toolName));
+}
+
+function remainingBudgetMs(run: DelegationRunState): number | null {
+  const deadlineAt = run.budget?.deadlineAt;
+  if (!deadlineAt) return null;
+  return Math.max(0, deadlineAt - Date.now());
+}
+
+function formatRunBudgetForPrompt(budget: AgentRunBudget | undefined): string | null {
+  if (!budget) return null;
+  const lines: string[] = [];
+  if (budget.tokens) lines.push(`- token budget: ${budget.tokens}`);
+  if (budget.wallClockMinutes) lines.push(`- wall-clock budget: ${budget.wallClockMinutes} minutes`);
+  return lines.length ? lines.join('\n') : null;
+}
+
+function formatRunScopeForPrompt(scope: AgentRunScope | undefined): string | null {
+  if (!scope) return null;
+  const lines: string[] = [];
+  if (scope.capabilities?.length) lines.push(`- capabilities: ${scope.capabilities.join(', ')}`);
+  if (scope.resources?.docs?.length) lines.push(`- docs: ${scope.resources.docs.join(', ')}`);
+  if (scope.resources?.paths?.length) lines.push(`- paths: ${scope.resources.paths.join(', ')}`);
+  return lines.length ? lines.join('\n') : null;
+}
+
+function parseVerifierVerdict(text: string): { verdict: 'pass' | 'fail'; gap: string } {
+  const trimmed = text.trim();
+  const jsonMatch = /\{[\s\S]*\}/.exec(trimmed);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]) as unknown;
+      if (isPlainRecord(parsed)) {
+        const verdict = coerceString(parsed.verdict)?.trim().toLowerCase();
+        const gap = coerceString(parsed.gap)?.trim() ?? '';
+        if (verdict === 'pass') return { verdict: 'pass', gap };
+        if (verdict === 'fail') return { verdict: 'fail', gap };
+      }
+    } catch {
+      // Fall through to the text heuristic.
+    }
+  }
+  if (/\bverdict\s*[:=]\s*pass\b/i.test(trimmed) || /"verdict"\s*:\s*"pass"/i.test(trimmed)) {
+    return { verdict: 'pass', gap: '' };
+  }
+  const gap = trimmed || 'Verifier did not return a parseable pass verdict.';
+  return { verdict: 'fail', gap: truncate(gap, 1_000) };
+}
+
+function verifierGapSignature(gap: string): string {
+  return gap.toLowerCase().replace(/\s+/g, ' ').replace(/[^\p{L}\p{N} ]/gu, '').trim().slice(0, 240) || 'unknown-gap';
+}
+
+function sameTailCount(values: readonly string[], value: string): number {
+  let count = 0;
+  for (let index = values.length - 1; index >= 0 && values[index] === value; index -= 1) {
+    count += 1;
+  }
+  return count;
+}
+
+function normalizeAmendParams(raw: unknown): { runId: string; changes: { objective?: string; criteria?: string[]; budget?: AgentRunBudget } } {
+  if (!isPlainRecord(raw)) throw new Error('run_amend input must be an object.');
+  const runId = coerceString(raw.runId)?.trim() || coerceString(raw.agent_id)?.trim();
+  if (!runId) throw new Error('run_amend input requires runId.');
+  if (!isPlainRecord(raw.changes)) throw new Error('run_amend input requires changes.');
+  const objective = coerceString(raw.changes.objective)?.trim();
+  const criteria = raw.changes.criteria === undefined ? undefined : coerceStringArray(raw.changes.criteria) ?? [];
+  const budget = raw.changes.budget === undefined ? undefined : normalizeRunBudgetInput(raw.changes.budget);
+  if (objective === undefined && criteria === undefined && budget === undefined) {
+    throw new Error('run_amend changes must include objective, criteria, or budget.');
+  }
+  return { runId, changes: { objective, criteria, budget } };
 }
 
 function coerceStringArray(value: unknown): string[] | undefined {
@@ -1644,7 +2276,7 @@ function coerceStringArray(value: unknown): string[] | undefined {
 function normalizeRunSelector(raw: unknown): { agent_id?: string; name?: string; wait?: boolean; timeout_ms?: number } {
   if (!isPlainRecord(raw)) return {};
   return {
-    agent_id: coerceString(raw.agent_id),
+    agent_id: coerceString(raw.runId) ?? coerceString(raw.agent_id),
     name: coerceString(raw.name),
     wait: raw.wait === true,
     timeout_ms: parsePositiveInteger(raw.timeout_ms),
@@ -1652,11 +2284,11 @@ function normalizeRunSelector(raw: unknown): { agent_id?: string; name?: string;
 }
 
 function normalizeSendParams(raw: unknown): { agent_id?: string; name?: string; message: string } {
-  if (!isPlainRecord(raw)) throw new Error('AgentSend input must be an object.');
+  if (!isPlainRecord(raw)) throw new Error('run_steer input must be an object.');
   const message = coerceString(raw.message)?.trim();
-  if (!message) throw new Error('AgentSend input requires message.');
+  if (!message) throw new Error('run_steer input requires message.');
   return {
-    agent_id: coerceString(raw.agent_id),
+    agent_id: coerceString(raw.runId) ?? coerceString(raw.agent_id),
     name: coerceString(raw.name),
     message,
   };

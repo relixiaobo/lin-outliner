@@ -18,8 +18,12 @@ import type {
   AgentRunAnchor,
   AgentRunFingerprint,
   AgentRunKind,
+  AgentObjectiveStatus,
+  AgentRunBudget,
   AgentRunMeta,
+  AgentRunPurpose,
   AgentRunRetention,
+  AgentRunScope,
   AgentRunStatus,
   AgentIdentityRecord,
   AgentRunTrigger,
@@ -1179,6 +1183,12 @@ export class AgentEventStore {
       parentRunId: existing?.parentRunId ?? (trigger?.type === 'parent-run' ? trigger.parentRunId : undefined),
       kind: existing?.kind ?? (started?.type === 'run.started' ? started.kind : undefined) ?? 'turn',
       status: terminal ? runStatusFromTerminalEvent(terminal) : existing?.status ?? 'running',
+      objective: existing?.objective ?? (started?.type === 'run.started' ? started.objective : undefined),
+      criteria: existing?.criteria ?? (started?.type === 'run.started' ? started.criteria : undefined),
+      objectiveStatus: terminal?.objectiveStatus ?? existing?.objectiveStatus ?? (started?.type === 'run.started' ? started.objectiveStatus : undefined),
+      purpose: existing?.purpose ?? (started?.type === 'run.started' ? started.purpose : undefined),
+      scope: existing?.scope ?? (started?.type === 'run.started' ? started.scope : undefined),
+      budget: terminal?.budget ?? existing?.budget ?? (started?.type === 'run.started' ? started.budget : undefined),
       trigger: trigger ?? { type: 'manual' },
       usage: terminal?.usage ?? existing?.usage,
       fingerprint: existing?.fingerprint ?? (started?.type === 'run.started' ? started.fingerprint : undefined) ?? emptyRunFingerprint(),
@@ -2079,6 +2089,12 @@ function normalizeRunMeta(value: unknown): AgentRunMetaProjection | null {
     parentRunId: typeof value.parentRunId === 'string' ? value.parentRunId : undefined,
     kind: isAgentRunKind(value.kind) ? value.kind : 'turn',
     status: value.status,
+    objective: typeof value.objective === 'string' ? value.objective : undefined,
+    criteria: Array.isArray(value.criteria) ? uniqueStrings(value.criteria.filter((item): item is string => typeof item === 'string')) : undefined,
+    objectiveStatus: isAgentObjectiveStatus(value.objectiveStatus) ? value.objectiveStatus : undefined,
+    purpose: isAgentRunPurpose(value.purpose) ? value.purpose : undefined,
+    scope: normalizeAgentRunScope(value.scope),
+    budget: normalizeAgentRunBudget(value.budget),
     trigger: value.trigger as AgentRunTrigger,
     usage: isRecord(value.usage) ? value.usage as unknown as Usage : undefined,
     fingerprint: value.fingerprint as unknown as AgentRunFingerprint,
@@ -2168,6 +2184,51 @@ function isAgentRunKind(value: unknown): value is AgentRunKind {
 
 function isAgentRunStatus(value: unknown): value is AgentRunStatus {
   return value === 'running' || value === 'completed' || value === 'failed' || value === 'cancelled';
+}
+
+function isAgentObjectiveStatus(value: unknown): value is AgentObjectiveStatus {
+  return value === 'active'
+    || value === 'verifying'
+    || value === 'verified'
+    || value === 'blocked'
+    || value === 'budget_exhausted'
+    || value === 'stopped';
+}
+
+function isAgentRunPurpose(value: unknown): value is AgentRunPurpose {
+  return value === 'work' || value === 'verify';
+}
+
+function normalizeAgentRunScope(value: unknown): AgentRunScope | undefined {
+  if (!isRecord(value)) return undefined;
+  const capabilities = Array.isArray(value.capabilities)
+    ? uniqueStrings(value.capabilities.filter((item): item is string => typeof item === 'string'))
+    : undefined;
+  const rawResources = isRecord(value.resources) ? value.resources : null;
+  const resources = rawResources ? {
+    docs: Array.isArray(rawResources.docs)
+      ? uniqueStrings(rawResources.docs.filter((item): item is string => typeof item === 'string'))
+      : undefined,
+    paths: Array.isArray(rawResources.paths)
+      ? uniqueStrings(rawResources.paths.filter((item): item is string => typeof item === 'string'))
+      : undefined,
+  } : undefined;
+  const compactResources = resources && (resources.docs?.length || resources.paths?.length)
+    ? resources
+    : undefined;
+  return capabilities?.length || compactResources
+    ? { capabilities, resources: compactResources }
+    : undefined;
+}
+
+function normalizeAgentRunBudget(value: unknown): AgentRunBudget | undefined {
+  if (!isRecord(value)) return undefined;
+  const budget: AgentRunBudget = {};
+  for (const key of ['tokens', 'wallClockMinutes', 'reservedTokens', 'spentTokens', 'startedAt', 'deadlineAt'] as const) {
+    const numeric = numberOrNull(value[key]);
+    if (numeric !== null) budget[key] = numeric;
+  }
+  return Object.keys(budget).length ? budget : undefined;
 }
 
 function isAgentRunRetention(value: unknown): value is AgentRunRetention {

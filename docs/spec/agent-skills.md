@@ -9,7 +9,7 @@ be shadowed by mutable local skills with the same name. Resource-backed
 built-in skill folders load before code-registered inline built-ins; a duplicate
 built-in name is a product bug and fails loudly instead of being silently
 dropped. The current user-visible built-in skills are `/skillify`,
-`/research`, `/presentation`, `/document`, and
+`/goal-launching`, `/research`, `/presentation`, `/document`, and
 `/data-analysis`.
 
 `/skillify` is a user- and model-invocable workflow for creating or updating
@@ -23,6 +23,15 @@ runtime also treats explicit natural-language authoring requests such as "save
 this as a skill" or "update the import skill with this workflow" as direct
 `/skillify` user invocations when slash skills are enabled; ordinary questions
 about whether a skill exists or how skills work remain normal conversation.
+
+`/goal-launching` is a user- and model-invocable guidance workflow for turning a
+natural-language handoff into a persistent verified Run. It tells the model to
+separate objective from acceptance criteria, clarify missing criteria when
+needed, launch with `spawn` using `detach:true`, `context:"brief"`, a finite
+budget, and narrow scope, and then rely on verifier/objective status rather than
+the worker's own completion claim. The user's direct slash command `/goal ...`
+uses the runtime shortcut; the skill is the model-side launch policy for
+ordinary prose such as "make this a goal".
 
 `/research` is a user- and model-invocable `execution: isolated` workflow for
 bounded investigation. It starts an isolated child run of the current agent and
@@ -183,7 +192,8 @@ When the model calls the `skill` tool for an `execution: isolated` skill:
 
 1. `AgentSkillRuntime` resolves, validates, and renders the skill body.
 2. `AgentDelegationRuntime` starts a sidechain child run using the rendered skill body as the child prompt.
-3. The skill's `agent` field selects a real agent definition; if absent, Lin forks the current conversation context.
+3. The child run is a same-agent run of Neva; isolated skills do not select a
+   different agent definition.
 4. The skill's `allowed-tools` rules are passed as child-run preapproval metadata.
 5. The skill's `model` and `effort` fields apply to the child agent run.
 6. The parent receives only the final child-run result or error as the `skill` tool result.
@@ -361,7 +371,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | `allowed-tools` | Supported as run-scoped preapproval metadata, not as a tool visibility list. |
 | `model` and `effort` | Supported as one-turn `pi-agent-core` loop updates. |
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery for mutable skills. Built-ins load immediately even when they declare `paths`. |
-| `execution: isolated` | Supported through the same-conversation `Agent`/delegation runtime. Isolated skill bodies run in a sidechain child run (a fork of the current agent — there is no agent selection) and return only the final result to the parent. Legacy `context: fork` parses as `execution: isolated` for existing skills. |
+| `execution: isolated` | Supported through the same-conversation `spawn`/delegation runtime. Isolated skill bodies run in a sidechain child run of the current agent and return only the final result to the parent. Legacy `context: fork` parses as `execution: isolated` for existing skills. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
 | Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes into registry-recognized skill directories use ordinary file-tool permissions, then the file-tool gateway validates them as feedback, emits audit events, carries rollback metadata, records provenance hashes, and hot-reloads the registry. Agent-written skills are available immediately for slash invocation and, when model-invocable, automatic listing without a separate trust prompt. |
 | Agent-managed agent-definition writes | Not supported. The one-Neva invariant removed agent authoring as a self-definition surface (no `/create-agent` workflow, and the self-definition write gate governs skills only). The single agent, Neva, is configured through the agent-config window (`agentUpdateAgentDefinition`), not by authoring `AGENT.md` files. |
@@ -518,7 +528,7 @@ Intentional omissions:
 - Session-memory compact: omitted because Lin does not use this memory model.
 - Pre/post/session-start compact hooks: omitted until Lin has a first-class hook system.
 - Plan-mode and plan-file attachments: omitted because Lin does not have that separate plan-mode runtime.
-- Task-output-file compatibility tools: omitted because Lin follows cc-2.1's preferred path of surfacing durable output references that can be read with `file_read`. `AgentStatus` remains only for explicit same-conversation status/wait checks.
+- Task-output-file compatibility tools: omitted because Lin follows cc-2.1's preferred path of surfacing durable output references that can be read with `file_read`. `run_status` remains only for explicit same-conversation status/wait checks.
 - Deferred-tool/MCP delta re-announcement: omitted for now because Lin's tool registry is stable in `pi-agent-core`; future plugin/app tools should add their own compact restore state.
 - Provider-specific cache-edit microcompact: omitted because it depends on cache editing support that is not available through the generic pi provider path. Lin uses stable event-log replacements instead.
 - Prompt-cache telemetry and survey plumbing: omitted because it is observability, not model-visible behavior.

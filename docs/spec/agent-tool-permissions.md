@@ -110,8 +110,9 @@ sandbox, or user blocklist rule matches:
 - network reads such as search/fetch;
 - external CLI actions such as `git push`, `gh pr create`, deploy commands, and
   message sends;
-- local control-plane actions such as child-run spawn/status/send/stop, skill
-  invocation, task stop, Dream, and whitelisted runtime config writes.
+- local control-plane actions such as child-run `spawn`, `run_status`,
+  `run_steer`, `run_amend`, `run_stop`, skill invocation, task stop, Dream, and
+  whitelisted runtime config writes.
 
 This deliberately trades approval prompts for model judgment, durable audit, and
 fast user correction through the blocklist.
