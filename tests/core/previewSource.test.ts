@@ -138,6 +138,41 @@ describe('preview source commands', () => {
     expect(missingRun.source).toBeNull();
   });
 
+  test('derives EPUB source extension from MIME when the payload has no filename', async () => {
+    const payload: AgentPayloadRef = {
+      kind: 'payload_ref',
+      id: 'book-payload',
+      storage: 'file',
+      mimeType: 'application/epub+zip',
+      byteLength: 4,
+      sha256: 'sha',
+      role: 'tool_output',
+      scope: { type: 'run', conversationId: 'conversation-1', runId: 'run-1' },
+    };
+    const context = previewContext({
+      agentRuntime: {
+        previewPayload: async () => payload,
+        previewPayloadBytes: async () => Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+      },
+    });
+
+    const resolved = await handlePreviewCommand('preview_resolve_source', {
+      target: {
+        kind: 'agent-payload',
+        conversationId: 'conversation-1',
+        runId: 'run-1',
+        payloadId: 'book-payload',
+      },
+    }, context) as PreviewResolveSourceResult;
+
+    expect(resolved.source).toMatchObject({
+      kind: 'file',
+      name: 'book-payload.epub',
+      ext: 'epub',
+      mimeType: 'application/epub+zip',
+    });
+  });
+
   function previewContext(overrides: Partial<PreviewCommandContext> = {}): PreviewCommandContext {
     return {
       agentLocalFileRoots: [root],

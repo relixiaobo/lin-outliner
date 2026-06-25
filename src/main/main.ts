@@ -397,30 +397,52 @@ agentRuntime.setOsNotifier(({ title, body, conversationId }) => {
 
 const RENDERER_DEV_URL = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
 const RENDERER_DEV_ORIGIN = RENDERER_DEV_URL ? safeOrigin(RENDERER_DEV_URL) : null;
+const RENDERER_SCRIPT_SRC = "script-src 'self'";
+// Hash of @vitejs/plugin-react's dev preamble for base "/". Recompute if the
+// plugin changes that injected module script.
+const VITE_REACT_REFRESH_PREAMBLE_CSP_HASH =
+  "'sha256-Z2/iFzh9VMlVkEOar1f/oSHWwQk3ve1qk/C2WdsC4Xk='";
 
 // navigator.clipboard.writeText is the only renderer capability we rely on; deny
 // everything else (geolocation, media, notifications, …) by default.
 const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write']);
 
-// The packaged renderer (loaded from file://) is locked to its own resources.
+// The renderer is locked to its own resources.
 // 'unsafe-inline' styles cover Shiki's inline color spans + React style props;
 // remote http(s) is allowed only as <img>/<video> sources. The renderer makes
 // no direct network calls (everything else goes through IPC) and runs no
 // WebAssembly (loro-crdt lives in the main process), so script-src and
 // connect-src stay tight.
-const RENDERER_CSP = [
+const RENDERER_CSP_DIRECTIVES = [
   "default-src 'self'",
-  "script-src 'self'",
+  RENDERER_SCRIPT_SRC,
   "style-src 'self' 'unsafe-inline'",
   `img-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}:`,
   `media-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}:`,
   "font-src 'self' data:",
-  `connect-src 'self' ${ASSET_URL_SCHEME}:`,
   "object-src 'none'",
-  "frame-src 'none'",
+  // EPUB preview renders book sections in blob: iframes; packaged script-src
+  // stays 'self', while dev admits only Vite's hashed React-refresh preamble.
+  "frame-src blob:",
   "base-uri 'self'",
   "form-action 'none'",
+];
+
+const RENDERER_DEV_CSP_DIRECTIVES = RENDERER_CSP_DIRECTIVES.map((directive) =>
+  directive === RENDERER_SCRIPT_SRC
+    ? `${RENDERER_SCRIPT_SRC} ${VITE_REACT_REFRESH_PREAMBLE_CSP_HASH}`
+    : directive,
+);
+
+const RENDERER_CSP = [
+  ...RENDERER_CSP_DIRECTIVES,
+  `connect-src 'self' ${ASSET_URL_SCHEME}:`,
 ].join('; ');
+
+const RENDERER_DEV_CSP = RENDERER_DEV_ORIGIN ? [
+  ...RENDERER_DEV_CSP_DIRECTIVES,
+  `connect-src 'self' ${ASSET_URL_SCHEME}: ${RENDERER_DEV_ORIGIN} ${RENDERER_DEV_ORIGIN.replace(/^http/i, 'ws')}`,
+].join('; ') : null;
 
 function safeOrigin(url: string): string | null {
   try {
@@ -465,19 +487,26 @@ function configureSessionSecurity() {
     callback(ALLOWED_PERMISSIONS.has(permission));
   });
   ses.setPermissionCheckHandler((_contents, permission) => ALLOWED_PERMISSIONS.has(permission));
-  // Enforce CSP on the packaged renderer's own document (loaded from file://).
-  // Dev loads from the Vite origin, which needs a relaxed policy for HMR, so it
-  // falls through here untouched; the agent's remote web-fetch windows load
-  // http(s) and are excluded too.
+  // Enforce CSP on app renderer documents. Dev admits only Vite React refresh's
+  // exact inline preamble by hash and widens connect-src for Vite HMR.
   ses.webRequest.onHeadersReceived((details, callback) => {
-    if (details.resourceType !== 'mainFrame' || !details.url.startsWith('file:')) {
+    if (details.resourceType !== 'mainFrame') {
+      callback({});
+      return;
+    }
+    const csp = details.url.startsWith('file:')
+      ? RENDERER_CSP
+      : RENDERER_DEV_ORIGIN && safeOrigin(details.url) === RENDERER_DEV_ORIGIN
+        ? RENDERER_DEV_CSP
+        : null;
+    if (!csp) {
       callback({});
       return;
     }
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        'Content-Security-Policy': [RENDERER_CSP],
+        'Content-Security-Policy': [csp],
       },
     });
   });
@@ -2399,6 +2428,7 @@ function inferMimeType(filePath: string): string {
   if (extension === '.heic') return 'image/heic';
   if (extension === '.tif' || extension === '.tiff') return 'image/tiff';
   if (extension === '.pdf') return 'application/pdf';
+  if (extension === '.epub') return 'application/epub+zip';
   if (extension === '.doc') return 'application/msword';
   if (extension === '.docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   if (extension === '.ppt') return 'application/vnd.ms-powerpoint';

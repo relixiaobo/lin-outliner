@@ -151,6 +151,19 @@ describe('AssetService', () => {
     });
   });
 
+  test('keeps EPUB files distinct from generic ZIP archives', async () => {
+    const meta = await service.ingest({
+      kind: 'buffer',
+      data: new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
+      originalFilename: 'book.epub',
+    });
+    expect(meta).toMatchObject({
+      mimeType: 'application/epub+zip',
+      originalFilename: 'book.epub',
+    });
+    expect((await readdir(root)).some((entry) => entry.endsWith('.epub'))).toBe(true);
+  });
+
   test('derives WAV duration metadata', async () => {
     const meta = await service.ingest({ kind: 'buffer', data: wavBytes(1250), originalFilename: 'memo.wav' });
     expect(meta).toMatchObject({
@@ -192,6 +205,8 @@ describe('sniffMimeType', () => {
   });
 
   test('falls back to the filename extension when bytes are inconclusive', () => {
+    expect(sniffMimeType(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), 'book.epub')).toBe('application/epub+zip');
+    expect(sniffMimeType(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]), 'renamed.epub')).toBe('application/pdf');
     expect(sniffMimeType(new Uint8Array([0, 0, 0]), 'note.svg')).toBe('image/svg+xml');
     expect(sniffMimeType(new Uint8Array([0, 0, 0]), 'mystery')).toBeUndefined();
   });

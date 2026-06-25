@@ -250,6 +250,42 @@
   tab-size: 2;
 }
 
+.file-preview-epub {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  height: 100%;
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.file-preview-epub-host,
+.file-preview-epub-view {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.file-preview-epub-host[aria-hidden='true'] {
+  visibility: hidden;
+}
+
+.file-preview-epub-view {
+  color-scheme: light dark;
+  --link-color: var(--link);
+  --selection-background: var(--document-selection-bg);
+  --selection-color: var(--text-strong);
+}
+
+.file-preview-epub-view::part(container) {
+  scrollbar-gutter: stable;
+}
+
+.file-preview-epub-view::part(filter) {
+  background: var(--surface);
+}
+
 .file-preview-pdf {
   display: flex;
   min-width: 0;
@@ -504,7 +540,8 @@
   overflow: auto;
 }
 
-.file-node-preview.expanded:has(> .file-preview-pdf--full) {
+.file-node-preview.expanded:has(> .file-preview-pdf--full),
+.file-node-preview.expanded:has(> .file-preview-epub--full) {
   height: var(--file-preview-expanded-height, min(70vh, 720px));
   overflow: hidden;
   padding-bottom: var(--file-preview-frame-padding-block);
@@ -520,7 +557,8 @@
   flex: 1 1 auto;
 }
 
-.file-node-preview--reader.expanded:has(> .file-preview-pdf--full) {
+.file-node-preview--reader.expanded:has(> .file-preview-pdf--full),
+.file-node-preview--reader.expanded:has(> .file-preview-epub--full) {
   height: auto;
 }
 

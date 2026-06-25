@@ -203,6 +203,7 @@ const FILE_PREVIEW_RENDERERS: PreviewRendererEntry[] = [
   { id: 'directory', match: (source) => source.entryKind === 'directory', component: DirectoryPreview },
   { id: 'image', match: isImageSource, component: ImagePreview },
   { id: 'pdf', match: isPdfSource, component: PdfPreview },
+  { id: 'epub', match: isEpubSource, component: EpubPreviewLoader },
   { id: 'audio', match: isAudioSource, component: AudioPreview },
   { id: 'video', match: isVideoSource, component: VideoPreview },
   { id: 'markdown', match: isMarkdownSource, component: MarkdownPreview },
@@ -589,6 +590,33 @@ function TextPreview({ source }: PreviewRendererProps) {
   if (textState.status === 'loading') return <PreviewMessage>{labels.loading}</PreviewMessage>;
   if (textState.status === 'error') return <PreviewMessage>{textState.error === 'too-large' ? labels.tooLarge : labels.unavailable}</PreviewMessage>;
   return <div className="file-preview-code" data-preserve-selection data-preview-text dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+function EpubPreviewLoader(props: PreviewRendererProps) {
+  const labels = useT().shell.filePreview;
+  const [component, setComponent] = useState<PreviewRendererEntry['component'] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setComponent(null);
+    setFailed(false);
+    void import('./EpubPreview')
+      .then(({ EpubPreview }) => {
+        if (!cancelled) setComponent(() => EpubPreview);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (failed) return <PreviewMessage>{labels.unavailable}</PreviewMessage>;
+  if (!component) return <PreviewMessage>{labels.loading}</PreviewMessage>;
+  const EpubPreview = component;
+  return <EpubPreview {...props} />;
 }
 
 function PdfPreview({
@@ -1186,7 +1214,7 @@ function PdfUnavailablePreview({ message, source }: { message: string; source: P
   );
 }
 
-function MetadataPreview({ source }: { source: PreviewFileSource }) {
+export function MetadataPreview({ source }: { source: PreviewFileSource }) {
   const labels = useT().shell.filePreview;
   const kind = metadataKindLabel(source);
   const size = formatBytes(source.sizeBytes);
@@ -1306,6 +1334,11 @@ function isVideoSource(source: PreviewFileSource): boolean {
 function isPdfSource(source: PreviewFileSource): boolean {
   return source.entryKind === 'file'
     && (source.mimeType.toLowerCase() === 'application/pdf' || source.ext === 'pdf');
+}
+
+function isEpubSource(source: PreviewFileSource): boolean {
+  return source.entryKind === 'file'
+    && (source.mimeType.toLowerCase() === 'application/epub+zip' || source.ext === 'epub');
 }
 
 function isMarkdownSource(source: PreviewFileSource): boolean {

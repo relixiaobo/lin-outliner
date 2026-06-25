@@ -337,6 +337,7 @@ export const zhHans: PartialMessages = {
       modified: ({ date }) => `修改于 ${date}`,
       itemCount: ({ count }) => `${count} 项`,
       imageAlt: ({ name }) => `${name} 预览`,
+      epubPreviewAlt: ({ name }) => `${name} EPUB 阅读器`,
       sourceLocalFile: '本地文件',
       sourceAsset: '资源',
       sourceAgentPayload: '智能体输出',
