@@ -594,12 +594,18 @@ run_stop(runId: RunId, opts?: { reason?: string })
 VerifierVerdict = { verdict: 'pass' | 'fail', gaps: { signature, criterion, detail }[] }
 ```
 
-**Preconditions** (the catalog filter): `spawn` needs spawn capability (controllers /
-decomposing Runs); `request_complete` / `report_blocked` are visible on **any tracked Run**
-(the root submits to Neva, who verifies against the user's criteria); `run_status` /
-`run_send` / `run_stop` require **owning the target** (Neva over a root; a controller over
-its child); `ask_user_question` requires **`attended`**. The **verifier Run** gets none of
-`spawn` / the write family (sensor ≠ actuator).
+**Preconditions** (the catalog filter), keyed on **`role`** (derived from lineage, never
+stored): `spawn` needs spawn capability (a controller / decomposing Run, and Neva at the
+root); `request_complete` / `report_blocked` are visible on **any objective Run —
+controller, worker, *or* root** (a worker submits its leaf result; a controller submits its
+folded-up result; the root submits to Neva, who verifies against the user's criteria) — note
+this is **role, not `tracked`**: a worker carries no `objectiveStatus` yet is the primary
+caller of `request_complete`; `run_status` / `run_send` / `run_stop` require **owning the
+target** (Neva over a root; a controller over its child); `ask_user_question` requires
+**`attended`**. The **verifier** is the single role excluded from all of these — not
+`spawn`, not the submit/escalate family (sensor ≠ actuator). It only reads its
+runtime-pinned evidence pack and returns a `VerifierVerdict`; it is the **base case**, so
+verification never itself bottoms out into more verification (no infinite regress).
 
 ## Theory & prior art (design against these)
 
