@@ -461,13 +461,19 @@ untouched, and expressing the new control/verification lifecycle separately:
                       ├─ controller classifies (needs owner/scope · gap repeats N×) ──► blocked
                       ├─ budget reserve denied & over ceiling ──► budget_exhausted
                       └─ owner/parent stop ──► stopped
+
+   blocked / budget_exhausted ──(owner un-blocks: run_amend budget · ask-gate scope)──► active
+                                  (same runId; executionStatus stays `running`, never resurrected)
 ```
 
 The **four terminal outcomes** that matter to the owner are the **root** controller's
 `objectiveStatus`: `verified` (success) / `blocked` / `budget_exhausted` / `stopped`.
-Only `verified` is success. A worker that fails verification ends with
-`executionStatus: completed` but is simply not accepted upward — the failure is the
-controller's `objectiveStatus`, never a corrupted execution state.
+Only `verified` is success. These are terminal on the **objective axis** — the owner-facing
+notify endpoints — but **`blocked` / `budget_exhausted` are NOT terminal on the execution
+axis**: the run stays `running` (parked awaiting the owner) and is resumable, so the owner
+can un-block it (extend budget / re-authorize) on the *same* run. A worker that fails
+verification ends with `executionStatus: completed` but is simply not accepted upward — the
+failure is the controller's `objectiveStatus`, never a corrupted execution state.
 
 #### A controller's `executionStatus` — closing the process/objective mapping
 
@@ -478,18 +484,30 @@ tracks **the lifecycle of that run as a whole**, and the objective detail rides
 | Controller is… | `executionStatus` | `objectiveStatus` |
 |---|---|---|
 | pursuing its objective (running a step **or parked** waiting on children/verifier) | `running` | `active` / `verifying` |
+| **parked awaiting the owner** (blocked / budget exhausted — **resumable**, not terminal) | `running` | `blocked` / `budget_exhausted` |
 | objective verified | `completed` | `verified` |
-| blocked / budget exhausted (autonomous work ended cleanly, just not successful) | `completed` | `blocked` / `budget_exhausted` |
-| owner/parent stopped | `cancelled` | `stopped` |
+| owner gave up, or a **hard backstop** fired (e.g. max-wall-clock) | `completed` | (last value) |
+| owner/parent `run_stop` | `cancelled` | `stopped` |
 | the controller run itself crashed/errored | `failed` | (last value) |
 
-So `executionStatus: running` for a controller means **"this objective is live"** — it is a
-genuinely active run, even while parked between discrete steps. **"Is a step in flight
-*right now*"** is a *transient* condition (any in-flight child/verifier step), **derivable,
-never a persisted ledger state** — there is no new enum value. Consumers split cleanly:
+The subtle row is **blocked / budget_exhausted = parked *awaiting the owner***: structurally
+the same as parked-awaiting-children, so it stays **`running`**, not `completed`. This is
+load-bearing for the never-re-spawned / stable-`runId` invariant — **un-block is an
+`objectiveStatus: blocked → active` transition on the *same* run**, never a `completed →
+running` resurrection (which the ledger treats as terminal), and it is what makes a
+`run_amend`-budget on a blocked goal physically possible (you cannot amend a `completed`
+run). Execution-axis terminal is reserved for the genuinely terminal: `verified → completed`,
+owner-give-up / hard backstop `→ completed`, `run_stop → cancelled`, crash `→ failed`; an
+abandoned blocked goal is eventually collected by the **max-wall-clock backstop**.
+
+So `executionStatus: running` for a controller means **"this objective is live"** (pursuing
+*or* parked, awaiting children or the owner). **"Is a step in flight *right now*"** is a
+*transient* condition (any in-flight child/verifier step), **derivable, never a persisted
+ledger state** — there is no new enum value. Consumers split cleanly:
 
 - **active-run detection** reads `executionStatus = running` → unchanged (a parked
-  controller IS active; it must be resumed/flushed).
+  controller IS active — tracked + restored on restart). A blocked controller stays in this
+  set *awaiting the owner* (it is not force-advanced — that is the `objectiveStatus`'s job).
 - **Dream/reflective skip** must **switch to the in-flight-step signal**, not raw
   `running` — else a long parked controller would suppress reflection indefinitely.
 - **UI busy/spinner** reads `objectiveStatus` (`active`/`verifying`) **plus** the
