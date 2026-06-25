@@ -44,10 +44,10 @@ caught-and-fixed retention-prune bricking bug). **2026-06-24:** that plan **comp
 retire the legacy believer-pool memory projection) merged; plan archived `done` (see *Recently completed*). Also
 **2026-06-24:** **#327** (`file-ingestion-derived-cache`, codex-3 — in-process LRU cache for runtime
 extractions; `/code-review xhigh`, 7 findings fixed) landed as a fast-track follow-up to #326. The
-**agent-goal** plan landed as a `draft` board item (plan PR **#323**; revised by **#334**, then
-reframed **2026-06-25 by #337** to a nested supervisory control system — `Goal` becomes a new fact
-object (Run stays single-attempt) gated by an **independent verifier**, still `draft`, see Agent
-capabilities). **No PR open.** The agent subsystem portfolio is otherwise mature (single-agent collapse + one-Neva
+**agent-goal** plan landed as a `draft` board item (plan PR **#323**; revised by **#334** / **#337**,
+then recast **2026-06-25 by #340** to a **self-similar Run tree with zero new fact objects** — `Goal`
+is a Run's `objective`, durable intent rides a persistent **controller Run**, gated by the
+**parent-verifies-child** rule, still `draft`, see Agent capabilities). **No PR open.** The agent subsystem portfolio is otherwise mature (single-agent collapse + one-Neva
 invariant, the IM-native memory/channel spine, the 2026-06-22 Codex-transcript wave); the active build
 frontier remains the **command-surface / performance / UI-quality / files** lanes in the **Backlog** —
 start at *Top of queue*. The full shipped history is in **Recently completed**; small unclaimed
@@ -199,28 +199,37 @@ before any directional/security-sensitive build.
     Note: the believer-pool store + Dream extraction substrate still ships under the hood.
     **PR3 jump-to-source UI shipped (#310, 2026-06-19)** — the whole #302 subsystem replacement
     is complete.
-- **agent-goal** (P2, *design captured 2026-06-23 (#323), revised 2026-06-24 (#334) to a unified Run
-  model, then reframed 2026-06-25 (#337) as a nested supervisory control system — `draft`, 8 open
-  questions pending; needs a dev build one-pager; two features*) — see `docs/plans/agent-goal.md`. Let a
-  user hand a long-running **objective** to the agent and have it pursued **autonomously across many
-  execution attempts until the objective is independently verified complete** — not until the model
-  decides to stop. The design adds exactly **one new fact object — `Goal`** (durable intent that outlives
-  any single Run; `Run` stays single-attempt — persistence is the **Goal's control loop**, not a Run
-  continuation mode), giving **7 fact objects, 0 projection concepts** (`Turn / Task / Team / Channel /
-  Step / kind` all become views). The load-bearing safety property is the **lying sensor**: completion is
-  **never self-declared** — `request_complete()` triggers an **independent verifier** (a *fresh run*:
-  clean context, artifacts + fixed criteria + adversarial framing only), recursing so every level has its
-  own sensor block. Inside the loop there are no second agents — **one persistent self (Neva)**; workers
-  and the verifier are **stateless functional blocks** differentiated by **function / context /
-  capability / model, never identity** (reaffirms the post-#300 one-Neva invariant). A code fork inherits
-  the whole conversation, so `spawn` gains a **`context: 'full' | 'brief' | 'none'`** knob (fork =
-  `full`; verifier pinned to `none`). **Shape (b):** **Feature A** — Goal with independent verification
-  (single worker); **Feature B** — goal-as-team with **recursion** (goal-shaped subtasks promote to
-  sub-Goals, bounded by one shared tree budget + narrow-only scope + a sensor block at every level;
-  builds on A + existing fork delegation). Touches the protocol surface (`commands.ts`/`types.ts`: `Goal`
-  record, `trigger: goal`, `spawn` params incl. `context`, run terminal status, `set_budget`) → land
-  **interface-first**. Directional / autonomy-sensitive — escalate the capability + budget boundary
-  before building.
+- **agent-goal** (P2, *design captured 2026-06-23 (#323), revised #334 / #337, then recast 2026-06-25
+  (#340) to a self-similar Run tree with zero new fact objects — `draft`, 4 open questions pending; needs
+  a dev build one-pager; one PR, build-order within it*) — see `docs/plans/agent-goal.md`. Let a user hand
+  a long-running **objective** to Neva and have it pursued **autonomously until independently verified
+  complete** — not until the model decides to stop. The objective runs as a **recursive tree of Runs**,
+  designed as **one verified edge** (parent → child → fresh-context **verifier Run** → accept / retry)
+  recursed; the tree **emerges**, no code takes "the tree" as input (each Run reasons only one level via
+  `parentRunId` / `childRunIds` — **no `rootRunId`**). **Zero new fact objects** (the existing 6:
+  Conversation / Message / Principal / Agent / Run / RunEvent): "Goal/Task" = a Run's `objective`; durable
+  intent rides a persistent **controller Run** (never re-spawned, so its `runId` is the stable task
+  identity), while **worker Runs** are ephemeral single attempts the controller re-spawns on failure. The
+  load-bearing safety property is the **lying sensor**: completion is **never self-declared** — a child
+  only **terminates**, its parent **senses** that and verifies the result via a fresh **`context:'none'`
+  verifier Run** (raw evidence + fixed criteria + adversarial rubric, read-only, no actuation); the
+  **root** is verified by Neva against the user's **fixed** criteria. **No upward tool** — feedback is the
+  run's own termination + output (removes `request_complete` / `report_blocked`; a child never
+  self-declares done or blocked); all controls are **downward**. **`Run` enriched** (objective / criteria
+  / scope / budget / persistent `disposition` / **dual status**: existing `executionStatus` untouched +
+  new controller-only `objectiveStatus`) — **no `Goal` object**; **`kind` derived** (via the new
+  `disposition`) then physically removed. Tools: **`Agent` → `spawn`** + uniform `run_status` /
+  `run_steer` (soft) / `run_amend` (hard, invalidates verdicts) / `run_stop`; `criteria` required unless
+  `verify:false`; **`ScopeSpec` reuses the existing `AgentToolActionKind`** taxonomy (no parallel enum).
+  **One persistent self (Neva)**; workers / verifiers are **stateless Runs** differentiated by **function
+  / context / capability / model, never identity** (reaffirms the post-#300 one-Neva invariant). Budget
+  **mandatory + local admission control** per edge (tree total emergent, no shared pool). **Shape (a):**
+  ONE PR, build-order within it — protocol / naming interface (`disposition` + `kind` migration + the
+  renames) first, then control + verifier capped at depth/fan-out = 1 (early end-to-end), then uncap to
+  arbitrary depth, then delivery / UI. Touches the protocol surface (`types.ts` / `agentEventLog.ts` /
+  `commands.ts` / `agentPermissionModel.ts`) + the model-facing `Agent` → `spawn` rename → land
+  **interface-first**. Directional / autonomy-sensitive — the highest-blast capability; the
+  parent-verifies-child rule + budget admission + livelock guard are the load-bearing guards.
 - **agent-skills-authoring** (P1, M0–M2) — skill **structure** (one unified library +
   by-name binding via `AgentDefinition.skills` + a `built-in` immutable floor) and
   **governed self-authoring** (skillify + file tools, provenance/snapshot/rollback,
