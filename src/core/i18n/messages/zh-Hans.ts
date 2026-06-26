@@ -1066,17 +1066,6 @@ commandPalette: {
       },
     },
     childRun: {
-      summary: ({ description }) => `子智能体 · ${description}`,
-      // 在对话流里记录一次子智能体运行的内联分割线。
-      boundary: {
-        label: '子智能体',
-        running: '运行中…',
-        ranAt: ({ time }) => `${time} 运行`,
-        failed: '失败',
-        stopped: '已停止',
-        viewFullRun: '查看完整运行',
-        noResult: '未记录结果。',
-      },
       heading: '子智能体',
       status: '状态',
       mode: '模式',

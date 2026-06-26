@@ -49,7 +49,6 @@ import {
 } from '../icons';
 import { AgentCompactionBoundary } from './AgentCompactionBoundary';
 import { AgentDreamBoundary } from './AgentDreamBoundary';
-import { AgentChildRunBoundary } from './AgentChildRunBoundary';
 import { AgentComposer } from './AgentComposer';
 import { DreamLauncher } from './DreamLauncher';
 import type { AgentComposerNodeReference } from './AgentComposerEditor';
@@ -1158,7 +1157,7 @@ export function AgentChatPanel({
       return <AgentDreamBoundary entry={row.entry} />;
     }
     if (row.entry.kind === 'child-run') {
-      return <AgentChildRunBoundary entry={row.entry} onOpenTranscript={setSelectedChildRunId} />;
+      return null;
     }
 
     const systemText = systemLineText(row.entry);

@@ -3174,10 +3174,9 @@ test.describe('agent composer controls', () => {
       }],
     });
 
-    // A DM main-agent child run folds into its spawning turn's process: the Agent
-    // tool-call row renders the child-run summary inline (turn-anchored, so editing
-    // the turn removes it), NOT a free-floating conversation-level boundary. So there
-    // is no boundary region, and the run surfaces as a process row in the bubble.
+    // A DM main-agent child run stays anchored to its spawning ordinary Agent
+    // tool-call row, NOT a free-floating conversation-level boundary. So there
+    // is no boundary region, and the run remains a process row in the bubble.
     await expect(page.getByRole('region', { name: 'Agent task · Inspect child run UI' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Running agent task "Inspect child run UI"' }).first()).toBeVisible();
 

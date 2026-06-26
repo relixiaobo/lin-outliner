@@ -13,6 +13,7 @@ import type { AgentTaskEntry } from '../../src/renderer/agent/runtime';
 import { buildAgentTaskEntries } from '../../src/renderer/agent/runtime';
 import type { DocumentIndex } from '../../src/renderer/state/document';
 import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlock';
+import { AgentToolActivityGroup } from '../../src/renderer/ui/agent/AgentToolActivityGroup';
 import { AgentChildRunDetailsPanel } from '../../src/renderer/ui/agent/AgentChildRunDetailsPanel';
 import { AgentTaskPanel } from '../../src/renderer/ui/agent/AgentTaskPanel';
 import { renderAssistantBlocks } from '../../src/renderer/ui/agent/AgentAssistantTurnContent';
@@ -43,7 +44,7 @@ afterEach(() => {
 });
 
 describe('agent child run UI', () => {
-  test('renders a compact Agent tool block and opens transcript details', async () => {
+  test('renders child runs through the ordinary Agent tool block and opens transcript details', async () => {
     let openedChildRunId: string | null = null;
     const rendered = renderComponent(
       <AgentToolCallBlock
@@ -58,18 +59,53 @@ describe('agent child run UI', () => {
       />,
     );
 
-    expect(rendered.container.textContent).toContain('Agent task · Inspect child run UI');
+    expect(rendered.container.textContent).toContain('Ran agent task');
+    expect(rendered.container.textContent).toContain('Inspect child run UI');
 
-    await click(rendered, textButton(rendered, 'Agent task · Inspect child run UI'));
+    await click(rendered, firstToolCallToggle(rendered));
 
-    expect(rendered.container.textContent).toContain('Status');
-    expect(rendered.container.textContent).toContain('completed');
-    expect(rendered.container.textContent).toContain('fork · explorer');
+    expect(rendered.container.textContent).toContain('Input');
     expect(rendered.container.textContent).toContain('Inspect the current UI.');
-    expect(rendered.container.textContent).toContain('Found the relevant UI path.');
+    expect(rendered.container.textContent).not.toContain('Found the relevant UI path.');
 
     await click(rendered, textButton(rendered, 'View transcript'));
     expect(openedChildRunId).toBe('child-1');
+  });
+
+  test('uses child run status when summarizing ordinary tool activity groups', () => {
+    const runningChildRun = {
+      ...childRunEntity(),
+      completedAt: undefined,
+      result: undefined,
+      status: 'running' as const,
+    };
+    const rendered = renderComponent(
+      <AgentToolActivityGroup
+        conversationId="conversation-1"
+        expandState={NOOP_EXPAND_STATE}
+        id="activity:tool-bash-1"
+        index={TEST_INDEX}
+        members={[
+          {
+            id: 'tool:tool-bash-1',
+            type: 'toolCall',
+            toolCall: { type: 'toolCall', id: 'tool-bash-1', name: 'bash', arguments: { command: 'pwd' } },
+            outcome: 'completed',
+          },
+          {
+            id: 'tool:tool-agent-1',
+            type: 'toolCall',
+            toolCall: agentToolCall(),
+            childRun: runningChildRun,
+          },
+        ]}
+        pendingToolCallIds={new Set()}
+        results={new Map()}
+        turnActive
+      />,
+    );
+
+    expect(rendered.container.textContent).toContain('Ran a command · using a tool');
   });
 
   test('loads a child run transcript and keeps nested tool calls expandable', async () => {
@@ -190,8 +226,8 @@ describe('agent child run UI', () => {
       },
     );
 
-    await waitForText(rendered, 'Agent task · Nested child run');
-    await click(rendered, textButton(rendered, 'Agent task · Nested child run'));
+    await waitForText(rendered, 'Ran agent task');
+    await click(rendered, firstToolCallToggle(rendered));
     await click(rendered, textButton(rendered, 'View transcript'));
 
     expect(openedChildRunId).toBe('child-2');

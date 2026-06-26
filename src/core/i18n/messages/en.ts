@@ -1157,19 +1157,8 @@ commandPalette: {
         writeFile: { base: 'write file', pending: 'Writing file', done: 'Wrote file' },
       },
     },
-    // The agent-task (delegated child run) details panel + inline details.
+    // The agent-task (delegated child run) details panel and tool-call details.
     childRun: {
-      summary: ({ description }: { description: string }) => `Agent task · ${description}`,
-      // The inline transcript divider that records a delegated agent task in its conversation.
-      boundary: {
-        label: 'Agent task',
-        running: 'Running…',
-        ranAt: ({ time }: { time: string }) => `ran ${time}`,
-        failed: 'Failed',
-        stopped: 'Stopped',
-        viewFullRun: 'View full run',
-        noResult: 'No result recorded.',
-      },
       heading: 'Agent task',
       status: 'Status',
       mode: 'Mode',

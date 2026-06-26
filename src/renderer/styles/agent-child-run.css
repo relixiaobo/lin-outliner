@@ -232,33 +232,12 @@
   color: var(--danger);
 }
 
-.agent-child-run-inline {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-5);
-}
-
-.agent-child-run-meta-grid {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-4);
-  margin: 0;
-}
-
-.agent-child-run-meta-grid > div {
-  min-width: 0;
-}
-
-.agent-child-run-meta-grid dt,
 .agent-child-run-metadata dt {
   color: var(--text-faint);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
 }
 
-.agent-child-run-meta-grid dd,
 .agent-child-run-metadata dd {
   min-width: 0;
   margin: var(--space-1) 0 0;

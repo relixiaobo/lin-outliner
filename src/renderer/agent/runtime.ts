@@ -108,8 +108,9 @@ export interface AgentActiveDreamEntry {
 
 export type AgentDreamEntry = AgentCompletedDreamEntry | AgentActiveDreamEntry;
 
-// A child run surfaced inline in the transcript as a boundary — the permanent
-// record of the run in its conversation (its final result lives on the entity).
+// Child-run entries stay in the type for replay/projection compatibility, but
+// the live transcript no longer renders them as standalone boundary rows. Runs
+// surface through their ordinary spawn/run_* tool calls plus the task panel.
 export interface AgentChildRunEntry {
   id: string;
   kind: 'child-run';
@@ -278,8 +279,9 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
     }
 
     if (row.kind === 'child-run') {
-      const childRun = projection.entities.childRuns[row.childRunId];
-      if (childRun) entries.push({ id: row.id, kind: 'child-run', childRun });
+      // Keep child-run data available to task panels and tool-call rows, but do
+      // not add a second transcript boundary. The spawn/run_* tool row is the
+      // interaction surface in the main conversation.
       continue;
     }
 
