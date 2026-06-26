@@ -1146,10 +1146,10 @@ test.describe('file attachments', () => {
       backgroundColor: 'rgb(255, 255, 255)',
       boxShadow: 'none',
       hostBackgroundColor: 'rgba(0, 0, 0, 0)',
-      hostRadius: '12px',
-      iframeRadius: '12px',
+      hostRadius: '16px',
+      iframeRadius: '16px',
       minHeight: '0px',
-      pageRadius: '12px',
+      pageRadius: '16px',
     });
 
     await outlineMarkers.nth(1).click();
