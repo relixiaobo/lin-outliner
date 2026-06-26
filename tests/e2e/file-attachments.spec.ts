@@ -289,7 +289,7 @@ test.describe('file attachments', () => {
     await attachmentChevron.click();
     const inlinePreviewFrame = attachmentRow.locator('.file-node-row-preview .file-node-preview.collapsed');
     await expect(inlinePreviewFrame).toBeVisible();
-    await expectConcentricPreviewCorners(inlinePreviewFrame, '.file-preview-pdf-canvas');
+    await expectConcentricPreviewCorners(inlinePreviewFrame, '.file-preview-pdf--summary');
     await expect.poll(async () => inlinePreviewFrame.evaluate((element) => {
       const style = getComputedStyle(element);
       const summaryStrip = element.querySelector<HTMLElement>('.file-preview-pdf--summary');
@@ -1090,7 +1090,7 @@ test.describe('file attachments', () => {
     }).toBe(true);
 
     const epubBody = page.locator('.file-node-row-preview > .file-node-body').last();
-    await expectConcentricPreviewCorners(epubPreview, '.file-preview-epub-frame');
+    await expectConcentricPreviewCorners(epubPreview, '.file-preview-epub-host');
     await epubBody.locator('.file-preview-pill-primary').click();
     const fullPreview = epubBody.locator('.file-node-preview.expanded .file-preview-epub--full');
     const fullReader = fullPreview.locator('.file-preview-epub-host');

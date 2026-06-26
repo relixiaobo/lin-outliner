@@ -264,6 +264,7 @@
   min-width: 0;
   width: 100%;
   height: 100%;
+  border-radius: var(--file-preview-page-radius);
 }
 
 .file-preview-epub-host[aria-hidden='true'] {
@@ -278,7 +279,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  border-radius: var(--file-preview-page-radius);
   overflow-x: hidden;
   overflow-y: auto;
 }
@@ -334,6 +334,7 @@
   display: flex;
   min-width: 0;
   gap: var(--space-4);
+  border-radius: var(--file-preview-page-radius);
 }
 
 .file-preview-pdf-shell--full {
@@ -364,7 +365,6 @@
 .file-preview-pdf--full {
   height: 100%;
   flex-direction: column;
-  border-radius: var(--file-preview-page-radius);
   overflow-x: hidden;
   overflow-y: auto;
 }
