@@ -48,6 +48,7 @@ import {
   ICON_SIZE,
   LoaderIcon,
   MoreIcon,
+  RefreshIcon,
   UsedToolsIcon,
   WarningIcon,
 } from '../icons';
@@ -1310,6 +1311,7 @@ export function AgentChatPanel({
   // and delete-confirm — one fallback everywhere so inside/outside never disagree.
   const displayTitle = readableConversationTitle(conversationTitle, t.common.untitled);
   const detailRunInHeader = workPanelOpen ? selectedRun : null;
+  const runIndexInHeader = workPanelOpen && !detailRunInHeader;
   const dockMenuAnchorRef = useMemo(() => ({
     current: {
       getBoundingClientRect: () => {
@@ -1366,6 +1368,13 @@ export function AgentChatPanel({
             <span className="agent-dock-run-label">{t.agent.childRun.heading}</span>
             <span className={`agent-dock-run-status is-${detailRunInHeader.status}`}>{detailRunInHeader.status}</span>
           </ButtonControl>
+        ) : runIndexInHeader ? (
+          <div className="agent-dock-work-title" aria-label={t.agent.run.panelAriaLabel}>
+            <span className="agent-dock-title-leading">
+              <UsedToolsIcon aria-hidden="true" size={ICON_SIZE.menu} />
+            </span>
+            <span className="agent-dock-title">{t.agent.run.heading}</span>
+          </div>
         ) : (
           <ButtonControl
             ref={historyButtonRef}
@@ -1390,19 +1399,32 @@ export function AgentChatPanel({
           </ButtonControl>
         )}
         <div className="agent-dock-actions">
-          {detailRunInHeader ? (
-            <ButtonControl
-              aria-label={t.agent.run.closePanel}
-              className="agent-run-panel-button"
-              onClick={() => {
-                setSelectedRunId(null);
-                setSelectedRunConversationId(null);
-                setWorkPanelOpen(false);
-              }}
-              title={t.agent.run.closePanel}
-            >
-              <CloseIcon size={ICON_SIZE.toolbar} />
-            </ButtonControl>
+          {workPanelOpen ? (
+            <>
+              {runIndexInHeader ? (
+                <ButtonControl
+                  aria-label={t.agent.run.refresh}
+                  className="agent-run-panel-button"
+                  disabled={runIndexLoading}
+                  onClick={() => void loadRunIndex()}
+                  title={t.agent.run.refresh}
+                >
+                  <RefreshIcon size={ICON_SIZE.toolbar} />
+                </ButtonControl>
+              ) : null}
+              <ButtonControl
+                aria-label={t.agent.run.closePanel}
+                className="agent-run-panel-button"
+                onClick={() => {
+                  setSelectedRunId(null);
+                  setSelectedRunConversationId(null);
+                  setWorkPanelOpen(false);
+                }}
+                title={t.agent.run.closePanel}
+              >
+                <CloseIcon size={ICON_SIZE.toolbar} />
+              </ButtonControl>
+            </>
           ) : (
             <ButtonControl
               aria-expanded={workPanelOpen}
@@ -1423,7 +1445,7 @@ export function AgentChatPanel({
             </ButtonControl>
           )}
         </div>
-        {!detailRunInHeader && historyOpen ? createPortal(
+        {!workPanelOpen && historyOpen ? createPortal(
           <div
             ref={historyMenuRef}
             className="agent-conversation-menu"
@@ -1545,11 +1567,6 @@ export function AgentChatPanel({
             <AgentRunsPanel
               error={runIndexError}
               loading={runIndexLoading}
-              onClose={() => {
-                setSelectedRunId(null);
-                setSelectedRunConversationId(null);
-                setWorkPanelOpen(false);
-              }}
               onOpenRun={(run) => void openRunFromWorkPanel(run)}
               onRefresh={() => void loadRunIndex()}
               runs={runIndex}

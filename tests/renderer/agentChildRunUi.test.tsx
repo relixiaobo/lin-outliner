@@ -478,7 +478,6 @@ describe('agent child run UI', () => {
       <AgentRunsPanel
         error={null}
         loading={false}
-        onClose={() => undefined}
         onOpenRun={(run) => {
           openedRunId = run.runId;
         }}
@@ -487,9 +486,7 @@ describe('agent child run UI', () => {
       />,
     );
 
-    expect(rendered.container.textContent).toContain('Runs');
-    expect(rendered.container.textContent).toContain('1 run running');
-    expect(rendered.container.querySelector('[aria-live="polite"]')?.textContent).toContain('1 run running');
+    expect(rendered.container.querySelector('[role="tree"]')).not.toBeNull();
     expect(rendered.container.textContent).toContain('Inspect child run UI');
     expect(rendered.container.textContent).toContain('Summarize notes');
     expect(rendered.container.textContent).toContain('Verifier');

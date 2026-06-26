@@ -3185,8 +3185,11 @@ test.describe('agent composer controls', () => {
     const runs = page.getByRole('region', { name: 'Agent runs' });
     await expect(runs).toBeVisible();
     await expect(runs).toHaveCSS('position', 'static');
+    await expect(page.locator('.agent-dock-header')).toContainText('Runs');
+    await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Refresh runs' })).toBeVisible();
+    await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Close Work' })).toBeVisible();
+    await expect(runs.getByRole('button', { name: 'Close Work' })).toHaveCount(0);
     await expect(page.locator('.agent-composer-region')).toHaveCount(0);
-    await expect(runs.getByText('1 run running')).toBeVisible();
     await expect(runs.getByText('Inspect child run UI')).toBeVisible();
     await runs.getByRole('treeitem', { name: /Inspect child run UI/ }).click();
 
@@ -3229,7 +3232,7 @@ test.describe('agent composer controls', () => {
     await page.getByRole('button', { name: 'Back to runs' }).click();
     await expect(details).toHaveCount(0);
     await expect(runs).toBeVisible();
-    await runs.getByRole('button', { name: 'Close Work' }).click();
+    await page.locator('.agent-dock-header').getByRole('button', { name: 'Close Work' }).click();
     await expect(runs).toHaveCount(0);
   });
 });

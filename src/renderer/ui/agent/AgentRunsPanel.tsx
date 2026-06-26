@@ -6,12 +6,9 @@ import { useI18n } from '../../i18n/I18nProvider';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
-  CloseIcon,
   ICON_SIZE,
   LoaderIcon,
-  RefreshIcon,
   StopIcon,
-  UsedToolsIcon,
   WarningIcon,
 } from '../icons';
 import { CheckboxMark } from '../primitives/CheckboxMark';
@@ -21,7 +18,6 @@ import { IconButton } from '../primitives/IconButton';
 interface AgentRunsPanelProps {
   error: string | null;
   loading: boolean;
-  onClose: () => void;
   onOpenRun: (run: AgentRunListEntry) => void;
   onRefresh: () => void;
   runs: readonly AgentRunListEntry[];
@@ -102,7 +98,6 @@ function runChildProgressLabel(
 export function AgentRunsPanel({
   error,
   loading,
-  onClose,
   onOpenRun,
   onRefresh,
   runs,
@@ -113,7 +108,6 @@ export function AgentRunsPanel({
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const autoExpandedRunIds = useRef(new Set<string>());
   const tree = useMemo(() => buildRunTree(runs), [runs]);
-  const runningCount = useMemo(() => runs.filter((run) => run.status === 'running').length, [runs]);
 
   useEffect(() => {
     setExpandedRunIds((previous) => {
@@ -163,34 +157,6 @@ export function AgentRunsPanel({
 
   return (
     <section className="agent-run-panel" aria-label={t.agent.run.panelAriaLabel}>
-      <header className="agent-run-header">
-        <div className="agent-run-title-block">
-          <div className="agent-run-title-line">
-            <UsedToolsIcon size={ICON_SIZE.menu} />
-            <span>{t.agent.run.heading}</span>
-          </div>
-          <p aria-live="polite">{runningCount > 0 ? t.agent.run.runningSummary({ count: runningCount }) : t.agent.run.idleSummary}</p>
-        </div>
-        <div className="agent-run-header-actions">
-          <IconButton
-            className="agent-run-icon-button"
-            disabled={loading}
-            icon={RefreshIcon}
-            label={t.agent.run.refresh}
-            onClick={onRefresh}
-            title={t.agent.run.refresh}
-            variant="panel"
-          />
-          <IconButton
-            className="agent-run-close"
-            icon={CloseIcon}
-            label={t.agent.run.closePanel}
-            onClick={onClose}
-            title={t.agent.run.close}
-            variant="panel"
-          />
-        </div>
-      </header>
       {actionError ? (
         <div className="agent-run-action-error" role="alert">
           <WarningIcon size={ICON_SIZE.menu} />

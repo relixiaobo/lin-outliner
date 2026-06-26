@@ -985,9 +985,11 @@ Rules:
     Boundary rows live only in `transcriptRows`, never in the active `rows` path.
 - The Work/Runs view is a global run index backed by `agent_list_runs`, not a
   projection-only task list on the active conversation. Opening Work replaces the
-  agent dock's chat body with the first-level run tree; opening a row switches
-  that same body area to the second-level run detail view. The first level lists
-  non-turn, non-Dream runs across channels as a compact task-list tree using
+  dock's channel header with the first-level `Runs` header, moves refresh into
+  the dock header actions, turns the Work/Runs toolbar icon into the close
+  affordance, and replaces the chat body with the first-level run tree. Opening a
+  row switches that same body area to the second-level run detail view. The first
+  level lists non-turn, non-Dream runs across channels as a compact task-list tree using
   `parentRunId`: each row shows the shared checkbox marker on the left, the run
   title as the primary text. Rows with direct child runs add one muted secondary
   line containing only an inline `Child run(s) completed/total` disclosure
@@ -1000,9 +1002,9 @@ Rules:
   internal verification prompt. There is no separate trailing disclosure column,
   and hover never paints a separate subrow rectangle that fights the tree
   alignment. The detail view is a read-only
-  drill-in, not a second chat surface: it replaces the dock's channel header with
-  the run-detail navigation row (`Back to runs · Agent run · status`), and the
-  Work/Runs toolbar icon becomes the close affordance for that drill-in. The
+  drill-in, not a second chat surface: it reuses the same dock-header model with
+  the run-detail navigation row (`Back to runs · Agent run · status`) and the
+  Work/Runs toolbar icon still acting as the close affordance. The
   detail body shows the run title, Result, direct child Runs (or Verification when
   the only direct children are verifier runs), a collapsed Activity log, and
   collapsed Technical details in a single scroll flow. Result is plain read-only markdown content:
