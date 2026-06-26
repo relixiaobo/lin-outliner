@@ -229,6 +229,14 @@
   white-space: normal;
 }
 
+.agent-run-child-progress {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
 .agent-run-meta {
   display: block;
   overflow: hidden;

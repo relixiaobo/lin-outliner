@@ -990,11 +990,13 @@ Rules:
   non-turn, non-Dream runs across channels as a compact task-list tree using
   `parentRunId`: each row shows the shared checkbox marker on the left, the run
   title as the primary text, and one muted metadata line
-  (`channel · kind · status · time`); row actions reveal on hover/focus. Expanded
-  child runs render as checklist-style subrows below the parent content with fine
-  separators, not as a strongly indented tree; the disclosure control sits on the
-  trailing side, never before the checkbox marker. The detail view still reads the
-  selected conversation's `entities.childRuns` and run transcript.
+  (`channel · kind · status · time`); rows with direct child runs also show a
+  trailing `completed/total` count on the title row. Row actions reveal on
+  hover/focus. Expanded child runs render as checklist-style subrows below the
+  parent content with fine separators, not as a strongly indented tree; the
+  disclosure control sits on the trailing side, never before the checkbox marker.
+  The detail view still reads the selected conversation's `entities.childRuns` and
+  run transcript.
 - Long output rows are collapsed by default.
 - **Result-first turn fold (one flat level).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last

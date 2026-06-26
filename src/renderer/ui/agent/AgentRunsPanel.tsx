@@ -91,6 +91,15 @@ function runStatusLabel(run: AgentRunListEntry, labels: Messages['agent']['run']
   return labels.status[run.status];
 }
 
+function runStatusClass(run: AgentRunListEntry): string {
+  return run.objectiveStatus ?? run.status;
+}
+
+function isCompletedRun(run: AgentRunListEntry): boolean {
+  const status = runStatusClass(run);
+  return status === 'completed' || status === 'verified';
+}
+
 function runKindLabel(run: AgentRunListEntry, labels: Messages['agent']['run']): string {
   if (run.purpose === 'verify') return labels.kind.verifier;
   return labels.kind[run.kind];
@@ -223,8 +232,10 @@ export function AgentRunsPanel({
             const expanded = expandedRunIds.has(run.runId);
             const hasChildren = node.children.length > 0;
             const meta = runMetaParts(run, locale, t.agent.run).join(' · ');
-            const statusClass = run.objectiveStatus ?? run.status;
-            const completed = statusClass === 'completed' || statusClass === 'verified';
+            const statusClass = runStatusClass(run);
+            const completed = isCompletedRun(run);
+            const completedChildCount = node.children.filter((child) => isCompletedRun(child.run)).length;
+            const childProgress = hasChildren ? `${completedChildCount}/${node.children.length}` : null;
             const rowClassName = [
               'agent-run-row',
               `is-${run.status}`,
@@ -254,6 +265,7 @@ export function AgentRunsPanel({
                 >
                   <span className="agent-run-title-row">
                     <span className="agent-run-title">{run.title}</span>
+                    {childProgress ? <span className="agent-run-child-progress">{childProgress}</span> : null}
                   </span>
                   <span className="agent-run-meta">{meta}</span>
                 </ButtonControl>

@@ -440,6 +440,7 @@ describe('agent child run UI', () => {
     expect(rendered.container.querySelector('[aria-live="polite"]')?.textContent).toContain('1 run running');
     expect(rendered.container.textContent).toContain('Inspect child run UI');
     expect(rendered.container.textContent).toContain('Summarize notes');
+    expect(rendered.container.textContent).toContain('1/1');
 
     await click(rendered, textButton(rendered, 'Inspect child run UI'));
     expect(openedRunId).toBe('child-1');
