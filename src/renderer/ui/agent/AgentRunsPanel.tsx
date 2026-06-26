@@ -223,14 +223,25 @@ export function AgentRunsPanel({
             const hasChildren = node.children.length > 0;
             const meta = runMetaParts(run, locale, t.agent.run).join(' · ');
             const statusClass = run.objectiveStatus ?? run.status;
+            const rowClassName = [
+              'agent-run-row',
+              `is-${run.status}`,
+              `is-${statusClass}`,
+              hasChildren ? 'has-children' : 'is-leaf',
+              expanded ? 'is-expanded' : '',
+              node.depth > 0 ? 'is-subrun' : 'is-root-run',
+            ].filter(Boolean).join(' ');
             return (
               <article
                 aria-expanded={hasChildren ? expanded : undefined}
                 aria-level={node.depth + 1}
-                className={`agent-run-row is-${run.status} is-${statusClass}`}
+                className={rowClassName}
                 key={run.runId}
                 role="treeitem"
-                style={{ '--run-depth': node.depth } as CSSProperties}
+                style={{
+                  '--run-depth': node.depth,
+                  '--subrun-depth': Math.max(0, node.depth - 1),
+                } as CSSProperties}
               >
                 <button
                   aria-label={expanded ? t.agent.run.collapseRun : t.agent.run.expandRun}
