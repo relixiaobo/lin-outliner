@@ -104,11 +104,13 @@ async function expectConcentricPreviewCorners(previewFrame: Locator, contentSele
     const paddingTop = Number.parseFloat(frameStyle.paddingTop);
     const paddingLeft = Number.parseFloat(frameStyle.paddingLeft);
     return {
+      contentClipPath: contentStyle.clipPath,
       contentHasRadius: contentRadius > 0,
       inlinePaddingMatchesBlock: Math.abs(paddingLeft - paddingTop) <= 1,
       radiiAreConcentric: Math.abs(frameRadius - (contentRadius + paddingTop)) <= 1,
     };
   }, contentSelector)).toEqual({
+    contentClipPath: 'inset(0px round 12px)',
     contentHasRadius: true,
     inlinePaddingMatchesBlock: true,
     radiiAreConcentric: true,
