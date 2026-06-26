@@ -1117,10 +1117,11 @@ Implemented for the current first-class surfaces.
   first, and shows status, type/mode, message count, and latest update time.
 - Run rows can open the existing child run details panel; running rows can stop
   the child run through `run_stop`.
-- The child run details panel is a read-only drill-in that shows Overview,
-  Result, direct child Runs, Timeline, and Metadata in one scroll flow. It loads
-  the run-ledger transcript lazily through `agent_child_run_transcript` (cached
-  on the ledger tail seq; polled while the run is live). `run_steer` remains the
+- The child run details panel is a read-only drill-in that shows Result, direct
+  child Runs (or Verification for verifier-only children), collapsed Activity log,
+  and collapsed Technical details in one scroll flow. It loads the run-ledger
+  transcript lazily through `agent_child_run_transcript` (cached on the ledger
+  tail seq; polled while the run is live). `run_steer` remains the
   same-conversation continuation mechanism for agents/tools, but the detail page
   does not expose a permanent follow-up composer.
 - Nested child tool calls inside transcripts remain expandable.

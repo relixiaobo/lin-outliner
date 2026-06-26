@@ -998,11 +998,14 @@ Rules:
   concise "Verifier" row rather than exposing their internal verification prompt.
   The disclosure control sits on the trailing side, never before the checkbox
   marker. The detail view is a read-only drill-in, not a second chat surface: it
-  shows a header, Overview, Result, direct child Runs, Timeline, and Metadata in a
-  single scroll flow. It reads the selected conversation's `entities.childRuns`
-  and lazily replays the run transcript through `agent_child_run_transcript`;
-  running detail views expose Stop, while follow-up/steering remains an internal
-  `run_steer` runtime/tool capability instead of a permanent detail-page input.
+  shows a header, Result, direct child Runs (or Verification when the only direct
+  children are verifier runs), a collapsed Activity log, and collapsed Technical
+  details in a single scroll flow. Header metadata stays user-facing (`messages ·
+  duration`); internal mode/type/id fields live in Technical details. The view
+  reads the selected conversation's `entities.childRuns` and lazily replays the
+  run transcript through `agent_child_run_transcript`; running detail views expose
+  Stop, while follow-up/steering remains an internal `run_steer` runtime/tool
+  capability instead of a permanent detail-page input.
 - Long output rows are collapsed by default.
 - **Result-first turn fold (one flat level).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last

@@ -435,12 +435,11 @@ describe('agent child run UI', () => {
       },
     );
 
-    await waitForText(rendered, 'Child run');
-    expect(rendered.container.textContent).toContain('Overview');
+    await waitForText(rendered, 'Verification');
     expect(rendered.container.textContent).toContain('Result');
-    expect(rendered.container.textContent).toContain('Verify launch checklist');
+    expect(rendered.container.textContent).toContain('Verifier');
 
-    await click(rendered, textButton(rendered, 'Verify launch checklist'));
+    await click(rendered, textButton(rendered, 'Verifier'));
     expect(openedChildRunId).toBe('child-2');
   });
 

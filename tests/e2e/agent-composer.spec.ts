@@ -3194,10 +3194,10 @@ test.describe('agent composer controls', () => {
     await expect(details).toBeVisible();
     await expect(details).toHaveCSS('position', 'static');
     await expect(details.getByText('Inspect child run UI')).toBeVisible();
-    await expect(page.getByText('fork · explorer')).toBeVisible();
+    await expect(details.getByText(/4 messages ·/)).toBeVisible();
 
     await expect(details).toBeVisible();
-    await expect(details.getByText('Timeline (4)')).toBeVisible();
+    await expect(details.getByText('Activity log (4)')).toBeVisible();
     await expect(details.getByText('Inspect the current UI.')).toBeVisible();
     const thoughtToggles = details.getByRole('button', { name: 'Thought · Read node "today"' });
     await expect(thoughtToggles.first()).toBeVisible();

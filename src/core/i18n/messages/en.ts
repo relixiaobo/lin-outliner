@@ -1184,14 +1184,14 @@ commandPalette: {
       detailsAriaLabel: 'Agent run details',
       closeDetails: 'Close agent run details',
       close: 'Close',
-      metaLine: ({ mode, type, count, duration }: { mode: string; type: string; count: number; duration: string }) =>
-        `${mode} · ${type} · ${count} messages · ${duration}`,
-      sectionOverview: 'Overview',
+      metaLine: ({ count, duration }: { count: number; duration: string }) =>
+        `${count === 1 ? '1 message' : `${count} messages`} · ${duration}`,
       sectionResult: 'Result',
       sectionChildRuns: ({ count }: { count: number }) =>
         count === 1 ? 'Child run' : `Child runs (${count})`,
-      sectionTimeline: ({ count }: { count: number }) => `Timeline (${count})`,
-      sectionMetadata: 'Metadata',
+      sectionVerification: 'Verification',
+      sectionActivityLog: ({ count }: { count: number }) => `Activity log (${count})`,
+      sectionTechnicalDetails: 'Technical details',
       stop: 'Stop',
       stopping: 'Stopping...',
       metaAgentId: 'Agent ID',

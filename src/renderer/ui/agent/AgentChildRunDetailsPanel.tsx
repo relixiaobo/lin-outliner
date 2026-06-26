@@ -105,8 +105,12 @@ function transcriptHasActiveAssistantTurn(
   return false;
 }
 
+function isVerifierRun(run: AgentRenderChildRunEntity): boolean {
+  return run.agentType === 'verifier' || /^verify\b/i.test(run.description);
+}
+
 function runTitle(run: AgentRenderChildRunEntity, labels: Messages['agent']): string {
-  if (run.agentType === 'verifier') return labels.run.kind.verifier;
+  if (isVerifierRun(run)) return labels.run.kind.verifier;
   return run.description || run.name || run.id;
 }
 
@@ -182,6 +186,27 @@ function DetailSection({
       <h4>{title}</h4>
       {children}
     </section>
+  );
+}
+
+function DisclosureSection({
+  children,
+  defaultOpen,
+  title,
+}: {
+  children: ReactNode;
+  defaultOpen: boolean;
+  title: string;
+}) {
+  return (
+    <details className="agent-child-run-disclosure-section" open={defaultOpen}>
+      <summary>
+        <span>{title}</span>
+      </summary>
+      <div className="agent-child-run-disclosure-body">
+        {children}
+      </div>
+    </details>
   );
 }
 
@@ -384,6 +409,10 @@ export function AgentChildRunDetailsPanel({
   const canStop = childRun.status === 'running';
   const duration = formatDuration(childRun.startedAt, endedAt);
   const resultText = childRun.result ?? childRun.error ?? '';
+  const showActivityOpen = childRun.status === 'running' || !resultText;
+  const childRunSectionTitle = directChildRuns.length > 0 && directChildRuns.every(isVerifierRun)
+    ? t.agent.childRun.sectionVerification
+    : t.agent.childRun.sectionChildRuns({ count: directChildRuns.length });
 
   async function stopChildRun() {
     if (!conversationId || !childRun || !canStop || actionPending) return;
@@ -420,10 +449,8 @@ export function AgentChildRunDetailsPanel({
           <h3>{childRun.description || childRun.name || childRun.id}</h3>
           <p>
             {t.agent.childRun.metaLine({
-              mode: childRun.contextMode,
-              type: childRun.agentType,
               count: messages.length,
-              duration: formatDuration(childRun.startedAt, endedAt),
+              duration,
             })}
           </p>
         </div>
@@ -455,38 +482,21 @@ export function AgentChildRunDetailsPanel({
         </div>
       ) : null}
       <div className="agent-child-run-details-body">
-        <DetailSection title={t.agent.childRun.sectionOverview}>
-          <dl className="agent-child-run-summary">
-            <div>
-              <dt>{t.agent.childRun.status}</dt>
-              <dd>{runStatusLabel(childRun.status, t.agent.run.status)}</dd>
-            </div>
-            <div>
-              <dt>{t.agent.childRun.mode}</dt>
-              <dd>{childRun.contextMode}</dd>
-            </div>
-            <div>
-              <dt>{t.agent.childRun.metaType}</dt>
-              <dd>{childRun.agentType}</dd>
-            </div>
-            <div>
-              <dt>{t.agent.childRun.duration}</dt>
-              <dd>{duration}</dd>
-            </div>
-          </dl>
-        </DetailSection>
         <DetailSection title={t.agent.childRun.sectionResult}>
           <ResultText text={resultText} />
         </DetailSection>
         {directChildRuns.length > 0 ? (
-          <DetailSection title={t.agent.childRun.sectionChildRuns({ count: directChildRuns.length })}>
+          <DetailSection title={childRunSectionTitle}>
             <ChildRunList
               runs={directChildRuns}
               onOpenChildRunTranscript={onOpenChildRunTranscript}
             />
           </DetailSection>
         ) : null}
-        <DetailSection title={t.agent.childRun.sectionTimeline({ count: messages.length })}>
+        <DisclosureSection
+          defaultOpen={showActivityOpen}
+          title={t.agent.childRun.sectionActivityLog({ count: messages.length })}
+        >
           <TranscriptTimeline
             error={error}
             loading={loading}
@@ -501,8 +511,8 @@ export function AgentChildRunDetailsPanel({
             onOpenChildRunTranscript={onOpenChildRunTranscript}
             toolResults={toolResults}
           />
-        </DetailSection>
-        <DetailSection title={t.agent.childRun.sectionMetadata}>
+        </DisclosureSection>
+        <DisclosureSection defaultOpen={false} title={t.agent.childRun.sectionTechnicalDetails}>
           <dl className="agent-child-run-metadata">
             <div>
               <dt>{t.agent.childRun.metaAgentId}</dt>
@@ -511,6 +521,18 @@ export function AgentChildRunDetailsPanel({
             <div>
               <dt>{t.agent.childRun.name}</dt>
               <dd>{childRun.name ?? t.agent.childRun.metaNone}</dd>
+            </div>
+            <div>
+              <dt>{t.agent.childRun.status}</dt>
+              <dd>{runStatusLabel(childRun.status, t.agent.run.status)}</dd>
+            </div>
+            <div>
+              <dt>{t.agent.childRun.mode}</dt>
+              <dd>{childRun.contextMode}</dd>
+            </div>
+            <div>
+              <dt>{t.agent.childRun.metaType}</dt>
+              <dd>{childRun.agentType}</dd>
             </div>
             <div>
               <dt>{t.agent.childRun.metaParentToolCall}</dt>
@@ -529,7 +551,7 @@ export function AgentChildRunDetailsPanel({
               <dd>{new Date(childRun.updatedAt).toLocaleString()}</dd>
             </div>
           </dl>
-        </DetailSection>
+        </DisclosureSection>
       </div>
     </section>
   );
