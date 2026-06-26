@@ -487,6 +487,7 @@ describe('agent child run UI', () => {
     expect(rendered.container.textContent).toContain('Verifier');
     expect(rendered.container.textContent).not.toContain(verifierPrompt);
     expect(rendered.container.textContent).toContain('1/2');
+    expect(rendered.container.querySelector('.agent-run-main .agent-run-child-progress')).toBeNull();
 
     await click(rendered, textButton(rendered, 'Inspect child run UI'));
     expect(openedRunId).toBe('child-1');

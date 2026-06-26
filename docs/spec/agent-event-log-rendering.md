@@ -991,13 +991,15 @@ Rules:
   `parentRunId`: each row shows the shared checkbox marker on the left, the run
   title as the primary text, and one muted metadata line
   (`channel · status · time`); rows with direct child runs also show a trailing
-  `completed/total` count on the title row. Clicking a row opens its detail view;
-  running rows additionally reveal a Stop action on hover/focus. Expanded child
-  runs render as checklist-style subrows below the parent content with fine
-  separators, not as a strongly indented tree; verifier child runs display as the
-  concise "Verifier" row rather than exposing their internal verification prompt.
-  The disclosure control sits on the trailing side, never before the checkbox
-  marker. The detail view is a read-only drill-in, not a second chat surface: it
+  `completed/total` progress column before the disclosure control. Clicking a row
+  opens its detail view; running rows additionally reveal a Stop action on
+  hover/focus. Expanded child runs render as checklist-style subrows below the
+  parent content with fine separators, not as a strongly indented tree; verifier
+  child runs display as the concise "Verifier" row rather than exposing their
+  internal verification prompt. The disclosure control sits on the trailing side,
+  never before the checkbox marker, and hover never paints a separate subrow
+  rectangle that fights the tree alignment. The detail view is a read-only
+  drill-in, not a second chat surface: it
   shows a header, Result, direct child Runs (or Verification when the only direct
   children are verifier runs), a collapsed Activity log, and collapsed Technical
   details in a single scroll flow. Header metadata stays user-facing (`messages ·

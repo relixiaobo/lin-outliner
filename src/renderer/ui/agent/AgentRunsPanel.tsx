@@ -270,10 +270,10 @@ export function AgentRunsPanel({
                 >
                   <span className="agent-run-title-row">
                     <span className="agent-run-title">{title}</span>
-                    {childProgress ? <span className="agent-run-child-progress">{childProgress}</span> : null}
                   </span>
                   <span className="agent-run-meta">{meta}</span>
                 </ButtonControl>
+                {childProgress ? <span className="agent-run-child-progress">{childProgress}</span> : null}
                 {hasChildren ? (
                   <button
                     aria-label={expanded ? t.agent.run.collapseRun : t.agent.run.expandRun}
