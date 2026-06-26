@@ -16,6 +16,7 @@ import {
   WarningIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { CheckboxMark } from '../primitives/CheckboxMark';
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
 
@@ -223,6 +224,7 @@ export function AgentRunsPanel({
             const hasChildren = node.children.length > 0;
             const meta = runMetaParts(run, locale, t.agent.run).join(' · ');
             const statusClass = run.objectiveStatus ?? run.status;
+            const completed = statusClass === 'completed' || statusClass === 'verified';
             const rowClassName = [
               'agent-run-row',
               `is-${run.status}`,
@@ -243,19 +245,9 @@ export function AgentRunsPanel({
                   '--subrun-depth': Math.max(0, node.depth - 1),
                 } as CSSProperties}
               >
-                <button
-                  aria-label={expanded ? t.agent.run.collapseRun : t.agent.run.expandRun}
-                  className="agent-run-disclosure"
-                  disabled={!hasChildren}
-                  onClick={() => toggleExpanded(run.runId)}
-                  title={expanded ? t.agent.run.collapseRun : t.agent.run.expandRun}
-                  type="button"
-                >
-                  {hasChildren ? (
-                    expanded ? <ChevronDownIcon size={ICON_SIZE.menu} /> : <ChevronRightIcon size={ICON_SIZE.menu} />
-                  ) : null}
-                </button>
-                <span className={`agent-run-marker is-${statusClass}`} aria-hidden="true" />
+                <span className={`agent-run-marker is-${statusClass}`} aria-hidden="true">
+                  <CheckboxMark checked={completed} />
+                </span>
                 <ButtonControl
                   className="agent-run-main"
                   onClick={() => onOpenRun(run)}
@@ -265,6 +257,17 @@ export function AgentRunsPanel({
                   </span>
                   <span className="agent-run-meta">{meta}</span>
                 </ButtonControl>
+                {hasChildren ? (
+                  <button
+                    aria-label={expanded ? t.agent.run.collapseRun : t.agent.run.expandRun}
+                    className="agent-run-disclosure"
+                    onClick={() => toggleExpanded(run.runId)}
+                    title={expanded ? t.agent.run.collapseRun : t.agent.run.expandRun}
+                    type="button"
+                  >
+                    {expanded ? <ChevronDownIcon size={ICON_SIZE.menu} /> : <ChevronRightIcon size={ICON_SIZE.menu} />}
+                  </button>
+                ) : null}
                 <div className="agent-run-row-actions">
                   <IconButton
                     className="agent-run-icon-button"

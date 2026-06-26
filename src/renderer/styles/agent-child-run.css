@@ -137,11 +137,11 @@
 }
 
 .agent-run-row.has-children {
-  grid-template-columns: 18px 20px minmax(0, 1fr) auto;
+  grid-template-columns: 20px minmax(0, 1fr) 18px auto;
 }
 
 .agent-run-row.is-subrun {
-  margin-left: calc(38px + var(--subrun-depth, 0) * var(--space-5));
+  margin-left: calc(20px + var(--space-2) + var(--subrun-depth, 0) * var(--space-5));
   border-top: 1px solid var(--border-subtle);
   border-radius: 0;
   padding-right: var(--space-2);
@@ -174,14 +174,12 @@
   height: 32px;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-faint);
   padding: 0;
-}
-
-.agent-run-row.is-leaf .agent-run-disclosure {
-  display: none;
 }
 
 .agent-run-disclosure:hover:not(:disabled),
@@ -193,13 +191,8 @@
   color: transparent;
 }
 
-.agent-run-main:hover,
 .agent-run-main:focus-visible {
-  background: var(--control-hover);
-}
-
-.agent-run-row.is-readonly .agent-run-main:hover {
-  background: transparent;
+  box-shadow: var(--focus-ring-shadow);
 }
 
 .agent-run-marker {
@@ -211,31 +204,10 @@
   justify-content: center;
 }
 
-.agent-run-marker::before {
-  width: 12px;
-  height: 12px;
-  border: 1.5px solid var(--border-strong);
-  border-radius: var(--radius-pill);
-  content: "";
-}
-
-.agent-run-marker.is-running::before,
-.agent-run-marker.is-verifying::before {
-  border-color: var(--agent-accent);
-  background: color-mix(in srgb, var(--agent-accent) 18%, transparent);
-}
-
-.agent-run-marker.is-completed::before,
-.agent-run-marker.is-verified::before {
-  border-color: var(--semantic-success);
-  background: var(--semantic-success);
-  box-shadow: inset 0 0 0 3px var(--surface);
-}
-
-.agent-run-marker.is-blocked::before,
-.agent-run-marker.is-budget_exhausted::before,
-.agent-run-marker.is-failed::before,
-.agent-run-marker.is-stopped::before {
+.agent-run-marker.is-blocked .checkbox-mark,
+.agent-run-marker.is-budget_exhausted .checkbox-mark,
+.agent-run-marker.is-failed .checkbox-mark,
+.agent-run-marker.is-stopped .checkbox-mark {
   border-color: var(--danger);
   background: color-mix(in srgb, var(--danger) 14%, transparent);
 }
