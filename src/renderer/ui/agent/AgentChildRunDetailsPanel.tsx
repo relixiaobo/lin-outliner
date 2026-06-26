@@ -144,7 +144,7 @@ function directChildRunsFor(
     .sort(compareChildRuns);
 }
 
-function ResultText({ text }: { text: string }) {
+function CopyResultButton({ text }: { text: string }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
   const CopyStateIcon = copied ? CheckIcon : CopyIcon;
@@ -157,33 +157,42 @@ function ResultText({ text }: { text: string }) {
   }
 
   return (
+    <IconButton
+      className="agent-message-action-button"
+      disabled={!text}
+      icon={CopyStateIcon}
+      label={t.agent.childRun.copyResult}
+      onClick={() => void copy()}
+      title={t.agent.message.copy}
+      variant="message"
+    />
+  );
+}
+
+function ResultText({ text }: { text: string }) {
+  const t = useT();
+  return (
     <div className="agent-child-run-result-box">
-      <div className="agent-child-run-result-actions">
-        <IconButton
-          className="agent-message-action-button"
-          disabled={!text}
-          icon={CopyStateIcon}
-          label={t.agent.childRun.copyResult}
-          onClick={() => void copy()}
-          title={t.agent.message.copy}
-          variant="message"
-        />
-      </div>
       <AgentMarkdown keyPrefix="child-run-result" text={text || t.agent.childRun.noResultYet} />
     </div>
   );
 }
 
 function DetailSection({
+  actions,
   children,
   title,
 }: {
+  actions?: ReactNode;
   children: ReactNode;
   title: string;
 }) {
   return (
     <section className="agent-child-run-section">
-      <h4>{title}</h4>
+      <div className="agent-child-run-section-header">
+        <h4>{title}</h4>
+        {actions ? <div className="agent-child-run-section-actions">{actions}</div> : null}
+      </div>
       {children}
     </section>
   );
@@ -482,7 +491,10 @@ export function AgentChildRunDetailsPanel({
         </div>
       ) : null}
       <div className="agent-child-run-details-body">
-        <DetailSection title={t.agent.childRun.sectionResult}>
+        <DetailSection
+          actions={<CopyResultButton text={resultText} />}
+          title={t.agent.childRun.sectionResult}
+        >
           <ResultText text={resultText} />
         </DetailSection>
         {directChildRuns.length > 0 ? (

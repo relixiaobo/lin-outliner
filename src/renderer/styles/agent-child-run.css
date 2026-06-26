@@ -434,12 +434,27 @@
   gap: var(--space-4);
 }
 
+.agent-child-run-section-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
 .agent-child-run-section h4 {
   margin: 0;
   color: var(--text-strong);
   font-size: var(--font-ui-sm);
   font-weight: 650;
   line-height: var(--line-ui-sm);
+}
+
+.agent-child-run-section-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .agent-child-run-child-list {
@@ -666,16 +681,7 @@
 }
 
 .agent-child-run-result-box {
-  position: relative;
   min-width: 0;
-}
-
-.agent-child-run-result-actions {
-  position: sticky;
-  top: 0;
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: var(--space-3);
 }
 
 .agent-child-run-metadata {

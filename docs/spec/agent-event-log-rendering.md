@@ -1003,8 +1003,10 @@ Rules:
   drill-in, not a second chat surface: it
   shows a header, Result, direct child Runs (or Verification when the only direct
   children are verifier runs), a collapsed Activity log, and collapsed Technical
-  details in a single scroll flow. Header metadata stays user-facing (`messages ·
-  duration`); internal mode/type/id fields live in Technical details. The view
+  details in a single scroll flow. Result is plain read-only markdown content:
+  its copy affordance belongs to the Result section header, and GFM task-list
+  output shows the checkbox without an extra bullet marker. Header metadata stays
+  user-facing (`messages · duration`); internal mode/type/id fields live in Technical details. The view
   reads the selected conversation's `entities.childRuns` and lazily replays the
   run transcript through `agent_child_run_transcript`; running detail views expose
   Stop, while follow-up/steering remains an internal `run_steer` runtime/tool

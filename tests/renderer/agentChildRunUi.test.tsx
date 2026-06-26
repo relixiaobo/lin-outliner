@@ -401,7 +401,10 @@ describe('agent child run UI', () => {
 
   test('shows direct child runs in the run details page', async () => {
     let openedChildRunId: string | null = null;
-    const parent = childRunEntity();
+    const parent = {
+      ...childRunEntity(),
+      result: '- [ ] Complete testing.\n- [ ] Finish review.\n- [ ] Prepare release.',
+    };
     const nestedRun = {
       ...childRunEntity(),
       id: 'child-2',
@@ -437,6 +440,11 @@ describe('agent child run UI', () => {
 
     await waitForText(rendered, 'Verification');
     expect(rendered.container.textContent).toContain('Result');
+    expect(rendered.container.textContent).toContain('Complete testing.');
+    expect(rendered.container.querySelector('.agent-child-run-section-header [aria-label="Copy run result"]')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-child-run-result-actions')).toBeNull();
+    expect(rendered.container.querySelector('.agent-child-run-result-box .contains-task-list')).not.toBeNull();
+    expect(rendered.container.querySelectorAll('.agent-child-run-result-box .task-list-item')).toHaveLength(3);
     expect(rendered.container.textContent).toContain('Verifier');
 
     await click(rendered, textButton(rendered, 'Verifier'));
