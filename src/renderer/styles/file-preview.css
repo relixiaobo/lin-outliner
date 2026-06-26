@@ -499,19 +499,16 @@
   border: 0;
   border-radius: var(--radius-pill);
   background: var(--preview-action-bg);
-  box-shadow: 0 0 0 1px var(--preview-action-outline), var(--shadow-thumb);
-  opacity: 0.88;
+  box-shadow: 0 0 0 1px var(--preview-action-outline);
+  opacity: 0.56;
   transition:
     background var(--motion-fast),
-    opacity var(--motion-fast),
-    width var(--motion-fast);
+    opacity var(--motion-fast);
 }
 
 .document-outline-rail-marker:hover,
 .document-outline-rail-marker.active {
-  width: var(--space-6);
-  background: var(--preview-action-hover-bg);
-  opacity: 1;
+  opacity: 0.56;
 }
 
 .document-outline-rail-marker:focus-visible {

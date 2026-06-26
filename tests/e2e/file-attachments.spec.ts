@@ -1082,6 +1082,9 @@ test.describe('file attachments', () => {
       const [first, second] = markers.map((marker) => marker.getBoundingClientRect());
       return first && second ? Math.round(second.top - first.bottom) : null;
     })).toBe(8);
+    await expect.poll(async () => outlineMarkers.evaluateAll((markers) => (
+      markers.map((marker) => Math.round(marker.getBoundingClientRect().width))
+    ))).toEqual([10, 10]);
     await expect.poll(async () => outlineRail.evaluate((rail) => Math.round(rail.getBoundingClientRect().height)))
       .toBeLessThan(60);
     await outlineRail.locator('.document-outline-rail-track').hover();
