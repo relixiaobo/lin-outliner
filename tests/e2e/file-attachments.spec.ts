@@ -93,6 +93,28 @@ async function pasteClipboardFileAndOpenPreview(
   return previewFrame;
 }
 
+async function expectConcentricPreviewCorners(previewFrame: Locator, contentSelector: string) {
+  await expect.poll(async () => previewFrame.evaluate((element, selector) => {
+    const content = element.querySelector<HTMLElement>(selector);
+    if (!content) return null;
+    const frameStyle = getComputedStyle(element);
+    const contentStyle = getComputedStyle(content);
+    const frameRadius = Number.parseFloat(frameStyle.borderTopLeftRadius);
+    const contentRadius = Number.parseFloat(contentStyle.borderTopLeftRadius);
+    const paddingTop = Number.parseFloat(frameStyle.paddingTop);
+    const paddingLeft = Number.parseFloat(frameStyle.paddingLeft);
+    return {
+      contentHasRadius: contentRadius > 0,
+      inlinePaddingMatchesBlock: Math.abs(paddingLeft - paddingTop) <= 1,
+      radiiAreConcentric: Math.abs(frameRadius - (contentRadius + paddingTop)) <= 1,
+    };
+  }, contentSelector)).toEqual({
+    contentHasRadius: true,
+    inlinePaddingMatchesBlock: true,
+    radiiAreConcentric: true,
+  });
+}
+
 async function dispatchExternalFileDrag(
   page: Parameters<typeof trailingEditor>[0],
   targetId: string,
@@ -267,6 +289,7 @@ test.describe('file attachments', () => {
     await attachmentChevron.click();
     const inlinePreviewFrame = attachmentRow.locator('.file-node-row-preview .file-node-preview.collapsed');
     await expect(inlinePreviewFrame).toBeVisible();
+    await expectConcentricPreviewCorners(inlinePreviewFrame, '.file-preview-pdf-canvas');
     await expect.poll(async () => inlinePreviewFrame.evaluate((element) => {
       const style = getComputedStyle(element);
       const summaryStrip = element.querySelector<HTMLElement>('.file-preview-pdf--summary');
@@ -296,7 +319,6 @@ test.describe('file attachments', () => {
         bottomInsetMatchesTop: firstRect ? Math.abs(bottomInset - topInset) <= 1 : false,
         compactGap: measuredGap <= 6,
         compactHeight: element.getBoundingClientRect().height <= 260,
-        concentricRadius: canvasRadius > 0 && Math.abs(frameRadius - (canvasRadius + paddingTop)) <= 1,
         edgeInset: firstRect ? firstRect.left - frameRect.left >= 7 && firstRect.top - frameRect.top >= 7 : false,
         horizontalSummary: style.overflowX === 'hidden' && summaryStyle?.overflowX === 'auto',
         noScrollBleed: edgeHit ? !edgeHit.closest('.file-preview-pdf-page, .file-preview-pdf-stage, .file-preview-pdf-canvas') : false,
@@ -308,7 +330,6 @@ test.describe('file attachments', () => {
       bottomInsetMatchesTop: true,
       compactGap: true,
       compactHeight: true,
-      concentricRadius: true,
       edgeInset: true,
       horizontalSummary: true,
       noScrollBleed: true,
@@ -1068,6 +1089,7 @@ test.describe('file attachments', () => {
     }).toBe(true);
 
     const epubBody = page.locator('.file-node-row-preview > .file-node-body').last();
+    await expectConcentricPreviewCorners(epubPreview, '.file-preview-epub-frame');
     await epubBody.locator('.file-preview-pill-primary').click();
     const fullPreview = epubBody.locator('.file-node-preview.expanded .file-preview-epub--full');
     const fullReader = fullPreview.locator('.file-preview-epub-host');
@@ -1128,7 +1150,7 @@ test.describe('file attachments', () => {
       pageRadius: '12px',
     });
 
-    await outlineRail.locator('.document-outline-item').filter({ hasText: 'Continue' }).click();
+    await outlineMarkers.nth(1).click();
     await expect.poll(async () => fullReader.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
 
     await page.mouse.move(readerBox.x + readerBox.width / 2, readerBox.y + readerBox.height / 2);
