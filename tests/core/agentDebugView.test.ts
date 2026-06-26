@@ -40,7 +40,7 @@ describe('deriveDebugRounds', () => {
     seqCounter = 0;
     const runId = 'run-x';
     const events: AgentEvent[] = [
-      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', kind: 'turn', trigger: { type: 'message', messageId: 'u1' } }),
+      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', disposition: 'attended', trigger: { type: 'message', messageId: 'u1' } }),
       ev('user_message.created', { runId, messageId: 'u1', parentMessageId: null, content: [{ type: 'text', text: 'List my files' }] }, userActor),
       ev('assistant_message.started', { runId, messageId: 'a1', parentMessageId: 'u1', providerId: 'anthropic', modelId: 'claude', apiId: 'messages' }),
       ev('assistant_message.completed', {
@@ -98,7 +98,7 @@ describe('deriveDebugRounds', () => {
       ev('user_message.created', { runId, messageId: 'ctx-u', parentMessageId: null, content: [{ type: 'text', text: 'inherited question' }] }, userActor),
       ev('assistant_message.started', { runId, messageId: 'ctx-a', parentMessageId: 'ctx-u', providerId: 'anthropic', modelId: 'claude', apiId: 'messages' }),
       ev('assistant_message.completed', { runId, messageId: 'ctx-a', parentMessageId: 'ctx-u', stopReason: 'stop', content: [{ type: 'text', text: 'inherited answer' }] }),
-      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', kind: 'delegation', trigger: { type: 'parent-run', parentRunId: 'run-parent' } }),
+      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', disposition: 'attended', trigger: { type: 'parent-run', parentRunId: 'run-parent' } }),
       ev('user_message.created', { runId, messageId: 'dir', parentMessageId: 'ctx-a', content: [{ type: 'text', text: 'do the subtask' }] }, userActor),
       ev('assistant_message.started', { runId, messageId: 'a1', parentMessageId: 'dir', providerId: 'anthropic', modelId: 'claude', apiId: 'messages' }),
       ev('assistant_message.completed', { runId, messageId: 'a1', parentMessageId: 'dir', stopReason: 'stop', content: [{ type: 'text', text: 'done' }] }),
@@ -116,7 +116,7 @@ describe('deriveDebugRounds', () => {
     seqCounter = 0;
     const runId = 'run-slim';
     const events: AgentEvent[] = [
-      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', kind: 'turn', trigger: { type: 'message', messageId: 'u1' } }),
+      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', disposition: 'attended', trigger: { type: 'message', messageId: 'u1' } }),
       ev('user_message.created', { runId, messageId: 'u1', parentMessageId: null, content: [{ type: 'text', text: 'read it' }] }, userActor),
       ev('assistant_message.started', { runId, messageId: 'a1', parentMessageId: 'u1', providerId: 'anthropic', modelId: 'claude', apiId: 'messages' }),
       ev('assistant_message.completed', {
@@ -144,7 +144,7 @@ describe('deriveDebugRounds', () => {
     // stream (stamped with the active run) but matches no call here — it must be
     // ignored, never fabricate an empty-named exchange on the in-flight round.
     const events: AgentEvent[] = [
-      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', kind: 'turn', trigger: { type: 'message', messageId: 'u1' } }),
+      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', disposition: 'attended', trigger: { type: 'message', messageId: 'u1' } }),
       ev('user_message.created', { runId, messageId: 'u1', parentMessageId: null, content: [{ type: 'text', text: 'hi' }] }, userActor),
       ev('assistant_message.started', { runId, messageId: 'a1', parentMessageId: 'u1', providerId: 'anthropic', modelId: 'claude', apiId: 'messages' }),
       ev('tool_result.replaced', { runId, messageId: 'tr-foreign', toolCallId: 'call-from-another-run', content: [{ type: 'text', text: 'slim' }], outputSummary: '' }),
@@ -160,7 +160,7 @@ describe('deriveDebugRounds', () => {
     seqCounter = 0;
     const runId = 'run-secret';
     const events: AgentEvent[] = [
-      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', kind: 'turn', trigger: { type: 'message', messageId: 'u1' } }),
+      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', disposition: 'attended', trigger: { type: 'message', messageId: 'u1' } }),
       ev('user_message.created', { runId, messageId: 'u1', parentMessageId: null, content: [{ type: 'text', text: 'go' }] }, userActor),
       ev('assistant_message.started', { runId, messageId: 'a1', parentMessageId: 'u1', providerId: 'anthropic', modelId: 'claude', apiId: 'messages' }),
       ev('assistant_message.completed', {
@@ -338,7 +338,7 @@ describe('deriveDebugRun + snapshot + summary assembly', () => {
     seqCounter = 0;
     const runId = 'run-assembled';
     const events: AgentEvent[] = [
-      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', kind: 'turn', trigger: { type: 'message', messageId: 'u1' } }),
+      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', disposition: 'attended', trigger: { type: 'message', messageId: 'u1' } }),
       ev('debug.run_snapshot.created', {
         runId,
         systemPrompt: 'You are Tenon.',
@@ -352,7 +352,7 @@ describe('deriveDebugRun + snapshot + summary assembly', () => {
     ];
 
     const meta = {
-      v: 1, id: runId, agentId: 'built-in:tenon:assistant', kind: 'turn', status: 'completed',
+      v: 1, id: runId, agentId: 'built-in:tenon:assistant', disposition: 'attended', status: 'completed',
       anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
       trigger: { type: 'message', messageId: 'u1' },
       usage: { input: 10, output: 5, totalTokens: 15, cost: { total: 0.001 } },
@@ -381,7 +381,7 @@ describe('deriveDebugRun + snapshot + summary assembly', () => {
     seqCounter = 0;
     const runId = 'run-live-usage';
     const events: AgentEvent[] = [
-      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', kind: 'turn', trigger: { type: 'message', messageId: 'u1' } }),
+      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', disposition: 'attended', trigger: { type: 'message', messageId: 'u1' } }),
       ev('user_message.created', { runId, messageId: 'u1', parentMessageId: null, content: [{ type: 'text', text: 'hi' }] }, userActor),
       ev('assistant_message.started', { runId, messageId: 'a1', parentMessageId: 'u1', providerId: 'anthropic', modelId: 'claude', apiId: 'messages' }),
       ev('assistant_message.completed', { runId, messageId: 'a1', parentMessageId: 'u1', stopReason: 'tool_use', content: [{ type: 'text', text: 'one' }], usage: { input: 100, output: 10, totalTokens: 110, cost: { total: 0.01 } } }),
@@ -391,7 +391,7 @@ describe('deriveDebugRun + snapshot + summary assembly', () => {
     // meta has NO usage (run not terminated) — the run total must still reflect
     // the rounds the user can already see, not read zero.
     const meta = {
-      v: 1, id: runId, agentId: 'built-in:tenon:assistant', kind: 'turn', status: 'running',
+      v: 1, id: runId, agentId: 'built-in:tenon:assistant', disposition: 'attended', status: 'running',
       anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
       trigger: { type: 'message', messageId: 'u1' },
       fingerprint: {}, retention: 'hot', createdAt: 1700, updatedAt: 1800, latestSeq: 6,
@@ -417,7 +417,7 @@ describe('deriveDebugRounds running-state', () => {
     seqCounter = 0;
     const runId = 'run-live';
     const events: AgentEvent[] = [
-      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', kind: 'turn', trigger: { type: 'message', messageId: 'u1' } }),
+      ev('run.started', { runId, agentId: 'built-in:tenon:assistant', disposition: 'attended', trigger: { type: 'message', messageId: 'u1' } }),
       ev('user_message.created', { runId, messageId: 'u1', parentMessageId: null, content: [{ type: 'text', text: 'Hi' }] }, userActor),
       ev('assistant_message.started', { runId, messageId: 'a1', parentMessageId: 'u1', providerId: 'anthropic', modelId: 'claude', apiId: 'messages' }),
     ];

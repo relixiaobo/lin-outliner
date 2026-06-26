@@ -73,6 +73,7 @@ export const SUPPORTED_AGENT_TOOL_ACTION_KINDS = [
   'agent.delegate.spawn',
   'agent.delegate.status',
   'agent.delegate.send',
+  'agent.delegate.amend',
   'agent.delegate.stop',
   'agent.permission.modify',
   'payment.purchase',
@@ -113,6 +114,7 @@ const READ_ONLY_ACTION_KIND_FLAGS = {
   'agent.delegate.spawn': false,
   'agent.delegate.status': true,
   'agent.delegate.send': false,
+  'agent.delegate.amend': false,
   'agent.delegate.stop': false,
   'agent.permission.modify': false,
   'payment.purchase': false,
@@ -181,6 +183,11 @@ export const AGENT_TOOL_ACTION_KIND_PROFILES = {
   AgentStatus: ['agent.delegate.status'],
   AgentSend: ['agent.delegate.send'],
   AgentStop: ['agent.delegate.stop'],
+  spawn: ['agent.delegate.spawn'],
+  run_status: ['agent.delegate.status'],
+  run_steer: ['agent.delegate.send'],
+  run_amend: ['agent.delegate.amend'],
+  run_stop: ['agent.delegate.stop'],
   skill: ['agent.skill.invoke'],
 } satisfies Record<string, readonly AgentToolActionKind[]>;
 
@@ -199,6 +206,42 @@ export function agentToolActionKindProfile(toolNameInput: string, args?: unknown
   const toolName = normalizeAgentToolProfileName(toolNameInput);
   if (toolName === 'operation_history') return operationHistoryActionKindProfile(args);
   return AGENT_TOOL_ACTION_KIND_PROFILE_MAP[toolName] ?? null;
+}
+
+export function isAgentToolActionKind(value: string): value is AgentToolActionKind {
+  return SUPPORTED_ACTION_KIND_SET.has(value);
+}
+
+export function normalizeAgentToolActionKinds(values: readonly string[] | undefined): AgentToolActionKind[] | undefined {
+  if (!values) return undefined;
+  const result: AgentToolActionKind[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    if (isAgentToolActionKind(trimmed)) {
+      result.push(trimmed);
+      continue;
+    }
+    const profile = agentToolActionKindProfile(trimmed);
+    if (profile) result.push(...profile);
+  }
+  return [...new Set(result)];
+}
+
+export function agentToolNamesForActionKindScope(
+  actionKinds: readonly string[] | undefined,
+  candidates?: readonly string[],
+): string[] | undefined {
+  const normalizedActionKinds = normalizeAgentToolActionKinds(actionKinds);
+  if (!normalizedActionKinds || normalizedActionKinds.length === 0) return undefined;
+  const allowed = new Set<AgentToolActionKind>(normalizedActionKinds);
+  const names = candidates
+    ? candidates.flatMap((toolName) => normalizeAgentToolProfileName(toolName) === '*' ? Object.keys(AGENT_TOOL_ACTION_KIND_PROFILES) : [normalizeAgentToolProfileName(toolName)])
+    : Object.keys(AGENT_TOOL_ACTION_KIND_PROFILES);
+  return [...new Set(names.filter((toolName) => {
+    const profile = AGENT_TOOL_ACTION_KIND_PROFILE_MAP[toolName];
+    return profile?.some((actionKind) => allowed.has(actionKind)) === true;
+  }))];
 }
 
 export function readOnlyAgentToolNames(candidates?: readonly string[]): string[] {

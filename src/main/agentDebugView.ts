@@ -15,7 +15,7 @@ import type {
 } from '../core/agentTypes';
 import { formatAgentDebugToolResultText } from '../core/agentDebugProtocol';
 import type { AgentEvent, AgentPersistedContent, DebugRunModelInputMessage, DebugRunToolSchema } from '../core/agentEventLog';
-import type { AgentRunMetaProjection } from './agentEventStore';
+import { deriveAgentRunKind, type AgentRunMetaProjection } from './agentEventStore';
 import { elideLargeBlobs, redactSecretKeyedValues, redactSecretLikeContent } from './agentSecretRedaction';
 
 // Run-grounded debug derivation ([[agent-debug-run-grounded]]): pure transforms
@@ -166,7 +166,7 @@ export function deriveDebugRun(events: readonly AgentEvent[], context: DerivedRu
   return {
     runId: meta.id,
     agentId: meta.agentId,
-    kind: meta.kind,
+    kind: deriveAgentRunKind(meta),
     status: runStatus(meta.status),
     parentRunId: meta.parentRunId ?? null,
     parentToolCallId: context.parentToolCallId ?? null,
@@ -242,7 +242,7 @@ export function summarizeRunStream(
   return {
     runId: meta.id,
     agentId: meta.agentId,
-    kind: meta.kind,
+    kind: deriveAgentRunKind(meta),
     status: runStatus(meta.status),
     parentRunId: meta.parentRunId ?? null,
     parentToolCallId,

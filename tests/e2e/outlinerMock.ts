@@ -76,6 +76,7 @@ type E2EWindow = Window & {
     emitDocumentEvent: (event: unknown) => void;
     emitOAuthEvent: (envelope: unknown) => void;
     resolveOAuthLogin: (providerId: string) => void;
+    setAgentRuns: (runs: unknown[]) => void;
     setAgentMessageContextMenuAction: (action: 'copy' | 'retry' | 'regenerate' | 'details' | null) => void;
   };
   lin?: {
@@ -337,6 +338,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const documentListeners: Array<(event: unknown) => void> = [];
     const oauthListeners: Array<(envelope: unknown) => void> = [];
     let messageContextMenuAction: 'copy' | 'retry' | 'regenerate' | 'details' | null = null;
+    let agentRuns: unknown[] = [];
     // An in-flight sign-in's resolve/reject, keyed by providerId. The spec drives
     // the event stream (emitOAuthEvent) and completes it (resolveOAuthLogin), so
     // the flow is fully deterministic — no real provider, timers, or network.
@@ -1634,6 +1636,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       emitDocumentEvent,
       emitOAuthEvent,
       resolveOAuthLogin,
+      setAgentRuns: (runs) => { agentRuns = runs; },
       setAgentMessageContextMenuAction: (action) => { messageContextMenuAction = action; },
     };
     (win as unknown as { e2eNodeInlineRef: typeof nodeInlineRef }).e2eNodeInlineRef = nodeInlineRef;
@@ -1716,9 +1719,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         errorMessage: null,
         rows,
         transcriptRows: rows,
-        taskIds: [],
         childRunIds: [],
-        entities: { messages, childRuns: {}, compactions: {}, dreams: {}, tasks: {} },
+        entities: { messages, childRuns: {}, compactions: {}, dreams: {} },
         streaming: null,
         dmStreaming: null,
       };
@@ -1824,6 +1826,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_get_provider_settings') return clone(agentSettings) as T;
         if (cmd === 'agent_list_conversations') return clone(agentConversations) as T;
+        if (cmd === 'agent_list_runs') return clone(agentRuns) as T;
         if (cmd === 'agent_rename_conversation') {
           const target = agentConversations.find((conversation) => conversation.id === args.conversationId);
           if (target) {
@@ -2081,10 +2084,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const runId = String(args.runId);
           return clone(runId === 'child-run-1' || runId === 'child-run-source-e2e' ? generalChannelId : null) as T;
         }
-        if (cmd === 'agent_child_run_status') {
+        if (cmd === 'agent_run_status' || cmd === 'agent_child_run_status') {
+          const runId = String(args.runId ?? args.agentId);
           return clone({
             status: 'running',
-            agent_id: String(args.agentId),
+            agent_id: runId,
             description: 'Inspect child run UI',
             prompt: 'Inspect the current UI.',
             agent_type: 'explorer',
@@ -2094,10 +2098,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             transcript_message_count: 4,
           }) as T;
         }
-        if (cmd === 'agent_child_run_send') {
+        if (cmd === 'agent_run_steer' || cmd === 'agent_child_run_send') {
+          const runId = String(args.runId ?? args.agentId);
           return clone({
             status: 'queued',
-            agent_id: String(args.agentId),
+            agent_id: runId,
             description: 'Inspect child run UI',
             prompt: 'Inspect the current UI.',
             agent_type: 'explorer',
@@ -2108,10 +2113,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             instructions: 'Message queued for the running background agent.',
           }) as T;
         }
-        if (cmd === 'agent_child_run_stop') {
+        if (cmd === 'agent_run_stop' || cmd === 'agent_child_run_stop') {
+          const runId = String(args.runId ?? args.agentId);
           return clone({
             status: 'cancelled',
-            agent_id: String(args.agentId),
+            agent_id: runId,
             description: 'Inspect child run UI',
             prompt: 'Inspect the current UI.',
             agent_type: 'explorer',
@@ -3196,22 +3202,25 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
     : rawChildRuns;
   const childRunIds = state.childRunIds
     ?? (Array.isArray(rawChildRuns) ? rawChildRuns.map((childRun: any) => childRun.id) : Object.keys(childRuns));
-  const childRunTasks = Object.values(childRuns).map((childRun: any) => ({
-    id: `child-run:${childRun.id}`,
-    kind: 'child-run',
+  const runListEntries = Object.values(childRuns).map((childRun: any) => ({
+    runId: childRun.id,
+    conversationId,
+    conversationTitle: state.conversationTitle ?? 'General',
+    agentId: childRun.executingAgentId ?? 'built-in:tenon:assistant',
+    kind: 'delegation',
     status: childRun.status,
-    title: (childRun.description ?? '').trim() || (childRun.name ?? '').trim() || childRun.id,
-    subtitle: `${childRun.contextMode} · ${childRun.agentType}`,
+    objectiveStatus: childRun.objectiveStatus,
+    purpose: childRun.purpose,
+    parentRunId: childRun.parentRunId ?? null,
+    title: (childRun.objective ?? childRun.description ?? '').trim() || childRun.id,
     startedAt: childRun.startedAt,
     updatedAt: childRun.updatedAt,
-    completedAt: childRun.completedAt,
-    childRunId: childRun.id,
+    completedAt: childRun.status === 'running' ? undefined : childRun.completedAt ?? childRun.updatedAt,
   }));
-  const tasks = {
-    ...Object.fromEntries(childRunTasks.map((task: any) => [task.id, task])),
-    ...(state.tasks ?? {}),
-  };
-  const taskIds = state.taskIds ?? Object.keys(tasks);
+  await page.evaluate((runs) => {
+    const win = window as E2EWindow;
+    win.__LIN_E2E__?.setAgentRuns(runs);
+  }, runListEntries);
   const sourceSeqs = (entry: any, message: any) => {
     const values = entry.sourceSeqs ?? message.sourceSeqs;
     if (Array.isArray(values)) return values;
@@ -3439,9 +3448,8 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       errorMessage: state.errorMessage ?? null,
       rows,
       transcriptRows: projectedTranscriptRows,
-      taskIds,
       childRunIds,
-      entities: { messages: entities, childRuns, compactions, tasks },
+      entities: { messages: entities, childRuns, compactions, dreams: {} },
       streaming: projectionChannel ? null : streaming,
       dmStreaming: projectionChannel ? null : streaming,
     },

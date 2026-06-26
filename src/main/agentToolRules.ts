@@ -4,6 +4,10 @@ const TOOL_NAME_ALIASES: Record<string, string> = {
   grep: 'file_grep',
   edit: 'file_edit',
   write: 'file_write',
+  agent: 'spawn',
+  agentstatus: 'run_status',
+  agentsend: 'run_steer',
+  agentstop: 'run_stop',
 };
 
 export function normalizeAgentToolRuleName(rule: string): string | null {

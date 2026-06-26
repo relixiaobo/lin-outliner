@@ -33,8 +33,6 @@ import type {
   AgentRenderProjection,
   AgentRenderProjectionPatch,
   AgentRenderChildRunEntity,
-  AgentRenderTaskEntity,
-  AgentRenderTaskStatus,
 } from '../../core/agentRenderProjection';
 import { applyAgentRenderProjectionPatch } from '../../core/agentRenderProjection';
 import type { AgentActor, AgentPersistedContent, AgentToolCallOutcome } from '../../core/agentEventLog';
@@ -108,8 +106,9 @@ export interface AgentActiveDreamEntry {
 
 export type AgentDreamEntry = AgentCompletedDreamEntry | AgentActiveDreamEntry;
 
-// A child run surfaced inline in the transcript as a boundary — the permanent
-// record of the run in its conversation (its final result lives on the entity).
+// Child-run entries stay in the type for replay/projection compatibility, but
+// the live transcript no longer renders them as standalone boundary rows. Runs
+// surface through their ordinary spawn/run_* tool calls plus the Work/Runs view.
 export interface AgentChildRunEntry {
   id: string;
   kind: 'child-run';
@@ -123,9 +122,6 @@ export type AgentConversationEntry =
   | AgentChildRunEntry;
 
 export type AgentTurnPhase = 'idle' | 'streaming_text' | 'waiting_for_tool' | 'resuming_after_tool';
-
-export type AgentTaskEntry =
-  Extract<AgentRenderTaskEntity, { kind: 'child-run' }> & { childRun: AgentRenderChildRunEntity };
 
 const EMPTY_PROJECTION: AgentRenderProjection = {
   conversationId: '',
@@ -143,9 +139,8 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   errorMessage: null,
   rows: [],
   transcriptRows: [],
-  taskIds: [],
   childRunIds: [],
-  entities: { messages: {}, childRuns: {}, compactions: {}, dreams: {}, tasks: {} },
+  entities: { messages: {}, childRuns: {}, compactions: {}, dreams: {} },
   streaming: null,
 };
 
@@ -278,8 +273,9 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
     }
 
     if (row.kind === 'child-run') {
-      const childRun = projection.entities.childRuns[row.childRunId];
-      if (childRun) entries.push({ id: row.id, kind: 'child-run', childRun });
+      // Keep child-run data available to Work and tool-call rows, but do
+      // not add a second transcript boundary. The spawn/run_* tool row is the
+      // interaction surface in the main conversation.
       continue;
     }
 
@@ -374,32 +370,6 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   }
 
   return { entries, turnPhase };
-}
-
-const TASK_STATUS_RANK: Record<AgentRenderTaskStatus, number> = {
-  running: 0,
-  failed: 1,
-  stopped: 2,
-  completed: 3,
-};
-
-export function buildAgentTaskEntries(projection: AgentRenderProjection): AgentTaskEntry[] {
-  const tasks = projection.taskIds.flatMap((id): AgentTaskEntry[] => {
-    const task = projection.entities.tasks[id];
-    if (!task) return [];
-    // Dream tasks ride in the projection but are surfaced in Settings → Agent, not the
-    // in-conversation task panel; only child-run tasks belong here.
-    if (task.kind !== 'child-run') return [];
-    const childRun = projection.entities.childRuns[task.childRunId];
-    if (!childRun) return [];
-    return [{ ...task, childRun }];
-  });
-
-  return tasks.sort((left, right) => (
-    TASK_STATUS_RANK[left.status] - TASK_STATUS_RANK[right.status]
-    || right.updatedAt - left.updatedAt
-    || left.id.localeCompare(right.id)
-  ));
 }
 
 function isHiddenOnlySystemReminder(entity: AgentRenderMessageEntity): boolean {
@@ -617,7 +587,6 @@ export interface LinAgentRuntimeView {
   members: AgentRenderMemberView[];
   /** Folded per-conversation unread count for conversation-list badges. */
   unreadByConversationId: ReadonlyMap<string, number>;
-  tasks: AgentTaskEntry[];
   childRunIds: string[];
   childRuns: Record<string, AgentRenderChildRunEntity>;
   childRunsByParentToolCallId: Map<string, AgentRenderChildRunEntity>;
@@ -1349,7 +1318,6 @@ export class AgentRuntimeStore {
       // recompute on every projection tick.
       members: this.projection.members ?? EMPTY_MEMBERS,
       unreadByConversationId: new Map(this.unreadByConversationId),
-      tasks: buildAgentTaskEntries(this.projection),
       childRunIds: this.projection.childRunIds,
       childRuns,
       childRunsByParentToolCallId,

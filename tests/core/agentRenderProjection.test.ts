@@ -644,10 +644,9 @@ describe('agent render projection', () => {
     const projection = buildAgentRenderProjection(state, { revision: 1 });
 
     // The data vocabulary is `cancelled`; the render projection is the one seam
-    // that maps it to the user-facing word `stopped`, on BOTH the entity and the
-    // task — so renderer components never see `cancelled`.
+    // that maps it to the user-facing word `stopped`, so renderer components
+    // never see `cancelled`.
     expect(projection.entities.childRuns['sub-1']?.status).toBe('stopped');
-    expect(projection.entities.tasks['child-run:sub-1']?.status).toBe('stopped');
   });
 
   test('folds a DM main-agent child run into its spawning turn — no boundary row', () => {

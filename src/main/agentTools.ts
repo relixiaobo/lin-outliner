@@ -218,30 +218,59 @@ export interface AgentToolsOptions {
   disallowedTools?: readonly string[];
 }
 
+interface AgentToolCatalogEntry {
+  precondition: boolean;
+  create: () => AgentTool<any>[];
+}
+
 export function createAgentTools(outliner?: OutlinerToolHost, options: AgentToolsOptions = {}): AgentTool<any>[] {
   // Web-fetch binaries are scratch, not workspace output: prefer the workspace's resolved
   // scratch root, otherwise derive it through the single-source default (never re-deriving a
   // cwd fallback locally — that is the one polluting path F2 removes).
   const scratchRoot = options.localWorkspace?.scratchRoot
     ?? scratchRootForWorkdir(options.localFileRoot, undefined);
-  const tools = [
-    ...(outliner ? createNodeTools(outliner, {
+  const tools = buildAgentToolCatalog(outliner, options, scratchRoot)
+    .flatMap((entry) => entry.precondition ? entry.create() : []);
+  return filterAgentTools(tools, options.allowedTools, options.disallowedTools);
+}
+
+function buildAgentToolCatalog(
+  outliner: OutlinerToolHost | undefined,
+  options: AgentToolsOptions,
+  scratchRoot: string,
+): AgentToolCatalogEntry[] {
+  return [{
+    precondition: !!outliner,
+    create: () => outliner ? createNodeTools(outliner, {
       chatSourceValidator: options.chatSourceValidator,
       localFileRoot: options.localFileRoot,
-    }) : []),
-    ...createLocalTools({
+    }) : [],
+  }, {
+    precondition: true,
+    create: () => createLocalTools({
       localRoot: options.localFileRoot,
       workspace: options.localWorkspace,
       skillRuntime: options.skillRuntime,
     }),
-    createWebSearchTool(),
-    createWebFetchTool(scratchRoot),
-    ...(options.pastChats ? [createPastChatsTool(options.pastChats)] : []),
-    ...(options.askUserQuestion ? [createAskUserQuestionTool(options.askUserQuestion)] : []),
-    ...(options.skillRuntime && options.skillToolEnabled !== false ? [createSkillTool(options.skillRuntime)] : []),
-    ...(options.delegationRuntime ? createAgentDelegationTools(options.delegationRuntime) : []),
-  ];
-  return filterAgentTools(tools, options.allowedTools, options.disallowedTools);
+  }, {
+    precondition: true,
+    create: () => [createWebSearchTool()],
+  }, {
+    precondition: true,
+    create: () => [createWebFetchTool(scratchRoot)],
+  }, {
+    precondition: !!options.pastChats,
+    create: () => options.pastChats ? [createPastChatsTool(options.pastChats)] : [],
+  }, {
+    precondition: !!options.askUserQuestion,
+    create: () => options.askUserQuestion ? [createAskUserQuestionTool(options.askUserQuestion)] : [],
+  }, {
+    precondition: !!options.skillRuntime && options.skillToolEnabled !== false,
+    create: () => options.skillRuntime ? [createSkillTool(options.skillRuntime)] : [],
+  }, {
+    precondition: !!options.delegationRuntime,
+    create: () => options.delegationRuntime ? createAgentDelegationTools(options.delegationRuntime) : [],
+  }];
 }
 
 function filterAgentTools(

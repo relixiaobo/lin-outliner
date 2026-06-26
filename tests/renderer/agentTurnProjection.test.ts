@@ -151,7 +151,7 @@ describe('projectAssistantTurn', () => {
     });
   });
 
-  test('drops channel child-run spawn tool calls from the inline process', () => {
+  test('keeps channel child-run spawn tool calls in the inline process', () => {
     const turn = project(assistant([
       toolCall('child-tool'),
       { type: 'text', text: 'Follow-up answer' },
@@ -160,7 +160,12 @@ describe('projectAssistantTurn', () => {
       isChannel: true,
     });
 
-    expect(turn.process).toBeNull();
+    expect(turn.process?.items.map((item) => item.type)).toEqual(['toolCall']);
+    expect(turn.process?.items[0]).toMatchObject({
+      childRun: childRun(),
+      id: 'tool:child-tool',
+      type: 'toolCall',
+    });
     expect(turn.finalMessages.map((item) => item.text)).toEqual(['Follow-up answer']);
   });
 });

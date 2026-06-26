@@ -127,13 +127,15 @@ truth.
   - embedded skill shell expansion through the shared permission layer
   - manual, automatic, and reactive compaction with prompt-too-large retry
   - stable tool-output slimming and recent file-context restore across compact
-  - same-conversation `Agent`, `AgentStatus`, `AgentSend`, and `AgentStop`
-  - fresh and fork child runs, each with its OWN run ledger (run unification;
-    sidechain transcripts replay from the ledger) and background
-    notifications
-  - conversation task panel derived from the shared render task projection: it
-    shows only child-run tasks with open-details/stop actions (Dream history
-    moved to the Settings → Agent "Memory & activity" panel)
+  - same-conversation `spawn`, `run_status`, `run_steer`, `run_amend`, and
+    `run_stop`
+  - child runs with full/brief/none context modes, verifier retry, and their OWN
+    run ledger (run unification; sidechain transcripts replay from the ledger)
+    plus background notifications
+  - Work/Runs view backed by the global `agent_list_runs` index: it replaces the
+    agent dock's chat body with a run tree and second-level detail view for
+    non-turn, non-Dream runs across channels with open-details/stop actions
+    (Dream history moved to the Settings → Agent "Memory & activity" panel)
   - skill `execution: isolated` routed through the delegation runtime
   - provider overflow detection, response debug capture, stream option pass-through,
     and session resource cleanup via pi-ai

@@ -9,7 +9,8 @@ import type {
   AgentCreateConversationOptions,
   AgentConversationListMeta,
   AgentDreamReadiness,
-  AgentRenderDreamTaskEntity,
+  AgentRenderDreamRunEntity,
+  AgentRunListEntry,
   AgentPickScopeFolderResult,
   AgentSlashCommandView,
   AgentApprovalResolutionScope,
@@ -317,12 +318,14 @@ export const api = {
     command<AgentConversationListMeta | null>('agent_set_conversation_include_in_dream_data', { conversationId, includeInDreamData }),
   agentDeleteConversation: (conversationId: string) =>
     command<void>('agent_delete_conversation', { conversationId }),
+  agentListRuns: (options: { limit?: number; perConversationLimit?: number } = {}) =>
+    command<AgentRunListEntry[]>('agent_list_runs', options),
   agentListDreamHistory: (options: { limit?: number } = {}) =>
-    command<AgentRenderDreamTaskEntity[]>('agent_list_dream_history', options),
+    command<AgentRenderDreamRunEntity[]>('agent_list_dream_history', options),
   agentDreamReadiness: () =>
     command<AgentDreamReadiness>('agent_dream_readiness', {}),
   agentRunDreamNow: (options: { limit?: number; startDate?: string; endDate?: string; guidance?: string } = {}) =>
-    command<AgentRenderDreamTaskEntity[]>('agent_run_dream_now', options),
+    command<AgentRenderDreamRunEntity[]>('agent_run_dream_now', options),
   agentDebugView: (conversationId: string) =>
     command<AgentDebugConversation>('agent_debug_view', { conversationId }),
   agentDebugRun: (conversationId: string, runId: string) =>
@@ -333,12 +336,20 @@ export const api = {
     command<{ messages: unknown[] } | null>('agent_child_run_transcript', { conversationId, runId }),
   agentRunConversationId: (runId: string) =>
     command<string | null>('agent_run_conversation_id', { runId }),
+  agentRunStatus: (conversationId: string, runId: string, options: { wait?: boolean; timeoutMs?: number } = {}) =>
+    command<AgentChildRunActionResult>('agent_run_status', { conversationId, runId, ...options }),
+  agentRunSteer: (conversationId: string, runId: string, message: string) =>
+    command<AgentChildRunActionResult>('agent_run_steer', { conversationId, runId, message }),
+  agentRunAmend: (conversationId: string, runId: string, changes: unknown) =>
+    command<AgentChildRunActionResult>('agent_run_amend', { conversationId, runId, changes }),
+  agentRunStop: (conversationId: string, runId: string) =>
+    command<AgentChildRunActionResult>('agent_run_stop', { conversationId, runId }),
   agentChildRunStatus: (conversationId: string, agentId: string, options: { wait?: boolean; timeoutMs?: number } = {}) =>
-    command<AgentChildRunActionResult>('agent_child_run_status', { conversationId, agentId, ...options }),
+    command<AgentChildRunActionResult>('agent_run_status', { conversationId, runId: agentId, ...options }),
   agentChildRunSend: (conversationId: string, agentId: string, message: string) =>
-    command<AgentChildRunActionResult>('agent_child_run_send', { conversationId, agentId, message }),
+    command<AgentChildRunActionResult>('agent_run_steer', { conversationId, runId: agentId, message }),
   agentChildRunStop: (conversationId: string, agentId: string) =>
-    command<AgentChildRunActionResult>('agent_child_run_stop', { conversationId, agentId }),
+    command<AgentChildRunActionResult>('agent_run_stop', { conversationId, runId: agentId }),
   agentSendMessage: (
     conversationId: string,
     message: string,

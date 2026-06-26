@@ -3,18 +3,15 @@ import { act, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import type { ToolCall, Usage } from '../../src/core/agentTypes';
+import type { AgentRunListEntry, ToolCall, Usage } from '../../src/core/agentTypes';
 import type {
   AgentRenderChildRunEntity,
-  AgentRenderDreamTaskEntity,
-  AgentRenderProjection,
 } from '../../src/core/agentRenderProjection';
-import type { AgentTaskEntry } from '../../src/renderer/agent/runtime';
-import { buildAgentTaskEntries } from '../../src/renderer/agent/runtime';
 import type { DocumentIndex } from '../../src/renderer/state/document';
 import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlock';
+import { AgentToolActivityGroup } from '../../src/renderer/ui/agent/AgentToolActivityGroup';
 import { AgentChildRunDetailsPanel } from '../../src/renderer/ui/agent/AgentChildRunDetailsPanel';
-import { AgentTaskPanel } from '../../src/renderer/ui/agent/AgentTaskPanel';
+import { AgentRunsPanel } from '../../src/renderer/ui/agent/AgentRunsPanel';
 import { renderAssistantBlocks } from '../../src/renderer/ui/agent/AgentAssistantTurnContent';
 import type { AgentExpandState } from '../../src/renderer/ui/agent/agentProcessTypes';
 
@@ -43,7 +40,7 @@ afterEach(() => {
 });
 
 describe('agent child run UI', () => {
-  test('renders a compact Agent tool block and opens transcript details', async () => {
+  test('renders child runs through the ordinary Agent tool block and opens transcript details', async () => {
     let openedChildRunId: string | null = null;
     const rendered = renderComponent(
       <AgentToolCallBlock
@@ -58,18 +55,53 @@ describe('agent child run UI', () => {
       />,
     );
 
-    expect(rendered.container.textContent).toContain('Agent task · Inspect child run UI');
+    expect(rendered.container.textContent).toContain('Ran agent run');
+    expect(rendered.container.textContent).toContain('Inspect child run UI');
 
-    await click(rendered, textButton(rendered, 'Agent task · Inspect child run UI'));
+    await click(rendered, firstToolCallToggle(rendered));
 
-    expect(rendered.container.textContent).toContain('Status');
-    expect(rendered.container.textContent).toContain('completed');
-    expect(rendered.container.textContent).toContain('fork · explorer');
+    expect(rendered.container.textContent).toContain('Input');
     expect(rendered.container.textContent).toContain('Inspect the current UI.');
-    expect(rendered.container.textContent).toContain('Found the relevant UI path.');
+    expect(rendered.container.textContent).not.toContain('Found the relevant UI path.');
 
     await click(rendered, textButton(rendered, 'View transcript'));
     expect(openedChildRunId).toBe('child-1');
+  });
+
+  test('uses child run status when summarizing ordinary tool activity groups', () => {
+    const runningChildRun = {
+      ...childRunEntity(),
+      completedAt: undefined,
+      result: undefined,
+      status: 'running' as const,
+    };
+    const rendered = renderComponent(
+      <AgentToolActivityGroup
+        conversationId="conversation-1"
+        expandState={NOOP_EXPAND_STATE}
+        id="activity:tool-bash-1"
+        index={TEST_INDEX}
+        members={[
+          {
+            id: 'tool:tool-bash-1',
+            type: 'toolCall',
+            toolCall: { type: 'toolCall', id: 'tool-bash-1', name: 'bash', arguments: { command: 'pwd' } },
+            outcome: 'completed',
+          },
+          {
+            id: 'tool:tool-agent-1',
+            type: 'toolCall',
+            toolCall: agentToolCall(),
+            childRun: runningChildRun,
+          },
+        ]}
+        pendingToolCallIds={new Set()}
+        results={new Map()}
+        turnActive
+      />,
+    );
+
+    expect(rendered.container.textContent).toContain('Ran a command · using a tool');
   });
 
   test('loads a child run transcript and keeps nested tool calls expandable', async () => {
@@ -190,8 +222,8 @@ describe('agent child run UI', () => {
       },
     );
 
-    await waitForText(rendered, 'Agent task · Nested child run');
-    await click(rendered, textButton(rendered, 'Agent task · Nested child run'));
+    await waitForText(rendered, 'Ran agent run');
+    await click(rendered, firstToolCallToggle(rendered));
     await click(rendered, textButton(rendered, 'View transcript'));
 
     expect(openedChildRunId).toBe('child-2');
@@ -323,7 +355,7 @@ describe('agent child run UI', () => {
     expect(rendered.container.querySelector('.agent-transcript-tool-result-row h1')).toBeNull();
   });
 
-  test('sends follow-ups and stops running childRuns through runtime commands', async () => {
+  test('stops running childRuns from read-only details', async () => {
     const rendered = renderComponent(
       <AgentChildRunDetailsPanel
         onClose={() => undefined}
@@ -353,31 +385,74 @@ describe('agent child run UI', () => {
     );
 
     await waitForText(rendered, 'Inspect the current UI.');
-    await changeTextarea(rendered, 'Agent task follow-up', 'Continue with layout risks.');
-    await click(rendered, textButton(rendered, 'Send'));
+    expect(rendered.document.querySelector('textarea[aria-label="Agent run follow-up"]')).toBeNull();
     await click(rendered, textButton(rendered, 'Stop'));
 
-    expect(rendered.commands.filter((call) => call.cmd === 'agent_child_run_send' || call.cmd === 'agent_child_run_stop')).toEqual([
+    expect(rendered.commands.filter((call) => call.cmd === 'agent_run_steer' || call.cmd === 'agent_run_stop')).toEqual([
       {
-        cmd: 'agent_child_run_send',
+        cmd: 'agent_run_stop',
         args: {
-          agentId: 'child-1',
-          message: 'Continue with layout risks.',
-          conversationId: 'conversation-1',
-        },
-      },
-      {
-        cmd: 'agent_child_run_stop',
-        args: {
-          agentId: 'child-1',
+          runId: 'child-1',
           conversationId: 'conversation-1',
         },
       },
     ]);
   });
 
-  test('lists child run tasks and stops a running task', async () => {
+  test('shows direct child runs in the run details page', async () => {
     let openedChildRunId: string | null = null;
+    const parent = {
+      ...childRunEntity(),
+      result: '- [ ] Complete testing.\n- [ ] Finish review.\n- [ ] Prepare release.',
+    };
+    const nestedRun = {
+      ...childRunEntity(),
+      id: 'child-2',
+      description: 'Verify launch checklist',
+      parentRunId: 'child-1',
+      parentToolCallId: 'tool-agent-2',
+      startedAt: 180,
+      updatedAt: 260,
+      completedAt: 260,
+    };
+    const rendered = renderComponent(
+      <AgentChildRunDetailsPanel
+        onClose={() => undefined}
+        onOpenChildRunTranscript={(childRunId) => {
+          openedChildRunId = childRunId;
+        }}
+        conversationId="conversation-1"
+        index={TEST_INDEX}
+        childRun={parent}
+        childRuns={{ [parent.id]: parent, [nestedRun.id]: nestedRun }}
+      />,
+      {
+        payloads: {
+          'child-1': JSON.stringify({
+            v: 1,
+            runId: 'child-1',
+            messageCount: 0,
+            messages: [],
+          }),
+        },
+      },
+    );
+
+    await waitForText(rendered, 'Verification');
+    expect(rendered.container.textContent).toContain('Result');
+    expect(rendered.container.textContent).toContain('Complete testing.');
+    expect(rendered.container.querySelector('.agent-child-run-section-header [aria-label="Copy run result"]')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-child-run-result-actions')).toBeNull();
+    expect(rendered.container.querySelector('.agent-child-run-result-box .contains-task-list')).not.toBeNull();
+    expect(rendered.container.querySelectorAll('.agent-child-run-result-box .task-list-item')).toHaveLength(3);
+    expect(rendered.container.textContent).toContain('Verifier');
+
+    await click(rendered, textButton(rendered, 'Verifier'));
+    expect(openedChildRunId).toBe('child-2');
+  });
+
+  test('lists run trees and stops a running run', async () => {
+    let openedRunId: string | null = null;
     const running = childRunEntity();
     running.status = 'running';
     running.completedAt = undefined;
@@ -388,34 +463,52 @@ describe('agent child run UI', () => {
       status: 'completed' as const,
       updatedAt: 320,
       completedAt: 320,
+      parentRunId: 'child-1',
+    };
+    const verifierPrompt = 'You are an independent verifier Run. Inspect the submitted child Run result.';
+    const verifier = {
+      ...runEntry(completed),
+      runId: 'child-3',
+      parentRunId: 'child-1',
+      purpose: 'verify' as const,
+      status: 'failed' as const,
+      title: verifierPrompt,
     };
     const rendered = renderComponent(
-      <AgentTaskPanel
-        conversationId="conversation-1"
-        onClose={() => undefined}
-        onOpenChildRun={(childRunId) => {
-          openedChildRunId = childRunId;
+      <AgentRunsPanel
+        error={null}
+        loading={false}
+        onOpenRun={(run) => {
+          openedRunId = run.runId;
         }}
-        tasks={[taskEntry(running), taskEntry(completed)]}
+        onRefresh={() => undefined}
+        runs={[runEntry(running), runEntry(completed), verifier]}
       />,
     );
 
-    expect(rendered.container.textContent).toContain('Tasks');
-    expect(rendered.container.textContent).toContain('1 task running');
-    expect(rendered.container.querySelector('[aria-live="polite"]')?.textContent).toContain('1 task running');
+    expect(rendered.container.querySelector('[role="tree"]')).not.toBeNull();
     expect(rendered.container.textContent).toContain('Inspect child run UI');
     expect(rendered.container.textContent).toContain('Summarize notes');
+    expect(rendered.container.textContent).toContain('Verifier');
+    expect(rendered.container.textContent).not.toContain(verifierPrompt);
+    expect(rendered.container.textContent).toContain('Child runs 1/2');
+    expect(rendered.container.textContent).not.toContain('General ·');
+    expect(rendered.container.textContent).not.toContain('Verified ·');
+    expect(rendered.container.querySelector('.agent-run-child-toggle')).not.toBeNull();
 
-    await click(rendered, textButton(rendered, 'Inspect child run UI'));
-    expect(openedChildRunId).toBe('child-1');
+    await click(rendered, textButton(rendered, 'Child runs 1/2'));
+    expect(openedRunId).toBeNull();
 
-    await click(rendered, ariaButton(rendered, 'Stop task'));
-    await waitForCommand(rendered, 'agent_child_run_stop');
+    await click(rendered, textTreeItem(rendered, 'Inspect child run UI'));
+    expect(openedRunId).toBe('child-1');
 
-    expect(rendered.commands.filter((call) => call.cmd === 'agent_child_run_stop')).toEqual([{
-      cmd: 'agent_child_run_stop',
+    await click(rendered, ariaButton(rendered, 'Stop run'));
+    await waitForCommand(rendered, 'agent_run_stop');
+
+    expect(rendered.commands.filter((call) => call.cmd === 'agent_run_stop')).toEqual([{
+      cmd: 'agent_run_stop',
       args: {
-        agentId: 'child-1',
+        runId: 'child-1',
         conversationId: 'conversation-1',
       },
       }]);
@@ -468,68 +561,6 @@ describe('agent child run UI', () => {
     expect(fetchCount()).toBeGreaterThan(before);
   });
 
-  test('Dream tasks are surfaced in Settings, not the conversation task panel', async () => {
-    // Dreams ride in the projection but are filtered out of buildAgentTaskEntries —
-    // they now live in Settings → Agent's Dream-history group. Only child-run tasks
-    // reach the in-conversation panel.
-    const childRun = childRunEntity();
-    const dreamTask: AgentRenderDreamTaskEntity = {
-      id: 'dream:dream-run-1',
-      kind: 'dream',
-      status: 'completed',
-      trigger: 'manual',
-      principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
-      startedAt: 100,
-      updatedAt: 150,
-      completedAt: 150,
-      runId: 'dream-run-1',
-      processed: { totalMessageCount: 3, totalCharCount: 900, consolidateOnly: false },
-      changes: { added: 1, updated: 0, forgotten: 0, skipped: 0 },
-    };
-    const childRunTask = taskEntry(childRun);
-    const projection = {
-      taskIds: [dreamTask.id, childRunTask.id],
-      childRunIds: [childRun.id],
-      entities: {
-        messages: {},
-        childRuns: { [childRun.id]: childRun },
-        compactions: {},
-        dreams: {},
-        tasks: {
-          [dreamTask.id]: dreamTask,
-          [childRunTask.id]: {
-            id: childRunTask.id,
-            kind: 'child-run' as const,
-            status: childRunTask.status,
-            title: childRunTask.title,
-            subtitle: childRunTask.subtitle,
-            startedAt: childRunTask.startedAt,
-            updatedAt: childRunTask.updatedAt,
-            completedAt: childRunTask.completedAt,
-            childRunId: childRunTask.childRunId,
-          },
-        },
-      },
-    } as unknown as AgentRenderProjection;
-
-    const entries = buildAgentTaskEntries(projection);
-    // Only the child-run task survives; the dream is dropped.
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.kind).toBe('child-run');
-    expect(entries.some((entry) => entry.id === dreamTask.id)).toBe(false);
-
-    // And the panel renders nothing dream-shaped for those entries.
-    const rendered = renderComponent(
-      <AgentTaskPanel
-        conversationId="conversation-1"
-        onClose={() => undefined}
-        onOpenChildRun={() => undefined}
-        tasks={entries}
-      />,
-    );
-    expect(rendered.container.textContent).not.toContain('Memory Dream');
-    expect(rendered.container.textContent).toContain('Inspect child run UI');
-  });
 });
 
 describe('assistant turn interrupted verdict', () => {
@@ -672,10 +703,11 @@ function installDomGlobals(window: Window, payloads: Record<string, string>) {
         if (!raw) return null as T;
         return { messages: (JSON.parse(raw) as { messages: unknown[] }).messages } as T;
       }
-      if (cmd === 'agent_child_run_send') {
+      if (cmd === 'agent_run_steer' || cmd === 'agent_child_run_send') {
+        const runId = args.runId ?? args.agentId;
         return {
           status: 'queued',
-          agent_id: args.agentId,
+          agent_id: runId,
           description: 'Inspect child run UI',
           prompt: 'Inspect the current UI.',
           agent_type: 'explorer',
@@ -685,10 +717,11 @@ function installDomGlobals(window: Window, payloads: Record<string, string>) {
           transcript_message_count: 1,
         } as T;
       }
-      if (cmd === 'agent_child_run_stop') {
+      if (cmd === 'agent_run_stop' || cmd === 'agent_child_run_stop') {
+        const runId = args.runId ?? args.agentId;
         return {
           status: 'cancelled',
-          agent_id: args.agentId,
+          agent_id: runId,
           description: 'Inspect child run UI',
           prompt: 'Inspect the current UI.',
           agent_type: 'explorer',
@@ -731,23 +764,17 @@ async function waitForText(rendered: RenderedComponent, text: string) {
   throw new Error(`Missing text: ${text}`);
 }
 
-async function changeTextarea(rendered: RenderedComponent, ariaLabel: string, value: string) {
-  const element = rendered.document.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${ariaLabel}"]`);
-  if (!element) throw new Error(`Missing textarea: ${ariaLabel}`);
-  await act(async () => {
-    const setter = Object.getOwnPropertyDescriptor(rendered.window.HTMLTextAreaElement.prototype, 'value')?.set;
-    if (setter) setter.call(element, value);
-    else element.value = value;
-    element.dispatchEvent(new rendered.window.Event('input', { bubbles: true, cancelable: true }));
-    element.dispatchEvent(new rendered.window.Event('change', { bubbles: true, cancelable: true }));
-    await Promise.resolve();
-  });
-}
-
 function textButton(rendered: RenderedComponent, text: string): HTMLButtonElement {
   const found = Array.from(rendered.document.querySelectorAll<HTMLButtonElement>('button'))
     .find((candidate) => candidate.textContent?.includes(text));
   if (!found) throw new Error(`Missing button: ${text}`);
+  return found;
+}
+
+function textTreeItem(rendered: RenderedComponent, text: string): HTMLElement {
+  const found = Array.from(rendered.document.querySelectorAll<HTMLElement>('[role="treeitem"]'))
+    .find((candidate) => candidate.textContent?.includes(text));
+  if (!found) throw new Error(`Missing tree item: ${text}`);
   return found;
 }
 
@@ -804,18 +831,20 @@ function childRunEntity(): AgentRenderChildRunEntity {
   };
 }
 
-function taskEntry(childRun: AgentRenderChildRunEntity): AgentTaskEntry {
+function runEntry(childRun: AgentRenderChildRunEntity): AgentRunListEntry {
   return {
-    id: `child-run:${childRun.id}`,
-    kind: 'child-run',
+    runId: childRun.id,
+    conversationId: 'conversation-1',
+    conversationTitle: 'General',
+    agentId: childRun.executingAgentId,
+    kind: 'delegation',
     status: childRun.status,
+    purpose: undefined,
+    parentRunId: childRun.parentRunId ?? null,
     title: childRun.description,
-    subtitle: `${childRun.contextMode} · ${childRun.agentType}`,
     startedAt: childRun.startedAt,
     updatedAt: childRun.updatedAt,
     completedAt: childRun.completedAt,
-    childRunId: childRun.id,
-    childRun,
   };
 }
 

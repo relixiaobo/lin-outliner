@@ -48,8 +48,20 @@
   margin-top: var(--space-2);
 }
 
+.agent-markdown ul.contains-task-list {
+  padding-left: 0;
+}
+
+.agent-markdown li.task-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  list-style: none;
+}
+
 .agent-markdown li > input[type="checkbox"] {
-  margin-right: var(--space-3);
+  flex: 0 0 auto;
+  margin: 0;
   transform: translateY(1px);
 }
 
