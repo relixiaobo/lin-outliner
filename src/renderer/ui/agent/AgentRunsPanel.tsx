@@ -4,7 +4,6 @@ import type { AgentRunListEntry } from '../../api/types';
 import { api } from '../../api/client';
 import { useI18n } from '../../i18n/I18nProvider';
 import {
-  AgentIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CloseIcon,
@@ -100,6 +99,7 @@ function runMetaParts(run: AgentRunListEntry, locale: string, labels: Messages['
   return [
     run.conversationTitle ?? labels.unknownConversation,
     runKindLabel(run, labels),
+    runStatusLabel(run, labels),
     formatRunTime(run.updatedAt, locale),
   ];
 }
@@ -227,7 +227,7 @@ export function AgentRunsPanel({
               <article
                 aria-expanded={hasChildren ? expanded : undefined}
                 aria-level={node.depth + 1}
-                className={`agent-run-row is-${run.status}`}
+                className={`agent-run-row is-${run.status} is-${statusClass}`}
                 key={run.runId}
                 role="treeitem"
                 style={{ '--run-depth': node.depth } as CSSProperties}
@@ -244,16 +244,14 @@ export function AgentRunsPanel({
                     expanded ? <ChevronDownIcon size={ICON_SIZE.menu} /> : <ChevronRightIcon size={ICON_SIZE.menu} />
                   ) : null}
                 </button>
+                <span className={`agent-run-marker is-${statusClass}`} aria-hidden="true" />
                 <ButtonControl
                   className="agent-run-main"
                   onClick={() => onOpenRun(run)}
                 >
-                  <span className="agent-run-kind">
-                    <AgentIcon size={ICON_SIZE.menu} />
-                    <span>{runKindLabel(run, t.agent.run)}</span>
-                    <span className={`agent-run-status is-${statusClass}`}>{runStatusLabel(run, t.agent.run)}</span>
+                  <span className="agent-run-title-row">
+                    <span className="agent-run-title">{run.title}</span>
                   </span>
-                  <span className="agent-run-title">{run.title}</span>
                   <span className="agent-run-meta">{meta}</span>
                 </ButtonControl>
                 <div className="agent-run-row-actions">

@@ -3188,7 +3188,7 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-composer-region')).toHaveCount(0);
     await expect(runs.getByText('1 run running')).toBeVisible();
     await expect(runs.getByText('Inspect child run UI')).toBeVisible();
-    await runs.getByRole('button', { name: 'Open run' }).click();
+    await runs.getByRole('button', { name: /Inspect child run UI/ }).click();
 
     const details = page.getByRole('region', { name: 'Agent run details' });
     await expect(details).toBeVisible();

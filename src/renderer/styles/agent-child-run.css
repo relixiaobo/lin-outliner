@@ -121,19 +121,19 @@
   min-width: 0;
   flex: 1;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 0;
   overflow: auto;
-  padding: var(--space-4);
+  padding: var(--space-3) var(--space-4) var(--space-5);
 }
 
 .agent-run-row {
   display: grid;
   min-width: 0;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: 18px 20px minmax(0, 1fr) auto;
+  align-items: start;
   gap: var(--space-2);
-  border-radius: var(--radius-md);
-  padding-left: calc(var(--run-depth, 0) * var(--space-5));
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2) var(--space-1) calc(var(--space-2) + var(--run-depth, 0) * var(--space-5));
 }
 
 .agent-run-row:hover {
@@ -145,17 +145,17 @@
   min-width: 0;
   flex-direction: column;
   align-items: stretch;
-  gap: var(--space-2);
-  border-radius: var(--radius-md);
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
   color: inherit;
-  padding: var(--space-4);
+  padding: var(--space-2) var(--space-2) var(--space-3) 0;
   text-align: left;
 }
 
 .agent-run-disclosure {
   display: inline-flex;
-  width: 22px;
-  height: 28px;
+  width: 18px;
+  height: 32px;
   align-items: center;
   justify-content: center;
   border: 0;
@@ -182,19 +182,50 @@
   background: transparent;
 }
 
-.agent-run-kind,
+.agent-run-marker {
+  position: relative;
+  display: inline-flex;
+  width: 20px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-run-marker::before {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  content: "";
+}
+
+.agent-run-marker.is-running::before,
+.agent-run-marker.is-verifying::before {
+  border-color: var(--agent-accent);
+  background: color-mix(in srgb, var(--agent-accent) 18%, transparent);
+}
+
+.agent-run-marker.is-completed::before,
+.agent-run-marker.is-verified::before {
+  border-color: var(--semantic-success);
+  background: var(--semantic-success);
+  box-shadow: inset 0 0 0 3px var(--surface);
+}
+
+.agent-run-marker.is-blocked::before,
+.agent-run-marker.is-budget_exhausted::before,
+.agent-run-marker.is-failed::before,
+.agent-run-marker.is-stopped::before {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.agent-run-title-row,
 .agent-run-meta {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: var(--space-2);
-  color: var(--text-faint);
-  font-size: var(--font-ui-xs);
-  line-height: var(--line-ui-xs);
-}
-
-.agent-run-kind {
-  color: var(--text-soft);
+  gap: var(--space-3);
 }
 
 .agent-run-title {
@@ -210,45 +241,10 @@
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
   white-space: nowrap;
-}
-
-.agent-run-status {
-  display: inline-flex;
-  min-height: 18px;
-  align-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--fill-2);
-  color: var(--text-soft);
-  padding: 0 var(--space-2);
-}
-
-.agent-run-status.is-running {
-  background: color-mix(in srgb, var(--agent-accent) 12%, transparent);
-  color: var(--agent-accent);
-}
-
-.agent-run-status.is-completed {
-  background: color-mix(in srgb, var(--semantic-success) 12%, transparent);
-  color: var(--semantic-success-strong);
-}
-
-.agent-run-status.is-verified {
-  background: color-mix(in srgb, var(--semantic-success) 14%, transparent);
-  color: var(--semantic-success-strong);
-}
-
-.agent-run-status.is-verifying {
-  background: color-mix(in srgb, var(--agent-accent) 12%, transparent);
-  color: var(--agent-accent);
-}
-
-.agent-run-status.is-blocked,
-.agent-run-status.is-budget_exhausted,
-.agent-run-status.is-failed,
-.agent-run-status.is-stopped {
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  color: var(--danger);
 }
 
 .agent-run-row-actions {
@@ -256,7 +252,17 @@
   flex: 0 0 auto;
   align-items: center;
   gap: var(--space-1);
-  padding-right: var(--space-2);
+  min-height: 32px;
+  opacity: 0;
+  padding-right: var(--space-1);
+  pointer-events: none;
+  transition: opacity var(--motion-fast);
+}
+
+.agent-run-row:hover .agent-run-row-actions,
+.agent-run-row:focus-within .agent-run-row-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .agent-run-icon-button {

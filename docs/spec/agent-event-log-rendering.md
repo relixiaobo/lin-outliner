@@ -987,9 +987,11 @@ Rules:
   projection-only task list on the active conversation. Opening Work replaces the
   agent dock's chat body with the first-level run tree; opening a row switches
   that same body area to the second-level run detail view. The first level lists
-  non-turn, non-Dream runs across channels as a tree using `parentRunId`. The
-  detail view still reads the selected conversation's `entities.childRuns` and
-  run transcript.
+  non-turn, non-Dream runs across channels as a compact task-list tree using
+  `parentRunId`: each row shows a left status marker, the run title as the primary
+  text, and one muted metadata line (`channel · kind · status · time`); row
+  actions reveal on hover/focus. The detail view still reads the selected
+  conversation's `entities.childRuns` and run transcript.
 - Long output rows are collapsed by default.
 - **Result-first turn fold (one flat level).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last
