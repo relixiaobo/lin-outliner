@@ -3193,6 +3193,9 @@ test.describe('agent composer controls', () => {
     const details = page.getByRole('region', { name: 'Agent run details' });
     await expect(details).toBeVisible();
     await expect(details).toHaveCSS('position', 'static');
+    await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Back to runs' })).toBeVisible();
+    await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Close Work' })).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Back to runs' })).toHaveCount(0);
     await expect(details.getByText('Inspect child run UI')).toBeVisible();
     await expect(details.getByText(/4 messages ·/)).toBeVisible();
 
@@ -3223,7 +3226,7 @@ test.describe('agent composer controls', () => {
       },
     ]);
 
-    await details.getByRole('button', { name: 'Back to runs' }).click();
+    await page.getByRole('button', { name: 'Back to runs' }).click();
     await expect(details).toHaveCount(0);
     await expect(runs).toBeVisible();
     await runs.getByRole('button', { name: 'Close Work' }).click();

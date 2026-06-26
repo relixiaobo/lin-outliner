@@ -38,6 +38,7 @@ interface AgentChildRunDetailsPanelProps {
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onOpenChildRunTranscript?: (childRunId: string) => void;
+  showHeader?: boolean;
 }
 
 /** Live-run transcript poll cadence (the fetch is meta-keyed in main, near-free when unchanged). */
@@ -340,6 +341,7 @@ export function AgentChildRunDetailsPanel({
   childRunsByParentToolCallId,
   onNodeReferenceOpen,
   onOpenChildRunTranscript,
+  showHeader = true,
 }: AgentChildRunDetailsPanelProps) {
   const t = useT();
   const [actionError, setActionError] = useState<string | null>(null);
@@ -419,6 +421,11 @@ export function AgentChildRunDetailsPanel({
   const duration = formatDuration(childRun.startedAt, endedAt);
   const resultText = childRun.result ?? childRun.error ?? '';
   const showActivityOpen = childRun.status === 'running' || !resultText;
+  const title = childRun.description || childRun.name || childRun.id;
+  const metaLine = t.agent.childRun.metaLine({
+    count: messages.length,
+    duration,
+  });
   const childRunSectionTitle = directChildRuns.length > 0 && directChildRuns.every(isVerifierRun)
     ? t.agent.childRun.sectionVerification
     : t.agent.childRun.sectionChildRuns({ count: directChildRuns.length });
@@ -436,9 +443,21 @@ export function AgentChildRunDetailsPanel({
     }
   }
 
+  const stopButton = canStop ? (
+    <Button
+      disabled={actionPending !== null}
+      onClick={() => void stopChildRun()}
+      size="sm"
+      variant="danger"
+    >
+      {actionPending === 'stop' ? t.agent.childRun.stopping : t.agent.childRun.stop}
+    </Button>
+  ) : null;
+
   return (
     <section className="agent-child-run-details-panel" aria-label={t.agent.childRun.detailsAriaLabel}>
-      <header className="agent-child-run-details-header">
+      {showHeader ? (
+        <header className="agent-child-run-details-header">
         {onBack ? (
           <IconButton
             className="agent-child-run-back"
@@ -455,25 +474,11 @@ export function AgentChildRunDetailsPanel({
             <span>{t.agent.childRun.heading}</span>
             <span className={`agent-child-run-status is-${childRun.status}`}>{childRun.status}</span>
           </div>
-          <h3>{childRun.description || childRun.name || childRun.id}</h3>
-          <p>
-            {t.agent.childRun.metaLine({
-              count: messages.length,
-              duration,
-            })}
-          </p>
+          <h3>{title}</h3>
+          <p>{metaLine}</p>
         </div>
         <div className="agent-child-run-header-actions">
-          {canStop ? (
-            <Button
-              disabled={actionPending !== null}
-              onClick={() => void stopChildRun()}
-              size="sm"
-              variant="danger"
-            >
-              {actionPending === 'stop' ? t.agent.childRun.stopping : t.agent.childRun.stop}
-            </Button>
-          ) : null}
+          {stopButton}
           <IconButton
             className="agent-child-run-close"
             icon={CloseIcon}
@@ -483,7 +488,8 @@ export function AgentChildRunDetailsPanel({
             variant="panel"
           />
         </div>
-      </header>
+        </header>
+      ) : null}
       {actionError ? (
         <div className="agent-child-run-action-error" role="alert">
           <WarningIcon size={ICON_SIZE.menu} />
@@ -491,6 +497,19 @@ export function AgentChildRunDetailsPanel({
         </div>
       ) : null}
       <div className="agent-child-run-details-body">
+        {!showHeader ? (
+          <div className="agent-child-run-details-summary">
+            <div className="agent-child-run-title-block">
+              <h3>{title}</h3>
+              <p>{metaLine}</p>
+            </div>
+            {stopButton ? (
+              <div className="agent-child-run-header-actions">
+                {stopButton}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <DetailSection
           actions={<CopyResultButton text={resultText} />}
           title={t.agent.childRun.sectionResult}

@@ -40,7 +40,10 @@ import type {
 } from '../../agent/runtime';
 import {
   AddIcon,
+  AgentIcon,
+  BackIcon,
   ChevronDownIcon,
+  CloseIcon,
   HashIcon,
   ICON_SIZE,
   LoaderIcon,
@@ -1306,6 +1309,7 @@ export function AgentChatPanel({
   // Unnamed conversations read "untitled" in the header too, matching the conversation list
   // and delete-confirm — one fallback everywhere so inside/outside never disagree.
   const displayTitle = readableConversationTitle(conversationTitle, t.common.untitled);
+  const detailRunInHeader = workPanelOpen ? selectedRun : null;
   const dockMenuAnchorRef = useMemo(() => ({
     current: {
       getBoundingClientRect: () => {
@@ -1344,48 +1348,82 @@ export function AgentChatPanel({
   });
   return (
     <div className="agent-chat-panel" data-turn-phase={turnPhase}>
-      <header className="agent-dock-header" ref={headerRef}>
-        <ButtonControl
-          ref={historyButtonRef}
-          aria-expanded={historyOpen}
-          aria-label={t.agent.chat.showConversations}
-          className="agent-dock-title-button"
-          onClick={() => setHistoryOpen((open) => !open)}
-          title={t.agent.chat.showConversations}
-        >
-          {/* Single-agent collapse: every conversation is one of Neva's channels.
-              The agent is always Neva, so a per-conversation avatar here carried no
-              signal — show the channel glyph + title, matching the conversation list
-              (agent-conversation-channel-icon). */}
-          <span className="agent-dock-title-leading">
-            <HashIcon aria-hidden="true" size={ICON_SIZE.menu} />
-          </span>
-          <span className="agent-dock-title">{displayTitle}</span>
-          <ChevronDownIcon
-            className={historyOpen ? 'agent-title-chevron is-open' : 'agent-title-chevron'}
-            size={ICON_SIZE.menu}
-          />
-        </ButtonControl>
-        <div className="agent-dock-actions">
+      <header className={detailRunInHeader ? 'agent-dock-header is-run-detail' : 'agent-dock-header'} ref={headerRef}>
+        {detailRunInHeader ? (
           <ButtonControl
-            aria-expanded={workPanelOpen}
-            aria-label={runningRunCount > 0
-              ? t.agent.run.openPanelActive({ count: runningRunCount })
-              : t.agent.run.openPanel}
-            className="agent-run-panel-button"
+            aria-label={t.agent.run.backToRuns}
+            className="agent-dock-run-back"
             onClick={() => {
               setSelectedRunId(null);
               setSelectedRunConversationId(null);
-              setWorkPanelOpen((open) => !open);
-              scheduleRunIndexRefresh();
             }}
-            title={t.agent.run.openPanel}
+            title={t.agent.run.backToRuns}
           >
-            <UsedToolsIcon size={ICON_SIZE.toolbar} />
-            {runningRunCount > 0 ? <span className="agent-run-panel-badge">{runningRunCount}</span> : null}
+            <BackIcon aria-hidden="true" size={ICON_SIZE.menu} />
+            <span className="agent-dock-title-leading">
+              <AgentIcon aria-hidden="true" size={ICON_SIZE.menu} />
+            </span>
+            <span className="agent-dock-run-label">{t.agent.childRun.heading}</span>
+            <span className={`agent-dock-run-status is-${detailRunInHeader.status}`}>{detailRunInHeader.status}</span>
           </ButtonControl>
+        ) : (
+          <ButtonControl
+            ref={historyButtonRef}
+            aria-expanded={historyOpen}
+            aria-label={t.agent.chat.showConversations}
+            className="agent-dock-title-button"
+            onClick={() => setHistoryOpen((open) => !open)}
+            title={t.agent.chat.showConversations}
+          >
+            {/* Single-agent collapse: every conversation is one of Neva's channels.
+                The agent is always Neva, so a per-conversation avatar here carried no
+                signal — show the channel glyph + title, matching the conversation list
+                (agent-conversation-channel-icon). */}
+            <span className="agent-dock-title-leading">
+              <HashIcon aria-hidden="true" size={ICON_SIZE.menu} />
+            </span>
+            <span className="agent-dock-title">{displayTitle}</span>
+            <ChevronDownIcon
+              className={historyOpen ? 'agent-title-chevron is-open' : 'agent-title-chevron'}
+              size={ICON_SIZE.menu}
+            />
+          </ButtonControl>
+        )}
+        <div className="agent-dock-actions">
+          {detailRunInHeader ? (
+            <ButtonControl
+              aria-label={t.agent.run.closePanel}
+              className="agent-run-panel-button"
+              onClick={() => {
+                setSelectedRunId(null);
+                setSelectedRunConversationId(null);
+                setWorkPanelOpen(false);
+              }}
+              title={t.agent.run.closePanel}
+            >
+              <CloseIcon size={ICON_SIZE.toolbar} />
+            </ButtonControl>
+          ) : (
+            <ButtonControl
+              aria-expanded={workPanelOpen}
+              aria-label={runningRunCount > 0
+                ? t.agent.run.openPanelActive({ count: runningRunCount })
+                : t.agent.run.openPanel}
+              className="agent-run-panel-button"
+              onClick={() => {
+                setSelectedRunId(null);
+                setSelectedRunConversationId(null);
+                setWorkPanelOpen((open) => !open);
+                scheduleRunIndexRefresh();
+              }}
+              title={t.agent.run.openPanel}
+            >
+              <UsedToolsIcon size={ICON_SIZE.toolbar} />
+              {runningRunCount > 0 ? <span className="agent-run-panel-badge">{runningRunCount}</span> : null}
+            </ButtonControl>
+          )}
         </div>
-        {historyOpen ? createPortal(
+        {!detailRunInHeader && historyOpen ? createPortal(
           <div
             ref={historyMenuRef}
             className="agent-conversation-menu"
@@ -1501,6 +1539,7 @@ export function AgentChatPanel({
                 setSelectedRunConversationId(conversationId);
                 setSelectedRunId(childRunId);
               }}
+              showHeader={false}
             />
           ) : (
             <AgentRunsPanel

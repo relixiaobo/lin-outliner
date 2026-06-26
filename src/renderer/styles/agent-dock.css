@@ -190,6 +190,63 @@ button.panel-resize-handle {
   color: var(--text-strong);
 }
 
+.agent-dock-run-back {
+  display: inline-flex;
+  min-width: 0;
+  height: 28px;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  padding: 0 var(--space-2);
+  transition: color var(--motion-fast);
+}
+
+.agent-dock-run-back:hover,
+.agent-dock-run-back:focus-visible {
+  color: var(--text-strong);
+}
+
+.agent-dock-run-label {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-dock-run-status {
+  display: inline-flex;
+  min-height: 20px;
+  flex: 0 0 auto;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--fill-2);
+  color: var(--text-soft);
+  font-size: var(--font-ui-xs);
+  line-height: var(--line-ui-xs);
+  padding: 0 var(--space-2);
+}
+
+.agent-dock-run-status.is-running {
+  background: color-mix(in srgb, var(--agent-accent) 12%, transparent);
+  color: var(--agent-accent);
+}
+
+.agent-dock-run-status.is-completed {
+  background: color-mix(in srgb, var(--semantic-success) 12%, transparent);
+  color: var(--semantic-success-strong);
+}
+
+.agent-dock-run-status.is-failed,
+.agent-dock-run-status.is-stopped {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
 .agent-dock-title {
   min-width: 0;
   overflow: hidden;

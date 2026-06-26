@@ -1000,10 +1000,12 @@ Rules:
   internal verification prompt. There is no separate trailing disclosure column,
   and hover never paints a separate subrow rectangle that fights the tree
   alignment. The detail view is a read-only
-  drill-in, not a second chat surface: it
-  shows a header, Result, direct child Runs (or Verification when the only direct
-  children are verifier runs), a collapsed Activity log, and collapsed Technical
-  details in a single scroll flow. Result is plain read-only markdown content:
+  drill-in, not a second chat surface: it replaces the dock's channel header with
+  the run-detail navigation row (`Back to runs · Agent run · status`), and the
+  Work/Runs toolbar icon becomes the close affordance for that drill-in. The
+  detail body shows the run title, Result, direct child Runs (or Verification when
+  the only direct children are verifier runs), a collapsed Activity log, and
+  collapsed Technical details in a single scroll flow. Result is plain read-only markdown content:
   its copy affordance belongs to the Result section header, and GFM task-list
   output shows the checkbox without an extra bullet marker. Header metadata stays
   user-facing (`messages · duration`); internal mode/type/id fields live in Technical details. The view

@@ -366,6 +366,18 @@
   line-height: var(--line-meta);
 }
 
+.agent-child-run-details-summary {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.agent-child-run-details-summary .agent-child-run-title-block h3 {
+  margin-top: 0;
+}
+
 .agent-child-run-status {
   display: inline-flex;
   min-height: 20px;
