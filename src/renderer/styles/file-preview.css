@@ -500,7 +500,7 @@
   border-radius: var(--radius-pill);
   background: var(--preview-action-bg);
   box-shadow: 0 0 0 1px var(--preview-action-outline);
-  opacity: 0.56;
+  opacity: 0.34;
   transition:
     background var(--motion-fast),
     opacity var(--motion-fast);
