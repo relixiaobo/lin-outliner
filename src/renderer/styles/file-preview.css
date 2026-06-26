@@ -255,7 +255,7 @@
   display: grid;
   min-width: 0;
   height: 100%;
-  background: var(--surface);
+  background: transparent;
   color: var(--text-primary);
 }
 
@@ -324,6 +324,7 @@
   width: 100%;
   min-height: 100%;
   border: 0;
+  border-radius: inherit;
   background: Canvas;
   color-scheme: light;
 }
@@ -383,6 +384,7 @@
   display: grid;
   place-items: start center;
   position: relative;
+  border-radius: var(--file-preview-page-radius);
 }
 
 .file-preview-pdf--summary .file-preview-pdf-stage {
@@ -407,7 +409,7 @@
   inset: 1px;
   z-index: 1;
   overflow: clip;
-  border-radius: var(--file-preview-page-radius);
+  border-radius: inherit;
   color: transparent;
   forced-color-adjust: none;
   line-height: 1;
@@ -667,7 +669,7 @@
   --file-preview-frame-padding-block: var(--space-4);
   --file-preview-frame-padding-inline: var(--file-preview-frame-padding-block);
   --file-preview-frame-radius: var(--radius-lg);
-  --file-preview-page-radius: var(--radius-md);
+  --file-preview-page-radius: var(--radius-lg);
   --file-preview-scrollbar-gutter: var(--space-4);
 }
 

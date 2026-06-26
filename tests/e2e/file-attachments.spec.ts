@@ -1104,15 +1104,24 @@ test.describe('file attachments', () => {
     expect(sectionGap).toBeGreaterThan(0);
     await expect.poll(async () => fullReader.locator('.file-preview-epub-frame').first().evaluate((frame) => {
       const style = getComputedStyle(frame);
+      const hostStyle = getComputedStyle(frame.closest('.file-preview-epub') as HTMLElement);
+      const iframe = frame.querySelector<HTMLElement>('.file-preview-epub-iframe');
+      const iframeStyle = iframe ? getComputedStyle(iframe) : null;
       return {
         backgroundColor: style.backgroundColor,
         boxShadow: style.boxShadow,
+        hostBackgroundColor: hostStyle.backgroundColor,
+        iframeRadius: iframeStyle?.borderTopLeftRadius ?? '',
         minHeight: style.minHeight,
+        pageRadius: style.borderTopLeftRadius,
       };
     })).toEqual({
       backgroundColor: 'rgb(255, 255, 255)',
       boxShadow: 'none',
+      hostBackgroundColor: 'rgba(0, 0, 0, 0)',
+      iframeRadius: '12px',
       minHeight: '0px',
+      pageRadius: '12px',
     });
 
     await outlineRail.locator('.document-outline-item').filter({ hasText: 'Continue' }).click();
