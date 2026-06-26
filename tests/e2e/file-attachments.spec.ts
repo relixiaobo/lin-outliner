@@ -1110,7 +1110,7 @@ test.describe('file attachments', () => {
         minHeight: style.minHeight,
       };
     })).toEqual({
-      backgroundColor: 'rgba(0, 0, 0, 0)',
+      backgroundColor: 'rgb(255, 255, 255)',
       boxShadow: 'none',
       minHeight: '0px',
     });

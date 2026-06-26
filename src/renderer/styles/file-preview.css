@@ -301,7 +301,7 @@
   overflow: hidden;
   border: 1px solid var(--border-subtle);
   border-radius: var(--file-preview-page-radius);
-  background: transparent;
+  background: var(--bg-content);
 }
 
 .file-preview-epub--summary .file-preview-epub-frame {
