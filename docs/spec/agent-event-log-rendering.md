@@ -989,11 +989,11 @@ Rules:
   that same body area to the second-level run detail view. The first level lists
   non-turn, non-Dream runs across channels as a compact task-list tree using
   `parentRunId`: each row shows the shared checkbox marker on the left, the run
-  title as the primary text, and one muted metadata line
-  (`channel · status · time`). Rows with direct child runs put an inline
-  `Child run(s) completed/total` disclosure control at the end of that metadata
-  line; that control alone expands/collapses children, while clicking the rest of
-  the row opens its detail view. Running rows additionally reveal a Stop action on
+  title as the primary text. Rows with direct child runs add one muted secondary
+  line containing only an inline `Child run(s) completed/total` disclosure
+  control; that control alone expands/collapses children, while clicking the rest
+  of the row opens its detail view. Rows without child runs show no secondary
+  metadata. Running rows additionally reveal a Stop action on
   hover/focus. Expanded child runs render as checklist-style subrows below the
   parent content with fine separators, not as a strongly indented tree; verifier
   child runs display as the concise "Verifier" row rather than exposing their

@@ -173,8 +173,6 @@
   color: var(--text-strong);
 }
 
-.agent-run-row:hover .agent-run-meta,
-.agent-run-row:focus-within .agent-run-meta,
 .agent-run-row:hover .agent-run-child-toggle,
 .agent-run-row:focus-within .agent-run-child-toggle {
   color: var(--text-soft);
@@ -243,17 +241,6 @@
 .agent-run-child-toggle:hover:not(:disabled),
 .agent-run-child-toggle:focus-visible:not(:disabled) {
   color: var(--text-strong);
-}
-
-.agent-run-meta {
-  display: inline-flex;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text-faint);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
-  white-space: nowrap;
 }
 
 .agent-run-row-actions {

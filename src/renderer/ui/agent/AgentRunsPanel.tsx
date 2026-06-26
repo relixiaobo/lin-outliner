@@ -32,10 +32,6 @@ interface AgentRunTreeNode {
   run: AgentRunListEntry;
 }
 
-function formatRunTime(timestamp: number, locale: string): string {
-  return new Date(timestamp).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-}
-
 function runStatusRank(run: AgentRunListEntry): number {
   if (run.status === 'running' && run.objectiveStatus !== 'blocked') return 0;
   if (run.status === 'running') return 1;
@@ -81,14 +77,6 @@ function flattenTree(nodes: readonly AgentRunTreeNode[], expanded: ReadonlySet<s
   return rows;
 }
 
-function runStatusLabel(run: AgentRunListEntry, labels: Messages['agent']['run']): string {
-  if (run.objectiveStatus === 'verified') return labels.status.verified;
-  if (run.objectiveStatus === 'blocked') return labels.status.blocked;
-  if (run.objectiveStatus === 'budget_exhausted') return labels.status.budgetExhausted;
-  if (run.objectiveStatus === 'verifying') return labels.status.verifying;
-  return labels.status[run.status];
-}
-
 function runStatusClass(run: AgentRunListEntry): string {
   return run.objectiveStatus ?? run.status;
 }
@@ -98,22 +86,9 @@ function isCompletedRun(run: AgentRunListEntry): boolean {
   return status === 'completed' || status === 'verified';
 }
 
-function runKindLabel(run: AgentRunListEntry, labels: Messages['agent']['run']): string {
-  if (run.purpose === 'verify') return labels.kind.verifier;
-  return labels.kind[run.kind];
-}
-
 function runDisplayTitle(run: AgentRunListEntry, labels: Messages['agent']['run']): string {
   if (run.purpose === 'verify') return labels.kind.verifier;
   return run.title;
-}
-
-function runMetaParts(run: AgentRunListEntry, locale: string, labels: Messages['agent']['run']): string[] {
-  return [
-    run.conversationTitle ?? labels.unknownConversation,
-    runStatusLabel(run, labels),
-    formatRunTime(run.updatedAt, locale),
-  ];
 }
 
 function runChildProgressLabel(
@@ -132,7 +107,7 @@ export function AgentRunsPanel({
   onRefresh,
   runs,
 }: AgentRunsPanelProps) {
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   const [stoppingRunId, setStoppingRunId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
@@ -249,7 +224,6 @@ export function AgentRunsPanel({
             const expanded = expandedRunIds.has(run.runId);
             const hasChildren = node.children.length > 0;
             const title = runDisplayTitle(run, t.agent.run);
-            const meta = runMetaParts(run, locale, t.agent.run).join(' · ');
             const statusClass = runStatusClass(run);
             const completed = isCompletedRun(run);
             const completedChildCount = node.children.filter((child) => isCompletedRun(child.run)).length;
@@ -267,7 +241,7 @@ export function AgentRunsPanel({
             ].filter(Boolean).join(' ');
             return (
               <article
-                aria-label={`${title}, ${meta}`}
+                aria-label={[title, childProgress].filter(Boolean).join(', ')}
                 aria-expanded={hasChildren ? expanded : undefined}
                 aria-level={node.depth + 1}
                 className={rowClassName}
@@ -288,9 +262,8 @@ export function AgentRunsPanel({
                   <span className="agent-run-title-row">
                     <span className="agent-run-title">{title}</span>
                   </span>
-                  <span className="agent-run-meta-row">
-                    <span className="agent-run-meta">{meta}</span>
-                    {hasChildren && childProgress ? (
+                  {hasChildren && childProgress ? (
+                    <span className="agent-run-meta-row">
                       <button
                         aria-label={expanded ? t.agent.run.collapseRun : t.agent.run.expandRun}
                         className="agent-run-child-toggle"
@@ -304,8 +277,8 @@ export function AgentRunsPanel({
                         <span>{childProgress}</span>
                         {expanded ? <ChevronDownIcon size={ICON_SIZE.menu} /> : <ChevronRightIcon size={ICON_SIZE.menu} />}
                       </button>
-                    ) : null}
-                  </span>
+                    </span>
+                  ) : null}
                 </span>
                 {canStop ? (
                   <div className="agent-run-row-actions">
