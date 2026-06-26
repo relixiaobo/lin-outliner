@@ -508,7 +508,7 @@
 
 .document-outline-rail-marker:hover,
 .document-outline-rail-marker.active {
-  opacity: 0.56;
+  opacity: 0.86;
 }
 
 .document-outline-rail-marker:focus-visible {

@@ -1085,6 +1085,9 @@ test.describe('file attachments', () => {
     await expect.poll(async () => outlineMarkers.evaluateAll((markers) => (
       markers.map((marker) => Math.round(marker.getBoundingClientRect().width))
     ))).toEqual([10, 10]);
+    await expect.poll(async () => outlineMarkers.evaluateAll((markers) => (
+      markers.map((marker) => getComputedStyle(marker).opacity)
+    ))).toEqual(['0.86', '0.56']);
     await expect.poll(async () => outlineRail.evaluate((rail) => Math.round(rail.getBoundingClientRect().height)))
       .toBeLessThan(60);
     await outlineRail.locator('.document-outline-rail-track').hover();
