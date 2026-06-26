@@ -322,9 +322,11 @@ emits the final idle projection on drain). `agent_edit_message`/`agent_regenerat
 is DM-only; Channels have no steer (a send while runs work dispatches a new addressed
 turn). See `agent-architecture.md` (Channel runtime).
 
-### Agent — delegated child runs
-`agent_child_run_status`, `agent_child_run_send`, `agent_child_run_stop`,
+### Agent — delegated runs
+`agent_run_status`, `agent_run_steer`, `agent_run_amend`, `agent_run_stop`,
 `agent_child_run_transcript` (the drill-in transcript, replayed from the run's own ledger).
+The older child-run control command names remain accepted as compatibility aliases,
+but new runtime control surfaces use the `agent_run_*` commands.
 
 ### Agent — debug
 `agent_debug_view` (the conversation's run list + rollups), `agent_debug_run`

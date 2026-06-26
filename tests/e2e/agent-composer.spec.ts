@@ -1542,6 +1542,17 @@ test.describe('agent composer controls', () => {
     ]);
   });
 
+  test('starts a goal from the composer draft with one tap', async ({ page }) => {
+    const input = page.getByLabel('Agent message');
+    await input.fill('Finish the release checklist');
+    await page.getByRole('button', { name: 'Start goal' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_send_message')?.args.message;
+    }).toBe('/goal Finish the release checklist');
+  });
+
   test('suggests slash commands from the composer editor', async ({ page }) => {
     const input = page.getByLabel('Agent message');
     await input.click();
@@ -3198,21 +3209,21 @@ test.describe('agent composer controls', () => {
 
     await expect.poll(async () => {
       const calls = await commandCalls(page);
-      return calls.filter((call) => call.cmd === 'agent_child_run_send' || call.cmd === 'agent_child_run_stop')
+      return calls.filter((call) => call.cmd === 'agent_run_steer' || call.cmd === 'agent_run_stop')
         .map((call) => ({ cmd: call.cmd, args: call.args }));
     }).toEqual([
       {
-        cmd: 'agent_child_run_send',
+        cmd: 'agent_run_steer',
         args: {
-          agentId: 'child-run-1',
+          runId: 'child-run-1',
           message: 'Continue with layout risks.',
           conversationId: DEFAULT_DM_CONVERSATION_ID,
         },
       },
       {
-        cmd: 'agent_child_run_stop',
+        cmd: 'agent_run_stop',
         args: {
-          agentId: 'child-run-1',
+          runId: 'child-run-1',
           conversationId: DEFAULT_DM_CONVERSATION_ID,
         },
       },

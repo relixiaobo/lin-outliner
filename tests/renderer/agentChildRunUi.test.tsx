@@ -357,19 +357,19 @@ describe('agent child run UI', () => {
     await click(rendered, textButton(rendered, 'Send'));
     await click(rendered, textButton(rendered, 'Stop'));
 
-    expect(rendered.commands.filter((call) => call.cmd === 'agent_child_run_send' || call.cmd === 'agent_child_run_stop')).toEqual([
+    expect(rendered.commands.filter((call) => call.cmd === 'agent_run_steer' || call.cmd === 'agent_run_stop')).toEqual([
       {
-        cmd: 'agent_child_run_send',
+        cmd: 'agent_run_steer',
         args: {
-          agentId: 'child-1',
+          runId: 'child-1',
           message: 'Continue with layout risks.',
           conversationId: 'conversation-1',
         },
       },
       {
-        cmd: 'agent_child_run_stop',
+        cmd: 'agent_run_stop',
         args: {
-          agentId: 'child-1',
+          runId: 'child-1',
           conversationId: 'conversation-1',
         },
       },
@@ -410,12 +410,12 @@ describe('agent child run UI', () => {
     expect(openedChildRunId).toBe('child-1');
 
     await click(rendered, ariaButton(rendered, 'Stop task'));
-    await waitForCommand(rendered, 'agent_child_run_stop');
+    await waitForCommand(rendered, 'agent_run_stop');
 
-    expect(rendered.commands.filter((call) => call.cmd === 'agent_child_run_stop')).toEqual([{
-      cmd: 'agent_child_run_stop',
+    expect(rendered.commands.filter((call) => call.cmd === 'agent_run_stop')).toEqual([{
+      cmd: 'agent_run_stop',
       args: {
-        agentId: 'child-1',
+        runId: 'child-1',
         conversationId: 'conversation-1',
       },
       }]);
@@ -672,10 +672,11 @@ function installDomGlobals(window: Window, payloads: Record<string, string>) {
         if (!raw) return null as T;
         return { messages: (JSON.parse(raw) as { messages: unknown[] }).messages } as T;
       }
-      if (cmd === 'agent_child_run_send') {
+      if (cmd === 'agent_run_steer' || cmd === 'agent_child_run_send') {
+        const runId = args.runId ?? args.agentId;
         return {
           status: 'queued',
-          agent_id: args.agentId,
+          agent_id: runId,
           description: 'Inspect child run UI',
           prompt: 'Inspect the current UI.',
           agent_type: 'explorer',
@@ -685,10 +686,11 @@ function installDomGlobals(window: Window, payloads: Record<string, string>) {
           transcript_message_count: 1,
         } as T;
       }
-      if (cmd === 'agent_child_run_stop') {
+      if (cmd === 'agent_run_stop' || cmd === 'agent_child_run_stop') {
+        const runId = args.runId ?? args.agentId;
         return {
           status: 'cancelled',
-          agent_id: args.agentId,
+          agent_id: runId,
           description: 'Inspect child run UI',
           prompt: 'Inspect the current UI.',
           agent_type: 'explorer',

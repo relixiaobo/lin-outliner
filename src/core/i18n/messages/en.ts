@@ -942,6 +942,7 @@ commandPalette: {
       cancelQueuedSteer: 'Cancel queued steer',
       send: 'Send',
       sendMessage: 'Send message',
+      startGoal: 'Start goal',
       steerAgent: 'Steer agent',
       stop: 'Stop',
       stopAgent: 'Stop agent',

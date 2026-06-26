@@ -2081,10 +2081,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const runId = String(args.runId);
           return clone(runId === 'child-run-1' || runId === 'child-run-source-e2e' ? generalChannelId : null) as T;
         }
-        if (cmd === 'agent_child_run_status') {
+        if (cmd === 'agent_run_status' || cmd === 'agent_child_run_status') {
+          const runId = String(args.runId ?? args.agentId);
           return clone({
             status: 'running',
-            agent_id: String(args.agentId),
+            agent_id: runId,
             description: 'Inspect child run UI',
             prompt: 'Inspect the current UI.',
             agent_type: 'explorer',
@@ -2094,10 +2095,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             transcript_message_count: 4,
           }) as T;
         }
-        if (cmd === 'agent_child_run_send') {
+        if (cmd === 'agent_run_steer' || cmd === 'agent_child_run_send') {
+          const runId = String(args.runId ?? args.agentId);
           return clone({
             status: 'queued',
-            agent_id: String(args.agentId),
+            agent_id: runId,
             description: 'Inspect child run UI',
             prompt: 'Inspect the current UI.',
             agent_type: 'explorer',
@@ -2108,10 +2110,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             instructions: 'Message queued for the running background agent.',
           }) as T;
         }
-        if (cmd === 'agent_child_run_stop') {
+        if (cmd === 'agent_run_stop' || cmd === 'agent_child_run_stop') {
+          const runId = String(args.runId ?? args.agentId);
           return clone({
             status: 'cancelled',
-            agent_id: String(args.agentId),
+            agent_id: runId,
             description: 'Inspect child run UI',
             prompt: 'Inspect the current UI.',
             agent_type: 'explorer',

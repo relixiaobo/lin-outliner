@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   SUPPORTED_AGENT_TOOL_ACTION_KINDS,
+  agentToolNamesForActionKindScope,
   agentToolActionKindProfile,
   decideAgentOperationEffect,
   isReadOnlyActionKind,
@@ -66,5 +67,15 @@ describe('agent permission model', () => {
     ]);
     expect(agentToolActionKindProfile('operation_history', { action: 'list' })).toEqual(['outline.read']);
     expect(agentToolActionKindProfile('operation_history', { action: 'undo' })).toEqual(['outline.edit']);
+  });
+
+  test('maps action-kind scope to the visible tool catalog', () => {
+    expect(agentToolNamesForActionKindScope(['agent.delegate.status'], ['*'])).toEqual(expect.arrayContaining([
+      'run_status',
+      'AgentStatus',
+    ]));
+    expect(agentToolNamesForActionKindScope(['agent.delegate.status'], ['*'])).not.toContain('spawn');
+    expect(agentToolNamesForActionKindScope(['agent.delegate.status'], ['*'])).not.toContain('run_amend');
+    expect(agentToolNamesForActionKindScope(['file.read.allowed_file_area'], ['file_read', 'file_write'])).toEqual(['file_read']);
   });
 });

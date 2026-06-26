@@ -9,7 +9,7 @@ import {
   type AgentEventReplayState,
   type AgentId,
   type AgentPersistedContent,
-  type AgentRunKind,
+  type AgentRunDisposition,
   type AgentObjectiveStatus,
   type AgentRunBudget,
   type AgentRunPurpose,
@@ -60,7 +60,7 @@ export interface AgentRunLedgerStartInput {
   agentId: AgentId;
   /** The delegating run; absent for runs spawned outside any run (system-triggered). */
   parentRunId?: string;
-  kind?: AgentRunKind;
+  disposition?: AgentRunDisposition;
   objective?: string;
   criteria?: string[];
   objectiveStatus?: AgentObjectiveStatus;
@@ -121,7 +121,7 @@ export class AgentRunLedgerWriter {
         runId: input.runId,
         agentId: input.agentId,
         anchor: { type: 'conversation', agentId: input.agentId, conversationId: run.conversationId },
-        kind: input.kind ?? 'delegation',
+        disposition: input.disposition ?? 'detached',
         objective: input.objective,
         criteria: input.criteria,
         objectiveStatus: input.objectiveStatus,
@@ -236,7 +236,7 @@ export class AgentRunLedgerWriter {
             runId,
             agentId: options.agentId,
             anchor: { type: 'conversation', agentId: options.agentId, conversationId: run.conversationId },
-            kind: 'delegation',
+            disposition: 'detached',
             trigger: options.parentRunId ? { type: 'parent-run', parentRunId: options.parentRunId } : { type: 'system' },
           })
         : this.buildEvent(run, runId, {

@@ -868,6 +868,7 @@ commandPalette: {
       cancelQueuedSteer: '取消排队的引导',
       send: '发送',
       sendMessage: '发送消息',
+      startGoal: '启动目标',
       steerAgent: '引导智能体',
       stop: '停止',
       stopAgent: '停止智能体',

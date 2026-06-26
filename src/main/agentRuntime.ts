@@ -85,7 +85,6 @@ import {
   type AgentPersistedContent,
   type AgentPrincipal,
   type AgentRunFingerprint,
-  type AgentRunKind,
   type AgentRunTrigger,
   type AgentRunMeta,
   type AgentUserQuestionAnswer,
@@ -134,6 +133,7 @@ import {
 } from './agentDebugView';
 import {
   AgentEventStore,
+  deriveAgentRunKind,
   type AgentConversationIndexEntry,
   type AgentRunMetaProjection,
 } from './agentEventStore';
@@ -1354,7 +1354,7 @@ export class AgentRuntime {
     const summaries: AgentDebugRunSummary[] = [];
     for (const meta of metas) {
       // Reflective / principal-anchored runs span conversations — not this view.
-      if (meta.kind === 'reflective' || meta.anchor.type !== 'conversation') continue;
+      if (deriveAgentRunKind(meta) === 'reflective' || meta.anchor.type !== 'conversation') continue;
       summaries.push(await this.summarizeDebugRunFromStore(meta, context.parentToolCallByChild.get(meta.id) ?? null));
     }
     // Shape + member roster come from the conversation's authoritative members
@@ -1566,6 +1566,14 @@ export class AgentRuntime {
     return conversation.delegationRuntime.send({
       agent_id: agentId,
       message,
+    });
+  }
+
+  async childRunAmend(conversationId: string, agentId: string, changes: unknown) {
+    const conversation = await this.ensureConversationWithId(conversationId);
+    return conversation.delegationRuntime.amend({
+      agent_id: agentId,
+      changes,
     });
   }
 
@@ -2857,6 +2865,7 @@ export class AgentRuntime {
       purpose: snapshot.purpose,
       scope: snapshot.scope,
       budget: snapshot.budget,
+      disposition: snapshot.disposition,
       actor,
       contextMessages: seed.contextMessages,
       evidenceMessages: seed.evidenceMessages,
@@ -2880,6 +2889,7 @@ export class AgentRuntime {
       purpose: snapshot.purpose,
       scope: snapshot.scope,
       budget: snapshot.budget,
+      disposition: snapshot.disposition,
       agentType: snapshot.agentType,
       contextMode: snapshot.contextMode,
       unattended: snapshot.unattended,
@@ -3618,7 +3628,7 @@ export class AgentRuntime {
   private async scheduledDreamAttemptCountForDue(schedule: string, dueAt: number): Promise<number> {
     const runs = await this.getEventStore().listConversationRunMetaProjections(DEFAULT_DREAM_CHANNEL_ID, { limit: 100 });
     return runs.filter((run) =>
-      run.kind === 'reflective'
+      deriveAgentRunKind(run) === 'reflective'
       && run.trigger.type === 'schedule'
       && run.trigger.schedule === schedule
       && run.trigger.dueAt === dueAt).length;
@@ -3959,7 +3969,7 @@ export class AgentRuntime {
           runId: task.runId,
           executingAgentId: this.agentIdentity.agentId,
           agent: dreamAgent,
-          kind: 'reflective',
+          disposition: 'detached',
           fingerprint: memoryDreamRunFingerprint(task, model),
         },
       );
@@ -4037,7 +4047,7 @@ export class AgentRuntime {
         agentId: this.agentIdentity.agentId as AgentRunMetaProjection['agentId'],
         conversationId: DEFAULT_DREAM_CHANNEL_ID,
       },
-      kind: 'reflective',
+      disposition: 'detached',
       status,
       trigger: task.trigger === 'schedule'
         ? { type: 'schedule', schedule: task.schedule, dueAt: task.dueAt }
@@ -5480,7 +5490,7 @@ export class AgentRuntime {
       executingAgentId?: string;
       agent?: Agent;
       allowConcurrent?: boolean;
-      kind?: AgentRunKind;
+      disposition?: AgentRunMeta['disposition'];
       fingerprint?: AgentRunFingerprint;
     } = {},
   ): Promise<string> {
@@ -5521,7 +5531,7 @@ export class AgentRuntime {
         runId,
         agentId,
         anchor: { type: 'conversation', agentId, conversationId },
-        kind: identity.kind ?? 'turn',
+        disposition: identity.disposition ?? 'attended',
         trigger: triggerOverride ?? this.runTrigger(scoped),
         fingerprint: identity.fingerprint ?? this.runFingerprint(scoped, agentId, agent),
         retention: 'hot',
@@ -7934,7 +7944,7 @@ function dreamTaskFromRunMeta(
   completed: Extract<AgentEvent, { type: 'dream.finished' }> | null,
   principal: AgentPrincipal,
 ): AgentRenderDreamTaskEntity | null {
-  if (run.kind !== 'reflective') return null;
+  if (deriveAgentRunKind(run) !== 'reflective') return null;
   const trigger = dreamTaskTrigger(run);
   if (!trigger) return null;
   const status = renderTaskStatusFromRunStatus(run.status);

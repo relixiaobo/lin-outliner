@@ -16,6 +16,7 @@ import type {
   AgentPayloadRole,
   AgentId,
   AgentRunAnchor,
+  AgentRunDisposition,
   AgentRunFingerprint,
   AgentRunKind,
   AgentObjectiveStatus,
@@ -29,6 +30,7 @@ import type {
   AgentRunTrigger,
 } from '../core/agentEventLog';
 import { agentIdOfRunAnchor, appendAgentEventToReplayState, conversationIdOfRun, getAgentEventActivePath, mergeUniquePrincipals, principalKey, replayAgentEvents, samePrincipal } from '../core/agentEventLog';
+import { DEFAULT_DREAM_CHANNEL_ID } from '../core/agentChannel';
 import {
   analyzeTextSearchQuery,
   normalizeSearchText,
@@ -56,6 +58,8 @@ const SEARCH_INDEX_FILE = 'search-index.json';
 // the current layout (log + re-probe next launch — never wipe on error).
 // Future format breaks bump the integer instead of authoring a new detector.
 export const LAYOUT_SENTINEL_FILE = 'layout.json';
+// v5 = agent-goal: run `kind` is no longer stored; run meta stores
+// `disposition` and derives presentation kind from provenance/lineage.
 // v4 = Dream channel PR-3: remove the principal memory event log/projection.
 // Durable memory now lives only in outline nodes; principal sidecars keep only
 // reflective-run indexes. No legacy memory reader; pre-release clean-cut wipes
@@ -67,7 +71,7 @@ export const LAYOUT_SENTINEL_FILE = 'layout.json';
 // conversation stream keeps only the slim child_run.started/updated markers.
 // The pre-unification entity-grade events and transcript-snapshot payloads
 // are gone.
-export const STORAGE_LAYOUT_VERSION = 4;
+export const STORAGE_LAYOUT_VERSION = 5;
 const CHECKPOINT_VERSION = 5;
 const SEARCH_INDEX_VERSION = 2;
 const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
@@ -116,6 +120,14 @@ export interface AgentRunMetaProjection extends AgentRunMeta {
   v: 1;
   updatedAt: number;
   latestSeq: number;
+}
+
+export function deriveAgentRunKind(meta: Pick<AgentRunMetaProjection, 'id' | 'anchor' | 'parentRunId' | 'trigger' | 'disposition'>): AgentRunKind {
+  if (meta.parentRunId || isDelegationRunId(meta.id)) return 'delegation';
+  if (meta.anchor.type === 'principal') return 'reflective';
+  if (meta.anchor.type === 'conversation' && meta.anchor.conversationId === DEFAULT_DREAM_CHANNEL_ID) return 'reflective';
+  if (meta.trigger.type === 'schedule') return 'scheduled';
+  return meta.disposition === 'detached' ? 'background' : 'turn';
 }
 
 export interface AgentConversationMetaProjection extends AgentConversationMeta {
@@ -172,10 +184,10 @@ interface AgentConversationRunIndex {
   runIds: string[];
   latestSeqByRunId: Record<string, number>;
   /**
-   * Runs whose ledgers are their OWN streams (kind 'delegation'): excluded from
-   * the conversation replay join, checkpoint targets, and the conversation's
-   * latest-seq derivation — a delegated run has its own seq space and its own
-   * message tree, replayed independently (run unification).
+   * Runs whose ledgers are their OWN streams (derived presentation kind
+   * 'delegation'): excluded from the conversation replay join, checkpoint targets,
+   * and the conversation's latest-seq derivation — a delegated run has its own seq
+   * space and its own message tree, replayed independently (run unification).
    */
   delegationRunIds: string[];
 }
@@ -973,7 +985,7 @@ export class AgentEventStore {
           const meta = normalizeRunMeta(JSON.parse(await readFile(path.join(runDir, RUN_META_FILE), 'utf8')));
           if (!meta || conversationIdOfRun(meta) !== conversationId) continue;
           latestSeqByRunId[meta.id] = Math.max(latestSeqByRunId[meta.id] ?? 0, meta.latestSeq);
-          if (meta.kind === 'delegation') delegationRunIds.push(meta.id);
+          if (deriveAgentRunKind(meta) === 'delegation') delegationRunIds.push(meta.id);
         } catch (error) {
           if (isNotFoundError(error) || error instanceof SyntaxError) continue;
           throw error;
@@ -1105,7 +1117,7 @@ export class AgentEventStore {
   private async updateRunIndexes(meta: AgentRunMetaProjection) {
     const conversationId = conversationIdOfRun(meta);
     if (conversationId) {
-      await this.updateConversationRunIndex(conversationId, meta.id, meta.latestSeq, meta.kind);
+      await this.updateConversationRunIndex(conversationId, meta);
     }
     if (meta.anchor.type === 'principal') {
       await this.updatePrincipalRunIndex(meta.anchor.principal, meta.id, meta.updatedAt);
@@ -1119,20 +1131,20 @@ export class AgentEventStore {
   // runIds list and permanently drops a finished run from the index (cold
   // replay then silently misses that run's events; the index only self-heals
   // on a missing FILE, not a missing entry).
-  private async updateConversationRunIndex(conversationId: string, runId: string, latestSeq: number, kind: AgentRunKind) {
+  private async updateConversationRunIndex(conversationId: string, meta: AgentRunMetaProjection) {
     await this.enqueueIndexWrite(async () => {
       const paths = this.paths(conversationId);
       const existing = await this.ensureConversationRunIndex(conversationId);
-      const runIds = existing.runIds.includes(runId) ? existing.runIds : [...existing.runIds, runId];
-      const delegationRunIds = kind === 'delegation'
-        ? (existing.delegationRunIds.includes(runId) ? existing.delegationRunIds : [...existing.delegationRunIds, runId])
-        : existing.delegationRunIds.filter((id) => id !== runId);
+      const runIds = existing.runIds.includes(meta.id) ? existing.runIds : [...existing.runIds, meta.id];
+      const delegationRunIds = deriveAgentRunKind(meta) === 'delegation'
+        ? (existing.delegationRunIds.includes(meta.id) ? existing.delegationRunIds : [...existing.delegationRunIds, meta.id])
+        : existing.delegationRunIds.filter((id) => id !== meta.id);
       const index: AgentConversationRunIndex = {
         v: 2,
         runIds,
         latestSeqByRunId: {
           ...existing.latestSeqByRunId,
-          [runId]: Math.max(existing.latestSeqByRunId[runId] ?? 0, latestSeq),
+          [meta.id]: Math.max(existing.latestSeqByRunId[meta.id] ?? 0, meta.latestSeq),
         },
         delegationRunIds,
       };
@@ -1181,7 +1193,7 @@ export class AgentEventStore {
       // run that spawned it ({type:'parent-run'}), and the meta mirrors it so
       // `runs WHERE parentRunId=X` is answerable from metas alone.
       parentRunId: existing?.parentRunId ?? (trigger?.type === 'parent-run' ? trigger.parentRunId : undefined),
-      kind: existing?.kind ?? (started?.type === 'run.started' ? started.kind : undefined) ?? 'turn',
+      disposition: existing?.disposition ?? (started?.type === 'run.started' ? normalizeRunDisposition(started.disposition, started) : undefined) ?? 'attended',
       status: terminal ? runStatusFromTerminalEvent(terminal) : existing?.status ?? 'running',
       objective: existing?.objective ?? (started?.type === 'run.started' ? started.objective : undefined),
       criteria: existing?.criteria ?? (started?.type === 'run.started' ? started.criteria : undefined),
@@ -1883,6 +1895,10 @@ function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values.filter(Boolean))];
 }
 
+function isDelegationRunId(runId: string): boolean {
+  return runId.startsWith('child-');
+}
+
 function clampSearchLimit(limit: number | undefined): number {
   if (limit === undefined) return 50;
   if (!Number.isFinite(limit)) return 50;
@@ -2087,7 +2103,7 @@ function normalizeRunMeta(value: unknown): AgentRunMetaProjection | null {
     agentId: asAgentId(value.agentId)!,
     anchor,
     parentRunId: typeof value.parentRunId === 'string' ? value.parentRunId : undefined,
-    kind: isAgentRunKind(value.kind) ? value.kind : 'turn',
+    disposition: normalizeRunDisposition(value.disposition, value),
     status: value.status,
     objective: typeof value.objective === 'string' ? value.objective : undefined,
     criteria: Array.isArray(value.criteria) ? uniqueStrings(value.criteria.filter((item): item is string => typeof item === 'string')) : undefined,
@@ -2180,6 +2196,14 @@ function isAgentRunKind(value: unknown): value is AgentRunKind {
     || value === 'delegation'
     || value === 'scheduled'
     || value === 'reflective';
+}
+
+function normalizeRunDisposition(value: unknown, legacy?: unknown): AgentRunDisposition {
+  if (value === 'attended' || value === 'detached') return value;
+  const legacyKind = isRecord(legacy) ? legacy.kind : undefined;
+  return legacyKind === 'background' || legacyKind === 'scheduled' || legacyKind === 'reflective'
+    ? 'detached'
+    : 'attended';
 }
 
 function isAgentRunStatus(value: unknown): value is AgentRunStatus {

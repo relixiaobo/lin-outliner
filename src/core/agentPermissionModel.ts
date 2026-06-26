@@ -208,6 +208,42 @@ export function agentToolActionKindProfile(toolNameInput: string, args?: unknown
   return AGENT_TOOL_ACTION_KIND_PROFILE_MAP[toolName] ?? null;
 }
 
+export function isAgentToolActionKind(value: string): value is AgentToolActionKind {
+  return SUPPORTED_ACTION_KIND_SET.has(value);
+}
+
+export function normalizeAgentToolActionKinds(values: readonly string[] | undefined): AgentToolActionKind[] | undefined {
+  if (!values) return undefined;
+  const result: AgentToolActionKind[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    if (isAgentToolActionKind(trimmed)) {
+      result.push(trimmed);
+      continue;
+    }
+    const profile = agentToolActionKindProfile(trimmed);
+    if (profile) result.push(...profile);
+  }
+  return [...new Set(result)];
+}
+
+export function agentToolNamesForActionKindScope(
+  actionKinds: readonly string[] | undefined,
+  candidates?: readonly string[],
+): string[] | undefined {
+  const normalizedActionKinds = normalizeAgentToolActionKinds(actionKinds);
+  if (!normalizedActionKinds || normalizedActionKinds.length === 0) return undefined;
+  const allowed = new Set<AgentToolActionKind>(normalizedActionKinds);
+  const names = candidates
+    ? candidates.flatMap((toolName) => normalizeAgentToolProfileName(toolName) === '*' ? Object.keys(AGENT_TOOL_ACTION_KIND_PROFILES) : [normalizeAgentToolProfileName(toolName)])
+    : Object.keys(AGENT_TOOL_ACTION_KIND_PROFILES);
+  return [...new Set(names.filter((toolName) => {
+    const profile = AGENT_TOOL_ACTION_KIND_PROFILE_MAP[toolName];
+    return profile?.some((actionKind) => allowed.has(actionKind)) === true;
+  }))];
+}
+
 export function readOnlyAgentToolNames(candidates?: readonly string[]): string[] {
   if (!candidates) return [...READ_ONLY_AGENT_TOOL_NAMES];
   const names = candidates

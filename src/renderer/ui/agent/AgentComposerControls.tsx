@@ -2,6 +2,7 @@ import type { ChangeEvent, ReactNode, RefObject } from 'react';
 import {
   AttachmentIcon,
   PencilIcon,
+  PlayIcon,
   SendIcon,
   StopIcon,
   TrashIcon,
@@ -71,6 +72,7 @@ export function AgentComposerToolbar({
   modelControl,
   onAttachmentClick,
   onFileInputChange,
+  goalAction,
   primaryAction,
 }: {
   attachmentDisabled: boolean;
@@ -79,6 +81,7 @@ export function AgentComposerToolbar({
   modelControl?: ReactNode;
   onAttachmentClick: () => void;
   onFileInputChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  goalAction?: ReactNode;
   primaryAction: ReactNode;
 }) {
   return (
@@ -97,9 +100,31 @@ export function AgentComposerToolbar({
       <div className="agent-composer-spacer" />
       <div className="agent-composer-control-group">
         {modelControl}
+        {goalAction}
         {primaryAction}
       </div>
     </div>
+  );
+}
+
+export function AgentComposerGoalAction({
+  canStartGoal,
+  onStartGoal,
+}: {
+  canStartGoal: boolean;
+  onStartGoal: () => void;
+}) {
+  const t = useT();
+  return (
+    <IconButton
+      className="agent-composer-tool-button agent-composer-goal-button"
+      disabled={!canStartGoal}
+      icon={PlayIcon}
+      label={t.agent.composer.startGoal}
+      onClick={onStartGoal}
+      title={t.agent.composer.startGoal}
+      variant="composerTool"
+    />
   );
 }
 

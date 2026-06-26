@@ -195,7 +195,9 @@ export type AgentConversationEvent =
       source: { fromMessageId: string; throughMessageId: string };
     });
 
+/** Derived presentation category only. It is not persisted on run events or run meta. */
 export type AgentRunKind = 'turn' | 'background' | 'delegation' | 'scheduled' | 'reflective';
+export type AgentRunDisposition = 'attended' | 'detached';
 export type AgentRunRetention = 'hot' | 'cold-archived' | 'summarized-only' | 'deleted';
 export type AgentRunPurpose = 'work' | 'verify';
 export type AgentObjectiveStatus = 'active' | 'verifying' | 'verified' | 'blocked' | 'budget_exhausted' | 'stopped';
@@ -250,7 +252,7 @@ export interface AgentRunMeta {
   agentId: AgentId;
   anchor: AgentRunAnchor;
   parentRunId?: string;
-  kind: AgentRunKind;
+  disposition: AgentRunDisposition;
   status: AgentRunStatus;
   objective?: string;
   criteria?: string[];
@@ -907,7 +909,7 @@ export interface RunStartedEvent extends AgentEventBase {
   runId: string;
   agentId?: AgentId;
   anchor?: AgentRunAnchor;
-  kind?: AgentRunKind;
+  disposition?: AgentRunDisposition;
   objective?: string;
   criteria?: string[];
   objectiveStatus?: AgentObjectiveStatus;
@@ -955,6 +957,7 @@ export interface ChildRunStartedEvent extends AgentEventBase {
   purpose?: AgentRunPurpose;
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
+  disposition?: AgentRunDisposition;
   agentType: string;
   /** Always 'fork': a child run is the current agent in an isolated context, never a different agent. */
   contextMode: AgentRunContextMode;
@@ -1137,6 +1140,7 @@ export interface DelegationDetail {
   purpose?: AgentRunPurpose;
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
+  disposition?: AgentRunDisposition;
   agentType: string;
   /** Always 'fork': a child run is the current agent in an isolated context, never a different agent. */
   contextMode: AgentRunContextMode;
@@ -1649,6 +1653,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         purpose: event.purpose,
         scope: event.scope,
         budget: event.budget,
+        disposition: event.disposition,
         agentType: event.agentType,
         contextMode: event.contextMode,
         parentRunId: event.parentRunId,

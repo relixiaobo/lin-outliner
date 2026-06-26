@@ -327,7 +327,9 @@ describe('agent runtime childRuns', () => {
         },
         fauxAssistantMessage(fauxText('Parent final after fork.')),
       ],
-      () => undefined,
+      (_model, context) => {
+        contexts.push(textFromContext(context));
+      },
     );
 
     const { AgentRuntime } = await loadRuntimeModule();
@@ -439,7 +441,9 @@ describe('agent runtime childRuns', () => {
         },
         fauxAssistantMessage(fauxText('Parent received slim child result.')),
       ],
-      () => undefined,
+      (_model, context) => {
+        childContexts.push(textFromContext(context));
+      },
     );
 
     const { AgentRuntime } = await loadRuntimeModule();
@@ -496,7 +500,9 @@ describe('agent runtime childRuns', () => {
         },
         fauxAssistantMessage(fauxText('Parent received compacted child result.')),
       ],
-      () => undefined,
+      (_model, context) => {
+        childContexts.push(textFromContext(context));
+      },
     );
     const compactModel = compactTestModel('child-run-compact-test-model', 'Child Run Compact Test Model');
 
@@ -674,11 +680,139 @@ describe('agent runtime childRuns', () => {
     expect(verifierContexts.join('\n')).toContain('Tool trace');
     const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
     const childRuns = Object.values(replay.childRuns);
-    const worker = childRuns.find((run) => run.description === 'verified child');
+    const workers = childRuns.filter((run) => run.description === 'verified child');
     const verifier = childRuns.find((run) => run.purpose === 'verify');
-    expect(worker?.objectiveStatus).toBe('verified');
-    expect(worker?.result).toBe('verified result');
+    expect(workers).toHaveLength(2);
+    expect(workers[0]?.objectiveStatus).toBe('blocked');
+    expect(workers[1]?.objectiveStatus).toBe('verified');
+    expect(workers[1]?.result).toBe('verified result');
     expect(verifier?.contextMode).toBe('none');
+  });
+
+  test('settles a failed verified worker budget before spawning its replacement', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-verifier-budget-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-verifier-budget-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const replacementContexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('spawn', {
+            description: 'budget verifier parent',
+            objective: 'Supervise one exact-budget verified child.',
+            verify: false,
+            budget: { tokens: 100 },
+          }, { id: 'tool-agent-budget-verifier-parent' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage([
+          fauxToolCall('spawn', {
+            description: 'budget verified child',
+            objective: 'Produce a verified child result within the exact parent token slice.',
+            criteria: ['The final result must include the phrase verified result.'],
+            budget: { tokens: 100 },
+          }, { id: 'tool-agent-budget-verified-child' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('first incomplete result')),
+        fauxAssistantMessage(fauxText('{"verdict":"fail","gap":"missing required phrase"}')),
+        (context) => {
+          replacementContexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('verified result'));
+        },
+        fauxAssistantMessage(fauxText('{"verdict":"pass","gap":""}')),
+        fauxAssistantMessage(fauxText('Parent accepted replacement child.')),
+        fauxAssistantMessage(fauxText('Root observed exact-budget replacement.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn exact-budget verified child work.', sink);
+
+    expect(script.pendingCount()).toBe(0);
+    expect(replacementContexts.join('\n')).toContain('missing required phrase');
+    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
+    const workers = Object.values(replay.childRuns).filter((run) => run.description === 'budget verified child');
+    expect(workers).toHaveLength(2);
+    expect(workers[0]?.objectiveStatus).toBe('blocked');
+    expect(workers[1]?.objectiveStatus).toBe('verified');
+    expect(workers[1]?.result).toBe('verified result');
+  });
+
+  test('verifier evidence includes indirect file changes from shell tools', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-verifier-shell-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-verifier-shell-data-'));
+    roots.push(localRoot, dataRoot);
+    const indirectPath = path.join(localRoot, 'indirect-output.txt');
+
+    const verifierContexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('spawn', {
+            description: 'indirect evidence child',
+            objective: 'Create indirect shell evidence.',
+            criteria: ['The file indirect-output.txt exists with indirect evidence.'],
+          }, { id: 'tool-agent-indirect-child' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage([
+          fauxToolCall('bash', {
+            command: `printf indirect-evidence > ${JSON.stringify(indirectPath)}`,
+            description: 'Write indirect verifier evidence file',
+          }, { id: 'tool-bash-indirect-evidence' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Wrote indirect evidence.')),
+        (context) => {
+          verifierContexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('{"verdict":"pass","gap":""}'));
+        },
+        fauxAssistantMessage(fauxText('Parent accepted indirect evidence child.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a child that writes through shell.', sink);
+
+    expect(script.pendingCount()).toBe(0);
+    const evidence = verifierContexts.join('\n');
+    expect(evidence).toContain('File changes');
+    expect(evidence).toContain('indirect-output.txt');
+    expect(evidence).toContain('working-set-snapshot');
   });
 
   test('/goal starts a detached child run with persisted objective and criteria', async () => {
@@ -729,6 +863,185 @@ describe('agent runtime childRuns', () => {
       objectiveStatus: 'verified',
       status: 'completed',
     });
+  });
+
+  test('child run scope narrows visible tools by action kind', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-scope-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-scope-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const childTools: string[][] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('spawn', {
+            objective: 'Inspect only run status.',
+            criteria: ['The child can read run status only.'],
+            verify: false,
+            context: 'none',
+            scope: { capabilities: ['agent.delegate.status'] },
+          }, { id: 'tool-agent-scope' }),
+        ], { stopReason: 'toolUse' }),
+        (context) => {
+          childTools.push(context.tools?.map((tool) => tool.name) ?? []);
+          return fauxAssistantMessage(fauxText('Scoped child done.'));
+        },
+        fauxAssistantMessage(fauxText('Parent accepted scoped child.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a status-only scoped child run.', sink);
+
+    expect(script.pendingCount()).toBe(0);
+    expect(childTools).toHaveLength(1);
+    expect(childTools[0]).toContain('run_status');
+    expect(childTools[0]).not.toContain('spawn');
+    expect(childTools[0]).not.toContain('run_steer');
+    expect(childTools[0]).not.toContain('run_amend');
+    expect(childTools[0]).not.toContain('run_stop');
+    expect(childTools[0]).not.toContain('file_write');
+  });
+
+  test('child run budget cannot exceed the parent slice', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-budget-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-budget-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const childContexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('spawn', {
+            objective: 'Try to overspend budget.',
+            criteria: ['The child reports that excessive budget was rejected.'],
+            verify: false,
+            context: 'none',
+            budget: { wallClockMinutes: 1 },
+          }, { id: 'tool-agent-budget-parent' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage([
+          fauxToolCall('spawn', {
+            objective: 'Spend too much.',
+            criteria: ['This should not launch.'],
+            verify: false,
+            context: 'none',
+            budget: { wallClockMinutes: 60 },
+          }, { id: 'tool-agent-budget-child' }),
+        ], { stopReason: 'toolUse' }),
+        (context) => {
+          childContexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('Budget was denied before launch.'));
+        },
+        fauxAssistantMessage(fauxText('Parent saw budget denial.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a budget-limited child run.', sink);
+
+    expect(script.pendingCount()).toBe(0);
+    expect(childContexts.join('\n')).toContain('Run budget exceeds parent remaining wall-clock budget.');
+  });
+
+  test('child run budget reserves parent token headroom before sibling spawns', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-budget-reserve-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-budget-reserve-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const contexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('spawn', {
+            description: 'budget parent',
+            objective: 'Spawn token-budgeted sibling runs.',
+            verify: false,
+            budget: { tokens: 100 },
+          }, { id: 'tool-agent-budget-parent' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage([
+          fauxToolCall('spawn', {
+            description: 'first budget child',
+            objective: 'Use most of the parent token slice.',
+            verify: false,
+            budget: { tokens: 80 },
+          }, { id: 'tool-agent-budget-first' }),
+          fauxToolCall('spawn', {
+            description: 'second budget child',
+            objective: 'Attempt to exceed the remaining parent token slice.',
+            verify: false,
+            budget: { tokens: 30 },
+          }, { id: 'tool-agent-budget-second' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('First budget child completed.')),
+        (context) => {
+          contexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('Budget parent observed sibling admission.'));
+        },
+        fauxAssistantMessage(fauxText('Root observed budget reservation.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a token-budgeted child run.', sink);
+
+    expect(script.pendingCount()).toBe(0);
+    expect(contexts.join('\n')).toContain('Run budget exceeds parent remaining token budget.');
   });
 
   test('tracks a background child run through run_status', async () => {
