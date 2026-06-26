@@ -1494,6 +1494,7 @@ export function AgentChatPanel({
               conversationId={conversationId}
               index={index}
               childRun={selectedRun}
+              childRuns={childRuns}
               childRunsByParentToolCallId={childRunsByParentToolCallId}
               onNodeReferenceOpen={onOpenNodeReference}
               onOpenChildRunTranscript={(childRunId) => {

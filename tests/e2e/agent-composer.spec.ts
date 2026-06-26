@@ -3206,8 +3206,7 @@ test.describe('agent composer controls', () => {
     await details.locator('.agent-tool-call-toggle').first().click();
     await expect(details.getByText('Daily note content from child run.')).toBeVisible();
 
-    await details.getByLabel('Agent run follow-up').fill('Continue with layout risks.');
-    await details.getByRole('button', { name: 'Send' }).click();
+    await expect(details.getByLabel('Agent run follow-up')).toHaveCount(0);
     await details.getByRole('button', { name: 'Stop' }).click();
 
     await expect.poll(async () => {
@@ -3215,14 +3214,6 @@ test.describe('agent composer controls', () => {
       return calls.filter((call) => call.cmd === 'agent_run_steer' || call.cmd === 'agent_run_stop')
         .map((call) => ({ cmd: call.cmd, args: call.args }));
     }).toEqual([
-      {
-        cmd: 'agent_run_steer',
-        args: {
-          runId: 'child-run-1',
-          message: 'Continue with layout risks.',
-          conversationId: DEFAULT_DM_CONVERSATION_ID,
-        },
-      },
       {
         cmd: 'agent_run_stop',
         args: {

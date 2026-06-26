@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
   AgentMessage,
   AgentToolResultWithPayloads,
   ToolResultMessage,
 } from '../../../core/agentTypes';
+import type { Messages } from '../../../core/i18n';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
@@ -17,13 +18,10 @@ import {
   LoaderIcon,
   WarningIcon,
 } from '../icons';
-import { resolveMenuNavigation } from '../primitives/useMenuKeyboard';
-import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { IconButton } from '../primitives/IconButton';
 import { Button } from '../primitives/Button';
-import { ButtonControl } from '../primitives/ButtonControl';
+import { CheckboxMark } from '../primitives/CheckboxMark';
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
-import { Textarea } from '../primitives/Textarea';
 import { AgentMarkdown } from './AgentMarkdown';
 import { AgentTranscriptMessageList } from './AgentTranscriptMessageList';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
@@ -36,6 +34,7 @@ interface AgentChildRunDetailsPanelProps {
   conversationId: string | null;
   index: DocumentIndex;
   childRun: AgentRenderChildRunEntity | null;
+  childRuns?: Record<string, AgentRenderChildRunEntity>;
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onOpenChildRunTranscript?: (childRunId: string) => void;
@@ -106,6 +105,41 @@ function transcriptHasActiveAssistantTurn(
   return false;
 }
 
+function runTitle(run: AgentRenderChildRunEntity, labels: Messages['agent']): string {
+  if (run.agentType === 'verifier') return labels.run.kind.verifier;
+  return run.description || run.name || run.id;
+}
+
+function runStatusLabel(
+  status: AgentRenderChildRunEntity['status'],
+  labels: Messages['agent']['run']['status'],
+): string {
+  switch (status) {
+    case 'running':
+      return labels.running;
+    case 'completed':
+      return labels.completed;
+    case 'failed':
+      return labels.failed;
+    case 'stopped':
+      return labels.stopped;
+  }
+}
+
+function compareChildRuns(left: AgentRenderChildRunEntity, right: AgentRenderChildRunEntity): number {
+  return left.startedAt - right.startedAt || left.id.localeCompare(right.id);
+}
+
+function directChildRunsFor(
+  childRuns: Record<string, AgentRenderChildRunEntity> | undefined,
+  parentRunId: string | undefined,
+): AgentRenderChildRunEntity[] {
+  if (!childRuns || !parentRunId) return [];
+  return Object.values(childRuns)
+    .filter((run) => run.parentRunId === parentRunId)
+    .sort(compareChildRuns);
+}
+
 function ResultText({ text }: { text: string }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
@@ -132,6 +166,61 @@ function ResultText({ text }: { text: string }) {
         />
       </div>
       <AgentMarkdown keyPrefix="child-run-result" text={text || t.agent.childRun.noResultYet} />
+    </div>
+  );
+}
+
+function DetailSection({
+  children,
+  title,
+}: {
+  children: ReactNode;
+  title: string;
+}) {
+  return (
+    <section className="agent-child-run-section">
+      <h4>{title}</h4>
+      {children}
+    </section>
+  );
+}
+
+function ChildRunList({
+  runs,
+  onOpenChildRunTranscript,
+}: {
+  runs: AgentRenderChildRunEntity[];
+  onOpenChildRunTranscript?: (childRunId: string) => void;
+}) {
+  const t = useT();
+  return (
+    <div className="agent-child-run-child-list">
+      {runs.map((run) => {
+        const completed = run.status === 'completed';
+        const title = runTitle(run, t.agent);
+        const meta = [
+          runStatusLabel(run.status, t.agent.run.status),
+          run.contextMode,
+          formatDuration(run.startedAt, run.completedAt ?? run.updatedAt),
+        ].join(' · ');
+        return (
+          <button
+            className={`agent-child-run-child-row is-${run.status}`}
+            disabled={!onOpenChildRunTranscript}
+            key={run.id}
+            onClick={() => onOpenChildRunTranscript?.(run.id)}
+            type="button"
+          >
+            <span className={`agent-run-marker is-${run.status}`} aria-hidden="true">
+              <CheckboxMark checked={completed} />
+            </span>
+            <span className="agent-child-run-child-main">
+              <span className="agent-child-run-child-title">{title}</span>
+              <span className="agent-child-run-child-meta">{meta}</span>
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -213,18 +302,14 @@ export function AgentChildRunDetailsPanel({
   conversationId,
   index,
   childRun,
+  childRuns,
   childRunsByParentToolCallId,
   onNodeReferenceOpen,
   onOpenChildRunTranscript,
 }: AgentChildRunDetailsPanelProps) {
   const t = useT();
-  const [activeTab, setActiveTab] = useState<'timeline' | 'result' | 'metadata'>('timeline');
-  const tablistRef = useRef<HTMLElement>(null);
-  const TABPANEL_ID = 'agent-child-run-tabpanel';
-  const tabButtonId = (tab: string) => `agent-child-run-tab-${tab}`;
-  const [followUpDraft, setFollowUpDraft] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
-  const [actionPending, setActionPending] = useState<'send' | 'stop' | null>(null);
+  const [actionPending, setActionPending] = useState<'stop' | null>(null);
   const [rawTranscript, setRawTranscript] = useState<unknown[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -257,8 +342,6 @@ export function AgentChildRunDetailsPanel({
   }, [conversationId, childRun?.id, t.agent.childRun.transcriptPayloadUnavailable]);
 
   useEffect(() => {
-    setActiveTab('timeline');
-    setFollowUpDraft('');
     setActionError(null);
     setActionPending(null);
     setRawTranscript(null);
@@ -290,51 +373,17 @@ export function AgentChildRunDetailsPanel({
     () => collectPendingToolCallIds(messages, childRun?.status === 'running'),
     [messages, childRun?.status],
   );
+  const directChildRuns = useMemo(
+    () => directChildRunsFor(childRuns, childRun?.id),
+    [childRuns, childRun?.id],
+  );
 
   if (!childRun) return null;
 
   const endedAt = childRun.completedAt ?? childRun.updatedAt;
-  const canSendFollowUp = true;
   const canStop = childRun.status === 'running';
-  const tabs = [
-    ['timeline', t.agent.childRun.tabTimeline({ count: messages.length })],
-    ['result', t.agent.childRun.tabResult],
-    ['metadata', t.agent.childRun.tabMetadata],
-  ] as const;
-
-  // Roving tab navigation (automatic activation): Arrow/Home/End move + select the
-  // active tab, matching the ARIA tabs pattern.
-  function onTabsKeyDown(event: KeyboardEvent<HTMLElement>) {
-    if (isImeComposingEvent(event)) return;
-    const keys = tabs.map(([tab]) => tab);
-    const index = keys.indexOf(activeTab);
-    // A horizontal tablist also takes Left/Right; map them onto the shared
-    // vertical resolver so the wrap math lives in one place.
-    const key = event.key === 'ArrowRight' ? 'ArrowDown' : event.key === 'ArrowLeft' ? 'ArrowUp' : event.key;
-    const next = resolveMenuNavigation(key, index, keys.length);
-    if (next === null) return;
-    event.preventDefault();
-    setActiveTab(keys[next]!);
-    tablistRef.current?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();
-  }
-
-  async function sendFollowUp() {
-    const message = followUpDraft.trim();
-    if (!conversationId || !childRun || !message || !canSendFollowUp || actionPending) return;
-    setActionPending('send');
-    setActionError(null);
-    try {
-      await api.agentChildRunSend(conversationId, childRun.id, message);
-      setFollowUpDraft('');
-      // Refresh eagerly; anything the loop has not drained into the ledger
-      // yet is picked up by the live poll on the next tick.
-      loadTranscript();
-    } catch (caught) {
-      setActionError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setActionPending(null);
-    }
-  }
+  const duration = formatDuration(childRun.startedAt, endedAt);
+  const resultText = childRun.result ?? childRun.error ?? '';
 
   async function stopChildRun() {
     if (!conversationId || !childRun || !canStop || actionPending) return;
@@ -378,94 +427,66 @@ export function AgentChildRunDetailsPanel({
             })}
           </p>
         </div>
-        <IconButton
-          className="agent-child-run-close"
-          icon={CloseIcon}
-          label={t.agent.childRun.closeDetails}
-          onClick={onClose}
-          title={t.agent.childRun.close}
-          variant="panel"
-        />
-      </header>
-      <nav
-        className="agent-child-run-tabs"
-        aria-label={t.agent.childRun.detailTabsAriaLabel}
-        onKeyDown={onTabsKeyDown}
-        ref={tablistRef}
-        role="tablist"
-      >
-        {tabs.map(([tab, label]) => {
-          const active = activeTab === tab;
-          return (
-            <ButtonControl
-              aria-controls={TABPANEL_ID}
-              aria-selected={active}
-              className={active ? 'agent-child-run-tab is-active' : 'agent-child-run-tab'}
-              id={tabButtonId(tab)}
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              role="tab"
-              tabIndex={active ? 0 : -1}
-            >
-              {label}
-            </ButtonControl>
-          );
-        })}
-      </nav>
-      <section className="agent-child-run-actions" aria-label={t.agent.childRun.actionsAriaLabel}>
-        <div className="agent-child-run-followup">
-          <Textarea
-            className="agent-child-run-followup-input"
-            label={t.agent.childRun.followUpAriaLabel}
-            disabled={!canSendFollowUp || actionPending !== null}
-            onChange={(event) => setFollowUpDraft(event.target.value)}
-            onInput={(event) => setFollowUpDraft(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-                event.preventDefault();
-                void sendFollowUp();
-              }
-            }}
-            placeholder={t.agent.childRun.followUpPlaceholder}
-            rows={2}
-            value={followUpDraft}
-          />
-          <div className="agent-child-run-action-buttons">
-            {canStop ? (
-              <Button
-                disabled={actionPending !== null}
-                onClick={() => void stopChildRun()}
-                size="sm"
-                variant="danger"
-              >
-                {actionPending === 'stop' ? t.agent.childRun.stopping : t.agent.childRun.stop}
-              </Button>
-            ) : null}
+        <div className="agent-child-run-header-actions">
+          {canStop ? (
             <Button
-              disabled={!canSendFollowUp || !followUpDraft.trim() || actionPending !== null}
-              onClick={() => void sendFollowUp()}
+              disabled={actionPending !== null}
+              onClick={() => void stopChildRun()}
               size="sm"
-              variant="primary"
+              variant="danger"
             >
-              {actionPending === 'send' ? t.agent.childRun.sending : t.agent.childRun.send}
+              {actionPending === 'stop' ? t.agent.childRun.stopping : t.agent.childRun.stop}
             </Button>
-          </div>
+          ) : null}
+          <IconButton
+            className="agent-child-run-close"
+            icon={CloseIcon}
+            label={t.agent.childRun.closeDetails}
+            onClick={onClose}
+            title={t.agent.childRun.close}
+            variant="panel"
+          />
         </div>
-        {actionError ? (
-          <div className="agent-child-run-action-error" role="alert">
-            <WarningIcon size={ICON_SIZE.menu} />
-            <span>{actionError}</span>
-          </div>
+      </header>
+      {actionError ? (
+        <div className="agent-child-run-action-error" role="alert">
+          <WarningIcon size={ICON_SIZE.menu} />
+          <span>{actionError}</span>
+        </div>
+      ) : null}
+      <div className="agent-child-run-details-body">
+        <DetailSection title={t.agent.childRun.sectionOverview}>
+          <dl className="agent-child-run-summary">
+            <div>
+              <dt>{t.agent.childRun.status}</dt>
+              <dd>{runStatusLabel(childRun.status, t.agent.run.status)}</dd>
+            </div>
+            <div>
+              <dt>{t.agent.childRun.mode}</dt>
+              <dd>{childRun.contextMode}</dd>
+            </div>
+            <div>
+              <dt>{t.agent.childRun.metaType}</dt>
+              <dd>{childRun.agentType}</dd>
+            </div>
+            <div>
+              <dt>{t.agent.childRun.duration}</dt>
+              <dd>{duration}</dd>
+            </div>
+          </dl>
+        </DetailSection>
+        <DetailSection title={t.agent.childRun.sectionResult}>
+          <ResultText text={resultText} />
+        </DetailSection>
+        {directChildRuns.length > 0 ? (
+          <DetailSection title={t.agent.childRun.sectionChildRuns({ count: directChildRuns.length })}>
+            <ChildRunList
+              runs={directChildRuns}
+              onOpenChildRunTranscript={onOpenChildRunTranscript}
+            />
+          </DetailSection>
         ) : null}
-      </section>
-      <div
-        className="agent-child-run-details-body"
-        role="tabpanel"
-        id={TABPANEL_ID}
-        aria-labelledby={tabButtonId(activeTab)}
-        tabIndex={0}
-      >
-        {activeTab === 'timeline' ? (
+        <DetailSection title={t.agent.childRun.sectionTimeline({ count: messages.length })}>
           <TranscriptTimeline
             error={error}
             loading={loading}
@@ -480,11 +501,8 @@ export function AgentChildRunDetailsPanel({
             onOpenChildRunTranscript={onOpenChildRunTranscript}
             toolResults={toolResults}
           />
-        ) : null}
-        {activeTab === 'result' ? (
-          <ResultText text={childRun.result ?? childRun.error ?? ''} />
-        ) : null}
-        {activeTab === 'metadata' ? (
+        </DetailSection>
+        <DetailSection title={t.agent.childRun.sectionMetadata}>
           <dl className="agent-child-run-metadata">
             <div>
               <dt>{t.agent.childRun.metaAgentId}</dt>
@@ -493,18 +511,6 @@ export function AgentChildRunDetailsPanel({
             <div>
               <dt>{t.agent.childRun.name}</dt>
               <dd>{childRun.name ?? t.agent.childRun.metaNone}</dd>
-            </div>
-            <div>
-              <dt>{t.agent.childRun.status}</dt>
-              <dd>{childRun.status}</dd>
-            </div>
-            <div>
-              <dt>{t.agent.childRun.mode}</dt>
-              <dd>{childRun.contextMode}</dd>
-            </div>
-            <div>
-              <dt>{t.agent.childRun.metaType}</dt>
-              <dd>{childRun.agentType}</dd>
             </div>
             <div>
               <dt>{t.agent.childRun.metaParentToolCall}</dt>
@@ -523,7 +529,7 @@ export function AgentChildRunDetailsPanel({
               <dd>{new Date(childRun.updatedAt).toLocaleString()}</dd>
             </div>
           </dl>
-        ) : null}
+        </DetailSection>
       </div>
     </section>
   );

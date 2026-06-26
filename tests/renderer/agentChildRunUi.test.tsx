@@ -355,7 +355,7 @@ describe('agent child run UI', () => {
     expect(rendered.container.querySelector('.agent-transcript-tool-result-row h1')).toBeNull();
   });
 
-  test('sends follow-ups and stops running childRuns through runtime commands', async () => {
+  test('stops running childRuns from read-only details', async () => {
     const rendered = renderComponent(
       <AgentChildRunDetailsPanel
         onClose={() => undefined}
@@ -385,19 +385,10 @@ describe('agent child run UI', () => {
     );
 
     await waitForText(rendered, 'Inspect the current UI.');
-    await changeTextarea(rendered, 'Agent run follow-up', 'Continue with layout risks.');
-    await click(rendered, textButton(rendered, 'Send'));
+    expect(rendered.document.querySelector('textarea[aria-label="Agent run follow-up"]')).toBeNull();
     await click(rendered, textButton(rendered, 'Stop'));
 
     expect(rendered.commands.filter((call) => call.cmd === 'agent_run_steer' || call.cmd === 'agent_run_stop')).toEqual([
-      {
-        cmd: 'agent_run_steer',
-        args: {
-          runId: 'child-1',
-          message: 'Continue with layout risks.',
-          conversationId: 'conversation-1',
-        },
-      },
       {
         cmd: 'agent_run_stop',
         args: {
@@ -406,6 +397,51 @@ describe('agent child run UI', () => {
         },
       },
     ]);
+  });
+
+  test('shows direct child runs in the run details page', async () => {
+    let openedChildRunId: string | null = null;
+    const parent = childRunEntity();
+    const nestedRun = {
+      ...childRunEntity(),
+      id: 'child-2',
+      description: 'Verify launch checklist',
+      parentRunId: 'child-1',
+      parentToolCallId: 'tool-agent-2',
+      startedAt: 180,
+      updatedAt: 260,
+      completedAt: 260,
+    };
+    const rendered = renderComponent(
+      <AgentChildRunDetailsPanel
+        onClose={() => undefined}
+        onOpenChildRunTranscript={(childRunId) => {
+          openedChildRunId = childRunId;
+        }}
+        conversationId="conversation-1"
+        index={TEST_INDEX}
+        childRun={parent}
+        childRuns={{ [parent.id]: parent, [nestedRun.id]: nestedRun }}
+      />,
+      {
+        payloads: {
+          'child-1': JSON.stringify({
+            v: 1,
+            runId: 'child-1',
+            messageCount: 0,
+            messages: [],
+          }),
+        },
+      },
+    );
+
+    await waitForText(rendered, 'Child run');
+    expect(rendered.container.textContent).toContain('Overview');
+    expect(rendered.container.textContent).toContain('Result');
+    expect(rendered.container.textContent).toContain('Verify launch checklist');
+
+    await click(rendered, textButton(rendered, 'Verify launch checklist'));
+    expect(openedChildRunId).toBe('child-2');
   });
 
   test('lists run trees and stops a running run', async () => {
@@ -716,19 +752,6 @@ async function waitForText(rendered: RenderedComponent, text: string) {
     if (rendered.container.textContent?.includes(text)) return;
   }
   throw new Error(`Missing text: ${text}`);
-}
-
-async function changeTextarea(rendered: RenderedComponent, ariaLabel: string, value: string) {
-  const element = rendered.document.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${ariaLabel}"]`);
-  if (!element) throw new Error(`Missing textarea: ${ariaLabel}`);
-  await act(async () => {
-    const setter = Object.getOwnPropertyDescriptor(rendered.window.HTMLTextAreaElement.prototype, 'value')?.set;
-    if (setter) setter.call(element, value);
-    else element.value = value;
-    element.dispatchEvent(new rendered.window.Event('input', { bubbles: true, cancelable: true }));
-    element.dispatchEvent(new rendered.window.Event('change', { bubbles: true, cancelable: true }));
-    await Promise.resolve();
-  });
 }
 
 function textButton(rendered: RenderedComponent, text: string): HTMLButtonElement {
