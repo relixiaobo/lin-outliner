@@ -449,6 +449,9 @@
 }
 
 .document-outline-rail {
+  --document-outline-track-width: calc(var(--space-8) + var(--space-1));
+  --document-outline-marker-width: calc(var(--space-4) + 2px);
+
   position: absolute;
   inset-block: 16%;
   right: var(--space-5);
@@ -465,26 +468,32 @@
   position: absolute;
   inset-block: 0;
   right: 0;
-  width: var(--space-8);
+  width: var(--document-outline-track-width);
   pointer-events: auto;
 }
 
 .document-outline-rail-marker {
   position: absolute;
-  right: 0;
-  width: var(--space-4);
+  right: calc((var(--document-outline-track-width) - var(--document-outline-marker-width)) / 2);
+  width: var(--document-outline-marker-width);
   height: 2px;
   margin: 0;
   padding: 0;
   border: 0;
   border-radius: var(--radius-pill);
-  background: var(--text-tertiary);
-  opacity: 0.65;
+  background: var(--preview-action-bg);
+  box-shadow: 0 0 0 1px var(--preview-action-outline), var(--shadow-thumb);
+  opacity: 0.88;
+  transition:
+    background var(--motion-fast),
+    opacity var(--motion-fast),
+    width var(--motion-fast);
 }
 
+.document-outline-rail-marker:hover,
 .document-outline-rail-marker.active {
   width: var(--space-6);
-  background: var(--text-strong);
+  background: var(--preview-action-hover-bg);
   opacity: 1;
 }
 
@@ -496,8 +505,8 @@
 .document-outline-popover {
   position: absolute;
   top: 50%;
-  right: var(--space-8);
-  width: min(240px, calc(100% - var(--space-8)));
+  right: var(--document-outline-track-width);
+  width: min(240px, calc(100% - var(--document-outline-track-width)));
   max-height: 100%;
   overflow: auto;
   padding: var(--space-2);
