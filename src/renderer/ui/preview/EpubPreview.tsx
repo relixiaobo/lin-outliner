@@ -4,6 +4,12 @@ import { MetadataPreview, PreviewMessage } from './previewRenderers';
 import { DocumentOutlineRail, type DocumentOutlineItem } from './DocumentOutlineRail';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
+import {
+  previewReadingPositionKey,
+  readEpubReadingPosition,
+  writeEpubReadingPosition,
+  type EpubReadingPosition,
+} from './readingPositionStore';
 
 type EpubState =
   | { status: 'loading' }
@@ -73,6 +79,23 @@ function loadFoliateMakeBook(): Promise<EpubMakeBook> {
 export function EpubPreview({ displayMode, source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const [state, setState] = useState<EpubState>({ status: 'loading' });
+  const targetKey = previewReadingPositionKey(source.target);
+  const savedReadingPositionRef = useRef<{ targetKey: string; position: EpubReadingPosition | null }>({
+    targetKey,
+    position: readEpubReadingPosition(targetKey),
+  });
+
+  if (savedReadingPositionRef.current.targetKey !== targetKey) {
+    savedReadingPositionRef.current = {
+      targetKey,
+      position: readEpubReadingPosition(targetKey),
+    };
+  }
+
+  const persistReadingPosition = useCallback((position: EpubReadingPosition) => {
+    savedReadingPositionRef.current = { targetKey, position };
+    writeEpubReadingPosition(targetKey, position);
+  }, [targetKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -107,7 +130,9 @@ export function EpubPreview({ displayMode, source }: PreviewRendererProps) {
     <EpubReader
       blob={state.blob}
       displayMode={displayMode}
+      initialReadingPosition={savedReadingPositionRef.current.position}
       name={source.name}
+      onReadingPositionChange={persistReadingPosition}
     />
   );
 }
@@ -115,17 +140,24 @@ export function EpubPreview({ displayMode, source }: PreviewRendererProps) {
 function EpubReader({
   blob,
   displayMode,
+  initialReadingPosition,
   name,
+  onReadingPositionChange,
 }: {
   blob: Blob;
   displayMode: PreviewRendererProps['displayMode'];
+  initialReadingPosition: EpubReadingPosition | null;
   name: string;
+  onReadingPositionChange: (position: EpubReadingPosition) => void;
 }) {
   const labels = useT().shell.filePreview;
   const scrollRootRef = useRef<HTMLDivElement | null>(null);
   const frameRefs = useRef(new Map<number, HTMLIFrameElement>());
   const [state, setState] = useState<EpubReaderState>({ status: 'loading' });
   const [outlineLayoutVersion, setOutlineLayoutVersion] = useState(0);
+  const restoredFullSessionRef = useRef(0);
+  const fullSessionRef = useRef(0);
+  const scrollReportFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,6 +185,10 @@ function EpubReader({
       frameRefs.current.clear();
     };
   }, [blob, name]);
+
+  useEffect(() => {
+    if (displayMode === 'full') fullSessionRef.current += 1;
+  }, [blob, displayMode]);
 
   const registerFrame = useCallback((sectionIndex: number, frame: HTMLIFrameElement | null) => {
     if (frame) frameRefs.current.set(sectionIndex, frame);
@@ -195,6 +231,47 @@ function EpubReader({
     : [];
   const ready = state.status === 'ready';
 
+  useEffect(() => {
+    if (
+      displayMode !== 'full'
+      || state.status !== 'ready'
+      || !initialReadingPosition
+      || restoredFullSessionRef.current === fullSessionRef.current
+    ) {
+      return undefined;
+    }
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      const scrollRoot = scrollRootRef.current;
+      const frame = frameRefs.current.get(initialReadingPosition.sectionIndex);
+      const sectionElement = frame?.closest<HTMLElement>('.file-preview-epub-section');
+      if (!scrollRoot || !frame || !sectionElement) return;
+
+      const rootRect = scrollRoot.getBoundingClientRect();
+      const sectionRect = sectionElement.getBoundingClientRect();
+      const sectionOffset = Math.max(0, sectionRect.height * initialReadingPosition.sectionOffsetRatio);
+      scrollRoot.scrollTo({
+        top: scrollRoot.scrollTop + sectionRect.top - rootRect.top + sectionOffset,
+        behavior: 'auto',
+      });
+      restoredFullSessionRef.current = fullSessionRef.current;
+    });
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [displayMode, initialReadingPosition, outlineLayoutVersion, state]);
+
+  useEffect(() => () => {
+    if (scrollReportFrameRef.current !== null) window.cancelAnimationFrame(scrollReportFrameRef.current);
+  }, []);
+
+  const reportReadingPosition = () => {
+    if (displayMode !== 'full' || state.status !== 'ready' || scrollReportFrameRef.current !== null) return;
+    scrollReportFrameRef.current = window.requestAnimationFrame(() => {
+      scrollReportFrameRef.current = null;
+      const position = currentEpubReadingPosition(scrollRootRef.current);
+      if (position) onReadingPositionChange(position);
+    });
+  };
+
   return (
     <div className={`file-preview-epub file-preview-epub--${displayMode}`} data-preserve-selection>
       {state.status === 'loading' ? <PreviewMessage>{labels.loading}</PreviewMessage> : null}
@@ -205,6 +282,7 @@ function EpubReader({
         className="file-preview-epub-host"
         data-epub-continuous-reader={displayMode === 'full' && ready ? 'true' : undefined}
         data-epub-section-count={displayMode === 'full' && ready ? String(sections.length) : undefined}
+        onScroll={reportReadingPosition}
         ref={scrollRootRef}
       >
         {ready ? sections.map(({ index, number, section }) => (
@@ -330,6 +408,7 @@ function EpubSectionFrame({
   return (
     <div
       className="file-preview-epub-section"
+      data-epub-section-index={sectionIndex}
       data-epub-section-number={sectionNumber}
     >
       <div className="file-preview-epub-frame" style={frameStyle}>
@@ -591,6 +670,26 @@ function scrollToEpubTarget({
     top: sectionElement.offsetTop + offset,
     behavior: 'smooth',
   });
+}
+
+function currentEpubReadingPosition(scrollRoot: HTMLElement | null): EpubReadingPosition | null {
+  if (!scrollRoot) return null;
+  const sections = Array.from(scrollRoot.querySelectorAll<HTMLElement>('.file-preview-epub-section'));
+  if (sections.length === 0) return null;
+  const rootRect = scrollRoot.getBoundingClientRect();
+  const viewportTop = rootRect.top + 1;
+  const currentSection = sections.find((section) => section.getBoundingClientRect().bottom > viewportTop)
+    ?? sections[sections.length - 1];
+  const sectionIndex = Number(currentSection.dataset.epubSectionIndex);
+  if (!Number.isFinite(sectionIndex) || sectionIndex < 0) return null;
+  const sectionRect = currentSection.getBoundingClientRect();
+  const sectionOffset = Math.max(0, Math.min(sectionRect.height, viewportTop - sectionRect.top));
+  const sectionOffsetRatio = sectionRect.height > 0 ? sectionOffset / sectionRect.height : 0;
+  return {
+    sectionIndex,
+    sectionOffsetRatio,
+    updatedAt: Date.now(),
+  };
 }
 
 function epubAnchorOffset(frame: HTMLIFrameElement, anchor: unknown): number {

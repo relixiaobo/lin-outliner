@@ -407,7 +407,10 @@ contents, overlay a right-edge outline rail whose markers use a fixed inter-item
 gap and a capped maximum height rather than stretching to fill the available
 space. The rail is a directory index rather than a precise scroll-position
 indicator; hover/focus opens the chapter popover, and both surfaces jump to
-resolved scroll positions. Documents without outline metadata render no rail.
+resolved scroll positions. Reader scroll positions persist per resolved preview
+identity: PDFs restore page + page-relative offset, while EPUBs restore spine
+section + section-relative offset. Documents without outline metadata render no
+rail.
 
 **Add to outline.** A non-node preview carries an "add to outline" action that
 saves the source into the document as a file node. It is offered for the kinds

@@ -104,12 +104,14 @@ async function expectConcentricPreviewCorners(previewFrame: Locator, contentSele
     const paddingTop = Number.parseFloat(frameStyle.paddingTop);
     const paddingLeft = Number.parseFloat(frameStyle.paddingLeft);
     return {
+      frameHasHairlineEdge: frameStyle.borderTopWidth === '0px' && frameStyle.boxShadow !== 'none',
       contentClipPath: contentStyle.clipPath,
       contentHasRadius: contentRadius > 0,
       inlinePaddingMatchesBlock: Math.abs(paddingLeft - paddingTop) <= 1,
       innerRadiusFromOuter: Math.abs(contentRadius - Math.max(2, frameRadius - paddingTop)) <= 1,
     };
   }, contentSelector)).toEqual({
+    frameHasHairlineEdge: true,
     contentClipPath: 'inset(0px round 8px)',
     contentHasRadius: true,
     inlinePaddingMatchesBlock: true,
@@ -1160,6 +1162,27 @@ test.describe('file attachments', () => {
     await page.mouse.move(readerBox.x + readerBox.width / 2, readerBox.y + readerBox.height / 2);
     await page.mouse.wheel(0, 20000);
     await expect.poll(async () => fullReader.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await expect.poll(async () => page.evaluate(() => {
+      const raw = localStorage.getItem('lin-outliner:epub-reading-position:v1');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as {
+        positions?: Record<string, { sectionIndex?: unknown; sectionOffsetRatio?: unknown }>;
+      };
+      const position = Object.values(parsed.positions ?? {})[0];
+      return position
+        ? {
+          sectionIndex: typeof position.sectionIndex,
+          sectionOffsetRatio: typeof position.sectionOffsetRatio,
+        }
+        : null;
+    })).toEqual({ sectionIndex: 'number', sectionOffsetRatio: 'number' });
+
+    await epubBody.locator('.file-preview-pill-primary').click();
+    await expect(epubBody.locator('.file-node-preview.collapsed .file-preview-epub--summary')).toBeVisible();
+    await epubBody.locator('.file-preview-pill-primary').click();
+    const restoredReader = epubBody.locator('.file-node-preview.expanded .file-preview-epub-host');
+    await expect(restoredReader).toHaveAttribute('data-epub-continuous-reader', 'true');
+    await expect.poll(async () => restoredReader.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   });
 
   test('unsupported file previews keep the same bottom action location as previewable files', async ({ page }) => {

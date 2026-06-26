@@ -22,15 +22,8 @@ import type {
   PreviewSourceDescriptor,
   PreviewTarget,
 } from '../../../core/preview';
-import { previewTargetKey } from '../../../core/preview';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
-import {
-  localStorageOrNull,
-  pruneLocalStorageEntries,
-  readLocalStorageKeyedStore,
-  writeLocalStorageKeyedStore,
-} from '../../state/localStorageStore';
 import {
   FileTextIcon,
   FolderIcon,
@@ -44,6 +37,12 @@ import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
 import { formatBytes } from './fileNode';
 import { DocumentOutlineRail, type DocumentOutlineItem } from './DocumentOutlineRail';
 import { FilePreviewPill, type FilePreviewMenuAction } from './FilePreviewPill';
+import {
+  previewReadingPositionKey,
+  readPdfReadingPosition,
+  writePdfReadingPosition,
+  type PdfReadingPosition,
+} from './readingPositionStore';
 import { usePreviewObjectUrl } from './usePreviewObjectUrl';
 
 type FilePreviewLabels = ReturnType<typeof useT>['shell']['filePreview'];
@@ -97,20 +96,11 @@ const PDF_MAX_RENDER_SCALE = 3;
 // Render a page when it is within this many pixels of the scroll viewport.
 const PDF_LAZY_ROOT_MARGIN = '800px';
 const PDF_SUMMARY_PAGE_MIN_WIDTH = 104;
-const PDF_READING_POSITION_STORAGE_KEY = 'lin-outliner:pdf-reading-position:v1';
-const PDF_READING_POSITION_STORE_VERSION = 1;
-const PDF_READING_POSITION_MAX_ENTRIES = 100;
 const PREVIEW_RESIZE_MIN_HEIGHT = 180;
 const PREVIEW_RESIZE_MAX_HEIGHT = 720;
 const PREVIEW_RESIZE_KEY_STEP = 24;
 
 type FilePreviewDisplayMode = 'summary' | 'full';
-
-interface PdfReadingPosition {
-  pageNumber: number;
-  pageOffsetRatio: number;
-  updatedAt: number;
-}
 
 type PdfRefProxy = {
   gen: number;
@@ -130,70 +120,9 @@ type PdfOutlineTarget = {
 type PdfJsModule = typeof import('pdfjs-dist');
 
 let pdfJsModulePromise: Promise<PdfJsModule> | null = null;
-let pdfReadingPositionsCache: Record<string, PdfReadingPosition> | null = null;
 
 function clampPreviewHeight(height: number) {
   return Math.max(PREVIEW_RESIZE_MIN_HEIGHT, Math.min(PREVIEW_RESIZE_MAX_HEIGHT, Math.round(height)));
-}
-
-function sanitizePdfReadingPosition(value: unknown): PdfReadingPosition | null {
-  if (!value || typeof value !== 'object') return null;
-  const record = value as Record<string, unknown>;
-  const pageNumber = record.pageNumber;
-  const pageOffsetRatio = record.pageOffsetRatio;
-  const updatedAt = record.updatedAt;
-  if (
-    typeof pageNumber !== 'number'
-    || !Number.isFinite(pageNumber)
-    || pageNumber < 1
-    || typeof pageOffsetRatio !== 'number'
-    || !Number.isFinite(pageOffsetRatio)
-    || typeof updatedAt !== 'number'
-    || !Number.isFinite(updatedAt)
-  ) {
-    return null;
-  }
-  return {
-    pageNumber: Math.floor(pageNumber),
-    pageOffsetRatio: Math.max(0, Math.min(1, pageOffsetRatio)),
-    updatedAt,
-  };
-}
-
-function readPdfReadingPositions(): Record<string, PdfReadingPosition> {
-  if (pdfReadingPositionsCache) return pdfReadingPositionsCache;
-  const storage = localStorageOrNull();
-  if (!storage) {
-    pdfReadingPositionsCache = {};
-    return pdfReadingPositionsCache;
-  }
-  pdfReadingPositionsCache = readLocalStorageKeyedStore({
-    storage,
-    storageKey: PDF_READING_POSITION_STORAGE_KEY,
-    version: PDF_READING_POSITION_STORE_VERSION,
-    entriesKey: 'positions',
-    decodeEntry: sanitizePdfReadingPosition,
-  });
-  return pdfReadingPositionsCache;
-}
-
-function readPdfReadingPosition(targetKey: string): PdfReadingPosition | null {
-  return readPdfReadingPositions()[targetKey] ?? null;
-}
-
-function writePdfReadingPosition(targetKey: string, position: PdfReadingPosition): void {
-  const storage = localStorageOrNull();
-  if (!storage) return;
-  const positions = readPdfReadingPositions();
-  positions[targetKey] = position;
-  pruneLocalStorageEntries(positions, PDF_READING_POSITION_MAX_ENTRIES, (entry) => entry.updatedAt);
-  writeLocalStorageKeyedStore({
-    storage,
-    storageKey: PDF_READING_POSITION_STORAGE_KEY,
-    version: PDF_READING_POSITION_STORE_VERSION,
-    entriesKey: 'positions',
-    entries: positions,
-  });
 }
 
 export interface PreviewRendererProps {
@@ -649,7 +578,7 @@ function PdfPreview({
     | { status: 'ready'; document: PDFDocumentProxy; pageCount: number }
     | { status: 'error'; error?: string }
   >({ status: 'loading' });
-  const targetKey = previewTargetKey(source.target);
+  const targetKey = previewReadingPositionKey(source.target);
   const savedReadingPositionRef = useRef<{ targetKey: string; position: PdfReadingPosition | null }>({
     targetKey,
     position: readPdfReadingPosition(targetKey),

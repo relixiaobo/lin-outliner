@@ -699,10 +699,10 @@
 .file-node-preview {
   box-sizing: border-box;
   min-width: 0;
-  border: 1px solid var(--border-subtle);
+  border: 0;
   border-radius: var(--file-preview-frame-radius);
   background: var(--surface-soft);
-  box-shadow: var(--outline-subtle);
+  box-shadow: var(--inset-hairline);
   padding: var(--file-preview-frame-padding-block) var(--file-preview-frame-padding-inline);
 }
 
