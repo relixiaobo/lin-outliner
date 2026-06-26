@@ -110,10 +110,11 @@ and every conversation's members are `{user, Neva}`.
 
 ### Verified goal runs
 
-Long objectives use the same Run primitive, not a new Task object. A root goal is
-launched with `/goal` or the composer goal button; the runtime starts a detached
-tracked child run with explicit criteria, a 30-minute default wall-clock slice,
-and `objectiveStatus: active`. The child may decompose by calling `spawn`; every
+Long objectives use the same Run primitive, not a new Task object. There is no
+user-facing goal mode, `/goal` shortcut, or composer goal button: users describe
+work in ordinary prose, and the model-side `goal-launching` workflow decides when
+to start a detached tracked child run with explicit criteria, bounded budget, and
+`objectiveStatus: active`. The child may decompose by calling `spawn`; every
 spawned worker is a Run, every verifier is a Run with persisted `purpose:
 verify`, and every verifier is runtime-pinned to `context: none` with read-only
 tools.

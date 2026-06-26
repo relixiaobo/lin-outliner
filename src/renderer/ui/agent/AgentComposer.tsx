@@ -27,7 +27,6 @@ import type {
 import type { DocumentIndex } from '../../state/document';
 import {
   AgentComposerAttachmentButton,
-  AgentComposerGoalAction,
   AgentComposerPrimaryAction,
   AgentComposerToolbar,
   AgentQueuedSteer,
@@ -65,10 +64,6 @@ interface AgentComposerProps {
   onSend: (
     message: string,
     attachments?: AgentMessageAttachmentInput[],
-    nodeRefs?: AgentComposerNodeReference[],
-  ) => Promise<void>;
-  onStartGoal: (
-    message: string,
     nodeRefs?: AgentComposerNodeReference[],
   ) => Promise<void>;
   onSteer: (message: string) => Promise<void>;
@@ -184,7 +179,6 @@ export function AgentComposer({
   onResolveApproval,
   onResolveUserQuestion,
   onSend,
-  onStartGoal,
   onSteer,
   onStop,
   pendingApproval,
@@ -250,13 +244,6 @@ export function AgentComposer({
   const canSubmit = (pendingApproval || pendingUserQuestion ? false : steering
     ? hasDraft && !hasAttachments
     : !sending && (hasDraft || hasAttachments)) && !providerBlocksSend;
-  const canStartGoal = !steering
-    && !sending
-    && hasDraft
-    && !hasAttachments
-    && !pendingApproval
-    && !pendingUserQuestion
-    && !providerBlocksSend;
 
   useEffect(() => {
     let canceled = false;
@@ -318,26 +305,6 @@ export function AgentComposer({
           revokeAttachmentPreview(attachment);
         }
       }
-      sendingRef.current = false;
-      setSending(false);
-    }
-  }
-
-  async function startGoal() {
-    if (!canStartGoal) return;
-    const currentDraft = draftRef.current;
-    const message = currentDraft.text.trim();
-    const editorSnapshot = editorRef.current?.snapshot() ?? null;
-    if (!message || sendingRef.current) return;
-    sendingRef.current = true;
-    setSending(true);
-    editorRef.current?.clear();
-    try {
-      await onStartGoal(message, currentDraft.nodeRefs);
-    } catch (error) {
-      restoreDraftIfUnchanged(editorSnapshot);
-      setAttachmentError(error instanceof Error ? error.message : String(error));
-    } finally {
       sendingRef.current = false;
       setSending(false);
     }
@@ -471,12 +438,6 @@ export function AgentComposer({
               ) : undefined}
               onAttachmentClick={() => void handleAttachmentClick()}
               onFileInputChange={handleFileInputChange}
-              goalAction={(
-                <AgentComposerGoalAction
-                  canStartGoal={canStartGoal}
-                  onStartGoal={() => void startGoal()}
-                />
-              )}
               primaryAction={(
                 <AgentComposerPrimaryAction
                   canSubmit={canSubmit}

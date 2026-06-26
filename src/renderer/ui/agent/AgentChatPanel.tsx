@@ -665,13 +665,6 @@ export function AgentChatPanel({
   ) => (
     sendRuntimeMessage(prompt, attachments, withReferencedNodes(userViewContext, nodeRefs, index, t.common.untitled))
   ), [index, sendRuntimeMessage, userViewContext, t.common.untitled]);
-  const startGoal = useCallback((
-    prompt: string,
-    nodeRefs: AgentComposerNodeReference[] = [],
-  ) => (
-    sendRuntimeMessage(`/goal ${prompt.trim()}`, [], withReferencedNodes(userViewContext, nodeRefs, index, t.common.untitled))
-  ), [index, sendRuntimeMessage, userViewContext, t.common.untitled]);
-
   const updateScrollMetrics = useCallback((element: HTMLDivElement) => {
     const next = {
       height: element.clientHeight,
@@ -1485,7 +1478,6 @@ export function AgentChatPanel({
             onNodeReferenceOpen={onOpenNodeReference}
             onCancelSteer={handleCancelSteer}
             onSend={sendMessage}
-            onStartGoal={startGoal}
             onStop={stop}
             onSteer={handleSteerMessage}
             onResolveApproval={handleResolveApproval}

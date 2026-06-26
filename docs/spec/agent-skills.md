@@ -8,9 +8,9 @@ Lin implements agent skills as local `SKILL.md` instruction bundles that the mod
 be shadowed by mutable local skills with the same name. Resource-backed
 built-in skill folders load before code-registered inline built-ins; a duplicate
 built-in name is a product bug and fails loudly instead of being silently
-dropped. The current user-visible built-in skills are `/skillify`,
-`/goal-launching`, `/research`, `/presentation`, `/document`, and
-`/data-analysis`.
+dropped. The current user-visible built-in skills are `/skillify`, `/research`,
+`/presentation`, `/document`, and `/data-analysis`. `goal-launching` is a
+model-only built-in workflow and is not exposed as a slash skill.
 
 `/skillify` is a user- and model-invocable workflow for creating or updating
 local skills through normal file tools. Its Skillify v2 body analyzes the current
@@ -24,14 +24,13 @@ this as a skill" or "update the import skill with this workflow" as direct
 `/skillify` user invocations when slash skills are enabled; ordinary questions
 about whether a skill exists or how skills work remain normal conversation.
 
-`/goal-launching` is a user- and model-invocable guidance workflow for turning a
+`goal-launching` is a model-invocable guidance workflow for turning a
 natural-language handoff into a persistent verified Run. It tells the model to
 separate objective from acceptance criteria, clarify missing criteria when
 needed, launch with `spawn` using `detach:true`, `context:"brief"`, a finite
 budget, and narrow scope, and then rely on verifier/objective status rather than
-the worker's own completion claim. The user's direct slash command `/goal ...`
-uses the runtime shortcut; the skill is the model-side launch policy for
-ordinary prose such as "make this a goal".
+the worker's own completion claim. There is no user-facing `/goal` shortcut or
+composer goal button; ordinary prose is the entry point.
 
 `/research` is a user- and model-invocable `execution: isolated` workflow for
 bounded investigation. It starts an isolated child run of the current agent and

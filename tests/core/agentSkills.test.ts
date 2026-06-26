@@ -1007,7 +1007,7 @@ describe('agent skills', () => {
       name: 'goal-launching',
       source: 'built-in',
       modelInvocable: true,
-      userInvocable: true,
+      userInvocable: false,
       ratified: true,
       argumentHint: '<objective and acceptance criteria>',
       argumentNames: ['objective'],

@@ -93,6 +93,7 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
   name: 'goal-launching',
   description: 'Launch and supervise persistent verified goal runs from natural-language requests.',
   whenToUse: 'Use when the user asks to start, hand off, pursue, complete, or keep working on a longer objective that should run beyond the current answer and be independently verified. Do not use for direct one-turn answers or simple edits you can finish immediately.',
+  userInvocable: false,
   argumentHint: '<objective and acceptance criteria>',
   argumentNames: ['objective'],
   body: [

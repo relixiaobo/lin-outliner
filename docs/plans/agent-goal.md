@@ -950,9 +950,11 @@ before the goal loop is layered on. Build-order:
    controller — the *same edge code*, nothing new); recursion to arbitrary depth, kept
    safe by the three **local** governors (slice reservation, narrowing scope, parent
    verifies child) — no tree-wide supervisor, no owner approval gate.
-4. **Delivery / UI** — `/goal` + one-tap "make this a goal"; Neva as the root supervisor
-   holding the user's objective; the "tasks" panel renders root Runs (children grouped by
-   function label, never "N Nevas"); the four root outcomes notify; steering via
+4. **Delivery / UI** — no explicit Goal entry point. Users describe the work in
+   ordinary prose; the model-side `goal-launching` workflow decides when to spawn a
+   detached verified Run. Neva remains the root supervisor holding the user's
+   objective; the "tasks" panel renders root Runs (children grouped by function
+   label, never "N Nevas"); the four root outcomes notify; steering via
    `run_steer` / `run_amend`.
 
 ## Open questions
@@ -964,8 +966,7 @@ Genuinely open, all build-time-reversible:
 2. **`context` default for a worker.** `full` (continue the thread) vs `brief` (scoped
    slate). **Recommend** `brief` for detached objectives, `full` only on an explicit
    continuation. (A verifier is always `none`.)
-3. **Composer placement** of `/goal` and the one-tap affordance — settle at build time.
-4. **Livelock N and budget defaults** — the gap-repeat threshold and the default tree
+3. **Livelock N and budget defaults** — the gap-repeat threshold and the default tree
    budget / hard-backstop values; tune against the dev probe.
 
 **Decided (not open):**
@@ -1071,10 +1072,11 @@ Result: **no overlap.**
       a controller, the *same edge code*); recursion to arbitrary depth, kept safe by the
       three **local** governors (slice reservation / narrowing scope / parent-verifies-child)
       — no tree-wide supervisor, no owner approval gate.
-- [ ] **Delivery / UI** — `/goal` + one-tap; Neva as root supervisor; "tasks" panel
-      renders root Runs (children by function label); the four root outcomes notify;
-      steering via `run_steer` / `run_amend`. (light + dark.)
-- [ ] **Launching skill** (when/how to set a goal) authored.
+- [ ] **Delivery / UI** — no explicit Goal entry point; Neva as root supervisor;
+      "tasks" panel renders root Runs (children by function label); the four root
+      outcomes notify; steering via `run_steer` / `run_amend`. (light + dark.)
+- [ ] **Launching skill** (when/how to create a detached verified Run from
+      natural-language intent) authored.
 - [ ] **Verify in the dev app** — set a goal mid-DM; confirm it self-decomposes into a Run
       tree, each child is independently verified by its parent before folding up, the
       livelock guard and budget admission fire, the four root outcomes notify, and a

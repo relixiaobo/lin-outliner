@@ -1542,15 +1542,16 @@ test.describe('agent composer controls', () => {
     ]);
   });
 
-  test('starts a goal from the composer draft with one tap', async ({ page }) => {
-    const input = page.getByLabel('Agent message');
-    await input.fill('Finish the release checklist');
-    await page.getByRole('button', { name: 'Start goal' }).click();
+  test('does not expose an explicit goal launcher', async ({ page }) => {
+    await expect(page.getByRole('button', { name: 'Start goal' })).toHaveCount(0);
 
-    await expect.poll(async () => {
-      const calls = await commandCalls(page);
-      return calls.findLast((call) => call.cmd === 'agent_send_message')?.args.message;
-    }).toBe('/goal Finish the release checklist');
+    const input = page.getByLabel('Agent message');
+    await input.click();
+    await page.keyboard.type('/');
+
+    const menu = page.getByRole('listbox', { name: 'Agent slash commands' });
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole('option', { name: /\/goal/ })).toHaveCount(0);
   });
 
   test('suggests slash commands from the composer editor', async ({ page }) => {
