@@ -438,6 +438,7 @@ test.describe('file attachments', () => {
       Math.round(element.getBoundingClientRect().width));
     await nodePage.locator('.file-node-preview.collapsed .file-preview-pdf-page').nth(1).click();
     await expect(previewStage).toHaveClass(/expanded/);
+    await expectConcentricPreviewCorners(previewStage, '.file-preview-pdf--full');
     await expect(pill.locator('.file-preview-pill-primary')).toHaveText('Collapse');
     const collapseButtonWidth = await pill.locator('.file-preview-pill-primary').evaluate((element) =>
       Math.round(element.getBoundingClientRect().width));
@@ -1093,6 +1094,7 @@ test.describe('file attachments', () => {
     await epubBody.locator('.file-preview-pill-primary').click();
     const fullPreview = epubBody.locator('.file-node-preview.expanded .file-preview-epub--full');
     const fullReader = fullPreview.locator('.file-preview-epub-host');
+    await expectConcentricPreviewCorners(epubBody.locator('.file-node-preview.expanded'), '.file-preview-epub-host');
     await expect(fullReader).toHaveAttribute('data-epub-continuous-reader', 'true');
     await expect(fullReader).toHaveAttribute('data-epub-section-count', '2');
     await expect(fullReader.locator('.file-preview-epub-section')).toHaveCount(2);
