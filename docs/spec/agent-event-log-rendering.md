@@ -985,11 +985,12 @@ Rules:
     Boundary rows live only in `transcriptRows`, never in the active `rows` path.
 - The Work/Runs view is a global run index backed by `agent_list_runs`, not a
   projection-only task list on the active conversation. Opening Work replaces the
-  dock's channel header with the first-level `Runs` header, moves refresh into
-  the dock header actions, turns the Work/Runs toolbar icon into the close
-  affordance, and replaces the chat body with the first-level run tree. Opening a
-  row switches that same body area to the second-level run detail view. The first
-  level lists non-turn, non-Dream runs across channels as a compact task-list tree using
+  dock's channel header with a first-level `Back to chat · Runs` header and
+  replaces the chat body with the first-level run tree. The left header control
+  closes Work directly; the index refreshes on open and from agent runtime events,
+  so it does not expose a persistent manual refresh button. Opening a row switches
+  that same body area to the second-level run detail view. The first level lists
+  non-turn, non-Dream runs across channels as a compact task-list tree using
   `parentRunId`: each row shows the shared checkbox marker on the left, the run
   title as the primary text. Rows with direct child runs add one muted secondary
   line containing only an inline `Child run(s) completed/total` disclosure

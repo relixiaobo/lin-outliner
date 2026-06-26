@@ -1114,6 +1114,7 @@ commandPalette: {
       openPanelActive: ({ count }) => `打开工作（${count} 个运行中）`,
       closePanel: '关闭工作',
       close: '关闭',
+      backToChat: '返回聊天',
       backToRuns: '返回运行列表',
       idleSummary: '没有正在运行的运行',
       runningSummary: ({ count }) => `${count} 个运行中`,

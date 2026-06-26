@@ -1210,6 +1210,7 @@ commandPalette: {
         count === 1 ? 'Open Work (1 run running)' : `Open Work (${count} runs running)`,
       closePanel: 'Close Work',
       close: 'Close',
+      backToChat: 'Back to chat',
       backToRuns: 'Back to runs',
       idleSummary: 'No active runs',
       runningSummary: ({ count }: { count: number }) => count === 1 ? '1 run running' : `${count} runs running`,
