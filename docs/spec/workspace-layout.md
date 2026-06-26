@@ -389,8 +389,8 @@ Renderers are directory listing, image, PDF (`pdf.js`; every page is stacked
 vertically and scrolled to navigate — each page renders lazily as it nears the
 scroll viewport and is fitted to the available width, with no page-nav or zoom
 controls), EPUB (`foliate-js`; summary previews the first loaded section, while
-expanded readers use wheel/trackpad scrolling to advance through scrolled
-sections and across spine items, with book bytes loaded only through the capped
+expanded readers stack every linear spine section into one continuous vertical
+scrollport with page-like gaps, with book bytes loaded only through the capped
 preview bytes API), text/source-code with Shiki, Markdown with `react-markdown` +
 `remark-gfm`, CSV/TSV table, and fallback metadata. The PDF renderer reads bytes
 only through the preview source API, uses a bundled same-origin worker, and falls
@@ -401,7 +401,16 @@ fallback. EPUB sections render in `blob:` iframes, so renderer CSP permits
 fixed hash for Vite React Refresh's inline preamble and widens `connect-src` for
 Vite HMR. Scripted EPUB content is not a supported preview capability, and remote
 links from inside the book are intercepted and sent through the app's
-http(s)-only external-open path.
+http(s)-only external-open path. Expanded PDF and EPUB readers keep the native
+scrollbar for exact position and, when the document exposes an outline/table of
+contents, overlay a right-edge outline rail whose markers use a fixed inter-item
+gap and a capped maximum height rather than stretching to fill the available
+space. The rail is a directory index rather than a precise scroll-position
+indicator; hover/focus opens the chapter popover, and both surfaces jump to
+resolved scroll positions. Reader scroll positions persist per resolved preview
+identity: PDFs restore page + page-relative offset, while EPUBs restore spine
+section + section-relative offset. Documents without outline metadata render no
+rail.
 
 **Add to outline.** A non-node preview carries an "add to outline" action that
 saves the source into the document as a file node. It is offered for the kinds

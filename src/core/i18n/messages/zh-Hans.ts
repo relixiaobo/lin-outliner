@@ -346,6 +346,8 @@ export const zhHans: PartialMessages = {
       metadataSize: '大小',
       metadataPath: '路径',
       pdfCanvas: ({ page }) => `PDF 第 ${page} 页`,
+      documentOutline: '文档目录',
+      documentOutlineJump: ({ title }) => `跳转到 ${title}`,
       expand: '展开',
       collapse: '收起',
       actions: '预览操作',

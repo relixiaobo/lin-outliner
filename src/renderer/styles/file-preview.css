@@ -255,41 +255,99 @@
   display: grid;
   min-width: 0;
   height: 100%;
-  background: var(--surface);
+  background: transparent;
   color: var(--text-primary);
 }
 
-.file-preview-epub-host,
-.file-preview-epub-view {
+.file-preview-epub-host {
   display: block;
   min-width: 0;
   width: 100%;
   height: 100%;
+  border-radius: var(--file-preview-page-radius);
+  clip-path: inset(0 round var(--file-preview-page-radius));
 }
 
 .file-preview-epub-host[aria-hidden='true'] {
   visibility: hidden;
 }
 
-.file-preview-epub-view {
-  color-scheme: light dark;
-  --link-color: var(--link);
-  --selection-background: var(--document-selection-bg);
-  --selection-color: var(--text-strong);
+.file-preview-epub--summary .file-preview-epub-host {
+  overflow: hidden;
 }
 
-.file-preview-epub-view::part(container) {
-  scrollbar-gutter: stable;
+.file-preview-epub--full .file-preview-epub-host {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
-.file-preview-epub-view::part(filter) {
-  background: var(--surface);
+.file-preview-epub-section {
+  display: grid;
+  min-width: 0;
+  place-items: start center;
+}
+
+.file-preview-epub--summary .file-preview-epub-section {
+  width: 100%;
+  height: 100%;
+}
+
+.file-preview-epub-frame {
+  position: relative;
+  display: grid;
+  width: min(720px, 100%);
+  min-height: 320px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--file-preview-page-radius);
+  background: var(--bg-content);
+}
+
+.file-preview-epub--summary .file-preview-epub-frame {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.file-preview-epub--full .file-preview-epub-frame {
+  min-height: 0;
+}
+
+.file-preview-epub-frame > .file-preview-message {
+  grid-area: 1 / 1;
+}
+
+.file-preview-epub-iframe {
+  grid-area: 1 / 1;
+  display: block;
+  width: 100%;
+  min-height: 100%;
+  border: 0;
+  border-radius: inherit;
+  background: Canvas;
+  color-scheme: light;
 }
 
 .file-preview-pdf {
   display: flex;
   min-width: 0;
   gap: var(--space-4);
+  border-radius: var(--file-preview-page-radius);
+  clip-path: inset(0 round var(--file-preview-page-radius));
+}
+
+.file-preview-pdf-shell--full {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  height: 100%;
+}
+
+.file-preview-pdf-shell--full > .file-preview-pdf--full {
+  grid-area: 1 / 1;
 }
 
 .file-preview-pdf--summary {
@@ -330,6 +388,7 @@
   display: grid;
   place-items: start center;
   position: relative;
+  border-radius: var(--file-preview-page-radius);
 }
 
 .file-preview-pdf--summary .file-preview-pdf-stage {
@@ -354,7 +413,7 @@
   inset: 1px;
   z-index: 1;
   overflow: clip;
-  border-radius: var(--file-preview-page-radius);
+  border-radius: inherit;
   color: transparent;
   forced-color-adjust: none;
   line-height: 1;
@@ -393,6 +452,141 @@
 
 .file-preview-pdf-page[role='button']:focus-visible .file-preview-pdf-canvas {
   box-shadow: var(--focus-ring-shadow), var(--shadow-thumb);
+}
+
+.document-outline-rail {
+  --document-outline-track-width: calc(var(--space-8) + var(--space-1));
+  --document-outline-marker-width: calc(var(--space-4) + 2px);
+  --document-outline-marker-gap: var(--space-4);
+
+  position: absolute;
+  top: 50%;
+  right: var(--space-5);
+  z-index: var(--z-popover);
+  width: min(320px, calc(100% - var(--space-8)));
+  max-height: min(360px, 52%);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.file-preview-epub--full .document-outline-rail {
+  right: max(var(--space-5), calc((100% - 720px) / 2 + var(--space-5)));
+}
+
+.document-outline-rail-track {
+  display: flex;
+  width: var(--document-outline-track-width);
+  max-height: inherit;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--document-outline-marker-gap);
+  margin-left: auto;
+  overflow-y: auto;
+  pointer-events: auto;
+  scrollbar-width: none;
+  transition: opacity var(--motion-fast);
+}
+
+.document-outline-rail-track::-webkit-scrollbar {
+  display: none;
+}
+
+.document-outline-rail:hover .document-outline-rail-track,
+.document-outline-rail:has(.document-outline-popover:focus-within) .document-outline-rail-track {
+  opacity: 0;
+}
+
+.document-outline-rail-marker {
+  flex: 0 0 auto;
+  width: var(--document-outline-marker-width);
+  height: 2px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--preview-action-bg);
+  box-shadow: 0 0 0 1px var(--preview-action-outline);
+  opacity: 0.34;
+  transition:
+    background var(--motion-fast),
+    opacity var(--motion-fast);
+}
+
+.document-outline-rail-marker:hover,
+.document-outline-rail-marker.active {
+  opacity: 0.86;
+}
+
+.document-outline-rail-marker:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+  outline: none;
+}
+
+.document-outline-popover {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: min(320px, 100%);
+  max-height: min(360px, 52vh);
+  overflow: auto;
+  padding: var(--space-2);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(var(--space-2));
+  transition:
+    opacity var(--motion-fast),
+    transform var(--motion-fast),
+    visibility var(--motion-fast);
+  visibility: hidden;
+}
+
+.document-outline-rail:hover .document-outline-popover,
+.document-outline-rail:focus-within .document-outline-popover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%);
+  transition-delay: 0s;
+  visibility: visible;
+}
+
+.document-outline-item {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-2) var(--space-2) var(--space-2)
+    calc(var(--space-2) + var(--document-outline-level, 0) * var(--space-3));
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  text-align: left;
+}
+
+.document-outline-item:hover,
+.document-outline-item.active {
+  background: var(--fill-2);
+  color: var(--text-strong);
+}
+
+.document-outline-item:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+  outline: none;
+}
+
+.document-outline-item-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-preview-table-wrap {
@@ -478,8 +672,11 @@
   --file-preview-content-inset: var(--space-4);
   --file-preview-frame-padding-block: var(--space-4);
   --file-preview-frame-padding-inline: var(--file-preview-frame-padding-block);
-  --file-preview-frame-radius: var(--radius-lg);
-  --file-preview-page-radius: var(--radius-md);
+  --file-preview-frame-radius: var(--radius-xl);
+  --file-preview-page-radius: max(
+    var(--radius-2xs),
+    calc(var(--file-preview-frame-radius) - var(--file-preview-frame-padding-block))
+  );
   --file-preview-scrollbar-gutter: var(--space-4);
 }
 
@@ -502,10 +699,10 @@
 .file-node-preview {
   box-sizing: border-box;
   min-width: 0;
-  border: 1px solid var(--border-subtle);
+  border: 0;
   border-radius: var(--file-preview-frame-radius);
   background: var(--surface-soft);
-  box-shadow: var(--outline-subtle);
+  box-shadow: var(--inset-hairline);
   padding: var(--file-preview-frame-padding-block) var(--file-preview-frame-padding-inline);
 }
 
@@ -541,6 +738,7 @@
 }
 
 .file-node-preview.expanded:has(> .file-preview-pdf--full),
+.file-node-preview.expanded:has(> .file-preview-pdf-shell--full),
 .file-node-preview.expanded:has(> .file-preview-epub--full) {
   height: var(--file-preview-expanded-height, min(70vh, 720px));
   overflow: hidden;
@@ -558,6 +756,7 @@
 }
 
 .file-node-preview--reader.expanded:has(> .file-preview-pdf--full),
+.file-node-preview--reader.expanded:has(> .file-preview-pdf-shell--full),
 .file-node-preview--reader.expanded:has(> .file-preview-epub--full) {
   height: auto;
 }
