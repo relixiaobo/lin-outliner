@@ -16,7 +16,6 @@ export type DocumentOutlineItem = {
 };
 
 type DocumentOutlineMarker = DocumentOutlineItem & {
-  ratio: number;
   top: number;
 };
 
@@ -70,13 +69,11 @@ export function DocumentOutlineRail({
       return;
     }
 
-    const maxScrollTop = Math.max(1, scrollRoot.scrollHeight - scrollRoot.clientHeight);
     const nextMarkers = items.flatMap((item) => {
       const top = resolveItemTop(item, scrollRoot);
       if (top === null || !Number.isFinite(top)) return [];
       return [{
         ...item,
-        ratio: Math.max(0, Math.min(1, top / maxScrollTop)),
         top: Math.max(0, top),
       }];
     });
@@ -138,7 +135,6 @@ export function DocumentOutlineRail({
             className={`document-outline-rail-marker ${index === activeIndex ? 'active' : ''}`}
             key={marker.id}
             onClick={() => jumpToMarker(index)}
-            style={{ top: `${marker.ratio * 100}%` }}
             title={marker.title}
             type="button"
           />
@@ -170,7 +166,6 @@ function outlineMarkersEqual(left: DocumentOutlineMarker[], right: DocumentOutli
       && marker.id === other.id
       && marker.title === other.title
       && marker.level === other.level
-      && Math.abs(marker.top - other.top) < 1
-      && Math.abs(marker.ratio - other.ratio) < 0.001;
+      && Math.abs(marker.top - other.top) < 1;
   });
 }

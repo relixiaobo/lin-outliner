@@ -1076,7 +1076,14 @@ test.describe('file attachments', () => {
     await expect(fullReader.locator('.file-preview-epub-section')).toHaveCount(2);
     await expect(fullReader.locator('.file-preview-epub-iframe')).toHaveCount(2);
     const outlineRail = fullPreview.locator('.document-outline-rail');
-    await expect(outlineRail.locator('.document-outline-rail-marker')).toHaveCount(2);
+    const outlineMarkers = outlineRail.locator('.document-outline-rail-marker');
+    await expect(outlineMarkers).toHaveCount(2);
+    await expect.poll(async () => outlineMarkers.evaluateAll((markers) => {
+      const [first, second] = markers.map((marker) => marker.getBoundingClientRect());
+      return first && second ? Math.round(second.top - first.bottom) : null;
+    })).toBe(8);
+    await expect.poll(async () => outlineRail.evaluate((rail) => Math.round(rail.getBoundingClientRect().height)))
+      .toBeLessThan(60);
     await outlineRail.locator('.document-outline-rail-track').hover();
     await expect(outlineRail.locator('.document-outline-item-title')).toHaveText(['Start', 'Continue']);
 
