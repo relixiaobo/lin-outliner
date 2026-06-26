@@ -422,6 +422,15 @@ describe('agent child run UI', () => {
       completedAt: 320,
       parentRunId: 'child-1',
     };
+    const verifierPrompt = 'You are an independent verifier Run. Inspect the submitted child Run result.';
+    const verifier = {
+      ...runEntry(completed),
+      runId: 'child-3',
+      parentRunId: 'child-1',
+      purpose: 'verify' as const,
+      status: 'failed' as const,
+      title: verifierPrompt,
+    };
     const rendered = renderComponent(
       <AgentRunsPanel
         error={null}
@@ -431,7 +440,7 @@ describe('agent child run UI', () => {
           openedRunId = run.runId;
         }}
         onRefresh={() => undefined}
-        runs={[runEntry(running), runEntry(completed)]}
+        runs={[runEntry(running), runEntry(completed), verifier]}
       />,
     );
 
@@ -440,7 +449,9 @@ describe('agent child run UI', () => {
     expect(rendered.container.querySelector('[aria-live="polite"]')?.textContent).toContain('1 run running');
     expect(rendered.container.textContent).toContain('Inspect child run UI');
     expect(rendered.container.textContent).toContain('Summarize notes');
-    expect(rendered.container.textContent).toContain('1/1');
+    expect(rendered.container.textContent).toContain('Verifier');
+    expect(rendered.container.textContent).not.toContain(verifierPrompt);
+    expect(rendered.container.textContent).toContain('1/2');
 
     await click(rendered, textButton(rendered, 'Inspect child run UI'));
     expect(openedRunId).toBe('child-1');

@@ -9,7 +9,6 @@ import {
   CloseIcon,
   ICON_SIZE,
   LoaderIcon,
-  OpenIcon,
   RefreshIcon,
   StopIcon,
   UsedToolsIcon,
@@ -105,10 +104,14 @@ function runKindLabel(run: AgentRunListEntry, labels: Messages['agent']['run']):
   return labels.kind[run.kind];
 }
 
+function runDisplayTitle(run: AgentRunListEntry, labels: Messages['agent']['run']): string {
+  if (run.purpose === 'verify') return labels.kind.verifier;
+  return run.title;
+}
+
 function runMetaParts(run: AgentRunListEntry, locale: string, labels: Messages['agent']['run']): string[] {
   return [
     run.conversationTitle ?? labels.unknownConversation,
-    runKindLabel(run, labels),
     runStatusLabel(run, labels),
     formatRunTime(run.updatedAt, locale),
   ];
@@ -231,6 +234,7 @@ export function AgentRunsPanel({
             const stopping = stoppingRunId === run.runId;
             const expanded = expandedRunIds.has(run.runId);
             const hasChildren = node.children.length > 0;
+            const title = runDisplayTitle(run, t.agent.run);
             const meta = runMetaParts(run, locale, t.agent.run).join(' · ');
             const statusClass = runStatusClass(run);
             const completed = isCompletedRun(run);
@@ -241,6 +245,7 @@ export function AgentRunsPanel({
               `is-${run.status}`,
               `is-${statusClass}`,
               hasChildren ? 'has-children' : 'is-leaf',
+              canStop ? 'has-actions' : '',
               expanded ? 'is-expanded' : '',
               node.depth > 0 ? 'is-subrun' : 'is-root-run',
             ].filter(Boolean).join(' ');
@@ -264,7 +269,7 @@ export function AgentRunsPanel({
                   onClick={() => onOpenRun(run)}
                 >
                   <span className="agent-run-title-row">
-                    <span className="agent-run-title">{run.title}</span>
+                    <span className="agent-run-title">{title}</span>
                     {childProgress ? <span className="agent-run-child-progress">{childProgress}</span> : null}
                   </span>
                   <span className="agent-run-meta">{meta}</span>
@@ -280,16 +285,8 @@ export function AgentRunsPanel({
                     {expanded ? <ChevronDownIcon size={ICON_SIZE.menu} /> : <ChevronRightIcon size={ICON_SIZE.menu} />}
                   </button>
                 ) : null}
-                <div className="agent-run-row-actions">
-                  <IconButton
-                    className="agent-run-icon-button"
-                    icon={OpenIcon}
-                    label={t.agent.run.openRun}
-                    onClick={() => onOpenRun(run)}
-                    title={t.agent.run.openRun}
-                    variant="message"
-                  />
-                  {canStop ? (
+                {canStop ? (
+                  <div className="agent-run-row-actions">
                     <IconButton
                       className="agent-run-icon-button is-danger"
                       disabled={stoppingRunId !== null}
@@ -299,8 +296,8 @@ export function AgentRunsPanel({
                       title={stopping ? t.agent.run.stopping : t.agent.run.stopRun}
                       variant="message"
                     />
-                  ) : null}
-                </div>
+                  </div>
+                ) : null}
               </article>
             );
           })}

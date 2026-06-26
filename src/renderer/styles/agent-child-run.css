@@ -129,7 +129,7 @@
 .agent-run-row {
   display: grid;
   min-width: 0;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
+  grid-template-columns: 20px minmax(0, 1fr);
   align-items: start;
   gap: var(--space-2);
   border-radius: var(--radius-sm);
@@ -137,6 +137,14 @@
 }
 
 .agent-run-row.has-children {
+  grid-template-columns: 20px minmax(0, 1fr) 18px;
+}
+
+.agent-run-row.has-actions {
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+}
+
+.agent-run-row.has-children.has-actions {
   grid-template-columns: 20px minmax(0, 1fr) 18px auto;
 }
 
