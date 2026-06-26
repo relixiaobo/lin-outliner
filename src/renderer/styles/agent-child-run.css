@@ -166,15 +166,24 @@
   flex-direction: column;
   align-items: stretch;
   gap: var(--space-1);
+  margin-left: calc(var(--space-2) * -1);
   border-radius: var(--radius-sm);
   color: inherit;
-  padding: var(--space-2) var(--space-2) var(--space-3) 0;
+  padding: var(--space-2) var(--space-2) var(--space-3);
   text-align: left;
 }
 
-.agent-run-main:hover,
-.agent-run-main:focus-visible {
+.agent-run-row:hover > .agent-run-main,
+.agent-run-row:focus-within > .agent-run-main {
+  background: var(--fill-1);
   color: var(--text-strong);
+}
+
+.agent-run-row:hover > .agent-run-child-progress,
+.agent-run-row:focus-within > .agent-run-child-progress,
+.agent-run-row:hover > .agent-run-disclosure,
+.agent-run-row:focus-within > .agent-run-disclosure {
+  color: var(--text-soft);
 }
 
 .agent-run-disclosure {
