@@ -460,6 +460,7 @@ test.describe('file attachments', () => {
         usLetterAspect: Math.abs(aspect - 792 / 612) < 0.02,
       };
     })).toEqual({ hasInk: true, rendered: true, usLetterAspect: true });
+    await expect(nodePage.locator('.file-node-preview.expanded .file-preview-pdf-shell--full .document-outline-rail')).toHaveCount(0);
     const pageTwoTextLayer = nodePage.locator(
       '.file-node-preview.expanded .file-preview-pdf--full [data-pdf-page-number="2"] .file-preview-pdf-text-layer.ready',
     ).first();
@@ -1068,11 +1069,16 @@ test.describe('file attachments', () => {
 
     const epubBody = page.locator('.file-node-row-preview > .file-node-body').last();
     await epubBody.locator('.file-preview-pill-primary').click();
-    const fullReader = epubBody.locator('.file-node-preview.expanded .file-preview-epub--full .file-preview-epub-host');
+    const fullPreview = epubBody.locator('.file-node-preview.expanded .file-preview-epub--full');
+    const fullReader = fullPreview.locator('.file-preview-epub-host');
     await expect(fullReader).toHaveAttribute('data-epub-continuous-reader', 'true');
     await expect(fullReader).toHaveAttribute('data-epub-section-count', '2');
     await expect(fullReader.locator('.file-preview-epub-section')).toHaveCount(2);
     await expect(fullReader.locator('.file-preview-epub-iframe')).toHaveCount(2);
+    const outlineRail = fullPreview.locator('.document-outline-rail');
+    await expect(outlineRail.locator('.document-outline-rail-marker')).toHaveCount(2);
+    await outlineRail.locator('.document-outline-rail-track').hover();
+    await expect(outlineRail.locator('.document-outline-item-title')).toHaveText(['Start', 'Continue']);
 
     const readerBox = await fullReader.boundingBox();
     if (!readerBox) throw new Error('Missing EPUB reader bounds');
@@ -1095,6 +1101,9 @@ test.describe('file attachments', () => {
       boxShadow: 'none',
       minHeight: '0px',
     });
+
+    await outlineRail.locator('.document-outline-item').filter({ hasText: 'Continue' }).click();
+    await expect.poll(async () => fullReader.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
 
     await page.mouse.move(readerBox.x + readerBox.width / 2, readerBox.y + readerBox.height / 2);
     await page.mouse.wheel(0, 20000);

@@ -334,6 +334,17 @@
   gap: var(--space-4);
 }
 
+.file-preview-pdf-shell--full {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  height: 100%;
+}
+
+.file-preview-pdf-shell--full > .file-preview-pdf--full {
+  grid-area: 1 / 1;
+}
+
 .file-preview-pdf--summary {
   box-sizing: border-box;
   width: 100%;
@@ -435,6 +446,118 @@
 
 .file-preview-pdf-page[role='button']:focus-visible .file-preview-pdf-canvas {
   box-shadow: var(--focus-ring-shadow), var(--shadow-thumb);
+}
+
+.document-outline-rail {
+  position: absolute;
+  inset-block: 16%;
+  right: var(--space-5);
+  z-index: var(--z-popover);
+  width: min(260px, calc(100% - var(--space-8)));
+  pointer-events: none;
+}
+
+.file-preview-epub--full .document-outline-rail {
+  right: max(var(--space-5), calc((100% - 720px) / 2 + var(--space-5)));
+}
+
+.document-outline-rail-track {
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  width: var(--space-8);
+  pointer-events: auto;
+}
+
+.document-outline-rail-marker {
+  position: absolute;
+  right: 0;
+  width: var(--space-4);
+  height: 2px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--text-tertiary);
+  opacity: 0.65;
+}
+
+.document-outline-rail-marker.active {
+  width: var(--space-6);
+  background: var(--text-strong);
+  opacity: 1;
+}
+
+.document-outline-rail-marker:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+  outline: none;
+}
+
+.document-outline-popover {
+  position: absolute;
+  top: 50%;
+  right: var(--space-8);
+  width: min(240px, calc(100% - var(--space-8)));
+  max-height: 100%;
+  overflow: auto;
+  padding: var(--space-2);
+  border-radius: var(--radius-overlay-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(var(--space-2));
+  transition:
+    opacity var(--motion-fast),
+    transform var(--motion-fast),
+    visibility var(--motion-fast);
+  visibility: hidden;
+}
+
+.document-outline-rail:hover .document-outline-popover,
+.document-outline-rail:focus-within .document-outline-popover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%);
+  transition-delay: 0s;
+  visibility: visible;
+}
+
+.document-outline-item {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-2) var(--space-2) var(--space-2)
+    calc(var(--space-2) + var(--document-outline-level, 0) * var(--space-3));
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  text-align: left;
+}
+
+.document-outline-item:hover,
+.document-outline-item.active {
+  background: var(--fill-2);
+  color: var(--text-strong);
+}
+
+.document-outline-item:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+  outline: none;
+}
+
+.document-outline-item-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-preview-table-wrap {
@@ -583,6 +706,7 @@
 }
 
 .file-node-preview.expanded:has(> .file-preview-pdf--full),
+.file-node-preview.expanded:has(> .file-preview-pdf-shell--full),
 .file-node-preview.expanded:has(> .file-preview-epub--full) {
   height: var(--file-preview-expanded-height, min(70vh, 720px));
   overflow: hidden;
@@ -600,6 +724,7 @@
 }
 
 .file-node-preview--reader.expanded:has(> .file-preview-pdf--full),
+.file-node-preview--reader.expanded:has(> .file-preview-pdf-shell--full),
 .file-node-preview--reader.expanded:has(> .file-preview-epub--full) {
   height: auto;
 }

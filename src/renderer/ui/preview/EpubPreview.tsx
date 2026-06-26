@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PreviewRendererProps } from './previewRenderers';
 import { MetadataPreview, PreviewMessage } from './previewRenderers';
+import { DocumentOutlineRail, type DocumentOutlineItem } from './DocumentOutlineRail';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 
@@ -19,6 +20,7 @@ type EpubBook = {
   isExternal?: (href: string) => boolean;
   resolveHref?: (href: string) => { index?: unknown; anchor?: unknown } | undefined;
   sections?: unknown[];
+  toc?: unknown[];
   transformTarget?: EventTarget;
 };
 
@@ -34,6 +36,16 @@ type EpubReadableSection = {
   index: number;
   number: number;
   section: EpubSection;
+};
+
+type EpubOutlineTarget = {
+  href: string;
+};
+
+type EpubTocItem = {
+  href?: unknown;
+  label?: unknown;
+  subitems?: unknown;
 };
 
 type EpubMakeBook = (book: Blob | File | string) => Promise<EpubBook>;
@@ -113,6 +125,7 @@ function EpubReader({
   const scrollRootRef = useRef<HTMLDivElement | null>(null);
   const frameRefs = useRef(new Map<number, HTMLIFrameElement>());
   const [state, setState] = useState<EpubReaderState>({ status: 'loading' });
+  const [outlineLayoutVersion, setOutlineLayoutVersion] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -155,6 +168,27 @@ function EpubReader({
       scrollRoot: scrollRootRef.current,
     });
   }, [state]);
+  const noteOutlineLayoutChange = useCallback(() => {
+    setOutlineLayoutVersion((version) => version + 1);
+  }, []);
+  const outlineItems = useMemo(() => (
+    state.status === 'ready' && displayMode === 'full'
+      ? epubOutlineItems(state.book)
+      : []
+  ), [displayMode, state]);
+  const resolveOutlineTop = useCallback((item: DocumentOutlineItem) => {
+    if (state.status !== 'ready' || !state.book.resolveHref) return null;
+    const href = (item.target as Partial<EpubOutlineTarget>).href;
+    if (typeof href !== 'string') return null;
+    const resolved = state.book.resolveHref(href);
+    const sectionIndex = resolved?.index;
+    if (typeof sectionIndex !== 'number' || !Number.isFinite(sectionIndex)) return null;
+
+    const frame = frameRefs.current.get(sectionIndex);
+    const sectionElement = frame?.closest<HTMLElement>('.file-preview-epub-section');
+    if (!frame || !sectionElement) return null;
+    return sectionElement.offsetTop + epubAnchorOffset(frame, resolved?.anchor);
+  }, [state]);
 
   const sections = state.status === 'ready'
     ? displayMode === 'summary' ? state.sections.slice(0, 1) : state.sections
@@ -179,6 +213,7 @@ function EpubReader({
             displayMode={displayMode}
             key={index}
             name={name}
+            onLayoutChange={noteOutlineLayoutChange}
             onNavigate={handleNavigation}
             registerFrame={registerFrame}
             section={section}
@@ -187,6 +222,14 @@ function EpubReader({
           />
         )) : null}
       </div>
+      {displayMode === 'full' && outlineItems.length > 0 ? (
+        <DocumentOutlineRail
+          items={outlineItems}
+          layoutVersion={outlineLayoutVersion}
+          resolveItemTop={resolveOutlineTop}
+          scrollRootRef={scrollRootRef}
+        />
+      ) : null}
     </div>
   );
 }
@@ -195,6 +238,7 @@ function EpubSectionFrame({
   book,
   displayMode,
   name,
+  onLayoutChange,
   onNavigate,
   registerFrame,
   section,
@@ -204,6 +248,7 @@ function EpubSectionFrame({
   book: EpubBook;
   displayMode: PreviewRendererProps['displayMode'];
   name: string;
+  onLayoutChange: () => void;
   onNavigate: (href: string) => void;
   registerFrame: (sectionIndex: number, frame: HTMLIFrameElement | null) => void;
   section: EpubSection;
@@ -275,6 +320,10 @@ function EpubSectionFrame({
     applyDocumentSetup();
   }, [applyDocumentSetup, state]);
 
+  useEffect(() => {
+    if (height !== null) onLayoutChange();
+  }, [height, onLayoutChange]);
+
   const frameStyle = displayMode === 'full' && height ? { height: `${height}px` } : undefined;
   const iframeStyle = height ? { height: `${height}px` } : undefined;
 
@@ -316,6 +365,43 @@ function readableEpubSections(book: EpubBook): EpubReadableSection[] {
       isEpubSection(entry.section) && entry.section.linear !== 'no'
     ))
     .map((entry, offset) => ({ ...entry, number: offset + 1 }));
+}
+
+function epubOutlineItems(book: EpubBook): DocumentOutlineItem[] {
+  const toc = Array.isArray(book.toc) ? book.toc : [];
+  const items: DocumentOutlineItem[] = [];
+  const visit = (tocItems: unknown[], level: number) => {
+    for (const tocItem of tocItems) {
+      if (!isEpubTocItem(tocItem)) continue;
+      const href = typeof tocItem.href === 'string' ? tocItem.href : null;
+      const title = epubTocLabel(tocItem.label) ?? href;
+      if (href && title) {
+        items.push({
+          id: `epub-outline-${items.length}:${href}`,
+          level,
+          target: { href } satisfies EpubOutlineTarget,
+          title,
+        });
+      }
+      if (Array.isArray(tocItem.subitems)) visit(tocItem.subitems, level + 1);
+    }
+  };
+  visit(toc, 0);
+  return items;
+}
+
+function isEpubTocItem(value: unknown): value is EpubTocItem {
+  return Boolean(value && typeof value === 'object');
+}
+
+function epubTocLabel(value: unknown): string | null {
+  if (typeof value === 'string') return value.trim() || null;
+  if (value && typeof value === 'object') {
+    for (const entry of Object.values(value)) {
+      if (typeof entry === 'string' && entry.trim()) return entry.trim();
+    }
+  }
+  return null;
 }
 
 function setupEpubDocument({

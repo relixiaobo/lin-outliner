@@ -42,6 +42,7 @@ import { normalizeCodeLanguage } from '../editor/codeLanguages';
 import { wantsNewPaneFromClick } from '../shared';
 import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
 import { formatBytes } from './fileNode';
+import { DocumentOutlineRail, type DocumentOutlineItem } from './DocumentOutlineRail';
 import { FilePreviewPill, type FilePreviewMenuAction } from './FilePreviewPill';
 import { usePreviewObjectUrl } from './usePreviewObjectUrl';
 
@@ -110,6 +111,21 @@ interface PdfReadingPosition {
   pageOffsetRatio: number;
   updatedAt: number;
 }
+
+type PdfRefProxy = {
+  gen: number;
+  num: number;
+};
+
+type PdfOutlineNode = {
+  dest: string | unknown[] | null;
+  items?: PdfOutlineNode[];
+  title?: string;
+};
+
+type PdfOutlineTarget = {
+  pageNumber: number;
+};
 
 type PdfJsModule = typeof import('pdfjs-dist');
 
@@ -752,6 +768,7 @@ function PdfPages({
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [aspect, setAspect] = useState(PDF_FALLBACK_ASPECT);
   const [pageAspects, setPageAspects] = useState<Record<number, number>>({});
+  const [outlineItems, setOutlineItems] = useState<DocumentOutlineItem[]>([]);
 
   const setPageAspect = useCallback((pageNumber: number, nextAspect: number) => {
     if (!Number.isFinite(nextAspect) || nextAspect <= 0) return;
@@ -780,6 +797,24 @@ function PdfPages({
       cancelled = true;
     };
   }, [pdfDocument, setPageAspect]);
+
+  useEffect(() => {
+    if (displayMode !== 'full') {
+      setOutlineItems((current) => current.length === 0 ? current : []);
+      return undefined;
+    }
+
+    let cancelled = false;
+    void readPdfOutlineItems(pdfDocument, pageCount).then((items) => {
+      if (!cancelled) setOutlineItems(items);
+    }).catch(() => {
+      if (!cancelled) setOutlineItems([]);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [displayMode, pageCount, pdfDocument]);
 
   // Measure the width synchronously before the first paint so every page reserves a
   // real placeholder height (width × aspect) immediately. Without this, the first
@@ -815,6 +850,13 @@ function PdfPages({
     )
     : containerSize.width;
   const pageScrollRootRef = containerRef;
+  const outlineLayoutVersion = `${pageWidth}:${pageCount}:${Object.keys(pageAspects).length}`;
+  const resolvePdfOutlineTop = useCallback((item: DocumentOutlineItem) => {
+    const target = item.target as Partial<PdfOutlineTarget>;
+    if (typeof target.pageNumber !== 'number') return null;
+    const pageElement = containerRef.current?.querySelector<HTMLElement>(`[data-pdf-page-number="${target.pageNumber}"]`);
+    return pageElement?.offsetTop ?? null;
+  }, []);
   const restoreTargetPageNumber = useMemo(() => {
     if (displayMode !== 'full') return null;
     const targetPageNumber = scrollToPageNumber ?? initialReadingPosition?.pageNumber;
@@ -909,7 +951,7 @@ function PdfPages({
     });
   };
 
-  return (
+  const pages = (
     <div
       className={`file-preview-pdf file-preview-pdf--${displayMode}`}
       onScroll={reportReadingPosition}
@@ -928,6 +970,22 @@ function PdfPages({
           width={pageWidth}
         />
       ))}
+    </div>
+  );
+
+  if (displayMode !== 'full') return pages;
+
+  return (
+    <div className="file-preview-pdf-shell file-preview-pdf-shell--full">
+      {pages}
+      {displayMode === 'full' && outlineItems.length > 0 ? (
+        <DocumentOutlineRail
+          items={outlineItems}
+          layoutVersion={outlineLayoutVersion}
+          resolveItemTop={resolvePdfOutlineTop}
+          scrollRootRef={pageScrollRootRef}
+        />
+      ) : null}
     </div>
   );
 }
@@ -974,6 +1032,58 @@ function currentPdfReadingPosition(scrollRoot: HTMLElement | null): PdfReadingPo
     pageOffsetRatio,
     updatedAt: Date.now(),
   };
+}
+
+async function readPdfOutlineItems(pdfDocument: PDFDocumentProxy, pageCount: number): Promise<DocumentOutlineItem[]> {
+  const outline = await pdfDocument.getOutline();
+  if (!Array.isArray(outline) || outline.length === 0) return [];
+
+  const items: DocumentOutlineItem[] = [];
+  const visit = async (nodes: PdfOutlineNode[], level: number) => {
+    for (const node of nodes) {
+      const pageNumber = await pdfOutlinePageNumber(pdfDocument, node.dest, pageCount);
+      const title = typeof node.title === 'string' ? node.title.trim() : '';
+      if (pageNumber && title) {
+        items.push({
+          id: `pdf-outline-${items.length}:${pageNumber}:${title}`,
+          level,
+          target: { pageNumber } satisfies PdfOutlineTarget,
+          title,
+        });
+      }
+      if (Array.isArray(node.items) && node.items.length > 0) {
+        await visit(node.items, level + 1);
+      }
+    }
+  };
+
+  await visit(outline as PdfOutlineNode[], 0);
+  return items;
+}
+
+async function pdfOutlinePageNumber(
+  pdfDocument: PDFDocumentProxy,
+  dest: string | unknown[] | null,
+  pageCount: number,
+): Promise<number | null> {
+  const destination = typeof dest === 'string'
+    ? await pdfDocument.getDestination(dest).catch(() => null)
+    : Array.isArray(dest) ? dest : null;
+  const pageRef = destination?.[0];
+  if (typeof pageRef === 'number') {
+    const pageNumber = pageRef + 1;
+    return pageNumber >= 1 && pageNumber <= pageCount ? pageNumber : null;
+  }
+  if (!isPdfRefProxy(pageRef)) return null;
+  const pageNumber = await pdfDocument.getPageIndex(pageRef).then((index) => index + 1).catch(() => null);
+  if (!pageNumber || pageNumber < 1 || pageNumber > pageCount) return null;
+  return pageNumber;
+}
+
+function isPdfRefProxy(value: unknown): value is PdfRefProxy {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Partial<PdfRefProxy>;
+  return typeof record.num === 'number' && typeof record.gen === 'number';
 }
 
 function LazyPdfPage({

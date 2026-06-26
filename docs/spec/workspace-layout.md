@@ -401,7 +401,11 @@ fallback. EPUB sections render in `blob:` iframes, so renderer CSP permits
 fixed hash for Vite React Refresh's inline preamble and widens `connect-src` for
 Vite HMR. Scripted EPUB content is not a supported preview capability, and remote
 links from inside the book are intercepted and sent through the app's
-http(s)-only external-open path.
+http(s)-only external-open path. Expanded PDF and EPUB readers keep the native
+scrollbar for exact position and, when the document exposes an outline/table of
+contents, overlay a narrow right-edge outline rail whose hover/focus popover lists
+chapters and jumps to their resolved scroll positions; documents without outline
+metadata render no rail.
 
 **Add to outline.** A non-node preview carries an "add to outline" action that
 saves the source into the document as a file node. It is offered for the kinds
