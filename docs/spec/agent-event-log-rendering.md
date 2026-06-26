@@ -998,7 +998,7 @@ Rules:
   of the row opens its detail view. Rows without child runs show no secondary
   metadata. Running rows additionally reveal a Stop action on
   hover/focus. Expanded child runs render as checklist-style subrows below the
-  parent content with fine separators, not as a strongly indented tree; verifier
+  parent content without separator lines or strong tree chrome; verifier
   child runs display as the concise "Verifier" row rather than exposing their
   internal verification prompt. There is no separate trailing disclosure column,
   and hover never paints a separate subrow rectangle that fights the tree
