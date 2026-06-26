@@ -670,7 +670,7 @@
   --file-preview-content-inset: var(--space-4);
   --file-preview-frame-padding-block: var(--space-4);
   --file-preview-frame-padding-inline: var(--file-preview-frame-padding-block);
-  --file-preview-page-radius: var(--radius-xl);
+  --file-preview-page-radius: var(--radius-lg);
   --file-preview-frame-radius: calc(var(--file-preview-page-radius) + var(--file-preview-frame-padding-block));
   --file-preview-scrollbar-gutter: var(--space-4);
 }
