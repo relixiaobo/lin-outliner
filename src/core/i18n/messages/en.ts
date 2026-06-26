@@ -1226,6 +1226,8 @@ commandPalette: {
       openRun: 'Open run',
       stopRun: 'Stop run',
       stopping: 'Stopping...',
+      childRunProgress: ({ completed, total }: { completed: number; total: number }) =>
+        total === 1 ? `Child run ${completed}/${total}` : `Child runs ${completed}/${total}`,
       messages: ({ count }: { count: number }) => count === 1 ? '1 message' : `${count} messages`,
       memoryChanges: ({ count }: { count: number }) => count === 1 ? '1 memory change' : `${count} memory changes`,
       status: {

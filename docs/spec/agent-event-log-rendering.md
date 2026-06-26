@@ -990,15 +990,16 @@ Rules:
   non-turn, non-Dream runs across channels as a compact task-list tree using
   `parentRunId`: each row shows the shared checkbox marker on the left, the run
   title as the primary text, and one muted metadata line
-  (`channel · status · time`); rows with direct child runs also show a trailing
-  `completed/total` progress column before the disclosure control. Clicking a row
-  opens its detail view; running rows additionally reveal a Stop action on
+  (`channel · status · time`). Rows with direct child runs put an inline
+  `Child run(s) completed/total` disclosure control at the end of that metadata
+  line; that control alone expands/collapses children, while clicking the rest of
+  the row opens its detail view. Running rows additionally reveal a Stop action on
   hover/focus. Expanded child runs render as checklist-style subrows below the
   parent content with fine separators, not as a strongly indented tree; verifier
   child runs display as the concise "Verifier" row rather than exposing their
-  internal verification prompt. The disclosure control sits on the trailing side,
-  never before the checkbox marker, and hover never paints a separate subrow
-  rectangle that fights the tree alignment. The detail view is a read-only
+  internal verification prompt. There is no separate trailing disclosure column,
+  and hover never paints a separate subrow rectangle that fights the tree
+  alignment. The detail view is a read-only
   drill-in, not a second chat surface: it
   shows a header, Result, direct child Runs (or Verification when the only direct
   children are verifier runs), a collapsed Activity log, and collapsed Technical

@@ -1130,6 +1130,7 @@ commandPalette: {
       openRun: '打开运行',
       stopRun: '停止运行',
       stopping: '正在停止……',
+      childRunProgress: ({ completed, total }) => `子运行 ${completed}/${total}`,
       messages: ({ count }) => `${count} 条消息`,
       memoryChanges: ({ count }) => `${count} 条记忆变更`,
       status: {

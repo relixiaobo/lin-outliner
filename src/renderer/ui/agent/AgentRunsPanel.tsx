@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import type { Messages } from '../../../core/i18n';
 import type { AgentRunListEntry } from '../../api/types';
 import { api } from '../../api/client';
@@ -14,7 +14,6 @@ import {
   UsedToolsIcon,
   WarningIcon,
 } from '../icons';
-import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxMark } from '../primitives/CheckboxMark';
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
@@ -117,6 +116,14 @@ function runMetaParts(run: AgentRunListEntry, locale: string, labels: Messages['
   ];
 }
 
+function runChildProgressLabel(
+  completed: number,
+  total: number,
+  labels: Messages['agent']['run'],
+): string {
+  return labels.childRunProgress({ completed, total });
+}
+
 export function AgentRunsPanel({
   error,
   loading,
@@ -170,6 +177,13 @@ export function AgentRunsPanel({
       else next.add(runId);
       return next;
     });
+  }
+
+  function openRunFromRow(event: KeyboardEvent<HTMLElement>, run: AgentRunListEntry) {
+    if (event.currentTarget !== event.target) return;
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    onOpenRun(run);
   }
 
   return (
@@ -239,7 +253,9 @@ export function AgentRunsPanel({
             const statusClass = runStatusClass(run);
             const completed = isCompletedRun(run);
             const completedChildCount = node.children.filter((child) => isCompletedRun(child.run)).length;
-            const childProgress = hasChildren ? `${completedChildCount}/${node.children.length}` : null;
+            const childProgress = hasChildren
+              ? runChildProgressLabel(completedChildCount, node.children.length, t.agent.run)
+              : null;
             const rowClassName = [
               'agent-run-row',
               `is-${run.status}`,
@@ -251,40 +267,46 @@ export function AgentRunsPanel({
             ].filter(Boolean).join(' ');
             return (
               <article
+                aria-label={`${title}, ${meta}`}
                 aria-expanded={hasChildren ? expanded : undefined}
                 aria-level={node.depth + 1}
                 className={rowClassName}
                 key={run.runId}
+                onClick={() => onOpenRun(run)}
+                onKeyDown={(event) => openRunFromRow(event, run)}
                 role="treeitem"
                 style={{
                   '--run-depth': node.depth,
                   '--subrun-depth': Math.max(0, node.depth - 1),
                 } as CSSProperties}
+                tabIndex={0}
               >
                 <span className={`agent-run-marker is-${statusClass}`} aria-hidden="true">
                   <CheckboxMark checked={completed} />
                 </span>
-                <ButtonControl
-                  className="agent-run-main"
-                  onClick={() => onOpenRun(run)}
-                >
+                <span className="agent-run-main">
                   <span className="agent-run-title-row">
                     <span className="agent-run-title">{title}</span>
                   </span>
-                  <span className="agent-run-meta">{meta}</span>
-                </ButtonControl>
-                {childProgress ? <span className="agent-run-child-progress">{childProgress}</span> : null}
-                {hasChildren ? (
-                  <button
-                    aria-label={expanded ? t.agent.run.collapseRun : t.agent.run.expandRun}
-                    className="agent-run-disclosure"
-                    onClick={() => toggleExpanded(run.runId)}
-                    title={expanded ? t.agent.run.collapseRun : t.agent.run.expandRun}
-                    type="button"
-                  >
-                    {expanded ? <ChevronDownIcon size={ICON_SIZE.menu} /> : <ChevronRightIcon size={ICON_SIZE.menu} />}
-                  </button>
-                ) : null}
+                  <span className="agent-run-meta-row">
+                    <span className="agent-run-meta">{meta}</span>
+                    {hasChildren && childProgress ? (
+                      <button
+                        aria-label={expanded ? t.agent.run.collapseRun : t.agent.run.expandRun}
+                        className="agent-run-child-toggle"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleExpanded(run.runId);
+                        }}
+                        title={expanded ? t.agent.run.collapseRun : t.agent.run.expandRun}
+                        type="button"
+                      >
+                        <span>{childProgress}</span>
+                        {expanded ? <ChevronDownIcon size={ICON_SIZE.menu} /> : <ChevronRightIcon size={ICON_SIZE.menu} />}
+                      </button>
+                    ) : null}
+                  </span>
+                </span>
                 {canStop ? (
                   <div className="agent-run-row-actions">
                     <IconButton
@@ -292,7 +314,10 @@ export function AgentRunsPanel({
                       disabled={stoppingRunId !== null}
                       icon={StopIcon}
                       label={stopping ? t.agent.run.stopping : t.agent.run.stopRun}
-                      onClick={() => void stopRun(run)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void stopRun(run);
+                      }}
                       title={stopping ? t.agent.run.stopping : t.agent.run.stopRun}
                       variant="message"
                     />
