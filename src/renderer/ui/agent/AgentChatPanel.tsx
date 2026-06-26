@@ -48,7 +48,7 @@ import {
   ICON_SIZE,
   LoaderIcon,
   MoreIcon,
-  UsedToolsIcon,
+  RunsIcon,
   WarningIcon,
 } from '../icons';
 import { AgentCompactionBoundary } from './AgentCompactionBoundary';
@@ -1379,9 +1379,6 @@ export function AgentChatPanel({
             title={t.agent.run.backToChat}
           >
             <BackIcon aria-hidden="true" size={ICON_SIZE.menu} />
-            <span className="agent-dock-title-leading">
-              <UsedToolsIcon aria-hidden="true" size={ICON_SIZE.menu} />
-            </span>
             <span className="agent-dock-title">{t.agent.run.heading}</span>
           </ButtonControl>
         ) : (
@@ -1436,7 +1433,7 @@ export function AgentChatPanel({
               }}
               title={t.agent.run.openPanel}
             >
-              <UsedToolsIcon size={ICON_SIZE.toolbar} />
+              <RunsIcon size={ICON_SIZE.toolbar} />
               {runningRunCount > 0 ? <span className="agent-run-panel-badge">{runningRunCount}</span> : null}
             </ButtonControl>
           ) : null}

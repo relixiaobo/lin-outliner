@@ -3187,6 +3187,7 @@ test.describe('agent composer controls', () => {
     await expect(runs).toHaveCSS('position', 'static');
     await expect(page.locator('.agent-dock-header')).toContainText('Runs');
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Back to chat' })).toBeVisible();
+    await expect(page.locator('.agent-dock-header .agent-dock-title-leading')).toHaveCount(0);
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Refresh runs' })).toHaveCount(0);
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Close Work' })).toHaveCount(0);
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: /^Open Work/ })).toHaveCount(0);
