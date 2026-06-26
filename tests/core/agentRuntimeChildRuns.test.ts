@@ -754,6 +754,80 @@ describe('agent runtime childRuns', () => {
     expect(workers[0]?.objectiveStatus).toBe('blocked');
     expect(workers[1]?.objectiveStatus).toBe('verified');
     expect(workers[1]?.result).toBe('verified result');
+    const failedWorkerStatus = await runtime.childRunStatus(conversation.conversationId, workers[0]!.id, { wait: true });
+    expect(failedWorkerStatus.latest_verifier_gap).toBe('missing required phrase');
+  });
+
+  test('a controller with child runs replans in place instead of being replaced', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-controller-replan-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-controller-replan-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const replanContexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('spawn', {
+            description: 'controller with child',
+            objective: 'Integrate a child result into a verified controller result.',
+            criteria: ['The final result must include the phrase controller verified result.'],
+          }, { id: 'tool-agent-controller' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage([
+          fauxToolCall('spawn', {
+            description: 'controller leaf child',
+            objective: 'Produce one leaf fact.',
+            verify: false,
+          }, { id: 'tool-agent-controller-leaf' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('leaf fact')),
+        fauxAssistantMessage(fauxText('controller incomplete result')),
+        fauxAssistantMessage(fauxText('{"verdict":"fail","gap":"missing controller verified result"}')),
+        (context) => {
+          replanContexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('controller verified result'));
+        },
+        fauxAssistantMessage(fauxText('{"verdict":"pass","gap":""}')),
+        fauxAssistantMessage(fauxText('Parent accepted controller result.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a verified controller run.', sink);
+
+    expect(script.pendingCount()).toBe(0);
+    expect(replanContexts.join('\n')).toContain('missing controller verified result');
+    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
+    const controllers = Object.values(replay.childRuns).filter((run) => run.description === 'controller with child');
+    expect(controllers).toHaveLength(1);
+    expect(controllers[0]?.objectiveStatus).toBe('verified');
+    expect(controllers[0]?.result).toBe('controller verified result');
+    const controllerStatus = await runtime.childRunStatus(conversation.conversationId, controllers[0]!.id, { wait: true });
+    expect(controllerStatus.children?.map((child) => child.role).sort()).toEqual(['verifier', 'verifier', 'worker']);
+    expect(controllerStatus.children?.find((child) => child.description === 'controller leaf child')).toMatchObject({
+      objective: 'Produce one leaf fact.',
+      executionStatus: 'completed',
+      objectiveStatus: undefined,
+      role: 'worker',
+    });
   });
 
   test('verifier evidence includes indirect file changes from shell tools', async () => {
@@ -862,6 +936,61 @@ describe('agent runtime childRuns', () => {
       criteria: ['Mention the verified result', 'Mention any blockers'],
       objectiveStatus: 'verified',
       status: 'completed',
+    });
+  });
+
+  test('/goal root replans in place after verifier failure', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-goal-replan-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-goal-replan-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const replanContexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage(fauxText('first incomplete goal result')),
+        fauxAssistantMessage(fauxText('{"verdict":"fail","gap":"missing final verified goal result"}')),
+        (context) => {
+          replanContexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('final verified goal result'));
+        },
+        fauxAssistantMessage(fauxText('{"verdict":"pass","gap":""}')),
+        fauxAssistantMessage(fauxText('Parent consumed replanned goal notification.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(
+      conversation.conversationId,
+      '/goal Write a verified launch memo --criteria Include final verified goal result',
+    );
+    await waitFor(() => script.pendingCount() === 0);
+
+    expect(replanContexts.join('\n')).toContain('missing final verified goal result');
+    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
+    const goalRuns = Object.values(replay.childRuns).filter((run) => run.objective === 'Write a verified launch memo');
+    expect(goalRuns).toHaveLength(1);
+    expect(goalRuns[0]).toMatchObject({
+      objectiveStatus: 'verified',
+      status: 'completed',
+      result: 'final verified goal result',
     });
   });
 

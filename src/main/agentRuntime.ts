@@ -2913,6 +2913,7 @@ export class AgentRuntime {
       result: snapshot.result,
       error: snapshot.error,
       blockedReason: snapshot.blockedReason,
+      latestVerifierGap: snapshot.latestVerifierGap,
     }]);
     await this.runLedger.statusChanged(snapshot.id, snapshot.status, {
       actor: this.childRunActor(snapshot),

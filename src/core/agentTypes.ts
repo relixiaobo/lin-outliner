@@ -193,6 +193,16 @@ export interface AgentChildRunFileChanges {
   patches?: AgentChildRunFilePatch[];
 }
 
+export interface AgentChildRunChildStatus {
+  runId: string;
+  role: 'controller' | 'worker' | 'verifier';
+  objectiveStatus?: AgentObjectiveStatus;
+  executionStatus: AgentChildRunActionResult['status'];
+  name?: string;
+  description?: string;
+  objective?: string;
+}
+
 export interface AgentChildRunActionResult {
   status: 'completed' | 'async_launched' | 'queued' | 'running' | 'failed' | 'cancelled';
   agent_id: string;
@@ -217,6 +227,8 @@ export interface AgentChildRunActionResult {
   updated_at: number;
   completed_at?: number;
   transcript_message_count: number;
+  children?: AgentChildRunChildStatus[];
+  latest_verifier_gap?: string;
   node_changes?: AgentChildRunNodeChanges;
   file_changes?: AgentChildRunFileChanges;
   /**

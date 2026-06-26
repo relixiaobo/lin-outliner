@@ -975,6 +975,7 @@ export interface ChildRunUpdatedEvent extends AgentEventBase {
   result?: string;
   error?: string;
   blockedReason?: string;
+  latestVerifierGap?: string;
 }
 
 export interface CompactionCompletedEvent extends AgentEventBase {
@@ -1156,6 +1157,7 @@ export interface DelegationDetail {
   result?: string;
   error?: string;
   blockedReason?: string;
+  latestVerifierGap?: string;
   parentToolCallId?: string;
   /**
    * Run with no interactive approval channel (a tool needing approval is denied
@@ -1683,6 +1685,7 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       run.result = event.result;
       run.error = event.error;
       run.blockedReason = event.blockedReason;
+      run.latestVerifierGap = event.latestVerifierGap;
       run.updatedAt = event.createdAt;
       return;
     }

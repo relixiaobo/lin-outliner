@@ -93,10 +93,14 @@ interface SpawnInput {
 ```
 
 The runtime validates that verified runs have explicit criteria. The returned
-Run result is accepted only after the parent-verifies-child loop passes. A
-verifier failure does not resurrect the worker Run: the failed attempt stays
-completed with a blocked objective status, and a fresh replacement worker gets a
-new `runId` when budget and livelock guards allow it.
+Run result is accepted only after the parent-verifies-child loop passes. A leaf
+worker verifier failure does not resurrect the worker Run: the failed attempt
+stays completed with a blocked objective status, and a fresh replacement worker
+gets a new `runId` when budget and livelock guards allow it. A controller
+(structurally: a work Run that has spawned work children) and a root tracked goal
+replan in place after verifier failure: the same `runId` returns to `running` /
+`active`, receives the verifier gap as hidden continuation context, and keeps its
+child lineage intact.
 
 The control tools are intentionally uniform:
 
@@ -110,6 +114,12 @@ The control tools are intentionally uniform:
 Scope narrows downward by action kind; resource paths/docs cannot widen past the
 parent Run. Budget is admitted locally at each edge, reserves token headroom
 before sibling spawns, and settles on child termination.
+
+`run_status` returns the Run's execution status, objective status, budget, latest
+verifier gap if any, and one level of direct child summaries. Child summaries use
+the structural role labels `worker`, `controller`, or `verifier`; `verifier`
+comes from the persisted Run purpose, while `controller` is derived from having
+spawned work children.
 
 ### Deferred Tools
 
