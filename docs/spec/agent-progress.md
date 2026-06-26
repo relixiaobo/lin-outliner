@@ -132,9 +132,9 @@ truth.
   - child runs with full/brief/none context modes, verifier retry, and their OWN
     run ledger (run unification; sidechain transcripts replay from the ledger)
     plus background notifications
-  - conversation task panel derived from the shared render task projection: it
-    shows only child-run tasks with open-details/stop actions (Dream history
-    moved to the Settings → Agent "Memory & activity" panel)
+  - Work/Runs panel backed by the global `agent_list_runs` index: it lists
+    non-turn, non-Dream runs across channels with open-details/stop actions
+    (Dream history moved to the Settings → Agent "Memory & activity" panel)
   - skill `execution: isolated` routed through the delegation runtime
   - provider overflow detection, response debug capture, stream option pass-through,
     and session resource cleanup via pi-ai

@@ -3178,17 +3178,17 @@ test.describe('agent composer controls', () => {
     // A DM main-agent child run stays anchored to its spawning ordinary Agent
     // tool-call row, NOT a free-floating conversation-level boundary. So there
     // is no boundary region, and the run remains a process row in the bubble.
-    await expect(page.getByRole('region', { name: 'Agent task · Inspect child run UI' })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Running agent task "Inspect child run UI"' }).first()).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Agent run · Inspect child run UI' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Running agent run "Inspect child run UI"' }).first()).toBeVisible();
 
-    await page.getByRole('button', { name: 'Open task panel' }).click();
-    const tasks = page.getByRole('complementary', { name: 'Agent tasks' });
-    await expect(tasks).toBeVisible();
-    await expect(tasks.getByText('1 task running')).toBeVisible();
-    await expect(tasks.getByText('Inspect child run UI')).toBeVisible();
-    await tasks.getByRole('button', { name: 'Open task' }).click();
+    await page.getByRole('button', { name: /^Open Work/ }).click();
+    const runs = page.getByRole('complementary', { name: 'Agent runs' });
+    await expect(runs).toBeVisible();
+    await expect(runs.getByText('1 run running')).toBeVisible();
+    await expect(runs.getByText('Inspect child run UI')).toBeVisible();
+    await runs.getByRole('button', { name: 'Open run' }).click();
 
-    const details = page.getByRole('complementary', { name: 'Agent task details' });
+    const details = page.getByRole('complementary', { name: 'Agent run details' });
     await expect(details).toBeVisible();
     await expect(details.getByText('Inspect child run UI')).toBeVisible();
     await expect(page.getByText('fork · explorer')).toBeVisible();
@@ -3203,7 +3203,7 @@ test.describe('agent composer controls', () => {
     await details.locator('.agent-tool-call-toggle').first().click();
     await expect(details.getByText('Daily note content from child run.')).toBeVisible();
 
-    await details.getByLabel('Agent task follow-up').fill('Continue with layout risks.');
+    await details.getByLabel('Agent run follow-up').fill('Continue with layout risks.');
     await details.getByRole('button', { name: 'Send' }).click();
     await details.getByRole('button', { name: 'Stop' }).click();
 
@@ -3229,9 +3229,10 @@ test.describe('agent composer controls', () => {
       },
     ]);
 
-    await details.getByRole('button', { name: 'Close agent task details' }).click();
+    await details.getByRole('button', { name: 'Back to runs' }).click();
     await expect(details).toHaveCount(0);
-    await tasks.getByRole('button', { name: 'Close task panel' }).click();
-    await expect(tasks).toHaveCount(0);
+    await expect(runs).toBeVisible();
+    await runs.getByRole('button', { name: 'Close Work' }).click();
+    await expect(runs).toHaveCount(0);
   });
 });

@@ -9,7 +9,8 @@ import type {
   AgentCreateConversationOptions,
   AgentConversationListMeta,
   AgentDreamReadiness,
-  AgentRenderDreamTaskEntity,
+  AgentRenderDreamRunEntity,
+  AgentRunListEntry,
   AgentPickScopeFolderResult,
   AgentSlashCommandView,
   AgentApprovalResolutionScope,
@@ -317,12 +318,14 @@ export const api = {
     command<AgentConversationListMeta | null>('agent_set_conversation_include_in_dream_data', { conversationId, includeInDreamData }),
   agentDeleteConversation: (conversationId: string) =>
     command<void>('agent_delete_conversation', { conversationId }),
+  agentListRuns: (options: { limit?: number; perConversationLimit?: number } = {}) =>
+    command<AgentRunListEntry[]>('agent_list_runs', options),
   agentListDreamHistory: (options: { limit?: number } = {}) =>
-    command<AgentRenderDreamTaskEntity[]>('agent_list_dream_history', options),
+    command<AgentRenderDreamRunEntity[]>('agent_list_dream_history', options),
   agentDreamReadiness: () =>
     command<AgentDreamReadiness>('agent_dream_readiness', {}),
   agentRunDreamNow: (options: { limit?: number; startDate?: string; endDate?: string; guidance?: string } = {}) =>
-    command<AgentRenderDreamTaskEntity[]>('agent_run_dream_now', options),
+    command<AgentRenderDreamRunEntity[]>('agent_run_dream_now', options),
   agentDebugView: (conversationId: string) =>
     command<AgentDebugConversation>('agent_debug_view', { conversationId }),
   agentDebugRun: (conversationId: string, runId: string) =>

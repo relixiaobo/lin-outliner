@@ -89,7 +89,7 @@ The only agent-to-agent relationship is **delegation** (a child run). Peer agent
 and every conversation's members are `{user, Neva}`.
 
 - **Delegation (a child run — NOT a separate kind of agent / NOT a member)** — Neva
-  spawns helper runs for a TASK. Delegation is **fork-only**: a fork *is* Neva
+  spawns helper runs for a bounded objective. Delegation is **fork-only**: a fork *is* Neva
   continuing in an isolated child context (it runs AS Neva — same
   `executingAgentId`/`memoryOwnerAgentId`), never a second agent. The cross-agent
   "fresh" path (a sub-agent with its own identity + memory line) is **removed**
@@ -105,8 +105,8 @@ and every conversation's members are `{user, Neva}`.
   evidence + watermark scheme exists everywhere; child compaction is
   event-sourced like a conversation's. The former entity-grade species
   (transcript payload snapshots, the `runId:message:N` codec, the positional Dream
-  cursor) is deleted. Delegation tasks surface in the in-conversation task panel
-  (child-run/delegation tasks only).
+  cursor) is deleted. Delegated runs surface in the global Work/Runs panel
+  (non-turn, non-Dream runs only).
 
 ### Verified goal runs
 
@@ -213,8 +213,8 @@ the foreground `dream` tool are cut.
 **Dream/run surfacing is relocated.** Dream history lives in Settings → Agent
 "Memory & activity" panel (alongside memory inspect/correct/forget), fetched via
 `agent_list_dream_history`, and the actual run transcript lives in the protected
-Dream channel. The conversation task panel keeps only child-run (delegation)
-tasks.
+Dream channel. The Work/Runs panel keeps Dream out and lists ordinary non-turn
+runs across channels.
 
 ## The runtime/policy seam (trigger · mechanism · policy)
 
@@ -310,7 +310,7 @@ leftover; only the single-agent value is ever assigned.)
 | One editable agent — Neva | ✅ built | built-in `built-in:tenon:assistant` (handle `assistant`); user edits layer as a stored overlay (`builtInAgentProfiles` in `agent-providers.json`); directly editable in Settings → Agent (model/effort/persona/tools/skills); Save persists the overlay, Delete suppressed for the built-in |
 | Channels-only conversations (no DM) | ✅ built | every conversation is single-agent + inline-streaming + steerable; one conversation list (no two sections / two "+" buttons), no nav-lock, "General" and protected "Dream" default channels; `canonicalDmAgentId` / `lin-agent-dm-` prefix / DM-vs-Channel branching removed |
 | Run→conversation anchor + per-conversation run index | ✅ built | `runs WHERE conversationId=X` is enumerable |
-| Delegation / child-run runtime (#164) | ✅ built | sub-agents spawned for a TASK (NOT peers/members); ordinary Runs with their own `runs/<runId>/` ledger, joined by `parentRunId`/`parentToolCallId`; surfaced in the conversation task panel (child-run tasks only) |
+| Delegation / child-run runtime (#164) | ✅ built | helper runs spawned for a bounded objective (NOT peers/members); ordinary Runs with their own `runs/<runId>/` ledger, joined by `parentRunId`/`parentToolCallId`; surfaced in the Work/Runs panel (non-turn, non-Dream runs only) |
 | Timeline memory nodes | ✅ built | durable memory lives in per-day generated-headline `#d-memory` plus optional `#d-episode`, `#d-belief`, `#d-question`, and `#d-guidance` outline nodes; foreground retrieval is pull-only through `node_search` / `node_read` |
 | One Dream (conversation + outline context) | ✅ built | scheduled at-most-once-daily and Settings-manual `memory-dream` Dream-channel runs read member conversations through `past_chats` when sources exist, gather relevant prior memory/workspace context through `node_search` / `node_read`, may delete obsolete nodes with `node_delete`, and update today's memory nodes through the human-dream cycle; the Dream channel retains the newest 512 run transcripts and prunes older run ledgers/anchor markers/search entries; manual consolidate-only can reconcile outline/prior Dream context without new chat spans; agent-self / run-log Dream, manual `/dream`, and foreground `dream` are cut |
 | Chat source binding under compaction (#302) | ✅ built | `chat-source` inline refs encode `{stream, streamId, range}` raw sources over the ledgers; node writes validate the exact source before mutation |

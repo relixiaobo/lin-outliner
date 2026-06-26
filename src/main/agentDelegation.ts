@@ -150,7 +150,7 @@ const AGENT_TOOL_PARAMETERS = {
       type: 'string',
       minLength: 1,
       maxLength: 200,
-      description: 'Optional short 3-5 word description for the task panel.',
+      description: 'Optional short 3-5 word description for the Work/Runs panel.',
     },
     prompt: {
       type: 'string',

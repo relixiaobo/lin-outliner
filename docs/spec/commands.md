@@ -150,7 +150,7 @@ never blocks the others or subsequent sweeps. A fire runs the brief as a
 **delegated child run** on the command's own delivery conversation, so every run is recorded
 inline in that conversation as a **child-run boundary row** (its final result
 lands in the channel as an expandable summary with a "View full run" link; see
-`agent-event-log-rendering.md`) and also surfaces as a task in its task panel.
+`agent-event-log-rendering.md`) and also surfaces in the Work/Runs panel.
 Under the one-Neva invariant there is exactly one agent, so a scheduled command
 always forks the current agent (Neva), running under its identity and
 capabilities — a command never selects an executing agent. The run prompt is the
@@ -210,8 +210,8 @@ two seeded config field rows plus the prompt steps (any other child nodes).
 (`CommandRunButton` — a text action button with a background, aligned with the
 title like the inline Done checkbox) sits at the start of the command title;
 `useCommandRun` drives the attended run: ensure the delivery conversation
-(`agent_ensure_command_conversation`), reveal the agent panel on it (no longer
-auto-opening the task panel — that was abrupt), then run it
+(`agent_ensure_command_conversation`), reveal the agent panel on it (without
+auto-opening Work — that was abrupt), then run it
 (`agent_run_command_now`), so the run streams in live as an inline child-run
 boundary. While the run is in flight the **command bullet glyph becomes a
 spinner** (`RowMarker` `processing` → `.is-processing`) — that is the *only*

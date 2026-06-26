@@ -9,10 +9,12 @@ import type {
   Usage,
   UserMessage,
 } from '@earendil-works/pi-ai';
-import type { AgentRenderProjection, AgentRenderProjectionPatch } from './agentRenderProjection';
+import type { AgentRenderProjection, AgentRenderProjectionPatch, AgentRenderRunStatus } from './agentRenderProjection';
 import type {
+  AgentId,
   AgentPayloadRef,
   AgentRunContextMode,
+  AgentRunKind,
   AgentUserQuestionRequestView,
   AskUserQuestionResult,
 } from './agentEventLog';
@@ -239,6 +241,22 @@ export interface AgentChildRunActionResult {
    */
   incomplete?: boolean;
   instructions?: string;
+}
+
+export interface AgentRunListEntry {
+  runId: string;
+  conversationId: string;
+  conversationTitle: string | null;
+  agentId: AgentId;
+  kind: AgentRunKind;
+  status: AgentRenderRunStatus;
+  objectiveStatus?: AgentObjectiveStatus;
+  purpose?: AgentRunPurpose;
+  parentRunId: string | null;
+  title: string;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
 }
 
 export type AgentDebugTurnStatus = 'running' | 'completed' | 'error' | 'aborted';

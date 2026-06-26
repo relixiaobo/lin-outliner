@@ -140,7 +140,7 @@ export interface AgentRenderChildRunEntity {
   executingAgentId: string;
   parentAgentId: string;
   memoryOwnerAgentId: string;
-  status: AgentRenderTaskStatus;
+  status: AgentRenderRunStatus;
   startedAt: number;
   updatedAt: number;
   completedAt?: number;
@@ -189,35 +189,23 @@ export interface AgentRenderActiveDream {
   startedAt: number;
 }
 
-export type AgentRenderTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
+export type AgentRenderRunStatus = 'running' | 'completed' | 'failed' | 'stopped';
 
 /**
  * Project the canonical run-status vocabulary onto the renderer's presentation
  * term: a user-cancelled run reads as `stopped` in the UI (the user pressed
  * stop). The single translation seam between the data vocabulary (`cancelled`)
- * and the renderer (`stopped`) — shared by every task/child-run render entity so
+ * and the renderer (`stopped`) — shared by every run render entity so
  * components never see `cancelled`.
  */
-export function renderTaskStatusFromRunStatus(status: AgentRunStatus): AgentRenderTaskStatus {
+export function renderRunStatusFromRunStatus(status: AgentRunStatus): AgentRenderRunStatus {
   return status === 'cancelled' ? 'stopped' : status;
 }
 
-export interface AgentRenderChildRunTaskEntity {
-  id: string;
-  kind: 'child-run';
-  status: AgentRenderTaskStatus;
-  title: string;
-  subtitle: string;
-  startedAt: number;
-  updatedAt: number;
-  completedAt?: number;
-  childRunId: string;
-}
-
-export interface AgentRenderDreamTaskEntity {
+export interface AgentRenderDreamRunEntity {
   id: string;
   kind: 'dream';
-  status: AgentRenderTaskStatus;
+  status: AgentRenderRunStatus;
   trigger: 'manual' | 'schedule';
   window?: AgentDreamRecord['window'];
   /** The principal model this Dream maintains (run anchor subject), so the panel can label whose Dream. */
@@ -255,14 +243,11 @@ export interface AgentDreamReadiness {
   belowThreshold: boolean;
 }
 
-export type AgentRenderTaskEntity = AgentRenderChildRunTaskEntity | AgentRenderDreamTaskEntity;
-
 export interface AgentRenderEntities {
   messages: Record<string, AgentRenderMessageEntity>;
   childRuns: Record<string, AgentRenderChildRunEntity>;
   compactions: Record<string, AgentRenderCompactionEntity>;
   dreams: Record<string, AgentRenderDreamEntity>;
-  tasks: Record<string, AgentRenderTaskEntity>;
 }
 
 export interface AgentRenderProjection {
@@ -286,7 +271,6 @@ export interface AgentRenderProjection {
   errorMessage: string | null;
   rows: AgentRenderRow[];
   transcriptRows: AgentRenderRow[];
-  taskIds: string[];
   childRunIds: string[];
   entities: AgentRenderEntities;
   /** The streaming tail (the token stream rendered in the transcript). */
@@ -305,7 +289,6 @@ export interface AgentRenderProjectionPatch {
     childRuns: Record<string, AgentRenderChildRunEntity>;
     compactions: Record<string, AgentRenderCompactionEntity>;
     dreams: Record<string, AgentRenderDreamEntity>;
-    tasks: Record<string, AgentRenderTaskEntity>;
   }>;
   streaming?: AgentStreamingRenderState | null;
 }
@@ -330,9 +313,6 @@ export function applyAgentRenderProjectionPatch(
         dreams: patch.entities.dreams
           ? { ...projection.entities.dreams, ...patch.entities.dreams }
           : projection.entities.dreams,
-        tasks: patch.entities.tasks
-          ? { ...projection.entities.tasks, ...patch.entities.tasks }
-          : projection.entities.tasks,
       }
     : projection.entities;
   return {
@@ -354,8 +334,7 @@ function patchOnlyReplacesExistingEntities(
   return Object.keys(patch.entities?.messages ?? {}).every((id) => projection.entities.messages[id])
     && Object.keys(patch.entities?.childRuns ?? {}).every((id) => projection.entities.childRuns[id])
     && Object.keys(patch.entities?.compactions ?? {}).every((id) => projection.entities.compactions[id])
-    && Object.keys(patch.entities?.dreams ?? {}).every((id) => projection.entities.dreams[id])
-    && Object.keys(patch.entities?.tasks ?? {}).every((id) => projection.entities.tasks[id]);
+    && Object.keys(patch.entities?.dreams ?? {}).every((id) => projection.entities.dreams[id]);
 }
 
 export interface BuildAgentRenderProjectionOptions {
@@ -369,7 +348,6 @@ export interface BuildAgentRenderProjectionOptions {
   thinkingLevel?: string;
   pendingToolCallIds?: string[];
   errorMessage?: string | null;
-  agentTasks?: readonly AgentRenderTaskEntity[];
   /** Display names for agent members (agentId → name); mention token is the fallback. */
   memberDisplayNames?: Record<string, string>;
   /** The Channel coordinator (default = the main agent); flags its member view. */
@@ -385,7 +363,7 @@ export function buildAgentRenderProjection(
   }
 
   const activePath = getAgentEventActivePath(state);
-  const entities: AgentRenderEntities = { messages: {}, childRuns: {}, compactions: {}, dreams: {}, tasks: {} };
+  const entities: AgentRenderEntities = { messages: {}, childRuns: {}, compactions: {}, dreams: {} };
   // The runs that are LIVE right now (in-memory active runs the runtime passes in),
   // NOT every run whose persisted status is `running`. A run left `running` by a
   // crash/quit is absent here, so its interrupted turn is never mistaken for an
@@ -429,20 +407,12 @@ export function buildAgentRenderProjection(
     }
   }
 
-  const taskIds: string[] = [];
   const childRunIds = Object.values(state.childRuns ?? {})
     .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id))
     .map((run) => {
       entities.childRuns[run.id] = toRenderChildRunEntity(run);
-      const task = toRenderChildRunTaskEntity(run);
-      entities.tasks[task.id] = task;
-      taskIds.push(task.id);
       return run.id;
     });
-  for (const task of options.agentTasks ?? []) {
-    entities.tasks[task.id] = task;
-    if (!taskIds.includes(task.id)) taskIds.push(task.id);
-  }
   const pendingToolCallIds = options.pendingToolCallIds ?? [];
   const activeRunId = options.activeRunId ?? options.activeRuns?.[0]?.runId ?? null;
 
@@ -462,7 +432,6 @@ export function buildAgentRenderProjection(
     errorMessage: options.errorMessage ?? null,
     rows,
     transcriptRows,
-    taskIds,
     childRunIds,
     entities,
     streaming,
@@ -719,27 +688,13 @@ function toRenderChildRunEntity(run: AgentChildRunRecord): AgentRenderChildRunEn
     executingAgentId: run.executingAgentId,
     parentAgentId: run.parentAgentId,
     memoryOwnerAgentId: run.memoryOwnerAgentId,
-    status: renderTaskStatusFromRunStatus(run.status),
+    status: renderRunStatusFromRunStatus(run.status),
     startedAt: run.startedAt,
     updatedAt: run.updatedAt,
     completedAt: run.completedAt,
     result: run.result,
     error: run.error,
     parentToolCallId: run.parentToolCallId,
-  };
-}
-
-function toRenderChildRunTaskEntity(run: AgentChildRunRecord): AgentRenderChildRunTaskEntity {
-  return {
-    id: `child-run:${run.id}`,
-    kind: 'child-run',
-    status: renderTaskStatusFromRunStatus(run.status),
-    title: run.description.trim() || run.name?.trim() || run.id,
-    subtitle: `${run.contextMode} · ${run.agentType}`,
-    startedAt: run.startedAt,
-    updatedAt: run.updatedAt,
-    completedAt: run.completedAt,
-    childRunId: run.id,
   };
 }
 

@@ -25,6 +25,7 @@ import type {
   AgentApprovalResolutionScope,
   AgentProviderSettingsView,
   AgentConversationListMeta,
+  AgentRunListEntry,
   AgentSlashCommandView,
   NodeId,
 } from '../../api/types';
@@ -62,7 +63,7 @@ import {
 } from './agentConversationRows';
 import type { AgentConversationRenderRow } from './agentConversationRows';
 import { AgentChildRunDetailsPanel } from './AgentChildRunDetailsPanel';
-import { AgentTaskPanel } from './AgentTaskPanel';
+import { AgentRunsPanel } from './AgentRunsPanel';
 import { composerCurrentNodeId } from './userViewContext';
 import { resolveUsableActiveProvider } from './providerCatalog';
 import { Button } from '../primitives/Button';
@@ -504,7 +505,6 @@ export function AgentChatPanel({
     childRunsByParentToolCallId,
     switchBranch,
     stop,
-    tasks,
     toolResults,
     turnPhase,
     unreadByConversationId,
@@ -520,8 +520,12 @@ export function AgentChatPanel({
   const [conversationsLoading, setConversationsLoading] = useState(false);
   const [slashCommands, setSlashCommands] = useState<AgentSlashCommandView[]>([]);
   const [rowActionMenu, setRowActionMenu] = useState<string | null>(null);
-  const [taskPanelOpen, setTaskPanelOpen] = useState(false);
-  const [selectedChildRunId, setSelectedChildRunId] = useState<string | null>(null);
+  const [workPanelOpen, setWorkPanelOpen] = useState(false);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedRunConversationId, setSelectedRunConversationId] = useState<string | null>(null);
+  const [runIndex, setRunIndex] = useState<AgentRunListEntry[]>([]);
+  const [runIndexLoading, setRunIndexLoading] = useState(false);
+  const [runIndexError, setRunIndexError] = useState<string | null>(null);
   const [pendingTranscriptReveal, setPendingTranscriptReveal] = useState<PendingTranscriptReveal | null>(null);
   const [highlightedTranscriptRowKey, setHighlightedTranscriptRowKey] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -534,6 +538,8 @@ export function AgentChatPanel({
   const conversationsRequestRef = useRef(0);
   const slashCommandsRequestRef = useRef(0);
   const agentDefinitionsRequestRef = useRef(0);
+  const runIndexRequestRef = useRef(0);
+  const runIndexRefreshTimerRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const bottomScrollFrameRef = useRef<number | null>(null);
   const revealAfterDockOpenTimerRef = useRef<number | null>(null);
@@ -579,8 +585,10 @@ export function AgentChatPanel({
     () => buildConversationRenderRows(entries, turnPhase),
     [entries, turnPhase],
   );
-  const runningTaskCount = useMemo(() => tasks.filter((task) => task.status === 'running').length, [tasks]);
-  const selectedChildRun = selectedChildRunId ? childRuns[selectedChildRunId] ?? null : null;
+  const runningRunCount = useMemo(() => runIndex.filter((run) => run.status === 'running').length, [runIndex]);
+  const selectedRun = selectedRunId && selectedRunConversationId === conversationId
+    ? childRuns[selectedRunId] ?? null
+    : null;
   const [agentDefinitions, setAgentDefinitions] = useState<AgentDefinitionView[]>([]);
   const agentDefinitionById = useMemo(() => {
     const map = new Map<string, AgentDefinitionView>();
@@ -770,6 +778,38 @@ export function AgentChatPanel({
     }
   }, []);
 
+  const loadRunIndex = useCallback(async () => {
+    const requestId = runIndexRequestRef.current + 1;
+    runIndexRequestRef.current = requestId;
+    setRunIndexLoading(true);
+    try {
+      const next = await api.agentListRuns();
+      if (!mountedRef.current || requestId !== runIndexRequestRef.current) return null;
+      setRunIndex(next);
+      setRunIndexError(null);
+      return next;
+    } catch (caught) {
+      if (mountedRef.current && requestId === runIndexRequestRef.current) {
+        setRunIndexError(caught instanceof Error ? caught.message : String(caught));
+      }
+      return null;
+    } finally {
+      if (mountedRef.current && requestId === runIndexRequestRef.current) {
+        setRunIndexLoading(false);
+      }
+    }
+  }, []);
+
+  const scheduleRunIndexRefresh = useCallback(() => {
+    if (runIndexRefreshTimerRef.current !== null) {
+      window.clearTimeout(runIndexRefreshTimerRef.current);
+    }
+    runIndexRefreshTimerRef.current = window.setTimeout(() => {
+      runIndexRefreshTimerRef.current = null;
+      void loadRunIndex();
+    }, 250);
+  }, [loadRunIndex]);
+
   const loadSlashCommands = useCallback(async () => {
     const requestId = slashCommandsRequestRef.current + 1;
     slashCommandsRequestRef.current = requestId;
@@ -914,8 +954,9 @@ export function AgentChatPanel({
 
     if (target.stream === 'run') {
       if (childRuns[target.streamId]) {
-        setTaskPanelOpen(false);
-        setSelectedChildRunId(target.streamId);
+        setWorkPanelOpen(true);
+        setSelectedRunConversationId(conversationId);
+        setSelectedRunId(target.streamId);
         if (rowIndex >= 0) revealTranscriptRow(rowIndex, conversationRows[rowIndex]!.key);
         setPendingTranscriptReveal(null);
         return;
@@ -925,8 +966,9 @@ export function AgentChatPanel({
     }
 
     if (rowIndex >= 0) {
-      setTaskPanelOpen(false);
-      setSelectedChildRunId(null);
+      setWorkPanelOpen(false);
+      setSelectedRunId(null);
+      setSelectedRunConversationId(null);
       revealTranscriptRow(rowIndex, conversationRows[rowIndex]!.key);
       setPendingTranscriptReveal(null);
       return;
@@ -972,14 +1014,24 @@ export function AgentChatPanel({
   useEffect(() => {
     mountedRef.current = true;
     void loadProviderSettings();
+    void loadRunIndex();
     return () => {
       mountedRef.current = false;
       providerSettingsRequestRef.current += 1;
       conversationsRequestRef.current += 1;
+      runIndexRequestRef.current += 1;
       slashCommandsRequestRef.current += 1;
       agentDefinitionsRequestRef.current += 1;
+      if (runIndexRefreshTimerRef.current !== null) {
+        window.clearTimeout(runIndexRefreshTimerRef.current);
+        runIndexRefreshTimerRef.current = null;
+      }
     };
-  }, [loadProviderSettings]);
+  }, [loadProviderSettings, loadRunIndex]);
+
+  useEffect(() => window.lin?.onAgentEvent(() => {
+    scheduleRunIndexRefresh();
+  }), [scheduleRunIndexRefresh]);
 
   useEffect(() => {
     void loadSlashCommands();
@@ -993,11 +1045,18 @@ export function AgentChatPanel({
   }, [runActive]);
 
   useEffect(() => {
-    if (selectedChildRunId && !childRuns[selectedChildRunId]) setSelectedChildRunId(null);
-  }, [selectedChildRunId, childRuns]);
+    if (
+      selectedRunId
+      && selectedRunConversationId === conversationId
+      && !childRuns[selectedRunId]
+    ) {
+      setSelectedRunId(null);
+      setSelectedRunConversationId(null);
+    }
+  }, [selectedRunId, selectedRunConversationId, conversationId, childRuns]);
 
-  // A command Run reveals its delivery conversation and asks for the task panel —
-  // the run is a parentless child run, so it surfaces there (the open task panel
+  // A command Run reveals its delivery conversation and asks for the Work panel —
+  // the run is a parentless child run, so it surfaces there (the open run panel
   // persists across the conversation switch this same reveal triggers).
   useEffect(() => onAgentRevealRequest((targetConversationId, options) => {
     if (options.transcriptTarget) {
@@ -1008,10 +1067,25 @@ export function AgentChatPanel({
         target: options.transcriptTarget,
       });
     }
-    if (!options.openTasks) return;
-    setSelectedChildRunId(null);
-    setTaskPanelOpen(true);
-  }), []);
+    if (!options.openWork) return;
+    setSelectedRunId(null);
+    setSelectedRunConversationId(null);
+    setWorkPanelOpen(true);
+    scheduleRunIndexRefresh();
+  }), [scheduleRunIndexRefresh]);
+
+  const openRunFromWorkPanel = useCallback(async (run: AgentRunListEntry) => {
+    setWorkPanelOpen(true);
+    try {
+      if (run.conversationId !== conversationId) {
+        await selectConversation(run.conversationId);
+      }
+      setSelectedRunConversationId(run.conversationId);
+      setSelectedRunId(run.runId);
+    } catch (caught) {
+      setRunIndexError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }, [conversationId, selectConversation]);
 
   useEffect(() => {
     if (historyOpen) void loadConversations();
@@ -1051,6 +1125,7 @@ export function AgentChatPanel({
     await Promise.all([
       loadProviderSettings(),
       loadConversations(),
+      loadRunIndex(),
       loadSlashCommands(),
       loadAgentDefinitions(),
       reloadConversation(),
@@ -1199,7 +1274,11 @@ export function AgentChatPanel({
         onDisclosureToggle={pauseStickToBottomForDisclosure}
         onEdit={editMessage}
         onNodeReferenceOpen={onOpenNodeReference}
-        onOpenChildRunTranscript={setSelectedChildRunId}
+        onOpenChildRunTranscript={(childRunId) => {
+          setWorkPanelOpen(true);
+          setSelectedRunConversationId(conversationId);
+          setSelectedRunId(childRunId);
+        }}
         onOpenRunDetails={(runId) => onOpenRunDetailsPanel?.(conversationId, runId)}
         onRegenerate={regenerateMessage}
         onRetry={retryMessage}
@@ -1289,19 +1368,21 @@ export function AgentChatPanel({
         </ButtonControl>
         <div className="agent-dock-actions">
           <ButtonControl
-            aria-expanded={taskPanelOpen && !selectedChildRun}
-            aria-label={runningTaskCount > 0
-              ? t.agent.task.openPanelActive({ count: runningTaskCount })
-              : t.agent.task.openPanel}
-            className="agent-task-panel-button"
+            aria-expanded={workPanelOpen}
+            aria-label={runningRunCount > 0
+              ? t.agent.run.openPanelActive({ count: runningRunCount })
+              : t.agent.run.openPanel}
+            className="agent-run-panel-button"
             onClick={() => {
-              setSelectedChildRunId(null);
-              setTaskPanelOpen((open) => !open);
+              setSelectedRunId(null);
+              setSelectedRunConversationId(null);
+              setWorkPanelOpen((open) => !open);
+              scheduleRunIndexRefresh();
             }}
-            title={t.agent.task.openPanel}
+            title={t.agent.run.openPanel}
           >
             <UsedToolsIcon size={ICON_SIZE.toolbar} />
-            {runningTaskCount > 0 ? <span className="agent-task-panel-badge">{runningTaskCount}</span> : null}
+            {runningRunCount > 0 ? <span className="agent-run-panel-badge">{runningRunCount}</span> : null}
           </ButtonControl>
         </div>
         {historyOpen ? createPortal(
@@ -1494,23 +1575,40 @@ export function AgentChatPanel({
           />
         )}
       </div>
-      <AgentChildRunDetailsPanel
-        onClose={() => setSelectedChildRunId(null)}
-        conversationId={conversationId}
-        index={index}
-        childRun={selectedChildRun}
-        childRunsByParentToolCallId={childRunsByParentToolCallId}
-        onNodeReferenceOpen={onOpenNodeReference}
-        onOpenChildRunTranscript={setSelectedChildRunId}
-      />
-      {taskPanelOpen && !selectedChildRun ? (
-        <AgentTaskPanel
-          conversationId={conversationId}
-          onClose={() => setTaskPanelOpen(false)}
-          onOpenChildRun={(childRunId) => {
-            setSelectedChildRunId(childRunId);
+      {workPanelOpen && selectedRun ? (
+        <AgentChildRunDetailsPanel
+          onBack={() => {
+            setSelectedRunId(null);
+            setSelectedRunConversationId(null);
           }}
-          tasks={tasks}
+          onClose={() => {
+            setSelectedRunId(null);
+            setSelectedRunConversationId(null);
+            setWorkPanelOpen(false);
+          }}
+          conversationId={conversationId}
+          index={index}
+          childRun={selectedRun}
+          childRunsByParentToolCallId={childRunsByParentToolCallId}
+          onNodeReferenceOpen={onOpenNodeReference}
+          onOpenChildRunTranscript={(childRunId) => {
+            setSelectedRunConversationId(conversationId);
+            setSelectedRunId(childRunId);
+          }}
+        />
+      ) : null}
+      {workPanelOpen && !selectedRun ? (
+        <AgentRunsPanel
+          error={runIndexError}
+          loading={runIndexLoading}
+          onClose={() => {
+            setSelectedRunId(null);
+            setSelectedRunConversationId(null);
+            setWorkPanelOpen(false);
+          }}
+          onOpenRun={(run) => void openRunFromWorkPanel(run)}
+          onRefresh={() => void loadRunIndex()}
+          runs={runIndex}
         />
       ) : null}
     </div>

@@ -225,7 +225,7 @@ should use cc-2.1-style bounded nesting and cycle prevention instead.
 
 [open-multi-agent](https://github.com/open-multi-agent/open-multi-agent)
 
-Problem definition: turn a user goal into a multi-agent task graph and execute
+Problem definition: turn a user goal into a recursive run tree and execute
 independent tasks concurrently.
 
 Observed approach: provides `runAgent`, `runTeam`, `runTasks`, and an
@@ -475,7 +475,7 @@ Field behavior:
   excerpt, and `none` starts clean. Verifier Runs are always `none`.
 - `detach`: if true, return immediately and notify the parent conversation when
   done.
-- `description`: optional short task panel summary.
+- `description`: optional short Work/Runs panel summary.
 - `prompt`: legacy alias for `objective`; new callers should use `objective`.
 - `model`: optional per-call model override. Resolution order is request override
   → the running agent's owned model (user/project `AgentDefinition.model`, or the
@@ -544,7 +544,7 @@ Background launch:
 ```
 
 When a background run reaches `completed`, `failed`, or `cancelled`, Lin appends
-a hidden `<agent-task-notification>` message to the parent conversation and
+a hidden `<agent-run-notification>` message to the parent conversation and
 starts a parent continuation when the parent agent is idle. The parent agent
 should not poll `run_status` for ordinary result retrieval.
 

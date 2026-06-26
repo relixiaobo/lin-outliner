@@ -3,19 +3,15 @@ import { act, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import type { ToolCall, Usage } from '../../src/core/agentTypes';
+import type { AgentRunListEntry, ToolCall, Usage } from '../../src/core/agentTypes';
 import type {
   AgentRenderChildRunEntity,
-  AgentRenderDreamTaskEntity,
-  AgentRenderProjection,
 } from '../../src/core/agentRenderProjection';
-import type { AgentTaskEntry } from '../../src/renderer/agent/runtime';
-import { buildAgentTaskEntries } from '../../src/renderer/agent/runtime';
 import type { DocumentIndex } from '../../src/renderer/state/document';
 import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import { AgentToolActivityGroup } from '../../src/renderer/ui/agent/AgentToolActivityGroup';
 import { AgentChildRunDetailsPanel } from '../../src/renderer/ui/agent/AgentChildRunDetailsPanel';
-import { AgentTaskPanel } from '../../src/renderer/ui/agent/AgentTaskPanel';
+import { AgentRunsPanel } from '../../src/renderer/ui/agent/AgentRunsPanel';
 import { renderAssistantBlocks } from '../../src/renderer/ui/agent/AgentAssistantTurnContent';
 import type { AgentExpandState } from '../../src/renderer/ui/agent/agentProcessTypes';
 
@@ -59,7 +55,7 @@ describe('agent child run UI', () => {
       />,
     );
 
-    expect(rendered.container.textContent).toContain('Ran agent task');
+    expect(rendered.container.textContent).toContain('Ran agent run');
     expect(rendered.container.textContent).toContain('Inspect child run UI');
 
     await click(rendered, firstToolCallToggle(rendered));
@@ -226,7 +222,7 @@ describe('agent child run UI', () => {
       },
     );
 
-    await waitForText(rendered, 'Ran agent task');
+    await waitForText(rendered, 'Ran agent run');
     await click(rendered, firstToolCallToggle(rendered));
     await click(rendered, textButton(rendered, 'View transcript'));
 
@@ -389,7 +385,7 @@ describe('agent child run UI', () => {
     );
 
     await waitForText(rendered, 'Inspect the current UI.');
-    await changeTextarea(rendered, 'Agent task follow-up', 'Continue with layout risks.');
+    await changeTextarea(rendered, 'Agent run follow-up', 'Continue with layout risks.');
     await click(rendered, textButton(rendered, 'Send'));
     await click(rendered, textButton(rendered, 'Stop'));
 
@@ -412,8 +408,8 @@ describe('agent child run UI', () => {
     ]);
   });
 
-  test('lists child run tasks and stops a running task', async () => {
-    let openedChildRunId: string | null = null;
+  test('lists run trees and stops a running run', async () => {
+    let openedRunId: string | null = null;
     const running = childRunEntity();
     running.status = 'running';
     running.completedAt = undefined;
@@ -424,28 +420,31 @@ describe('agent child run UI', () => {
       status: 'completed' as const,
       updatedAt: 320,
       completedAt: 320,
+      parentRunId: 'child-1',
     };
     const rendered = renderComponent(
-      <AgentTaskPanel
-        conversationId="conversation-1"
+      <AgentRunsPanel
+        error={null}
+        loading={false}
         onClose={() => undefined}
-        onOpenChildRun={(childRunId) => {
-          openedChildRunId = childRunId;
+        onOpenRun={(run) => {
+          openedRunId = run.runId;
         }}
-        tasks={[taskEntry(running), taskEntry(completed)]}
+        onRefresh={() => undefined}
+        runs={[runEntry(running), runEntry(completed)]}
       />,
     );
 
-    expect(rendered.container.textContent).toContain('Tasks');
-    expect(rendered.container.textContent).toContain('1 task running');
-    expect(rendered.container.querySelector('[aria-live="polite"]')?.textContent).toContain('1 task running');
+    expect(rendered.container.textContent).toContain('Runs');
+    expect(rendered.container.textContent).toContain('1 run running');
+    expect(rendered.container.querySelector('[aria-live="polite"]')?.textContent).toContain('1 run running');
     expect(rendered.container.textContent).toContain('Inspect child run UI');
     expect(rendered.container.textContent).toContain('Summarize notes');
 
     await click(rendered, textButton(rendered, 'Inspect child run UI'));
-    expect(openedChildRunId).toBe('child-1');
+    expect(openedRunId).toBe('child-1');
 
-    await click(rendered, ariaButton(rendered, 'Stop task'));
+    await click(rendered, ariaButton(rendered, 'Stop run'));
     await waitForCommand(rendered, 'agent_run_stop');
 
     expect(rendered.commands.filter((call) => call.cmd === 'agent_run_stop')).toEqual([{
@@ -504,68 +503,6 @@ describe('agent child run UI', () => {
     expect(fetchCount()).toBeGreaterThan(before);
   });
 
-  test('Dream tasks are surfaced in Settings, not the conversation task panel', async () => {
-    // Dreams ride in the projection but are filtered out of buildAgentTaskEntries —
-    // they now live in Settings → Agent's Dream-history group. Only child-run tasks
-    // reach the in-conversation panel.
-    const childRun = childRunEntity();
-    const dreamTask: AgentRenderDreamTaskEntity = {
-      id: 'dream:dream-run-1',
-      kind: 'dream',
-      status: 'completed',
-      trigger: 'manual',
-      principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
-      startedAt: 100,
-      updatedAt: 150,
-      completedAt: 150,
-      runId: 'dream-run-1',
-      processed: { totalMessageCount: 3, totalCharCount: 900, consolidateOnly: false },
-      changes: { added: 1, updated: 0, forgotten: 0, skipped: 0 },
-    };
-    const childRunTask = taskEntry(childRun);
-    const projection = {
-      taskIds: [dreamTask.id, childRunTask.id],
-      childRunIds: [childRun.id],
-      entities: {
-        messages: {},
-        childRuns: { [childRun.id]: childRun },
-        compactions: {},
-        dreams: {},
-        tasks: {
-          [dreamTask.id]: dreamTask,
-          [childRunTask.id]: {
-            id: childRunTask.id,
-            kind: 'child-run' as const,
-            status: childRunTask.status,
-            title: childRunTask.title,
-            subtitle: childRunTask.subtitle,
-            startedAt: childRunTask.startedAt,
-            updatedAt: childRunTask.updatedAt,
-            completedAt: childRunTask.completedAt,
-            childRunId: childRunTask.childRunId,
-          },
-        },
-      },
-    } as unknown as AgentRenderProjection;
-
-    const entries = buildAgentTaskEntries(projection);
-    // Only the child-run task survives; the dream is dropped.
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.kind).toBe('child-run');
-    expect(entries.some((entry) => entry.id === dreamTask.id)).toBe(false);
-
-    // And the panel renders nothing dream-shaped for those entries.
-    const rendered = renderComponent(
-      <AgentTaskPanel
-        conversationId="conversation-1"
-        onClose={() => undefined}
-        onOpenChildRun={() => undefined}
-        tasks={entries}
-      />,
-    );
-    expect(rendered.container.textContent).not.toContain('Memory Dream');
-    expect(rendered.container.textContent).toContain('Inspect child run UI');
-  });
 });
 
 describe('assistant turn interrupted verdict', () => {
@@ -842,18 +779,20 @@ function childRunEntity(): AgentRenderChildRunEntity {
   };
 }
 
-function taskEntry(childRun: AgentRenderChildRunEntity): AgentTaskEntry {
+function runEntry(childRun: AgentRenderChildRunEntity): AgentRunListEntry {
   return {
-    id: `child-run:${childRun.id}`,
-    kind: 'child-run',
+    runId: childRun.id,
+    conversationId: 'conversation-1',
+    conversationTitle: 'General',
+    agentId: childRun.executingAgentId,
+    kind: 'delegation',
     status: childRun.status,
+    purpose: undefined,
+    parentRunId: childRun.parentRunId ?? null,
     title: childRun.description,
-    subtitle: `${childRun.contextMode} · ${childRun.agentType}`,
     startedAt: childRun.startedAt,
     updatedAt: childRun.updatedAt,
     completedAt: childRun.completedAt,
-    childRunId: childRun.id,
-    childRun,
   };
 }
 

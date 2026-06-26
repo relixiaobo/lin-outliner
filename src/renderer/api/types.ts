@@ -67,12 +67,13 @@ export type {
   AgentApprovalResolutionScope,
   AgentAuthoringInput,
   AgentDefinitionView,
+  AgentRunListEntry,
   AgentStorageLocation,
 } from '../../core/agentTypes';
 
 export type {
   AgentDreamReadiness,
-  AgentRenderDreamTaskEntity,
+  AgentRenderDreamRunEntity,
 } from '../../core/agentRenderProjection';
 
 export interface AgentToolPermissionSettingsView {

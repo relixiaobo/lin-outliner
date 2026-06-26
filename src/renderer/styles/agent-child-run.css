@@ -1,4 +1,4 @@
-.agent-task-panel-button {
+.agent-run-panel-button {
   position: relative;
   display: inline-flex;
   width: 24px;
@@ -10,13 +10,13 @@
   transition: color var(--motion-fast);
 }
 
-.agent-task-panel-button:hover:not(:disabled),
-.agent-task-panel-button:focus-visible:not(:disabled),
-.agent-task-panel-button[aria-expanded="true"] {
+.agent-run-panel-button:hover:not(:disabled),
+.agent-run-panel-button:focus-visible:not(:disabled),
+.agent-run-panel-button[aria-expanded="true"] {
   color: var(--text-strong);
 }
 
-.agent-task-panel-badge {
+.agent-run-panel-badge {
   position: absolute;
   top: -3px;
   right: -5px;
@@ -34,7 +34,7 @@
   padding: 0 var(--space-1);
 }
 
-.agent-task-panel {
+.agent-run-panel {
   position: absolute;
   z-index: var(--z-popover);
   top: 0;
@@ -49,7 +49,7 @@
   box-shadow: var(--agent-side-panel-shadow);
 }
 
-.agent-task-header {
+.agent-run-header {
   display: flex;
   flex: 0 0 auto;
   align-items: flex-start;
@@ -61,11 +61,11 @@
   padding: var(--chrome-height) var(--space-6) var(--space-6);
 }
 
-.agent-task-title-block {
+.agent-run-title-block {
   min-width: 0;
 }
 
-.agent-task-title-line {
+.agent-run-title-line {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -74,18 +74,25 @@
   line-height: var(--line-ui-sm);
 }
 
-.agent-task-title-block p {
+.agent-run-title-block p {
   margin: var(--space-2) 0 0;
   color: var(--text-faint);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }
 
-.agent-task-close {
+.agent-run-close {
   flex: 0 0 auto;
 }
 
-.agent-task-action-error {
+.agent-run-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.agent-run-action-error {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -97,7 +104,7 @@
   padding: var(--space-4) var(--space-6);
 }
 
-.agent-task-empty {
+.agent-run-empty {
   display: flex;
   min-height: 160px;
   align-items: center;
@@ -108,7 +115,7 @@
   padding: var(--space-6);
 }
 
-.agent-task-list {
+.agent-run-list {
   display: flex;
   min-height: 0;
   min-width: 0;
@@ -119,20 +126,21 @@
   padding: var(--space-4);
 }
 
-.agent-task-row {
+.agent-run-row {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-2);
   border-radius: var(--radius-md);
+  padding-left: calc(var(--run-depth, 0) * var(--space-5));
 }
 
-.agent-task-row:hover {
+.agent-run-row:hover {
   background: var(--fill-1);
 }
 
-.agent-task-main {
+.agent-run-main {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -144,17 +152,38 @@
   text-align: left;
 }
 
-.agent-task-main:hover,
-.agent-task-main:focus-visible {
+.agent-run-disclosure {
+  display: inline-flex;
+  width: 22px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  padding: 0;
+}
+
+.agent-run-disclosure:hover:not(:disabled),
+.agent-run-disclosure:focus-visible:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.agent-run-disclosure:disabled {
+  color: transparent;
+}
+
+.agent-run-main:hover,
+.agent-run-main:focus-visible {
   background: var(--control-hover);
 }
 
-.agent-task-row.is-readonly .agent-task-main:hover {
+.agent-run-row.is-readonly .agent-run-main:hover {
   background: transparent;
 }
 
-.agent-task-kind,
-.agent-task-meta {
+.agent-run-kind,
+.agent-run-meta {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -164,11 +193,11 @@
   line-height: var(--line-ui-xs);
 }
 
-.agent-task-kind {
+.agent-run-kind {
   color: var(--text-soft);
 }
 
-.agent-task-title {
+.agent-run-title {
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--text-strong);
@@ -177,14 +206,14 @@
   white-space: normal;
 }
 
-.agent-task-meta {
+.agent-run-meta {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.agent-task-status {
+.agent-run-status {
   display: inline-flex;
   min-height: 18px;
   align-items: center;
@@ -194,23 +223,35 @@
   padding: 0 var(--space-2);
 }
 
-.agent-task-status.is-running {
+.agent-run-status.is-running {
   background: color-mix(in srgb, var(--agent-accent) 12%, transparent);
   color: var(--agent-accent);
 }
 
-.agent-task-status.is-completed {
+.agent-run-status.is-completed {
   background: color-mix(in srgb, var(--semantic-success) 12%, transparent);
   color: var(--semantic-success-strong);
 }
 
-.agent-task-status.is-failed,
-.agent-task-status.is-stopped {
+.agent-run-status.is-verified {
+  background: color-mix(in srgb, var(--semantic-success) 14%, transparent);
+  color: var(--semantic-success-strong);
+}
+
+.agent-run-status.is-verifying {
+  background: color-mix(in srgb, var(--agent-accent) 12%, transparent);
+  color: var(--agent-accent);
+}
+
+.agent-run-status.is-blocked,
+.agent-run-status.is-budget_exhausted,
+.agent-run-status.is-failed,
+.agent-run-status.is-stopped {
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: var(--danger);
 }
 
-.agent-task-row-actions {
+.agent-run-row-actions {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -218,17 +259,17 @@
   padding-right: var(--space-2);
 }
 
-.agent-task-icon-button {
+.agent-run-icon-button {
   color: var(--text-faint);
 }
 
-.agent-task-icon-button:hover:not(:disabled),
-.agent-task-icon-button:focus-visible:not(:disabled) {
+.agent-run-icon-button:hover:not(:disabled),
+.agent-run-icon-button:focus-visible:not(:disabled) {
   color: var(--text-strong);
 }
 
-.agent-task-icon-button.is-danger:hover:not(:disabled),
-.agent-task-icon-button.is-danger:focus-visible:not(:disabled) {
+.agent-run-icon-button.is-danger:hover:not(:disabled),
+.agent-run-icon-button.is-danger:focus-visible:not(:disabled) {
   color: var(--danger);
 }
 
@@ -298,11 +339,12 @@
   justify-content: space-between;
   gap: var(--space-5);
   border-bottom: 1px solid var(--border-subtle);
-  /* Matches .agent-task-header: controls clear the top window chrome drag zone. */
+  /* Matches .agent-run-header: controls clear the top window chrome drag zone. */
   padding: var(--chrome-height) var(--space-6) var(--space-6);
 }
 
 .agent-child-run-title-block {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -356,6 +398,7 @@
   color: var(--danger);
 }
 
+.agent-child-run-back,
 .agent-child-run-close {
   flex: 0 0 auto;
 }

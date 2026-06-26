@@ -1175,7 +1175,7 @@ describe('agent runtime childRuns', () => {
 
     expect(script.pendingCount()).toBe(0);
     const notificationText = notificationContexts.join('\n');
-    expect(notificationText).toContain('agent-task-notification');
+    expect(notificationText).toContain('agent-run-notification');
     expect(notificationText).toContain('bg-notify');
     expect(notificationText).toContain('Background notification result.');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
@@ -1206,6 +1206,76 @@ describe('agent runtime childRuns', () => {
         event.type === 'conversation_attention',
     );
     expect(afterOpen[afterOpen.length - 1]?.unreadCount).toBe(0);
+  });
+
+  test('lists Work runs across channels without surfacing ordinary turns', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-list-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-list-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('spawn', {
+            description: 'alpha run',
+            objective: 'Index alpha work.',
+            verify: false,
+            name: 'alpha-index',
+          }, { id: 'tool-alpha-run' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Alpha background result.')),
+        fauxAssistantMessage(fauxText('Alpha parent final.')),
+        fauxAssistantMessage([
+          fauxToolCall('spawn', {
+            description: 'beta run',
+            objective: 'Index beta work.',
+            verify: false,
+            name: 'beta-index',
+          }, { id: 'tool-beta-run' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Beta background result.')),
+        fauxAssistantMessage(fauxText('Beta parent final.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const alpha = await runtime.createConversation({ title: 'Alpha Work' });
+    await sendMessageApprovingAgent(runtime, alpha.conversationId, 'Start the alpha indexed run.', sink);
+    const beta = await runtime.createConversation({ title: 'Beta Work' });
+    await sendMessageApprovingAgent(runtime, beta.conversationId, 'Start the beta indexed run.', sink);
+
+    expect(script.pendingCount()).toBe(0);
+    const runs = await runtime.listRuns();
+    expect(runs).toHaveLength(2);
+    expect(runs.some((run) => run.kind === 'turn')).toBe(false);
+    expect(runs.every((run) => run.kind === 'delegation')).toBe(true);
+    expect(runs.every((run) => run.status === 'completed')).toBe(true);
+    expect(runs.every((run) => Boolean(run.parentRunId))).toBe(true);
+
+    const byTitle = new Map(runs.map((run) => [run.title, run]));
+    expect([...byTitle.keys()].sort()).toEqual(['Index alpha work.', 'Index beta work.']);
+    expect(byTitle.get('Index alpha work.')?.conversationId).toBe(alpha.conversationId);
+    expect(byTitle.get('Index alpha work.')?.conversationTitle).toBe('Alpha Work');
+    expect(byTitle.get('Index beta work.')?.conversationId).toBe(beta.conversationId);
+    expect(byTitle.get('Index beta work.')?.conversationTitle).toBe('Beta Work');
+    await expect(runtime.listRuns({ limit: 1 })).resolves.toHaveLength(1);
   });
 
   test('exposes runtime commands for child run follow-up and status refresh', async () => {

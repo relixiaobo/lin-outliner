@@ -2504,6 +2504,11 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentRuntime.setConversationIncludeInDreamData(conversationId(), args.includeInDreamData === true);
     case 'agent_delete_conversation':
       return agentRuntime.deleteConversation(conversationId());
+    case 'agent_list_runs':
+      return agentRuntime.listRuns({
+        limit: typeof args.limit === 'number' ? args.limit : undefined,
+        perConversationLimit: typeof args.perConversationLimit === 'number' ? args.perConversationLimit : undefined,
+      });
     case 'agent_list_dream_history':
       return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
     case 'agent_dream_readiness':

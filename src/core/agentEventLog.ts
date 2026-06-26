@@ -839,14 +839,14 @@ export interface FollowUpAppliedEvent extends AgentEventBase {
 }
 
 export type AgentNotificationKind =
-  // Off-floor task terminal states — the only kinds with an emitter today.
+  // Off-floor run terminal states — the only kinds with an emitter today.
   | 'task_completed'
   | 'task_failed'
   // Reserved (no emitter yet): a conversation's own *foreground* agent awaiting a
   // user decision while the user is elsewhere. Delegated child runs never ask the
   // user mid-execution, so there is deliberately no child-run→user needs_input trigger.
   | 'needs_input'
-  // Reserved (no emitter yet): a cheap no-LLM progress post for a long task.
+  // Reserved (no emitter yet): a cheap no-LLM progress post for a long run.
   | 'status'
   // A delivered in-Channel peer reply, raised only when the conversation is not
   // being viewed. Badge-only: it folds into unread like any notification, but the
@@ -860,7 +860,7 @@ export type AgentNotificationKind =
  * (`conversationId`) — a run anchored to conversation X still reports there.
  * One variant only: a delegated child run IS a run (run unification).
  */
-export type AgentTaskSource = { type: 'run'; runId: string };
+export type AgentRunNotificationSource = { type: 'run'; runId: string };
 
 /**
  * Delivered to its origin conversation: the base `conversationId` IS the
@@ -874,7 +874,7 @@ export interface NotificationCreatedEvent extends AgentEventBase {
   title: string;
   body?: string;
   /** The off-floor run that produced this notification, when any. */
-  source?: AgentTaskSource;
+  source?: AgentRunNotificationSource;
 }
 
 /**
@@ -932,7 +932,7 @@ export interface RunTerminalEvent extends AgentEventBase {
 
 /**
  * Conversation-log lifecycle marker for a delegated (child) run — the slim
- * projection feed for the boundary row + task panel. The child's transcript
+ * projection feed for the boundary row + Work/Runs panel. The child's transcript
  * lives in its OWN run ledger (`runs/<childRunId>/events.jsonl`, replayed
  * alone); there is no transcript snapshot, message count, or evidence
  * boundary here (run unification — the boundary is `run.started`'s seq in
@@ -1169,7 +1169,7 @@ export interface DelegationDetail {
 
 /**
  * Conversation-level record of a delegated (child) run — the projection the
- * boundary row + task panel read. The transcript is NOT here: it lives in the
+ * boundary row + Work/Runs panel read. The transcript is NOT here: it lives in the
  * child's own run ledger, replayed independently (run unification).
  */
 export type AgentChildRunRecord = DelegationDetail;
@@ -1222,7 +1222,7 @@ export interface AgentNotificationRecord {
   kind: AgentNotificationKind;
   title: string;
   body?: string;
-  source?: AgentTaskSource;
+  source?: AgentRunNotificationSource;
   seq: number;
   createdAt: number;
   read: boolean;

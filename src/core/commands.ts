@@ -100,6 +100,7 @@ export const AGENT_COMMANDS = [
   'agent_rename_conversation',
   'agent_set_conversation_include_in_dream_data',
   'agent_delete_conversation',
+  'agent_list_runs',
   'agent_list_dream_history',
   'agent_dream_readiness',
   'agent_run_dream_now',

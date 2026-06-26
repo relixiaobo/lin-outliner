@@ -9,6 +9,7 @@ import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import {
   AgentIcon,
+  BackIcon,
   CheckIcon,
   CloseIcon,
   CopyIcon,
@@ -30,6 +31,7 @@ import { formatRunDuration } from './agentProcessTypes';
 import { useT } from '../../i18n/I18nProvider';
 
 interface AgentChildRunDetailsPanelProps {
+  onBack?: () => void;
   onClose: () => void;
   conversationId: string | null;
   index: DocumentIndex;
@@ -206,6 +208,7 @@ function TranscriptTimeline({
 }
 
 export function AgentChildRunDetailsPanel({
+  onBack,
   onClose,
   conversationId,
   index,
@@ -349,6 +352,16 @@ export function AgentChildRunDetailsPanel({
   return (
     <aside className="agent-child-run-details-panel" aria-label={t.agent.childRun.detailsAriaLabel}>
       <header className="agent-child-run-details-header">
+        {onBack ? (
+          <IconButton
+            className="agent-child-run-back"
+            icon={BackIcon}
+            label={t.agent.run.backToRuns}
+            onClick={onBack}
+            title={t.agent.run.backToRuns}
+            variant="panel"
+          />
+        ) : null}
         <div className="agent-child-run-title-block">
           <div className="agent-child-run-title-line">
             <AgentIcon size={ICON_SIZE.menu} />
