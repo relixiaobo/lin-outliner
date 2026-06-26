@@ -107,13 +107,13 @@ async function expectConcentricPreviewCorners(previewFrame: Locator, contentSele
       contentClipPath: contentStyle.clipPath,
       contentHasRadius: contentRadius > 0,
       inlinePaddingMatchesBlock: Math.abs(paddingLeft - paddingTop) <= 1,
-      radiiAreConcentric: Math.abs(frameRadius - (contentRadius + paddingTop)) <= 1,
+      innerRadiusFromOuter: Math.abs(contentRadius - Math.max(2, frameRadius - paddingTop)) <= 1,
     };
   }, contentSelector)).toEqual({
-    contentClipPath: 'inset(0px round 12px)',
+    contentClipPath: 'inset(0px round 8px)',
     contentHasRadius: true,
     inlinePaddingMatchesBlock: true,
-    radiiAreConcentric: true,
+    innerRadiusFromOuter: true,
   });
 }
 
@@ -1148,10 +1148,10 @@ test.describe('file attachments', () => {
       backgroundColor: 'rgb(255, 255, 255)',
       boxShadow: 'none',
       hostBackgroundColor: 'rgba(0, 0, 0, 0)',
-      hostRadius: '12px',
-      iframeRadius: '12px',
+      hostRadius: '8px',
+      iframeRadius: '8px',
       minHeight: '0px',
-      pageRadius: '12px',
+      pageRadius: '8px',
     });
 
     await outlineMarkers.nth(1).click();
