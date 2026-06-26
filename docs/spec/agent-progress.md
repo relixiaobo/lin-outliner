@@ -132,7 +132,8 @@ truth.
   - child runs with full/brief/none context modes, verifier retry, and their OWN
     run ledger (run unification; sidechain transcripts replay from the ledger)
     plus background notifications
-  - Work/Runs panel backed by the global `agent_list_runs` index: it lists
+  - Work/Runs view backed by the global `agent_list_runs` index: it replaces the
+    agent dock's chat body with a run tree and second-level detail view for
     non-turn, non-Dream runs across channels with open-details/stop actions
     (Dream history moved to the Settings → Agent "Memory & activity" panel)
   - skill `execution: isolated` routed through the delegation runtime

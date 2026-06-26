@@ -108,7 +108,7 @@ export type AgentDreamEntry = AgentCompletedDreamEntry | AgentActiveDreamEntry;
 
 // Child-run entries stay in the type for replay/projection compatibility, but
 // the live transcript no longer renders them as standalone boundary rows. Runs
-// surface through their ordinary spawn/run_* tool calls plus the Work/Runs panel.
+// surface through their ordinary spawn/run_* tool calls plus the Work/Runs view.
 export interface AgentChildRunEntry {
   id: string;
   kind: 'child-run';

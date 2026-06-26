@@ -150,7 +150,7 @@ never blocks the others or subsequent sweeps. A fire runs the brief as a
 **delegated child run** on the command's own delivery conversation, so every run is recorded
 inline in that conversation as a **child-run boundary row** (its final result
 lands in the channel as an expandable summary with a "View full run" link; see
-`agent-event-log-rendering.md`) and also surfaces in the Work/Runs panel.
+`agent-event-log-rendering.md`) and also surfaces in the Work/Runs view.
 Under the one-Neva invariant there is exactly one agent, so a scheduled command
 always forks the current agent (Neva), running under its identity and
 capabilities — a command never selects an executing agent. The run prompt is the

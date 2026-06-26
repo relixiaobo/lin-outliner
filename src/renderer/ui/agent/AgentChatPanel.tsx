@@ -1478,139 +1478,145 @@ export function AgentChatPanel({
         ) : null}
       </header>
 
-      <div
-        ref={scrollRef}
-        className="agent-chat-scroll"
-        onScroll={(event) => {
-          stickToBottomRef.current = shouldStickToBottom(event.currentTarget);
-          scheduleScrollMetrics(event.currentTarget);
-        }}
-      >
-        {visibleError ? (
-          <div className="agent-message-error" role="status">
-            <WarningIcon size={ICON_SIZE.menu} />
-            <span>{visibleError}</span>
-          </div>
-        ) : null}
-        {entries.length === 0 ? (
-          <div className="agent-empty-state">
-            {!settingsLoaded ? (
-              <EmptyState icon={LoaderIcon} loading role="status" title={t.common.loading} />
-            ) : hasUsableProvider ? null : (
-              <div className="agent-onboarding" role="status">
-                <p className="agent-onboarding-text">{t.agent.chat.onboardingText}</p>
-                <Button
-                  onClick={() => {
-                    void window.lin?.openSettings();
-                  }}
-                  variant="primary"
-                >
-                  {t.agent.chat.onboardingCta}
-                </Button>
+      {workPanelOpen ? (
+        <div className="agent-work-page">
+          {selectedRun ? (
+            <AgentChildRunDetailsPanel
+              onBack={() => {
+                setSelectedRunId(null);
+                setSelectedRunConversationId(null);
+              }}
+              onClose={() => {
+                setSelectedRunId(null);
+                setSelectedRunConversationId(null);
+                setWorkPanelOpen(false);
+              }}
+              conversationId={conversationId}
+              index={index}
+              childRun={selectedRun}
+              childRunsByParentToolCallId={childRunsByParentToolCallId}
+              onNodeReferenceOpen={onOpenNodeReference}
+              onOpenChildRunTranscript={(childRunId) => {
+                setSelectedRunConversationId(conversationId);
+                setSelectedRunId(childRunId);
+              }}
+            />
+          ) : (
+            <AgentRunsPanel
+              error={runIndexError}
+              loading={runIndexLoading}
+              onClose={() => {
+                setSelectedRunId(null);
+                setSelectedRunConversationId(null);
+                setWorkPanelOpen(false);
+              }}
+              onOpenRun={(run) => void openRunFromWorkPanel(run)}
+              onRefresh={() => void loadRunIndex()}
+              runs={runIndex}
+            />
+          )}
+        </div>
+      ) : (
+        <>
+          <div
+            ref={scrollRef}
+            className="agent-chat-scroll"
+            onScroll={(event) => {
+              stickToBottomRef.current = shouldStickToBottom(event.currentTarget);
+              scheduleScrollMetrics(event.currentTarget);
+            }}
+          >
+            {visibleError ? (
+              <div className="agent-message-error" role="status">
+                <WarningIcon size={ICON_SIZE.menu} />
+                <span>{visibleError}</span>
+              </div>
+            ) : null}
+            {entries.length === 0 ? (
+              <div className="agent-empty-state">
+                {!settingsLoaded ? (
+                  <EmptyState icon={LoaderIcon} loading role="status" title={t.common.loading} />
+                ) : hasUsableProvider ? null : (
+                  <div className="agent-onboarding" role="status">
+                    <p className="agent-onboarding-text">{t.agent.chat.onboardingText}</p>
+                    <Button
+                      onClick={() => {
+                        void window.lin?.openSettings();
+                      }}
+                      variant="primary"
+                    >
+                      {t.agent.chat.onboardingCta}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div
+                className={shouldVirtualizeTranscript ? 'agent-chat-transcript is-virtual' : 'agent-chat-transcript'}
+                data-virtualized={shouldVirtualizeTranscript ? 'true' : 'false'}
+                style={shouldVirtualizeTranscript ? { height: virtualLayout.totalHeight } : undefined}
+              >
+                {visibleConversationRows.map((row, offset) => {
+                  const rowIndex = virtualRange.start + offset;
+                  const item = virtualLayout.items[rowIndex];
+                  const rowHighlighted = highlightedTranscriptRowKey === row.key;
+                  const renderedRow = renderConversationRow(row, rowHighlighted);
+                  return (
+                    <AgentTranscriptRowShell
+                      highlighted={rowHighlighted}
+                      key={row.key}
+                      onMeasure={measureConversationRow}
+                      rowKey={row.key}
+                      style={shouldVirtualizeTranscript && item
+                        ? { transform: `translateY(${item.top}px)` }
+                        : undefined}
+                      virtualized={shouldVirtualizeTranscript}
+                    >
+                      {renderedRow}
+                    </AgentTranscriptRowShell>
+                  );
+                })}
               </div>
             )}
           </div>
-        ) : (
-          <div
-            className={shouldVirtualizeTranscript ? 'agent-chat-transcript is-virtual' : 'agent-chat-transcript'}
-            data-virtualized={shouldVirtualizeTranscript ? 'true' : 'false'}
-            style={shouldVirtualizeTranscript ? { height: virtualLayout.totalHeight } : undefined}
-          >
-            {visibleConversationRows.map((row, offset) => {
-              const rowIndex = virtualRange.start + offset;
-              const item = virtualLayout.items[rowIndex];
-              const rowHighlighted = highlightedTranscriptRowKey === row.key;
-              const renderedRow = renderConversationRow(row, rowHighlighted);
-              return (
-                <AgentTranscriptRowShell
-                  highlighted={rowHighlighted}
-                  key={row.key}
-                  onMeasure={measureConversationRow}
-                  rowKey={row.key}
-                  style={shouldVirtualizeTranscript && item
-                    ? { transform: `translateY(${item.top}px)` }
-                    : undefined}
-                  virtualized={shouldVirtualizeTranscript}
-                >
-                  {renderedRow}
-                </AgentTranscriptRowShell>
-              );
-            })}
-          </div>
-        )}
-      </div>
 
-      <div className="agent-composer-region">
-        {conversationId === DEFAULT_DREAM_CHANNEL_ID ? (
-          <DreamLauncher
-            dreamSchedule={providerSettings?.agent.dreamSchedule}
-            isStreaming={runActive}
-            onSettingsChanged={() => {
-              void loadProviderSettings();
-            }}
-          />
-        ) : (
-          <AgentComposer
-            currentNodeId={composerCurrentNodeId(userViewContext, index)}
-            focusToken={composerFocusToken}
-            index={index}
-            isStreaming={runActive}
-            members={[]}
-            onNodeReferenceOpen={onOpenNodeReference}
-            onCancelSteer={handleCancelSteer}
-            onSend={sendMessage}
-            onStop={stop}
-            onSteer={handleSteerMessage}
-            onResolveApproval={handleResolveApproval}
-            onResolveUserQuestion={resolveUserQuestion}
-            pendingApproval={pendingApproval}
-            pendingUserQuestion={pendingUserQuestion}
-            settings={providerSettings}
-            agentModel={typeof builtInDefinition?.model === 'string' ? builtInDefinition.model : ''}
-            agentEffort={typeof builtInDefinition?.effort === 'string' ? builtInDefinition.effort : ''}
-            onModelChange={builtInDefinition ? handleAgentModelChange : undefined}
-            onEffortChange={builtInDefinition ? handleAgentEffortChange : undefined}
-            slashCommands={slashCommands}
-            steeringNote={steeringNote}
-          />
-        )}
-      </div>
-      {workPanelOpen && selectedRun ? (
-        <AgentChildRunDetailsPanel
-          onBack={() => {
-            setSelectedRunId(null);
-            setSelectedRunConversationId(null);
-          }}
-          onClose={() => {
-            setSelectedRunId(null);
-            setSelectedRunConversationId(null);
-            setWorkPanelOpen(false);
-          }}
-          conversationId={conversationId}
-          index={index}
-          childRun={selectedRun}
-          childRunsByParentToolCallId={childRunsByParentToolCallId}
-          onNodeReferenceOpen={onOpenNodeReference}
-          onOpenChildRunTranscript={(childRunId) => {
-            setSelectedRunConversationId(conversationId);
-            setSelectedRunId(childRunId);
-          }}
-        />
-      ) : null}
-      {workPanelOpen && !selectedRun ? (
-        <AgentRunsPanel
-          error={runIndexError}
-          loading={runIndexLoading}
-          onClose={() => {
-            setSelectedRunId(null);
-            setSelectedRunConversationId(null);
-            setWorkPanelOpen(false);
-          }}
-          onOpenRun={(run) => void openRunFromWorkPanel(run)}
-          onRefresh={() => void loadRunIndex()}
-          runs={runIndex}
-        />
-      ) : null}
+          <div className="agent-composer-region">
+            {conversationId === DEFAULT_DREAM_CHANNEL_ID ? (
+              <DreamLauncher
+                dreamSchedule={providerSettings?.agent.dreamSchedule}
+                isStreaming={runActive}
+                onSettingsChanged={() => {
+                  void loadProviderSettings();
+                }}
+              />
+            ) : (
+              <AgentComposer
+                currentNodeId={composerCurrentNodeId(userViewContext, index)}
+                focusToken={composerFocusToken}
+                index={index}
+                isStreaming={runActive}
+                members={[]}
+                onNodeReferenceOpen={onOpenNodeReference}
+                onCancelSteer={handleCancelSteer}
+                onSend={sendMessage}
+                onStop={stop}
+                onSteer={handleSteerMessage}
+                onResolveApproval={handleResolveApproval}
+                onResolveUserQuestion={resolveUserQuestion}
+                pendingApproval={pendingApproval}
+                pendingUserQuestion={pendingUserQuestion}
+                settings={providerSettings}
+                agentModel={typeof builtInDefinition?.model === 'string' ? builtInDefinition.model : ''}
+                agentEffort={typeof builtInDefinition?.effort === 'string' ? builtInDefinition.effort : ''}
+                onModelChange={builtInDefinition ? handleAgentModelChange : undefined}
+                onEffortChange={builtInDefinition ? handleAgentEffortChange : undefined}
+                slashCommands={slashCommands}
+                steeringNote={steeringNote}
+              />
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

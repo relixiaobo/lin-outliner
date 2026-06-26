@@ -35,18 +35,20 @@
 }
 
 .agent-run-panel {
-  position: absolute;
-  z-index: var(--z-popover);
-  top: 0;
-  right: 0;
-  bottom: 0;
   display: flex;
-  width: min(380px, 100%);
   min-width: 0;
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
-  border-left: 1px solid var(--border-subtle);
-  background: color-mix(in srgb, var(--surface) 96%, white);
-  box-shadow: var(--agent-side-panel-shadow);
+}
+
+.agent-work-page {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .agent-run-header {
@@ -56,9 +58,7 @@
   justify-content: space-between;
   gap: var(--space-5);
   border-bottom: 1px solid var(--border-subtle);
-  /* Side panels reach the top edge, but their controls must sit below the window
-     chrome drag zone; otherwise the corner agent toggle intercepts pointer clicks. */
-  padding: var(--chrome-height) var(--space-6) var(--space-6);
+  padding: var(--space-4) var(--space-5);
 }
 
 .agent-run-title-block {
@@ -318,18 +318,11 @@
 }
 
 .agent-child-run-details-panel {
-  position: absolute;
-  z-index: var(--z-popover);
-  top: 0;
-  right: 0;
-  bottom: 0;
   display: flex;
-  width: min(540px, 100%);
   min-width: 0;
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
-  border-left: 1px solid var(--border-subtle);
-  background: color-mix(in srgb, var(--surface) 96%, white);
-  box-shadow: var(--agent-side-panel-shadow);
 }
 
 .agent-child-run-details-header {
@@ -339,8 +332,7 @@
   justify-content: space-between;
   gap: var(--space-5);
   border-bottom: 1px solid var(--border-subtle);
-  /* Matches .agent-run-header: controls clear the top window chrome drag zone. */
-  padding: var(--chrome-height) var(--space-6) var(--space-6);
+  padding: var(--space-4) var(--space-5);
 }
 
 .agent-child-run-title-block {

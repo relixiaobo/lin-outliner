@@ -160,7 +160,7 @@ export function AgentRunsPanel({
   }
 
   return (
-    <aside className="agent-run-panel" aria-label={t.agent.run.panelAriaLabel}>
+    <section className="agent-run-panel" aria-label={t.agent.run.panelAriaLabel}>
       <header className="agent-run-header">
         <div className="agent-run-title-block">
           <div className="agent-run-title-line">
@@ -282,6 +282,6 @@ export function AgentRunsPanel({
           })}
         </div>
       )}
-    </aside>
+    </section>
   );
 }

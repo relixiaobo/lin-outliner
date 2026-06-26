@@ -475,7 +475,7 @@ Field behavior:
   excerpt, and `none` starts clean. Verifier Runs are always `none`.
 - `detach`: if true, return immediately and notify the parent conversation when
   done.
-- `description`: optional short Work/Runs panel summary.
+- `description`: optional short Work/Runs view summary.
 - `prompt`: legacy alias for `objective`; new callers should use `objective`.
 - `model`: optional per-call model override. Resolution order is request override
   → the running agent's owned model (user/project `AgentDefinition.model`, or the

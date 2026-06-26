@@ -3182,14 +3182,17 @@ test.describe('agent composer controls', () => {
     await expect(page.getByRole('button', { name: 'Running agent run "Inspect child run UI"' }).first()).toBeVisible();
 
     await page.getByRole('button', { name: /^Open Work/ }).click();
-    const runs = page.getByRole('complementary', { name: 'Agent runs' });
+    const runs = page.getByRole('region', { name: 'Agent runs' });
     await expect(runs).toBeVisible();
+    await expect(runs).toHaveCSS('position', 'static');
+    await expect(page.locator('.agent-composer-region')).toHaveCount(0);
     await expect(runs.getByText('1 run running')).toBeVisible();
     await expect(runs.getByText('Inspect child run UI')).toBeVisible();
     await runs.getByRole('button', { name: 'Open run' }).click();
 
-    const details = page.getByRole('complementary', { name: 'Agent run details' });
+    const details = page.getByRole('region', { name: 'Agent run details' });
     await expect(details).toBeVisible();
+    await expect(details).toHaveCSS('position', 'static');
     await expect(details.getByText('Inspect child run UI')).toBeVisible();
     await expect(page.getByText('fork · explorer')).toBeVisible();
 

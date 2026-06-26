@@ -350,7 +350,7 @@ export function AgentChildRunDetailsPanel({
   }
 
   return (
-    <aside className="agent-child-run-details-panel" aria-label={t.agent.childRun.detailsAriaLabel}>
+    <section className="agent-child-run-details-panel" aria-label={t.agent.childRun.detailsAriaLabel}>
       <header className="agent-child-run-details-header">
         {onBack ? (
           <IconButton
@@ -525,6 +525,6 @@ export function AgentChildRunDetailsPanel({
           </dl>
         ) : null}
       </div>
-    </aside>
+    </section>
   );
 }

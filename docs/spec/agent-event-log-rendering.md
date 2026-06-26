@@ -960,7 +960,7 @@ Rules:
   assistant/tool transcript stays inline. Users can trigger a manual run only
   from Settings, and durable Dream history is surfaced in Settings → Agent
   "Memory & activity" via the `agent_list_dream_history` IPC. Dream runs do not
-  appear in the Work/Runs panel; `AgentRenderDreamTaskEntity.principal` remains
+  appear in the Work/Runs view; `AgentRenderDreamTaskEntity.principal` remains
   the Dream subject for audit labeling.
 - `child_run.*` events back `entities.childRuns` — the conversation's permanent
   record of a run, whose final result is an expandable summary with a "View full
@@ -983,11 +983,13 @@ Rules:
   - A running boundary row shows a live status line and is not yet expandable;
     once it seals it expands to the result (or error) and the full-run link.
     Boundary rows live only in `transcriptRows`, never in the active `rows` path.
-- The Work/Runs panel is a global run index backed by `agent_list_runs`, not a
-  projection-only task list on the active conversation. Its first level lists
-  non-turn, non-Dream runs across channels as a tree using `parentRunId`; opening
-  a row switches the same side panel to the run detail view. The detail view still
-  reads the selected conversation's `entities.childRuns` and run transcript.
+- The Work/Runs view is a global run index backed by `agent_list_runs`, not a
+  projection-only task list on the active conversation. Opening Work replaces the
+  agent dock's chat body with the first-level run tree; opening a row switches
+  that same body area to the second-level run detail view. The first level lists
+  non-turn, non-Dream runs across channels as a tree using `parentRunId`. The
+  detail view still reads the selected conversation's `entities.childRuns` and
+  run transcript.
 - Long output rows are collapsed by default.
 - **Result-first turn fold (one flat level).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last
