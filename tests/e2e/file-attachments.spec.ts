@@ -1059,7 +1059,7 @@ test.describe('file attachments', () => {
     await expect(epubPreview.locator('.file-preview-epub--summary')).toBeVisible();
     await expect(epubPreview.locator('.file-preview-epub-host')).toHaveAttribute('aria-label', 'preview-book.epub EPUB reader');
     await expect(epubPreview.locator('.file-preview-epub-host')).toHaveAttribute('aria-hidden', 'false');
-    await expect(epubPreview.locator('.file-preview-epub-view')).toHaveCount(1);
+    await expect(epubPreview.locator('.file-preview-epub-section')).toHaveCount(1);
     await expect(epubPreview.locator('.file-preview-metadata')).toHaveCount(0);
     await expect.poll(async () => {
       const calls = await commandCalls(page);
@@ -1069,15 +1069,36 @@ test.describe('file attachments', () => {
     const epubBody = page.locator('.file-node-row-preview > .file-node-body').last();
     await epubBody.locator('.file-preview-pill-primary').click();
     const fullReader = epubBody.locator('.file-node-preview.expanded .file-preview-epub--full .file-preview-epub-host');
-    await expect(fullReader).toHaveAttribute('data-epub-scroll-reader', 'true');
-    await expect(fullReader).toHaveAttribute('data-epub-section', '1');
+    await expect(fullReader).toHaveAttribute('data-epub-continuous-reader', 'true');
+    await expect(fullReader).toHaveAttribute('data-epub-section-count', '2');
+    await expect(fullReader.locator('.file-preview-epub-section')).toHaveCount(2);
+    await expect(fullReader.locator('.file-preview-epub-iframe')).toHaveCount(2);
 
     const readerBox = await fullReader.boundingBox();
     if (!readerBox) throw new Error('Missing EPUB reader bounds');
+    const sectionGap = await fullReader.evaluate((element) => {
+      const sections = Array.from(element.querySelectorAll<HTMLElement>('.file-preview-epub-section'));
+      const first = sections[0]?.getBoundingClientRect();
+      const second = sections[1]?.getBoundingClientRect();
+      return first && second ? second.top - first.bottom : 0;
+    });
+    expect(sectionGap).toBeGreaterThan(0);
+    await expect.poll(async () => fullReader.locator('.file-preview-epub-frame').first().evaluate((frame) => {
+      const style = getComputedStyle(frame);
+      return {
+        backgroundColor: style.backgroundColor,
+        boxShadow: style.boxShadow,
+        minHeight: style.minHeight,
+      };
+    })).toEqual({
+      backgroundColor: 'rgba(0, 0, 0, 0)',
+      boxShadow: 'none',
+      minHeight: '0px',
+    });
+
     await page.mouse.move(readerBox.x + readerBox.width / 2, readerBox.y + readerBox.height / 2);
     await page.mouse.wheel(0, 20000);
-    await page.mouse.wheel(0, 20000);
-    await expect(fullReader).toHaveAttribute('data-epub-section', '2');
+    await expect.poll(async () => fullReader.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   });
 
   test('unsupported file previews keep the same bottom action location as previewable files', async ({ page }) => {

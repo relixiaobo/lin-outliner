@@ -389,8 +389,8 @@ Renderers are directory listing, image, PDF (`pdf.js`; every page is stacked
 vertically and scrolled to navigate — each page renders lazily as it nears the
 scroll viewport and is fitted to the available width, with no page-nav or zoom
 controls), EPUB (`foliate-js`; summary previews the first loaded section, while
-expanded readers use wheel/trackpad scrolling to advance through scrolled
-sections and across spine items, with book bytes loaded only through the capped
+expanded readers stack every linear spine section into one continuous vertical
+scrollport with page-like gaps, with book bytes loaded only through the capped
 preview bytes API), text/source-code with Shiki, Markdown with `react-markdown` +
 `remark-gfm`, CSV/TSV table, and fallback metadata. The PDF renderer reads bytes
 only through the preview source API, uses a bundled same-origin worker, and falls
