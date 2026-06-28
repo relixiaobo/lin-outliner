@@ -780,11 +780,17 @@ function PdfPages({
     : containerSize.width;
   const pageScrollRootRef = containerRef;
   const outlineLayoutVersion = `${pageWidth}:${pageCount}:${Object.keys(pageAspects).length}`;
-  const resolvePdfOutlineTop = useCallback((item: DocumentOutlineItem) => {
+  const resolvePdfOutlineTop = useCallback((item: DocumentOutlineItem, scrollRoot: HTMLElement) => {
     const target = item.target as Partial<PdfOutlineTarget>;
     if (typeof target.pageNumber !== 'number') return null;
-    const pageElement = containerRef.current?.querySelector<HTMLElement>(`[data-pdf-page-number="${target.pageNumber}"]`);
-    return pageElement?.offsetTop ?? null;
+    const pageElement = scrollRoot.querySelector<HTMLElement>(`[data-pdf-page-number="${target.pageNumber}"]`);
+    if (!pageElement) return null;
+    // Scroll-content coordinates (what scrollTo/scrollTop compare against), not
+    // offsetParent-relative offsetTop, so the marker stays accurate if the scrollport
+    // gains padding or a positioned wrapper.
+    const rootRect = scrollRoot.getBoundingClientRect();
+    const pageRect = pageElement.getBoundingClientRect();
+    return scrollRoot.scrollTop + (pageRect.top - rootRect.top);
   }, []);
   const restoreTargetPageNumber = useMemo(() => {
     if (displayMode !== 'full') return null;
