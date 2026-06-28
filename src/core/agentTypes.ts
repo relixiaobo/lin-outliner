@@ -9,13 +9,17 @@ import type {
   Usage,
   UserMessage,
 } from '@earendil-works/pi-ai';
-import type { AgentRenderProjection, AgentRenderProjectionPatch } from './agentRenderProjection';
+import type { AgentRenderProjection, AgentRenderProjectionPatch, AgentRenderRunStatus } from './agentRenderProjection';
 import type {
+  AgentId,
   AgentPayloadRef,
+  AgentRunContextMode,
+  AgentRunKind,
   AgentUserQuestionRequestView,
   AskUserQuestionResult,
 } from './agentEventLog';
 import type { AgentDefinition, AgentDelegationPermissionMode, NodeId, NodeType } from './types';
+import type { AgentObjectiveStatus, AgentRunBudget, AgentRunPurpose, AgentRunScope } from './agentEventLog';
 
 export const LIN_AGENT_EVENT_CHANNEL = 'lin-agent-event';
 
@@ -176,15 +180,46 @@ export interface AgentChildRunNodeChanges {
   trashedNodeIds?: string[];
 }
 
+export interface AgentChildRunFilePatch {
+  filePath: string;
+  operation: 'create' | 'update' | 'delete';
+  structuredPatch?: unknown;
+  trashPath?: string;
+  kind?: string;
+}
+
+export interface AgentChildRunFileChanges {
+  createdPaths?: string[];
+  updatedPaths?: string[];
+  deletedPaths?: string[];
+  patches?: AgentChildRunFilePatch[];
+}
+
+export interface AgentChildRunChildStatus {
+  runId: string;
+  role: 'controller' | 'worker' | 'verifier';
+  objectiveStatus?: AgentObjectiveStatus;
+  executionStatus: AgentChildRunActionResult['status'];
+  name?: string;
+  description?: string;
+  objective?: string;
+}
+
 export interface AgentChildRunActionResult {
   status: 'completed' | 'async_launched' | 'queued' | 'running' | 'failed' | 'cancelled';
   agent_id: string;
   name?: string;
   description: string;
   prompt: string;
+  objective?: string;
+  criteria?: string[];
+  objective_status?: AgentObjectiveStatus;
+  purpose?: AgentRunPurpose;
+  scope?: AgentRunScope;
+  budget?: AgentRunBudget;
+  blocked_reason?: string;
   agent_type: string;
-  /** Always 'fork': a child run is the current agent in an isolated context, never a different agent. */
-  context_mode: 'fork';
+  context_mode: AgentRunContextMode;
   executing_agent_id?: string;
   parent_agent_id?: string;
   memory_owner_agent_id?: string;
@@ -194,7 +229,10 @@ export interface AgentChildRunActionResult {
   updated_at: number;
   completed_at?: number;
   transcript_message_count: number;
+  children?: AgentChildRunChildStatus[];
+  latest_verifier_gap?: string;
   node_changes?: AgentChildRunNodeChanges;
+  file_changes?: AgentChildRunFileChanges;
   /**
    * The run reached a terminal `completed` status WITHOUT the model deciding it
    * was done: a maxTurns abort or an unresolved context overflow cut it off mid
@@ -203,6 +241,22 @@ export interface AgentChildRunActionResult {
    */
   incomplete?: boolean;
   instructions?: string;
+}
+
+export interface AgentRunListEntry {
+  runId: string;
+  conversationId: string;
+  conversationTitle: string | null;
+  agentId: AgentId;
+  kind: AgentRunKind;
+  status: AgentRenderRunStatus;
+  objectiveStatus?: AgentObjectiveStatus;
+  purpose?: AgentRunPurpose;
+  parentRunId: string | null;
+  title: string;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
 }
 
 export type AgentDebugTurnStatus = 'running' | 'completed' | 'error' | 'aborted';

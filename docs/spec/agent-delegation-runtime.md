@@ -9,20 +9,18 @@
 > like a conversation's. Vocabulary below was rewritten accordingly; cc-2.1
 > references describe the SOURCE system's wording, not ours.
 
-> **Single-agent collapse — fork-only (2026-06-18, `single-agent-finish-collapse`).**
-> The end-state supersedes every "fresh vs fork" / `agent_type` / file-backed
-> agent-loading passage below. There is exactly one agent, **Neva**; delegation is
-> **fork-only**. Concretely: the `Agent` tool schema carries **no** `agent_type`
-> (and no agent name/type field at all — "delegate to a different agent" is
-> structurally unrepresentable); `contextMode` is always `'fork'`; the registry
-> loads only the built-in Neva and never scans `~/.agents/agents` or
-> `<workspace>/.agents/agents`; a fork runs AS Neva (`executingAgentId` /
-> `memoryOwnerAgentId` are always the parent = Neva). `/research` and background
-> self-work are forks; runtime Dream uses the protected Dream channel's restricted
-> top-level run profile instead. The cross-agent "fresh" run, the by-name agent
-> registry scan, the `additionalAgentDirectories` setting, and the cross-principal
-> memory redaction are all removed as dead code. Read the `fresh` material below
-> as historical design context, not current behavior.
+> **Goal-run update — same-agent run tree (2026-06-25, `agent-goal`).**
+> The current model-facing delegation tool is `spawn`, not `Agent`. There is
+> exactly one agent, **Neva**; delegation creates same-agent child Runs, never a
+> different persona. The tool schema carries no `agent_type`; `contextMode` is
+> now `full` / `brief` / `none` (`fork` remains only as a persisted legacy value).
+> `spawn` defaults to verified execution: criteria are required unless
+> `verify:false`, parents verify child results through read-only verifier Runs,
+> and failed verification triggers bounded retry before `blocked` /
+> `budget_exhausted`. `/research` and isolated skills are same-agent child Runs;
+> runtime Dream uses the protected Dream channel's restricted top-level run
+> profile instead. Read the old "fresh" / by-name agent material below as
+> historical design context, not current behavior.
 
 This document is the design and implementation baseline for Tenon's delegation
 runtime. It records both the cc-2.1 source references used for alignment and the
@@ -60,7 +58,7 @@ child run path:
 
 ```text
 main agent conversation
-  -> Agent tool
+  -> spawn tool
       -> child run
           -> pi-mono Agent instance
           -> sidechain transcript
@@ -69,7 +67,7 @@ main agent conversation
 
 Child runs are conversation-scoped execution units. The main agent remains the
 coordinator. Multiple child runs run in parallel when the model emits multiple
-`Agent` tool calls in the same turn.
+`spawn` tool calls in the same turn.
 
 Child run is therefore Lin's isolated cognition and task execution unit. It is not
 a team member, a code-editing sandbox, or a cross-conversation messaging peer.
@@ -84,19 +82,19 @@ cc-2.1 contains two layers:
 
 | cc-2.1 source | Behavior to study | Lin decision |
 | --- | --- | --- |
-| `src/tools/AgentTool/constants.ts` | Tool name is `Agent`; legacy alias is `Task`. | Use `Agent` as the model-facing tool. Do not introduce `delegate`. |
-| `src/tools/AgentTool/AgentTool.tsx` | Launches fresh/fork agents, async/background agents, teammate variants, worktree/remote variants, result mapping. | Reuse the core Agent/child run path. Omit teammate, team, worktree, and remote branches initially. |
+| `src/tools/AgentTool/constants.ts` | Tool name is `Agent`; legacy alias is `Task`. | Historical source reference only; Lin's current model-facing tool is `spawn`. |
+| `src/tools/AgentTool/AgentTool.tsx` | Launches fresh/fork agents, async/background agents, teammate variants, worktree/remote variants, result mapping. | Reuse the core child-run path. Omit teammate, team, worktree, and remote branches. |
 | `src/tools/AgentTool/prompt.ts` | Teaches when to use child runs, how to brief fresh agents, how to launch multiple agents in one turn, and how fork differs from fresh. | Reuse the guidance style and parallelism rules, with Lin terminology. |
-| `src/tools/AgentTool/forkSubagent.ts` | Fork gate, implicit fork by omitting `agent_type`, cache-stable fork directive, recursive fork guard. | Reuse fork behavior. Prefer cc-compatible implicit fork rather than adding a `context` parameter. |
+| `src/tools/AgentTool/forkSubagent.ts` | Fork gate, implicit fork by omitting `agent_type`, cache-stable fork directive, recursive fork guard. | Reuse cache-stable context copying, but expose Lin-owned `context` modes and bounded recursive `spawn`. |
 | `src/tools/AgentTool/runAgent.ts` | Builds isolated child run context, system prompt, tool pool, sidechain transcript, skill preload, cleanup, and query loop. | Reuse the execution shape with pi-mono `Agent`; defer hooks and agent-specific MCP. |
 | `src/utils/forkedAgent.ts` | Creates isolated tool-use context, cloned read state, cloned content replacement state, child abort behavior, cache-safe fork helpers. | Reuse the isolation and cache-stability ideas in Lin-owned runtime context types. |
 | `src/tools/AgentTool/loadAgentsDir.ts` | Loads agent definitions from markdown and JSON, including tools, model, effort, permission mode, max turns, skills, background, hooks, MCP, memory, isolation. | Implement `.agents/agents` definitions. Support the core fields now; defer hooks, MCP, memory, and isolation. |
 | `src/tasks/LocalAgentTask/LocalAgentTask.tsx` | Registers background agent tasks, tracks status/progress, supports completion/failure/killed notifications and queued messages. | Reuse lifecycle states, but persist through Lin event store and child-run runtime state. |
-| `src/tools/AgentTool/resumeAgent.ts` | Reconstructs sidechain transcript, appends a new user prompt, rebuilds replacement state, resumes in background. | Implement `AgentSend` for same-conversation child run continuation. |
-| `src/tools/TaskOutputTool/TaskOutputTool.tsx` | Reads background task output and can block until completion; deprecated in favor of reading output file path. | Do not add a TaskOutput clone. Prefer completion notifications plus output references readable with `file_read`; keep `AgentStatus` only for explicit status/wait checks. |
-| `src/tools/TaskStopTool/TaskStopTool.ts` | Stops a running background task by id. | Implement `AgentStop` for child run ids/names. |
+| `src/tools/AgentTool/resumeAgent.ts` | Reconstructs sidechain transcript, appends a new user prompt, rebuilds replacement state, resumes in background. | Implement `run_steer` for same-conversation child run continuation. |
+| `src/tools/TaskOutputTool/TaskOutputTool.tsx` | Reads background task output and can block until completion; deprecated in favor of reading output file path. | Do not add a TaskOutput clone. Prefer completion notifications plus output references readable with `file_read`; keep `run_status` only for explicit status/wait checks. |
+| `src/tools/TaskStopTool/TaskStopTool.ts` | Stops a running background task by id. | Implement `run_stop` for child run ids/names. |
 | `src/tools/TeamCreateTool/*` | Creates team config, team task list, leader state, teammate workflow. | Do not copy for initial child runs. |
-| `src/tools/SendMessageTool/*` | Mixes teammate mailbox, background-agent resume, broadcast, shutdown/plan protocol, and cross-session routes. | Do not copy as one tool. Use `AgentSend` only for same-conversation child run continuation. Future global messaging gets separate tools. |
+| `src/tools/SendMessageTool/*` | Mixes teammate mailbox, background-agent resume, broadcast, shutdown/plan protocol, and cross-session routes. | Do not copy as one tool. Use `run_steer` only for same-conversation child run continuation. Future global messaging gets separate tools. |
 
 ### Source-Level Design Anchors
 
@@ -105,17 +103,18 @@ at `/Users/lixiaobo/Coding/.research-repos/cc-2.1`, not on prior memory of the
 design.
 Key anchors:
 
-- `src/tools/AgentTool/AgentTool.tsx:81-88`: the core `Agent` input schema is
+- `src/tools/AgentTool/AgentTool.tsx:81-88`: the source `Agent` input schema is
   `description`, `prompt`, `agent_type`, `model`, and `run_in_background`.
-  Lin's `Agent` tool starts from this shape.
+  Lin's current `spawn` schema keeps the useful task/background shape but
+  replaces it with `objective`, `criteria`, `verify`, `context`, `scope`, and
+  `budget`.
 - `src/tools/AgentTool/AgentTool.tsx:90-101`: `name`, `team_name`, `mode`,
   `isolation`, and `cwd` are added on top of the core schema for teammate,
   team, and isolation behavior. Lin keeps only `name` as a same-conversation alias
   and omits the rest in the first version.
-- `src/tools/AgentTool/AgentTool.tsx:318-335`: fresh/fork routing is controlled
-  by `agent_type`. When it is set, that agent definition wins. When omitted
-  and fork is enabled, the path is fork. This is why Lin does not add a separate
-  model-facing `context` field.
+- `src/tools/AgentTool/AgentTool.tsx:318-335`: source fresh/fork routing is
+  controlled by `agent_type`. Lin removed model-facing agent selection and uses
+  the explicit `context` field for inherited-context behavior.
 - `src/tools/AgentTool/AgentTool.tsx:483-540`: fork children inherit the parent
   system prompt and use `buildForkedMessages`; fresh agents build their own agent
   system prompt and receive a single user prompt. Lin mirrors this split.
@@ -129,7 +128,7 @@ Key anchors:
   file details.
 - `src/tools/AgentTool/AgentTool.tsx:1327-1373`: cc maps async and completed
   results differently, with continuation hints for resumable agents. Lin keeps
-  the result distinction but routes continuation through `AgentSend`.
+  the result distinction but routes continuation through `run_steer`.
 - `src/tools/AgentTool/runAgent.ts:368-379`: fork context messages are merged
   into initial messages and read-file state is cloned. Lin must preserve this
   separation between inherited context and child-local mutable state.
@@ -159,10 +158,10 @@ Key anchors:
   tracking, clones tool-output replacement state, and creates a new query chain.
   This is the main source for Lin's child run context isolation design.
 - `src/tools/AgentTool/resumeAgent.ts:63-79`: resume loads sidechain transcript
-  and reconstructs tool-output replacement state. `AgentSend` must do the same.
+  and reconstructs tool-output replacement state. `run_steer` must do the same.
 - `src/tools/AgentTool/resumeAgent.ts:99-195`: resume restores fork vs fresh
   agent type, parent system prompt for resumed forks, exact tools for resumed
-  forks, and appends the new user message. Lin's `AgentSend` follows this.
+  forks, and appends the new user message. Lin's `run_steer` follows this.
 - `src/tools/AgentTool/loadAgentsDir.ts:73-99` and `541-747`: agent definition
   parsing supports `description`, `tools`, `disallowedTools`, `model`, `effort`,
   `permissionMode`, `maxTurns`, `skills`, `background`, plus deferred fields.
@@ -173,7 +172,7 @@ Key anchors:
 - `src/utils/attachments.ts:1477-1556`: agent listings were moved out of the tool
   schema into `agent_listing_delta` attachments for prompt-cache stability. Lin
   should inject agent listings as turn state/reminders rather than mutating the
-  `Agent` tool schema.
+  `spawn` tool schema.
 
 ## External Open-Source Research
 
@@ -200,8 +199,9 @@ Lin decision: this is the highest-value external source because it is Pi-based.
 Borrow spawn/fork semantics, depth and cycle guard, bounded concurrency,
 project-agent trust checks, final-result-only parent content, and expandable
 execution details. Prefer pi-mono in-process `Agent` instances over shelling out
-to `pi` when Lin can preserve the same isolation contract. Keep Lin's
-`.agents/agents` search paths and model-facing `Agent` tool.
+to `pi` when Lin can preserve the same isolation contract. Under one-Neva, keep
+the in-process run-tree shape and model-facing `spawn` tool, but do not load
+project agent definitions.
 
 [ECA](https://eca.dev/)
 
@@ -225,7 +225,7 @@ should use cc-2.1-style bounded nesting and cycle prevention instead.
 
 [open-multi-agent](https://github.com/open-multi-agent/open-multi-agent)
 
-Problem definition: turn a user goal into a multi-agent task graph and execute
+Problem definition: turn a user goal into a recursive run tree and execute
 independent tasks concurrently.
 
 Observed approach: provides `runAgent`, `runTeam`, `runTasks`, and an
@@ -258,7 +258,7 @@ files reviewed: `src/agency_swarm/agency/core.py`,
 
 Lin decision: good evidence that generic agent messaging needs explicit scope.
 Lin should not expose general cross-agent messaging in the first version.
-`AgentSend` should be a same-conversation continuation tool for an existing
+`run_steer` should be a same-conversation continuation tool for an existing
 background child run, not a global routing primitive.
 
 [OpenHands Agent Delegation](https://docs.openhands.dev/sdk/guides/agent-delegation)
@@ -303,30 +303,29 @@ crew/team/workflow/memory concepts into the first child run implementation.
 
 ### External Research Conclusions
 
-- Keep one primary model-facing tool: `Agent`. Avoid separate Team, Delegate,
+- Keep one primary model-facing tool: `spawn`. Avoid separate Team, Delegate,
   or general Send Message tools in the first version. Multiple child runs are
-  launched by multiple `Agent` tool calls in the same turn, matching cc-2.1's
+  launched by multiple `spawn` tool calls in the same turn, matching cc-2.1's
   model guidance and avoiding a second orchestration abstraction.
-- `Agent` must support both `fresh` and `fork`. External Pi and ECA
-  implementations independently validate that this is the right split:
-  fresh runs are clean specialist conversations, while fork runs inherit current
-  context for isolated branch work.
+- `spawn` must support explicit context modes. External Pi and ECA
+  implementations validate the underlying split between clean child contexts
+  and inherited-context child work; Lin exposes that as `context:'none'`,
+  `context:'brief'`, and `context:'full'` instead of model-facing agent types.
 - Parent context should receive only a compact child result plus a durable run
   id. Full child turns, tool calls, progress, and errors belong in sidechain
   transcript/event storage and UI replay.
-- Runtime must include `max-depth`, ancestry/cycle prevention, per-conversation
-  concurrency caps, and stop propagation. These are not optional polish; every
-  mature implementation needs them to avoid runaway recursive delegation and
-  deadlocked child work.
+- Runtime must include max depth, per-conversation concurrency caps, and stop
+  propagation. These are not optional polish; every mature implementation needs
+  them to avoid runaway recursive delegation and deadlocked child work.
 - Agent listing should remain prompt-cache friendly. cc-2.1 moved dynamic agent
   lists out of the tool schema; Lin should use the same shape as skills:
   stable tool schema plus listing state/reminders.
-- Project-local agent definitions need trust handling through Lin's permission
-  layer. Do not silently load untrusted local agent definitions from arbitrary
-  directories.
-- `AgentSend` is intentionally narrow: continue or message an existing
-  same-conversation background child run. Cross-conversation and global agent
-  messaging are future product features and should use a separate design.
+- Project-local self-definition remains skills-only under the one-Neva model; do
+  not silently load untrusted local agent definitions from arbitrary directories.
+- `run_steer` is intentionally narrow: continue or message an existing
+  same-conversation background child run without changing objective or criteria.
+  Cross-conversation and global agent messaging are future product features and
+  should use a separate design.
 - Team/DAG/coordinator/shared-memory systems are valid future workflows, but
   they solve a different problem. Adding them now would blur the boundary
   between "run an isolated helper agent" and "build a workflow engine".
@@ -335,45 +334,20 @@ crew/team/workflow/memory concepts into the first child run implementation.
 
 ### Agent Definition
 
-An agent definition is a reusable execution profile, not a running agent.
-
-Search paths:
-
-```text
-~/.agents/agents
-<workspace>/.agents/agents
-settings.additionalAgentDirectories
-```
-
-Each agent directory should contain an `AGENT.md` file.
-
-Supported frontmatter for the first child run version:
-
-- `name`
-- `description`
-- `tools`
-- `disallowed-tools`
-- `skills`
-- `model`
-- `effort`
-- `permission-mode`
-- `max-turns`
-- `background`
-
-Deferred frontmatter:
-
-- `mcp-servers`
-- `hooks`
-- `memory`
-- `isolation`
-
-The markdown body is the child run system prompt supplement.
+There is one loaded execution profile: the built-in Neva assistant definition.
+The delegation runtime still uses the `AgentDefinition` shape internally because
+the pi-mono harness expects tools, model, effort, permission mode, max turns,
+and background defaults in that form. The registry does not scan
+`~/.agents/agents`, project agent directories, or additional agent directories.
+Specialization happens through the single editable Neva overlay and skills, not
+by dispatching to another model-facing agent.
 
 ### Running child run
 
-The in-memory run record (delegation runtime). The transcript is NOT part of the
-durable record — it is the run's own ledger, replayed on demand; `messages` is
-the live continuation context, loaded lazily on resume:
+The in-memory run record (delegation runtime) embeds the durable
+`DelegationDetail` plus live-only state. The transcript is NOT part of the
+durable conversation record — it is the run's own ledger, replayed on demand;
+`messages` is the live continuation context, loaded lazily on resume:
 
 ```ts
 type AgentRunRecord = {
@@ -381,9 +355,15 @@ type AgentRunRecord = {
   name?: string;
   description: string;
   prompt: string;
+  objective?: string;
+  criteria?: string[];
+  objectiveStatus?: 'active' | 'verifying' | 'verified' | 'blocked' | 'budget_exhausted' | 'stopped';
+  purpose?: 'work' | 'verify';
+  scope?: AgentRunScope;
+  budget?: AgentRunBudget;
   agentType: string;
-  contextMode: 'fork';              // always 'fork' — a child run is the current agent, never a different one
-  status: 'running' | 'completed' | 'failed' | 'stopped';
+  contextMode: 'full' | 'brief' | 'none' | 'fork';
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
   executingAgentId: string;
   parentAgentId: string;
   parentRunId?: string;             // the delegating run (run tree)
@@ -395,102 +375,46 @@ type AgentRunRecord = {
   completedAt?: number;
   result?: string;
   error?: string;
+  blockedReason?: string;
   messages: AgentMessage[];         // live context; empty until resume restores it
 };
 ```
 
-### Fresh Child run
+### Context Modes
 
-A fresh child run starts from its own agent definition and prompt. It does not
-inherit the parent transcript. The parent must brief it with complete context.
-Its execution identity and memory owner are the called agent definition, not the
-parent agent that invoked `Agent`.
+Every child run uses the current Neva system prompt. The `context` field controls
+only the parent transcript seed:
 
-Selection:
+- `full`: clone parent messages, close unresolved parent tool calls with
+  placeholder results, then append the run directive.
+- `brief`: pass a compact hidden excerpt of recent parent messages, then append
+  the run directive.
+- `none`: append only the run directive. Verifier Runs always use this mode.
 
-- `agent_type` set: use that agent definition.
-- `agent_type` omitted: fork from the current conversation context.
-- There is no built-in generic fallback. A fresh run always names a real agent
-  definition; generic isolated work should omit `agent_type` and fork from the
-  current context.
+The Dream-evidence boundary remains structural: the ledger seeds
+`[context messages…, run.started, directive…]` and evidence is everything past
+the first `run.started`. Dream must not rediscover the boundary by scanning
+transcript text or counting positions, because compaction and slimming can
+rewrite both.
 
-Recovery:
+### Recursive Child Runs
 
-- A new fresh run with an unknown `agent_type` is rejected.
-- A persisted fresh run whose original definition was deleted or renamed after
-  it started remains resumable. On resume, if the stored run has no embedded
-  definition and the registry can no longer resolve its `agentType`, the runtime
-  continues it with the built-in Tenon assistant definition. This is a durable
-  recovery path for already-started work, not a generic dispatch fallback.
-
-#### System prompt — one agent, headless mode (not a separate persona)
-
-A fresh child run is the **same Tenon agent in headless mode**, not a stripped-down
-persona. It uses `composeAgentPrompt(definition, { mode: 'child' })`, so its stable
-prompt is layered in the same order as every other agent:
-
-1. **L0 universal firmware** — the same perception and conduct/safety floor as the
-   main agent and custom peers;
-2. **L1 capability modules** — memory framing when the child can use memory tools,
-   plus a **child-agent directive** ("You are a Tenon child agent... # Child run
-   rules": complete only the task, run headless / never ask the user, keep tool
-   chatter out of the result, stay in scope, don't over-claim);
-3. **L2 persona** — the definition's body as `# Agent instructions`, when non-empty.
-
-A **user/project** definition specializes by adding a body; its body is purely
-additive on top of the shared base. A definition with an empty body is still a
-real definition, not a built-in generic fallback. Fork is unaffected; see below.
-
-When the active provider is Anthropic, fresh child runs enable Tenon's L0
-system-prompt cache breakpoint rewrite. The runtime splits the provider payload
-at the shared firmware boundary, then leaves the child directive and persona in
-the per-agent stable segment. This lets a fresh child reuse the same firmware
-cache segment warmed by another agent while keeping its child-specific L1/L2
-prompt stable per agent. Forked child runs do not enable this rewrite because
-they inherit the parent's already-rendered cache-stable prompt and message
-prefix.
-
-### Fork Child run
-
-A fork child run inherits the current prepared parent context as a cache-stable
-snapshot. It is used when the main agent needs isolated exploration or execution
-without pulling intermediate tool output into the parent context.
-Its execution identity and memory owner remain the parent agent's identity.
-
-Selection:
-
-- `agent_type` omitted: fork.
-- `agent_type` set: fresh.
-
-This follows cc-2.1's fork path instead of adding a new `context: "fork"` field.
-The model sees fewer concepts, and the tool stays closer to the reference
-implementation.
-
-Fork requirements:
-
-- Use the parent's already-rendered system prompt when available.
-- Use the parent's exact tool definitions when possible.
-- Preserve parent thinking/runtime params that affect cache keys.
-- Include parent messages as the fork prefix.
-- Add a short fork directive message that scopes the child task.
-- The fork Dream-evidence boundary is STRUCTURAL: the ledger seeds
-  `[fork context messages…, run.started, directive…]` and evidence is
-  everything past the first `run.started`. Dream must not rediscover the
-  boundary by scanning transcript text or counting positions — compaction and
-  slimming can rewrite both.
-- Prevent recursive fork from inside a forked child run.
-- Store the fork transcript in the run's own ledger, not in the parent
-  transcript.
+Child Runs may call `spawn` when their narrowed tool catalog includes the
+delegation capability. Recursion is controlled by a configured depth limit and a
+per-conversation concurrency cap, not by a hard fork-cycle ban. A child that
+needs more authority than its current scope should block or be stopped and
+re-spawned with a wider still-parent-bounded scope; `run_amend` never widens
+scope in place.
 
 ### Sidechain Transcript
 
 Every child run writes a separate transcript. The parent conversation stores only:
 
-- the `Agent` tool call;
+- the `spawn` tool call;
 - launch metadata;
 - status/progress notifications;
 - final result summary;
-- stable handle for status, send, and stop.
+- stable handle for status, steer, amend, and stop.
 
 This is required so child runs reduce parent-context pressure rather than moving
 tool noise into the main conversation.
@@ -503,38 +427,64 @@ that conversation stream.
 
 ## Model-Facing Tools
 
-### `Agent`
+### `spawn`
 
-Launches one child run.
+Launches one child Run. The Run is always a same-agent child run; there is no
+model-facing agent selection. Parent context is controlled by the `context`
+field, and verification is on by default.
 
 Input:
 
 ```json
 {
-  "description": "string",
-  "prompt": "string",
-  "agent_type": "optional string",
+  "objective": "string",
+  "criteria": ["optional string"],
+  "verify": "optional boolean",
+  "scope": {
+    "capabilities": ["optional tool name"],
+    "resources": {
+      "docs": ["optional string"],
+      "paths": ["optional string"]
+    }
+  },
+  "budget": {
+    "tokens": "optional number",
+    "wallClockMinutes": "optional number"
+  },
+  "context": "optional full|brief|none",
+  "detach": "optional boolean",
+  "description": "optional string",
+  "prompt": "optional legacy string",
   "model": "optional string",
-  "run_in_background": "optional boolean",
+  "run_in_background": "optional legacy boolean",
   "name": "optional string"
 }
 ```
 
 Field behavior:
 
-- `description`: short three-to-five-word task summary.
-- `prompt`: complete task instruction for fresh agents, or a directive for fork
-  agents.
-- `agent_type`: agent definition name. If omitted, run a fork child run.
+- `objective`: the work the child Run must pursue.
+- `criteria`: acceptance criteria the parent verifies. Required unless
+  `verify: false`.
+- `verify`: defaults to `true`; explicit `false` is the only unverified path.
+- `scope`: optional narrowed capability/resource scope. It can only reduce the
+  child catalog.
+- `budget`: optional run-local budget metadata. `wallClockMinutes` is enforced
+  as a hard runtime backstop.
+- `context`: `full` copies the parent context, `brief` provides a compact parent
+  excerpt, and `none` starts clean. Verifier Runs are always `none`.
+- `detach`: if true, return immediately and notify the parent conversation when
+  done.
+- `description`: optional short Work/Runs view summary.
+- `prompt`: legacy alias for `objective`; new callers should use `objective`.
 - `model`: optional per-call model override. Resolution order is request override
   → the running agent's owned model (user/project `AgentDefinition.model`, or the
   built-in assistant's settings overlay) → catalog first-ranked fallback. Provider
   rows are connection-only and never carry a model; see the resolution chain in
   `agent-pi-mono-implementation.md`.
-- `run_in_background`: if true, return immediately and notify the parent conversation
-  when done.
-- `name`: optional conversation-local alias for later `AgentSend`, `AgentStatus`, and
-  `AgentStop`.
+- `run_in_background`: legacy alias for `detach`.
+- `name`: optional conversation-local alias for later `run_steer`,
+  `run_status`, and `run_stop`.
 
 Not included:
 
@@ -542,7 +492,6 @@ Not included:
 - `mode` for teammate plan mode
 - `isolation`
 - `cwd`
-- `context`
 - per-call `effort`
 
 `effort` is supported in agent definitions, matching cc-2.1's source shape.
@@ -558,8 +507,14 @@ Foreground completion:
   "name": "optional string",
   "description": "string",
   "prompt": "string",
+  "objective": "string",
+  "criteria": ["string"],
+  "objective_status": "verified",
+  "purpose": "work",
+  "scope": {},
+  "budget": {},
   "agent_type": "string",
-  "context_mode": "fork",
+  "context_mode": "full|brief|none|fork",
   "result": "string",
   "started_at": 0,
   "updated_at": 0,
@@ -577,8 +532,10 @@ Background launch:
   "name": "optional string",
   "description": "string",
   "prompt": "string",
+  "objective": "string",
+  "objective_status": "active",
   "agent_type": "string",
-  "context_mode": "fork",
+  "context_mode": "full|brief|none|fork",
   "started_at": 0,
   "updated_at": 0,
   "transcript_message_count": 0,
@@ -586,14 +543,12 @@ Background launch:
 }
 ```
 
-When a background run reaches `completed`, `failed`, or `stopped`, Lin appends a
-hidden `<agent-task-notification>` message to the parent conversation and starts a
-parent continuation when the parent agent is idle. The notification should carry
-a durable output reference that can be read with `file_read`, matching
-cc-2.1's preferred path for background task output. The parent agent should not
-poll `AgentStatus` for ordinary result retrieval.
+When a background run reaches `completed`, `failed`, or `cancelled`, Lin appends
+a hidden `<agent-run-notification>` message to the parent conversation and
+starts a parent continuation when the parent agent is idle. The parent agent
+should not poll `run_status` for ordinary result retrieval.
 
-### `AgentStatus`
+### `run_status`
 
 Reads or waits for same-conversation child run state. It is a status/wait tool, not the
 normal result retrieval path.
@@ -602,7 +557,8 @@ Input:
 
 ```json
 {
-  "agent_id": "optional string",
+  "runId": "optional string",
+  "agent_id": "optional legacy string",
   "name": "optional string",
   "wait": "optional boolean",
   "timeout_ms": "optional number"
@@ -611,21 +567,24 @@ Input:
 
 Behavior:
 
-- Requires `agent_id` or `name` and returns status metadata for that child run.
+- Requires `runId`, legacy `agent_id`, or `name` and returns status metadata for
+  that child run.
 - `wait: true` waits until the selected child run leaves `running` or timeout.
 - Completed output should be read from the notification/output reference with
   `file_read` unless a concise result is already included in the status metadata.
 
-### `AgentSend`
+### `run_steer`
 
-Continues a same-conversation child run by appending a new user instruction to its
-sidechain transcript and resuming it in the background.
+Soft-steers a same-conversation child run by appending a new user instruction to
+its sidechain transcript and resuming it in the background. It does not change
+the objective, criteria, or verifier state.
 
 Input:
 
 ```json
 {
-  "agent_id": "optional string",
+  "runId": "optional string",
+  "agent_id": "optional legacy string",
   "name": "optional string",
   "message": "string"
 }
@@ -633,7 +592,7 @@ Input:
 
 Behavior:
 
-- Resolves by `agent_id` first, then `name`.
+- Resolves by `runId` first, then legacy `agent_id`, then `name`.
 - Reconstructs sidechain transcript.
 - Reconstructs tool-output replacement state for cache-stable replay.
 - Appends the message.
@@ -644,7 +603,32 @@ This replaces the subset of cc-2.1 `SendMessage` that resumes background agents.
 It does not support teammate mailboxes, broadcast, structured shutdown messages,
 or cross-conversation routes.
 
-### `AgentStop`
+### `run_amend`
+
+Hard-amends a same-conversation child run's objective, criteria, or budget.
+
+Input:
+
+```json
+{
+  "runId": "optional string",
+  "agent_id": "optional legacy string",
+  "changes": {
+    "objective": "optional string",
+    "criteria": ["optional string"],
+    "budget": "optional budget object"
+  }
+}
+```
+
+Behavior:
+
+- Requires `runId` or legacy `agent_id`.
+- Updates only objective, criteria, and budget. Scope is not widened in place.
+- Resets `objectiveStatus` to `active` and clears any blocked reason; prior
+  verifier conclusions are invalidated.
+
+### `run_stop`
 
 Stops a running same-conversation child run.
 
@@ -652,14 +636,15 @@ Input:
 
 ```json
 {
-  "agent_id": "optional string",
+  "runId": "optional string",
+  "agent_id": "optional legacy string",
   "name": "optional string"
 }
 ```
 
 Behavior:
 
-- Resolves by `agent_id` first, then `name`.
+- Resolves by `runId` first, then legacy `agent_id`, then `name`.
 - Aborts the running pi-mono `Agent`.
 - Persists stopped state.
 - Preserves partial result if available.
@@ -781,9 +766,7 @@ pi-mono agents directly.
 The skill path should:
 
 - load and render skill content;
-- run the rendered content as a sidechain child run prompt using the skill's
-  `agent` field, or by forking the current conversation context when no agent is
-  set;
+- run the rendered content as a sidechain same-agent child run prompt;
 - pass `allowed-tools` as child-run preapproval metadata;
 - return only the final result/summary to the parent conversation.
 
@@ -794,8 +777,9 @@ override and asks for a read-only isolated run of the current agent. At spawn ti
 read-only catalog derived from `AgentToolActionKind`, then reuses the same
 `tools` / `disallowedTools` filtering path as ordinary agent definitions. The
 child request therefore lacks mutating tools (`file_write`, `file_edit`, node
-mutations, `skill`, `Agent`, `AgentSend`, `AgentStop`, shell execution), instead
-of relying on prompt text or permission denial after the model has seen them.
+mutations, `skill`, `spawn`, `run_steer`, `run_amend`, `run_stop`, shell
+execution), instead of relying on prompt text or permission denial after the
+model has seen them.
 The same `allowed-tools` list remains run-scoped preapproval for the expected
 read calls.
 
@@ -817,14 +801,15 @@ Implemented parent-conversation events:
 - `child_run.updated`
 
 `child_run.started` (the conversation marker) records stable run metadata: id,
-optional same-conversation name, description, prompt, agent type, fresh/fork
-context mode, execution identity, parent agent identity, parent run id, memory
-owner identity, memory origin workspace, and parent tool call id.
+optional same-conversation name, description, prompt, objective, criteria,
+objective status, purpose, scope, budget, agent type, context mode, execution
+identity, parent agent identity, parent run id, memory owner identity, memory
+origin workspace, and parent tool call id.
 
 `child_run.updated` (the conversation marker) records status transitions:
-`running`, `completed`, `failed`, or `stopped`, plus final result/error. The
-transcript itself never moves through conversation events — it lives in the
-run's own ledger.
+`running`, `completed`, `failed`, or `cancelled`, plus objective status, budget,
+blocked reason, final result, and error. The transcript itself never moves
+through conversation events — it lives in the run's own ledger.
 
 Replay must not let a late `running` transcript update downgrade an already
 terminal run. This mirrors the concurrency shape in cc-2.1, where transcript
@@ -864,7 +849,7 @@ expansion replays the visible transcript, so provenance stays stable across
 later compactions. The Dream cursor is derived from clean completed
 `dream.finished.window.end` markers in the protected Dream channel; there is no
 principal memory episode projection to read. The parent model only receives the
-`Agent` tool result projection.
+`spawn` tool result projection.
 
 ## Compaction And Resume
 
@@ -876,7 +861,7 @@ Parent compaction should preserve:
 - latest summaries/progress;
 - final result summaries for completed background runs that have not yet been
   acknowledged;
-- enough metadata for `AgentStatus`, `AgentSend`, and `AgentStop`.
+- enough metadata for `run_status`, `run_steer`, `run_amend`, and `run_stop`.
 
 Parent compaction should not inline full sidechain transcripts.
 
@@ -893,7 +878,7 @@ main agent:
 App restart restores **records only** — no ledger IO on the conversation-open
 path. A run's transcript is replayed from its own ledger lazily:
 
-- on first resume (`AgentSend` to a non-live run): the host restores the ledger
+- on first resume (`run_steer` to a non-live run): the host restores the ledger
   writer and re-derives the continuation context. If the ledger is MISSING (a
   crash between the spawn's ledger seed and nothing else — the seed lands before
   the conversation marker, so this is a residual edge), the writer is registered
@@ -907,7 +892,7 @@ If a child run was persisted as `running` but there is no live pi-mono `Agent`
 after restore, Lin marks it as failed with an interruption message — in BOTH
 representations: the conversation gets `child_run.updated{failed}` and the run's
 own ledger gets a mirrored `run.failed` (without it the run stream would
-self-describe as running forever). It can still be continued through `AgentSend`.
+self-describe as running forever). It can still be continued through `run_steer`.
 
 A delegated-run ledger uses the tolerant sidecar torn-tail policy, not the
 conversation log's strict one: a half-written FINAL line (crash artifact of an
@@ -922,7 +907,8 @@ Child runs should be trusted enough to be useful, but scoped by tool profile.
 
 Rules:
 
-- `Agent` launch is allowed by default.
+- `spawn` is allowed by default when the current run has
+  `agent.delegate.spawn`.
 - Every child run tool call still goes through Lin's permission layer.
 - Agent definition `tools` and `disallowed-tools` narrow the available tool set.
 - Agent definition `permission-mode` may relax or tighten behavior within Lin's
@@ -939,21 +925,23 @@ smallest Lin-owned policy that supports useful child runs with clear boundaries.
 The main agent can see:
 
 - normal Lin tools;
-- `Agent`;
-- `AgentStatus` for explicit status/wait checks;
-- `AgentSend`;
-- `AgentStop`.
+- `spawn`;
+- `run_status` for explicit status/wait checks;
+- `run_steer`;
+- `run_amend`;
+- `run_stop`.
 
-Fresh child runs can see:
+Child Runs can see:
 
-- tools allowed by their agent definition;
+- tools allowed by the current definition/scope intersection;
 - skill tool if enabled for the definition;
-- no `Agent` tool by default, to prevent uncontrolled nesting.
+- `spawn` only when the child's narrowed scope includes the delegation
+  capability.
 
-Fork child runs can see:
+Full-context child Runs can see:
 
-- the parent's exact tool set when needed for cache stability;
-- a runtime guard that rejects recursive fork attempts.
+- the parent's context plus placeholder results for unresolved tool calls;
+- recursive `spawn` calls until the configured depth limit.
 
 Background child runs can see only tools that can run without direct UI control.
 This should be implemented as a profile over Lin tools rather than a separate
@@ -961,21 +949,25 @@ tool system.
 
 ## Agent-Facing Prompt Guidance
 
-The `Agent` prompt should teach:
+The delegation prompt should teach:
 
-- Use `Agent` for complex, multi-step, or independent work.
+- Use `spawn` for complex, multi-step, or independent work.
 - Launch multiple child runs in one turn when the tasks are independent.
-- Use fresh child runs when a specialized agent definition is appropriate.
-- Brief fresh child runs completely; they do not see the current conversation.
-- Omit `agent_type` to fork when intermediate tool output is not worth keeping
-  in the main context.
+- Provide `criteria` unless the caller explicitly sets `verify:false`.
+- Choose `context` deliberately: `full` for cache-stable inherited context,
+  `brief` for summarized parent context, `none` for clean verification or
+  independent checks.
+- Verify child results before accepting them as done; runtime verifier Runs use
+  `context:'none'` and read-only tools.
 - Do not read or poll background transcripts unless asked; completion
   notifications will arrive.
 - Do not fabricate background results before notifications arrive.
-- Use `AgentSend` only to continue an existing same-conversation child run.
-- Use `AgentStatus` only for status or waiting; read completion output from the
+- Use `run_steer` only to continue an existing same-conversation child run
+  without changing its goal.
+- Use `run_amend` only to change objective, criteria, or budget.
+- Use `run_status` only for status or waiting; read completion output from the
   notification/output reference with `file_read`.
-- Use `AgentStop` to stop a running child run.
+- Use `run_stop` to stop a running child run.
 
 ## Explicit Non-Goals For The First Version
 
@@ -996,7 +988,7 @@ Do not implement:
 
 Future global or cross-conversation agent messaging should be a separate
 communication plane with separate tools. It must not be mixed into same-conversation
-`AgentSend`.
+`run_steer`.
 
 ## Implementation Status
 
@@ -1007,17 +999,18 @@ Implemented in `src/main/agentDelegation.ts`.
 - Loads `~/.agents/agents`, `<workspace>/.agents/agents`, and configured
   additional agent directories.
 - Supports directory agents with `AGENT.md`.
-- Does not ship a built-in generic worker profile; generic isolation uses fork
-  mode by omitting `agent_type`.
-- Injects agent listing as turn state/reminders, not inside the `Agent` tool
+- Does not ship a built-in generic worker profile; generic isolation is the
+  same-agent child-run path.
+- Injects agent listing as turn state/reminders, not inside the `spawn` tool
   schema.
 
-### Foreground Fresh Agent
+### Foreground Child Run
 
 Implemented.
 
-- `Agent` with `agent_type` creates a fresh sidechain pi-mono `Agent`.
-- The child receives its agent definition system prompt plus the supplied task.
+- `spawn` creates a sidechain pi-mono `Agent`.
+- The child receives the current agent system prompt plus a runtime directive
+  containing objective, criteria, context mode, scope, and budget.
 - Child runs are forks of Neva under the single-agent model. There is no
   owner-scoped `<memory>` briefing and no `recall` tool; memory retrieval remains
   pull-only through the child's allowed `node_search` / `node_read` tools, and
@@ -1032,26 +1025,55 @@ Implemented.
 
 Implemented.
 
-- `Agent` without `agent_type` forks from the current parent context.
-- The fork uses the parent system prompt, parent messages, a fork directive, and
+- `spawn` with `context:'full'` forks from the current parent context.
+- The fork uses the parent system prompt, parent messages, a run directive, and
   placeholder results for unresolved tool calls.
+- `context:'brief'` passes a compact hidden parent excerpt, and `context:'none'`
+  passes no parent transcript.
 - Fork runs keep the parent `executingAgentId` and `memoryOwnerAgentId`; their
   ledgers are not crawled directly by Dream.
 - A runtime-owned read-only isolated restriction can further narrow a child run
   catalog. `/research` uses this to keep generic investigation inside the
   current agent's DM/Channel identity while removing mutation and delegation
   tools from the child model request.
-- Recursive fork attempts are rejected.
+- Recursive `spawn` attempts are allowed until the configured nesting limit.
 - Child tool output stays in the sidechain transcript and does not pollute the
   parent context.
+
+### Parent Verification
+
+Implemented.
+
+- `spawn` defaults to verified execution and requires `criteria` unless
+  `verify:false`.
+- When a child work Run completes, its parent marks it `verifying`, spawns a
+  read-only verifier Run with `purpose:'verify'` and `context:'none'`, then
+  accepts `verified` results or retries the same worker with the verifier gap.
+- The verifier receives a runtime-assembled bounded evidence pack: the worker
+  result, node changes, file changes from `file_edit` / `file_write` /
+  `file_delete`, and a compact tool trace. The pack deliberately excludes full
+  file contents and large raw tool outputs.
+- The retry guard is bounded (`DEFAULT_VERIFIER_RETRY_LIMIT`) and repeated
+  same-gap verifier failures trip the livelock guard; repeated failure leaves the
+  worker `blocked` or `budget_exhausted`.
+- Verifier Runs are persisted as child Runs, but they are unverified themselves
+  and do not receive delegation/write tools.
+- Current retry semantics resume the same child run with the verifier gap. The
+  stronger plan shape, where a failed worker is replaced by a fresh `runId` while
+  a persistent controller run keeps the stable identity, remains an explicit
+  follow-up before the design can claim full controller/worker separation.
 
 ### Background Lifecycle
 
 Implemented for same-conversation background runs.
 
-- `run_in_background` returns `async_launched` metadata immediately.
-- `AgentStatus` reads or waits for a selected run.
-- `AgentStop` aborts a live child agent and persists stopped state.
+- `detach` (or legacy `run_in_background`) returns `async_launched` metadata
+  immediately.
+- `run_status` reads or waits for a selected run.
+- `run_stop` aborts a live child agent and persists cancelled state with
+  `objectiveStatus:'stopped'`.
+- `run_amend` changes objective, criteria, or budget and invalidates prior
+  verifier conclusions.
 - Completion, failure, and stopped states are returned to the parent model
   through hidden child run notifications.
 - The renderer derives current-conversation task entries from persisted
@@ -1061,7 +1083,7 @@ Implemented for same-conversation background runs.
 
 Implemented.
 
-- `AgentSend` continues an existing same-conversation child run by id or name.
+- `run_steer` continues an existing same-conversation child run by id or name.
 - Continuation replays the run's OWN ledger into the live context (lazy: the
   ledger is only read when a resume or drill-in actually needs it; a missing
   ledger registers empty so the run stays resumable).
@@ -1077,7 +1099,7 @@ Implemented.
 
 - Skill `execution: isolated` routing is implemented for model and slash skill
   entrypoints.
-- Isolated skill execution uses the sidechain child-run runtime, applies `agent`,
+- Isolated skill execution uses the sidechain child-run runtime, applies
   `model`, `effort`, and `allowed-tools` to the child run, and returns only the
   child result to the parent.
 - Child run sidechain compaction restores loaded skill state, preserves recent
@@ -1088,18 +1110,22 @@ Implemented.
 
 Implemented for the current first-class surfaces.
 
-- `Agent` tool blocks show child run metadata and transcript access.
+- `spawn` tool blocks show child run metadata and transcript access. Legacy
+  `Agent` blocks remain render-compatible for persisted history.
 - The agent header exposes a Tasks button. It opens a current-conversation task
   panel derived from `child_run.*` projection data, ordered with running work
   first, and shows status, type/mode, message count, and latest update time.
-- Task rows can open the existing child run details panel; running task rows can
-  stop the child run through `AgentStop`.
-- The child run details panel loads the run-ledger transcript lazily through
-  `agent_child_run_transcript` (cached on the ledger tail seq; polled while the
-  run is live).
+- Run rows can open the existing child run details panel; running rows can stop
+  the child run through `run_stop`.
+- The child run details panel is a read-only drill-in that shows Result, direct
+  child Runs (or Verification for verifier-only children), collapsed Activity log,
+  and collapsed Technical details in one scroll flow. It loads the run-ledger
+  transcript lazily through `agent_child_run_transcript` (cached on the ledger
+  tail seq; polled while the run is live). `run_steer` remains the
+  same-conversation continuation mechanism for agents/tools, but the detail page
+  does not expose a permanent follow-up composer.
 - Nested child tool calls inside transcripts remain expandable.
-- Running background child runs can be messaged or stopped from the details
-  panel.
+- Running background child runs can be stopped from the details panel.
 - Task and child run side-panel controls clear the top window chrome drag zone so
   close/open actions remain pointer-clickable in the agent rail.
 
@@ -1116,10 +1142,10 @@ Review against cc-2.1 and OpenClaw leaves these follow-ups:
 
 - Add `SubagentStart` and `SubagentStop` hook events (cc-2.1 vocabulary) only after Lin has a
   first-class hook registry. They should be lifecycle events, not special cases
-  inside the `Agent` tool.
-- Keep foreground fresh, fork, and background as the only first-version
-  lifecycles. Do not copy team/swarm/coordinator concepts into `Agent`,
-  `AgentSend`, or `AgentStatus`.
+  inside the `spawn` tool.
+- Keep foreground, detached, and verifier child Runs as the only first-version
+  lifecycles. Do not copy team/swarm/coordinator concepts into `spawn`,
+  `run_steer`, or `run_status`.
 - On app restart, stale running child runs should be marked interrupted or
   recoverable from persisted sidechain transcripts. They should not silently
   remain "running" without a live process.
@@ -1129,8 +1155,8 @@ Review against cc-2.1 and OpenClaw leaves these follow-ups:
 - Background child runs should fail closed when they need interactive permission
   and no approval channel is available. If a permission prompt can be surfaced,
   the parent should receive a clear blocked/waiting notification.
-- Forked child runs should continue to preserve cache-stable parent context and
-  reject recursive fork attempts, including after compaction.
+- Full-context child runs should continue to preserve cache-stable parent
+  context; recursive spawn is bounded by the configured depth limit.
 - Agent-specific MCP servers and remote/worktree isolation remain deferred until
   Lin has diagnostics and recovery for the smaller same-conversation model.
 
@@ -1140,14 +1166,16 @@ Core tests:
 
 - agent definition parsing and override order;
 - invalid agent definition diagnostics;
-- fresh `Agent` completes and returns a result;
-- fork `Agent` sees parent context;
-- fork `Agent` does not inject child tool output into parent context;
-- fork recursive guard;
-- background `Agent` launches and later notifies parent;
-- `AgentStatus` list, get, wait, and timeout;
-- `AgentSend` resumes from sidechain transcript;
-- `AgentStop` aborts and stores partial result;
+- `spawn` completes and returns a result;
+- full-context `spawn` sees parent context;
+- full-context `spawn` does not inject child tool output into parent context;
+- recursive `spawn` is bounded by depth;
+- detached `spawn` launches and later notifies parent;
+- verifier Run pass/fail, retry, and blocked/budget-exhausted paths;
+- `run_status` list, get, wait, and timeout;
+- `run_steer` resumes from sidechain transcript;
+- `run_amend` changes objective, criteria, or budget and invalidates verdicts;
+- `run_stop` aborts and stores partial result;
 - parent compact preserves child run handles and summaries;
 - child run compact preserves its own continuity;
 - app restart can inspect/resume completed sidechain transcripts;
@@ -1161,16 +1189,15 @@ Core tests:
 
 Reference-alignment tests:
 
-- `agent_type` set means fresh;
-- `agent_type` omitted means fork;
-- explicit `agent_type` must resolve to a real user/project agent definition;
-- omitted `agent_type` forks the current conversation context;
-- multiple `Agent` tool calls in one turn run independently;
-- agent listing changes do not mutate the `Agent` tool schema.
+- `context:'full'` means inherited parent transcript;
+- `context:'brief'` means compact parent excerpt;
+- `context:'none'` means clean child context;
+- multiple `spawn` tool calls in one turn run independently;
+- agent listing changes do not mutate the `spawn` tool schema.
 
 ## Deferred Questions
 
-- Should `AgentStatus` ever return sidechain transcript excerpts, or should the
+- Should `run_status` ever return sidechain transcript excerpts, or should the
   transcript stay UI/payload-only?
 - Should background child runs always run with lower output budgets by default?
 - Should Tenon ship additional bundled profiles, or should all specialization

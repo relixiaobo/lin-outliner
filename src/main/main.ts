@@ -2504,6 +2504,11 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentRuntime.setConversationIncludeInDreamData(conversationId(), args.includeInDreamData === true);
     case 'agent_delete_conversation':
       return agentRuntime.deleteConversation(conversationId());
+    case 'agent_list_runs':
+      return agentRuntime.listRuns({
+        limit: typeof args.limit === 'number' ? args.limit : undefined,
+        perConversationLimit: typeof args.perConversationLimit === 'number' ? args.perConversationLimit : undefined,
+      });
     case 'agent_list_dream_history':
       return agentRuntime.listDreamHistory({ limit: typeof args.limit === 'number' ? args.limit : undefined });
     case 'agent_dream_readiness':
@@ -2526,15 +2531,20 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     case 'agent_run_conversation_id':
       // Run ids are global, so this resolver needs no conversation context.
       return agentRuntime.runConversationId(String(args.runId));
+    case 'agent_run_status':
     case 'agent_child_run_status':
-      return agentRuntime.childRunStatus(conversationId(), String(args.agentId), {
+      return agentRuntime.childRunStatus(conversationId(), String(args.runId ?? args.agentId), {
         wait: args.wait === true,
         timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined,
       });
+    case 'agent_run_steer':
     case 'agent_child_run_send':
-      return agentRuntime.childRunSend(conversationId(), String(args.agentId), String(args.message ?? ''));
+      return agentRuntime.childRunSend(conversationId(), String(args.runId ?? args.agentId), String(args.message ?? ''));
+    case 'agent_run_amend':
+      return agentRuntime.childRunAmend(conversationId(), String(args.runId ?? args.agentId), args.changes);
+    case 'agent_run_stop':
     case 'agent_child_run_stop':
-      return agentRuntime.childRunStop(conversationId(), String(args.agentId));
+      return agentRuntime.childRunStop(conversationId(), String(args.runId ?? args.agentId));
     case 'agent_send_message':
       return agentRuntime.sendMessage(
         conversationId(),

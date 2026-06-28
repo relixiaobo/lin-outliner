@@ -75,7 +75,7 @@ describe('run-unification visible-transcript guard (PR-1 invariant)', () => {
           runId: 'run-dm',
           agentId: 'built-in:tenon:assistant',
           anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
-          kind: 'turn',
+          disposition: 'attended',
           trigger: { type: 'message', messageId: 'user-1' },
         },
         {
@@ -119,7 +119,7 @@ describe('run-unification visible-transcript guard (PR-1 invariant)', () => {
           ...base(conversationId, 3, 'run.started'),
           runId: 'run-parent',
           agentId: 'built-in:tenon:assistant',
-          kind: 'turn',
+          disposition: 'attended',
           trigger: { type: 'message', messageId: 'user-1' },
         },
         {
@@ -150,7 +150,7 @@ describe('run-unification visible-transcript guard (PR-1 invariant)', () => {
           runId: 'child-run',
           agentId: 'built-in:tenon:assistant',
           anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
-          kind: 'delegation',
+          disposition: 'attended',
           trigger: { type: 'parent-run', parentRunId: 'run-parent' },
         },
         {

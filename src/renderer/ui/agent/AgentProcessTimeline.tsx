@@ -78,19 +78,17 @@ export function AgentProcessTimeline({
   const onlyItem = visibleItems.length === 1 ? visibleItems[0]! : null;
   const soloThinkingItem = onlyItem?.type === 'reasoning' ? onlyItem : null;
 
-  // Fold runs of consecutive (non-child-run) tool calls into one counted
-  // activity group; thinking / narration / child-run tools break the run and
-  // render standalone (Codex's render-group split). A loaded-skill chip also
-  // breaks the run — it is a compact glanceable affordance, not an expandable
-  // tool row, so grouping it would bury it. Memoized: this re-runs the splitter
-  // (and getLoadedSkillDetails per tool item) on every render, including each 1s
-  // ticker tick and streaming token, unless pinned to its real inputs.
+  // Fold runs of consecutive tool calls into one counted activity group; thinking
+  // / narration break the run (Codex's render-group split). A loaded-skill chip
+  // also breaks the run — it is a compact glanceable affordance, not an
+  // expandable tool row, so grouping it would bury it. Memoized: this re-runs the
+  // splitter (and getLoadedSkillDetails per tool item) on every render, including
+  // each 1s ticker tick and streaming token, unless pinned to its real inputs.
   const groups = useMemo(
     () => splitTimelineIntoGroups(visibleItems, (item) => (
-      Boolean(item.childRun ?? childRunsByParentToolCallId?.get(item.toolCall.id))
-      || getLoadedSkillDetails(item.toolCall, results.get(item.toolCall.id)) !== null
+      getLoadedSkillDetails(item.toolCall, results.get(item.toolCall.id)) !== null
     )),
-    [visibleItems, childRunsByParentToolCallId, results],
+    [visibleItems, results],
   );
 
   const renderItem = (item: AgentTurnProcessItem) => {

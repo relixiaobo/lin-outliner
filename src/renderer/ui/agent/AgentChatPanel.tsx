@@ -25,6 +25,7 @@ import type {
   AgentApprovalResolutionScope,
   AgentProviderSettingsView,
   AgentConversationListMeta,
+  AgentRunListEntry,
   AgentSlashCommandView,
   NodeId,
 } from '../../api/types';
@@ -39,17 +40,19 @@ import type {
 } from '../../agent/runtime';
 import {
   AddIcon,
+  AgentIcon,
+  BackIcon,
   ChevronDownIcon,
+  CloseIcon,
   HashIcon,
   ICON_SIZE,
   LoaderIcon,
   MoreIcon,
-  UsedToolsIcon,
+  RunsIcon,
   WarningIcon,
 } from '../icons';
 import { AgentCompactionBoundary } from './AgentCompactionBoundary';
 import { AgentDreamBoundary } from './AgentDreamBoundary';
-import { AgentChildRunBoundary } from './AgentChildRunBoundary';
 import { AgentComposer } from './AgentComposer';
 import { DreamLauncher } from './DreamLauncher';
 import type { AgentComposerNodeReference } from './AgentComposerEditor';
@@ -63,7 +66,7 @@ import {
 } from './agentConversationRows';
 import type { AgentConversationRenderRow } from './agentConversationRows';
 import { AgentChildRunDetailsPanel } from './AgentChildRunDetailsPanel';
-import { AgentTaskPanel } from './AgentTaskPanel';
+import { AgentRunsPanel } from './AgentRunsPanel';
 import { composerCurrentNodeId } from './userViewContext';
 import { resolveUsableActiveProvider } from './providerCatalog';
 import { Button } from '../primitives/Button';
@@ -505,7 +508,6 @@ export function AgentChatPanel({
     childRunsByParentToolCallId,
     switchBranch,
     stop,
-    tasks,
     toolResults,
     turnPhase,
     unreadByConversationId,
@@ -521,8 +523,12 @@ export function AgentChatPanel({
   const [conversationsLoading, setConversationsLoading] = useState(false);
   const [slashCommands, setSlashCommands] = useState<AgentSlashCommandView[]>([]);
   const [rowActionMenu, setRowActionMenu] = useState<string | null>(null);
-  const [taskPanelOpen, setTaskPanelOpen] = useState(false);
-  const [selectedChildRunId, setSelectedChildRunId] = useState<string | null>(null);
+  const [workPanelOpen, setWorkPanelOpen] = useState(false);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedRunConversationId, setSelectedRunConversationId] = useState<string | null>(null);
+  const [runIndex, setRunIndex] = useState<AgentRunListEntry[]>([]);
+  const [runIndexLoading, setRunIndexLoading] = useState(false);
+  const [runIndexError, setRunIndexError] = useState<string | null>(null);
   const [pendingTranscriptReveal, setPendingTranscriptReveal] = useState<PendingTranscriptReveal | null>(null);
   const [highlightedTranscriptRowKey, setHighlightedTranscriptRowKey] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -535,6 +541,8 @@ export function AgentChatPanel({
   const conversationsRequestRef = useRef(0);
   const slashCommandsRequestRef = useRef(0);
   const agentDefinitionsRequestRef = useRef(0);
+  const runIndexRequestRef = useRef(0);
+  const runIndexRefreshTimerRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const bottomScrollFrameRef = useRef<number | null>(null);
   const revealAfterDockOpenTimerRef = useRef<number | null>(null);
@@ -580,8 +588,10 @@ export function AgentChatPanel({
     () => buildConversationRenderRows(entries, turnPhase),
     [entries, turnPhase],
   );
-  const runningTaskCount = useMemo(() => tasks.filter((task) => task.status === 'running').length, [tasks]);
-  const selectedChildRun = selectedChildRunId ? childRuns[selectedChildRunId] ?? null : null;
+  const runningRunCount = useMemo(() => runIndex.filter((run) => run.status === 'running').length, [runIndex]);
+  const selectedRun = selectedRunId && selectedRunConversationId === conversationId
+    ? childRuns[selectedRunId] ?? null
+    : null;
   const [agentDefinitions, setAgentDefinitions] = useState<AgentDefinitionView[]>([]);
   const agentDefinitionById = useMemo(() => {
     const map = new Map<string, AgentDefinitionView>();
@@ -666,7 +676,6 @@ export function AgentChatPanel({
   ) => (
     sendRuntimeMessage(prompt, attachments, withReferencedNodes(userViewContext, nodeRefs, index, t.common.untitled))
   ), [index, sendRuntimeMessage, userViewContext, t.common.untitled]);
-
   const updateScrollMetrics = useCallback((element: HTMLDivElement) => {
     const next = {
       height: element.clientHeight,
@@ -771,6 +780,38 @@ export function AgentChatPanel({
       }
     }
   }, []);
+
+  const loadRunIndex = useCallback(async () => {
+    const requestId = runIndexRequestRef.current + 1;
+    runIndexRequestRef.current = requestId;
+    setRunIndexLoading(true);
+    try {
+      const next = await api.agentListRuns();
+      if (!mountedRef.current || requestId !== runIndexRequestRef.current) return null;
+      setRunIndex(next);
+      setRunIndexError(null);
+      return next;
+    } catch (caught) {
+      if (mountedRef.current && requestId === runIndexRequestRef.current) {
+        setRunIndexError(caught instanceof Error ? caught.message : String(caught));
+      }
+      return null;
+    } finally {
+      if (mountedRef.current && requestId === runIndexRequestRef.current) {
+        setRunIndexLoading(false);
+      }
+    }
+  }, []);
+
+  const scheduleRunIndexRefresh = useCallback(() => {
+    if (runIndexRefreshTimerRef.current !== null) {
+      window.clearTimeout(runIndexRefreshTimerRef.current);
+    }
+    runIndexRefreshTimerRef.current = window.setTimeout(() => {
+      runIndexRefreshTimerRef.current = null;
+      void loadRunIndex();
+    }, 250);
+  }, [loadRunIndex]);
 
   const loadSlashCommands = useCallback(async () => {
     const requestId = slashCommandsRequestRef.current + 1;
@@ -916,8 +957,9 @@ export function AgentChatPanel({
 
     if (target.stream === 'run') {
       if (childRuns[target.streamId]) {
-        setTaskPanelOpen(false);
-        setSelectedChildRunId(target.streamId);
+        setWorkPanelOpen(true);
+        setSelectedRunConversationId(conversationId);
+        setSelectedRunId(target.streamId);
         if (rowIndex >= 0) revealTranscriptRow(rowIndex, conversationRows[rowIndex]!.key);
         setPendingTranscriptReveal(null);
         return;
@@ -927,8 +969,9 @@ export function AgentChatPanel({
     }
 
     if (rowIndex >= 0) {
-      setTaskPanelOpen(false);
-      setSelectedChildRunId(null);
+      setWorkPanelOpen(false);
+      setSelectedRunId(null);
+      setSelectedRunConversationId(null);
       revealTranscriptRow(rowIndex, conversationRows[rowIndex]!.key);
       setPendingTranscriptReveal(null);
       return;
@@ -974,14 +1017,24 @@ export function AgentChatPanel({
   useEffect(() => {
     mountedRef.current = true;
     void loadProviderSettings();
+    void loadRunIndex();
     return () => {
       mountedRef.current = false;
       providerSettingsRequestRef.current += 1;
       conversationsRequestRef.current += 1;
+      runIndexRequestRef.current += 1;
       slashCommandsRequestRef.current += 1;
       agentDefinitionsRequestRef.current += 1;
+      if (runIndexRefreshTimerRef.current !== null) {
+        window.clearTimeout(runIndexRefreshTimerRef.current);
+        runIndexRefreshTimerRef.current = null;
+      }
     };
-  }, [loadProviderSettings]);
+  }, [loadProviderSettings, loadRunIndex]);
+
+  useEffect(() => window.lin?.onAgentEvent(() => {
+    scheduleRunIndexRefresh();
+  }), [scheduleRunIndexRefresh]);
 
   useEffect(() => {
     void loadSlashCommands();
@@ -995,11 +1048,18 @@ export function AgentChatPanel({
   }, [runActive]);
 
   useEffect(() => {
-    if (selectedChildRunId && !childRuns[selectedChildRunId]) setSelectedChildRunId(null);
-  }, [selectedChildRunId, childRuns]);
+    if (
+      selectedRunId
+      && selectedRunConversationId === conversationId
+      && !childRuns[selectedRunId]
+    ) {
+      setSelectedRunId(null);
+      setSelectedRunConversationId(null);
+    }
+  }, [selectedRunId, selectedRunConversationId, conversationId, childRuns]);
 
-  // A command Run reveals its delivery conversation and asks for the task panel —
-  // the run is a parentless child run, so it surfaces there (the open task panel
+  // A command Run reveals its delivery conversation and asks for the Work panel —
+  // the run is a parentless child run, so it surfaces there (the open run panel
   // persists across the conversation switch this same reveal triggers).
   useEffect(() => onAgentRevealRequest((targetConversationId, options) => {
     if (options.transcriptTarget) {
@@ -1010,10 +1070,25 @@ export function AgentChatPanel({
         target: options.transcriptTarget,
       });
     }
-    if (!options.openTasks) return;
-    setSelectedChildRunId(null);
-    setTaskPanelOpen(true);
-  }), []);
+    if (!options.openWork) return;
+    setSelectedRunId(null);
+    setSelectedRunConversationId(null);
+    setWorkPanelOpen(true);
+    scheduleRunIndexRefresh();
+  }), [scheduleRunIndexRefresh]);
+
+  const openRunFromWorkPanel = useCallback(async (run: AgentRunListEntry) => {
+    setWorkPanelOpen(true);
+    try {
+      if (run.conversationId !== conversationId) {
+        await selectConversation(run.conversationId);
+      }
+      setSelectedRunConversationId(run.conversationId);
+      setSelectedRunId(run.runId);
+    } catch (caught) {
+      setRunIndexError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }, [conversationId, selectConversation]);
 
   useEffect(() => {
     if (historyOpen) void loadConversations();
@@ -1053,6 +1128,7 @@ export function AgentChatPanel({
     await Promise.all([
       loadProviderSettings(),
       loadConversations(),
+      loadRunIndex(),
       loadSlashCommands(),
       loadAgentDefinitions(),
       reloadConversation(),
@@ -1152,7 +1228,7 @@ export function AgentChatPanel({
       return <AgentDreamBoundary entry={row.entry} />;
     }
     if (row.entry.kind === 'child-run') {
-      return <AgentChildRunBoundary entry={row.entry} onOpenTranscript={setSelectedChildRunId} />;
+      return null;
     }
 
     const systemText = systemLineText(row.entry);
@@ -1201,7 +1277,11 @@ export function AgentChatPanel({
         onDisclosureToggle={pauseStickToBottomForDisclosure}
         onEdit={editMessage}
         onNodeReferenceOpen={onOpenNodeReference}
-        onOpenChildRunTranscript={setSelectedChildRunId}
+        onOpenChildRunTranscript={(childRunId) => {
+          setWorkPanelOpen(true);
+          setSelectedRunConversationId(conversationId);
+          setSelectedRunId(childRunId);
+        }}
         onOpenRunDetails={(runId) => onOpenRunDetailsPanel?.(conversationId, runId)}
         onRegenerate={regenerateMessage}
         onRetry={retryMessage}
@@ -1229,6 +1309,8 @@ export function AgentChatPanel({
   // Unnamed conversations read "untitled" in the header too, matching the conversation list
   // and delete-confirm — one fallback everywhere so inside/outside never disagree.
   const displayTitle = readableConversationTitle(conversationTitle, t.common.untitled);
+  const detailRunInHeader = workPanelOpen ? selectedRun : null;
+  const runIndexInHeader = workPanelOpen && !detailRunInHeader;
   const dockMenuAnchorRef = useMemo(() => ({
     current: {
       getBoundingClientRect: () => {
@@ -1267,46 +1349,96 @@ export function AgentChatPanel({
   });
   return (
     <div className="agent-chat-panel" data-turn-phase={turnPhase}>
-      <header className="agent-dock-header" ref={headerRef}>
-        <ButtonControl
-          ref={historyButtonRef}
-          aria-expanded={historyOpen}
-          aria-label={t.agent.chat.showConversations}
-          className="agent-dock-title-button"
-          onClick={() => setHistoryOpen((open) => !open)}
-          title={t.agent.chat.showConversations}
-        >
-          {/* Single-agent collapse: every conversation is one of Neva's channels.
-              The agent is always Neva, so a per-conversation avatar here carried no
-              signal — show the channel glyph + title, matching the conversation list
-              (agent-conversation-channel-icon). */}
-          <span className="agent-dock-title-leading">
-            <HashIcon aria-hidden="true" size={ICON_SIZE.menu} />
-          </span>
-          <span className="agent-dock-title">{displayTitle}</span>
-          <ChevronDownIcon
-            className={historyOpen ? 'agent-title-chevron is-open' : 'agent-title-chevron'}
-            size={ICON_SIZE.menu}
-          />
-        </ButtonControl>
-        <div className="agent-dock-actions">
+      <header className={detailRunInHeader ? 'agent-dock-header is-run-detail' : 'agent-dock-header'} ref={headerRef}>
+        {detailRunInHeader ? (
           <ButtonControl
-            aria-expanded={taskPanelOpen && !selectedChildRun}
-            aria-label={runningTaskCount > 0
-              ? t.agent.task.openPanelActive({ count: runningTaskCount })
-              : t.agent.task.openPanel}
-            className="agent-task-panel-button"
+            aria-label={t.agent.run.backToRuns}
+            className="agent-dock-run-back"
             onClick={() => {
-              setSelectedChildRunId(null);
-              setTaskPanelOpen((open) => !open);
+              setSelectedRunId(null);
+              setSelectedRunConversationId(null);
             }}
-            title={t.agent.task.openPanel}
+            title={t.agent.run.backToRuns}
           >
-            <UsedToolsIcon size={ICON_SIZE.toolbar} />
-            {runningTaskCount > 0 ? <span className="agent-task-panel-badge">{runningTaskCount}</span> : null}
+            <BackIcon aria-hidden="true" size={ICON_SIZE.menu} />
+            <span className="agent-dock-title-leading">
+              <AgentIcon aria-hidden="true" size={ICON_SIZE.menu} />
+            </span>
+            <span className="agent-dock-run-label">{t.agent.childRun.heading}</span>
+            <span className={`agent-dock-run-status is-${detailRunInHeader.status}`}>{detailRunInHeader.status}</span>
           </ButtonControl>
+        ) : runIndexInHeader ? (
+          <ButtonControl
+            aria-label={t.agent.run.backToChat}
+            className="agent-dock-run-back"
+            onClick={() => {
+              setSelectedRunId(null);
+              setSelectedRunConversationId(null);
+              setWorkPanelOpen(false);
+            }}
+            title={t.agent.run.backToChat}
+          >
+            <BackIcon aria-hidden="true" size={ICON_SIZE.menu} />
+            <span className="agent-dock-title">{t.agent.run.heading}</span>
+          </ButtonControl>
+        ) : (
+          <ButtonControl
+            ref={historyButtonRef}
+            aria-expanded={historyOpen}
+            aria-label={t.agent.chat.showConversations}
+            className="agent-dock-title-button"
+            onClick={() => setHistoryOpen((open) => !open)}
+            title={t.agent.chat.showConversations}
+          >
+            {/* Single-agent collapse: every conversation is one of Neva's channels.
+                The agent is always Neva, so a per-conversation avatar here carried no
+                signal — show the channel glyph + title, matching the conversation list
+                (agent-conversation-channel-icon). */}
+            <span className="agent-dock-title-leading">
+              <HashIcon aria-hidden="true" size={ICON_SIZE.menu} />
+            </span>
+            <span className="agent-dock-title">{displayTitle}</span>
+            <ChevronDownIcon
+              className={historyOpen ? 'agent-title-chevron is-open' : 'agent-title-chevron'}
+              size={ICON_SIZE.menu}
+            />
+          </ButtonControl>
+        )}
+        <div className="agent-dock-actions">
+          {detailRunInHeader ? (
+            <ButtonControl
+              aria-label={t.agent.run.closePanel}
+              className="agent-run-panel-button"
+              onClick={() => {
+                setSelectedRunId(null);
+                setSelectedRunConversationId(null);
+                setWorkPanelOpen(false);
+              }}
+              title={t.agent.run.closePanel}
+            >
+              <CloseIcon size={ICON_SIZE.toolbar} />
+            </ButtonControl>
+          ) : !workPanelOpen ? (
+            <ButtonControl
+              aria-expanded={workPanelOpen}
+              aria-label={runningRunCount > 0
+                ? t.agent.run.openPanelActive({ count: runningRunCount })
+                : t.agent.run.openPanel}
+              className="agent-run-panel-button"
+              onClick={() => {
+                setSelectedRunId(null);
+                setSelectedRunConversationId(null);
+                setWorkPanelOpen((open) => !open);
+                scheduleRunIndexRefresh();
+              }}
+              title={t.agent.run.openPanel}
+            >
+              <RunsIcon size={ICON_SIZE.toolbar} />
+              {runningRunCount > 0 ? <span className="agent-run-panel-badge">{runningRunCount}</span> : null}
+            </ButtonControl>
+          ) : null}
         </div>
-        {historyOpen ? createPortal(
+        {!workPanelOpen && historyOpen ? createPortal(
           <div
             ref={historyMenuRef}
             className="agent-conversation-menu"
@@ -1399,122 +1531,142 @@ export function AgentChatPanel({
         ) : null}
       </header>
 
-      <div
-        ref={scrollRef}
-        className="agent-chat-scroll"
-        onScroll={(event) => {
-          stickToBottomRef.current = shouldStickToBottom(event.currentTarget);
-          scheduleScrollMetrics(event.currentTarget);
-        }}
-      >
-        {visibleError ? (
-          <div className="agent-message-error" role="status">
-            <WarningIcon size={ICON_SIZE.menu} />
-            <span>{visibleError}</span>
-          </div>
-        ) : null}
-        {entries.length === 0 ? (
-          <div className="agent-empty-state">
-            {!settingsLoaded ? (
-              <EmptyState icon={LoaderIcon} loading role="status" title={t.common.loading} />
-            ) : hasUsableProvider ? null : (
-              <div className="agent-onboarding" role="status">
-                <p className="agent-onboarding-text">{t.agent.chat.onboardingText}</p>
-                <Button
-                  onClick={() => {
-                    void window.lin?.openSettings();
-                  }}
-                  variant="primary"
-                >
-                  {t.agent.chat.onboardingCta}
-                </Button>
+      {workPanelOpen ? (
+        <div className="agent-work-page">
+          {selectedRun ? (
+            <AgentChildRunDetailsPanel
+              onBack={() => {
+                setSelectedRunId(null);
+                setSelectedRunConversationId(null);
+              }}
+              onClose={() => {
+                setSelectedRunId(null);
+                setSelectedRunConversationId(null);
+                setWorkPanelOpen(false);
+              }}
+              conversationId={conversationId}
+              index={index}
+              childRun={selectedRun}
+              childRuns={childRuns}
+              childRunsByParentToolCallId={childRunsByParentToolCallId}
+              onNodeReferenceOpen={onOpenNodeReference}
+              onOpenChildRunTranscript={(childRunId) => {
+                setSelectedRunConversationId(conversationId);
+                setSelectedRunId(childRunId);
+              }}
+              showHeader={false}
+            />
+          ) : (
+            <AgentRunsPanel
+              error={runIndexError}
+              loading={runIndexLoading}
+              onOpenRun={(run) => void openRunFromWorkPanel(run)}
+              onRefresh={() => void loadRunIndex()}
+              runs={runIndex}
+            />
+          )}
+        </div>
+      ) : (
+        <>
+          <div
+            ref={scrollRef}
+            className="agent-chat-scroll"
+            onScroll={(event) => {
+              stickToBottomRef.current = shouldStickToBottom(event.currentTarget);
+              scheduleScrollMetrics(event.currentTarget);
+            }}
+          >
+            {visibleError ? (
+              <div className="agent-message-error" role="status">
+                <WarningIcon size={ICON_SIZE.menu} />
+                <span>{visibleError}</span>
+              </div>
+            ) : null}
+            {entries.length === 0 ? (
+              <div className="agent-empty-state">
+                {!settingsLoaded ? (
+                  <EmptyState icon={LoaderIcon} loading role="status" title={t.common.loading} />
+                ) : hasUsableProvider ? null : (
+                  <div className="agent-onboarding" role="status">
+                    <p className="agent-onboarding-text">{t.agent.chat.onboardingText}</p>
+                    <Button
+                      onClick={() => {
+                        void window.lin?.openSettings();
+                      }}
+                      variant="primary"
+                    >
+                      {t.agent.chat.onboardingCta}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div
+                className={shouldVirtualizeTranscript ? 'agent-chat-transcript is-virtual' : 'agent-chat-transcript'}
+                data-virtualized={shouldVirtualizeTranscript ? 'true' : 'false'}
+                style={shouldVirtualizeTranscript ? { height: virtualLayout.totalHeight } : undefined}
+              >
+                {visibleConversationRows.map((row, offset) => {
+                  const rowIndex = virtualRange.start + offset;
+                  const item = virtualLayout.items[rowIndex];
+                  const rowHighlighted = highlightedTranscriptRowKey === row.key;
+                  const renderedRow = renderConversationRow(row, rowHighlighted);
+                  return (
+                    <AgentTranscriptRowShell
+                      highlighted={rowHighlighted}
+                      key={row.key}
+                      onMeasure={measureConversationRow}
+                      rowKey={row.key}
+                      style={shouldVirtualizeTranscript && item
+                        ? { transform: `translateY(${item.top}px)` }
+                        : undefined}
+                      virtualized={shouldVirtualizeTranscript}
+                    >
+                      {renderedRow}
+                    </AgentTranscriptRowShell>
+                  );
+                })}
               </div>
             )}
           </div>
-        ) : (
-          <div
-            className={shouldVirtualizeTranscript ? 'agent-chat-transcript is-virtual' : 'agent-chat-transcript'}
-            data-virtualized={shouldVirtualizeTranscript ? 'true' : 'false'}
-            style={shouldVirtualizeTranscript ? { height: virtualLayout.totalHeight } : undefined}
-          >
-            {visibleConversationRows.map((row, offset) => {
-              const rowIndex = virtualRange.start + offset;
-              const item = virtualLayout.items[rowIndex];
-              const rowHighlighted = highlightedTranscriptRowKey === row.key;
-              const renderedRow = renderConversationRow(row, rowHighlighted);
-              return (
-                <AgentTranscriptRowShell
-                  highlighted={rowHighlighted}
-                  key={row.key}
-                  onMeasure={measureConversationRow}
-                  rowKey={row.key}
-                  style={shouldVirtualizeTranscript && item
-                    ? { transform: `translateY(${item.top}px)` }
-                    : undefined}
-                  virtualized={shouldVirtualizeTranscript}
-                >
-                  {renderedRow}
-                </AgentTranscriptRowShell>
-              );
-            })}
-          </div>
-        )}
-      </div>
 
-      <div className="agent-composer-region">
-        {conversationId === DEFAULT_DREAM_CHANNEL_ID ? (
-          <DreamLauncher
-            dreamSchedule={providerSettings?.agent.dreamSchedule}
-            isStreaming={runActive}
-            onSettingsChanged={() => {
-              void loadProviderSettings();
-            }}
-          />
-        ) : (
-          <AgentComposer
-            currentNodeId={composerCurrentNodeId(userViewContext, index)}
-            focusToken={composerFocusToken}
-            index={index}
-            isStreaming={runActive}
-            members={[]}
-            onNodeReferenceOpen={onOpenNodeReference}
-            onCancelSteer={handleCancelSteer}
-            onSend={sendMessage}
-            onStop={stop}
-            onSteer={handleSteerMessage}
-            onResolveApproval={handleResolveApproval}
-            onResolveUserQuestion={resolveUserQuestion}
-            pendingApproval={pendingApproval}
-            pendingUserQuestion={pendingUserQuestion}
-            settings={providerSettings}
-            agentModel={typeof builtInDefinition?.model === 'string' ? builtInDefinition.model : ''}
-            agentEffort={typeof builtInDefinition?.effort === 'string' ? builtInDefinition.effort : ''}
-            onModelChange={builtInDefinition ? handleAgentModelChange : undefined}
-            onEffortChange={builtInDefinition ? handleAgentEffortChange : undefined}
-            slashCommands={slashCommands}
-            steeringNote={steeringNote}
-          />
-        )}
-      </div>
-      <AgentChildRunDetailsPanel
-        onClose={() => setSelectedChildRunId(null)}
-        conversationId={conversationId}
-        index={index}
-        childRun={selectedChildRun}
-        childRunsByParentToolCallId={childRunsByParentToolCallId}
-        onNodeReferenceOpen={onOpenNodeReference}
-        onOpenChildRunTranscript={setSelectedChildRunId}
-      />
-      {taskPanelOpen && !selectedChildRun ? (
-        <AgentTaskPanel
-          conversationId={conversationId}
-          onClose={() => setTaskPanelOpen(false)}
-          onOpenChildRun={(childRunId) => {
-            setSelectedChildRunId(childRunId);
-          }}
-          tasks={tasks}
-        />
-      ) : null}
+          <div className="agent-composer-region">
+            {conversationId === DEFAULT_DREAM_CHANNEL_ID ? (
+              <DreamLauncher
+                dreamSchedule={providerSettings?.agent.dreamSchedule}
+                isStreaming={runActive}
+                onSettingsChanged={() => {
+                  void loadProviderSettings();
+                }}
+              />
+            ) : (
+              <AgentComposer
+                currentNodeId={composerCurrentNodeId(userViewContext, index)}
+                focusToken={composerFocusToken}
+                index={index}
+                isStreaming={runActive}
+                members={[]}
+                onNodeReferenceOpen={onOpenNodeReference}
+                onCancelSteer={handleCancelSteer}
+                onSend={sendMessage}
+                onStop={stop}
+                onSteer={handleSteerMessage}
+                onResolveApproval={handleResolveApproval}
+                onResolveUserQuestion={resolveUserQuestion}
+                pendingApproval={pendingApproval}
+                pendingUserQuestion={pendingUserQuestion}
+                settings={providerSettings}
+                agentModel={typeof builtInDefinition?.model === 'string' ? builtInDefinition.model : ''}
+                agentEffort={typeof builtInDefinition?.effort === 'string' ? builtInDefinition.effort : ''}
+                onModelChange={builtInDefinition ? handleAgentModelChange : undefined}
+                onEffortChange={builtInDefinition ? handleAgentEffortChange : undefined}
+                slashCommands={slashCommands}
+                steeringNote={steeringNote}
+              />
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

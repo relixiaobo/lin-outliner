@@ -29,7 +29,7 @@ function reasoningItem(sourceIndex: number): AgentTurnProcessItem {
   };
 }
 
-const noChildRuns = () => false;
+const noBreaks = () => false;
 
 function member(name: string, status: ToolStatus, args: Record<string, unknown> = {}, id = `${name}-${Math.random()}`): ToolActivitySummaryMember {
   return { status, toolCall: toolCall(id, name, args) };
@@ -39,7 +39,7 @@ describe('splitTimelineIntoGroups', () => {
   test('folds a run of >= 2 consecutive tool calls into one activity group', () => {
     const groups = splitTimelineIntoGroups(
       [toolItem('a', 'bash'), toolItem('b', 'bash'), toolItem('c', 'node_read')],
-      noChildRuns,
+      noBreaks,
     );
     expect(groups).toHaveLength(1);
     expect(groups[0]!.kind).toBe('toolActivity');
@@ -50,7 +50,7 @@ describe('splitTimelineIntoGroups', () => {
   });
 
   test('a lone tool call is NOT grouped (renders as its own item)', () => {
-    const groups = splitTimelineIntoGroups([toolItem('a', 'bash')], noChildRuns);
+    const groups = splitTimelineIntoGroups([toolItem('a', 'bash')], noBreaks);
     expect(groups).toHaveLength(1);
     expect(groups[0]!.kind).toBe('item');
   });
@@ -58,19 +58,22 @@ describe('splitTimelineIntoGroups', () => {
   test('a reasoning item breaks the run (reasoning is a hard boundary)', () => {
     const groups = splitTimelineIntoGroups(
       [toolItem('a', 'bash'), toolItem('b', 'bash'), reasoningItem(0), toolItem('c', 'bash'), toolItem('d', 'bash')],
-      noChildRuns,
+      noBreaks,
     );
     expect(groups.map((g) => g.kind)).toEqual(['toolActivity', 'item', 'toolActivity']);
   });
 
-  test('a child-run tool call breaks the run and renders standalone', () => {
+  test('a child-run tool call folds like an ordinary tool call', () => {
     const childItem = toolItem('child', 'Agent');
     const groups = splitTimelineIntoGroups(
       [toolItem('a', 'bash'), childItem, toolItem('b', 'bash')],
-      (item) => item.toolCall.id === 'child',
+      noBreaks,
     );
-    // a, [child standalone], b — none of the runs reach length 2, so all items.
-    expect(groups.map((g) => g.kind)).toEqual(['item', 'item', 'item']);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.kind).toBe('toolActivity');
+    if (groups[0]!.kind === 'toolActivity') {
+      expect(groups[0]!.members.map((member) => member.toolCall.id)).toEqual(['a', 'child', 'b']);
+    }
   });
 });
 

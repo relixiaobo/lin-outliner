@@ -959,10 +959,9 @@ Rules:
   scheduled anchor, so the anchor remains an ordinary message row and the
   assistant/tool transcript stays inline. Users can trigger a manual run only
   from Settings, and durable Dream history is surfaced in Settings → Agent
-  "Memory & activity" via the `agent_list_dream_history` IPC. `buildAgentTaskEntries`
-  filters Dream TASK entities out of the in-conversation task panel, which keeps
-  only child-run tasks. `AgentRenderDreamTaskEntity.principal` remains the Dream
-  subject for audit labeling.
+  "Memory & activity" via the `agent_list_dream_history` IPC. Dream runs do not
+  appear in the Work/Runs view; `AgentRenderDreamTaskEntity.principal` remains
+  the Dream subject for audit labeling.
 - `child_run.*` events back `entities.childRuns` — the conversation's permanent
   record of a run, whose final result is an expandable summary with a "View full
   run" link into the full transcript. **Where** that record renders depends on
@@ -972,7 +971,7 @@ Rules:
     of the current turn — so it gets **no conversation-level boundary row**.
     Instead it folds into the spawning turn's process: the `agent` tool-call block
     is **kept** (not suppressed) and renders the child-run summary inline
-    (`childRunsByParentToolCallId` → "Agent task · {description}", expandable to the
+    (`childRunsByParentToolCallId` → "Agent run · {description}", expandable to the
     result with the same "View full run" link). Because it lives inside the turn's
     own message, it is turn-anchored and branch-pruned with that message — editing
     the user message that started the turn removes it, with no orphan left at the
@@ -984,6 +983,39 @@ Rules:
   - A running boundary row shows a live status line and is not yet expandable;
     once it seals it expands to the result (or error) and the full-run link.
     Boundary rows live only in `transcriptRows`, never in the active `rows` path.
+- The Work/Runs view is a global run index backed by `agent_list_runs`, not a
+  projection-only task list on the active conversation. Opening Work replaces the
+  dock's channel header with a first-level `Back to chat · Runs` header and
+  replaces the chat body with the first-level run tree. The left header control
+  closes Work directly; the index refreshes on open and from agent runtime events,
+  so it does not expose a persistent manual refresh button. Opening a row switches
+  that same body area to the second-level run detail view. The first level lists
+  non-turn, non-Dream runs across channels as a compact task-list tree using
+  `parentRunId`: each row shows the shared checkbox marker on the left, the run
+  title as the primary text. Rows with direct child runs add one muted secondary
+  line containing only an inline `Child run(s) completed/total` disclosure
+  control; that control alone expands/collapses children, while clicking the rest
+  of the row opens its detail view. Rows without child runs show no secondary
+  metadata. Running rows additionally reveal a Stop action on
+  hover/focus. Expanded child runs render as checklist-style subrows below the
+  parent content without separator lines or strong tree chrome; verifier
+  child runs display as the concise "Verifier" row rather than exposing their
+  internal verification prompt. There is no separate trailing disclosure column,
+  and hover never paints a separate subrow rectangle that fights the tree
+  alignment. The detail view is a read-only
+  drill-in, not a second chat surface: it reuses the same dock-header model with
+  the run-detail navigation row (`Back to runs · Agent run · status`) and the
+  Work/Runs toolbar icon still acting as the close affordance. The
+  detail body shows the run title, Result, direct child Runs (or Verification when
+  the only direct children are verifier runs), a collapsed Activity log, and
+  collapsed Technical details in a single scroll flow. Result is plain read-only markdown content:
+  its copy affordance belongs to the Result section header, and GFM task-list
+  output shows the checkbox without an extra bullet marker. Header metadata stays
+  user-facing (`messages · duration`); internal mode/type/id fields live in Technical details. The view
+  reads the selected conversation's `entities.childRuns` and lazily replays the
+  run transcript through `agent_child_run_transcript`; running detail views expose
+  Stop, while follow-up/steering remains an internal `run_steer` runtime/tool
+  capability instead of a permanent detail-page input.
 - Long output rows are collapsed by default.
 - **Result-first turn fold (one flat level).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last

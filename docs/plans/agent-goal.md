@@ -270,7 +270,7 @@ RunEvent   (one thing that happened inside a Run)                ← unchanged
     supervisor** — it decomposes, dispatches workers, verifies their submissions,
     re-spawns the failures, integrates, and on its *own* verification failure
     **re-plans in place**. It is **never re-spawned**, so its `runId` is the stable
-    task identity (the budget ceiling, owner-control target, panel entry, amendment
+    work identity (the budget ceiling, owner-control target, panel entry, amendment
     target, attempt-history owner).
   - a **worker Run** (leaf) is an **ephemeral single attempt** at one objective; on
     failure its parent **spawns a fresh worker** (a new `runId`) for that sub-objective.
@@ -321,7 +321,7 @@ most are not.
 | Old projection word | Becomes | It is just |
 |---|---|---|
 | `kind` (turn/background/…) | **deleted (derived)** | derived from `provenance` + lineage + **`disposition`** |
-| `Task` | = a **root/tracked Run** | the "tasks" panel renders root Runs |
+| `Task` (old UI word) | = a **root/tracked Run** | the Work/Runs panel renders Runs; "Task" is not a stored concept |
 | `Team` | = a Run's **child Runs** | the run tree under a Run |
 | `Channel` | = **Conversation** | a (multi-member) Conversation |
 | `Turn` | = render(Message + its Run) | a rendering-layer term only |
@@ -433,7 +433,7 @@ re-spawned**:
 
 This is "the assignment outlives the employee" — the controller (assignment) persists,
 the worker (employee) is replaced — **without a separate object**, because the persistent
-thing already has a `runId`, and that id is the stable task identity.
+thing already has a `runId`, and that id is the stable work identity.
 
 ### Two status axes on a Run (no new object, no overloaded enum)
 
@@ -686,7 +686,7 @@ identity:**
 
 Role labels (`researcher` / `implementer` / `verifier`) are **function tags for the
 UI**, derived from tree position (with `verifier` read from the persisted `purpose`) — the
-"tasks" view renders a Run's children by function, never as "N Nevas".
+Work/Runs view renders a Run's children by function, never as "N Nevas".
 
 **No owner approval gate.** The owner controls the **outcome and the bounds** (criteria
 + scope + budget + the verifier gate + escalation), never the process — they do not
@@ -708,7 +708,7 @@ The precise shapes the one cut commits to.
 
 ```
 Run {
-  runId                    // primary key; for a controller this IS the stable task identity
+  runId                    // primary key; for a controller this IS the stable work identity
   anchor: AgentRunAnchor   // EXISTING discriminated union (conversation | principal); a tracked /
                            //   detached root is conversation-anchored for delivery + owner controls,
                            //   reflective stays principal-anchored
@@ -912,7 +912,7 @@ independently verified.*
 | **Contract Net Protocol** | a parent announces a sub-objective, awards it to a forked child | task announce → award; the award's least-privilege capability ∩ scope **is** the child's config |
 | **Principal–agent** | parent = principal; child Run = agent (a role, not a self) | audit = anti-moral-hazard; **independent verification**; scope = bounded discretion |
 | **Control theory / MAPE-K / cybernetics** | objective = setpoint; the parent's verifier = sensor + comparator | the closed loop, **recursively**; **sensor ≠ actuator** |
-| **Event sourcing / CQRS** | facts (Run/RunEvent) = write model; Task/Team = read models | projections are read-only views, never write models |
+| **Event sourcing / CQRS** | facts (Run/RunEvent) = write model; Work/run-tree views = read models | projections are read-only views, never write models |
 
 ## Shape
 
@@ -950,9 +950,11 @@ before the goal loop is layered on. Build-order:
    controller — the *same edge code*, nothing new); recursion to arbitrary depth, kept
    safe by the three **local** governors (slice reservation, narrowing scope, parent
    verifies child) — no tree-wide supervisor, no owner approval gate.
-4. **Delivery / UI** — `/goal` + one-tap "make this a goal"; Neva as the root supervisor
-   holding the user's objective; the "tasks" panel renders root Runs (children grouped by
-   function label, never "N Nevas"); the four root outcomes notify; steering via
+4. **Delivery / UI** — no explicit Goal entry point. Users describe the work in
+   ordinary prose; the model-side `goal-launching` workflow decides when to spawn a
+   detached verified Run. Neva remains the root supervisor holding the user's
+   objective; the Work/Runs panel renders root Runs (children grouped by function
+   label, never "N Nevas"); the four root outcomes notify; steering via
    `run_steer` / `run_amend`.
 
 ## Open questions
@@ -964,8 +966,7 @@ Genuinely open, all build-time-reversible:
 2. **`context` default for a worker.** `full` (continue the thread) vs `brief` (scoped
    slate). **Recommend** `brief` for detached objectives, `full` only on an explicit
    continuation. (A verifier is always `none`.)
-3. **Composer placement** of `/goal` and the one-tap affordance — settle at build time.
-4. **Livelock N and budget defaults** — the gap-repeat threshold and the default tree
+3. **Livelock N and budget defaults** — the gap-repeat threshold and the default tree
    budget / hard-backstop values; tune against the dev probe.
 
 **Decided (not open):**
@@ -1071,10 +1072,11 @@ Result: **no overlap.**
       a controller, the *same edge code*); recursion to arbitrary depth, kept safe by the
       three **local** governors (slice reservation / narrowing scope / parent-verifies-child)
       — no tree-wide supervisor, no owner approval gate.
-- [ ] **Delivery / UI** — `/goal` + one-tap; Neva as root supervisor; "tasks" panel
-      renders root Runs (children by function label); the four root outcomes notify;
-      steering via `run_steer` / `run_amend`. (light + dark.)
-- [ ] **Launching skill** (when/how to set a goal) authored.
+- [ ] **Delivery / UI** — no explicit Goal entry point; Neva as root supervisor;
+      Work/Runs panel renders root Runs (children by function label); the four root
+      outcomes notify; steering via `run_steer` / `run_amend`. (light + dark.)
+- [ ] **Launching skill** (when/how to create a detached verified Run from
+      natural-language intent) authored.
 - [ ] **Verify in the dev app** — set a goal mid-DM; confirm it self-decomposes into a Run
       tree, each child is independently verified by its parent before folding up, the
       livelock guard and budget admission fire, the four root outcomes notify, and a

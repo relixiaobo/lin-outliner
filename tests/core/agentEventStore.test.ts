@@ -8,6 +8,7 @@ import {
   agentCheckpointFileName,
   agentPayloadFileName,
   agentConversationDirName,
+  deriveAgentRunKind,
   LAYOUT_SENTINEL_FILE,
   STORAGE_LAYOUT_VERSION,
 } from '../../src/main/agentEventStore';
@@ -576,7 +577,7 @@ describe('agent event store', () => {
       id,
       agentId: 'built-in:tenon:assistant',
       anchor: { type: 'principal', principal },
-      kind: 'reflective',
+      disposition: 'detached',
       status: 'completed',
       trigger: { type: 'manual' },
       fingerprint: {
@@ -873,7 +874,7 @@ describe('agent event store', () => {
           ...base(conversationId, 3, 'run.started'),
           runId,
           agentId: 'built-in:tenon:assistant',
-          kind: 'turn',
+          disposition: 'attended',
           trigger: { type: 'message', messageId: 'message-1' },
           fingerprint: {
             appVersion: 'test',
@@ -1134,7 +1135,7 @@ describe('agent event store', () => {
           ...base(conversationId, 2, 'run.started'),
           runId,
           agentId: 'built-in:tenon:assistant',
-          kind: 'turn',
+          disposition: 'attended',
           trigger: { type: 'manual' },
           fingerprint: {
             appVersion: 'test',
@@ -1304,7 +1305,7 @@ describe('agent event store', () => {
           ...base(conversationId, childSeq, childSeq === 1 ? 'run.started' : 'run.completed'),
           eventId: `${childRunId}-evt-${childSeq}`,
           runId: childRunId,
-          ...(childSeq === 1 ? { kind: 'delegation' } : {}),
+          ...(childSeq === 1 ? { disposition: 'attended' } : {}),
         } as AgentEvent);
         jobs.push(store.appendEvents(conversationId, [
           { ...base(conversationId, startSeq, 'run.started'), runId: turnRunId },
@@ -1404,7 +1405,7 @@ describe('agent event store', () => {
         id,
         agentId: 'built-in:tenon:assistant',
         anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
-        kind: 'reflective',
+        disposition: 'attended',
         status: 'completed',
         trigger: { type: 'manual' },
         fingerprint: {
@@ -1579,7 +1580,7 @@ describe('agent event store', () => {
         id,
         agentId: 'built-in:tenon:assistant',
         anchor: { type: 'principal', principal },
-        kind: 'reflective',
+        disposition: 'detached',
         status: 'completed',
         trigger: { type: 'schedule', schedule: '2026-01-01T03:00 RRULE:FREQ=DAILY', dueAt: 1_800_000_000_000 },
         fingerprint: {
@@ -1602,19 +1603,22 @@ describe('agent event store', () => {
       await expect(store.readRunMetaProjection('dream-run-1')).resolves.toMatchObject({
         id: 'dream-run-1',
         anchor: { type: 'principal', principal: agent },
-        kind: 'reflective',
+        disposition: 'detached',
         trigger: { type: 'schedule' },
       });
+      const dreamMeta = await store.readRunMetaProjection('dream-run-1');
+      expect(dreamMeta && deriveAgentRunKind(dreamMeta)).toBe('reflective');
+      expect(JSON.parse(await readFile(store.runPaths('dream-run-1').runMetaPath, 'utf8'))).not.toHaveProperty('kind');
       // Each principal's run index lists only the runs maintaining ITS pool — the executor
       // (agentId) does not leak the user-Dream into the agent's run history.
       await expect(store.listPrincipalRunMetaProjections(agent)).resolves.toMatchObject([{
         id: 'dream-run-1',
-        kind: 'reflective',
+        disposition: 'detached',
         status: 'completed',
       }]);
       await expect(store.listPrincipalRunMetaProjections(user)).resolves.toMatchObject([{
         id: 'dream-run-user',
-        kind: 'reflective',
+        disposition: 'detached',
         status: 'completed',
       }]);
     });

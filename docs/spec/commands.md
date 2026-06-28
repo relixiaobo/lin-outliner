@@ -150,7 +150,7 @@ never blocks the others or subsequent sweeps. A fire runs the brief as a
 **delegated child run** on the command's own delivery conversation, so every run is recorded
 inline in that conversation as a **child-run boundary row** (its final result
 lands in the channel as an expandable summary with a "View full run" link; see
-`agent-event-log-rendering.md`) and also surfaces as a task in its task panel.
+`agent-event-log-rendering.md`) and also surfaces in the Work/Runs view.
 Under the one-Neva invariant there is exactly one agent, so a scheduled command
 always forks the current agent (Neva), running under its identity and
 capabilities — a command never selects an executing agent. The run prompt is the
@@ -210,8 +210,8 @@ two seeded config field rows plus the prompt steps (any other child nodes).
 (`CommandRunButton` — a text action button with a background, aligned with the
 title like the inline Done checkbox) sits at the start of the command title;
 `useCommandRun` drives the attended run: ensure the delivery conversation
-(`agent_ensure_command_conversation`), reveal the agent panel on it (no longer
-auto-opening the task panel — that was abrupt), then run it
+(`agent_ensure_command_conversation`), reveal the agent panel on it (without
+auto-opening Work — that was abrupt), then run it
 (`agent_run_command_now`), so the run streams in live as an inline child-run
 boundary. While the run is in flight the **command bullet glyph becomes a
 spinner** (`RowMarker` `processing` → `.is-processing`) — that is the *only*
@@ -322,9 +322,11 @@ emits the final idle projection on drain). `agent_edit_message`/`agent_regenerat
 is DM-only; Channels have no steer (a send while runs work dispatches a new addressed
 turn). See `agent-architecture.md` (Channel runtime).
 
-### Agent — delegated child runs
-`agent_child_run_status`, `agent_child_run_send`, `agent_child_run_stop`,
+### Agent — delegated runs
+`agent_run_status`, `agent_run_steer`, `agent_run_amend`, `agent_run_stop`,
 `agent_child_run_transcript` (the drill-in transcript, replayed from the run's own ledger).
+The older child-run control command names remain accepted as compatibility aliases,
+but new runtime control surfaces use the `agent_run_*` commands.
 
 ### Agent — debug
 `agent_debug_view` (the conversation's run list + rollups), `agent_debug_run`

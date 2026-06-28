@@ -6,7 +6,7 @@ import type {
   AgentProviderSettingsView,
   AgentDefinitionView,
   AgentDreamReadiness,
-  AgentRenderDreamTaskEntity,
+  AgentRenderDreamRunEntity,
   AgentToolPermissionSettingsView,
   SkillDefinition,
 } from '../../api/types';
@@ -232,7 +232,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   const [skillTrustBusy, setSkillTrustBusy] = useState(false);
   const [allAgents, setAllAgents] = useState<AgentDefinitionView[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
-  const [dreamHistory, setDreamHistory] = useState<AgentRenderDreamTaskEntity[]>([]);
+  const [dreamHistory, setDreamHistory] = useState<AgentRenderDreamRunEntity[]>([]);
   const [loadingDreams, setLoadingDreams] = useState(false);
   const [dreamRunBusy, setDreamRunBusy] = useState(false);
   // When a manual "Dream now" pre-check finds too little new evidence, we hold the

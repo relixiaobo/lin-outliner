@@ -924,6 +924,7 @@ describe('agent skills', () => {
     expect(allSkills.map((skill) => skill.name).sort()).toEqual([
       'data-analysis',
       'document',
+      'goal-launching',
       'memory-dream',
       'presentation',
       'research',
@@ -994,6 +995,25 @@ describe('agent skills', () => {
     if (!invocation.ok) return;
     expect(invocation.execution).toBe('isolated');
     expect(invocation.isolated?.status).toBe('completed');
+  });
+
+  test('ships goal-launching as a built-in model guidance skill', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+    const automaticListing = await runtime.buildSkillListingReminderText(200_000);
+    const skill = await runtime.getSkill('goal-launching');
+
+    expect(automaticListing).toContain('- goal-launching:');
+    expect(skill).toMatchObject({
+      name: 'goal-launching',
+      source: 'built-in',
+      modelInvocable: true,
+      userInvocable: false,
+      ratified: true,
+      argumentHint: '<objective and acceptance criteria>',
+      argumentNames: ['objective'],
+    });
+    expect(skill?.body).toContain('Use `spawn` with `objective`, explicit `criteria`, `detach:true`, `context:"brief"`, and a finite `budget`.');
+    expect(skill?.body).toContain('Never claim completion from the worker result alone');
   });
 
   test('disabled skill gates apply to built-in research', async () => {

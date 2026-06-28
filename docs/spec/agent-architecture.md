@@ -27,9 +27,13 @@ are **views, rules, or metadata** of these, not separate primitives.
    stored `kind`**; the conversation noun ("channel"/"conversation") stays, the
    multi-agent channel semantics are gone. ✅
 3. **Run** — one unit of agent execution (one reply or task). Anchored to a
-   conversation (the only home). Holds **all** execution detail. The "kinds"
-   (turn/background/delegation/scheduled) are **derived** from `trigger` +
-   `parentRunId` + foreground-ness; **Task is a view** (= background/child runs). ✅
+   conversation (the only home). Holds **all** execution detail. The presentation
+   categories (turn/background/delegation/scheduled/reflective) are **derived**
+   from `trigger` + lineage (`parentRunId`) + `disposition: attended | detached`
+   + anchor provenance; no run stores a `kind`. Tracked objective runs add
+   `objective`, `criteria`, `scope`, `budget`, persistent `purpose: work |
+   verify`, and `objectiveStatus` alongside the existing process status. **Task is
+   a view** (= detached/background or child runs). ✅
 4. **Memory** — Neva's first-person knowledge, held as ordinary timeline outline
    nodes (`#d-memory`, `#d-episode`, `#d-belief`, `#d-question`, `#d-guidance`).
    Canonically framed in the standard cognitive-science vocabulary — see *The
@@ -85,7 +89,7 @@ The only agent-to-agent relationship is **delegation** (a child run). Peer agent
 and every conversation's members are `{user, Neva}`.
 
 - **Delegation (a child run — NOT a separate kind of agent / NOT a member)** — Neva
-  spawns helper runs for a TASK. Delegation is **fork-only**: a fork *is* Neva
+  spawns helper runs for a bounded objective. Delegation is **fork-only**: a fork *is* Neva
   continuing in an isolated child context (it runs AS Neva — same
   `executingAgentId`/`memoryOwnerAgentId`), never a second agent. The cross-agent
   "fresh" path (a sub-agent with its own identity + memory line) is **removed**
@@ -96,12 +100,41 @@ and every conversation's members are `{user, Neva}`.
   `parentRunId`; they are **not** conversation members and **not** peers. ✅ — and
   the code honors the model (`agent-run-unification`, shipped): a delegated run is
   an ordinary Run with its OWN `runs/<runId>/` ledger (its own seq space, replayed
-  alone), kind `delegation`, joined to the parent by
-  `parentRunId`/`parentToolCallId`; one `{seq, eventId}` evidence + watermark
-  scheme everywhere; child compaction is event-sourced like a conversation's. The
-  former entity-grade species (transcript payload snapshots, the `runId:message:N`
-  codec, the positional Dream cursor) is deleted. Delegation tasks surface in the
-  in-conversation task panel (child-run/delegation tasks only).
+  alone), joined to the parent by `parentRunId`/`parentToolCallId`; its
+  delegation category is derived from lineage, not stored. One `{seq, eventId}`
+  evidence + watermark scheme exists everywhere; child compaction is
+  event-sourced like a conversation's. The former entity-grade species
+  (transcript payload snapshots, the `runId:message:N` codec, the positional Dream
+  cursor) is deleted. Delegated runs surface in the global Work/Runs view
+  (non-turn, non-Dream runs only).
+
+### Verified goal runs
+
+Long objectives use the same Run primitive, not a new Task object. There is no
+user-facing goal mode, `/goal` shortcut, or composer goal button: users describe
+work in ordinary prose, and the model-side `goal-launching` workflow decides when
+to start a detached tracked child run with explicit criteria, bounded budget, and
+`objectiveStatus: active`. The child may decompose by calling `spawn`; every
+spawned worker is a Run, every verifier is a Run with persisted `purpose:
+verify`, and every verifier is runtime-pinned to `context: none` with read-only
+tools.
+
+The parent-verifies-child rule is structural: a worker's terminal output is not
+self-declared completion. The parent spawns an independent verifier Run with a
+runtime-built evidence pack (node changes, direct and working-set file changes,
+tool trace, result, criteria, and run ids). A pass sets the worker
+`objectiveStatus` to `verified`; a verifier gap leaves that worker attempt
+completed but blocked and the parent starts a fresh replacement worker Run with a
+new `runId` when budget remains. Controllers/root goal runs keep their own
+`runId`; worker attempts are replaceable. Repeated identical gap signatures trip
+the local livelock guard and block instead of silently burning budget.
+
+Budgets are local to each edge. A child run is admitted only if its requested
+wall-clock/token slice fits under the parent slice; token slices are reserved
+before sibling spawns and settled when the child terminates. Scope also narrows
+downward: a child can receive only a subset of its parent's action-kind
+capabilities/resources, and the visible tool catalog is derived from those action
+kinds.
 
 ## User ↔ Agent (control + memory relationship)
 
@@ -180,8 +213,8 @@ the foreground `dream` tool are cut.
 **Dream/run surfacing is relocated.** Dream history lives in Settings → Agent
 "Memory & activity" panel (alongside memory inspect/correct/forget), fetched via
 `agent_list_dream_history`, and the actual run transcript lives in the protected
-Dream channel. The conversation task panel keeps only child-run (delegation)
-tasks.
+Dream channel. The Work/Runs view keeps Dream out and lists ordinary non-turn
+runs across channels.
 
 ## The runtime/policy seam (trigger · mechanism · policy)
 
@@ -277,7 +310,7 @@ leftover; only the single-agent value is ever assigned.)
 | One editable agent — Neva | ✅ built | built-in `built-in:tenon:assistant` (handle `assistant`); user edits layer as a stored overlay (`builtInAgentProfiles` in `agent-providers.json`); directly editable in Settings → Agent (model/effort/persona/tools/skills); Save persists the overlay, Delete suppressed for the built-in |
 | Channels-only conversations (no DM) | ✅ built | every conversation is single-agent + inline-streaming + steerable; one conversation list (no two sections / two "+" buttons), no nav-lock, "General" and protected "Dream" default channels; `canonicalDmAgentId` / `lin-agent-dm-` prefix / DM-vs-Channel branching removed |
 | Run→conversation anchor + per-conversation run index | ✅ built | `runs WHERE conversationId=X` is enumerable |
-| Delegation / child-run runtime (#164) | ✅ built | sub-agents spawned for a TASK (NOT peers/members); ordinary Runs with their own `runs/<runId>/` ledger, joined by `parentRunId`/`parentToolCallId`; surfaced in the conversation task panel (child-run tasks only) |
+| Delegation / child-run runtime (#164) | ✅ built | helper runs spawned for a bounded objective (NOT peers/members); ordinary Runs with their own `runs/<runId>/` ledger, joined by `parentRunId`/`parentToolCallId`; surfaced in the Work/Runs view (non-turn, non-Dream runs only) |
 | Timeline memory nodes | ✅ built | durable memory lives in per-day generated-headline `#d-memory` plus optional `#d-episode`, `#d-belief`, `#d-question`, and `#d-guidance` outline nodes; foreground retrieval is pull-only through `node_search` / `node_read` |
 | One Dream (conversation + outline context) | ✅ built | scheduled at-most-once-daily and Settings-manual `memory-dream` Dream-channel runs read member conversations through `past_chats` when sources exist, gather relevant prior memory/workspace context through `node_search` / `node_read`, may delete obsolete nodes with `node_delete`, and update today's memory nodes through the human-dream cycle; the Dream channel retains the newest 512 run transcripts and prunes older run ledgers/anchor markers/search entries; manual consolidate-only can reconcile outline/prior Dream context without new chat spans; agent-self / run-log Dream, manual `/dream`, and foreground `dream` are cut |
 | Chat source binding under compaction (#302) | ✅ built | `chat-source` inline refs encode `{stream, streamId, range}` raw sources over the ledgers; node writes validate the exact source before mutation |

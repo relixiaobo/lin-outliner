@@ -195,8 +195,30 @@ export type AgentConversationEvent =
       source: { fromMessageId: string; throughMessageId: string };
     });
 
+/** Derived presentation category only. It is not persisted on run events or run meta. */
 export type AgentRunKind = 'turn' | 'background' | 'delegation' | 'scheduled' | 'reflective';
+export type AgentRunDisposition = 'attended' | 'detached';
 export type AgentRunRetention = 'hot' | 'cold-archived' | 'summarized-only' | 'deleted';
+export type AgentRunPurpose = 'work' | 'verify';
+export type AgentObjectiveStatus = 'active' | 'verifying' | 'verified' | 'blocked' | 'budget_exhausted' | 'stopped';
+export type AgentRunContextMode = 'full' | 'brief' | 'none' | 'fork';
+
+export interface AgentRunBudget {
+  tokens?: number;
+  wallClockMinutes?: number;
+  reservedTokens?: number;
+  spentTokens?: number;
+  startedAt?: number;
+  deadlineAt?: number;
+}
+
+export interface AgentRunScope {
+  capabilities?: string[];
+  resources?: {
+    docs?: string[];
+    paths?: string[];
+  };
+}
 
 export type AgentRunTrigger =
   | { type: 'message'; messageId: string }
@@ -230,8 +252,14 @@ export interface AgentRunMeta {
   agentId: AgentId;
   anchor: AgentRunAnchor;
   parentRunId?: string;
-  kind: AgentRunKind;
+  disposition: AgentRunDisposition;
   status: AgentRunStatus;
+  objective?: string;
+  criteria?: string[];
+  objectiveStatus?: AgentObjectiveStatus;
+  purpose?: AgentRunPurpose;
+  scope?: AgentRunScope;
+  budget?: AgentRunBudget;
   trigger: AgentRunTrigger;
   usage?: Usage;
   fingerprint: AgentRunFingerprint;
@@ -811,14 +839,14 @@ export interface FollowUpAppliedEvent extends AgentEventBase {
 }
 
 export type AgentNotificationKind =
-  // Off-floor task terminal states — the only kinds with an emitter today.
+  // Off-floor run terminal states — the only kinds with an emitter today.
   | 'task_completed'
   | 'task_failed'
   // Reserved (no emitter yet): a conversation's own *foreground* agent awaiting a
   // user decision while the user is elsewhere. Delegated child runs never ask the
   // user mid-execution, so there is deliberately no child-run→user needs_input trigger.
   | 'needs_input'
-  // Reserved (no emitter yet): a cheap no-LLM progress post for a long task.
+  // Reserved (no emitter yet): a cheap no-LLM progress post for a long run.
   | 'status'
   // A delivered in-Channel peer reply, raised only when the conversation is not
   // being viewed. Badge-only: it folds into unread like any notification, but the
@@ -832,7 +860,7 @@ export type AgentNotificationKind =
  * (`conversationId`) — a run anchored to conversation X still reports there.
  * One variant only: a delegated child run IS a run (run unification).
  */
-export type AgentTaskSource = { type: 'run'; runId: string };
+export type AgentRunNotificationSource = { type: 'run'; runId: string };
 
 /**
  * Delivered to its origin conversation: the base `conversationId` IS the
@@ -846,7 +874,7 @@ export interface NotificationCreatedEvent extends AgentEventBase {
   title: string;
   body?: string;
   /** The off-floor run that produced this notification, when any. */
-  source?: AgentTaskSource;
+  source?: AgentRunNotificationSource;
 }
 
 /**
@@ -881,7 +909,13 @@ export interface RunStartedEvent extends AgentEventBase {
   runId: string;
   agentId?: AgentId;
   anchor?: AgentRunAnchor;
-  kind?: AgentRunKind;
+  disposition?: AgentRunDisposition;
+  objective?: string;
+  criteria?: string[];
+  objectiveStatus?: AgentObjectiveStatus;
+  purpose?: AgentRunPurpose;
+  scope?: AgentRunScope;
+  budget?: AgentRunBudget;
   trigger?: AgentRunTrigger;
   fingerprint?: AgentRunFingerprint;
   retention?: AgentRunRetention;
@@ -891,12 +925,14 @@ export interface RunTerminalEvent extends AgentEventBase {
   type: 'run.completed' | 'run.failed' | 'run.cancelled';
   runId: string;
   errorMessage?: string;
+  objectiveStatus?: AgentObjectiveStatus;
+  budget?: AgentRunBudget;
   usage?: Usage;
 }
 
 /**
  * Conversation-log lifecycle marker for a delegated (child) run — the slim
- * projection feed for the boundary row + task panel. The child's transcript
+ * projection feed for the boundary row + Work/Runs panel. The child's transcript
  * lives in its OWN run ledger (`runs/<childRunId>/events.jsonl`, replayed
  * alone); there is no transcript snapshot, message count, or evidence
  * boundary here (run unification — the boundary is `run.started`'s seq in
@@ -915,9 +951,16 @@ export interface ChildRunStartedEvent extends AgentEventBase {
   name?: string;
   description: string;
   prompt: string;
+  objective?: string;
+  criteria?: string[];
+  objectiveStatus?: AgentObjectiveStatus;
+  purpose?: AgentRunPurpose;
+  scope?: AgentRunScope;
+  budget?: AgentRunBudget;
+  disposition?: AgentRunDisposition;
   agentType: string;
   /** Always 'fork': a child run is the current agent in an isolated context, never a different agent. */
-  contextMode: 'fork';
+  contextMode: AgentRunContextMode;
   /** Persisted so a cross-restart resume honors the unattended approval policy. */
   unattended?: boolean;
 }
@@ -926,9 +969,13 @@ export interface ChildRunUpdatedEvent extends AgentEventBase {
   type: 'child_run.updated';
   childRunId: string;
   status: AgentRunStatus;
+  objectiveStatus?: AgentObjectiveStatus;
+  budget?: AgentRunBudget;
   completedAt?: number;
   result?: string;
   error?: string;
+  blockedReason?: string;
+  latestVerifierGap?: string;
 }
 
 export interface CompactionCompletedEvent extends AgentEventBase {
@@ -1088,9 +1135,16 @@ export interface DelegationDetail {
   name?: string;
   description: string;
   prompt: string;
+  objective?: string;
+  criteria?: string[];
+  objectiveStatus?: AgentObjectiveStatus;
+  purpose?: AgentRunPurpose;
+  scope?: AgentRunScope;
+  budget?: AgentRunBudget;
+  disposition?: AgentRunDisposition;
   agentType: string;
   /** Always 'fork': a child run is the current agent in an isolated context, never a different agent. */
-  contextMode: 'fork';
+  contextMode: AgentRunContextMode;
   parentRunId?: string;
   executingAgentId: string;
   parentAgentId: string;
@@ -1102,6 +1156,8 @@ export interface DelegationDetail {
   completedAt?: number;
   result?: string;
   error?: string;
+  blockedReason?: string;
+  latestVerifierGap?: string;
   parentToolCallId?: string;
   /**
    * Run with no interactive approval channel (a tool needing approval is denied
@@ -1113,7 +1169,7 @@ export interface DelegationDetail {
 
 /**
  * Conversation-level record of a delegated (child) run — the projection the
- * boundary row + task panel read. The transcript is NOT here: it lives in the
+ * boundary row + Work/Runs panel read. The transcript is NOT here: it lives in the
  * child's own run ledger, replayed independently (run unification).
  */
 export type AgentChildRunRecord = DelegationDetail;
@@ -1166,7 +1222,7 @@ export interface AgentNotificationRecord {
   kind: AgentNotificationKind;
   title: string;
   body?: string;
-  source?: AgentTaskSource;
+  source?: AgentRunNotificationSource;
   seq: number;
   createdAt: number;
   read: boolean;
@@ -1593,6 +1649,13 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         name: event.name,
         description: event.description,
         prompt: event.prompt,
+        objective: event.objective,
+        criteria: event.criteria,
+        objectiveStatus: event.objectiveStatus,
+        purpose: event.purpose,
+        scope: event.scope,
+        budget: event.budget,
+        disposition: event.disposition,
         agentType: event.agentType,
         contextMode: event.contextMode,
         parentRunId: event.parentRunId,
@@ -1616,9 +1679,13 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       // dropping it would hide the resumed run from Dream's running-skip,
       // crash-recovery's interrupted scan, and the projection.
       run.status = event.status;
+      run.objectiveStatus = event.objectiveStatus ?? run.objectiveStatus;
+      run.budget = event.budget ?? run.budget;
       run.completedAt = event.completedAt;
       run.result = event.result;
       run.error = event.error;
+      run.blockedReason = event.blockedReason;
+      run.latestVerifierGap = event.latestVerifierGap;
       run.updatedAt = event.createdAt;
       return;
     }

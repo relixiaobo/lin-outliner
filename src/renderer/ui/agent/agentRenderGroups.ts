@@ -6,9 +6,8 @@ import type { AgentTurnProcessItem, AgentTurnToolCallItem } from './agentTurnPro
 // Render-group splitting for the agent process timeline, mirroring Codex's
 // `split-items-into-render-groups`. A run of CONSECUTIVE tool-call items folds
 // into one counted "tool activity" group; a reasoning or narration item (Codex:
-// reasoning / assistant-message are hard boundaries) breaks the run, as does a
-// child-run tool call (it carries rich inline content we must not hide). Lone
-// runs stay un-grouped — Codex does not wrap a single tool in a summary.
+// reasoning / assistant-message are hard boundaries) breaks the run. Lone runs
+// stay un-grouped — Codex does not wrap a single tool in a summary.
 
 export type TimelineRenderGroup =
   | { kind: 'item'; item: AgentTurnProcessItem }
@@ -16,7 +15,7 @@ export type TimelineRenderGroup =
 
 export function splitTimelineIntoGroups(
   items: readonly AgentTurnProcessItem[],
-  isChildRun: (item: AgentTurnToolCallItem) => boolean,
+  breaksToolRun: (item: AgentTurnToolCallItem) => boolean,
 ): TimelineRenderGroup[] {
   const groups: TimelineRenderGroup[] = [];
   let run: AgentTurnToolCallItem[] = [];
@@ -32,7 +31,7 @@ export function splitTimelineIntoGroups(
   };
 
   for (const item of items) {
-    if (item.type === 'toolCall' && !isChildRun(item)) {
+    if (item.type === 'toolCall' && !breaksToolRun(item)) {
       run.push(item);
       continue;
     }

@@ -61,9 +61,65 @@ surface.
 |---|---|---:|---|---|
 | `past_chats` | agent | No | No | Read/search visible prior conversation history and raw cited spans. |
 | `ask_user_question` | agent | No | No | Pause the active run for structured user input, including refs/attachments or an explicit discuss outcome. |
+| `spawn` | agent | No document mutation | No | Start a scoped child Run for a focused objective, with criteria unless `verify:false`. |
+| `run_status` | agent | No | No | Inspect a same-session background or child Run by `runId`/name. |
+| `run_steer` | agent | No | No | Send soft execution guidance to a live Run without changing its contract. |
+| `run_amend` | agent | No document mutation | No | Hard-amend a Run's objective, criteria, or budget; invalidates verifier conclusions. |
+| `run_stop` | agent | No document mutation | No | Stop a live same-session Run. |
 
 There is one agent (Neva). Conversations ("channels") are not organized by an
 agent tool, so there are no channel-management tools on the surface.
+
+## Run Delegation Tools
+
+`spawn` is the only downward delegation primitive. It forks Neva into an isolated
+child Run and takes:
+
+```ts
+interface SpawnInput {
+  objective: string;
+  criteria?: string[]; // required unless verify === false
+  verify?: boolean; // default true
+  scope?: {
+    capabilities?: string[]; // action kinds, or legacy tool names normalized to action kinds
+    resources?: { docs?: string[]; paths?: string[] };
+  };
+  budget?: { tokens?: number; wallClockMinutes?: number };
+  context?: "full" | "brief" | "none"; // verifier Runs are runtime-pinned to "none"
+  detach?: boolean;
+  model?: string; // optional override
+  name?: string;
+}
+```
+
+The runtime validates that verified runs have explicit criteria. The returned
+Run result is accepted only after the parent-verifies-child loop passes. A leaf
+worker verifier failure does not resurrect the worker Run: the failed attempt
+stays completed with a blocked objective status, and a fresh replacement worker
+gets a new `runId` when budget and livelock guards allow it. A controller
+(structurally: a work Run that has spawned work children) and a root tracked goal
+replan in place after verifier failure: the same `runId` returns to `running` /
+`active`, receives the verifier gap as hidden continuation context, and keeps its
+child lineage intact.
+
+The control tools are intentionally uniform:
+
+- `run_status({ runId | name, wait?, timeout_ms? })`
+- `run_steer({ runId | name, message })`
+- `run_amend({ runId, changes: { objective?, criteria?, budget? } })`
+- `run_stop({ runId | name })`
+
+`run_steer` is soft guidance and never changes verifier validity.
+`run_amend` changes the contract and invalidates any prior verifier conclusion.
+Scope narrows downward by action kind; resource paths/docs cannot widen past the
+parent Run. Budget is admitted locally at each edge, reserves token headroom
+before sibling spawns, and settles on child termination.
+
+`run_status` returns the Run's execution status, objective status, budget, latest
+verifier gap if any, and one level of direct child summaries. Child summaries use
+the structural role labels `worker`, `controller`, or `verifier`; `verifier`
+comes from the persisted Run purpose, while `controller` is derived from having
+spawned work children.
 
 ### Deferred Tools
 

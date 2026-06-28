@@ -5,7 +5,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { useT } from '../../i18n/I18nProvider';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { isToolCallRowActive } from './AgentProcessTimeline';
-import { AgentToolCallBlock, getToolCallStatus } from './AgentToolCallBlock';
+import { AgentToolCallBlock, childRunToolStatus, getToolCallStatus } from './AgentToolCallBlock';
 import type { AgentExpandState } from './agentProcessTypes';
 import { summarizeToolActivity } from './agentRenderGroups';
 import type { AgentTurnToolCallItem } from './agentTurnProjection';
@@ -41,17 +41,16 @@ export function AgentToolActivityGroup({
 }: AgentToolActivityGroupProps) {
   const t = useT();
   const expanded = expandState.isExpanded(id, false);
-  // Group members are non-child-run tools by the timeline's split predicate, so
-  // childRun is always undefined here; every un-settled member spins while the turn
-  // is live (parallel calls included), matching the standalone-row rule.
   const memberStatuses = members.map((member) => ({
-    status: getToolCallStatus(
-      member.toolCall.id,
-      results.get(member.toolCall.id),
-      pendingToolCallIds,
-      isToolCallRowActive(member, pendingToolCallIds, results, undefined, turnActive),
-      member.outcome,
-    ),
+    status: member.childRun
+      ? childRunToolStatus(member.childRun)
+      : getToolCallStatus(
+          member.toolCall.id,
+          results.get(member.toolCall.id),
+          pendingToolCallIds,
+          isToolCallRowActive(member, pendingToolCallIds, results, member.childRun, turnActive),
+          member.outcome,
+        ),
     toolCall: member.toolCall,
   }));
   const summary = summarizeToolActivity(memberStatuses, t.agent.process);
@@ -89,9 +88,10 @@ export function AgentToolActivityGroup({
               pendingToolCallIds={pendingToolCallIds}
               result={results.get(member.toolCall.id)}
               conversationId={conversationId}
+              childRun={member.childRun}
               toolCall={member.toolCall}
               outcome={member.outcome}
-              turnActive={isToolCallRowActive(member, pendingToolCallIds, results, undefined, turnActive)}
+              turnActive={isToolCallRowActive(member, pendingToolCallIds, results, member.childRun, turnActive)}
             />
           ))}
         </div>

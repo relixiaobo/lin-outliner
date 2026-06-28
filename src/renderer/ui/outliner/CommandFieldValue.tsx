@@ -26,13 +26,13 @@ export interface CommandFieldLabels {
 }
 
 // Drives an attended "run now": 1) ensure the delivery conversation exists on
-// disk, 2) reveal + select it (loads the single in-memory conversation) and AWAIT that
-// so the run never recreates the conversation mid-flight, then 3) run it. The run
-// surfaces inline as a child run boundary in the conversation (its permanent
-// record), so failures that reach the conversation show there — nothing is
-// reflected on the Run button. `running` drives ONLY the command bullet's
-// processing spinner (the running indicator lives at the bullet, per the design);
-// a ref guards re-entry so a second click while in flight is a no-op.
+// disk, 2) reveal + select it (loads the single in-memory conversation) and AWAIT
+// that so the run never recreates the conversation mid-flight, then 3) run it.
+// The run surfaces through the conversation's ordinary agent run/task surfaces,
+// so failures that reach the conversation show there — nothing is reflected on
+// the Run button. `running` drives ONLY the command bullet's processing spinner
+// (the running indicator lives at the bullet, per the design); a ref guards
+// re-entry so a second click while in flight is a no-op.
 export function useCommandRun(nodeId: NodeId): { running: boolean; run: () => void } {
   const [running, setRunning] = useState(false);
   const runningRef = useRef(false);

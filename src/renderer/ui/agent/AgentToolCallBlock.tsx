@@ -3,7 +3,6 @@ import type { AgentToolResultPayloadPart, AgentToolResultWithPayloads, ToolCall 
 import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
 import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
 import { basenameForPath } from '../../../core/referenceMarkup';
-import { formatRunDuration } from './agentProcessTypes';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import { InlineFileReference } from '../editor/InlineFileReference';
@@ -109,8 +108,6 @@ export function getToolCallStatus(
   return pendingToolCallIds.has(toolCallId) || toolActive ? 'pending' : 'incomplete';
 }
 
-// The `Agent*` family are child-run tools (rich inline content); they are never
-// folded into a tool-activity group, so they do not need a bucket here.
 export function toolActivityKind(name: string): ToolActivityKind {
   switch (name) {
     case 'bash':
@@ -141,12 +138,7 @@ export function toolActivityKind(name: string): ToolActivityKind {
 }
 
 export function getToolIcon(toolCall: ToolCall) {
-  if (
-    toolCall.name === 'Agent'
-    || toolCall.name === 'AgentStatus'
-    || toolCall.name === 'AgentSend'
-    || toolCall.name === 'AgentStop'
-  ) return AgentIcon;
+  if (isRunControlTool(toolCall.name)) return AgentIcon;
   if (toolCall.name === 'node_create') return NodeCreateToolIcon;
   if (toolCall.name === 'node_read') return FileTextIcon;
   if (toolCall.name === 'node_edit') return NodeEditToolIcon;
@@ -201,13 +193,14 @@ function withSubject(verb: string, subject: string | null, labels: ToolCallLabel
 
 export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels: ToolCallLabels): string {
   const verbs = labels.verbs;
-  if (toolCall.name === 'Agent') {
-    const subject = pickSubject(toolCall.arguments, 'description', 'agent_type');
+  if (toolCall.name === 'Agent' || toolCall.name === 'spawn') {
+    const subject = pickSubject(toolCall.arguments, 'description', 'objective', 'agent_type');
     return withSubject(verbByStatus(verbs.runChildAgent, status, labels), subject, labels);
   }
-  if (toolCall.name === 'AgentStatus') return verbByStatus(verbs.checkChildAgent, status, labels);
-  if (toolCall.name === 'AgentSend') return verbByStatus(verbs.messageChildAgent, status, labels);
-  if (toolCall.name === 'AgentStop') return verbByStatus(verbs.stopChildRun, status, labels);
+  if (toolCall.name === 'AgentStatus' || toolCall.name === 'run_status') return verbByStatus(verbs.checkChildAgent, status, labels);
+  if (toolCall.name === 'AgentSend' || toolCall.name === 'run_steer') return verbByStatus(verbs.messageChildAgent, status, labels);
+  if (toolCall.name === 'AgentStop' || toolCall.name === 'run_stop') return verbByStatus(verbs.stopChildRun, status, labels);
+  if (toolCall.name === 'run_amend') return verbByStatus(verbs.messageChildAgent, status, labels);
   const args = toolCall.arguments;
   if (toolCall.name === 'recall') {
     return withSubject(verbByStatus(verbs.recallMemory, status, labels), pickSubject(args, 'query'), labels);
@@ -266,122 +259,22 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
   );
 }
 
+function isRunControlTool(toolName: string): boolean {
+  return toolName === 'Agent'
+    || toolName === 'AgentStatus'
+    || toolName === 'AgentSend'
+    || toolName === 'AgentStop'
+    || toolName === 'spawn'
+    || toolName === 'run_status'
+    || toolName === 'run_steer'
+    || toolName === 'run_amend'
+    || toolName === 'run_stop';
+}
+
 export function childRunToolStatus(childRun: AgentRenderChildRunEntity): ToolStatus {
   if (childRun.status === 'running') return 'pending';
   if (childRun.status === 'failed' || childRun.status === 'stopped') return 'error';
   return 'done';
-}
-
-function formatChildRunMode(childRun: AgentRenderChildRunEntity): string {
-  return `${childRun.contextMode} · ${childRun.agentType}`;
-}
-
-function formatChildRunDuration(childRun: AgentRenderChildRunEntity): string {
-  // Same wall-clock ladder as the "Worked for …" process header — one source of
-  // truth so the child-run row never drifts from it.
-  return formatRunDuration((childRun.completedAt ?? childRun.updatedAt) - childRun.startedAt);
-}
-
-function childRunSummary(childRun: AgentRenderChildRunEntity, labels: Messages['agent']['childRun']): string {
-  const description = childRun.description.trim() || childRun.name || childRun.id;
-  return labels.summary({ description });
-}
-
-function previewText(text: string | undefined, maxLength = 520): string {
-  const normalized = (text ?? '').replace(/\s+/g, ' ').trim();
-  return normalized.length > maxLength ? `${normalized.slice(0, maxLength).trim()}...` : normalized;
-}
-
-function ChildRunInlineDetails({
-  index,
-  onNodeReferenceOpen,
-  onOpenTranscript,
-  childRun,
-}: {
-  index?: DocumentIndex;
-  onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenTranscript?: (childRunId: string) => void;
-  childRun: AgentRenderChildRunEntity;
-}) {
-  const t = useT();
-  const result = previewText(childRun.result);
-  const error = previewText(childRun.error);
-  const prompt = previewText(childRun.prompt);
-  const canOpenTranscript = !!onOpenTranscript;
-
-  return (
-    <div className="agent-child-run-inline">
-      <dl className="agent-child-run-meta-grid">
-        <div>
-          <dt>{t.agent.childRun.status}</dt>
-          <dd>{childRun.status}</dd>
-        </div>
-        <div>
-          <dt>{t.agent.childRun.mode}</dt>
-          <dd>{formatChildRunMode(childRun)}</dd>
-        </div>
-        <div>
-          <dt>{t.agent.childRun.duration}</dt>
-          <dd>{formatChildRunDuration(childRun)}</dd>
-        </div>
-      </dl>
-      {childRun.name ? (
-        <section className="agent-tool-call-section">
-          <div className="agent-tool-call-section-header">
-            <div className="agent-tool-call-section-title">{t.agent.childRun.name}</div>
-          </div>
-          <PlainReadOnlyCodeBlock className="agent-tool-code" code={childRun.name}>
-            <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={childRun.name} />
-          </PlainReadOnlyCodeBlock>
-        </section>
-      ) : null}
-      {prompt ? (
-        <section className="agent-tool-call-section">
-          <div className="agent-tool-call-section-header">
-            <div className="agent-tool-call-section-title">{t.agent.childRun.prompt}</div>
-          </div>
-          <PlainReadOnlyCodeBlock className="agent-tool-code" code={prompt} copyLabel={t.agent.childRun.copyPrompt}>
-            <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={prompt} />
-          </PlainReadOnlyCodeBlock>
-        </section>
-      ) : null}
-      {result ? (
-        <section className="agent-tool-call-section">
-          <div className="agent-tool-call-section-header">
-            <div className="agent-tool-call-section-title">{t.agent.childRun.result}</div>
-          </div>
-          <PlainReadOnlyCodeBlock className="agent-tool-code" code={result} copyLabel={t.agent.childRun.copyResult}>
-            <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={result} />
-          </PlainReadOnlyCodeBlock>
-        </section>
-      ) : null}
-      {error ? (
-        <section className="agent-tool-call-section">
-          <div className="agent-tool-call-section-header">
-            <div className="agent-tool-call-section-title">
-              {t.agent.childRun.error}
-              <span>{t.agent.toolCall.errorBadge}</span>
-            </div>
-          </div>
-          <PlainReadOnlyCodeBlock className="agent-tool-code" code={error} copyLabel={t.agent.childRun.copyError}>
-            <AgentInlineReferenceText index={index} onNodeReferenceOpen={onNodeReferenceOpen} text={error} />
-          </PlainReadOnlyCodeBlock>
-        </section>
-      ) : null}
-      <div className="agent-child-run-inline-actions">
-        <Button
-          disabled={!canOpenTranscript}
-          onClick={() => onOpenTranscript?.(childRun.id)}
-          size="sm"
-          variant="ghost"
-        >
-          <FileTextIcon size={ICON_SIZE.menu} />
-          <span>{t.agent.childRun.viewTranscript}</span>
-        </Button>
-        <ToolCopyButton ariaLabel={t.agent.childRun.copyId} text={childRun.id} />
-      </div>
-    </div>
-  );
 }
 
 function resultText(result: AgentToolResultWithPayloads | undefined): string {
@@ -882,10 +775,10 @@ export function AgentToolCallBlock({
     () => (fileOutput ? [] : resultParts(result, isExpanded)),
     [fileOutput, result, isExpanded],
   );
-  const hasChildRunDetails = Boolean(childRun);
+  const canOpenChildRunTranscript = Boolean(childRun && onOpenChildRunTranscript);
   const hasDetails = fileOutput
-    ? hasChildRunDetails || fileOutput.diff.length > 0
-    : hasChildRunDetails || inputText !== '{}' || outputText.length > 0;
+    ? fileOutput.diff.length > 0 || Boolean(childRun)
+    : inputText !== '{}' || outputText.length > 0 || Boolean(childRun);
   const hasOutputDetails = outputText.length > 0;
   const loadedSkillDetails = getLoadedSkillDetails(toolCall, result);
 
@@ -912,17 +805,28 @@ export function AgentToolCallBlock({
       status={status}
       statusIcon={StatusIcon}
       statusIconClassName={status === 'pending' ? 'agent-tool-call-spinner' : undefined}
-      summary={childRun ? childRunSummary(childRun, t.agent.childRun) : summarizeToolCall(toolCall, status, t.agent.toolCall)}
+      summary={summarizeToolCall(toolCall, status, t.agent.toolCall)}
     >
       {childRun ? (
-        <ChildRunInlineDetails
-          index={index}
-          onNodeReferenceOpen={onNodeReferenceOpen}
-          onOpenTranscript={onOpenChildRunTranscript}
-          childRun={childRun}
-        />
+        <section className="agent-tool-call-section">
+          <div className="agent-tool-call-section-header">
+            <div className="agent-tool-call-section-title">{t.agent.childRun.heading}</div>
+          </div>
+          <div className="agent-child-run-inline-actions">
+            <Button
+              disabled={!canOpenChildRunTranscript}
+              onClick={() => onOpenChildRunTranscript?.(childRun.id)}
+              size="sm"
+              variant="ghost"
+            >
+              <FileTextIcon size={ICON_SIZE.menu} />
+              <span>{t.agent.childRun.viewTranscript}</span>
+            </Button>
+            <ToolCopyButton ariaLabel={t.agent.childRun.copyId} text={childRun.id} />
+          </div>
+        </section>
       ) : null}
-      {!hasChildRunDetails && fileOutput && fileOutput.diff ? (
+      {fileOutput && fileOutput.diff ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">{t.agent.toolCall.changes}</div>
@@ -930,7 +834,7 @@ export function AgentToolCallBlock({
           <HighlightedCode code={fileOutput.diff} lang="diff" />
         </section>
       ) : null}
-      {!hasChildRunDetails && !fileOutput && inputText !== '{}' ? (
+      {!fileOutput && inputText !== '{}' ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">{t.agent.toolCall.input}</div>
@@ -938,7 +842,7 @@ export function AgentToolCallBlock({
           <HighlightedJson code={inputText} />
         </section>
       ) : null}
-      {!hasChildRunDetails && !fileOutput && result && hasOutputDetails ? (
+      {!fileOutput && result && hasOutputDetails ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">

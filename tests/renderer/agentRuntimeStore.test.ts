@@ -20,7 +20,6 @@ import type {
   AgentRenderDreamEntity,
   AgentRenderProjection,
   AgentRenderChildRunEntity,
-  AgentRenderTaskEntity,
 } from '../../src/core/agentRenderProjection';
 import type { AgentPayloadRef, AgentPersistedContent } from '../../src/core/agentEventLog';
 import { systemReminder } from '../../src/core/agentAttachments';
@@ -78,8 +77,6 @@ function projection(
     dreams?: Record<string, AgentRenderDreamEntity>;
     childRuns?: Record<string, AgentRenderChildRunEntity>;
     childRunIds?: string[];
-    tasks?: Record<string, AgentRenderTaskEntity>;
-    taskIds?: string[];
   } = {},
 ): AgentRenderProjection {
   const rows = entries.map((entry) => ({
@@ -87,21 +84,6 @@ function projection(
     kind: 'message' as const,
     messageId: entry.nodeId,
   }));
-  const childRunTasks = Object.values(options.childRuns ?? {}).map((childRun) => ({
-    id: `child-run:${childRun.id}`,
-    kind: 'child-run' as const,
-    status: childRun.status,
-    title: childRun.description.trim() || childRun.name?.trim() || childRun.id,
-    subtitle: `${childRun.contextMode} · ${childRun.agentType}`,
-    startedAt: childRun.startedAt,
-    updatedAt: childRun.updatedAt,
-    completedAt: childRun.completedAt,
-    childRunId: childRun.id,
-  }));
-  const tasks = {
-    ...Object.fromEntries(childRunTasks.map((task) => [task.id, task])),
-    ...(options.tasks ?? {}),
-  };
   return {
     conversationId: 'saved',
     revision: options.revision ?? 1,
@@ -116,7 +98,6 @@ function projection(
     errorMessage: null,
     rows,
     transcriptRows: rows,
-    taskIds: options.taskIds ?? Object.keys(tasks),
     childRunIds: options.childRunIds ?? Object.keys(options.childRuns ?? {}),
     entities: {
       messages: Object.fromEntries(entries.map((entry) => [entry.nodeId, {
@@ -137,7 +118,6 @@ function projection(
       childRuns: options.childRuns ?? {},
       compactions: {},
       dreams: options.dreams ?? {},
-      tasks,
     },
     streaming: options.streamingMessageId ? {
       messageId: options.streamingMessageId,
@@ -434,89 +414,6 @@ describe('agent runtime store', () => {
     expect(entry?.message.content).toEqual([
       { type: 'text', text: 'Review [[file:shot.png^%2Ftmp%2Fshot.png]].' },
     ]);
-    unsubscribe();
-  });
-
-  test('derives task entries from child runs with running work first', async () => {
-    const completed = childRunEntity({
-      id: 'child-completed',
-      description: 'Finished audit',
-      status: 'completed',
-      updatedAt: 300,
-      completedAt: 300,
-    });
-    const running = childRunEntity({
-      id: 'child-running',
-      description: 'Long research',
-      status: 'running',
-      updatedAt: 200,
-      completedAt: undefined,
-    });
-    const restored = conversation('saved', projection([], {
-      childRunIds: [completed.id, running.id],
-      childRuns: {
-        [completed.id]: completed,
-        [running.id]: running,
-      },
-    }));
-    const fake = createFakeClient({ latestConversation: restored });
-    const store = createAgentRuntimeStore(fake.client);
-    const unsubscribe = store.subscribe(() => {});
-
-    await flushMicrotasks();
-
-    expect(store.getSnapshot().tasks.map((task) => ({
-      id: task.id,
-      status: task.status,
-      title: task.title,
-      subtitle: task.subtitle,
-      childRunId: task.childRunId,
-    }))).toEqual([
-      {
-        id: 'child-run:child-running',
-        status: 'running',
-        title: 'Long research',
-        subtitle: 'fork · explorer',
-        childRunId: 'child-running',
-      },
-      {
-        id: 'child-run:child-completed',
-        status: 'completed',
-        title: 'Finished audit',
-        subtitle: 'fork · explorer',
-        childRunId: 'child-completed',
-      },
-    ]);
-    unsubscribe();
-  });
-
-  test('Dream tasks ride in the projection but are not surfaced in the task panel', async () => {
-    // Dreams moved to Settings → Agent's Dream-history group; the in-conversation
-    // task panel keeps only child-run entries, so the store filters dreams out.
-    const dreamTask: AgentRenderTaskEntity = {
-      id: 'dream:dream-run-1',
-      kind: 'dream',
-      status: 'completed',
-      trigger: 'schedule',
-      principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
-      startedAt: 100,
-      updatedAt: 150,
-      completedAt: 150,
-      runId: 'dream-run-1',
-      processed: { totalMessageCount: 4, totalCharCount: 1200, consolidateOnly: false },
-      changes: { added: 1, updated: 1, forgotten: 0, skipped: 0 },
-    };
-    const restored = conversation('saved', projection([], {
-      taskIds: [dreamTask.id],
-      tasks: { [dreamTask.id]: dreamTask },
-    }));
-    const fake = createFakeClient({ latestConversation: restored });
-    const store = createAgentRuntimeStore(fake.client);
-    const unsubscribe = store.subscribe(() => {});
-
-    await flushMicrotasks();
-
-    expect(store.getSnapshot().tasks).toEqual([]);
     unsubscribe();
   });
 

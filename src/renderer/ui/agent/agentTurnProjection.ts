@@ -71,14 +71,10 @@ function isTextBlock(indexed: IndexedBlock): indexed is IndexedBlock<AssistantTe
 }
 
 function visibleAssistantBlocks({
-  childRunsByParentToolCallId,
-  isChannel,
   isError,
   message,
   streaming,
 }: {
-  childRunsByParentToolCallId?: ReadonlyMap<string, AgentRenderChildRunEntity>;
-  isChannel: boolean;
   isError: boolean;
   message: AssistantMessage;
   streaming: boolean;
@@ -92,9 +88,6 @@ function visibleAssistantBlocks({
       if (block.type === 'text') {
         if (isError && looksLikeRawAgentErrorPayload(block.text)) return false;
         return block.text.trim().length > 0 || streaming;
-      }
-      if (block.type === 'toolCall' && isChannel && childRunsByParentToolCallId?.has(block.id)) {
-        return false;
       }
       return true;
     });
@@ -157,8 +150,6 @@ export function projectAssistantTurn({
 }: ProjectAssistantTurnInput): AgentTurnProjection {
   const isError = !!message.errorMessage && message.stopReason !== 'aborted';
   const visibleBlocks = visibleAssistantBlocks({
-    childRunsByParentToolCallId,
-    isChannel,
     isError,
     message,
     streaming,

@@ -11,10 +11,10 @@ import type { ReferenceTarget } from '../api/types';
 // agent streaming — only on an actual reveal request.
 
 export interface AgentRevealOptions {
-  /** Also open the conversation's task panel (where command runs surface as
-   *  child run tasks). A command Run spawns a parentless child run, which lands in
-   *  the task panel rather than the main transcript, so the Run flow asks for it. */
-  openTasks?: boolean;
+  /** Also open the Work panel (where command runs surface as Runs). A command Run
+   *  spawns a parentless child run, which lands in Work rather than the main
+   *  transcript, so the Run flow asks for it. */
+  openWork?: boolean;
   /** Scroll/highlight a chat-source citation inside the revealed transcript. */
   transcriptTarget?: AgentChatSourceRevealTarget;
 }
@@ -26,7 +26,7 @@ type RevealListener = (conversationId: string, options: AgentRevealOptions) => v
 const listeners = new Set<RevealListener>();
 
 /** Select `conversationId` in the agent runtime and ask any listener (App opens
- *  the rail; the chat panel may open the task panel) to surface it. Returns the
+ *  the rail; the chat panel may open Work) to surface it. Returns the
  *  selection promise so callers can await the conversation being loaded before doing
  *  anything that mutates it (e.g. starting a run) — selecting concurrently with a
  *  run recreates the conversation and diverges the event seq. The conversation must

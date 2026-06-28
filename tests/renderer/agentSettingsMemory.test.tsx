@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import { DreamHistoryGroup, dreamMetaChips } from '../../src/renderer/ui/agent/DreamHistoryGroup';
 import { DEFAULT_MESSAGES } from '../../src/core/i18n';
-import type { AgentRenderDreamTaskEntity } from '../../src/core/agentRenderProjection';
+import type { AgentRenderDreamRunEntity } from '../../src/core/agentRenderProjection';
 
 interface Rendered {
   cleanup: () => void;
@@ -29,7 +29,7 @@ afterEach(() => {
 
 const fmtDate = (timestamp: number) => `at ${timestamp}`;
 
-function dreamEntry(): AgentRenderDreamTaskEntity {
+function dreamEntry(): AgentRenderDreamRunEntity {
   return {
     id: 'dream:dream-run-1',
     kind: 'dream',
@@ -79,7 +79,7 @@ describe('Settings → Agent Dream history group', () => {
   });
 
   test('dreamMetaChips drops processed/changes when absent', () => {
-    const minimal: AgentRenderDreamTaskEntity = {
+    const minimal: AgentRenderDreamRunEntity = {
       id: 'dream:2',
       kind: 'dream',
       status: 'running',
