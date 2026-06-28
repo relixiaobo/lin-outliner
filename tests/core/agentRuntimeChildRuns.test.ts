@@ -758,6 +758,69 @@ describe('agent runtime childRuns', () => {
     expect(failedWorkerStatus.latest_verifier_gap).toBe('missing required phrase');
   });
 
+  test('verifies a child run that carries a wall-clock budget', async () => {
+    // A verifier inherits the work run's budget as its parent, whose wall-clock
+    // deadline has been counting down since the work started. Requesting the
+    // original budget would exceed the parent's *remaining* time and be rejected
+    // at admission, leaving the run blocked ("Verifier failed to start") even
+    // though it succeeded — the default detached+verified+budget path. Guard that
+    // a budgeted run still reaches a real verifier verdict.
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-verifier-wallclock-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-verifier-wallclock-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const verifierContexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('spawn', {
+            description: 'budgeted verified child',
+            objective: 'Produce a verified child result under a wall-clock budget.',
+            criteria: ['The final result must include the phrase verified result.'],
+            budget: { wallClockMinutes: 5 },
+          }, { id: 'tool-agent-wallclock-child' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('verified result')),
+        (context) => {
+          verifierContexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('{"verdict":"pass","gap":""}'));
+        },
+        fauxAssistantMessage(fauxText('Parent accepted budgeted verified child.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a budgeted verified child.', sink);
+
+    expect(script.pendingCount()).toBe(0);
+    expect(verifierContexts).toHaveLength(1);
+    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
+    const childRuns = Object.values(replay.childRuns);
+    const worker = childRuns.find((run) => run.description === 'budgeted verified child');
+    const verifier = childRuns.find((run) => run.purpose === 'verify');
+    expect(worker?.objectiveStatus).toBe('verified');
+    expect(verifier).toBeDefined();
+    expect(verifier?.purpose).toBe('verify');
+  });
+
   test('a controller with child runs replans in place instead of being replaced', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-controller-replan-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-controller-replan-data-'));

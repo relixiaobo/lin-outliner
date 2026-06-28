@@ -208,8 +208,18 @@ function DisclosureSection({
   defaultOpen: boolean;
   title: string;
 }) {
+  // Own the open state and seed it once from `defaultOpen`. A bare controlled
+  // `open={defaultOpen}` (no onToggle) is re-asserted on every poll re-render, so
+  // the user can neither collapse it while the run streams nor keep it open once
+  // the derived default flips on completion. Per-run remounting (a key at the call
+  // site) re-seeds it for a freshly opened run.
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <details className="agent-child-run-disclosure-section" open={defaultOpen}>
+    <details
+      className="agent-child-run-disclosure-section"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary>
         <span>{title}</span>
       </summary>
@@ -525,6 +535,7 @@ export function AgentChildRunDetailsPanel({
           </DetailSection>
         ) : null}
         <DisclosureSection
+          key={`activity-${childRun.id}`}
           defaultOpen={showActivityOpen}
           title={t.agent.childRun.sectionActivityLog({ count: messages.length })}
         >
@@ -543,7 +554,7 @@ export function AgentChildRunDetailsPanel({
             toolResults={toolResults}
           />
         </DisclosureSection>
-        <DisclosureSection defaultOpen={false} title={t.agent.childRun.sectionTechnicalDetails}>
+        <DisclosureSection key={`technical-${childRun.id}`} defaultOpen={false} title={t.agent.childRun.sectionTechnicalDetails}>
           <dl className="agent-child-run-metadata">
             <div>
               <dt>{t.agent.childRun.metaAgentId}</dt>

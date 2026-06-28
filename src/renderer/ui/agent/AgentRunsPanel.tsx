@@ -29,8 +29,11 @@ interface AgentRunTreeNode {
 }
 
 function runStatusRank(run: AgentRunListEntry): number {
-  if (run.status === 'running' && run.objectiveStatus !== 'blocked') return 0;
-  if (run.status === 'running') return 1;
+  // Mirrors the main-process ranking: a blocked objective is a parked run that
+  // needs triage, so it sorts just under live runs even when its status is
+  // 'completed' (verification-rejected). Keying only off status would bury it.
+  if (run.objectiveStatus === 'blocked') return 1;
+  if (run.status === 'running') return 0;
   if (run.status === 'failed') return 2;
   if (run.status === 'stopped') return 3;
   return 4;
@@ -185,7 +188,11 @@ export function AgentRunsPanel({
         <div className="agent-run-list" role="tree" aria-label={t.agent.run.treeAriaLabel}>
           {visibleRows.map((node) => {
             const { run } = node;
-            const canStop = run.status === 'running';
+            // Only root runs are directly owned by the conversation runtime that
+            // agentRunStop routes to; nested runs are observedOnly there and a Stop
+            // would always throw "Cannot stop run … from this controller". Gate the
+            // action so sub-runs don't render an action that can only error.
+            const canStop = run.status === 'running' && node.depth === 0;
             const stopping = stoppingRunId === run.runId;
             const expanded = expandedRunIds.has(run.runId);
             const hasChildren = node.children.length > 0;

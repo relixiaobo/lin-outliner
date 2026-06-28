@@ -1,8 +1,8 @@
 import { Agent, type AfterToolCallResult, type AgentEvent, type AgentTool } from '@earendil-works/pi-agent-core';
 import { isContextOverflow } from '@earendil-works/pi-ai';
 import type { Api, AssistantMessage, ImageContent, Model, TextContent, ToolResultMessage, UserMessage } from '@earendil-works/pi-ai';
-import { createHash, randomUUID } from 'node:crypto';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
   coerceString,
@@ -60,7 +60,7 @@ import {
   agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
 } from './agentDelegationIdentity';
-import { agentToolNamesForActionKindScope, normalizeAgentToolActionKinds, readOnlyAgentToolNames } from '../core/agentPermissionModel';
+import { agentToolNamesForActionKindScope, isReadOnlyActionKind, normalizeAgentToolActionKinds, readOnlyAgentToolNames } from '../core/agentPermissionModel';
 
 export const AGENT_DELEGATE_TOOL_NAME = 'spawn';
 export const AGENT_STATUS_TOOL_NAME = 'run_status';
@@ -90,7 +90,9 @@ const DEFAULT_CHILD_WALL_CLOCK_MINUTES = 30;
 const DEFAULT_VERIFIER_LIVELOCK_REPEAT_LIMIT = 2;
 const MAX_RECORDED_TOOL_TRACE_ENTRIES = 40;
 const MAX_WORKING_SET_SNAPSHOT_FILES = 500;
-const MAX_WORKING_SET_HASH_BYTES = 1_000_000;
+// `setTimeout` stores its delay in a 32-bit int; a larger delay overflows and
+// fires (near-)immediately, so any timer is armed in clamped re-arming hops.
+const MAX_SETTIMEOUT_DELAY_MS = 2_147_483_647;
 const WORKING_SET_EXCLUDED_DIRS = new Set(['.git', 'node_modules', 'release']);
 
 const AGENT_TOOL_PARAMETERS = {
@@ -410,7 +412,6 @@ interface WorkingSetFileSnapshot {
   relativePath: string;
   size: number;
   mtimeMs: number;
-  hash?: string;
 }
 
 interface WorkingSetSnapshot {
@@ -731,7 +732,24 @@ export class AgentDelegationRuntime {
     }
     if (params.changes.criteria !== undefined) run.criteria = params.changes.criteria;
     if (params.changes.budget !== undefined) {
-      run.budget = normalizeRunBudget(params.changes.budget, run.budget, Date.now());
+      const nextBudget = normalizeRunBudget(params.changes.budget, run.budget, Date.now());
+      // Keep the parent's token ledger in sync: a direct reassignment would leave
+      // the original reservation in place while settleRunBudget later releases the
+      // amended amount, corrupting the parent's headroom. Reconcile the delta
+      // against the live reservation (with a headroom check on increases) unless
+      // the run already settled.
+      const parent = run.parentBudgetRef;
+      if (parent?.tokens && !run.budgetSettled) {
+        const previousTokens = run.budget?.tokens ?? 0;
+        const nextTokens = nextBudget?.tokens ?? 0;
+        const delta = nextTokens - previousTokens;
+        if (delta > 0) {
+          const headroom = Math.max(0, parent.tokens - (parent.reservedTokens ?? 0) - (parent.spentTokens ?? 0));
+          if (delta > headroom) throw new Error('Amended run budget exceeds parent remaining token budget.');
+        }
+        if (delta !== 0) parent.reservedTokens = Math.max(0, (parent.reservedTokens ?? 0) + delta);
+      }
+      run.budget = nextBudget;
     }
     run.objectiveStatus = 'active';
     run.blockedReason = undefined;
@@ -768,6 +786,10 @@ export class AgentDelegationRuntime {
       }
       run.agent?.abort();
       run.agent = undefined;
+      // Settle here: nulling `run.agent` makes runChildAgent's finally guard
+      // (`run.agent === agent`) fail, so its settleRunBudget never runs and the
+      // parent's token reservation would otherwise leak permanently.
+      settleRunBudget(run);
       await this.host.childRunStatusChanged(snapshotRun(run));
       if (run.detached) void this.notifyTerminalRun(run).catch(() => undefined);
     }
@@ -803,26 +825,35 @@ export class AgentDelegationRuntime {
     const parentBudget = params.parentBudget ?? this.inheritedBudget;
     const budget = admitRunBudget(parentBudget, params.budget, now, background);
     let run: DelegationRunState | null = null;
-    const { skillRuntime, localWorkspace, childAgent } = await this.buildChildAgentHarness({
-      runId,
-      definition,
-      scope,
-      budget,
-      executingAgentId,
-      parentAgentId,
-      memoryOwnerAgentId,
-      memoryOriginWorkspace,
-      model: params.model,
-      effort: params.effort,
-      preapprovedToolRules: params.preapprovedToolRules,
-      unattended: params.unattended,
-      // The child consumes its prompt via `run.messages` + `runChildAgent`, not
-      // through the agent's seed messages.
-      initialMessages: [],
-      afterToolResult: (toolCallId, toolName, result, isError) => (
-        run ? this.afterRunToolResult(run, toolCallId, toolName, result, isError) : undefined
-      ),
-    });
+    let childAgentHarness;
+    try {
+      childAgentHarness = await this.buildChildAgentHarness({
+        runId,
+        definition,
+        scope,
+        budget,
+        executingAgentId,
+        parentAgentId,
+        memoryOwnerAgentId,
+        memoryOriginWorkspace,
+        model: params.model,
+        effort: params.effort,
+        preapprovedToolRules: params.preapprovedToolRules,
+        unattended: params.unattended,
+        // The child consumes its prompt via `run.messages` + `runChildAgent`, not
+        // through the agent's seed messages.
+        initialMessages: [],
+        afterToolResult: (toolCallId, toolName, result, isError) => (
+          run ? this.afterRunToolResult(run, toolCallId, toolName, result, isError) : undefined
+        ),
+      });
+    } catch (error) {
+      // The run object never formed, so runChildAgent's finally can never settle
+      // the parent reservation admitRunBudget made above — release it here.
+      releaseAdmittedRunBudget(parentBudget, budget);
+      throw error;
+    }
+    const { skillRuntime, localWorkspace, childAgent } = childAgentHarness;
     // The ledger seed split ([[agent-run-unification]]): the inherited fork-context
     // prefix lands BEFORE `run.started` and is excluded from Dream evidence; the
     // fork directive lands after it — the boundary `dreamEvidenceStartMessageIndex`
@@ -889,7 +920,14 @@ export class AgentDelegationRuntime {
     releaseStartupSlot();
     this.subscribeToChild(run);
     this.installRunContextTransform(run);
-    await this.host.childRunStarted(snapshotRun(run), { contextMessages, evidenceMessages });
+    try {
+      await this.host.childRunStarted(snapshotRun(run), { contextMessages, evidenceMessages });
+    } catch (error) {
+      // runChildAgent has not been wired yet, so settle here to avoid leaking the
+      // parent reservation if the start announcement throws.
+      settleRunBudget(run);
+      throw error;
+    }
 
     run.completion = this.runChildAgent(run, promptMessages, background ? undefined : signal, background);
     if (background) {
@@ -1094,16 +1132,27 @@ export class AgentDelegationRuntime {
         run.updatedAt = run.completedAt;
         agent.abort();
       } else {
-        budgetTimer = setTimeout(() => {
-          if (run.agent !== agent || run.status !== 'running') return;
-          run.status = 'failed';
-          run.objectiveStatus = 'budget_exhausted';
-          run.error = 'Run wall-clock budget exhausted.';
-          run.blockedReason = run.error;
-          run.completedAt = Date.now();
-          run.updatedAt = run.completedAt;
-          agent.abort();
-        }, budgetDelayMs);
+        // Re-arm in 32-bit-safe hops so a far-future deadline (large wall-clock
+        // budget) is honored at the real time instead of overflowing setTimeout
+        // and killing the run on the next tick.
+        const armBudgetTimer = (delayMs: number) => {
+          budgetTimer = setTimeout(() => {
+            if (run.agent !== agent || run.status !== 'running') return;
+            const remaining = remainingBudgetMs(run);
+            if (remaining !== null && remaining > 0) {
+              armBudgetTimer(remaining);
+              return;
+            }
+            run.status = 'failed';
+            run.objectiveStatus = 'budget_exhausted';
+            run.error = 'Run wall-clock budget exhausted.';
+            run.blockedReason = run.error;
+            run.completedAt = Date.now();
+            run.updatedAt = run.completedAt;
+            agent.abort();
+          }, Math.min(delayMs, MAX_SETTIMEOUT_DELAY_MS));
+        };
+        armBudgetTimer(budgetDelayMs);
       }
     }
     const workingSetSnapshot = run.verify && run.purpose !== 'verify'
@@ -1191,9 +1240,17 @@ export class AgentDelegationRuntime {
     await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
 
     run.verificationAttempts += 1;
-    const releaseStartupSlot = this.reserveRunningSlot();
+    // The verifier runs AFTER the work completed, so the work run's wall-clock
+    // deadline has been counting down the whole time: requesting the original
+    // budget would exceed the parent's *remaining* time and be rejected at
+    // admission. Request only what is left (capped at the default), so a budgeted
+    // run can actually be verified instead of being marked blocked. A read-only
+    // verifier must also stay within the controller's own capability scope, or
+    // narrowing rejects the full read-only set as widening.
     let verifier: AgentDelegateToolData;
+    let releaseStartupSlot: RunningSlotReservation | undefined;
     try {
+      releaseStartupSlot = this.reserveRunningSlot();
       verifier = await this.startAgent({
         objective: buildVerifierObjective(run),
         criteria: ['Return a JSON verdict that independently checks every acceptance criterion.'],
@@ -1202,8 +1259,8 @@ export class AgentDelegationRuntime {
         prompt: buildVerifierObjective(run),
         purpose: 'verify',
         context: 'none',
-        scope: { capabilities: readOnlyAgentToolNames() },
-        budget: { wallClockMinutes: Math.min(DEFAULT_CHILD_WALL_CLOCK_MINUTES, run.budget?.wallClockMinutes ?? DEFAULT_CHILD_WALL_CLOCK_MINUTES) },
+        scope: verifierRunScope(this.inheritedScope),
+        budget: verifierBudgetForRun(run),
         run_in_background: false,
         allowedTools: readOnlyAgentToolNames(),
         parentRunId: run.id,
@@ -1211,15 +1268,27 @@ export class AgentDelegationRuntime {
         unattended: true,
       }, releaseStartupSlot, signal);
     } catch (error) {
-      releaseStartupSlot();
+      releaseStartupSlot?.();
       run.objectiveStatus = 'blocked';
       run.blockedReason = `Verifier failed to start: ${errorMessage(error)}`;
       run.updatedAt = Date.now();
+      await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
       return;
     }
 
     run.verifierRunIds.push(verifier.agent_id);
-    const verdict = parseVerifierVerdict(verifier.result ?? verifier.error ?? '');
+    // A verifier that did not itself complete (model error, context overflow,
+    // abort) produced no verdict. Treat that as inconclusive — block for triage
+    // — never as a `fail` verdict, which would fabricate a phantom gap and burn
+    // budget replanning/replacing against it.
+    if (verifier.status !== 'completed' || !verifier.result?.trim()) {
+      run.objectiveStatus = 'blocked';
+      run.blockedReason = `Verification could not complete: ${verifier.error?.trim() || 'verifier returned no verdict'}.`;
+      run.updatedAt = Date.now();
+      await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+      return;
+    }
+    const verdict = parseVerifierVerdict(verifier.result);
     if (verdict.verdict === 'pass') {
       run.objectiveStatus = 'verified';
       run.blockedReason = undefined;
@@ -1338,6 +1407,10 @@ export class AgentDelegationRuntime {
         unattended: run.unattended,
       }, releaseStartupSlot, signal, run.parentToolCallId);
       run.blockedReason = `${run.blockedReason}; replacement run ${replacement.agent_id} started.`;
+      // The replacement carries the objective forward and will fire its own
+      // terminal notification; suppress this superseded attempt's so the user is
+      // not told a rejected run "completed" and then notified again.
+      run.terminalNotificationSent = true;
       run.updatedAt = Date.now();
       await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
       return replacement;
@@ -1952,6 +2025,7 @@ function buildVerifierObjective(run: DelegationRunState): string {
     '1. Do not accept claims without evidence in the result or inspectable state.',
     '2. Use only read-only tools when inspection is needed.',
     '3. Fail if any acceptance criterion is incomplete, ambiguous, or unverifiable.',
+    '4. Your final message MUST be the JSON object and nothing else — no prose, no code fences. A passing run REQUIRES "verdict":"pass"; any other final message is read as a failure.',
     '',
     `Run id: ${run.id}`,
     `Objective:\n${run.objective ?? run.prompt}`,
@@ -2194,7 +2268,18 @@ async function recordWorkingSetDiff(
     });
   }
 
+  // Files the file tools already recorded carry precise structured patches; the
+  // snapshot exists only to surface out-of-band edits (shell scripts, etc.).
+  // Skip the tool-recorded paths so the verifier isn't handed the same file twice
+  // in two divergent formats. Tool paths and snapshot keys are both absolute.
+  const toolRecorded = new Set<string>([
+    ...(changes.createdPaths ?? []),
+    ...(changes.updatedPaths ?? []),
+    ...(changes.deletedPaths ?? []),
+  ]);
+
   for (const [filePath, afterFile] of after.files) {
+    if (toolRecorded.has(filePath)) continue;
     const beforeFile = before.files.get(filePath);
     if (!beforeFile) {
       appendUniqueStrings(changes, 'createdPaths', [filePath]);
@@ -2216,7 +2301,7 @@ async function recordWorkingSetDiff(
   }
 
   for (const [filePath, beforeFile] of before.files) {
-    if (after.files.has(filePath)) continue;
+    if (after.files.has(filePath) || toolRecorded.has(filePath)) continue;
     appendUniqueStrings(changes, 'deletedPaths', [filePath]);
     appendFilePatch(changes, {
       filePath,
@@ -2255,17 +2340,16 @@ async function walkWorkingSetPath(root: string, targetPath: string, snapshot: Wo
     return;
   }
   const relativePath = path.relative(root, targetPath) || path.basename(targetPath);
+  // Stat only — no content hashing. Hashing every file in the tree twice (before
+  // and after each verified run) was the dominant snapshot cost; size + mtime is
+  // a cheap, reliable change signal for the out-of-band edits this snapshot is
+  // meant to catch (tool edits already carry precise patches and are deduped out).
   snapshot.files.set(targetPath, {
     filePath: targetPath,
     relativePath,
     size: entryStat.size,
     mtimeMs: Math.trunc(entryStat.mtimeMs),
-    hash: entryStat.size <= MAX_WORKING_SET_HASH_BYTES ? await hashFile(targetPath).catch(() => undefined) : undefined,
   });
-}
-
-async function hashFile(filePath: string): Promise<string> {
-  return createHash('sha256').update(await readFile(filePath)).digest('hex');
 }
 
 function resolveScopedPath(root: string, input: string): string | null {
@@ -2279,7 +2363,6 @@ function isInsidePath(root: string, candidate: string): boolean {
 }
 
 function workingSetFileChanged(before: WorkingSetFileSnapshot, after: WorkingSetFileSnapshot): boolean {
-  if (before.hash && after.hash) return before.hash !== after.hash;
   return before.size !== after.size || before.mtimeMs !== after.mtimeMs;
 }
 
@@ -2292,8 +2375,8 @@ function workingSetPatch(
     source: 'working-set-snapshot',
     change,
     relativePath: after?.relativePath ?? before?.relativePath,
-    before: before ? { size: before.size, hash: before.hash } : undefined,
-    after: after ? { size: after.size, hash: after.hash } : undefined,
+    before: before ? { size: before.size } : undefined,
+    after: after ? { size: after.size } : undefined,
   };
 }
 
@@ -2566,7 +2649,13 @@ function normalizeRunBudget(
   existing: AgentRunBudget | undefined,
   now: number,
 ): AgentRunBudget | undefined {
-  const budget = { ...existing, ...next };
+  // Merge field-by-field, not by spread: `normalizeRunBudgetInput` yields explicit
+  // `undefined` for the field a partial amend did not touch, and `{...existing,
+  // ...next}` would let that `undefined` wipe the untouched limit (e.g. amending
+  // only wallClockMinutes would erase the token cap, leaking its reservation).
+  const budget: AgentRunBudget = { ...existing };
+  if (next?.tokens !== undefined) budget.tokens = next.tokens;
+  if (next?.wallClockMinutes !== undefined) budget.wallClockMinutes = next.wallClockMinutes;
   if (!budget.tokens && !budget.wallClockMinutes && !budget.reservedTokens && !budget.spentTokens) return undefined;
   budget.startedAt ??= now;
   if (budget.wallClockMinutes) {
@@ -2608,6 +2697,15 @@ function admitRunBudget(
   return budget;
 }
 
+// Reverse admitRunBudget's parent token reservation for a run that never came to
+// exist (e.g. the harness build threw), so a setup failure cannot permanently
+// inflate the parent's reservedTokens.
+function releaseAdmittedRunBudget(parent: AgentRunBudget | undefined, budget: AgentRunBudget | undefined): void {
+  if (parent?.tokens && budget?.tokens) {
+    parent.reservedTokens = Math.max(0, (parent.reservedTokens ?? 0) - budget.tokens);
+  }
+}
+
 function settleRunBudget(run: DelegationRunState): void {
   if (run.budgetSettled) return;
   if (!run.parentBudgetRef || !run.budget?.tokens) return;
@@ -2624,6 +2722,33 @@ function runUsageTokens(run: DelegationRunState): number {
     if (message.role === 'assistant') total += message.usage?.totalTokens ?? 0;
   }
   return total;
+}
+
+// A verifier reads to confirm the work; its capabilities are the read-only
+// subset of the controller's own scope (or all read-only kinds when the
+// controller is unrestricted), so narrowing never rejects it as widening.
+function verifierRunScope(inheritedScope: AgentRunScope | undefined): AgentRunScope {
+  const parentCapabilities = normalizeAgentToolActionKinds(inheritedScope?.capabilities);
+  const capabilities = parentCapabilities?.length
+    ? parentCapabilities.filter((kind) => isReadOnlyActionKind(kind))
+    : normalizeAgentToolActionKinds(readOnlyAgentToolNames());
+  return { capabilities: capabilities ?? [] };
+}
+
+// The verifier's wall-clock request must fit the parent run's *remaining* time
+// (its deadline has been counting down since the work started), capped at the
+// default, so admission never rejects a budgeted run's verification.
+function verifierBudgetForRun(run: DelegationRunState): AgentRunBudget {
+  const deadlineAt = run.budget?.deadlineAt;
+  const remainingMinutes = deadlineAt && deadlineAt > Date.now()
+    ? Math.max(1, Math.ceil((deadlineAt - Date.now()) / 60_000))
+    : undefined;
+  const wallClockMinutes = Math.min(
+    DEFAULT_CHILD_WALL_CLOCK_MINUTES,
+    run.budget?.wallClockMinutes ?? DEFAULT_CHILD_WALL_CLOCK_MINUTES,
+    remainingMinutes ?? DEFAULT_CHILD_WALL_CLOCK_MINUTES,
+  );
+  return { wallClockMinutes };
 }
 
 function narrowRunScope(parent: AgentRunScope | undefined, requested: AgentRunScope | undefined): AgentRunScope | undefined {

@@ -1226,13 +1226,14 @@ export class AgentRuntime {
     const runs: AgentRunListEntry[] = [];
     for (const conversation of conversations) {
       if (conversation.id === DEFAULT_DREAM_CHANNEL_ID) continue;
-      const [metas, conversationEvents] = await Promise.all([
-        store.listConversationRunMetaProjections(conversation.id, { limit: perConversationLimit }),
-        store.readConversationStreamEvents(conversation.id),
-      ]);
-      const childRunStarts = childRunStartsByRunId(conversationEvents);
+      // The run-meta projection already carries objective/objectiveStatus/purpose/
+      // parentRunId for every run — including child runs, which are anchored to
+      // this conversation via child_run.started. Reading the whole event stream
+      // per refresh (on a 250ms debounce during streaming) only to recover those
+      // same fields was O(conversations × stream-size) of redundant disk I/O.
+      const metas = await store.listConversationRunMetaProjections(conversation.id, { limit: perConversationLimit });
       for (const meta of metas) {
-        const entry = runListEntryFromMeta(meta, conversation, childRunStarts.get(meta.id));
+        const entry = runListEntryFromMeta(meta, conversation);
         if (entry) runs.push(entry);
       }
     }
@@ -7688,6 +7689,12 @@ function childRunNotificationKind(
 function childRunNotificationTitle(snapshot: AgentChildRunSnapshot): string {
   if (snapshot.status === 'failed') return `Agent run "${snapshot.description}" failed.`;
   if (snapshot.status === 'cancelled') return `Agent run "${snapshot.description}" was stopped.`;
+  // A run can reach a terminal notification with status==='completed' but an
+  // unresolved objective (verification rejected, livelocked, or out of budget);
+  // keying the title off objectiveStatus avoids telling the user it "completed".
+  if (snapshot.objectiveStatus === 'blocked') return `Agent run "${snapshot.description}" needs attention.`;
+  if (snapshot.objectiveStatus === 'budget_exhausted') return `Agent run "${snapshot.description}" ran out of budget.`;
+  if (snapshot.objectiveStatus === 'verified') return `Agent run "${snapshot.description}" verified.`;
   return `Agent run "${snapshot.description}" completed.`;
 }
 
@@ -7944,20 +7951,9 @@ function dreamRunFromMeta(
   };
 }
 
-function childRunStartsByRunId(
-  events: readonly AgentEvent[],
-): Map<string, Extract<AgentEvent, { type: 'child_run.started' }>> {
-  const starts = new Map<string, Extract<AgentEvent, { type: 'child_run.started' }>>();
-  for (const event of events) {
-    if (event.type === 'child_run.started') starts.set(event.childRunId, event);
-  }
-  return starts;
-}
-
 function runListEntryFromMeta(
   run: AgentRunMetaProjection,
   conversation: AgentConversationIndexEntry,
-  childRunStarted?: Extract<AgentEvent, { type: 'child_run.started' }>,
 ): AgentRunListEntry | null {
   if (run.anchor.type !== 'conversation') return null;
   const kind = deriveAgentRunKind(run);
@@ -7967,7 +7963,6 @@ function runListEntryFromMeta(
     ?? sanitizeConversationTitle(conversation.goal)
     ?? null;
   const title = run.objective?.trim()
-    || childRunStarted?.description?.trim()
     || conversationTitle
     || run.id;
   return {
@@ -7977,9 +7972,9 @@ function runListEntryFromMeta(
     agentId: run.agentId,
     kind,
     status,
-    objectiveStatus: run.objectiveStatus ?? childRunStarted?.objectiveStatus,
-    purpose: run.purpose ?? childRunStarted?.purpose,
-    parentRunId: run.parentRunId ?? childRunStarted?.parentRunId ?? null,
+    objectiveStatus: run.objectiveStatus,
+    purpose: run.purpose,
+    parentRunId: run.parentRunId ?? null,
     title,
     startedAt: run.createdAt,
     updatedAt: run.updatedAt,
@@ -7994,8 +7989,12 @@ function compareRunListEntries(left: AgentRunListEntry, right: AgentRunListEntry
 }
 
 function runListStatusRank(entry: AgentRunListEntry): number {
-  if (entry.status === 'running' && entry.objectiveStatus !== 'blocked') return 0;
-  if (entry.status === 'running') return 1;
+  // A blocked objective is a parked run that needs user triage — rank it just
+  // under live runs regardless of the underlying status. Verification-rejected
+  // runs carry status==='completed' with objectiveStatus==='blocked', so keying
+  // only off status would bury them at the bottom among successful completions.
+  if (entry.objectiveStatus === 'blocked') return 1;
+  if (entry.status === 'running') return 0;
   if (entry.status === 'failed') return 2;
   if (entry.status === 'stopped') return 3;
   return 4;
