@@ -1185,6 +1185,42 @@ test.describe('file attachments', () => {
     await expect.poll(async () => restoredReader.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   });
 
+  test('long EPUB readers mount sections lazily as they scroll into view', async ({ page }) => {
+    await pasteClipboardFileAndOpenPreview(page, {
+      name: 'preview-long-book.epub',
+      mimeType: 'application/epub+zip',
+      text: 'epub bytes',
+    });
+
+    const epubBody = page.locator('.file-node-row-preview > .file-node-body').last();
+    await epubBody.locator('.file-preview-pill-primary').click();
+    const fullReader = epubBody.locator('.file-node-preview.expanded .file-preview-epub-host');
+    await expect(fullReader).toHaveAttribute('data-epub-continuous-reader', 'true');
+    await expect(fullReader).toHaveAttribute('data-epub-section-count', '12');
+    // Every section reserves an always-rendered wrapper so navigation/restore can resolve
+    // any section, mounted or not.
+    await expect(fullReader.locator('.file-preview-epub-section')).toHaveCount(12);
+
+    const firstSectionIframe = fullReader.locator(
+      '.file-preview-epub-section[data-epub-section-index="0"] .file-preview-epub-iframe',
+    );
+    const lastSectionIframe = fullReader.locator(
+      '.file-preview-epub-section[data-epub-section-index="11"] .file-preview-epub-iframe',
+    );
+    // The near section mounts its iframe; the far last section does not, and the reader
+    // never mounts all 12 documents at once.
+    await expect(firstSectionIframe).toHaveCount(1);
+    await expect(lastSectionIframe).toHaveCount(0);
+    await expect.poll(async () => fullReader.locator('.file-preview-epub-iframe').count())
+      .toBeLessThan(12);
+
+    // Scrolling to the bottom brings the last section into view, which mounts it.
+    await fullReader.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect(lastSectionIframe).toHaveCount(1);
+  });
+
   test('unsupported file previews keep the same bottom action location as previewable files', async ({ page }) => {
     const beforeChildren = await todayChildren(page);
     await trailingEditor(page).click();
