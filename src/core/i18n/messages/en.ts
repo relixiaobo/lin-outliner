@@ -379,6 +379,8 @@ export const en = {
       metadataSize: 'Size',
       metadataPath: 'Path',
       pdfCanvas: ({ page }: { page: number }) => `PDF page ${page}`,
+      documentOutline: 'Document outline',
+      documentOutlineJump: ({ title }: { title: string }) => `Jump to ${title}`,
       expand: 'Expand',
       collapse: 'Collapse',
       actions: 'Preview actions',

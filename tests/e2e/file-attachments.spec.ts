@@ -93,6 +93,32 @@ async function pasteClipboardFileAndOpenPreview(
   return previewFrame;
 }
 
+async function expectConcentricPreviewCorners(previewFrame: Locator, contentSelector: string) {
+  await expect.poll(async () => previewFrame.evaluate((element, selector) => {
+    const content = element.querySelector<HTMLElement>(selector);
+    if (!content) return null;
+    const frameStyle = getComputedStyle(element);
+    const contentStyle = getComputedStyle(content);
+    const frameRadius = Number.parseFloat(frameStyle.borderTopLeftRadius);
+    const contentRadius = Number.parseFloat(contentStyle.borderTopLeftRadius);
+    const paddingTop = Number.parseFloat(frameStyle.paddingTop);
+    const paddingLeft = Number.parseFloat(frameStyle.paddingLeft);
+    return {
+      frameHasHairlineEdge: frameStyle.borderTopWidth === '0px' && frameStyle.boxShadow !== 'none',
+      contentClipPath: contentStyle.clipPath,
+      contentHasRadius: contentRadius > 0,
+      inlinePaddingMatchesBlock: Math.abs(paddingLeft - paddingTop) <= 1,
+      innerRadiusFromOuter: Math.abs(contentRadius - Math.max(2, frameRadius - paddingTop)) <= 1,
+    };
+  }, contentSelector)).toEqual({
+    frameHasHairlineEdge: true,
+    contentClipPath: 'inset(0px round 8px)',
+    contentHasRadius: true,
+    inlinePaddingMatchesBlock: true,
+    innerRadiusFromOuter: true,
+  });
+}
+
 async function dispatchExternalFileDrag(
   page: Parameters<typeof trailingEditor>[0],
   targetId: string,
@@ -267,6 +293,7 @@ test.describe('file attachments', () => {
     await attachmentChevron.click();
     const inlinePreviewFrame = attachmentRow.locator('.file-node-row-preview .file-node-preview.collapsed');
     await expect(inlinePreviewFrame).toBeVisible();
+    await expectConcentricPreviewCorners(inlinePreviewFrame, '.file-preview-pdf--summary');
     await expect.poll(async () => inlinePreviewFrame.evaluate((element) => {
       const style = getComputedStyle(element);
       const summaryStrip = element.querySelector<HTMLElement>('.file-preview-pdf--summary');
@@ -297,7 +324,6 @@ test.describe('file attachments', () => {
         compactGap: measuredGap <= 6,
         compactHeight: element.getBoundingClientRect().height <= 260,
         edgeInset: firstRect ? firstRect.left - frameRect.left >= 7 && firstRect.top - frameRect.top >= 7 : false,
-        frameRadius: frameRadius >= 10 && frameRadius <= 14,
         horizontalSummary: style.overflowX === 'hidden' && summaryStyle?.overflowX === 'auto',
         noScrollBleed: edgeHit ? !edgeHit.closest('.file-preview-pdf-page, .file-preview-pdf-stage, .file-preview-pdf-canvas') : false,
         pageRadius: canvasRadius >= 6 && canvasRadius <= frameRadius,
@@ -309,7 +335,6 @@ test.describe('file attachments', () => {
       compactGap: true,
       compactHeight: true,
       edgeInset: true,
-      frameRadius: true,
       horizontalSummary: true,
       noScrollBleed: true,
       pageRadius: true,
@@ -417,6 +442,7 @@ test.describe('file attachments', () => {
       Math.round(element.getBoundingClientRect().width));
     await nodePage.locator('.file-node-preview.collapsed .file-preview-pdf-page').nth(1).click();
     await expect(previewStage).toHaveClass(/expanded/);
+    await expectConcentricPreviewCorners(previewStage, '.file-preview-pdf--full');
     await expect(pill.locator('.file-preview-pill-primary')).toHaveText('Collapse');
     const collapseButtonWidth = await pill.locator('.file-preview-pill-primary').evaluate((element) =>
       Math.round(element.getBoundingClientRect().width));
@@ -460,6 +486,7 @@ test.describe('file attachments', () => {
         usLetterAspect: Math.abs(aspect - 792 / 612) < 0.02,
       };
     })).toEqual({ hasInk: true, rendered: true, usLetterAspect: true });
+    await expect(nodePage.locator('.file-node-preview.expanded .file-preview-pdf-shell--full .document-outline-rail')).toHaveCount(0);
     const pageTwoTextLayer = nodePage.locator(
       '.file-node-preview.expanded .file-preview-pdf--full [data-pdf-page-number="2"] .file-preview-pdf-text-layer.ready',
     ).first();
@@ -1059,7 +1086,7 @@ test.describe('file attachments', () => {
     await expect(epubPreview.locator('.file-preview-epub--summary')).toBeVisible();
     await expect(epubPreview.locator('.file-preview-epub-host')).toHaveAttribute('aria-label', 'preview-book.epub EPUB reader');
     await expect(epubPreview.locator('.file-preview-epub-host')).toHaveAttribute('aria-hidden', 'false');
-    await expect(epubPreview.locator('.file-preview-epub-view')).toHaveCount(1);
+    await expect(epubPreview.locator('.file-preview-epub-section')).toHaveCount(1);
     await expect(epubPreview.locator('.file-preview-metadata')).toHaveCount(0);
     await expect.poll(async () => {
       const calls = await commandCalls(page);
@@ -1067,17 +1094,131 @@ test.describe('file attachments', () => {
     }).toBe(true);
 
     const epubBody = page.locator('.file-node-row-preview > .file-node-body').last();
+    await expectConcentricPreviewCorners(epubPreview, '.file-preview-epub-host');
     await epubBody.locator('.file-preview-pill-primary').click();
-    const fullReader = epubBody.locator('.file-node-preview.expanded .file-preview-epub--full .file-preview-epub-host');
-    await expect(fullReader).toHaveAttribute('data-epub-scroll-reader', 'true');
-    await expect(fullReader).toHaveAttribute('data-epub-section', '1');
+    const fullPreview = epubBody.locator('.file-node-preview.expanded .file-preview-epub--full');
+    const fullReader = fullPreview.locator('.file-preview-epub-host');
+    await expectConcentricPreviewCorners(epubBody.locator('.file-node-preview.expanded'), '.file-preview-epub-host');
+    await expect(fullReader).toHaveAttribute('data-epub-continuous-reader', 'true');
+    await expect(fullReader).toHaveAttribute('data-epub-section-count', '2');
+    await expect(fullReader.locator('.file-preview-epub-section')).toHaveCount(2);
+    await expect(fullReader.locator('.file-preview-epub-iframe')).toHaveCount(2);
+    const outlineRail = fullPreview.locator('.document-outline-rail');
+    const outlineMarkers = outlineRail.locator('.document-outline-rail-marker');
+    await expect(outlineMarkers).toHaveCount(2);
+    await expect.poll(async () => outlineMarkers.evaluateAll((markers) => {
+      const [first, second] = markers.map((marker) => marker.getBoundingClientRect());
+      return first && second ? Math.round(second.top - first.bottom) : null;
+    })).toBe(8);
+    await expect.poll(async () => outlineMarkers.evaluateAll((markers) => (
+      markers.map((marker) => Math.round(marker.getBoundingClientRect().width))
+    ))).toEqual([10, 10]);
+    await expect.poll(async () => outlineMarkers.evaluateAll((markers) => (
+      markers.map((marker) => getComputedStyle(marker).opacity)
+    ))).toEqual(['0.86', '0.34']);
+    await expect.poll(async () => outlineRail.evaluate((rail) => Math.round(rail.getBoundingClientRect().height)))
+      .toBeLessThan(60);
+    await outlineRail.locator('.document-outline-rail-track').hover();
+    await expect(outlineRail.locator('.document-outline-item-title')).toHaveText(['Start', 'Continue']);
 
     const readerBox = await fullReader.boundingBox();
     if (!readerBox) throw new Error('Missing EPUB reader bounds');
+    const sectionGap = await fullReader.evaluate((element) => {
+      const sections = Array.from(element.querySelectorAll<HTMLElement>('.file-preview-epub-section'));
+      const first = sections[0]?.getBoundingClientRect();
+      const second = sections[1]?.getBoundingClientRect();
+      return first && second ? second.top - first.bottom : 0;
+    });
+    expect(sectionGap).toBeGreaterThan(0);
+    await expect.poll(async () => fullReader.locator('.file-preview-epub-frame').first().evaluate((frame) => {
+      const style = getComputedStyle(frame);
+      const host = frame.closest<HTMLElement>('.file-preview-epub-host');
+      const hostStyle = host ? getComputedStyle(host) : null;
+      const readerStyle = getComputedStyle(frame.closest('.file-preview-epub') as HTMLElement);
+      const iframe = frame.querySelector<HTMLElement>('.file-preview-epub-iframe');
+      const iframeStyle = iframe ? getComputedStyle(iframe) : null;
+      return {
+        backgroundColor: style.backgroundColor,
+        boxShadow: style.boxShadow,
+        hostBackgroundColor: readerStyle.backgroundColor,
+        hostRadius: hostStyle?.borderTopLeftRadius ?? '',
+        iframeRadius: iframeStyle?.borderTopLeftRadius ?? '',
+        minHeight: style.minHeight,
+        pageRadius: style.borderTopLeftRadius,
+      };
+    })).toEqual({
+      backgroundColor: 'rgb(255, 255, 255)',
+      boxShadow: 'none',
+      hostBackgroundColor: 'rgba(0, 0, 0, 0)',
+      hostRadius: '8px',
+      iframeRadius: '8px',
+      minHeight: '0px',
+      pageRadius: '8px',
+    });
+
+    await outlineMarkers.nth(1).click();
+    await expect.poll(async () => fullReader.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+
     await page.mouse.move(readerBox.x + readerBox.width / 2, readerBox.y + readerBox.height / 2);
     await page.mouse.wheel(0, 20000);
-    await page.mouse.wheel(0, 20000);
-    await expect(fullReader).toHaveAttribute('data-epub-section', '2');
+    await expect.poll(async () => fullReader.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await expect.poll(async () => page.evaluate(() => {
+      const raw = localStorage.getItem('lin-outliner:epub-reading-position:v1');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as {
+        positions?: Record<string, { sectionIndex?: unknown; sectionOffsetRatio?: unknown }>;
+      };
+      const position = Object.values(parsed.positions ?? {})[0];
+      return position
+        ? {
+          sectionIndex: typeof position.sectionIndex,
+          sectionOffsetRatio: typeof position.sectionOffsetRatio,
+        }
+        : null;
+    })).toEqual({ sectionIndex: 'number', sectionOffsetRatio: 'number' });
+
+    await epubBody.locator('.file-preview-pill-primary').click();
+    await expect(epubBody.locator('.file-node-preview.collapsed .file-preview-epub--summary')).toBeVisible();
+    await epubBody.locator('.file-preview-pill-primary').click();
+    const restoredReader = epubBody.locator('.file-node-preview.expanded .file-preview-epub-host');
+    await expect(restoredReader).toHaveAttribute('data-epub-continuous-reader', 'true');
+    await expect.poll(async () => restoredReader.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  });
+
+  test('long EPUB readers mount sections lazily as they scroll into view', async ({ page }) => {
+    await pasteClipboardFileAndOpenPreview(page, {
+      name: 'preview-long-book.epub',
+      mimeType: 'application/epub+zip',
+      text: 'epub bytes',
+    });
+
+    const epubBody = page.locator('.file-node-row-preview > .file-node-body').last();
+    await epubBody.locator('.file-preview-pill-primary').click();
+    const fullReader = epubBody.locator('.file-node-preview.expanded .file-preview-epub-host');
+    await expect(fullReader).toHaveAttribute('data-epub-continuous-reader', 'true');
+    await expect(fullReader).toHaveAttribute('data-epub-section-count', '12');
+    // Every section reserves an always-rendered wrapper so navigation/restore can resolve
+    // any section, mounted or not.
+    await expect(fullReader.locator('.file-preview-epub-section')).toHaveCount(12);
+
+    const firstSectionIframe = fullReader.locator(
+      '.file-preview-epub-section[data-epub-section-index="0"] .file-preview-epub-iframe',
+    );
+    const lastSectionIframe = fullReader.locator(
+      '.file-preview-epub-section[data-epub-section-index="11"] .file-preview-epub-iframe',
+    );
+    // The near section mounts its iframe; the far last section does not, and the reader
+    // never mounts all 12 documents at once.
+    await expect(firstSectionIframe).toHaveCount(1);
+    await expect(lastSectionIframe).toHaveCount(0);
+    await expect.poll(async () => fullReader.locator('.file-preview-epub-iframe').count())
+      .toBeLessThan(12);
+
+    // Scrolling to the bottom brings the last section into view, which mounts it.
+    await fullReader.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect(lastSectionIframe).toHaveCount(1);
   });
 
   test('unsupported file previews keep the same bottom action location as previewable files', async ({ page }) => {

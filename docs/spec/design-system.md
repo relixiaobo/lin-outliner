@@ -1041,14 +1041,15 @@ category history; see "Settings window".)
   `inlineFileIcon` mask mechanism painted with `currentColor`. Non-image rows do
   not carry a trailing action button; file actions are centralized in the preview
   surface, while image rows keep their top-right hover action.
-- File previews use one rounded viewport: `--radius-lg`, a neutral token border,
-  and the content base's soft surface. The frame uses one equal token inset on
-  every side so preview pages never touch the viewport edge; the PDF summary strip
-  scrolls inside that content box, so pages never render into the inset while
-  horizontally scrolled. The summary strip places the horizontal scrollbar in the
-  existing bottom inset, so the scrollbar sits below the pages without reducing
-  their display height or adding extra bottom space. Inner PDF page corners use the
-  smaller surface radius so the frame reads as a restrained container rather than a card.
+- File previews use one rounded viewport: the structural `--radius-xl`, a soft
+  `--inset-hairline` edge instead of a real border, and the content base's soft
+  surface. The frame uses one equal token inset on every side so preview pages
+  never touch the viewport edge; inner document-page corners derive from the
+  parent radius minus that inset so the curves stay concentric. The PDF summary
+  strip scrolls inside that content box, so pages never render into the inset
+  while horizontally scrolled. The summary strip places the horizontal scrollbar
+  in the existing bottom inset, so the scrollbar sits below the pages without
+  reducing their display height or adding extra bottom space.
   The shared bottom-center preview action bar sits over the preview frame in one
   consistent location for every non-image file type. It is two separate controls:
   a fixed-width primary capsule (`Expand` / `Collapse`, or short `Open` for

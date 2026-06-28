@@ -22,15 +22,8 @@ import type {
   PreviewSourceDescriptor,
   PreviewTarget,
 } from '../../../core/preview';
-import { previewTargetKey } from '../../../core/preview';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
-import {
-  localStorageOrNull,
-  pruneLocalStorageEntries,
-  readLocalStorageKeyedStore,
-  writeLocalStorageKeyedStore,
-} from '../../state/localStorageStore';
 import {
   FileTextIcon,
   FolderIcon,
@@ -42,7 +35,14 @@ import { normalizeCodeLanguage } from '../editor/codeLanguages';
 import { wantsNewPaneFromClick } from '../shared';
 import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
 import { formatBytes } from './fileNode';
+import { DocumentOutlineRail, type DocumentOutlineItem } from './DocumentOutlineRail';
 import { FilePreviewPill, type FilePreviewMenuAction } from './FilePreviewPill';
+import {
+  previewReadingPositionKey,
+  readPdfReadingPosition,
+  writePdfReadingPosition,
+  type PdfReadingPosition,
+} from './readingPositionStore';
 import { usePreviewObjectUrl } from './usePreviewObjectUrl';
 
 type FilePreviewLabels = ReturnType<typeof useT>['shell']['filePreview'];
@@ -96,88 +96,33 @@ const PDF_MAX_RENDER_SCALE = 3;
 // Render a page when it is within this many pixels of the scroll viewport.
 const PDF_LAZY_ROOT_MARGIN = '800px';
 const PDF_SUMMARY_PAGE_MIN_WIDTH = 104;
-const PDF_READING_POSITION_STORAGE_KEY = 'lin-outliner:pdf-reading-position:v1';
-const PDF_READING_POSITION_STORE_VERSION = 1;
-const PDF_READING_POSITION_MAX_ENTRIES = 100;
 const PREVIEW_RESIZE_MIN_HEIGHT = 180;
 const PREVIEW_RESIZE_MAX_HEIGHT = 720;
 const PREVIEW_RESIZE_KEY_STEP = 24;
 
 type FilePreviewDisplayMode = 'summary' | 'full';
 
-interface PdfReadingPosition {
+type PdfRefProxy = {
+  gen: number;
+  num: number;
+};
+
+type PdfOutlineNode = {
+  dest: string | unknown[] | null;
+  items?: PdfOutlineNode[];
+  title?: string;
+};
+
+type PdfOutlineTarget = {
   pageNumber: number;
-  pageOffsetRatio: number;
-  updatedAt: number;
-}
+};
 
 type PdfJsModule = typeof import('pdfjs-dist');
 
 let pdfJsModulePromise: Promise<PdfJsModule> | null = null;
-let pdfReadingPositionsCache: Record<string, PdfReadingPosition> | null = null;
 
 function clampPreviewHeight(height: number) {
   return Math.max(PREVIEW_RESIZE_MIN_HEIGHT, Math.min(PREVIEW_RESIZE_MAX_HEIGHT, Math.round(height)));
-}
-
-function sanitizePdfReadingPosition(value: unknown): PdfReadingPosition | null {
-  if (!value || typeof value !== 'object') return null;
-  const record = value as Record<string, unknown>;
-  const pageNumber = record.pageNumber;
-  const pageOffsetRatio = record.pageOffsetRatio;
-  const updatedAt = record.updatedAt;
-  if (
-    typeof pageNumber !== 'number'
-    || !Number.isFinite(pageNumber)
-    || pageNumber < 1
-    || typeof pageOffsetRatio !== 'number'
-    || !Number.isFinite(pageOffsetRatio)
-    || typeof updatedAt !== 'number'
-    || !Number.isFinite(updatedAt)
-  ) {
-    return null;
-  }
-  return {
-    pageNumber: Math.floor(pageNumber),
-    pageOffsetRatio: Math.max(0, Math.min(1, pageOffsetRatio)),
-    updatedAt,
-  };
-}
-
-function readPdfReadingPositions(): Record<string, PdfReadingPosition> {
-  if (pdfReadingPositionsCache) return pdfReadingPositionsCache;
-  const storage = localStorageOrNull();
-  if (!storage) {
-    pdfReadingPositionsCache = {};
-    return pdfReadingPositionsCache;
-  }
-  pdfReadingPositionsCache = readLocalStorageKeyedStore({
-    storage,
-    storageKey: PDF_READING_POSITION_STORAGE_KEY,
-    version: PDF_READING_POSITION_STORE_VERSION,
-    entriesKey: 'positions',
-    decodeEntry: sanitizePdfReadingPosition,
-  });
-  return pdfReadingPositionsCache;
-}
-
-function readPdfReadingPosition(targetKey: string): PdfReadingPosition | null {
-  return readPdfReadingPositions()[targetKey] ?? null;
-}
-
-function writePdfReadingPosition(targetKey: string, position: PdfReadingPosition): void {
-  const storage = localStorageOrNull();
-  if (!storage) return;
-  const positions = readPdfReadingPositions();
-  positions[targetKey] = position;
-  pruneLocalStorageEntries(positions, PDF_READING_POSITION_MAX_ENTRIES, (entry) => entry.updatedAt);
-  writeLocalStorageKeyedStore({
-    storage,
-    storageKey: PDF_READING_POSITION_STORAGE_KEY,
-    version: PDF_READING_POSITION_STORE_VERSION,
-    entriesKey: 'positions',
-    entries: positions,
-  });
 }
 
 export interface PreviewRendererProps {
@@ -633,7 +578,7 @@ function PdfPreview({
     | { status: 'ready'; document: PDFDocumentProxy; pageCount: number }
     | { status: 'error'; error?: string }
   >({ status: 'loading' });
-  const targetKey = previewTargetKey(source.target);
+  const targetKey = previewReadingPositionKey(source.target);
   const savedReadingPositionRef = useRef<{ targetKey: string; position: PdfReadingPosition | null }>({
     targetKey,
     position: readPdfReadingPosition(targetKey),
@@ -752,6 +697,7 @@ function PdfPages({
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [aspect, setAspect] = useState(PDF_FALLBACK_ASPECT);
   const [pageAspects, setPageAspects] = useState<Record<number, number>>({});
+  const [outlineItems, setOutlineItems] = useState<DocumentOutlineItem[]>([]);
 
   const setPageAspect = useCallback((pageNumber: number, nextAspect: number) => {
     if (!Number.isFinite(nextAspect) || nextAspect <= 0) return;
@@ -780,6 +726,24 @@ function PdfPages({
       cancelled = true;
     };
   }, [pdfDocument, setPageAspect]);
+
+  useEffect(() => {
+    if (displayMode !== 'full') {
+      setOutlineItems((current) => current.length === 0 ? current : []);
+      return undefined;
+    }
+
+    let cancelled = false;
+    void readPdfOutlineItems(pdfDocument, pageCount).then((items) => {
+      if (!cancelled) setOutlineItems(items);
+    }).catch(() => {
+      if (!cancelled) setOutlineItems([]);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [displayMode, pageCount, pdfDocument]);
 
   // Measure the width synchronously before the first paint so every page reserves a
   // real placeholder height (width × aspect) immediately. Without this, the first
@@ -815,6 +779,19 @@ function PdfPages({
     )
     : containerSize.width;
   const pageScrollRootRef = containerRef;
+  const outlineLayoutVersion = `${pageWidth}:${pageCount}:${Object.keys(pageAspects).length}`;
+  const resolvePdfOutlineTop = useCallback((item: DocumentOutlineItem, scrollRoot: HTMLElement) => {
+    const target = item.target as Partial<PdfOutlineTarget>;
+    if (typeof target.pageNumber !== 'number') return null;
+    const pageElement = scrollRoot.querySelector<HTMLElement>(`[data-pdf-page-number="${target.pageNumber}"]`);
+    if (!pageElement) return null;
+    // Scroll-content coordinates (what scrollTo/scrollTop compare against), not
+    // offsetParent-relative offsetTop, so the marker stays accurate if the scrollport
+    // gains padding or a positioned wrapper.
+    const rootRect = scrollRoot.getBoundingClientRect();
+    const pageRect = pageElement.getBoundingClientRect();
+    return scrollRoot.scrollTop + (pageRect.top - rootRect.top);
+  }, []);
   const restoreTargetPageNumber = useMemo(() => {
     if (displayMode !== 'full') return null;
     const targetPageNumber = scrollToPageNumber ?? initialReadingPosition?.pageNumber;
@@ -909,7 +886,7 @@ function PdfPages({
     });
   };
 
-  return (
+  const pages = (
     <div
       className={`file-preview-pdf file-preview-pdf--${displayMode}`}
       onScroll={reportReadingPosition}
@@ -928,6 +905,22 @@ function PdfPages({
           width={pageWidth}
         />
       ))}
+    </div>
+  );
+
+  if (displayMode !== 'full') return pages;
+
+  return (
+    <div className="file-preview-pdf-shell file-preview-pdf-shell--full">
+      {pages}
+      {displayMode === 'full' && outlineItems.length > 0 ? (
+        <DocumentOutlineRail
+          items={outlineItems}
+          layoutVersion={outlineLayoutVersion}
+          resolveItemTop={resolvePdfOutlineTop}
+          scrollRootRef={pageScrollRootRef}
+        />
+      ) : null}
     </div>
   );
 }
@@ -974,6 +967,58 @@ function currentPdfReadingPosition(scrollRoot: HTMLElement | null): PdfReadingPo
     pageOffsetRatio,
     updatedAt: Date.now(),
   };
+}
+
+async function readPdfOutlineItems(pdfDocument: PDFDocumentProxy, pageCount: number): Promise<DocumentOutlineItem[]> {
+  const outline = await pdfDocument.getOutline();
+  if (!Array.isArray(outline) || outline.length === 0) return [];
+
+  const items: DocumentOutlineItem[] = [];
+  const visit = async (nodes: PdfOutlineNode[], level: number) => {
+    for (const node of nodes) {
+      const pageNumber = await pdfOutlinePageNumber(pdfDocument, node.dest, pageCount);
+      const title = typeof node.title === 'string' ? node.title.trim() : '';
+      if (pageNumber && title) {
+        items.push({
+          id: `pdf-outline-${items.length}:${pageNumber}:${title}`,
+          level,
+          target: { pageNumber } satisfies PdfOutlineTarget,
+          title,
+        });
+      }
+      if (Array.isArray(node.items) && node.items.length > 0) {
+        await visit(node.items, level + 1);
+      }
+    }
+  };
+
+  await visit(outline as PdfOutlineNode[], 0);
+  return items;
+}
+
+async function pdfOutlinePageNumber(
+  pdfDocument: PDFDocumentProxy,
+  dest: string | unknown[] | null,
+  pageCount: number,
+): Promise<number | null> {
+  const destination = typeof dest === 'string'
+    ? await pdfDocument.getDestination(dest).catch(() => null)
+    : Array.isArray(dest) ? dest : null;
+  const pageRef = destination?.[0];
+  if (typeof pageRef === 'number') {
+    const pageNumber = pageRef + 1;
+    return pageNumber >= 1 && pageNumber <= pageCount ? pageNumber : null;
+  }
+  if (!isPdfRefProxy(pageRef)) return null;
+  const pageNumber = await pdfDocument.getPageIndex(pageRef).then((index) => index + 1).catch(() => null);
+  if (!pageNumber || pageNumber < 1 || pageNumber > pageCount) return null;
+  return pageNumber;
+}
+
+function isPdfRefProxy(value: unknown): value is PdfRefProxy {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Partial<PdfRefProxy>;
+  return typeof record.num === 'number' && typeof record.gen === 'number';
 }
 
 function LazyPdfPage({
