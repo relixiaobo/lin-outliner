@@ -476,6 +476,20 @@ anything.
 
 ## Recently completed
 
+- **epub-continuous-scroll** (`codex-3/epub-continuous-scroll`, PR #344, codex-3, merged 2026-06-28) —
+  replaces the wheel-driven EPUB section jumps (#339) with one **continuous vertical reader** that stacks
+  every spine section (including `linear="no"` covers/notes, so all TOC/anchor targets resolve to a
+  rendered frame) as **lazily-mounted** per-section iframes (IntersectionObserver, 800px margin,
+  mount-once, reserved placeholder height) — opening a long book never spins up every document at once.
+  Adds a **shared PDF/EPUB document outline rail** (fixed-gap markers, hover/focus chapter popover, jump to
+  resolved scroll position) and **per-identity reader-position restore** (PDF page + offset, EPUB section +
+  offset) factored into `readingPositionStore.ts`, with preview geometry aligned to the concentric radius
+  chain + soft inset-hairline edge. **Gate (main):** re-review of round-2 fixes (non-linear sections,
+  restore-drift → re-pin-until-target-measured, `scrollHeight`-based height measure, lazy mounting, vw/vh
+  bounded to the reader column, single setup source, scroll-content-coordinate math, TOC-label key
+  preference) — all resolved; residual polish (vh clamp + `epubSectionScrollTop` helper) landed in the
+  merge; typecheck clean + EPUB e2e (continuous + lazy mounting) green + `docs:check` OK on `811fc08b`.
+  Light/dark visual verification = confirmatory follow-up. Fast-track, **shape (a)**, *no plan file*.
 - **agent-goal** (`codex/agent-goal`, PR #343, codex, merged 2026-06-28) — a user can hand Neva a
   long-running **objective** pursued **autonomously until independently verified**, as a self-similar
   **tree of Runs** with **zero new fact objects**: "Goal/Task" = a Run's `objective`, durable intent rides

@@ -12,6 +12,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Continuous EPUB reader + document outline rail (PR #344, codex-3)** — the expanded EPUB preview now
+  scrolls as **one continuous vertical reader** that stacks every spine section (covers and `linear="no"`
+  note pages included, so every table-of-contents and in-text anchor resolves) like PDF pages, replacing
+  the wheel-driven section jumps from #339. Sections **mount lazily** as they near the viewport
+  (IntersectionObserver, mount-once) so opening a long book never spins up every section's document at
+  once. A **shared document outline rail** for both PDF and EPUB shows fixed-gap chapter markers with a
+  hover/focus popover that jumps to the resolved scroll position, and **reader positions persist per
+  preview identity** — PDFs restore page + page-relative offset, EPUBs restore spine section +
+  section-relative offset. Preview geometry is aligned to the concentric radius chain with a soft
+  inset-hairline edge in place of the heavier double border. **Gate (main):** code review across 8 finder
+  angles → a round-2 fix resolved every correctness/efficiency finding (dropped non-linear sections,
+  reading-position restore drift, content-height under-measurement, mount-everything-at-once, viewport-unit
+  CSS keyed off the window, double document setup, fragile `offsetTop` scroll math, mislabeled outline
+  entries); residual polish (bound `vh` to the reader viewport, dedupe the section scroll-top math) landed
+  in the merge — typecheck clean + EPUB e2e (continuous scroll + lazy mounting) green on `811fc08b`.
 - **Verified goal runs (PR #343, codex)** — Neva can take a long-running **objective** and pursue it
   **autonomously until independently verified**, modeled as a self-similar **tree of Runs** with no new
   stored objects: a persistent **controller Run** carries the durable intent, ephemeral **worker Runs** are
