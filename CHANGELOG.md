@@ -50,6 +50,13 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Runs-panel title robustness + verifier double-serialization (main, direct-to-`main`, 2026-06-28)** —
+  follow-up polish on the agent-goal feature (#343): the Work/Runs row title (also used as the row's
+  `aria-label`) now collapses a free-form `objective` to a single whitespace-normalized line capped at 120
+  chars, so a long or multi-line objective no longer ships a wall of text to the screen reader; and the
+  verifier objective (which serializes node/file changes plus up to 40 tool-trace entries) is built once
+  instead of twice per verification. No behavior change to verification outcomes. Typecheck clean;
+  `agentRuntimeChildRuns` + `agentRenderProjection` 48/0.
 - **Trashed schema definitions treated as inactive + Trash permanent-delete actions (PR #338, codex)** —
   deleting a tag/field definition moved it to Trash, but the app still let it be reused for new tags,
   fields, and `options_from_supertag` derivation. Core commands and renderer pickers now reject trashed

@@ -7951,6 +7951,17 @@ function dreamRunFromMeta(
   };
 }
 
+const RUN_LIST_TITLE_MAX_CHARS = 120;
+
+function compactRunListTitle(objective: string | undefined): string | null {
+  if (!objective) return null;
+  const compact = objective.replace(/\s+/g, ' ').trim();
+  if (!compact) return null;
+  return compact.length > RUN_LIST_TITLE_MAX_CHARS
+    ? `${compact.slice(0, RUN_LIST_TITLE_MAX_CHARS - 1)}…`
+    : compact;
+}
+
 function runListEntryFromMeta(
   run: AgentRunMetaProjection,
   conversation: AgentConversationIndexEntry,
@@ -7962,7 +7973,10 @@ function runListEntryFromMeta(
   const conversationTitle = sanitizeConversationTitle(conversation.title)
     ?? sanitizeConversationTitle(conversation.goal)
     ?? null;
-  const title = run.objective?.trim()
+  // The objective is free-form and may be long or multi-line; the runs panel uses
+  // this verbatim as the row title AND its aria-label, so collapse it to a single
+  // capped line here rather than shipping a wall of text to the screen reader.
+  const title = compactRunListTitle(run.objective)
     || conversationTitle
     || run.id;
   return {

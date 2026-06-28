@@ -1249,14 +1249,17 @@ export class AgentDelegationRuntime {
     // narrowing rejects the full read-only set as widening.
     let verifier: AgentDelegateToolData;
     let releaseStartupSlot: RunningSlotReservation | undefined;
+    // Serializes nodeChanges/fileChanges + up to 40 tool-trace entries — build it
+    // once and reuse it for both the objective and the prompt.
+    const verifierObjective = buildVerifierObjective(run);
     try {
       releaseStartupSlot = this.reserveRunningSlot();
       verifier = await this.startAgent({
-        objective: buildVerifierObjective(run),
+        objective: verifierObjective,
         criteria: ['Return a JSON verdict that independently checks every acceptance criterion.'],
         verify: false,
         description: `verify ${run.description}`,
-        prompt: buildVerifierObjective(run),
+        prompt: verifierObjective,
         purpose: 'verify',
         context: 'none',
         scope: verifierRunScope(this.inheritedScope),
