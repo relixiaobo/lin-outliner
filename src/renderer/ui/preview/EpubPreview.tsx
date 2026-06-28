@@ -69,6 +69,13 @@ type EpubDocumentSetupOptions = {
 // reader cap doubles as the `vw` resolution basis in `registerEpubCssTransform`.
 const EPUB_READER_MAX_INLINE_SIZE = 720;
 const EPUB_SUMMARY_MAX_INLINE_SIZE = 560;
+// `vh` resolution basis in `registerEpubCssTransform`: the reader's visible viewport
+// is bounded (the expanded reader caps at `min(70vh, 720px)`), so resolving `vh`
+// against the full window would let a `height: 100vh` cover spill far past the reader
+// and get clipped by the frame's `overflow: hidden`. The scrollport is not mounted
+// yet when section CSS is transformed during book load, so this cap is an
+// approximation of that height rather than a live measurement.
+const EPUB_READER_MAX_BLOCK_SIZE = 720;
 // Lazy mounting (mirrors the PDF page list): mount a section's iframe when its wrapper
 // is within this margin of the scroll viewport, so opening a long book never spins up
 // hundreds of live documents/observers at once. Mount-once — like the PDF canvases, a
@@ -250,16 +257,11 @@ function EpubReader({
     // Resolve against the always-rendered section wrapper, not the iframe, so a marker
     // still resolves when its section is lazily unmounted; the in-section anchor offset
     // only applies once the frame is mounted (otherwise jump to the section top).
-    // Express the result in scroll-content coordinates (what scrollTo expects), not
-    // offsetParent-relative offsetTop, so it stays correct if the scrollport gains
-    // padding or a positioned ancestor. Mirrors the restore/report math.
     const sectionElement = epubSectionElement(scrollRoot, sectionIndex);
     if (!sectionElement) return null;
     const frame = frameRefs.current.get(sectionIndex) ?? null;
-    const rootRect = scrollRoot.getBoundingClientRect();
-    const sectionRect = sectionElement.getBoundingClientRect();
     const anchorOffset = frame ? epubAnchorOffset(frame, resolved?.anchor) : 0;
-    return scrollRoot.scrollTop + (sectionRect.top - rootRect.top) + anchorOffset;
+    return epubSectionScrollTop(scrollRoot, sectionElement) + anchorOffset;
   }, [state]);
 
   const sections = state.status === 'ready'
@@ -286,11 +288,10 @@ function EpubReader({
       const sectionElement = epubSectionElement(scrollRoot, initialReadingPosition.sectionIndex);
       if (!sectionElement) return;
 
-      const rootRect = scrollRoot.getBoundingClientRect();
-      const sectionRect = sectionElement.getBoundingClientRect();
-      const sectionOffset = Math.max(0, sectionRect.height * initialReadingPosition.sectionOffsetRatio);
+      const sectionHeight = sectionElement.getBoundingClientRect().height;
+      const sectionOffset = Math.max(0, sectionHeight * initialReadingPosition.sectionOffsetRatio);
       scrollRoot.scrollTo({
-        top: scrollRoot.scrollTop + sectionRect.top - rootRect.top + sectionOffset,
+        top: epubSectionScrollTop(scrollRoot, sectionElement) + sectionOffset,
         behavior: 'auto',
       });
 
@@ -791,11 +792,9 @@ function scrollToEpubTarget({
   const sectionElement = epubSectionElement(scrollRoot, sectionIndex);
   if (!sectionElement) return;
   const frame = frameRefs.get(sectionIndex) ?? null;
-  const rootRect = scrollRoot.getBoundingClientRect();
-  const sectionRect = sectionElement.getBoundingClientRect();
   const offset = frame ? epubAnchorOffset(frame, resolved?.anchor) : 0;
   scrollRoot.scrollTo({
-    top: scrollRoot.scrollTop + (sectionRect.top - rootRect.top) + offset,
+    top: epubSectionScrollTop(scrollRoot, sectionElement) + offset,
     behavior: 'smooth',
   });
 }
@@ -804,6 +803,16 @@ function epubSectionElement(scrollRoot: HTMLElement, sectionIndex: number): HTML
   return scrollRoot.querySelector<HTMLElement>(
     `.file-preview-epub-section[data-epub-section-index="${sectionIndex}"]`,
   );
+}
+
+// Top of a section in the scrollport's scroll-content coordinates (what `scrollTo` and
+// `scrollTop` compare against) — not offsetParent-relative `offsetTop`, so it stays
+// correct if the scrollport gains padding or a positioned ancestor. Callers add their
+// own in-section offset (anchor / saved ratio) on top.
+function epubSectionScrollTop(scrollRoot: HTMLElement, sectionElement: HTMLElement): number {
+  const rootRect = scrollRoot.getBoundingClientRect();
+  const sectionRect = sectionElement.getBoundingClientRect();
+  return scrollRoot.scrollTop + (sectionRect.top - rootRect.top);
 }
 
 function currentEpubReadingPosition(scrollRoot: HTMLElement | null): EpubReadingPosition | null {
@@ -846,12 +855,13 @@ function registerEpubCssTransform(book: EpubBook): () => void {
   const handleData = (event: Event) => {
     const detail = (event as CustomEvent<{ data?: unknown; type?: unknown }>).detail;
     if (detail?.type !== 'text/css') return;
-    // Resolve `vw` against the bounded reading column, not the whole window: the body
-    // is capped at the reader's max-inline-size, so a `width: 80vw` image keyed off the
-    // window would blow far past the column and get clipped by the frame's
+    // Resolve `vw`/`vh` against the bounded reader, not the whole window: the body is
+    // capped at the reader's max-inline-size and the reader's visible height is bounded
+    // too, so units keyed off the window (e.g. a `width: 80vw` image or a `height: 100vh`
+    // cover) would blow past the column/viewport and get clipped by the frame's
     // `overflow: hidden`. (foliate sizes against its renderer column, not `window`.)
     const viewportWidth = Math.min(window.innerWidth, EPUB_READER_MAX_INLINE_SIZE);
-    const viewportHeight = window.innerHeight;
+    const viewportHeight = Math.min(window.innerHeight, EPUB_READER_MAX_BLOCK_SIZE);
     detail.data = Promise.resolve(detail.data).then((data) => {
       if (typeof data !== 'string') return data;
       return data
