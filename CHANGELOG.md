@@ -12,6 +12,27 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Verified goal runs (PR #343, codex)** — Neva can take a long-running **objective** and pursue it
+  **autonomously until independently verified**, modeled as a self-similar **tree of Runs** with no new
+  stored objects: a persistent **controller Run** carries the durable intent, ephemeral **worker Runs** are
+  re-spawned on failure, and completion is **sensed, never self-declared** — each child only terminates and
+  its parent verifies the result with a fresh read-only `context:'none'` **verifier Run** against fixed
+  acceptance criteria (the root verified by Neva). Runs gain `objective` / `criteria` / `scope` / `budget` /
+  persistent `disposition` and a second `objectiveStatus` axis (`active` / `verifying` / `verified` /
+  `blocked` / `budget_exhausted` / `stopped`) alongside the existing execution status; run `kind` is now
+  **derived** from provenance/lineage rather than stored (agent storage layout **v5** — pre-release dev
+  `userData` is wiped, no migration). The delegation tools become **`spawn`** + `run_status` /
+  `run_steer` (soft steer) / `run_amend` (hard amend, invalidates prior verdicts) / `run_stop`, with the old
+  `Agent`/`AgentStatus`/`AgentSend`/`AgentStop` names kept as aliases; `criteria` is required unless
+  `verify:false`, capability scope reuses the `AgentToolActionKind` taxonomy (never widened in place), and
+  each spawn passes local **budget admission** (token + wall-clock) with livelock and retry guards. The old
+  task panel is replaced by a compact **Work/Runs** tree — parent runs show child-run progress, children
+  expand inline, and run detail is a drill-in within the same dock. **Gate (main):** `/code-review xhigh`
+  (10 finder angles) → a round-2 fix resolved **all 15 findings** (verifier wall-clock/scope admission,
+  stuck-`verifying`, verifier-infra-error-as-fail, budget-ledger leaks on stop/amend/harness-throw,
+  `setTimeout` overflow, misleading "completed" notification, sub-run Stop gating, blocked-run sort order,
+  details-disclosure control, `listRuns` per-event I/O, working-set hashing) — re-verified resolved with
+  typecheck clean and `agentRuntimeChildRuns` 29/0 on `af3e96db`.
 - **EPUB file preview (PR #339, codex-3)** — `.epub` attachments and local files now render in an inline
   `foliate-js` reader instead of the metadata fallback. Summary previews the first section; the expanded
   reader advances through scrolled sections + spine items via wheel/trackpad. Book bytes load only through
