@@ -31,6 +31,10 @@ describe('FilePreviewShell media controls', () => {
     expect(rendered.document.querySelector('.file-node-preview--media > .file-preview-pill--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill--footer')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill-primary')).toBeNull();
+    const video = rendered.document.querySelector('.file-preview-video');
+    expect(video?.getAttribute('controlsList')).toBe('nodownload noplaybackrate noremoteplayback');
+    expect(video?.hasAttribute('disableRemotePlayback')).toBe(true);
+    expect(video?.hasAttribute('disablePictureInPicture')).toBe(true);
   });
 
   test('renders audio controls with the same flat media stage', () => {
@@ -52,6 +56,9 @@ describe('FilePreviewShell media controls', () => {
     expect(rendered.document.querySelector('.file-node-preview--media > .file-preview-pill--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill--footer')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill-primary')).toBeNull();
+    const audio = rendered.document.querySelector('.file-preview-audio');
+    expect(audio?.getAttribute('controlsList')).toBe('nodownload noplaybackrate noremoteplayback');
+    expect((audio as HTMLMediaElement | null)?.disableRemotePlayback).toBe(true);
   });
 
   test('media keyboard shortcuts are scoped to the focused media element', async () => {

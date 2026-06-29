@@ -552,11 +552,24 @@ function AudioPreview({ source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const { src, error } = useMediaSourceUrl(source);
   const mediaRef = useRef<HTMLAudioElement | null>(null);
+  const setMediaRef = useCallback((element: HTMLAudioElement | null) => {
+    mediaRef.current = element;
+    if (element) element.disableRemotePlayback = true;
+  }, []);
   useMediaKeyboardShortcuts(mediaRef, Boolean(src));
   if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
   return (
     <div className="file-preview-audio-frame" data-preserve-selection>
-      <audio ref={mediaRef} className="file-preview-media file-preview-audio" controls data-preserve-selection preload="metadata" src={src} tabIndex={0} />
+      <audio
+        ref={setMediaRef}
+        className="file-preview-media file-preview-audio"
+        controls
+        controlsList="nodownload noplaybackrate noremoteplayback"
+        data-preserve-selection
+        preload="metadata"
+        src={src}
+        tabIndex={0}
+      />
     </div>
   );
 }
@@ -567,7 +580,20 @@ function VideoPreview({ source }: PreviewRendererProps) {
   const mediaRef = useRef<HTMLVideoElement | null>(null);
   useMediaKeyboardShortcuts(mediaRef, Boolean(src));
   if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
-  return <video ref={mediaRef} className="file-preview-media file-preview-video" controls data-preserve-selection preload="metadata" src={src} tabIndex={0} />;
+  return (
+    <video
+      ref={mediaRef}
+      className="file-preview-media file-preview-video"
+      controls
+      controlsList="nodownload noplaybackrate noremoteplayback"
+      data-preserve-selection
+      disablePictureInPicture
+      disableRemotePlayback
+      preload="metadata"
+      src={src}
+      tabIndex={0}
+    />
+  );
 }
 
 function HtmlPreview({ source }: PreviewRendererProps) {

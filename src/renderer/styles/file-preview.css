@@ -151,6 +151,10 @@
   margin: 0;
 }
 
+.file-preview-media::-webkit-media-controls-overflow-button {
+  display: none;
+}
+
 .file-preview-audio-frame {
   display: flex;
   width: 100%;
@@ -879,6 +883,7 @@
 
 .file-node-preview--media-audio {
   display: grid;
+  --file-preview-action-size: 34px;
   grid-template-columns: minmax(0, 1fr) var(--file-preview-action-size);
   gap: var(--space-2);
   align-items: center;

@@ -19,7 +19,9 @@ describe('input modality CSS guards', () => {
     expect(filePreviewCss).toContain('.file-node-body--media-audio');
     expect(filePreviewCss).toContain('--file-preview-media-width: min(640px, 100%);');
     expect(filePreviewCss).toContain('.file-preview-audio-frame');
+    expect(filePreviewCss).toMatch(/\.file-node-preview--media-audio\s*\{[^}]*--file-preview-action-size:\s*34px;/s);
     expect(filePreviewCss).toContain('grid-template-columns: minmax(0, 1fr) var(--file-preview-action-size);');
+    expect(filePreviewCss).toMatch(/\.file-preview-media::-webkit-media-controls-overflow-button\s*\{[^}]*display:\s*none;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-pill--media\s*\{[^}]*pointer-events:\s*none;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-pill--media:has\(\.file-preview-pill-more\[aria-expanded='true'\]\)\s*\{[^}]*pointer-events:\s*auto;/s);
     expect(filePreviewCss).not.toContain('right: calc(-1 *');
