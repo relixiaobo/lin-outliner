@@ -26,7 +26,9 @@ describe('FilePreviewShell media controls', () => {
     expect(rendered.document.querySelector('.file-preview-video[data-preserve-selection]')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-body--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--media-video')).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill--media')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--media > .file-preview-pill--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill--footer')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill-primary')).toBeNull();
   });
@@ -41,9 +43,13 @@ describe('FilePreviewShell media controls', () => {
     );
 
     expect(rendered.document.querySelector('.file-preview-audio[data-preserve-selection]')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-audio-frame[data-preserve-selection]')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-body--media')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-body--media-audio')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--media-audio')).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill--media')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--media > .file-preview-pill--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill--footer')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill-primary')).toBeNull();
   });

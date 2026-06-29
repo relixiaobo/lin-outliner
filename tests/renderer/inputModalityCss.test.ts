@@ -16,8 +16,12 @@ describe('input modality CSS guards', () => {
 
   test('keeps flat media previews visible and non-blocking while chrome is hidden', () => {
     expect(filePreviewCss).toContain('width: var(--file-preview-media-width, min(760px, 100%));');
-    expect(filePreviewCss).toContain('--file-preview-media-width: min(560px, 100%);');
+    expect(filePreviewCss).toContain('.file-node-body--media-audio');
+    expect(filePreviewCss).toContain('--file-preview-media-width: min(640px, 100%);');
+    expect(filePreviewCss).toContain('.file-preview-audio-frame');
+    expect(filePreviewCss).toContain('grid-template-columns: minmax(0, 1fr) var(--file-preview-action-size);');
     expect(filePreviewCss).toMatch(/\.file-preview-pill--media\s*\{[^}]*pointer-events:\s*none;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-pill--media:has\(\.file-preview-pill-more\[aria-expanded='true'\]\)\s*\{[^}]*pointer-events:\s*auto;/s);
+    expect(filePreviewCss).not.toContain('right: calc(-1 *');
   });
 });

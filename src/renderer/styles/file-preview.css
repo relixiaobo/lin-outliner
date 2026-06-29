@@ -151,8 +151,18 @@
   margin: 0;
 }
 
+.file-preview-audio-frame {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  align-items: center;
+}
+
 .file-preview-audio {
   width: 100%;
+  min-width: 0;
+  height: 40px;
 }
 
 .file-preview-video {
@@ -749,8 +759,8 @@
   margin-bottom: var(--space-4);
 }
 
-.file-node-body--media:has(.file-preview-audio) {
-  --file-preview-media-width: min(560px, 100%);
+.file-node-body--media-audio {
+  --file-preview-media-width: min(640px, 100%);
 }
 
 .file-node-body--reader {
@@ -854,7 +864,7 @@
 
 .file-node-preview--media {
   position: relative;
-  display: inline-block;
+  display: block;
   max-width: 100%;
   overflow: visible;
   border-radius: var(--radius-md);
@@ -867,8 +877,11 @@
   padding-bottom: 0;
 }
 
-.file-node-preview--media .file-preview-audio {
-  filter: drop-shadow(0 0 0 var(--border-subtle));
+.file-node-preview--media-audio {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--file-preview-action-size);
+  gap: var(--space-2);
+  align-items: center;
 }
 
 /* The shared bottom-center action bar for every non-image file preview. It is chrome
@@ -910,17 +923,18 @@
   transition: opacity var(--motion-fast);
 }
 
+.file-node-preview--media-audio .file-preview-pill--media {
+  position: static;
+  align-self: center;
+  justify-self: end;
+  transform: none;
+}
+
 .file-node-body--media:hover .file-preview-pill--media,
 .file-node-body--media:focus-within .file-preview-pill--media,
 .file-preview-pill--media:has(.file-preview-pill-more[aria-expanded='true']) {
   opacity: 1;
   pointer-events: auto;
-}
-
-.file-node-body--media:has(.file-preview-audio) .file-preview-pill--media {
-  top: 50%;
-  right: calc(-1 * (var(--file-preview-action-size) + var(--space-2)));
-  transform: translateY(-50%);
 }
 
 .file-preview-resize-handle {

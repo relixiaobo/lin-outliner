@@ -399,9 +399,10 @@ long book never spins up every section's document at once; book bytes load only
 through the capped preview bytes API), sandboxed static HTML (`.html`, `.htm`, or
 `text/html`) with a source-mode fallback, audio/video as flat media stages via
 native media controls backed by the same range-capable internal streams used by
-images (including seek and HTML fullscreen) plus Tenon-scoped media shortcuts
-while the player is focused or fullscreen (`Space`/`K` play-pause, arrows/`J`/`L`
-seek, `M` mute, `F` fullscreen), text/source-code with Shiki, Markdown with `react-markdown` +
+images (including seek and HTML fullscreen), with file actions kept inside the
+media stage plus Tenon-scoped media shortcuts while the player is focused or
+fullscreen (`Space`/`K` play-pause, arrows/`J`/`L` seek, `M` mute, `F`
+fullscreen), text/source-code with Shiki, Markdown with `react-markdown` +
 `remark-gfm`, CSV/TSV table, and fallback metadata. The PDF renderer reads bytes
 only through the preview source API, uses a bundled same-origin worker, and falls
 back to the metadata renderer if parsing or rendering fails. Markdown renderer

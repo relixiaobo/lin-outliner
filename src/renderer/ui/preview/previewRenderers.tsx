@@ -251,6 +251,7 @@ export function FilePreviewShell({
   const [scrollToPageNumber, setScrollToPageNumber] = useState<number | null>(null);
   const previewable = state.status === 'ready' && isPreviewableSource(state.source);
   const passivePlayback = state.status === 'ready' && isPassivePlaybackSource(state.source);
+  const mediaKind = state.status === 'ready' ? mediaKindForSource(state.source) : null;
   const metadataFallback = state.status === 'ready' && !previewable;
   const effectiveExpanded = readerMode || passivePlayback || expanded;
   const displayMode: FilePreviewDisplayMode = previewable && !effectiveExpanded ? 'summary' : 'full';
@@ -304,6 +305,7 @@ export function FilePreviewShell({
     `file-node-preview--${displayMode}`,
     metadataFallback ? 'file-node-preview--metadata' : '',
     passivePlayback ? 'file-node-preview--media' : '',
+    mediaKind ? `file-node-preview--media-${mediaKind}` : '',
     readerMode ? 'file-node-preview--reader' : '',
     resizedHeight !== undefined ? 'resized' : '',
     previewable ? (effectiveExpanded ? 'expanded' : 'collapsed') : '',
@@ -315,6 +317,7 @@ export function FilePreviewShell({
     'file-node-body',
     metadataFallback ? 'file-node-body--metadata' : '',
     passivePlayback ? 'file-node-body--media' : '',
+    mediaKind ? `file-node-body--media-${mediaKind}` : '',
     readerMode ? 'file-node-body--reader' : '',
   ]
     .filter(Boolean)
@@ -353,9 +356,9 @@ export function FilePreviewShell({
             scrollRootRef={previewRef}
           />
         )}
-        {metadataFallback ? pill : null}
+        {metadataFallback || passivePlayback ? pill : null}
       </div>
-      {metadataFallback ? null : pill}
+      {metadataFallback || passivePlayback ? null : pill}
       {previewable && !readerMode && !passivePlayback ? (
         <div
           aria-label="Resize preview"
@@ -551,7 +554,11 @@ function AudioPreview({ source }: PreviewRendererProps) {
   const mediaRef = useRef<HTMLAudioElement | null>(null);
   useMediaKeyboardShortcuts(mediaRef, Boolean(src));
   if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
-  return <audio ref={mediaRef} className="file-preview-media file-preview-audio" controls data-preserve-selection preload="metadata" src={src} tabIndex={0} />;
+  return (
+    <div className="file-preview-audio-frame" data-preserve-selection>
+      <audio ref={mediaRef} className="file-preview-media file-preview-audio" controls data-preserve-selection preload="metadata" src={src} tabIndex={0} />
+    </div>
+  );
 }
 
 function VideoPreview({ source }: PreviewRendererProps) {
@@ -1557,6 +1564,13 @@ function isAudioSource(source: PreviewFileSource): boolean {
 
 function isVideoSource(source: PreviewFileSource): boolean {
   return source.entryKind === 'file' && source.mimeType.toLowerCase().startsWith('video/');
+}
+
+function mediaKindForSource(source: PreviewSourceDescriptor): 'audio' | 'video' | null {
+  if (source.kind !== 'file') return null;
+  if (isAudioSource(source)) return 'audio';
+  if (isVideoSource(source)) return 'video';
+  return null;
 }
 
 function isHtmlSource(source: PreviewFileSource): boolean {
