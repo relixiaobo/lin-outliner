@@ -2736,7 +2736,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     protocol.handle(ASSET_URL_SCHEME, (request) => {
       const id = new URL(request.url).hostname;
-      return assetService.serve(id);
+      return assetService.serve(id, request);
     });
     protocol.handle(PREVIEW_LOCAL_URL_SCHEME, (request) => {
       const token = new URL(request.url).hostname;

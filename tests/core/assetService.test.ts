@@ -113,12 +113,24 @@ describe('AssetService', () => {
     }
   });
 
-  test('serve streams the bytes with the recorded MIME and 404s missing assets', async () => {
+  test('serve streams the bytes with the recorded MIME, byte range support, and 404s missing assets', async () => {
     const meta = await service.ingest({ kind: 'buffer', data: pngBytes(10, 10) });
     const ok = await service.serve(meta.id);
     expect(ok.status).toBe(200);
     expect(ok.headers.get('content-type')).toBe('image/png');
+    expect(ok.headers.get('accept-ranges')).toBe('bytes');
+    expect(ok.headers.get('content-length')).toBe('24');
     expect(new Uint8Array(await ok.arrayBuffer())).toEqual(pngBytes(10, 10));
+
+    const partial = await service.serve(meta.id, requestWithRange('bytes=1-3'));
+    expect(partial.status).toBe(206);
+    expect(partial.headers.get('content-range')).toBe('bytes 1-3/24');
+    expect(partial.headers.get('content-length')).toBe('3');
+    expect(new Uint8Array(await partial.arrayBuffer())).toEqual(pngBytes(10, 10).slice(1, 4));
+
+    const invalid = await service.serve(meta.id, requestWithRange('bytes=100-200'));
+    expect(invalid.status).toBe(416);
+    expect(invalid.headers.get('content-range')).toBe('bytes */24');
 
     const missing = await service.serve('doesnotexist000000000');
     expect(missing.status).toBe(404);
@@ -193,6 +205,12 @@ describe('AssetService', () => {
     }
   });
 });
+
+function requestWithRange(range: string): Pick<Request, 'headers'> {
+  const headers = new Headers();
+  headers.set('range', range);
+  return { headers };
+}
 
 describe('sniffMimeType', () => {
   test('detects common formats by magic bytes', () => {

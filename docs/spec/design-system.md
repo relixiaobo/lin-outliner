@@ -1133,11 +1133,13 @@ category history; see "Settings window".)
   regular file/folder, and rejects executable or bundle-like open targets.
   Previewable local files receive an opaque `preview-local://<token>` stream URL
   from the main process, the local-file twin of stored assets' `asset://<id>`
-  stream URL. Renderer code consumes only the shared `streamUrl` field; it must
-  not branch on source kind, navigate to `file://`, call `openExternal` for file
-  paths, or read local bytes directly. Composer local-file atoms expose the same
-  preview metadata, but click handling stays with the editor so draft text
-  remains selectable and editable.
+  stream URL. Both internal stream schemes are range-capable byte streams so
+  native image and media elements can load large files and audio/video can seek.
+  Renderer code consumes only the shared `streamUrl` field; it must not branch on
+  source kind, navigate to `file://`, call `openExternal` for file paths, or read
+  local bytes directly. Composer local-file atoms expose the same preview
+  metadata, but click handling stays with the editor so draft text remains
+  selectable and editable.
 
 ### Fields And Definition Configuration
 

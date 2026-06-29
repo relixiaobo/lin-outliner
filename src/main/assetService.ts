@@ -1,10 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, unlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, unlink } from 'node:fs/promises';
+import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import type { AssetIngestInput, AssetMetadata } from '../core/types';
 import { isPathInside } from './agentAttachmentMaterialization';
 import { atomicWriteFile, writeJsonFile } from './jsonFileStore';
+import { parseRangeHeader } from './localFilePreviewStream';
 
 const META_SUFFIX = '.meta.json';
 // Lowercase + digits only: ids land in `asset://<id>` URLs whose hostname
@@ -93,7 +95,7 @@ export class AssetService {
   }
 
   /** Serve an asset for the `asset://<id>` protocol handler. */
-  async serve(id: string): Promise<Response> {
+  async serve(id: string, request?: Pick<Request, 'headers'>): Promise<Response> {
     let safe: string;
     try {
       safe = sanitizeId(id);
@@ -105,18 +107,26 @@ export class AssetService {
     const metadata = await this.lookup(safe);
     const filePath = await this.safeAssetFilePath(safe);
     if (!filePath) return notFoundResponse();
-    // Whole-file read is fine for images; large media (video/audio) will need a
-    // streaming/range response — a follow-up when those types land.
-    const bytes = await readFile(filePath);
-    return new Response(bytes, {
-      status: 200,
-      headers: {
-        // SVGs are served here only to be drawn in <img>, where scripts do not
-        // execute. If an asset is ever rendered via <object>/<iframe> or direct
-        // navigation, sanitize the SVG or add CSP/Content-Disposition first.
-        'content-type': metadata?.mimeType ?? 'application/octet-stream',
-        'cache-control': 'private, max-age=31536000, immutable',
-      },
+    const fileStats = await stat(filePath);
+    const range = parseRangeHeader(request?.headers.get('range') ?? null, fileStats.size);
+    if (range === 'invalid') return rangeNotSatisfiableResponse(fileStats.size);
+
+    const headers = new Headers({
+      'accept-ranges': 'bytes',
+      // SVGs are served here only to be drawn in <img>, where scripts do not
+      // execute. If an asset is ever rendered via <object>/<iframe> or direct
+      // navigation, sanitize the SVG or add CSP/Content-Disposition first.
+      'content-type': metadata?.mimeType ?? 'application/octet-stream',
+      'cache-control': 'private, max-age=31536000, immutable',
+    });
+    const contentLength = range ? range.end - range.start + 1 : fileStats.size;
+    headers.set('content-length', String(contentLength));
+    if (range) headers.set('content-range', `bytes ${range.start}-${range.end}/${fileStats.size}`);
+    const handle = await open(filePath, 'r');
+    const streamOptions = range ? { start: range.start, end: range.end } : undefined;
+    return new Response(Readable.toWeb(handle.createReadStream(streamOptions)) as ReadableStream, {
+      status: range ? 206 : 200,
+      headers,
     });
   }
 
@@ -199,6 +209,16 @@ export class AssetService {
 
 function notFoundResponse(): Response {
   return new Response('Asset not found', { status: 404, headers: { 'content-type': 'text/plain' } });
+}
+
+function rangeNotSatisfiableResponse(sizeBytes: number): Response {
+  return new Response(null, {
+    status: 416,
+    headers: {
+      'accept-ranges': 'bytes',
+      'content-range': `bytes */${Math.max(sizeBytes, 0)}`,
+    },
+  });
 }
 
 function nanoid(size = 21): string {
