@@ -124,7 +124,7 @@ export interface AgentRuntimeContextHost<TConversation extends AgentRuntimeConte
   ): Promise<{ payload: AgentPayloadRef; label: string }>;
   emitError(conversationId: string, message: string): void;
   getActiveProviderConfig(): Promise<AgentProviderRuntimeConfig | null>;
-  getProviderApiKey(providerId: string): Promise<string | undefined> | string | undefined;
+  getProviderRequestAuthOverride(providerId: string): Promise<{ apiKey?: string }> | { apiKey?: string };
   resolveProviderModel(providerConfig: AgentProviderRuntimeConfig): Model<Api>;
   beginCompaction(conversationId: string, conversation: TConversation, trigger: AgentCompactionTrigger): string;
   finishCompaction(conversationId: string, conversation: TConversation, compactionId: string, lastEventType: string): void;
@@ -222,7 +222,9 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
       const providerConfig = await this.host.getActiveProviderConfig();
       if (!providerConfig) throw new Error('No enabled agent provider is configured.');
       const model = this.host.resolveProviderModel(providerConfig);
-      const apiKey = providerConfig.apiKey ?? await this.host.getProviderApiKey(providerConfig.providerId);
+      const authOverride = providerConfig.apiKey
+        ? { apiKey: providerConfig.apiKey }
+        : await this.host.getProviderRequestAuthOverride(providerConfig.providerId);
       const compactPlan = options.trigger === 'reactive'
         ? splitReactiveCompactMessages(activeMessages)
         : { messagesToSummarize: activeMessages, messagesToKeep: [] as AgentMessage[] };
@@ -239,7 +241,7 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
       ) ?? { fromMessageId: selectedLeafMessageId, throughMessageId: selectedLeafMessageId };
 
       activeCompactionId = this.host.beginCompaction(conversationId, conversation, options.trigger);
-      const response = await this.completeCompactSummaryWithRetries(conversationId, model, apiKey, {
+      const response = await this.completeCompactSummaryWithRetries(conversationId, model, authOverride, {
         messagesToSummarize: compactPlan.messagesToSummarize,
         customInstructions: options.customInstructions,
         mode: compactPlan.messagesToKeep.length > 0 ? 'up_to' : 'full',
@@ -420,7 +422,7 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
   private async completeCompactSummaryWithRetries(
     conversationId: string,
     model: Model<Api>,
-    apiKey: string | undefined,
+    authOverride: { apiKey?: string },
     options: {
       messagesToSummarize: AgentMessage[];
       customInstructions?: string;
@@ -440,7 +442,7 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
         tools: [],
       }, {
         ...providerStreamOptionsFromRuntimeSettings(options.runtimeSettings),
-        apiKey,
+        ...authOverride,
         maxTokens: Math.min(model.maxTokens ?? COMPACT_SUMMARY_MAX_OUTPUT_TOKENS, COMPACT_SUMMARY_MAX_OUTPUT_TOKENS),
         // pi-ai stream option (provider cache affinity) — the lib's own field name.
         sessionId: conversationId,

@@ -101,10 +101,12 @@ Replace product runtime calls to the old global API with adapter calls:
 but Tenon passes an explicit `streamFn`, so Tenon product runtime dispatch goes
 through `Models.streamSimple()`.
 
-The existing `getApiKey` hook remains for `pi-agent-core` compatibility. It now
-uses `Models.getAuth()` and returns the resolved key, or `'<authenticated>'` for
-ambient providers such as Bedrock where the provider SDK signs requests itself.
-Explicit `apiKey` request options still win per pi `Models.applyAuth()`.
+The existing `getApiKey` hook remains only for explicit request overrides
+(`providerConfig.apiKey` / test `providerApiKeyLoader`) required by
+`pi-agent-core`'s API shape. Stored credentials, ambient env/managed auth, OAuth
+refresh, provider-specific headers, provider env, and auth-provided `baseUrl`
+stay inside pi `Models.applyAuth()` at request time. Tenon does not flatten
+non-API-key auth into an `apiKey` string or sentinel value.
 
 ### Custom OpenAI-Compatible Providers
 
@@ -112,14 +114,23 @@ A Tenon provider row with `baseUrl` can use an arbitrary `providerId`, so it is
 not always present in the built-in catalog. The adapter handles this by
 registering a provider on demand:
 
-- provider id/name: Tenon's `providerId`;
+- provider id: an internal `tenon-custom:<providerId>` so custom endpoints never
+  replace a built-in catalog provider with the same id;
+- provider name / renderer-facing events: Tenon's `providerId`;
 - base URL: Tenon's `baseUrl`;
-- auth: stored API key only, or unconfigured when no key is stored;
+- auth: explicit request key override, stored API key, or request auth inherited
+  from the external provider's pi auth (without inheriting that provider's
+  default `baseUrl`); keyless auth is accepted only for local endpoints
+  (`localhost`, loopback, `*.localhost`) and is represented as an inert client key
+  because the OpenAI SDK requires an `apiKey` option even when the endpoint does
+  not validate it;
 - API implementation: `openAICompletionsApi()`;
 - model: the selected/probed OpenAI-compatible model id.
 
 This keeps existing custom endpoint behavior while routing requests through the
-new pi provider collection.
+new pi provider collection. It also keeps any configured custom `baseUrl` on Chat
+Completions-compatible dispatch, even when the model id exists in the built-in
+catalog, instead of accidentally using a built-in provider implementation.
 
 ### Tests
 
@@ -130,6 +141,8 @@ Update tests to exercise the new seams:
 - credential tests override the `anthropic` provider in the local `Models`
   collection with a fake OAuth auth object, verifying `CredentialStore.modify`
   refresh persistence rather than the old `getOAuthApiKey` helper;
+- custom-provider tests cover internal provider id isolation, inherited auth, and
+  runtime event provider-id normalization;
 - provider reconcile tests keep verifying durable cleanup rules and managed
   provider exemptions.
 

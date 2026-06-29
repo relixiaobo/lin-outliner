@@ -148,7 +148,6 @@ import { commandBriefText, liveCommandNodeIds, selectDueCommands, type DueComman
 import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
-  getProviderApiKey,
   getBuiltInAgentProfile,
   setBuiltInAgentProfile,
   providerStreamOptionsFromRuntimeSettings,
@@ -161,6 +160,7 @@ import {
   createOpenAICompatibleModel,
   ensurePiCustomProvider,
   piCompleteSimple,
+  piExternalProviderId,
   piFindModel,
   piProviders,
   piStreamSimple,
@@ -784,7 +784,7 @@ export class AgentRuntime {
       ),
       emitError: (conversationId, message) => this.emitError(conversationId, message),
       getActiveProviderConfig: () => this.getActiveProviderConfig(),
-      getProviderApiKey: (providerId) => this.getProviderApiKey(providerId),
+      getProviderRequestAuthOverride: (providerId) => this.getProviderRequestAuthOverride(providerId),
       resolveProviderModel: (providerConfig) => this.resolveProviderModel(providerConfig),
       beginCompaction: (conversationId, conversation, trigger) => this.beginCompaction(conversationId, conversation, trigger),
       finishCompaction: (conversationId, conversation, compactionId, lastEventType) => {
@@ -3065,7 +3065,9 @@ export class AgentRuntime {
     // Summaries run on the assistant's resolved model (handles custom endpoints,
     // where the provider connection has no catalog default).
     const model = modelOverride ?? (await this.resolveBuiltInAssistantModelEffort(providerConfig)).model;
-    const apiKey = providerConfig.apiKey ?? await this.getProviderApiKey(providerConfig.providerId);
+    const authOverride = providerConfig.apiKey
+      ? { apiKey: providerConfig.apiKey }
+      : await this.getProviderRequestAuthOverride(providerConfig.providerId);
     const runtimeSettings = await this.getRuntimeSettings();
     let messagesToSummarize = [...messages];
 
@@ -3077,7 +3079,7 @@ export class AgentRuntime {
         tools: [],
       }, {
         ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
-        apiKey,
+        ...authOverride,
         maxTokens: Math.min(model.maxTokens ?? COMPACT_SUMMARY_MAX_OUTPUT_TOKENS, COMPACT_SUMMARY_MAX_OUTPUT_TOKENS),
         // pi-ai stream option (provider cache affinity) — the lib's own field name.
         sessionId: conversationId,
@@ -4235,7 +4237,7 @@ export class AgentRuntime {
       skillBindings: [],
       modelConfig: hashJson({
         model: agent.state.model.id,
-        provider: agent.state.model.provider,
+        provider: piExternalProviderId(agent.state.model.provider),
         thinkingLevel: agent.state.thinkingLevel,
       }),
     };
@@ -4973,8 +4975,9 @@ export class AgentRuntime {
     }
   }
 
-  private getProviderApiKey(providerId: string) {
-    return this.options.providerApiKeyLoader?.(providerId) ?? getProviderApiKey(providerId);
+  private async getProviderRequestAuthOverride(providerId: string) {
+    const apiKey = await this.options.providerApiKeyLoader?.(providerId);
+    return apiKey ? { apiKey } : {};
   }
 
   private resolveProviderModel(providerConfig: AgentProviderRuntimeConfig) {
@@ -5339,7 +5342,7 @@ export class AgentRuntime {
             runId,
             messageId,
             parentMessageId,
-            providerId: message.provider,
+            providerId: piExternalProviderId(message.provider),
             modelId: message.model,
             apiId: message.api,
             createdAt: message.timestamp,
@@ -5734,7 +5737,7 @@ export class AgentRuntime {
       // later segment parents to the run's own tail (`lastMessageId`) so the run
       // stays a linear spine.
       parentMessageId: activeRun.lastMessageId ?? conversation.eventState.selectedLeafMessageId,
-      providerId: message.provider,
+      providerId: piExternalProviderId(message.provider),
       modelId: message.model,
       apiId: message.api,
     }]);
@@ -7282,10 +7285,11 @@ function createConfiguredAgent(
       return callbackPayload ?? payloadWithBreakpoints;
     },
     getApiKey: async (provider) => {
-      if (provider === providerConfig.providerId) {
-        return providerConfig.apiKey ?? options.providerApiKeyLoader?.(provider) ?? getProviderApiKey(provider);
+      const providerId = piExternalProviderId(provider);
+      if (providerId === providerConfig.providerId) {
+        return providerConfig.apiKey ?? options.providerApiKeyLoader?.(providerId);
       }
-      return options.providerApiKeyLoader?.(provider) ?? getProviderApiKey(provider);
+      return options.providerApiKeyLoader?.(providerId);
     },
     beforeToolCall: async ({ toolCall, args }, signal) => {
       const globalPermissions = await readAgentToolPermissionConfig();
@@ -7558,16 +7562,12 @@ function resolveModelOverride(
   const parsed = parseProviderQualifiedModel(requested, isKnownProviderId);
   const providerId = parsed?.providerId ?? providerConfig.providerId;
   const modelId = parsed?.modelId ?? requested;
-  const knownModel = findKnownModel(providerId, modelId);
-  if (knownModel) {
-    return providerId === providerConfig.providerId && providerConfig.baseUrl
-      ? { ...knownModel, baseUrl: providerConfig.baseUrl }
-      : knownModel;
-  }
   if (providerId === providerConfig.providerId && providerConfig.baseUrl) {
     ensurePiCustomProvider({ ...providerConfig, modelId });
     return createOpenAICompatibleModel({ ...providerConfig, modelId });
   }
+  const knownModel = findKnownModel(providerId, modelId);
+  if (knownModel) return knownModel;
   return null;
 }
 
@@ -7577,10 +7577,14 @@ function resolveModelOverride(
  * custom endpoint with no catalog (where the agent profile must name the model).
  */
 function resolveProviderCatalogModel(config: AgentProviderRuntimeConfig): Model<Api> | null {
-  if (config.baseUrl) ensurePiCustomProvider(config);
   const first = rankedModels(config.providerId)[0];
+  if (config.baseUrl) {
+    const modelId = first?.id ?? '__tenon_openai_compatible_probe__';
+    ensurePiCustomProvider({ ...config, modelId });
+    return createOpenAICompatibleModel({ ...config, modelId });
+  }
   if (!first) return null;
-  return config.baseUrl ? { ...first, baseUrl: config.baseUrl } : first;
+  return first;
 }
 
 /**
@@ -7904,7 +7908,7 @@ function memoryDreamRunFingerprint(
     skillBindings: [MEMORY_DREAM_SKILL_NAME],
     modelConfig: hashJson({
       model: model.id,
-      provider: model.provider,
+      provider: piExternalProviderId(model.provider),
     }),
   };
 }

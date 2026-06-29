@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import {
+  createProvider,
   createAssistantMessageEventStream,
   fauxAssistantMessage,
   fauxText,
@@ -22,6 +23,12 @@ import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/
 import type { AgentRenderProjection } from '../../src/core/agentRenderProjection';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
+import {
+  createOpenAICompatibleModel,
+  ensurePiCustomProvider,
+  piCustomProviderId,
+  piModels,
+} from '../../src/main/piModels';
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -254,7 +261,130 @@ describe('agent runtime skill integration', () => {
   });
 
   afterEach(async () => {
+    piModels().deleteProvider(piCustomProviderId('openai'));
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  test('leaves ambient provider auth for pi to apply at request time', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-ambient-auth-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-ambient-auth-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const savedOpenAIKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'env-key';
+
+    try {
+      const providerOptions: SimpleStreamOptions[] = [];
+      const compactOptions: SimpleStreamOptions[] = [];
+      const script = scriptedStream(
+        [
+          (_context, options, _model) => {
+            providerOptions.push(options ?? {});
+            return fauxAssistantMessage(fauxText('Ambient auth preserved.'));
+          },
+        ],
+        () => undefined,
+      );
+
+      const { AgentRuntime: Runtime } = await loadRuntimeModule();
+      const sink = createWindowSink();
+      const runtime = new Runtime(
+        () => sink.window as never,
+        hostFor(Core.new()),
+        {
+          agentDataRoot: dataRoot,
+          localFileRoot: localRoot,
+          providerConfigLoader: async () => ({
+            providerId: 'openai',
+            enabled: true,
+          }),
+          runtimeSettingsLoader: async () => ({
+            permissionMode: 'trusted',
+            automaticSkillsEnabled: true,
+            slashSkillsEnabled: true,
+            compactEnabled: true,
+            additionalSkillDirectories: [],
+          }),
+          streamFn: script.streamFn,
+          completeSimpleFn: async (model, _context, options) => {
+            compactOptions.push(options ?? {});
+            return normalizeAssistantMessage(
+              fauxAssistantMessage('<analysis>ambient auth</analysis><summary>Ambient auth stayed ambient.</summary>'),
+              model as Model<Api>,
+            );
+          },
+        },
+      );
+
+      const created = await runtime.restoreLatestConversation();
+      await runtime.sendMessage(created.conversationId, 'Check ambient auth.');
+      await runtime.sendMessage(created.conversationId, '/compact');
+
+      expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+      expect(providerOptions[0]?.apiKey).toBeUndefined();
+      expect(compactOptions[0]?.apiKey).toBeUndefined();
+    } finally {
+      if (savedOpenAIKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = savedOpenAIKey;
+    }
+  });
+
+  test('routes custom OpenAI-compatible endpoint models through pi custom provider while logging the configured provider', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-custom-provider-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-custom-provider-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const modelId = piModels().getModels('openai')[0]?.id ?? 'gpt-5.1';
+    const { setBuiltInAgentProfile } = await import('../../src/main/agentSettings');
+    await setBuiltInAgentProfile('built-in:tenon:assistant', { model: modelId });
+    const seenModels: Model<Api>[] = [];
+    const streamFn: StreamFn = ((model: Model<Api>) => {
+      seenModels.push(model);
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        const message = normalizeAssistantMessage(fauxAssistantMessage(fauxText('Custom endpoint routed.')), model);
+        stream.push({ type: 'start', partial: { ...message, content: [] } });
+        stream.push({ type: 'done', reason: 'stop', message });
+        stream.end(message);
+      });
+      return stream;
+    }) as StreamFn;
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          baseUrl: 'https://proxy.example.com/v1',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(created.conversationId, 'Use the configured custom endpoint.');
+
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(seenModels).toHaveLength(1);
+    expect(seenModels[0]?.provider).toBe(piCustomProviderId('openai'));
+    expect(seenModels[0]?.api).toBe('openai-completions');
+    expect(seenModels[0]?.baseUrl).toBe('https://proxy.example.com/v1');
+
+    const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
+    const started = events.find((event) => event.type === 'assistant_message.started');
+    expect(started).toMatchObject({
+      type: 'assistant_message.started',
+      providerId: 'openai',
+      modelId,
+      apiId: 'openai-completions',
+    });
   });
 
   test('passes runtime provider stream settings to agent and compact requests', async () => {

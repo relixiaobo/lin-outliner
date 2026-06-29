@@ -24,6 +24,7 @@ mock.module('@earendil-works/pi-ai/oauth', () => ({
 }));
 
 const {
+  getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
   getProviderSettings,
   reconcileProviderConfig,
@@ -154,7 +155,28 @@ describe('provider config startup reconcile (Part A)', () => {
 
     const view = await getProviderSettings();
     expect(view.providers.find((p) => p.providerId === 'local-llm')).toBeDefined();
-    // No stored key → not auto-activated, but the row is kept.
+    // No stored key -> not persisted as active, but the local endpoint is still
+    // usable at runtime through the read-path fallback.
+    expect(view.activeProviderId).toBeUndefined();
+    expect(await getActiveProviderRuntimeConfig()).toMatchObject({
+      providerId: 'local-llm',
+      baseUrl: 'http://localhost:1234/v1',
+      enabled: true,
+    });
+  });
+
+  test('a keyless row with a remote baseUrl is pruned', async () => {
+    await writeProviderFileRaw({
+      activeProviderId: 'my-proxy',
+      providers: [
+        { providerId: 'my-proxy', baseUrl: 'https://proxy.example.com/v1', enabled: true },
+      ],
+    });
+
+    await reconcileProviderConfig();
+
+    const view = await getProviderSettings();
+    expect(view.providers.find((p) => p.providerId === 'my-proxy')).toBeUndefined();
     expect(view.activeProviderId).toBeUndefined();
   });
 

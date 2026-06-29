@@ -1,7 +1,10 @@
 import {
+  createAssistantMessageEventStream,
   createProvider,
   type Api,
   type AssistantMessage,
+  type AssistantMessageEvent,
+  type AuthResult,
   type Context,
   type Credential,
   type CredentialStore,
@@ -11,9 +14,11 @@ import {
 } from '@earendil-works/pi-ai';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
+import { isLocalBaseUrl } from '../core/localEndpoint';
 
 const DEFAULT_CUSTOM_CONTEXT_WINDOW = 128000;
 const DEFAULT_CUSTOM_MAX_TOKENS = 8192;
+const CUSTOM_PROVIDER_ID_PREFIX = 'tenon-custom:';
 
 export interface PiCredentialStorage {
   read(providerId: string): Promise<Credential | undefined>;
@@ -42,7 +47,9 @@ export function piModels(): MutableModels {
 }
 
 export function piProviders(): string[] {
-  return piModels().getProviders().map((provider) => provider.id);
+  return piModels().getProviders()
+    .map((provider) => provider.id)
+    .filter((providerId) => !providerId.startsWith(CUSTOM_PROVIDER_ID_PREFIX));
 }
 
 export function piProviderAuthKind(providerId: string): 'api-key' | 'oauth' | 'managed' {
@@ -75,7 +82,7 @@ export async function piProviderHasAmbientAuth(providerId: string): Promise<bool
 export async function piResolveAuthApiKey(model: Model<Api>): Promise<string | undefined> {
   try {
     const auth = await piModels().getAuth(model);
-    return auth ? auth.auth.apiKey ?? '<authenticated>' : undefined;
+    return auth?.auth.apiKey;
   } catch {
     return undefined;
   }
@@ -83,36 +90,53 @@ export async function piResolveAuthApiKey(model: Model<Api>): Promise<string | u
 
 export function piStreamSimple(model: Model<Api>, context: Context, options?: SimpleStreamOptions) {
   ensureProviderForModel(model);
-  return piModels().streamSimple(model, context, options);
+  const stream = piModels().streamSimple(model, context, options);
+  const externalProviderId = externalProviderIdForModel(model);
+  return externalProviderId ? remapAssistantStreamProvider(stream, externalProviderId) : stream;
 }
 
 export async function piCompleteSimple(model: Model<Api>, context: Context, options?: SimpleStreamOptions): Promise<AssistantMessage> {
   ensureProviderForModel(model);
-  return piModels().completeSimple(model, context, options);
+  const message = await piModels().completeSimple(model, context, options);
+  const externalProviderId = externalProviderIdForModel(model);
+  return externalProviderId ? remapAssistantMessageProvider(message, externalProviderId) : message;
 }
 
 export function ensurePiCustomProvider(config: PiCustomProviderConfig): void {
   if (!config.baseUrl) return;
-  if (piModels().getProvider(config.providerId)) return;
+  const internalProviderId = piCustomProviderId(config.providerId);
+  const modelId = config.modelId ?? '__tenon_openai_compatible_probe__';
+  const existingModels = piModels().getModels(internalProviderId);
+  if (
+    piModels().getProvider(internalProviderId)
+    && existingModels.some((model) => model.id === modelId && model.baseUrl === config.baseUrl)
+  ) {
+    return;
+  }
   const model = createOpenAICompatibleModel({
     providerId: config.providerId,
-    modelId: config.modelId ?? '__tenon_openai_compatible_probe__',
+    modelId,
     baseUrl: config.baseUrl,
   });
   piModels().setProvider(createProvider({
-    id: config.providerId,
+    id: internalProviderId,
     name: config.providerId,
     baseUrl: config.baseUrl,
     auth: {
       apiKey: {
         name: `${config.providerId} API key`,
-        resolve: async ({ credential }) => {
-          if (credential?.key) return { auth: { apiKey: credential.key }, source: 'stored credential' };
+        resolve: async ({ credential: requestCredential, model }) => {
+          if (requestCredential?.key) return { auth: { apiKey: requestCredential.key }, source: 'request override' };
+          const storedCredential = await readCredential(config.providerId);
+          if (storedCredential?.type === 'api_key' && storedCredential.key) return { auth: { apiKey: storedCredential.key }, source: 'stored credential' };
+          const externalAuth = await resolveExternalProviderRequestAuth(config.providerId);
+          if (externalAuth) return externalAuth;
+          if (isLocalBaseUrl(model.baseUrl)) return { auth: { apiKey: 'local-endpoint' }, source: 'local endpoint' };
           return undefined;
         },
       },
     },
-    models: [model],
+    models: mergeCustomProviderModels(existingModels, model),
     api: openAICompletionsApi(),
   }));
 }
@@ -124,7 +148,7 @@ export function createOpenAICompatibleModel(
     id: config.modelId,
     name: config.modelId,
     api: 'openai-completions',
-    provider: config.providerId,
+    provider: piCustomProviderId(config.providerId),
     baseUrl: config.baseUrl ?? '',
     reasoning: false,
     input: ['text'],
@@ -142,8 +166,74 @@ export function createOpenAICompatibleModel(
 function ensureProviderForModel(model: Model<Api>): void {
   if (piModels().getProvider(model.provider)) return;
   if (model.baseUrl) {
-    ensurePiCustomProvider({ providerId: model.provider, baseUrl: model.baseUrl, modelId: model.id });
+    ensurePiCustomProvider({ providerId: piExternalProviderId(model.provider), baseUrl: model.baseUrl, modelId: model.id });
   }
+}
+
+function mergeCustomProviderModels(existingModels: readonly Model<Api>[], model: Model<'openai-completions'>): Model<Api>[] {
+  const next = existingModels.filter((existing) => existing.id !== model.id || existing.baseUrl !== model.baseUrl);
+  next.push(model);
+  return next;
+}
+
+export function piCustomProviderId(providerId: string): string {
+  return providerId.startsWith(CUSTOM_PROVIDER_ID_PREFIX)
+    ? providerId
+    : `${CUSTOM_PROVIDER_ID_PREFIX}${providerId}`;
+}
+
+export function piExternalProviderId(providerId: string): string {
+  return providerId.startsWith(CUSTOM_PROVIDER_ID_PREFIX)
+    ? providerId.slice(CUSTOM_PROVIDER_ID_PREFIX.length)
+    : providerId;
+}
+
+function externalProviderIdForModel(model: Model<Api>): string | null {
+  const externalProviderId = piExternalProviderId(model.provider);
+  return externalProviderId === model.provider ? null : externalProviderId;
+}
+
+function remapAssistantMessageProvider(message: AssistantMessage, provider: string): AssistantMessage {
+  return message.provider === provider ? message : { ...message, provider };
+}
+
+function remapAssistantEventProvider(event: AssistantMessageEvent, provider: string): AssistantMessageEvent {
+  if (event.type === 'done') return { ...event, message: remapAssistantMessageProvider(event.message, provider) };
+  if (event.type === 'error') return { ...event, error: remapAssistantMessageProvider(event.error, provider) };
+  return { ...event, partial: remapAssistantMessageProvider(event.partial, provider) };
+}
+
+function remapAssistantStreamProvider(stream: AsyncIterable<AssistantMessageEvent>, provider: string) {
+  const mapped = createAssistantMessageEventStream();
+  void (async () => {
+    let finalMessage: AssistantMessage | undefined;
+    try {
+      for await (const event of stream) {
+        const mappedEvent = remapAssistantEventProvider(event, provider);
+        if (mappedEvent.type === 'done') finalMessage = mappedEvent.message;
+        if (mappedEvent.type === 'error') finalMessage = mappedEvent.error;
+        mapped.push(mappedEvent);
+      }
+      mapped.end(finalMessage);
+    } catch (error) {
+      mapped.push({
+        type: 'error',
+        reason: 'error',
+        error: {
+          role: 'assistant',
+          content: [],
+          api: 'openai-completions',
+          provider,
+          model: 'unknown',
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          stopReason: 'error',
+          errorMessage: error instanceof Error ? error.message : String(error),
+          timestamp: Date.now(),
+        },
+      });
+    }
+  })();
+  return mapped;
 }
 
 async function readCredential(providerId: string): Promise<Credential | undefined> {
@@ -152,6 +242,15 @@ async function readCredential(providerId: string): Promise<Credential | undefine
   } catch {
     return undefined;
   }
+}
+
+async function resolveExternalProviderRequestAuth(providerId: string): Promise<AuthResult | undefined> {
+  const externalModel = piModelsForProvider(providerId)[0];
+  if (!externalModel) return undefined;
+  const resolved = await piModels().getAuth(externalModel);
+  if (!resolved) return undefined;
+  const { baseUrl: _baseUrl, ...auth } = resolved.auth;
+  return { ...resolved, auth };
 }
 
 const credentialStoreAdapter: CredentialStore = {

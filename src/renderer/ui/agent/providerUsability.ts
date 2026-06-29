@@ -3,6 +3,7 @@ import type {
   AgentProviderOption,
   AgentProviderSettingsView,
 } from '../../api/types';
+import { isLocalBaseUrl } from '../../../core/localEndpoint';
 
 // Pure provider-usability predicates, kept free of any asset/icon import (no
 // `import.meta.glob`) so they can be used in plain unit tests and lightweight
@@ -13,9 +14,12 @@ export function providerHasCredential(
   catalog: AgentProviderOption | undefined,
 ): boolean {
   // `auth.credentialed` is main's authoritative signal (stored key, oauth login,
-  // env key, or managed ambient). Fall back to the catalog env flag for a
-  // provider that has no view row yet (not configured).
-  return Boolean(provider?.auth?.credentialed) || Boolean(catalog?.hasEnvApiKey);
+  // env key, or managed ambient). A local OpenAI-compatible endpoint can be
+  // keyless. Fall back to the catalog env flag for a provider that has no view row
+  // yet (not configured).
+  return Boolean(provider?.auth?.credentialed)
+    || isLocalBaseUrl(provider?.baseUrl)
+    || Boolean(catalog?.hasEnvApiKey);
 }
 
 // The one "can this provider drive models right now?" predicate, shared by the

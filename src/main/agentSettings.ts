@@ -18,6 +18,7 @@ import type {
   AgentProviderSettingsView,
   ProviderAuthView,
 } from '../core/types';
+import { isLocalBaseUrl } from '../core/localEndpoint';
 import { parseDateSchedule } from '../core/dateSchedule';
 import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile, writeJsonFile } from './jsonFileStore';
 import { compareModels } from './modelRanking';
@@ -26,6 +27,7 @@ import {
   createOpenAICompatibleModel,
   ensurePiCustomProvider,
   piCompleteSimple,
+  piModels,
   piModelsForProvider,
   piProviderAuthKind,
   piProviderHasAmbientAuth,
@@ -121,6 +123,11 @@ export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
   apiKey?: string;
 }
 
+interface AgentProviderConnectionAuth {
+  apiKey?: string;
+  listHeaders?: Record<string, string>;
+}
+
 configurePiCredentialStorage({
   read: readPiCredential,
   modify: modifyPiCredential,
@@ -146,9 +153,9 @@ export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRun
     ?? await findUsableProvider(file.providers, secrets)
     ?? null;
   if (!active) return null;
-  // Connection only. Do not bake the key here — this path is sync and cannot await
-  // an OAuth refresh. Consumers resolve lazily via getProviderApiKey (the single
-  // async resolver) at request time; leaving apiKey undefined routes them there.
+  // Connection only. Do not bake auth here. pi `Models.applyAuth()` resolves
+  // stored/env/oauth/provider-specific auth at request time; `apiKey` is only an
+  // explicit override used by tests or the connection form's unsaved key.
   return { ...active };
 }
 
@@ -382,10 +389,10 @@ export async function getProviderSecretStatus(providerIdInput: string): Promise<
 }
 
 /**
- * The single resolver for a provider's usable API key. Auth-kind-agnostic and
- * backed by pi `Models.getAuth()`, so OAuth refresh runs through the
- * CredentialStore lock and persists rotated tokens before request dispatch.
- * Per that hook's contract it never throws — it returns undefined when no key.
+ * Resolve only the concrete API-key field from pi auth. This is for legacy
+ * callsites/tests that truly need a string key, not for provider requests:
+ * request dispatch should let pi `Models.applyAuth()` preserve provider-specific
+ * headers, env, and baseUrl auth fields.
  */
 export async function getProviderApiKey(providerIdInput: string): Promise<string | undefined> {
   try {
@@ -432,11 +439,13 @@ async function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): Pr
       const authKind = getProviderAuthKind(provider.providerId);
       const oauthCred = cred?.type === 'oauth' ? cred : undefined;
       const hasStoredKey = cred?.type === 'api_key';
+      const isKeylessLocalEndpoint = !cred && isLocalBaseUrl(provider.baseUrl);
       const auth: ProviderAuthView = {
         authKind,
         // Authoritative "can use models": any stored credential, env key, or
-        // managed sentinel. Renderer reads this instead of re-deriving.
-        credentialed: Boolean(cred) || hasEnvApiKey,
+        // managed sentinel. Keyless local endpoints are allowed. Renderer reads
+        // this instead of re-deriving.
+        credentialed: Boolean(cred) || hasEnvApiKey || isKeylessLocalEndpoint,
         hasStoredKey,
         oauth: authKind === 'oauth'
           ? { connected: Boolean(oauthCred), expiresAt: oauthCred?.expires }
@@ -541,6 +550,7 @@ async function providerCanRun(provider: AgentProviderConfig, secrets: SecretFile
   if (!provider.enabled) return false;
   if (secrets.credentials[provider.providerId]) return true;
   if (provider.baseUrl) ensurePiCustomProvider(provider);
+  if (isLocalBaseUrl(provider.baseUrl)) return true;
   return piProviderHasAmbientAuth(provider.providerId);
 }
 
@@ -567,12 +577,12 @@ async function findUsableProvider(
  * 1. If the secrets file cannot be read, do nothing: never prune, never write.
  *    The credential picture is unknown.
  * 2. Judge a row only by DURABLE, launch-stable signals: a stored secret-file
- *    credential, a `baseUrl`, and the provider kind. Ambient env keys are NOT
- *    consulted — they are launch-context-dependent (a Finder/Dock launch inherits
- *    no shell env), so judging on them would delete a deliberate row whenever the
- *    env happens to be absent. Managed (Bedrock/Vertex) and oauth kinds are exempt
- *    outright: managed credentials are always ambient, and oauth rows carry a
- *    stored credential.
+ *    credential, a local `baseUrl`, and the provider kind. Ambient env keys are
+ *    NOT consulted — they are launch-context-dependent (a Finder/Dock launch
+ *    inherits no shell env), so judging on them would delete a deliberate row
+ *    whenever the env happens to be absent. Managed (Bedrock/Vertex) and oauth
+ *    kinds are exempt outright: managed credentials are always ambient, and oauth
+ *    rows carry a stored credential.
  */
 export async function reconcileProviderConfig(): Promise<void> {
   const { secrets, readable } = await readSecretsWithStatus();
@@ -615,14 +625,14 @@ function reconcileProviderFile(file: ProviderConfigFile, secrets: SecretFile): b
 
 /**
  * The literal bug shape, and ONLY it: a plain api-key catalog row with no durable
- * stored credential and no `baseUrl`. Exempts managed/oauth kinds and any row with
- * a stored credential or a local endpoint. Never consults ambient env (see
+ * stored credential and no local `baseUrl`. Exempts managed/oauth kinds and any
+ * row with a stored credential or a local endpoint. Never consults ambient env (see
  * `reconcileProviderConfig` rule 2).
  */
 function isPrunableJunkRow(provider: AgentProviderConfig, secrets: SecretFile): boolean {
   if (getProviderAuthKind(provider.providerId) !== 'api-key') return false; // exempt managed + oauth
   if (secrets.credentials[provider.providerId]) return false;               // durable stored credential
-  if (provider.baseUrl) return false;                                       // local endpoint
+  if (isLocalBaseUrl(provider.baseUrl)) return false;                       // local endpoint
   return true;
 }
 
@@ -780,14 +790,14 @@ export async function testProviderConnection(input: {
     const providerId = normalizeProviderId(input.providerId);
     const baseUrl = input.baseUrl?.trim() || undefined;
 
-    let apiKey = input.apiKey?.trim();
-    if (!apiKey) {
-      // The single resolver handles api-key, oauth refresh, env, and managed.
-      apiKey = await getProviderApiKey(providerId);
-    }
-    if (!apiKey) {
+    const explicitApiKey = input.apiKey?.trim();
+    const requestAuth = explicitApiKey
+      ? { apiKey: explicitApiKey, listHeaders: { Authorization: `Bearer ${explicitApiKey}` } }
+      : await resolveProviderConnectionAuth(providerId, baseUrl);
+    if (!requestAuth) {
       return { success: false, message: 'API Key is missing.' };
     }
+    const authOverride = requestAuth.apiKey ? { apiKey: requestAuth.apiKey } : {};
 
     const catalogModel = firstRankedModel(providerId);
 
@@ -798,11 +808,11 @@ export async function testProviderConnection(input: {
     // too with a 1-token completion against a DISCOVERED (hosted) model.
     if (baseUrl) {
       try {
-        const models = await listOpenAiCompatibleModels(baseUrl, apiKey);
+        const models = await listOpenAiCompatibleModels(baseUrl, requestAuth.listHeaders);
         if (models.length > 0) {
           await piCompleteSimple(createOpenAICompatibleModel({ providerId, modelId: models[0], baseUrl }), {
             messages: [{ role: 'user', content: 'Ping', timestamp: Date.now() }],
-          }, { apiKey, timeoutMs: 8000, maxTokens: 1 });
+          }, { ...authOverride, timeoutMs: 8000, maxTokens: 1 });
           return { success: true, message: `Connection successful. ${models.length} model(s) available.` };
         }
       } catch (listError) {
@@ -818,7 +828,7 @@ export async function testProviderConnection(input: {
       const model = baseUrl ? { ...catalogModel, baseUrl } : { ...catalogModel };
       await piCompleteSimple(model as Model<any>, {
         messages: [{ role: 'user', content: 'Ping', timestamp: Date.now() }],
-      }, { apiKey, timeoutMs: 8000, maxTokens: 1 });
+      }, { ...authOverride, timeoutMs: 8000, maxTokens: 1 });
       return { success: true, message: 'Connection successful.' };
     }
 
@@ -851,6 +861,34 @@ export async function testProviderConnection(input: {
   }
 }
 
+async function resolveProviderConnectionAuth(providerId: string, baseUrl?: string): Promise<AgentProviderConnectionAuth | null> {
+  if (baseUrl) ensurePiCustomProvider({ providerId, baseUrl });
+  const model = baseUrl
+    ? createOpenAICompatibleModel({ providerId, modelId: '__tenon_openai_compatible_probe__', baseUrl })
+    : firstRankedModel(providerId);
+  if (!model) return null;
+  try {
+    const resolved = await piModels().getAuth(model);
+    if (!resolved) return null;
+    const headers = providerHeadersForModelList(resolved.auth);
+    return {
+      listHeaders: headers,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function providerHeadersForModelList(auth: { apiKey?: string; headers?: Record<string, string | null> }): Record<string, string> | undefined {
+  const headers: Record<string, string> = {};
+  if (auth.apiKey) headers.Authorization = `Bearer ${auth.apiKey}`;
+  for (const [name, value] of Object.entries(auth.headers ?? {})) {
+    if (value === null) delete headers[name];
+    else headers[name] = value;
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
 /**
  * List models from an OpenAI-compatible `GET {baseUrl}/models`. Used to prove a
  * custom endpoint's connection when there is no catalog model to probe with.
@@ -859,13 +897,13 @@ export async function testProviderConnection(input: {
  * maps to a precise auth/endpoint message (401/404/timeout) — strictly better than
  * a generic "no usable model".
  */
-async function listOpenAiCompatibleModels(baseUrl: string, apiKey: string): Promise<string[]> {
+async function listOpenAiCompatibleModels(baseUrl: string, headers?: Record<string, string>): Promise<string[]> {
   const url = `${baseUrl.replace(/\/+$/, '')}/models`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
     const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers,
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`${response.status}`);
