@@ -462,18 +462,99 @@ function useMediaSourceUrl(source: PreviewFileSource): { src: string | null; err
   return source.streamUrl ? { src: source.streamUrl } : bytes;
 }
 
+type PreviewMediaElement = HTMLAudioElement | HTMLVideoElement;
+
+function useMediaKeyboardShortcuts(ref: RefObject<PreviewMediaElement | null>, enabled: boolean) {
+  useEffect(() => {
+    if (!enabled) return;
+    const media = ref.current;
+    if (!media) return;
+    const ownerDocument = media.ownerDocument;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (!isMediaShortcutActive(ownerDocument, media, event.target)) return;
+      const key = event.key.toLowerCase();
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (key === ' ' || key === 'k') {
+        event.preventDefault();
+        void toggleMediaPlayback(media).catch(() => {});
+        return;
+      }
+      if (key === 'arrowleft' || key === 'arrowright') {
+        event.preventDefault();
+        seekMediaBy(media, key === 'arrowleft' ? -5 : 5);
+        return;
+      }
+      if (key === 'j' || key === 'l') {
+        event.preventDefault();
+        seekMediaBy(media, key === 'j' ? -10 : 10);
+        return;
+      }
+      if (key === 'm') {
+        event.preventDefault();
+        media.muted = !media.muted;
+        return;
+      }
+      if (key === 'f' && isPreviewVideoElement(media)) {
+        event.preventDefault();
+        void toggleMediaFullscreen(ownerDocument, media).catch(() => {});
+      }
+    };
+    ownerDocument.addEventListener('keydown', onKeyDown, true);
+    return () => ownerDocument.removeEventListener('keydown', onKeyDown, true);
+  }, [enabled, ref]);
+}
+
+function isMediaShortcutActive(
+  ownerDocument: Document,
+  media: PreviewMediaElement,
+  target: EventTarget | null,
+): boolean {
+  if (ownerDocument.fullscreenElement) return media.contains(ownerDocument.fullscreenElement);
+  return target === media;
+}
+
+async function toggleMediaPlayback(media: PreviewMediaElement): Promise<void> {
+  if (media.paused) {
+    await media.play();
+    return;
+  }
+  media.pause();
+}
+
+function seekMediaBy(media: PreviewMediaElement, deltaSeconds: number): void {
+  if (!Number.isFinite(media.duration)) return;
+  const max = Math.max(0, media.duration);
+  media.currentTime = Math.min(max, Math.max(0, media.currentTime + deltaSeconds));
+}
+
+function isPreviewVideoElement(media: PreviewMediaElement): media is HTMLVideoElement {
+  return media.tagName.toLowerCase() === 'video';
+}
+
+async function toggleMediaFullscreen(ownerDocument: Document, media: HTMLVideoElement): Promise<void> {
+  if (ownerDocument.fullscreenElement) {
+    await ownerDocument.exitFullscreen();
+    return;
+  }
+  await media.requestFullscreen();
+}
+
 function AudioPreview({ source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const { src, error } = useMediaSourceUrl(source);
+  const mediaRef = useRef<HTMLAudioElement | null>(null);
+  useMediaKeyboardShortcuts(mediaRef, Boolean(src));
   if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
-  return <audio className="file-preview-media file-preview-audio" controls data-preserve-selection preload="metadata" src={src} />;
+  return <audio ref={mediaRef} className="file-preview-media file-preview-audio" controls data-preserve-selection preload="metadata" src={src} tabIndex={0} />;
 }
 
 function VideoPreview({ source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const { src, error } = useMediaSourceUrl(source);
+  const mediaRef = useRef<HTMLVideoElement | null>(null);
+  useMediaKeyboardShortcuts(mediaRef, Boolean(src));
   if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
-  return <video className="file-preview-media file-preview-video" controls data-preserve-selection preload="metadata" src={src} />;
+  return <video ref={mediaRef} className="file-preview-media file-preview-video" controls data-preserve-selection preload="metadata" src={src} tabIndex={0} />;
 }
 
 function HtmlPreview({ source }: PreviewRendererProps) {
