@@ -170,6 +170,10 @@ export function isPreviewableSource(source: PreviewSourceDescriptor): boolean {
   return entry ? entry.id !== 'metadata' : false;
 }
 
+export function isPassivePlaybackSource(source: PreviewSourceDescriptor): boolean {
+  return source.kind === 'file' && (isAudioSource(source) || isVideoSource(source));
+}
+
 export function PreviewRenderer({
   displayMode,
   onSummaryPageSelect,
@@ -246,8 +250,9 @@ export function FilePreviewShell({
   const [previewHeights, setPreviewHeights] = useState<{ summary?: number; full?: number }>({});
   const [scrollToPageNumber, setScrollToPageNumber] = useState<number | null>(null);
   const previewable = state.status === 'ready' && isPreviewableSource(state.source);
+  const passivePlayback = state.status === 'ready' && isPassivePlaybackSource(state.source);
   const metadataFallback = state.status === 'ready' && !previewable;
-  const effectiveExpanded = readerMode || expanded;
+  const effectiveExpanded = readerMode || passivePlayback || expanded;
   const displayMode: FilePreviewDisplayMode = previewable && !effectiveExpanded ? 'summary' : 'full';
   const resizedHeight = displayMode === 'summary' ? previewHeights.summary : previewHeights.full;
   const toggleExpanded = () => {
@@ -317,6 +322,7 @@ export function FilePreviewShell({
       previewable={previewable}
       expanded={expanded}
       onToggleExpand={toggleExpanded}
+      primaryMode={passivePlayback ? 'none' : previewable ? 'toggle' : 'open'}
       primaryOpen={primaryOpen}
       menuActions={menuActions}
       meta={meta}
@@ -344,7 +350,7 @@ export function FilePreviewShell({
         {metadataFallback ? pill : null}
       </div>
       {metadataFallback ? null : pill}
-      {previewable && !readerMode ? (
+      {previewable && !readerMode && !passivePlayback ? (
         <div
           aria-label="Resize preview"
           aria-orientation="horizontal"

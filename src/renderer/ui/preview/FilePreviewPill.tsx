@@ -20,6 +20,8 @@ interface FilePreviewPillProps {
   previewable: boolean;
   expanded: boolean;
   onToggleExpand: () => void;
+  /** Audio/video previews are already final controls, so they omit the Expand primary. */
+  primaryMode?: 'toggle' | 'open' | 'none';
   /** Open with the OS default app (asset / local file / url). Null when not openable. */
   primaryOpen?: { label: string; run: () => void } | null;
   /** Secondary actions for the `⋯` menu (reveal in Finder, copy, add to outline). */
@@ -42,6 +44,7 @@ export function FilePreviewPill({
   previewable,
   expanded,
   onToggleExpand,
+  primaryMode = previewable ? 'toggle' : 'open',
   primaryOpen = null,
   menuActions = [],
   meta = null,
@@ -57,12 +60,12 @@ export function FilePreviewPill({
     ? [{ key: 'open', label: primaryOpen.label, icon: OpenIcon, run: primaryOpen.run }, ...menuActions]
     : menuActions;
 
-  const hasPrimary = previewable || Boolean(primaryOpen);
+  const hasPrimary = primaryMode !== 'none' && (primaryMode === 'toggle' || Boolean(primaryOpen));
   if (!hasPrimary && allMenuActions.length === 0) return null;
 
-  const primaryLabel = previewable ? (expanded ? labels.collapse : labels.expand) : labels.open;
-  const primaryTitle = previewable ? primaryLabel : primaryOpen?.label ?? labels.open;
-  const onPrimary = previewable ? onToggleExpand : primaryOpen?.run ?? (() => undefined);
+  const primaryLabel = primaryMode === 'toggle' ? (expanded ? labels.collapse : labels.expand) : labels.open;
+  const primaryTitle = primaryMode === 'toggle' ? primaryLabel : primaryOpen?.label ?? labels.open;
+  const onPrimary = primaryMode === 'toggle' ? onToggleExpand : primaryOpen?.run ?? (() => undefined);
 
   // Float over content inside an outliner row, so swallow the pointer: it must not
   // steal edit focus or move the row selection, and the trigger keeps its own

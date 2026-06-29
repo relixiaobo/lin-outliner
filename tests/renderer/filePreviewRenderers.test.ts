@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { PreviewSourceDescriptor } from '../../src/core/preview';
-import { isPreviewableSource } from '../../src/renderer/ui/preview/previewRenderers';
+import { isPassivePlaybackSource, isPreviewableSource } from '../../src/renderer/ui/preview/previewRenderers';
 
 function fileSource(overrides: Partial<Extract<PreviewSourceDescriptor, { kind: 'file' }>>): PreviewSourceDescriptor {
   return {
@@ -46,17 +46,35 @@ describe('file preview renderers', () => {
     }))).toBe(false);
   });
 
-  test('treats MP4 video as previewable', () => {
-    expect(isPreviewableSource(fileSource({
+  test('treats MP4 video and MP3 audio as direct-play previewable sources', () => {
+    const video = fileSource({
       name: 'clip.mp4',
       ext: 'mp4',
       mimeType: 'video/mp4',
-    }))).toBe(true);
+    });
+    expect(isPreviewableSource(video)).toBe(true);
+    expect(isPassivePlaybackSource(video)).toBe(true);
+
+    const audio = fileSource({
+      name: 'song.mp3',
+      ext: 'mp3',
+      mimeType: 'audio/mpeg',
+    });
+    expect(isPreviewableSource(audio)).toBe(true);
+    expect(isPassivePlaybackSource(audio)).toBe(true);
 
     expect(isPreviewableSource(fileSource({
       name: 'clip.mp4',
       ext: 'mp4',
       mimeType: 'application/octet-stream',
+    }))).toBe(false);
+  });
+
+  test('does not treat document previews as direct-play sources', () => {
+    expect(isPassivePlaybackSource(fileSource({
+      name: 'report.pdf',
+      ext: 'pdf',
+      mimeType: 'application/pdf',
     }))).toBe(false);
   });
 });
