@@ -37,9 +37,10 @@ import {
   type AgentMessageContextMenuRequest,
 } from '../core/agentTypes';
 import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
-import { ASSET_URL_SCHEME } from '../core/assets';
+import { ASSET_URL_SCHEME, PREVIEW_LOCAL_URL_SCHEME, previewLocalUrl } from '../core/assets';
 import { handlePreviewCommand } from './previewSource';
 import { setBoundedMapEntry } from './boundedMap';
+import { LocalFilePreviewStreamRegistry } from './localFilePreviewStream';
 import {
   LIN_AGENT_OAUTH_EVENT_CHANNEL,
   LIN_DOCUMENT_EVENT_CHANNEL,
@@ -216,10 +217,11 @@ installMainErrorHandlers();
 // before the app `ready` event.
 app.commandLine.appendSwitch('use-mock-keychain');
 
-// Must run before the app `ready` event so the renderer can load assets with
-// regular <img>/<video> tags via `asset://<id>`.
+// Must run before the app `ready` event so the renderer can load internal
+// preview streams with regular <img>/<video> tags.
 protocol.registerSchemesAsPrivileged([
   { scheme: ASSET_URL_SCHEME, privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
+  { scheme: PREVIEW_LOCAL_URL_SCHEME, privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
 ]);
 
 // Image file extensions for the native "insert image" picker. The filter's display
@@ -305,6 +307,7 @@ const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   dreamMemoryExtractionEnabled: true,
   errorReporter: reportError,
 });
+const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [agentLocalFileRoot, agentScratchRoot]);
 
 documentService.onProjectionChanged((event) => {
   mainWindow?.webContents.send(LIN_DOCUMENT_EVENT_CHANNEL, event);
@@ -417,8 +420,8 @@ const RENDERER_CSP_DIRECTIVES = [
   "default-src 'self'",
   RENDERER_SCRIPT_SRC,
   "style-src 'self' 'unsafe-inline'",
-  `img-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}:`,
-  `media-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}:`,
+  `img-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}: ${PREVIEW_LOCAL_URL_SCHEME}:`,
+  `media-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}: ${PREVIEW_LOCAL_URL_SCHEME}:`,
   "font-src 'self' data:",
   "object-src 'none'",
   // EPUB preview renders book sections in blob: iframes; packaged script-src
@@ -436,12 +439,12 @@ const RENDERER_DEV_CSP_DIRECTIVES = RENDERER_CSP_DIRECTIVES.map((directive) =>
 
 const RENDERER_CSP = [
   ...RENDERER_CSP_DIRECTIVES,
-  `connect-src 'self' ${ASSET_URL_SCHEME}:`,
+  `connect-src 'self' ${ASSET_URL_SCHEME}: ${PREVIEW_LOCAL_URL_SCHEME}:`,
 ].join('; ');
 
 const RENDERER_DEV_CSP = RENDERER_DEV_ORIGIN ? [
   ...RENDERER_DEV_CSP_DIRECTIVES,
-  `connect-src 'self' ${ASSET_URL_SCHEME}: ${RENDERER_DEV_ORIGIN} ${RENDERER_DEV_ORIGIN.replace(/^http/i, 'ws')}`,
+  `connect-src 'self' ${ASSET_URL_SCHEME}: ${PREVIEW_LOCAL_URL_SCHEME}: ${RENDERER_DEV_ORIGIN} ${RENDERER_DEV_ORIGIN.replace(/^http/i, 'ws')}`,
 ].join('; ') : null;
 
 function safeOrigin(url: string): string | null {
@@ -1321,6 +1324,10 @@ function registerIpc() {
           agentRuntime,
           assetService,
           inferMimeType,
+          localFileStreamUrl: async (file, mimeType) => {
+            const token = await localFilePreviewStreams.issue(file, mimeType);
+            return token ? previewLocalUrl(token) : null;
+          },
           localFileReferencePreview,
         });
       }
@@ -2733,6 +2740,10 @@ if (!app.requestSingleInstanceLock()) {
     protocol.handle(ASSET_URL_SCHEME, (request) => {
       const id = new URL(request.url).hostname;
       return assetService.serve(id);
+    });
+    protocol.handle(PREVIEW_LOCAL_URL_SCHEME, (request) => {
+      const token = new URL(request.url).hostname;
+      return localFilePreviewStreams.serve(token, request);
     });
     // Apply the persisted appearance preference before any window is created, so
     // the first paint (prePaintBackgroundColor → shouldUseDarkColors) already

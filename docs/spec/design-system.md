@@ -1131,7 +1131,10 @@ category history; see "Settings window".)
   go through the preload bridge and main process only after the main process
   canonicalizes the path under the non-root agent local file root, stats it as a
   regular file/folder, and rejects executable or bundle-like open targets.
-  Renderer code must not navigate to `file://`, call `openExternal` for file
+  Previewable local files receive an opaque `preview-local://<token>` stream URL
+  from the main process, the local-file twin of stored assets' `asset://<id>`
+  stream URL. Renderer code consumes only the shared `streamUrl` field; it must
+  not branch on source kind, navigate to `file://`, call `openExternal` for file
   paths, or read local bytes directly. Composer local-file atoms expose the same
   preview metadata, but click handling stays with the editor so draft text
   remains selectable and editable.

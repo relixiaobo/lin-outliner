@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import type { AgentPayloadRef } from '../../src/core/agentEventLog';
 import type { PreviewListDirectoryResult, PreviewReadTextResult, PreviewResolveSourceResult } from '../../src/core/preview';
+import { PREVIEW_LOCAL_URL_SCHEME } from '../../src/core/assets';
 import { handlePreviewCommand, type PreviewCommandContext } from '../../src/main/previewSource';
 import type { TrustedLocalFileReference } from '../../src/main/localFileReferenceSecurity';
 
@@ -194,10 +195,16 @@ describe('preview source commands', () => {
   test('resolves local MP4 files as video preview sources', async () => {
     const filePath = join(root, 'clip.mp4');
     await writeFile(filePath, new Uint8Array([0, 0, 0, 0]));
+    const issued: Array<{ path: string; mimeType: string }> = [];
 
     const resolved = await handlePreviewCommand('preview_resolve_source', {
       target: { kind: 'local-file', path: filePath, entryKind: 'file' },
-    }, previewContext()) as PreviewResolveSourceResult;
+    }, previewContext({
+      localFileStreamUrl: async (file, mimeType) => {
+        issued.push({ path: file.path, mimeType });
+        return `${PREVIEW_LOCAL_URL_SCHEME}://token-1`;
+      },
+    })) as PreviewResolveSourceResult;
 
     expect(resolved.source).toMatchObject({
       kind: 'file',
@@ -206,7 +213,9 @@ describe('preview source commands', () => {
       ext: 'mp4',
       mimeType: 'video/mp4',
       entryKind: 'file',
+      streamUrl: `${PREVIEW_LOCAL_URL_SCHEME}://token-1`,
     });
+    expect(issued).toEqual([{ path: await realpath(filePath), mimeType: 'video/mp4' }]);
   });
 
   function previewContext(overrides: Partial<PreviewCommandContext> = {}): PreviewCommandContext {

@@ -444,9 +444,9 @@ function ImagePreview({ source }: PreviewRendererProps) {
 }
 
 /**
- * Resolve a playable media URL for an audio/video source: prefer the streaming
- * `asset://` URL (uncapped, Chromium-cached, range-request friendly), falling back
- * to a bounded byte read → object URL for non-asset sources that have no stream URL.
+ * Resolve a playable media URL for an audio/video source: prefer the streaming URL
+ * (asset or trusted local file), falling back to a bounded byte read → object URL
+ * for sources that have no stream URL.
  */
 function useMediaSourceUrl(source: PreviewFileSource): { src: string | null; error?: string } {
   const bytes = usePreviewObjectUrl(source.target, {

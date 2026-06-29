@@ -40,6 +40,7 @@ export interface PreviewCommandContext {
   agentRuntime: Pick<AgentRuntime, 'previewPayload' | 'previewPayloadBytes'>;
   assetService: Pick<AssetService, 'lookup' | 'pathFor'>;
   inferMimeType: (filePath: string) => string;
+  localFileStreamUrl?: (file: TrustedLocalFileReference, mimeType: string) => Promise<string | null>;
   localFileReferencePreview: (file: TrustedLocalFileReference) => Promise<LocalFilePreviewMetadata>;
 }
 
@@ -82,6 +83,9 @@ async function previewSourceForTarget(
     const file = await resolveTrustedLocalFileReference(target.path, context.agentLocalFileRoots);
     if (!file) return null;
     const metadata = await context.localFileReferencePreview(file);
+    const streamUrl = metadata.entryKind === 'file'
+      ? await context.localFileStreamUrl?.(file, metadata.mimeType)
+      : null;
     const normalizedTarget: PreviewTarget = {
       ...target,
       path: file.path,
@@ -100,6 +104,7 @@ async function previewSourceForTarget(
       sizeBytes: metadata.sizeBytes,
       lastModified: metadata.lastModified,
       displayPath: metadata.path,
+      ...(streamUrl ? { streamUrl } : {}),
       ...(metadata.iconDataUrl ? { iconDataUrl: metadata.iconDataUrl } : {}),
       ...(metadata.thumbnailDataUrl ? { thumbnailDataUrl: metadata.thumbnailDataUrl } : {}),
     };
