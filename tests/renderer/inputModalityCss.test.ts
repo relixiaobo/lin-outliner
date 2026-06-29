@@ -21,8 +21,12 @@ describe('input modality CSS guards', () => {
     expect(filePreviewCss).toContain('.file-preview-media-player');
     expect(filePreviewCss).toContain('--media-control-height: 34px;');
     expect(filePreviewCss).toContain('.file-preview-media-controls');
+    expect(filePreviewCss).toMatch(/\.file-preview-media-player--audio\s*\{[^}]*box-shadow:\s*none;/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-media-player--video \.file-preview-media-controls\s*\{[^}]*box-shadow:\s*none;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-pill--media-control\s*\{[^}]*position:\s*static;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-pill--media-control \.file-preview-pill-more\s*\{[^}]*background:\s*transparent;/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-pill--media-control \.file-preview-pill-more\s*\{[^}]*box-shadow:\s*none;/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-pill--media-control \.file-preview-pill-more:hover,[\s\S]*?background:\s*var\(--fill-2\);/);
     expect(filePreviewCss).toMatch(/\.file-preview-pill--media\s*\{[^}]*pointer-events:\s*none;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-pill--media:has\(\.file-preview-pill-more\[aria-expanded='true'\]\)\s*\{[^}]*pointer-events:\s*auto;/s);
     expect(filePreviewCss).not.toContain('right: calc(-1 *');
