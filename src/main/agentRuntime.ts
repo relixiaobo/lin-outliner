@@ -9,14 +9,16 @@ import {
 import {
   // pi-ai's own vocabulary: per-"session" provider resources, keyed by our conversation id.
   cleanupSessionResources as cleanupPiConversationResources,
-  completeSimple,
   createAssistantMessageEventStream,
-  getModels,
-  getProviders,
   getSupportedThinkingLevels,
   isContextOverflow,
-  streamSimple,
 } from '@earendil-works/pi-ai';
+import {
+  completeSimple,
+  getModels,
+  getProviders,
+  streamSimple,
+} from '@earendil-works/pi-ai/compat';
 import type {
   Api,
   AssistantMessage,

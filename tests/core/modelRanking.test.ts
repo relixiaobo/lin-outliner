@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test';
-import { getModels, getProviders } from '@earendil-works/pi-ai';
+import { getModels, getProviders } from '@earendil-works/pi-ai/compat';
 import {
   MODEL_LINES,
   type RankableModel,

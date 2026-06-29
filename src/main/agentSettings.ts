@@ -1,12 +1,14 @@
 import * as electron from 'electron';
 import {
+  getSupportedThinkingLevels,
+} from '@earendil-works/pi-ai';
+import {
   findEnvKeys,
   getEnvApiKey,
   getModels,
   getProviders,
-  getSupportedThinkingLevels,
   completeSimple,
-} from '@earendil-works/pi-ai';
+} from '@earendil-works/pi-ai/compat';
 import type { Api, KnownProvider, Model, OAuthCredentials, OAuthProviderId, SimpleStreamOptions } from '@earendil-works/pi-ai';
 import { getOAuthApiKey, getOAuthProvider } from '@earendil-works/pi-ai/oauth';
 import { join } from 'node:path';

@@ -2,7 +2,7 @@
 
 We pin `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` at exact
 `0.78.0` (`package.json:33-34`, both direct deps). npm latest is **0.80.2**
-(released 2026-06-23). The gap (0.78.1 → 0.79.0–0.79.10 → 0.80.0–0.80.2) carries
+(released 2026-06-23). The gap (0.78.1 → 0.79.0–0.79.10 → 0.80.1–0.80.2) carries
 a large batch of provider/model-metadata fixes (GPT-5.4/5.5 + Codex
 context-window **billing-hazard** corrections, Gemini/GLM-5.2/Kimi/DeepSeek
 metadata), streaming-robustness fixes, vulnerable-dependency bumps (`undici`,
@@ -11,7 +11,7 @@ metadata), streaming-robustness fixes, vulnerable-dependency bumps (`undici`,
 
 A full surface audit (0.80.2 tarball `.d.ts` diffed against the real 0.78.0
 tarball, not changelog prose) shows the **only breaking change that touches us**
-is **v0.80.0**, which moved the old global pi-ai API off the package root to the
+is the **0.80 line**, which moved the old global pi-ai API off the package root to the
 `@earendil-works/pi-ai/compat` subpath. Six functions we import from the root
 moved; everything else we use is unchanged. This is therefore a **small,
 behavior-preserving** upgrade.
@@ -50,20 +50,22 @@ smallest, lowest-risk change.
 ### What actually breaks (the whole surface)
 
 Six **value (runtime)** functions we import from the `@earendil-works/pi-ai`
-**root** moved to `/compat` in 0.80.0. They appear in **three files**:
+**root** moved to `/compat` in the 0.80 line. They appear in **three runtime
+files plus one live-catalog test**:
 
 | Moved symbol | Files importing it from root |
 |---|---|
-| `getModels` | `agentSettings.ts`, `agentRuntime.ts` |
-| `getProviders` | `agentSettings.ts`, `agentRuntime.ts` |
+| `getModels` | `agentSettings.ts`, `agentRuntime.ts`, `modelRanking.test.ts` |
+| `getProviders` | `agentSettings.ts`, `agentRuntime.ts`, `modelRanking.test.ts` |
 | `completeSimple` | `agentSettings.ts`, `agentRuntimeContext.ts`, `agentRuntime.ts` |
 | `streamSimple` | `agentRuntime.ts` |
 | `getEnvApiKey` | `agentSettings.ts` |
 | `findEnvKeys` | `agentSettings.ts` |
 
-**The fix:** split each of those three `import { … } from '@earendil-works/pi-ai'`
-statements into two — moved symbols from `@earendil-works/pi-ai/compat`, the rest
-unchanged from the root. No call-site logic changes: the `/compat` aliases
+**The fix:** split each runtime `import { … } from '@earendil-works/pi-ai'`
+statement into two — moved symbols from `@earendil-works/pi-ai/compat`, the rest
+unchanged from the root. Move the test's live-catalog `getModels`/`getProviders`
+import to `/compat` as well. No call-site logic changes: the `/compat` aliases
 `getModels`/`getProviders` keep the exact 0.78 return types (`Model[]` /
 `KnownProvider[]`), and `completeSimple`/`streamSimple` keep the exact
 `(model, context, options?: SimpleStreamOptions)` signature.
@@ -103,6 +105,9 @@ unchanged from the root. No call-site logic changes: the `/compat` aliases
    `streamSimple` → `/compat`; keep `getSupportedThinkingLevels`,
    `isContextOverflow`, `cleanupSessionResources`,
    `createAssistantMessageEventStream` on root.
+5. **`tests/core/modelRanking.test.ts`** — `getModels`, `getProviders` →
+   `/compat`; this test intentionally exercises the real pi-ai catalog, and
+   `bun run test:core` imports it outside the `tsconfig.json` app include.
 
 That is the entire code change.
 
@@ -134,7 +139,8 @@ must still be run to confirm the bundle.
 - `bun run typecheck`
 - `bun run test:core` + `bun run test:renderer`
 - `bun run test:e2e`
-- **Real run** (`bun run dev:main`): one full chat round with Neva (exercises
+- **Real run** (`bun run dev:<current-clone>`; in this clone,
+  `bun run dev:codex-3`): one full chat round with Neva (exercises
   `completeSimple`/`streamSimple` streaming + the model picker's
   `getModels`/`getProviders`), and one OAuth provider login (exercises
   `getOAuthApiKey`). The agent store/unit tests do not cover the runtime session
@@ -153,10 +159,12 @@ must still be run to confirm the bundle.
 
 ## Collision check
 
-- `gh pr list` empty (no open PRs); `docs/TASKS.md` scan + grep of the three
-  target files against open-PR scopes: no overlap. Touches `package.json`
-  (infra-ownership — coordinate the bump as its own commit) + three `src/main/`
-  agent-runtime files. No protocol/`src/core` change.
+- Latest check: `gh pr list` currently shows #345
+  (`codex/preview-first-links-html-renderer`), whose preview/HTML scope does not
+  overlap this package/import migration. Re-run the collision check at claim time.
+  Touches `package.json`/`bun.lock` (infra-ownership — coordinate the bump as its
+  own commit) + three `src/main/` agent-runtime files + one core test. No
+  protocol/`src/core` change.
 
 ## Checklist
 
@@ -164,6 +172,7 @@ must still be run to confirm the bundle.
 - [ ] Split imports in `agentSettings.ts` (5 moved → `/compat`).
 - [ ] Split imports in `agentRuntimeContext.ts` (`completeSimple` → `/compat`).
 - [ ] Split imports in `agentRuntime.ts` (4 moved → `/compat`).
+- [ ] Split imports in `modelRanking.test.ts` (`getModels`/`getProviders` → `/compat`).
 - [ ] Add a `default` guard wherever we `switch` on `AgentEvent` if not already present.
 - [ ] `bun run typecheck` + `test:core` + `test:renderer` + `test:e2e`.
 - [ ] Real run: chat round-trip + model picker + OAuth login.

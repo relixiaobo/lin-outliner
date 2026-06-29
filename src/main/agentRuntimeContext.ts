@@ -1,5 +1,6 @@
 import type { AfterToolCallResult } from '@earendil-works/pi-agent-core';
-import { completeSimple, isContextOverflow } from '@earendil-works/pi-ai';
+import { isContextOverflow } from '@earendil-works/pi-ai';
+import { completeSimple } from '@earendil-works/pi-ai/compat';
 import type {
   Api,
   AssistantMessage,
