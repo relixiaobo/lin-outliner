@@ -1182,6 +1182,111 @@ describe('agent runtime skill integration', () => {
     expect(parentContexts.join('\n')).toContain('Research child inspected available context.');
   });
 
+  test('asks for a read scope when research inspects an external folder', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-research-scope-root-'));
+    const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-research-scope-external-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-research-scope-data-'));
+    roots.push(localRoot, outsideRoot, dataRoot);
+    await mkdir(path.join(outsideRoot, 'src'), { recursive: true });
+    await writeFile(path.join(outsideRoot, 'src', 'finding.ts'), 'export const finding = true;\n');
+
+    const childFollowUpContexts: string[] = [];
+    const parentContexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('skill', {
+            skill: 'research',
+            args: `inspect ${outsideRoot}`,
+          }, { id: 'tool-skill-research-scope' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage([
+          fauxToolCall('file_glob', {
+            path: outsideRoot,
+            pattern: '**/*.ts',
+          }, { id: 'tool-research-glob-outside' }),
+        ], { stopReason: 'toolUse' }),
+        (context) => {
+          childFollowUpContexts.push(JSON.stringify(context.messages));
+          return fauxAssistantMessage(fauxText([
+            'Findings',
+            '- External folder contained a TypeScript file.',
+            '',
+            'Evidence',
+            '- file_glob returned src/finding.ts.',
+            '',
+            'Confidence',
+            '- High.',
+          ].join('\n')));
+        },
+        (context) => {
+          parentContexts.push(JSON.stringify(context.messages));
+          return fauxAssistantMessage(fauxText('Parent consumed scoped research result.'));
+        },
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        permissionMode: 'restricted',
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    const sendPromise = runtime.sendMessage(created.conversationId, 'Use research on the external folder.');
+    await waitFor(() => sink.events.some((event) => event.type === 'approval_request'));
+    const approvalEvent = sink.events.find((event): event is Extract<AgentRuntimeEvent, { type: 'approval_request' }> => (
+      event.type === 'approval_request'
+    ));
+    if (!approvalEvent) throw new Error('Expected research file-scope approval request.');
+
+    expect(approvalEvent.request.toolName).toBe('file_glob');
+    expect(approvalEvent.request.toolCallId).toBe('tool-research-glob-outside');
+    expect(approvalEvent.request.target).toBe(outsideRoot);
+    expect(approvalEvent.request.alwaysAllowRule).toBe(`Scope(read:${outsideRoot})`);
+    expect(approvalEvent.request.alwaysAllowAction).toBe('grant');
+
+    await runtime.resolveApproval(created.conversationId, approvalEvent.requestId, true);
+    await sendPromise;
+
+    expect(script.pendingCount()).toBe(0);
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(childFollowUpContexts.join('\n')).toContain('tool-research-glob-outside');
+    expect(childFollowUpContexts.join('\n')).toContain('finding.ts');
+    expect(childFollowUpContexts.join('\n')).not.toContain('path_outside_local_root');
+    expect(parentContexts.join('\n')).toContain('External folder contained a TypeScript file.');
+
+    const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
+    expect(events.find((event) => (
+      event.type === 'tool.permission.checked'
+      && event.requestId === approvalEvent.requestId
+    ))).toMatchObject({
+      toolCallId: 'tool-research-glob-outside',
+      outcome: 'ask',
+    });
+    expect(events.find((event) => (
+      event.type === 'tool.permission.resolved'
+      && event.requestId === approvalEvent.requestId
+    ))).toMatchObject({
+      toolCallId: 'tool-research-glob-outside',
+      status: 'approved',
+      resolvedBy: 'user_once',
+    });
+  });
+
   test('runs skill shell expansion through the runtime permission layer', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-shell-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-skill-shell-data-'));

@@ -15,6 +15,7 @@ import {
   matchingGrantForEffect,
   matchingSoftBlockAllowForDescriptor,
   parseGlobalToolPermissionSettings,
+  alwaysAllowRuleForDescriptor,
   softBlockAllowRuleForDescriptor,
   type AgentToolActionKind,
   type GlobalToolPermissionConfig,
@@ -163,6 +164,15 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
   'run_status',
   'node_read',
   'node_search',
+]);
+
+const TYPED_FILE_TOOL_NAMES = new Set([
+  'file_read',
+  'file_glob',
+  'file_grep',
+  'file_edit',
+  'file_write',
+  'file_delete',
 ]);
 
 const TOOL_ALIASES = new Map<string, string>([
@@ -409,6 +419,14 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
       },
     );
   }
+  if (effectResolution.decision === 'ask') {
+    return askForDescriptor(
+      effectResolution.descriptor,
+      access,
+      preapproved,
+      descriptors,
+    );
+  }
   if (effectResolution.decision === 'soft_block') {
     return softBlockForDescriptor(
       effectResolution.descriptor,
@@ -438,7 +456,7 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
 type EffectDecisionSource = AgentPermissionSource;
 
 interface EffectDecisionResolution {
-  decision: GlobalToolPermissionDecision;
+  decision: GlobalToolPermissionDecision | 'ask';
   source: EffectDecisionSource;
   descriptor: DerivedToolActionDescriptor;
   grantRuleValue?: string;
@@ -488,6 +506,13 @@ function resolveEffectDecision(
     }
 
     const grant = matchingGrantForEffect(descriptor.effect, globalPermissions);
+    if (!grant && requiresOutsideScopeApproval(descriptor)) {
+      return {
+        decision: 'ask',
+        source: 'default',
+        descriptor,
+      };
+    }
     return {
       decision: 'allow',
       source: grant ? 'trust_ledger' : 'default',
@@ -496,12 +521,30 @@ function resolveEffectDecision(
     };
   });
   resolutions.sort((left, right) => (
-    compareToolPermissionResolutionPriority(left, right, (resolution) => permissionSourceRank(resolution.source))
+    compareToolPermissionResolutionPriority(
+      compareInputForEffectDecision(left),
+      compareInputForEffectDecision(right),
+      (resolution) => permissionSourceRank(resolution.source),
+    )
   ));
   return resolutions[0] ?? {
     decision: 'deny',
     source: 'default',
     descriptor: hiddenShellDescriptor('No permission descriptor was derived.'),
+  };
+}
+
+function requiresOutsideScopeApproval(descriptor: DerivedToolActionDescriptor): boolean {
+  return descriptor.effect.reach === 'outside_scope'
+    && descriptor.effect.grant?.kind === 'scope'
+    && TYPED_FILE_TOOL_NAMES.has(descriptor.toolName);
+}
+
+function compareInputForEffectDecision(resolution: EffectDecisionResolution) {
+  return {
+    decision: resolution.decision === 'ask' ? 'soft_block' as const : resolution.decision,
+    descriptor: resolution.descriptor,
+    source: resolution.source,
   };
 }
 
@@ -1394,6 +1437,38 @@ function softBlockForDescriptor(
       blockRuleValue,
     },
   );
+}
+
+function askForDescriptor(
+  descriptor: DerivedToolActionDescriptor,
+  access: AgentPermissionAccess,
+  preapproved: boolean,
+  descriptors: readonly DerivedToolActionDescriptor[],
+): AgentPermissionAskDecision {
+  const reason = descriptor.consequence;
+  const target = descriptor.requestTarget ?? descriptor.command ?? descriptor.summary;
+  const alwaysAllowRule = alwaysAllowRuleForDescriptor(descriptor);
+  return {
+    behavior: 'ask',
+    code: descriptor.code ?? descriptor.actionKind,
+    reason,
+    access,
+    preapproved,
+    request: {
+      title: descriptor.requestTitle ?? `Approve ${descriptor.title}?`,
+      target,
+      alwaysAllowRule,
+      alwaysAllowAction: alwaysAllowRule ? 'grant' : undefined,
+      details: descriptor.requestDetails ?? [
+        { label: 'Action', value: descriptor.title },
+        { label: 'Target', value: target },
+        { label: 'Why asking', value: reason },
+        { label: 'Permission kind', value: descriptor.actionKind },
+      ],
+    },
+    descriptor,
+    descriptors,
+  };
 }
 
 export function approvalNoticeForDeniedDecision(

@@ -39,14 +39,17 @@ metadata, and user blocklist keys. They are not a consequence severity model.
 The public permission vocabulary is:
 
 - `allow`: run the tool and record the derived action kinds.
+- `ask`: stop for explicit user approval before widening a typed file-tool root,
+  currently used when typed file read/search/write/delete tools target a local
+  path outside the handed file area. **Always allow** records a narrow
+  `Scope(read:/absolute/path)` or `Scope(write:/absolute/path)` grant.
 - `soft_blocked`: stop and show a card with **Allow once**, **Always allow**, and
   **Block now**. If the user does nothing, the card auto-blocks after its
   countdown.
 - `blocked`: hard redlines, restricted sandbox denials, runtime cancellation, or
   explicit/expired soft-block denials.
 
-There is no ordinary permission `ask` path for new tool decisions. The legacy
-ask resolver and event schema remain for compatibility and for non-permission
+The legacy ask resolver and event schema remain shared with non-permission
 approval surfaces such as skill trust.
 
 ## Allowed File Area
@@ -77,6 +80,13 @@ realpath containment:
 - **handed folders**: users may hand Tenon a real folder from Settings ->
   Security. That records a legacy `Scope(write:/absolute/folder)` grant and the
   runtime projects that scope into the file-tool execution layer.
+- **approved outside-scope file roots**: when a typed file tool targets a
+  path outside the current boundary, the permission layer asks before the file
+  tool runs. Approval for once projects that exact `Scope(read:/absolute/path)`
+  or `Scope(write:/absolute/path)` into the current run's file-tool roots;
+  approval for always also persists the grant. Isolated read-only skill runs,
+  including `/research`, inherit the same approval flow and can continue after
+  the parent conversation approves the scope.
 
 The boundary is asymmetric:
 
@@ -198,9 +208,8 @@ unqualified `Scope(/path)` values become diagnostics and never take effect.
 Writes are serialized, atomically renamed into place, and locked down with
 private file permissions.
 
-Legacy `grants` are retained for handed file folders and compatibility. They do
-not create ordinary approval prompts, because ordinary approvals no longer
-exist.
+`grants` are retained for handed file folders and compatibility, and are also
+the persistence target for outside-scope typed file-tool approvals.
 
 ## Evaluation Pipeline
 
@@ -214,7 +223,10 @@ exist.
 4. A matching user `blocks` rule returns `soft_blocked`.
 5. A built-in soft-block descriptor returns `soft_blocked` unless a matching
    `softBlockAllows` rule exists.
-6. Everything else allows.
+6. An unmatched `outside_scope` typed file-tool descriptor returns `ask`; a
+   matching `Scope(...)` grant allows and is projected into the local file-tool
+   execution boundary.
+7. Everything else allows.
 
 For compound bash commands, shell-surface segments are classified and ranked.
 Decision priority is `deny > soft_block > allow`, then source rank, then
