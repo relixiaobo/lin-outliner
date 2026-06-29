@@ -191,6 +191,24 @@ describe('preview source commands', () => {
     });
   });
 
+  test('resolves local MP4 files as video preview sources', async () => {
+    const filePath = join(root, 'clip.mp4');
+    await writeFile(filePath, new Uint8Array([0, 0, 0, 0]));
+
+    const resolved = await handlePreviewCommand('preview_resolve_source', {
+      target: { kind: 'local-file', path: filePath, entryKind: 'file' },
+    }, previewContext()) as PreviewResolveSourceResult;
+
+    expect(resolved.source).toMatchObject({
+      kind: 'file',
+      sourceKind: 'local-file',
+      name: 'clip.mp4',
+      ext: 'mp4',
+      mimeType: 'video/mp4',
+      entryKind: 'file',
+    });
+  });
+
   function previewContext(overrides: Partial<PreviewCommandContext> = {}): PreviewCommandContext {
     return {
       agentLocalFileRoots: [root],
@@ -214,6 +232,7 @@ function inferMimeType(filePath: string): string {
   if (extension === '.md' || extension === '.markdown') return 'text/markdown';
   if (extension === '.html' || extension === '.htm') return 'text/html';
   if (extension === '.json') return 'application/json';
+  if (extension === '.mp4') return 'video/mp4';
   return 'text/plain';
 }
 

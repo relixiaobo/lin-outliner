@@ -275,6 +275,10 @@ const EXT_TO_MIME: Record<string, string> = {
   '.zip': 'application/zip',
 };
 
+export function mimeTypeForFilename(filename: string): string | undefined {
+  return EXT_TO_MIME[extname(filename).toLowerCase()];
+}
+
 function extname(filename: string): string {
   const dot = filename.lastIndexOf('.');
   return dot >= 0 ? filename.slice(dot).toLowerCase() : '';
@@ -288,7 +292,7 @@ function extensionForMime(mimeType: string, filename?: string): string {
 
 /** Sniff a MIME type from magic bytes, falling back to the filename extension. */
 export function sniffMimeType(bytes: Uint8Array, filename?: string): string | undefined {
-  const filenameMimeType = filename ? EXT_TO_MIME[extname(filename)] : undefined;
+  const filenameMimeType = filename ? mimeTypeForFilename(filename) : undefined;
   if (bytes.length >= 8
     && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AssetService, imageDimensions, sniffMimeType } from '../../src/main/assetService';
+import { AssetService, imageDimensions, mimeTypeForFilename, sniffMimeType } from '../../src/main/assetService';
 
 function pngBytes(width: number, height: number): Uint8Array {
   const buf = Buffer.alloc(24);
@@ -209,6 +209,17 @@ describe('sniffMimeType', () => {
     expect(sniffMimeType(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]), 'renamed.epub')).toBe('application/pdf');
     expect(sniffMimeType(new Uint8Array([0, 0, 0]), 'note.svg')).toBe('image/svg+xml');
     expect(sniffMimeType(new Uint8Array([0, 0, 0]), 'mystery')).toBeUndefined();
+  });
+});
+
+describe('mimeTypeForFilename', () => {
+  test('keeps local-file preview MIME inference aligned with asset ingestion', () => {
+    expect(mimeTypeForFilename('clip.mp4')).toBe('video/mp4');
+    expect(mimeTypeForFilename('clip.m4v')).toBe('video/mp4');
+    expect(mimeTypeForFilename('clip.mov')).toBe('video/quicktime');
+    expect(mimeTypeForFilename('clip.webm')).toBe('video/webm');
+    expect(mimeTypeForFilename('memo.mp3')).toBe('audio/mpeg');
+    expect(mimeTypeForFilename('memo.m4a')).toBe('audio/mp4');
   });
 });
 

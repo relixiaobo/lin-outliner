@@ -45,4 +45,18 @@ describe('file preview renderers', () => {
       mimeType: 'application/zip',
     }))).toBe(false);
   });
+
+  test('treats MP4 video as previewable', () => {
+    expect(isPreviewableSource(fileSource({
+      name: 'clip.mp4',
+      ext: 'mp4',
+      mimeType: 'video/mp4',
+    }))).toBe(true);
+
+    expect(isPreviewableSource(fileSource({
+      name: 'clip.mp4',
+      ext: 'mp4',
+      mimeType: 'application/octet-stream',
+    }))).toBe(false);
+  });
 });

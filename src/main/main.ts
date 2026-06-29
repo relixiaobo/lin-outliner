@@ -8,7 +8,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
 import { DocumentService } from './documentService';
-import { AssetService } from './assetService';
+import { AssetService, mimeTypeForFilename } from './assetService';
 import { AgentRuntime } from './agentRuntime';
 import { MAC_TRAFFIC_LIGHT_POSITION, MAC_WINDOW_CORNER_RADIUS } from '../core/chromeGeometry';
 import { windowMaterialKind } from '../core/windowMaterial';
@@ -2417,18 +2417,9 @@ function safeAppPath(name: Parameters<typeof app.getPath>[0]): string | null {
 }
 
 function inferMimeType(filePath: string): string {
+  const sharedMimeType = mimeTypeForFilename(filePath);
+  if (sharedMimeType) return sharedMimeType;
   const extension = extname(filePath).toLowerCase();
-  if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg';
-  if (extension === '.png') return 'image/png';
-  if (extension === '.gif') return 'image/gif';
-  if (extension === '.webp') return 'image/webp';
-  if (extension === '.svg') return 'image/svg+xml';
-  if (extension === '.avif') return 'image/avif';
-  if (extension === '.bmp') return 'image/bmp';
-  if (extension === '.heic') return 'image/heic';
-  if (extension === '.tif' || extension === '.tiff') return 'image/tiff';
-  if (extension === '.pdf') return 'application/pdf';
-  if (extension === '.epub') return 'application/epub+zip';
   if (extension === '.doc') return 'application/msword';
   if (extension === '.docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   if (extension === '.ppt') return 'application/vnd.ms-powerpoint';
@@ -2439,10 +2430,8 @@ function inferMimeType(filePath: string): string {
   if (extension === '.xls') return 'application/vnd.ms-excel';
   if (extension === '.xlsx') return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   if (extension === '.numbers') return 'application/vnd.apple.numbers';
-  if (extension === '.json') return 'application/json';
   if (extension === '.xml') return 'application/xml';
   if (extension === '.yaml' || extension === '.yml') return 'application/yaml';
-  if (extension === '.html' || extension === '.htm') return 'text/html';
   if (TEXT_ATTACHMENT_EXTENSIONS.has(extension)) return 'text/plain';
   return 'application/octet-stream';
 }
