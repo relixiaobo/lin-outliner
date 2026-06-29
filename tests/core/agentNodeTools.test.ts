@@ -128,7 +128,7 @@ describe('agent node tools', () => {
     expect(nodeSearch.description).toContain('Use DATE_OVERLAPS only for values stored in a date field');
     expect(JSON.stringify(nodeSearch.parameters)).toContain('Plain field names');
     expect(JSON.stringify(nodeSearch.parameters)).toContain('Date field values use YYYY-MM-DD');
-    expect(nodeEdit.description).toContain('old_string "*" replaces the whole annotated outline');
+    expect(nodeEdit.description).toContain('old_string "*" is not supported');
     expect(JSON.stringify(nodeEdit.parameters)).toContain('Date field values use YYYY-MM-DD');
     expect(JSON.stringify(nodeEdit.parameters)).toContain('Include enough surrounding lines');
     expect(history.description).toContain('Use action "list" first');
@@ -190,6 +190,30 @@ describe('agent node tools', () => {
     expect(dateFieldIds).toHaveLength(1);
     expect(core.state().nodes[dateFieldIds[0]!]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual([
       '2026-05-20/2026-05-24',
+    ]);
+  });
+
+  test('node_create preserves reusable template field values while adding new values', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const tagId = mustFocus(core.createTag('project'));
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Status', 'plain'));
+    const fieldDefId = core.state().nodes[templateEntryId]!.fieldDefId!;
+    core.createNode(templateEntryId, null, 'Template default');
+
+    const envelope = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: '- Launch #project\n  - Status:: Active',
+    });
+
+    expect(envelope.ok).toBe(true);
+    const nodeId = envelope.data!.createdRootIds[0]!;
+    const fieldEntryId = core.state().nodes[nodeId]!.children.find((childId) =>
+      core.state().nodes[childId]!.type === 'fieldEntry'
+      && core.state().nodes[childId]!.fieldDefId === fieldDefId)!;
+    expect(core.state().nodes[fieldEntryId]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual([
+      'Template default',
+      'Active',
     ]);
   });
 
@@ -595,35 +619,58 @@ describe('agent node tools', () => {
     expect(core.state().nodes[nodeId]!.parentId).toBe(today);
   });
 
-  test('node_edit replaces an annotated outline and treats unmarked lines as new nodes', async () => {
+  test('node_delete can trash one field entry without touching sibling fields', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+    const statusField = mustFocus(core.createInlineField(root, null, 'Status', 'plain'));
+    const ownerField = mustFocus(core.createInlineField(root, null, 'Owner', 'plain'));
+    const ownerValue = mustFocus(core.createNode(ownerField, null, 'Ada'));
+
+    const envelope = await executeTool<{ deletedNodeIds: string[] }>(core, 'node_delete', { node_id: statusField });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.deletedNodeIds).toEqual([statusField]);
+    expect(core.state().nodes[statusField]!.parentId).toBe(TRASH_ID);
+    expect(core.state().nodes[ownerField]!.parentId).toBe(root);
+    expect(core.state().nodes[ownerValue]!.parentId).toBe(ownerField);
+  });
+
+  test('node_delete can trash one field value without touching sibling values', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+    const statusField = mustFocus(core.createInlineField(root, null, 'Status', 'plain'));
+    const openValue = mustFocus(core.createNode(statusField, null, 'Open'));
+    const blockedValue = mustFocus(core.createNode(statusField, null, 'Blocked'));
+
+    const envelope = await executeTool<{ deletedNodeIds: string[] }>(core, 'node_delete', { node_id: openValue });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.deletedNodeIds).toEqual([openValue]);
+    expect(core.state().nodes[openValue]!.parentId).toBe(TRASH_ID);
+    expect(core.state().nodes[blockedValue]!.parentId).toBe(statusField);
+    expect(core.state().nodes[statusField]!.children).toContain(blockedValue);
+  });
+
+  test('node_edit rejects whole-outline replacement and preserves children', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const root = mustFocus(core.createNode(today, null, 'Task'));
     const oldChild = mustFocus(core.createNode(root, null, 'Old child'));
 
-    const envelope = await executeTool<{
-      status: 'updated' | 'unchanged';
-      createdNodeIds?: string[];
-      trashedNodeIds?: string[];
-      updatedTags?: string[];
-      afterOutline?: string;
-    }>(core, 'node_edit', {
+    const envelope = await executeTool(core, 'node_edit', {
       node_id: root,
       old_string: '*',
       new_string: '- [x] Renamed - Done #edited\n  - Status:: Complete\n  - New child',
     });
 
-    expect(envelope.ok).toBe(true);
-    expect(envelope.data!.status).toBe('updated');
-    expect(envelope.data!.createdNodeIds?.length).toBeGreaterThanOrEqual(1);
-    expect(envelope.data!.trashedNodeIds ?? []).toContain(oldChild);
-    expect(core.state().nodes[root]!.content.text).toBe('Renamed');
-    expect(core.state().nodes[root]!.description).toBe('Done');
-    expect(core.state().nodes[root]!.completedAt).toBeGreaterThan(0);
-    expect(core.state().nodes[root]!.tags.map((tagId) => core.state().nodes[tagId]!.content.text)).toEqual(['edited']);
-    expect(core.state().nodes[oldChild]!.parentId).toBe(TRASH_ID);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('subtree_edit_removed');
+    expect(core.state().nodes[root]!.content.text).toBe('Task');
+    expect(core.state().nodes[root]!.children).toEqual([oldChild]);
     expect(core.state().nodes[oldChild]!.content.text).toBe('Old child');
-    expect(core.state().nodes[root]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['', 'New child']);
+    expect(core.state().nodes[oldChild]!.parentId).toBe(root);
   });
 
   test('node_edit guidance reports a real no-op instead of claiming the edit applied', async () => {
@@ -677,13 +724,8 @@ describe('agent node tools', () => {
 
     const envelope = await executeTool<{ status: 'updated' | 'unchanged' }>(core, 'node_edit', {
       node_id: root,
-      old_string: '*',
-      new_string: [
-        `- %%node:${root}%% Task ${rootMarker}`,
-        `  - %%node:${fieldEntryId}%% Status::`,
-        `    - %%node:${valueId}%% Open ${valueMarker}`,
-        '  - New child',
-      ].join('\n'),
+      old_string: `  - %%node:${fieldEntryId}%% Status::\n    - %%node:${valueId}%% Open ${valueMarker}`,
+      new_string: `  - %%node:${fieldEntryId}%% Status::\n    - %%node:${valueId}%% Open ${valueMarker}\n    - Waiting`,
     });
 
     expect(envelope.ok).toBe(true);
@@ -710,6 +752,10 @@ describe('agent node tools', () => {
         sizeBytes: 12,
       }],
     });
+    expect(core.state().nodes[fieldEntryId]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual([
+      'Open ',
+      'Waiting',
+    ]);
   });
 
   test('node_edit treats reference-like markers in descriptions and field names as plain text', async () => {
@@ -725,7 +771,7 @@ describe('agent node tools', () => {
 
     const envelope = await executeTool<{ status: 'updated' | 'unchanged' }>(core, 'node_edit', {
       node_id: root,
-      old_string: '*',
+      old_string: `- %%node:${root}%% Task`,
       new_string: `- %%node:${root}%% Task - See ${staleMarker}\n  - Review ${staleMarker}:: Plain`,
     });
 
@@ -748,7 +794,7 @@ describe('agent node tools', () => {
 
       const result = await executeRawTool(core, 'node_edit', {
         node_id: root,
-        old_string: '*',
+        old_string: `- %%node:${root}%% Task`,
         new_string: `- %%node:${root}%% Task ${marker}`,
       }, { localFileRoot: localRoot });
 
@@ -776,8 +822,8 @@ describe('agent node tools', () => {
 
     const valid = await executeTool(core, 'node_edit', {
       node_id: root,
-      old_string: '*',
-      new_string: `- %%node:${root}%% Launch #event\n  - %%node:${fieldEntryId}%% Date::\n    - 2026-05-20 / 2026-05-24`,
+      old_string: `  - %%node:${fieldEntryId}%% Date::`,
+      new_string: `  - %%node:${fieldEntryId}%% Date::\n    - 2026-05-20 / 2026-05-24`,
     });
     expect(valid.ok).toBe(true);
     expect(core.state().nodes[fieldEntryId]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual([
@@ -786,8 +832,8 @@ describe('agent node tools', () => {
 
     const invalid = await executeTool(core, 'node_edit', {
       node_id: root,
-      old_string: '*',
-      new_string: `- %%node:${root}%% Launch #event\n  - %%node:${fieldEntryId}%% Date::\n    - 2026-05-20..2026-05-24`,
+      old_string: `  - %%node:${fieldEntryId}%% Date::\n    - %%node:${core.state().nodes[fieldEntryId]!.children[0]}%% 2026-05-20/2026-05-24`,
+      new_string: `  - %%node:${fieldEntryId}%% Date::\n    - 2026-05-20..2026-05-24`,
     });
     expect(invalid.ok).toBe(false);
     expect(invalid.error?.message).toContain('Invalid date field value');
@@ -796,50 +842,44 @@ describe('agent node tools', () => {
     ]);
   });
 
-  test('node_edit supports exact partial outline replacement', async () => {
-    const core = Core.new();
-    const today = core.projection().todayId;
-    const root = mustFocus(core.createNode(today, null, 'Root'));
-    core.createNode(root, null, 'Task A');
-    const taskB = mustFocus(core.createNode(root, null, 'Task B'));
-
-    const envelope = await executeTool<{
-      afterOutline?: string;
-      matchedNodeIds?: string[];
-    }>(core, 'node_edit', {
-      node_id: root,
-      old_string: `  - %%node:${taskB}%% Task B`,
-      new_string: `  - %%node:${taskB}%% Task C`,
-    });
-
-    expect(envelope.ok).toBe(true);
-    expect(envelope.data!.afterOutline).toContain(`- %%node:${root}%% Root`);
-    expect(envelope.data!.afterOutline).toContain(`  - %%node:${taskB}%% Task C`);
-    expect(envelope.data!.matchedNodeIds).toContain(taskB);
-    expect(core.state().nodes[root]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['Task A', 'Task C']);
-  });
-
-  test('node_edit reorders marked child lines without recreating nodes', async () => {
+  test('node_edit rejects child-structure outline edits', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const root = mustFocus(core.createNode(today, null, 'Root'));
     const taskA = mustFocus(core.createNode(root, null, 'Task A'));
     const taskB = mustFocus(core.createNode(root, null, 'Task B'));
 
-    const envelope = await executeTool<{
-      movedNodeIds?: string[];
-      createdNodeIds?: string[];
-      trashedNodeIds?: string[];
-    }>(core, 'node_edit', {
+    const envelope = await executeTool(core, 'node_edit', {
       node_id: root,
-      old_string: '*',
-      new_string: `- %%node:${root}%% Root\n  - %%node:${taskB}%% Task B\n  - %%node:${taskA}%% Task A`,
+      old_string: `- %%node:${root}%% Root`,
+      new_string: `- %%node:${root}%% Root\n  - %%node:${taskB}%% Task C`,
+    });
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('subtree_edit_removed');
+    expect(core.state().nodes[root]!.children).toEqual([taskA, taskB]);
+    expect(core.state().nodes[taskB]!.content.text).toBe('Task B');
+  });
+
+  test('node_edit edits a child directly by id', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Root'));
+    const taskB = mustFocus(core.createNode(root, null, 'Task B'));
+
+    const envelope = await executeTool<{
+      afterOutline?: string;
+      matchedNodeIds?: string[];
+    }>(core, 'node_edit', {
+      node_id: taskB,
+      old_string: `- %%node:${taskB}%% Task B`,
+      new_string: `- %%node:${taskB}%% Task C`,
     });
 
     expect(envelope.ok).toBe(true);
-    expect(envelope.data!.createdNodeIds ?? []).toEqual([]);
-    expect(envelope.data!.trashedNodeIds ?? []).toEqual([]);
-    expect(core.state().nodes[root]!.children).toEqual([taskB, taskA]);
+    expect(envelope.data!.afterOutline).toContain(`- %%node:${taskB}%% Task C`);
+    expect(envelope.data!.matchedNodeIds).toContain(taskB);
+    expect(core.state().nodes[root]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['Task C']);
   });
 
   test('node_edit model-visible result returns current annotated outline after apply', async () => {
@@ -854,8 +894,8 @@ describe('agent node tools', () => {
       affectedNodeIds: string[];
     }>(core, 'node_edit', {
       node_id: root,
-      old_string: `  - %%node:${core.state().nodes[root]!.children[0]}%% Task A`,
-      new_string: `  - %%node:${core.state().nodes[root]!.children[0]}%% Task B`,
+      old_string: `- %%node:${root}%% Root`,
+      new_string: `- %%node:${root}%% Root updated`,
     });
 
     const visible = parseVisibleToolResult<{
@@ -867,39 +907,70 @@ describe('agent node tools', () => {
       };
     }>(result.contentText);
 
-    expect(result.details.data!.beforeOutline).toContain('Task A');
-    expect(result.details.data!.afterOutline).toContain('Task B');
+    expect(result.details.data!.beforeOutline).toContain('Root');
+    expect(result.details.data!.afterOutline).toContain('Root updated');
     expect(visible).toMatchObject({ ok: true });
     expect(visible).not.toHaveProperty('tool');
     expect(visible).not.toHaveProperty('status');
     expect(visible.data).not.toHaveProperty('kind');
     expect(visible.data).not.toHaveProperty('action');
     expect(visible.data).not.toHaveProperty('status');
-    expect(visible.data!.outline).toContain(`%%node:${root}%% Root`);
-    expect(visible.data!.outline).toContain('Task B');
+    expect(visible.data!.outline).toContain(`%%node:${root}%% Root updated`);
+    expect(visible.data!.outline).toContain('Task A');
     expect(visible.data!.changes!.updated).toEqual(result.details.data!.affectedNodeIds);
     expect(JSON.stringify(visible)).not.toContain('beforeOutline');
   });
 
-  test('node_edit reports order-based matching for duplicate sibling titles', async () => {
+  test('node_edit preserves omitted fields and field values', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const root = mustFocus(core.createNode(today, null, 'Root'));
-    const first = mustFocus(core.createNode(root, null, 'Task'));
-    const second = mustFocus(core.createNode(root, null, 'Task'));
+    const statusField = mustFocus(core.createInlineField(root, null, 'Status', 'plain'));
+    const statusOpen = mustFocus(core.createNode(statusField, null, 'Open'));
+    const statusBlocked = mustFocus(core.createNode(statusField, null, 'Blocked'));
+    const ownerField = mustFocus(core.createInlineField(root, null, 'Owner', 'plain'));
+    const ownerValue = mustFocus(core.createNode(ownerField, null, 'Ada'));
 
     const envelope = await executeTool<{
       matchedNodeIds?: string[];
+      createdNodeIds?: string[];
     }>(core, 'node_edit', {
       node_id: root,
-      old_string: `- %%node:${root}%% Root\n  - %%node:${first}%% Task\n  - %%node:${second}%% Task`,
-      new_string: `- %%node:${root}%% Root\n  - %%node:${first}%% Task\n  - %%node:${second}%% Task updated`,
+      old_string: `  - %%node:${statusField}%% Status::\n    - %%node:${statusOpen}%% Open\n    - %%node:${statusBlocked}%% Blocked`,
+      new_string: `  - %%node:${statusField}%% Status::\n    - %%node:${statusOpen}%% In progress\n    - Waiting`,
     });
 
     expect(envelope.ok).toBe(true);
-    expect(envelope.warnings?.some((warning) => warning.includes('Duplicate child nodes'))).toBe(true);
-    expect(envelope.data!.matchedNodeIds).toEqual(expect.arrayContaining([root, first, second]));
-    expect(core.state().nodes[root]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['Task', 'Task updated']);
+    expect(envelope.data!.matchedNodeIds).toEqual(expect.arrayContaining([statusField, statusOpen]));
+    expect(core.state().nodes[statusField]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual([
+      'In progress',
+      'Blocked',
+      'Waiting',
+    ]);
+    expect(core.state().nodes[ownerField]!.parentId).toBe(root);
+    expect(core.state().nodes[ownerValue]!.parentId).toBe(ownerField);
+  });
+
+  test('node_edit updates saved search config without pruning ordinary children', async () => {
+    const core = Core.new();
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Weather',
+      query: { kind: 'rule', op: 'STRING_MATCH', text: 'weather' },
+    }));
+    const noteChild = mustFocus(core.createNode(searchId, null, 'Pinned note'));
+
+    const envelope = await executeTool<{ status: 'updated' | 'unchanged'; afterOutline?: string }>(core, 'node_edit', {
+      node_id: searchId,
+      old_string: '    - value:: weather',
+      new_string: '    - value:: forecast',
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.status).toBe('updated');
+    expect(envelope.data!.afterOutline).toContain('value:: forecast');
+    expect(core.state().nodes[searchId]!.content.text).toBe('Weather');
+    expect(core.state().nodes[noteChild]!.parentId).toBe(searchId);
+    expect(core.state().nodes[noteChild]!.content.text).toBe('Pinned note');
   });
 
   test('node_edit moves nodes with an absolute destination', async () => {

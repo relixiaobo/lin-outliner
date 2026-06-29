@@ -179,7 +179,7 @@ export const NODE_EDIT_PARAMETERS = {
     old_string: {
       type: 'string',
       minLength: 1,
-      description: 'Exact fragment from node_read annotated outline, or "*" to replace the whole annotated outline for node_id. Include enough surrounding lines to make the fragment unique.',
+      description: 'Exact fragment from node_read for this node only: target line, field lines, field value lines, or saved-search config. "*" is not supported; use node_create, node_edit move, or node_delete for structure changes. Include enough surrounding lines to make the fragment unique.',
     },
     new_string: {
       type: 'string',
