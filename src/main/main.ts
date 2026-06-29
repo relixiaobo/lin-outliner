@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { DocumentService } from './documentService';
 import { AssetService, mimeTypeForFilename } from './assetService';
 import { AgentRuntime } from './agentRuntime';
+import { isRendererPermissionAllowed } from './rendererPermissions';
 import { MAC_TRAFFIC_LIGHT_POSITION, MAC_WINDOW_CORNER_RADIUS } from '../core/chromeGeometry';
 import { windowMaterialKind } from '../core/windowMaterial';
 import { applyMacWindowCorner } from './nativeWindowCorner';
@@ -406,10 +407,6 @@ const RENDERER_SCRIPT_SRC = "script-src 'self'";
 const VITE_REACT_REFRESH_PREAMBLE_CSP_HASH =
   "'sha256-Z2/iFzh9VMlVkEOar1f/oSHWwQk3ve1qk/C2WdsC4Xk='";
 
-// navigator.clipboard.writeText is the only renderer capability we rely on; deny
-// everything else (geolocation, media, notifications, …) by default.
-const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write']);
-
 // The renderer is locked to its own resources.
 // 'unsafe-inline' styles cover Shiki's inline color spans + React style props;
 // remote http(s) is allowed only as <img>/<video> sources. The renderer makes
@@ -487,9 +484,9 @@ function hardenWebContents(contents: Electron.WebContents) {
 function configureSessionSecurity() {
   const ses = session.defaultSession;
   ses.setPermissionRequestHandler((_contents, permission, callback) => {
-    callback(ALLOWED_PERMISSIONS.has(permission));
+    callback(isRendererPermissionAllowed(permission));
   });
-  ses.setPermissionCheckHandler((_contents, permission) => ALLOWED_PERMISSIONS.has(permission));
+  ses.setPermissionCheckHandler((_contents, permission) => isRendererPermissionAllowed(permission));
   // Enforce CSP on app renderer documents. Dev admits only Vite React refresh's
   // exact inline preamble by hash and widens connect-src for Vite HMR.
   ses.webRequest.onHeadersReceived((details, callback) => {

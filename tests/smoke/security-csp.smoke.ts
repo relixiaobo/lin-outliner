@@ -4,7 +4,8 @@ import { closeSmokeApp, launchSmokeApp, type SmokeApp } from './electronApp';
 // Stage 1 security shell, formally smoke-tested against the built bundle:
 //  - the strict prod CSP is injected on the packaged file:// document and is
 //    *enforcing*;
-//  - the session permission handlers deny a capability we never allow.
+//  - the session permission handlers allow only the app's narrow capability set
+//    and deny capabilities outside it.
 test.describe('security shell', () => {
   let smoke: SmokeApp;
 
@@ -48,11 +49,11 @@ test.describe('security shell', () => {
   });
 
   test('a permission we never allow (geolocation) is denied by the handler', async () => {
-    // The session permission request handler allows only
-    // clipboard-sanitized-write; geolocation must be denied. PERMISSION_DENIED
-    // (code 1) — not POSITION_UNAVAILABLE (2) — confirms a *permission* refusal,
-    // i.e. the request was rejected before any provider was consulted, rather
-    // than the request being granted and then failing for lack of a fix.
+    // Geolocation is outside the renderer capability allow-list and must be
+    // denied. PERMISSION_DENIED (code 1) — not POSITION_UNAVAILABLE (2) —
+    // confirms a *permission* refusal, i.e. the request was rejected before any
+    // provider was consulted, rather than the request being granted and then
+    // failing for lack of a fix.
     // (Accepted brittleness: if a future Electron/Chromium surfaces a denied
     // request as code 2, this flips red — a useful canary, not a false pass. A
     // code-agnostic assertion would go green even if the handler started

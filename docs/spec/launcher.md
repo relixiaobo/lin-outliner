@@ -60,7 +60,7 @@ navigation commands.
   fenced to app-document URLs.
 - Packaged launcher loads via `loadFile` (`file://`), so the renderer CSP applies.
 - It shares `defaultSession`, inheriting the permission allow-list
-  (`clipboard-sanitized-write` only).
+  (`clipboard-sanitized-write` and `fullscreen` only).
 - **No remote-content webContents.** Capture reads basic info via JXA / AppleScript
   / the Accessibility addon — no web page is ever loaded into an Electron
   webContents, so there is no remote-content surface to harden.

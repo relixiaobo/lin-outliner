@@ -397,7 +397,8 @@ always present (reserving a placeholder height) but its iframe mounts lazily as
 the section nears the scroll viewport and stays mounted thereafter, so opening a
 long book never spins up every section's document at once; book bytes load only
 through the capped preview bytes API), sandboxed static HTML (`.html`, `.htm`, or
-`text/html`) with a source-mode fallback, text/source-code with Shiki, Markdown with `react-markdown` +
+`text/html`) with a source-mode fallback, audio/video via native media controls
+(including seek and HTML fullscreen), text/source-code with Shiki, Markdown with `react-markdown` +
 `remark-gfm`, CSV/TSV table, and fallback metadata. The PDF renderer reads bytes
 only through the preview source API, uses a bundled same-origin worker, and falls
 back to the metadata renderer if parsing or rendering fails. Markdown renderer
