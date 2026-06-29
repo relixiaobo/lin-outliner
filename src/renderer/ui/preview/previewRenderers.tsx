@@ -326,7 +326,7 @@ export function FilePreviewShell({
       primaryOpen={primaryOpen}
       menuActions={menuActions}
       meta={meta}
-      placement={metadataFallback ? 'footer' : 'overlay'}
+      placement={metadataFallback || passivePlayback ? 'footer' : 'overlay'}
     />
   ) : null;
   return (
@@ -466,14 +466,14 @@ function AudioPreview({ source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const { src, error } = useMediaSourceUrl(source);
   if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
-  return <audio className="file-preview-media file-preview-audio" controls preload="metadata" src={src} />;
+  return <audio className="file-preview-media file-preview-audio" controls data-preserve-selection preload="metadata" src={src} />;
 }
 
 function VideoPreview({ source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const { src, error } = useMediaSourceUrl(source);
   if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
-  return <video className="file-preview-media file-preview-video" controls preload="metadata" src={src} />;
+  return <video className="file-preview-media file-preview-video" controls data-preserve-selection preload="metadata" src={src} />;
 }
 
 function HtmlPreview({ source }: PreviewRendererProps) {
