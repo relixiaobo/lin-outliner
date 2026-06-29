@@ -90,6 +90,9 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
 7. **`file-preview` PR3** (P2) — media streaming / Office / URL reader; next slice of a shipping plan,
    retires the `media-types` whole-file-read limit. (EPUB reader shipped #339/#344 as a registered
    `PreviewTarget` renderer; PDF #227, web-native #210 already in.)
+8. **`pi-ai-0.80-upgrade`** (P2, build-ready, plan-track) — bump pi-ai + pi-agent-core
+   `0.78.0 → 0.80.2`; small behavior-preserving import migration (6 fns → `pi-ai/compat`,
+   3 files) for the upstream provider/security fixes. Plan written; see Dependencies & platform.
 
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
 
@@ -423,6 +426,23 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   outliner-row focus must go through the focusRequest rail (IME composition guard,
   #176 family) — direct `element.focus()` is for non-editor chrome only. Renderer-only;
   no collision with #179/#180.
+
+### Dependencies & platform
+
+- **pi-ai-0.80-upgrade** (P2, build-ready, plan-track) — bump
+  `@earendil-works/pi-ai` + `@earendil-works/pi-agent-core` `0.78.0 → 0.80.2`
+  (latest). Full `.d.ts`-vs-0.78.0-tarball audit: the only breaking change that
+  touches us is **0.80.0** moving six root value functions
+  (`getModels`/`getProviders`/`completeSimple`/`streamSimple`/`getEnvApiKey`/
+  `findEnvKeys`) to the `pi-ai/compat` subpath — confined to **3 files**
+  (`agentSettings.ts`, `agentRuntimeContext.ts`, `agentRuntime.ts`); all types,
+  all of pi-agent-core, the `/oauth` subpath, and four other root fns are
+  unchanged. Behavior-preserving (`/compat` = strict superset). Picks up upstream
+  provider-metadata + billing-hazard + vulnerable-dep fixes. **Non-goal:** the
+  `createModels()` factory migration (separate future plan;
+  our `agent-secrets.json` is untouched). Gate = `/code-review` +
+  `/security-review` (OAuth/credential paths) + real-run verify. See
+  `docs/plans/pi-ai-0.80-upgrade.md`.
 
 ### Deferred follow-ups & carried TODOs
 
