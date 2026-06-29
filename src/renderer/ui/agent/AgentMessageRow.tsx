@@ -77,6 +77,7 @@ interface AgentMessageRowProps {
   busy?: boolean;
   contentKey?: string;
   entry: AgentMessageEntry;
+  filePreviewPresentation?: 'reader';
   highlighted?: boolean;
   index: DocumentIndex;
   isLastInTurn?: boolean;
@@ -479,6 +480,7 @@ function AgentMessageRowComponent({
   busy = false,
   contentKey,
   entry,
+  filePreviewPresentation,
   highlighted = false,
   index,
   isLastInTurn = true,
@@ -609,7 +611,7 @@ function AgentMessageRowComponent({
     const CopyStateIcon = copied ? CheckIcon : CopyIcon;
     if (editing && nodeId) {
       return (
-        <AgentMessageFrame messageId={nodeId} role="user">
+        <AgentMessageFrame filePreviewPresentation={filePreviewPresentation} messageId={nodeId} role="user">
           <div className={`agent-user-edit-card${highlighted ? ' is-highlighted' : ''}`}>
             <textarea
               autoFocus
@@ -646,7 +648,7 @@ function AgentMessageRowComponent({
       );
     }
     return (
-      <AgentMessageFrame messageId={nodeId} role="user" onContextMenu={handleContextMenu}>
+      <AgentMessageFrame filePreviewPresentation={filePreviewPresentation} messageId={nodeId} role="user" onContextMenu={handleContextMenu}>
         <div className="agent-user-content">
           {hasVisibleContent ? (
             <AgentUserCollapsibleContent highlighted={highlighted} measureKey={contentMeasureKey}>
@@ -767,7 +769,7 @@ function AgentMessageRowComponent({
   if (assistantBlocks.length === 0 && !hasError && !turnActive && !stopped) return null;
 
   return (
-    <AgentMessageFrame messageId={nodeId} role="assistant" onContextMenu={handleContextMenu}>
+    <AgentMessageFrame filePreviewPresentation={filePreviewPresentation} messageId={nodeId} role="assistant" onContextMenu={handleContextMenu}>
       {actorLabel ? (
         // Channel attribution header: avatar + speaker name on ONE line. The body
         // below spans the full row width (aligned to the avatar's left edge) rather
@@ -897,6 +899,7 @@ function sameAgentMessageRowProps(prev: AgentMessageRowProps, next: AgentMessage
     && prev.busy === next.busy
     && prev.contentKey === next.contentKey
     && sameMessageEntry(prev.entry, next.entry)
+    && prev.filePreviewPresentation === next.filePreviewPresentation
     && prev.highlighted === next.highlighted
     && prev.index === next.index
     && prev.isLastInTurn === next.isLastInTurn

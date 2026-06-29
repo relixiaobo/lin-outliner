@@ -16,13 +16,13 @@ import {
 // A transcript file chip points at a working file on disk: clicking it opens the
 // workspace file-only reader in the main canvas (not a split pane). The split is by
 // LOCATION: a chip with a `[data-agent-transcript-chips]`
-// ancestor is in the live transcript. That marker is set ONCE, on the live assistant
-// message body (AgentAssistantContent), so everything it renders — answer prose,
-// interim narration, and file_write/file_edit result chips — opens in the workspace
-// reader, while the same components on meta surfaces (compaction/child-run summaries,
-// the child-run details + PoV inspector panels) have no such ancestor and keep the
-// normal workspace preview. An outliner file reference is a node-model field, never
-// under this marker, so it too keeps its workspace preview behavior.
+// ancestor is in the live transcript. That marker is set ONCE per live transcript
+// message frame (user or assistant), so user attachment chips, answer prose, interim
+// narration, and file_write/file_edit result chips all open in the workspace reader,
+// while the same components on meta surfaces (compaction/child-run summaries, the
+// child-run details + PoV inspector panels) have no such ancestor and keep the normal
+// workspace preview. An outliner file reference is a node-model field, never under
+// this marker, so it too keeps its workspace preview behavior.
 const TRANSCRIPT_CHIP_CONTAINER_SELECTOR = '[data-agent-transcript-chips]';
 
 interface InlineFileMenuState {

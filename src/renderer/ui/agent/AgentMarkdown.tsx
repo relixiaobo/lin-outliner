@@ -325,7 +325,7 @@ export function AgentMarkdown({
   return (
     // The file-chip open behavior (workspace reader vs normal workspace preview) is decided by
     // location, NOT here: a `[data-agent-transcript-chips]` ancestor (set once on the
-    // live assistant message body — see AgentAssistantContent) routes chip clicks to
+    // live transcript message frame — see AgentMessageFrame) routes chip clicks to
     // the file-only reader. This markdown renders in both the live transcript and meta
     // surfaces (compaction/child-run summaries, the PoV inspector), so it stays neutral.
     <div className="agent-markdown">

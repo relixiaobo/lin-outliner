@@ -719,11 +719,13 @@ used by file preview panes. It reuses the active / available workspace pane rath
 than adding a split pane or previewing in the agent dock. The split is **by
 location**, not by node data: a chip is a transcript chip when it has a
 `[data-agent-transcript-chips]` ancestor. That marker is set in exactly **one**
-place — the live assistant message body (`AgentAssistantContent`) — so every chip
-a live turn renders (answer prose, interim narration, and `file_write` /
-`file_edit` result chips) opens in the workspace file-only reader, while the
-**same** components on meta surfaces (compaction / child-run summaries and the
-child-run-details panel) have no such ancestor and keep the workspace preview.
+place per live transcript message row (`AgentMessageFrame`, only when the row's
+caller opts into reader presentation) — so every chip a live turn renders (user
+attachment chips, user inline file references, answer prose, interim narration,
+and `file_write` / `file_edit` result chips) opens in the workspace file-only
+reader, while the **same** components on meta surfaces (compaction / child-run
+summaries and the child-run-details panel) have no such ancestor and keep the
+workspace preview.
 
 All path-backed inline local-file references share `InlineFileContextMenu` on
 right-click: *Preview in Tenon*, *Add to Today* (files only; copy the source into

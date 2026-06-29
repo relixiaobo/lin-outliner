@@ -1271,6 +1271,7 @@ export function AgentChatPanel({
         busy={anyRunActive}
         contentKey={row.contentKey}
         entry={row.entry}
+        filePreviewPresentation="reader"
         index={index}
         isLastInTurn={row.isLastInTurn}
         onCopy={copyAssistantTurn}
