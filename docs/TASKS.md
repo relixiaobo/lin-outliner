@@ -21,9 +21,9 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332; authored ratified plan agent-process-stable-disclosure #297) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -83,14 +83,13 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
    `new Map(prev.byId)` + `nextRevisions` whole-map rebuild), each a small standalone PR; no design gate.
 4. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
    `dark-mode-contrast-pass` (runs **last**, cross-cutting light+dark pass). `keyboard-a11y` shipped #273.
-5. **`focus-and-selection-polish`** (P2, build-ready, fast-track) — one renderer-only PR, four small
-   ratified behaviors (diagnosis is the contract; rebase on current `main`).
-6. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
+5. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
    API-key/Claude-Pro control); presentation-only, light/dark gate.
-7. **`agent-skills-authoring` diff/preview** (P1 tail) — the remaining creative-UX; NL save-as-skill
+6. **`agent-skills-authoring` diff/preview** (P1 tail) — the remaining creative-UX; NL save-as-skill
    routing already shipped (#271).
-8. **`file-preview` PR3** (P2) — media streaming / Office / URL reader; next slice of a shipping plan,
-   retires the `media-types` whole-file-read limit.
+7. **`file-preview` PR3** (P2) — media streaming / Office / URL reader; next slice of a shipping plan,
+   retires the `media-types` whole-file-read limit. (EPUB reader shipped #339/#344 as a registered
+   `PreviewTarget` renderer; PDF #227, web-native #210 already in.)
 
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
 
@@ -178,8 +177,8 @@ before any directional/security-sensitive build.
   `/research` (PR #235): an `execution: isolated` same-agent read-only child run, tools filtered
   through the read-only `AgentToolActionKind` partition. The "memory-bearing `researcher` agent"
   redirect was reconsidered and **dropped** — research stays a baseline capability, not a
-  consultation. **Open loose end:** `#232` (the draft `/research` plan) is redundant with the
-  shipped spec → **close, or merge + archive `done`** (codex-3 / PM).
+  consultation. (The redundant draft `/research` plan PR #232 was **closed** 2026-06-15 — never
+  merged, so nothing to archive; loose end resolved.)
 - **memory** (academic model + theory realignment **shipped**; authorities =
   `agent-memory-foundations` (`meta`) + `agent-data-model` § *Canonical memory vocabulary* +
   `agent-architecture.md` § *The memory system*) — the subsystem is canonically framed in academic
@@ -284,8 +283,6 @@ Standalone agent items (not part of the program):
   in `normalizeCheckpoint`, and extend `agentEventStore.test.ts` to replay a `dream.finished` tail over a
   shape-stale checkpoint (the current +30 test only exercises the full-fallback path, not the incremental
   tail-application path).
-- **agent-image-awareness** (P2, *no plan file*) — surface `image` nodes in the
-  agent projection so the agent can read/insert them.
 - **anthropic-auth-clarity** (P3, *no plan file*) — Anthropic is the only provider
   carrying BOTH an OAuth login (Claude Pro/Max) and an API key on one pi-ai id
   (`OAUTH_API_KEY_FALLBACK = {'anthropic'}` in `providerCatalog.tsx`), shown
@@ -347,33 +344,6 @@ archived `done` (see Recently completed). Remaining active work:
   catalog of nodex features lin deliberately **will not** port, with reasons;
   companion to the active plans. Current-code parity status lives in
   `docs/spec/outliner-parity-matrix.md`. See `docs/plans/nodex-parity-decisions.md`.
-- **focus-and-selection-polish** (P2, *fast-track, no plan file* — diagnosis is the
-  contract, rules PM-ratified 2026-06-10; ONE renderer-only PR, four small complete
-  behaviors):
-  **(1) Backspace deletes a field node from its name.** The field name is a plain
-  `<input>` (`OutlinerFieldRow.tsx:462,483`) whose `onKeyDown` (`:361-409`) has NO
-  Backspace branch — backspace at offset 0 is a native no-op, so a field row can only
-  be deleted via whole-row selection. Fix: Backspace at offset 0 in the name column
-  routes to the SAME delete command the row-selection path uses (identical semantics +
-  restorability), then focuses the previous visible row at end. Contrast: content rows
-  already have the full intent resolver (`OutlinerItem.tsx:1128`).
-  **(2) Page entry auto-places the cursor in the trailing draft** (PM-ratified rule:
-  enter a node page — today etc. — ready to append; Workflowy-style, zero new state).
-  Applies on root-page navigation; "remember last cursor per page" was considered and
-  deferred.
-  **(3) Agent dock open focuses the composer.** `AgentComposerEditor.tsx:367-368`
-  already exposes an imperative `focus()`; the dock open/click path never calls it
-  (the only `autoFocus` in the panel is the conversation-rename input). Pure wiring.
-  **(4) Cmd+A escalates text → page.** `selection.select_all` exists in the
-  row-selection scope only (`shortcutRegistry.ts:101`, `useWorkspaceKeyboard.ts:358`);
-  with the caret in an editor, ProseMirror/native swallows Cmd+A at "select this row's
-  text" with no escalation. Fix: editor keymap handles `Mod-a` — if the selection
-  already spans the whole row text, blur the editor and trigger the existing
-  select-all-rows path; same two-step in field name/value inputs.
-  Sync `ui-behavior.md` for (1)(2)(4) in the same PR (A6). No collision with #179 or
-  the other boarded fast-tracks (outliner-indent-draft-fixes **merged as PR #182** —
-  it touched the same Tab/draft paths, so rebase this branch on current `main`).
-
 - **macos-liquid-glass-icon** (P2) — true Liquid Glass app icon for macOS 26
   (Tahoe): the layered `.icon` (Icon Composer) format the OS renders with dynamic
   glass material, specular edges + depth, with a legacy `.icns` fallback for
@@ -391,19 +361,6 @@ archived `done` (see Recently completed). Remaining active work:
 - **view-toolbar-name-filter** (P3, *no plan file*) — quick incremental name filter as the
   view toolbar's first control (Tana-style); needs backend/data-model support.
   Optional follow-ons: `is_not` for options filters; relative-date operands.
-- **checkbox-row-long-text-wrap** (P3, bug, *no plan file*) — a done-checkbox row wraps its text onto
-  the next line when the text is long (checkbox sits alone on line 1). Root cause:
-  in `.row-content-line` (display: block) the `.done-checkbox` and `.row-editor`
-  are inline-level siblings, and the editor's `max-width: 100%`
-  (`outliner.css:1805-1817`) is relative to the full line width without
-  subtracting the ~21px the checkbox takes — so once long text pushes the editor
-  to its max-width, `checkbox + editor > 100%` and the editor wraps below.
-  Fix options: (a) switch `.row-content-line` to `display: flex; align-items:
-  flex-start` with the editor `flex: 1; min-width: 0` (cleanest, but must give
-  `TagBar` / `NodeDescription` `flex-basis: 100%` since they currently rely on
-  block flow to wrap below); (b) minimal — `.row-content-line:has(> .done-checkbox)
-  > .row-editor { max-width: calc(100% - 21px); }`. Prefer (a); verify visually
-  with a long-text checkbox row.
 - **embed-strategy** (P3, decision-only, **no deadline**) — decide live iframe vs
   cached-metadata embeds (Option B recommended), or fall back to Option C and remove
   the dead `embedType`/`embedId` schema in a future data-model cleanup. See
@@ -442,9 +399,9 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 ### Storage & platform hygiene (from the 2026-06-10 pre-release sweep)
 
 - **renderer-state-hygiene** (P3, *fast-track, no plan file*, **PM-ratified**) — three
-  small renderer items in one PR: (1) `useWorkspaceLayout.ts:12,115,127` localStorage
-  key says `:v3` but the persisted `version` int is `2` — align the int to 3, drop
-  nothing (pre-release: old keys are simply ignored, no migration), and fix the
+  small renderer items in one PR: (1) `useWorkspaceLayout.ts` localStorage key says
+  `:v4` (`STORAGE_KEY`) but the persisted `version` int is `3` — align key↔int (drop
+  nothing; pre-release old keys are simply ignored, no migration), and fix the
   `workspace-layout.md` claim in the same change (A6/A8); (2) on a projection delta,
   cull `removedIds` from `focusedId`/`selectedIds`/`expanded` instead of relying on
   read-side defensive checks; (3) pin the focus convention in `ui-behavior.md`:
