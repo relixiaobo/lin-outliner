@@ -166,15 +166,6 @@ const RESTRICTED_BASE_ALLOWED_TOOLS = new Set([
   'node_search',
 ]);
 
-const TYPED_FILE_TOOL_NAMES = new Set([
-  'file_read',
-  'file_glob',
-  'file_grep',
-  'file_edit',
-  'file_write',
-  'file_delete',
-]);
-
 const TOOL_ALIASES = new Map<string, string>([
   ['bash', 'bash'],
   ['shell', 'bash'],
@@ -521,11 +512,7 @@ function resolveEffectDecision(
     };
   });
   resolutions.sort((left, right) => (
-    compareToolPermissionResolutionPriority(
-      compareInputForEffectDecision(left),
-      compareInputForEffectDecision(right),
-      (resolution) => permissionSourceRank(resolution.source),
-    )
+    compareToolPermissionResolutionPriority(left, right, (resolution) => permissionSourceRank(resolution.source))
   ));
   return resolutions[0] ?? {
     decision: 'deny',
@@ -537,15 +524,7 @@ function resolveEffectDecision(
 function requiresOutsideScopeApproval(descriptor: DerivedToolActionDescriptor): boolean {
   return descriptor.effect.reach === 'outside_scope'
     && descriptor.effect.grant?.kind === 'scope'
-    && TYPED_FILE_TOOL_NAMES.has(descriptor.toolName);
-}
-
-function compareInputForEffectDecision(resolution: EffectDecisionResolution) {
-  return {
-    decision: resolution.decision === 'ask' ? 'soft_block' as const : resolution.decision,
-    descriptor: resolution.descriptor,
-    source: resolution.source,
-  };
+    && toolPathArgumentName(descriptor.toolName) !== null;
 }
 
 function permissionSourceRank(source: EffectDecisionSource): number {
@@ -1405,7 +1384,6 @@ function softBlockForDescriptor(
   blockRuleValue?: string,
 ): AgentPermissionSoftBlockDecision {
   const reason = descriptor.consequence;
-  const target = descriptor.requestTarget ?? descriptor.command ?? descriptor.summary;
   const alwaysAllowRule = permissionSource === 'user_blocklist'
     ? blockRuleValue
     : softBlockAllowRuleForDescriptor(descriptor);
@@ -1417,19 +1395,13 @@ function softBlockForDescriptor(
     reason,
     access,
     preapproved,
-    {
+    approvalRequestForDescriptor(descriptor, {
+      reasonLabel: 'Why blocked',
       title: descriptor.requestTitle ?? `Blocked by default: ${descriptor.title}`,
-      target,
       alwaysAllowRule,
       alwaysAllowAction,
       autoBlockMs: 10_000,
-      details: descriptor.requestDetails ?? [
-        { label: 'Action', value: descriptor.title },
-        { label: 'Target', value: target },
-        { label: 'Why blocked', value: reason },
-        { label: 'Permission kind', value: descriptor.actionKind },
-      ],
-    },
+    }),
     {
       descriptor,
       descriptors,
@@ -1446,7 +1418,6 @@ function askForDescriptor(
   descriptors: readonly DerivedToolActionDescriptor[],
 ): AgentPermissionAskDecision {
   const reason = descriptor.consequence;
-  const target = descriptor.requestTarget ?? descriptor.command ?? descriptor.summary;
   const alwaysAllowRule = alwaysAllowRuleForDescriptor(descriptor);
   return {
     behavior: 'ask',
@@ -1454,20 +1425,40 @@ function askForDescriptor(
     reason,
     access,
     preapproved,
-    request: {
+    request: approvalRequestForDescriptor(descriptor, {
+      reasonLabel: 'Why asking',
       title: descriptor.requestTitle ?? `Approve ${descriptor.title}?`,
-      target,
       alwaysAllowRule,
       alwaysAllowAction: alwaysAllowRule ? 'grant' : undefined,
-      details: descriptor.requestDetails ?? [
-        { label: 'Action', value: descriptor.title },
-        { label: 'Target', value: target },
-        { label: 'Why asking', value: reason },
-        { label: 'Permission kind', value: descriptor.actionKind },
-      ],
-    },
+    }),
     descriptor,
     descriptors,
+  };
+}
+
+function approvalRequestForDescriptor(
+  descriptor: DerivedToolActionDescriptor,
+  options: {
+    title: string;
+    reasonLabel: string;
+    alwaysAllowRule?: string;
+    alwaysAllowAction?: AgentApprovalRequest['alwaysAllowAction'];
+    autoBlockMs?: number;
+  },
+): AgentApprovalRequest {
+  const target = descriptor.requestTarget ?? descriptor.command ?? descriptor.summary;
+  return {
+    title: options.title,
+    target,
+    alwaysAllowRule: options.alwaysAllowRule,
+    alwaysAllowAction: options.alwaysAllowAction,
+    autoBlockMs: options.autoBlockMs,
+    details: descriptor.requestDetails ?? [
+      { label: 'Action', value: descriptor.title },
+      { label: 'Target', value: target },
+      { label: options.reasonLabel, value: descriptor.consequence },
+      { label: 'Permission kind', value: descriptor.actionKind },
+    ],
   };
 }
 
@@ -2081,7 +2072,8 @@ function isSensitivePath(filePath: string): boolean {
   return SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(filePath));
 }
 
-function toolPathArgumentName(toolName: string): string | null {
+export function toolPathArgumentName(toolNameInput: string): string | null {
+  const toolName = normalizeToolName(toolNameInput);
   if (toolName === 'file_read' || toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete') return 'file_path';
   if (toolName === 'file_glob' || toolName === 'file_grep') return 'path';
   return null;

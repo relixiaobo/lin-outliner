@@ -41,8 +41,8 @@ The public permission vocabulary is:
 - `allow`: run the tool and record the derived action kinds.
 - `ask`: stop for explicit user approval before widening a typed file-tool root,
   currently used when typed file read/search/write/delete tools target a local
-  path outside the handed file area. **Always allow** records a narrow
-  `Scope(read:/absolute/path)` or `Scope(write:/absolute/path)` grant.
+  non-sensitive path outside the handed file area. **Always allow** records a
+  narrow `Scope(read:/absolute/path)` or `Scope(write:/absolute/path)` grant.
 - `soft_blocked`: stop and show a card with **Allow once**, **Always allow**, and
   **Block now**. If the user does nothing, the card auto-blocks after its
   countdown.
@@ -81,12 +81,12 @@ realpath containment:
   Security. That records a legacy `Scope(write:/absolute/folder)` grant and the
   runtime projects that scope into the file-tool execution layer.
 - **approved outside-scope file roots**: when a typed file tool targets a
-  path outside the current boundary, the permission layer asks before the file
-  tool runs. Approval for once projects that exact `Scope(read:/absolute/path)`
-  or `Scope(write:/absolute/path)` into the current run's file-tool roots;
-  approval for always also persists the grant. Isolated read-only skill runs,
-  including `/research`, inherit the same approval flow and can continue after
-  the parent conversation approves the scope.
+  non-sensitive path outside the current boundary, the permission layer asks
+  before the file tool runs. Approval for once projects that exact
+  `Scope(read:/absolute/path)` or `Scope(write:/absolute/path)` into the current
+  run's file-tool roots; approval for always also persists the grant. Isolated
+  read-only skill runs, including `/research`, inherit the same approval flow and
+  can continue after the parent conversation approves the scope.
 
 The boundary is asymmetric:
 
@@ -143,7 +143,8 @@ exceptions:
   changes at filesystem root.
 
 Sensitive credential reads default to allow when they are not paired with an
-outward sink. Credential plus outward sink is exfiltration and is blocked.
+outward sink, including when the path is outside the handed file area. Credential
+plus outward sink is exfiltration and is blocked.
 
 ## Built-In Soft Blocks
 

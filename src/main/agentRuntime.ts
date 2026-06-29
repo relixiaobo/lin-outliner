@@ -198,6 +198,7 @@ import type { AgentSkillWriteAudit } from './agentSkillAuthoring';
 import { executeAgentSkillShellCommand } from './agentSkillShell';
 import {
   evaluateAgentToolPermission,
+  toolPathArgumentName,
   type AgentPermissionAskDecision,
   type AgentPermissionSoftBlockDecision,
 } from './agentPermissions';
@@ -331,14 +332,6 @@ const MAX_IMAGE_ATTACHMENT_BASE64_CHARS = MAX_INLINE_IMAGE_BASE64_CHARS;
 // are still surfaced as readable paths. Mirrors the composer's MAX_ATTACHMENTS spirit.
 const MAX_REFERENCED_INLINE_IMAGES = MAX_ATTACHMENTS;
 const MAX_INLINE_TOOL_OUTPUT_CHARS = DEFAULT_MAX_TOOL_RESULT_CHARS;
-const LOCAL_FILE_TOOL_NAMES = new Set([
-  'file_read',
-  'file_glob',
-  'file_grep',
-  'file_edit',
-  'file_write',
-  'file_delete',
-]);
 const LOCAL_USER_ID = 'local-user';
 const COMPACT_SUMMARY_MAX_OUTPUT_TOKENS = 20_000;
 const SCHEDULED_DREAM_MAX_ATTEMPTS_PER_DUE = 3;
@@ -2521,6 +2514,10 @@ export class AgentRuntime {
           askUserQuestion: this.createAskUserQuestionRuntime(() => conversationId, () => conversationRef.current),
           allowedTools: agentToolFilter.allowedTools,
           disallowedTools: agentToolFilter.disallowedTools,
+          permissionScopeIdProvider: () => {
+            const current = conversationRef.current;
+            return current ? this.activeRunId(current) : null;
+          },
           streamFn: this.options.streamFn,
           completeSimpleFn: this.options.completeSimpleFn,
           providerApiKeyLoader: this.options.providerApiKeyLoader,
@@ -2737,6 +2734,7 @@ export class AgentRuntime {
       allowedTools: input.allowedTools,
       disallowedTools: input.disallowedTools,
       preapprovedToolRules: input.preapprovedToolRules,
+      permissionScopeIdProvider: () => input.conversationId,
       // Unattended (scheduled command) runs have NO interactive approval channel:
       // leaving it undefined makes an 'ask' decision resolve to a denial that is
       // surfaced in the conversation, rather than hanging on a human who will
@@ -7209,6 +7207,30 @@ function approvalDeniedMessage(reason: PermissionDeniedReason): string {
   }
 }
 
+function runScopedGrantRuleValue(grant: AgentPermissionGrant): string {
+  if (grant.kind === 'scope') return `Scope(${grant.access}:${grant.root})`;
+  if (grant.kind === 'external') return `External(${grant.target})`;
+  return `Command(${grant.form})`;
+}
+
+function addRunScopedPermissionGrants(
+  target: AgentPermissionGrant[],
+  grants: readonly AgentPermissionGrant[],
+) {
+  for (const grant of grants) {
+    if (!target.some((existing) => permissionGrantsEqual(existing, grant))) target.push(grant);
+  }
+}
+
+function permissionGrantsEqual(left: AgentPermissionGrant, right: AgentPermissionGrant): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === 'scope' && right.kind === 'scope') {
+    return left.access === right.access && path.resolve(left.root) === path.resolve(right.root);
+  }
+  if (left.kind === 'external' && right.kind === 'external') return left.target === right.target;
+  return left.kind === 'command' && right.kind === 'command' && left.form === right.form;
+}
+
 function createConfiguredAgent(
   conversationId: string,
   providerConfig: AgentProviderRuntimeConfig,
@@ -7233,6 +7255,7 @@ function createConfiguredAgent(
     disallowedTools?: readonly string[];
     preapprovedToolRules?: string[];
     l0CacheBreakpointEnabled?: boolean;
+    permissionScopeIdProvider?: () => string | null;
     approvalHandler?: (input: AgentToolApprovalInput, signal?: AbortSignal) => Promise<AgentToolApprovalResolution>;
     streamFn?: StreamFn;
     completeSimpleFn?: CompleteSimpleFn;
@@ -7250,6 +7273,16 @@ function createConfiguredAgent(
   const localFileRoot = options.localFileRoot;
   const skillRuntime = options.skillRuntime;
   let syncedLocalPermissionRootSignature = '';
+  let runScopedPermissionScopeId: string | null = null;
+  let runScopedPermissionGrants: AgentPermissionGrant[] = [];
+  const currentRunScopedPermissionGrants = () => {
+    const scopeId = options.permissionScopeIdProvider?.() ?? conversationId;
+    if (runScopedPermissionScopeId !== scopeId) {
+      runScopedPermissionScopeId = scopeId;
+      runScopedPermissionGrants = [];
+    }
+    return runScopedPermissionGrants;
+  };
   const systemPrompt = options.systemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT;
   let activeLoopModel = model;
   let activeThinkingLevel = options.thinkingLevel ?? defaultThinkingLevel(model);
@@ -7296,8 +7329,9 @@ function createConfiguredAgent(
       const activeSkillReadRoots = skillRuntime ? await skillRuntime.getActiveSkillReadRoots() : [];
       const shouldSyncLocalPermissionRoots = Boolean(
         options.localWorkspace
-        && LOCAL_FILE_TOOL_NAMES.has(toolCall.name.trim().replace(/-/g, '_').toLowerCase()),
+        && toolPathArgumentName(toolCall.name) !== null,
       );
+      const scopedPermissionGrants = currentRunScopedPermissionGrants();
       const syncLocalPermissionRoots = (extraGrants: readonly AgentPermissionGrant[] = []) => {
         if (!options.localWorkspace || !shouldSyncLocalPermissionRoots) return;
         const roots = [
@@ -7305,6 +7339,11 @@ function createConfiguredAgent(
           ...globalPermissions.grants.flatMap((rule) => (
             rule.grant.kind === 'scope'
               ? [{ access: rule.grant.access, root: rule.grant.root }]
+              : []
+          )),
+          ...scopedPermissionGrants.flatMap((grant) => (
+            grant.kind === 'scope'
+              ? [{ access: grant.access, root: grant.root }]
               : []
           )),
           ...extraGrants.flatMap((grant) => (
@@ -7327,7 +7366,16 @@ function createConfiguredAgent(
           workspaceRoot: localFileRoot,
           scratchRoot: options.localWorkspace?.scratchRoot,
           trustedReadRoots: activeSkillReadRoots,
-          globalPermissions,
+          globalPermissions: {
+            ...globalPermissions,
+            grants: [
+              ...globalPermissions.grants,
+              ...scopedPermissionGrants.map((grant) => ({
+                ruleValue: runScopedGrantRuleValue(grant),
+                grant,
+              })),
+            ],
+          },
           preapprovedToolRules: [
             ...(skillRuntime?.getActivePermissionRules() ?? []),
             ...(options.preapprovedToolRules ?? []),
@@ -7411,9 +7459,11 @@ function createConfiguredAgent(
           });
           if (approval.approved) {
             if (shouldSyncLocalPermissionRoots) {
-              syncLocalPermissionRoots((decision.descriptors ?? [])
+              const approvedGrants = (decision.descriptors ?? [])
                 .map((descriptor) => descriptor.effect.grant)
-                .filter((grant): grant is AgentPermissionGrant => grant !== undefined));
+                .filter((grant): grant is AgentPermissionGrant => grant !== undefined);
+              if (approval.scope !== 'always') addRunScopedPermissionGrants(scopedPermissionGrants, approvedGrants);
+              syncLocalPermissionRoots(approvedGrants);
             }
             return undefined;
           }

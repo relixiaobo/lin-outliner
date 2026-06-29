@@ -1208,6 +1208,14 @@ describe('agent runtime skill integration', () => {
         ], { stopReason: 'toolUse' }),
         (context) => {
           childFollowUpContexts.push(JSON.stringify(context.messages));
+          return fauxAssistantMessage([
+            fauxToolCall('file_read', {
+              file_path: path.join(outsideRoot, 'src', 'finding.ts'),
+            }, { id: 'tool-research-read-outside' }),
+          ], { stopReason: 'toolUse' });
+        },
+        (context) => {
+          childFollowUpContexts.push(JSON.stringify(context.messages));
           return fauxAssistantMessage(fauxText([
             'Findings',
             '- External folder contained a TypeScript file.',
@@ -1265,9 +1273,12 @@ describe('agent runtime skill integration', () => {
     expect(script.pendingCount()).toBe(0);
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(childFollowUpContexts.join('\n')).toContain('tool-research-glob-outside');
+    expect(childFollowUpContexts.join('\n')).toContain('tool-research-read-outside');
     expect(childFollowUpContexts.join('\n')).toContain('finding.ts');
+    expect(childFollowUpContexts.join('\n')).toContain('export const finding = true');
     expect(childFollowUpContexts.join('\n')).not.toContain('path_outside_local_root');
     expect(parentContexts.join('\n')).toContain('External folder contained a TypeScript file.');
+    expect(sink.events.filter((event) => event.type === 'approval_request')).toHaveLength(1);
 
     const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
     expect(events.find((event) => (
@@ -1284,6 +1295,13 @@ describe('agent runtime skill integration', () => {
       toolCallId: 'tool-research-glob-outside',
       status: 'approved',
       resolvedBy: 'user_once',
+    });
+    expect(events.find((event) => (
+      event.type === 'tool.permission.checked'
+      && event.toolCallId === 'tool-research-read-outside'
+    ))).toMatchObject({
+      toolCallId: 'tool-research-read-outside',
+      outcome: 'allow',
     });
   });
 
