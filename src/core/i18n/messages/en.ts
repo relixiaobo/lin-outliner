@@ -1000,8 +1000,9 @@ commandPalette: {
       folder: 'Folder',
       modified: ({ date }: { date: string }) => `Modified ${date}`,
       unavailable: 'File unavailable',
-      // Right-click menu on a transcript file chip.
+      // Right-click menu on an inline local-file reference.
       menuLabel: 'File actions',
+      previewInTenon: 'Preview in Tenon',
       addToToday: 'Add to Today',
       openWithDefaultApp: 'Open with default app',
       showInFinder: 'Show in Finder',

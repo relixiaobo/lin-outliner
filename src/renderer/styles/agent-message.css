@@ -155,6 +155,8 @@
 }
 
 .agent-user-file-chip[href]:hover {
+  border-color: var(--border-strong);
+  background: var(--fill-1);
   color: var(--text-strong);
 }
 
