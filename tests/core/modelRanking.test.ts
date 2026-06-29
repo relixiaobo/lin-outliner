@@ -1,5 +1,6 @@
 import { test, expect, describe } from 'bun:test';
-import { getModels, getProviders } from '@earendil-works/pi-ai';
+import { getBuiltinModels, getBuiltinProviders } from '@earendil-works/pi-ai/providers/all';
+import type { KnownProvider } from '@earendil-works/pi-ai';
 import {
   MODEL_LINES,
   type RankableModel,
@@ -99,6 +100,8 @@ describe('isDatedSnapshot', () => {
 // the staleness tripwire — when a pi-ai upgrade ships a model the policy cannot
 // place, they go red instead of silently burying it.
 describe('live pi-ai catalog', () => {
+  const getModels = (provider: string) => getBuiltinModels(provider as KnownProvider);
+  const getProviders = () => getBuiltinProviders();
   const highestVersionInLine = (provider: string, linePrefix: string): number[] =>
     getModels(provider)
       .filter((m) => m.id.startsWith(linePrefix))

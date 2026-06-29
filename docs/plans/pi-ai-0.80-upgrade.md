@@ -1,171 +1,196 @@
-# pi-ai / pi-agent-core 0.78 → 0.80.2 upgrade
+# pi-ai / pi-agent-core 0.78 -> 0.80.2 upgrade
 
 We pin `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` at exact
-`0.78.0` (`package.json:33-34`, both direct deps). npm latest is **0.80.2**
-(released 2026-06-23). The gap (0.78.1 → 0.79.0–0.79.10 → 0.80.0–0.80.2) carries
-a large batch of provider/model-metadata fixes (GPT-5.4/5.5 + Codex
-context-window **billing-hazard** corrections, Gemini/GLM-5.2/Kimi/DeepSeek
-metadata), streaming-robustness fixes, vulnerable-dependency bumps (`undici`,
-`protobufjs` — 0.79.8), and feature work we mostly don't consume (TUI themes,
-`pi update` flow).
+`0.78.0` in `package.json`. The target is exact `0.80.2`. The upgrade brings
+provider/model metadata fixes, streaming robustness fixes, vulnerable dependency
+bumps, and the 0.80 API split that moves the old global runtime API behind a
+legacy compatibility entrypoint.
 
-A full surface audit (0.80.2 tarball `.d.ts` diffed against the real 0.78.0
-tarball, not changelog prose) shows the **only breaking change that touches us**
-is **v0.80.0**, which moved the old global pi-ai API off the package root to the
-`@earendil-works/pi-ai/compat` subpath. Six functions we import from the root
-moved; everything else we use is unchanged. This is therefore a **small,
-behavior-preserving** upgrade.
-
-This is shape **(a): one complete feature in one PR** — version bump + import
-migration + verification land together. The deeper migration to pi-ai's new
-`createModels()` provider-factory API is an explicit **non-goal** here (separate
-future plan).
+This is shape **(a): one complete feature in one PR**. The PR upgrades both
+packages and migrates Tenon's product code to pi-ai's 0.80 `Models` API instead
+of adopting the temporary `/compat` bridge.
 
 ## Goal
 
-Move both packages to `0.80.2` and adapt our imports so the app type-checks,
-tests green, and the agent actually runs (chat round-trip, model picker, OAuth
-login) — picking up the upstream provider-metadata and security fixes with the
-smallest, lowest-risk change.
+Upgrade both pi packages to `0.80.2` and use pi-ai in the clean 0.80 shape:
+`builtinModels()` for the full built-in provider collection, a Tenon-backed
+`CredentialStore` over `agent-secrets.json`, and `Models.streamSimple()` /
+`Models.completeSimple()` for runtime calls.
+
+The app must continue to support the current Tenon settings model:
+
+- full built-in provider picker;
+- existing plaintext `agent-secrets.json` credential file with chmod 600;
+- current OAuth login UI/orchestration;
+- custom OpenAI-compatible provider connections with arbitrary `providerId` +
+  `baseUrl`.
 
 ## Non-goals
 
-- **No migration to `createModels()` / `builtinModels()` / the new `auth`
-  `CredentialStore` model.** `/compat` is a strict superset of the old root API
-  (same signatures, same return types), and pi-agent-core 0.80.2 *itself* still
-  imports `@earendil-works/pi-ai/compat` internally — so `/compat` is load-bearing
-  at this version and will not vanish underneath us. We take the `/compat` path
-  now; the factory migration is a tracked follow-up for when upstream removes
-  compat (it is documented as eventually-removed "with the coding-agent
-  ModelManager migration"). See *Open questions*.
-- **No change to our credential storage.** Our `agent-secrets.json`
-  `ApiKeyCredential = { type: 'api_key'; key: string }` (`agentSettings.ts:81`)
-  is **our own** type; we never read/write pi's `auth.json`. The 0.80.2 pi
-  `auth.json` discriminator change (`type: "api-key"` → `"api_key"`) does not
-  reach us. (Coincidentally our discriminator already matches.)
-- No new provider wiring, no protocol/`src/core` change, no UI change.
+- No renderer protocol or `src/core` type change.
+- No rewrite of the OAuth sign-in UI. Login still uses the existing
+  `@earendil-works/pi-ai/oauth` provider lookup; request-time auth and token
+  refresh move to `Models.getAuth()` through the credential store.
+- No new migration/back-compat reader. The existing on-disk credential shape
+  already matches pi 0.80's `api_key` / `oauth` discriminator.
+- No per-provider bundle slimming. We still need the whole built-in catalog, so
+  `@earendil-works/pi-ai/providers/all` is the right explicit entrypoint.
 
 ## Design
 
-### What actually breaks (the whole surface)
+### Composition Root
 
-Six **value (runtime)** functions we import from the `@earendil-works/pi-ai`
-**root** moved to `/compat` in 0.80.0. They appear in **three files**:
+Add a main-process `piModels` adapter that owns pi integration:
 
-| Moved symbol | Files importing it from root |
-|---|---|
-| `getModels` | `agentSettings.ts`, `agentRuntime.ts` |
-| `getProviders` | `agentSettings.ts`, `agentRuntime.ts` |
-| `completeSimple` | `agentSettings.ts`, `agentRuntimeContext.ts`, `agentRuntime.ts` |
-| `streamSimple` | `agentRuntime.ts` |
-| `getEnvApiKey` | `agentSettings.ts` |
-| `findEnvKeys` | `agentSettings.ts` |
+- create a singleton `builtinModels({ credentials })` collection;
+- expose catalog helpers (`piProviders`, `piModelsForProvider`, `piFindModel`);
+- expose runtime helpers (`piStreamSimple`, `piCompleteSimple`,
+  `piResolveAuthApiKey`);
+- adapt Tenon's secret file to pi's `CredentialStore` contract;
+- register custom OpenAI-compatible provider connections with `createProvider()`
+  and `openAICompletionsApi()` when a Tenon connection has a custom `baseUrl`.
 
-**The fix:** split each of those three `import { … } from '@earendil-works/pi-ai'`
-statements into two — moved symbols from `@earendil-works/pi-ai/compat`, the rest
-unchanged from the root. No call-site logic changes: the `/compat` aliases
-`getModels`/`getProviders` keep the exact 0.78 return types (`Model[]` /
-`KnownProvider[]`), and `completeSimple`/`streamSimple` keep the exact
-`(model, context, options?: SimpleStreamOptions)` signature.
+Production code imports from this adapter, not from
+`@earendil-works/pi-ai/compat`.
 
-### What does NOT change (verified still on root / subpath, signatures stable)
+### Credential Store
 
-- **pi-ai root value imports that stay:** `getSupportedThinkingLevels`,
-  `isContextOverflow`, `cleanupSessionResources`,
-  `createAssistantMessageEventStream`.
-- **All pi-ai type imports stay on root:** `Api`, `KnownProvider`, `Model`,
-  `OAuthProviderId`, `SimpleStreamOptions`, `AssistantMessage`, `ImageContent`,
-  `TextContent`, `Message`, `ToolCall`, `ToolResultMessage`, `UserMessage`,
-  `ThinkingContent`, `Usage`, `AssistantMessageEventStream`, `OAuthCredentials`,
-  `OAuthLoginCallbacks`, `OAuthProviderInterface`.
-- **`@earendil-works/pi-ai/oauth` subpath stays:** `getOAuthApiKey`,
-  `getOAuthProvider` still exported there.
-- **All of pi-agent-core stays on root, unchanged:** `Agent` (value) +
-  `AgentTool`, `AgentToolResult`, `AfterToolCallResult`, `AgentEvent`,
-  `AgentLoopTurnUpdate`, `StreamFn`. `AgentOptions` is byte-for-byte identical
-  between 0.78 and 0.80.2.
-- We use **none** of the per-provider subpaths (`pi-ai/anthropic`,
-  `pi-ai/openai-*`, …) that 0.80.2 collapsed into `pi-ai/providers/*` — verified
-  by grep, no occurrences.
+`agent-secrets.json` remains the single durable credential store:
 
-### Concrete edits
+```ts
+type ApiKeyCredential = { type: 'api_key'; key: string };
+type OAuthStoredCredential = { type: 'oauth' } & OAuthCredentials;
+```
 
-1. **`package.json:33-34`** — bump both to `0.80.2` (still exact pins). Run
-   `bun install`; review the `bun.lock` diff for the bumped transitive SDKs
-   (`@anthropic-ai/sdk`, `openai`, `@google/genai`, `@mistralai/mistralai`,
-   `@aws-sdk/client-bedrock-runtime`).
-2. **`src/main/agentSettings.ts`** — `findEnvKeys`, `getEnvApiKey`, `getModels`,
-   `getProviders`, `completeSimple` → `/compat`; keep `getSupportedThinkingLevels`
-   on root.
-3. **`src/main/agentRuntimeContext.ts`** — `completeSimple` → `/compat`; keep
-   `isContextOverflow` on root.
-4. **`src/main/agentRuntime.ts`** — `completeSimple`, `getModels`, `getProviders`,
-   `streamSimple` → `/compat`; keep `getSupportedThinkingLevels`,
-   `isContextOverflow`, `cleanupSessionResources`,
-   `createAssistantMessageEventStream` on root.
+The adapter implements pi's `CredentialStore` as:
 
-That is the entire code change.
+- `read(providerId)` -> read and normalize one provider credential;
+- `modify(providerId, fn)` -> serialized read/modify/write using the existing
+  JSON file lock and chmod 600 options;
+- `delete(providerId)` -> remove the provider credential.
 
-### Bundling note
+OAuth refresh now happens inside pi `Models.getAuth()` / request dispatch, under
+`CredentialStore.modify`, so concurrent refreshes serialize through Tenon's
+existing file lock. API-key writes and OAuth login/logout still use the current
+settings commands and write the same file shape.
 
-`electron.vite.config.ts` externalizes only `electron`, so both packages (and
-their provider SDKs) are bundled into the main-process bundle. pi-agent-core
-0.80.2 internally imports `@earendil-works/pi-ai/compat`; that subpath is in
-0.80.2's `exports`, so Rollup resolves it (contrast the recent `foliate-js`
-breakage, which was a missing install, not a missing export). `bun run app:build`
-must still be run to confirm the bundle.
+### Provider Settings
 
-## Risks (low)
+Replace old global catalog/env helpers with `Models` reads:
 
-- **Behavioral drift in surviving symbols.** Type shapes were verified stable but
-  not every field byte-diffed; `AgentEvent` may have gained additive union
-  variants (our `switch` needs a `default`). 0.79–0.80 shipped many streaming
-  fixes (encrypted `reasoning_details`, tool-call delta ordering, OpenAI Responses
-  null-content tolerance) — generally compatible, but the streamed-transcript path
-  is the thing to regress-test on a real run.
-- **Transitive SDK bumps** pulled in by 0.80.2 (anthropic/openai/google/mistral/
-  aws) increase bundle size and could shift runtime behavior; inspect the lock
-  diff.
-- **`/compat` is temporary.** Acceptable now (load-bearing via pi-agent-core), but
-  recorded as a follow-up so we don't get stranded when it's removed.
+- provider list: `models.getProviders().map(provider => provider.id)`;
+- provider models: `models.getModels(providerId)`;
+- auth kind: inspect the provider's `auth.oauth` plus the managed ambient ids;
+- ambient credential status: call `models.getAuth(firstProviderModel)` only when
+  no stored credential exists, and render the result as `hasEnvApiKey` /
+  `auth.credentialed` for compatibility with the current renderer contract.
 
-## Verification (green tests ≠ can chat)
+`envKeyNames` stays empty for now because pi 0.80 does not expose env-var names
+through the `Models` API. The renderer currently uses credentialed state, not the
+specific env key labels.
+
+### Runtime Calls
+
+Replace product runtime calls to the old global API with adapter calls:
+
+- `streamSimple` -> `piStreamSimple`;
+- `completeSimple` -> `piCompleteSimple`;
+- `getModels` / `getProviders` lookups -> adapter catalog helpers.
+
+`pi-agent-core` 0.80.2 still imports `/compat` internally for its own default,
+but Tenon passes an explicit `streamFn`, so Tenon product runtime dispatch goes
+through `Models.streamSimple()`.
+
+The existing `getApiKey` hook remains only for explicit request overrides
+(`providerConfig.apiKey` / test `providerApiKeyLoader`) required by
+`pi-agent-core`'s API shape. Stored credentials, ambient env/managed auth, OAuth
+refresh, provider-specific headers, provider env, and auth-provided `baseUrl`
+stay inside pi `Models.applyAuth()` at request time. Tenon does not flatten
+non-API-key auth into an `apiKey` string or sentinel value.
+
+### Custom OpenAI-Compatible Providers
+
+A Tenon provider row with `baseUrl` can use an arbitrary `providerId`, so it is
+not always present in the built-in catalog. The adapter handles this by
+registering a provider on demand:
+
+- provider id: an internal `tenon-custom:<providerId>` so custom endpoints never
+  replace a built-in catalog provider with the same id;
+- provider name / renderer-facing events: Tenon's `providerId`;
+- base URL: Tenon's `baseUrl`;
+- auth: explicit request key override, otherwise local endpoints
+  (`localhost`, loopback, `*.localhost`) receive an inert client key before any
+  stored/ambient provider key is considered, otherwise stored API key or request
+  auth inherited from the external provider's pi auth (without inheriting that
+  provider's default `baseUrl`); keyless auth is accepted only for local
+  endpoints because the OpenAI SDK requires an `apiKey` option even when the
+  endpoint does not validate it;
+- API implementation: `openAICompletionsApi()`;
+- model: the selected/probed OpenAI-compatible model id. When the id is also a
+  known catalog model, the synthetic OpenAI-compatible model keeps the catalog's
+  neutral sizing/capability metadata (`contextWindow`, `maxTokens`, `reasoning`,
+  thinking map, cost/input) while switching provider/API/base URL for dispatch;
+  provider-specific dispatch knobs such as headers/compat stay tied to the
+  custom endpoint's provider/API/base URL instead of being copied from the
+  catalog model.
+
+This keeps existing custom endpoint behavior while routing requests through the
+new pi provider collection. It also keeps any configured custom `baseUrl` on Chat
+Completions-compatible dispatch, even when the model id exists in the built-in
+catalog, instead of accidentally using a built-in provider implementation.
+
+### Tests
+
+Update tests to exercise the new seams:
+
+- model-ranking live catalog reads use `getBuiltinModels()` /
+  `getBuiltinProviders()` from `providers/all`, not `/compat`;
+- credential tests override the `anthropic` provider in the local `Models`
+  collection with a fake OAuth auth object, verifying `CredentialStore.modify`
+  refresh persistence rather than the old `getOAuthApiKey` helper;
+- custom-provider tests cover internal provider id isolation, inherited auth, and
+  runtime event provider-id normalization;
+- provider reconcile tests keep verifying durable cleanup rules and managed
+  provider exemptions.
+
+## Risks
+
+- **Credential behavior changes from old helper to `Models.getAuth()`.** Covered by
+  targeted credential tests for stored keys, OAuth refresh persistence,
+  env/managed fallback, and failure-to-undefined behavior.
+- **Custom provider registration.** The migration must preserve arbitrary
+  OpenAI-compatible endpoints; covered through the adapter design and connection
+  probing path.
+- **Transitive SDK bumps.** `app:build` must run because provider SDKs are bundled
+  into the main process.
+- **E2E drift.** Existing E2E suites may have unrelated renderer/mock drift; record
+  exact failures rather than claiming full green if they remain.
+
+## Verification
+
+Required before marking the PR ready:
 
 - `bun run typecheck`
-- `bun run test:core` + `bun run test:renderer`
-- `bun run test:e2e`
-- **Real run** (`bun run dev:main`): one full chat round with Neva (exercises
-  `completeSimple`/`streamSimple` streaming + the model picker's
-  `getModels`/`getProviders`), and one OAuth provider login (exercises
-  `getOAuthApiKey`). The agent store/unit tests do not cover the runtime session
-  lifecycle.
-- `bun run app:build` — confirm the packaged bundle resolves
-  `pi-ai/compat` and launches.
-- `bun run docs:check`.
-
-## Open questions
-
-- **Now-or-later on the factory migration.** Default: ship `/compat` now, open a
-  separate `pi-ai-createModels-migration` plan later (rewrite the catalog builder
-  in `agentSettings.ts` onto `builtinModels()`/`Models` and adopt the new `auth`
-  model). Confirm we don't want to do the factory migration in this same PR
-  (recommendation: no — keep this upgrade small and reviewable).
+- `bun run test:core`
+- `bun run test:renderer`
+- `bun run docs:check`
+- `bun run app:build`
+- focused E2E for agent settings/OAuth/provider runtime where applicable
+- full `bun run test:e2e`; if it fails, document exact failures and classify
+  whether they are caused by this migration
 
 ## Collision check
 
-- `gh pr list` empty (no open PRs); `docs/TASKS.md` scan + grep of the three
-  target files against open-PR scopes: no overlap. Touches `package.json`
-  (infra-ownership — coordinate the bump as its own commit) + three `src/main/`
-  agent-runtime files. No protocol/`src/core` change.
+This PR touches `package.json` and `bun.lock` (infrastructure-ownership files),
+plus main-process agent provider/runtime files and targeted tests. Coordinate the
+package bump as the branch's claim. No protocol/`src/core` change is planned.
 
 ## Checklist
 
-- [ ] Bump `package.json:33-34` both → `0.80.2`; `bun install`; review `bun.lock` diff.
-- [ ] Split imports in `agentSettings.ts` (5 moved → `/compat`).
-- [ ] Split imports in `agentRuntimeContext.ts` (`completeSimple` → `/compat`).
-- [ ] Split imports in `agentRuntime.ts` (4 moved → `/compat`).
-- [ ] Add a `default` guard wherever we `switch` on `AgentEvent` if not already present.
-- [ ] `bun run typecheck` + `test:core` + `test:renderer` + `test:e2e`.
-- [ ] Real run: chat round-trip + model picker + OAuth login.
-- [ ] `bun run app:build` launches.
-- [ ] `/code-review` (+ `/security-review` — touches OAuth/credential paths).
+- [x] Bump both pi packages to `0.80.2` and update `bun.lock`.
+- [x] Add a Tenon-owned pi `Models` adapter.
+- [x] Wire `agent-secrets.json` as a pi `CredentialStore`.
+- [x] Replace product `/compat` imports with adapter / `providers/all` usage.
+- [x] Preserve custom OpenAI-compatible provider support.
+- [x] Update credential and live-catalog tests.
+- [ ] Run full verification and update the PR body with results.

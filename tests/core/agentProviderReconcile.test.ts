@@ -16,15 +16,15 @@ mock.module('electron', () => ({
   app: { getPath: () => currentUserData },
 }));
 
-// Mirror the credential suite: only the oauth subpath is faked; the real pi-ai
-// (getProviders / getModels / getEnvApiKey) drives catalog + env + kind lookups.
+// Only the OAuth login subpath is faked; provider catalog/auth status comes from
+// the real pi Models collection.
 mock.module('@earendil-works/pi-ai/oauth', () => ({
-  getOAuthApiKey: async () => null,
   getOAuthProvider: (id: string) =>
     ['anthropic', 'github-copilot', 'openai-codex'].includes(id) ? { id, name: id } : undefined,
 }));
 
 const {
+  getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
   getProviderSettings,
   reconcileProviderConfig,
@@ -155,8 +155,33 @@ describe('provider config startup reconcile (Part A)', () => {
 
     const view = await getProviderSettings();
     expect(view.providers.find((p) => p.providerId === 'local-llm')).toBeDefined();
-    // No stored key → not auto-activated, but the row is kept.
+    // No stored key -> not persisted as active, but the local endpoint is still
+    // usable at runtime through the read-path fallback.
     expect(view.activeProviderId).toBeUndefined();
+    expect(await getActiveProviderRuntimeConfig()).toMatchObject({
+      providerId: 'local-llm',
+      baseUrl: 'http://localhost:1234/v1',
+      enabled: true,
+    });
+  });
+
+  test('a keyless row with a remote baseUrl survives reconcile but is not usable without auth', async () => {
+    await writeProviderFileRaw({
+      activeProviderId: 'my-proxy',
+      providers: [
+        { providerId: 'my-proxy', baseUrl: 'https://proxy.example.com/v1', enabled: true },
+      ],
+    });
+
+    await reconcileProviderConfig();
+
+    const view = await getProviderSettings();
+    expect(view.providers.find((p) => p.providerId === 'my-proxy')).toBeDefined();
+    expect(view.activeProviderId).toBe('my-proxy');
+    expect(await getActiveProviderRuntimeConfig()).toBeNull();
+    expect((await readProviderFileRaw()).providers).toEqual([
+      { providerId: 'my-proxy', baseUrl: 'https://proxy.example.com/v1', enabled: true },
+    ]);
   });
 
   test('a stale active pointer is repointed to the surviving credentialed provider', async () => {
@@ -194,8 +219,8 @@ describe('provider config startup reconcile (Part A)', () => {
     expect((await readProviderFileRaw()).providers.map((p) => p.providerId)).toEqual(['openai', 'anthropic']);
   });
 
-  test('🟠 managed rows (Bedrock/Vertex) are exempt — never pruned without ambient env', async () => {
-    // No AWS/GCP env present (cleared in beforeEach), so getEnvApiKey returns nothing;
+  test('managed rows (Bedrock/Vertex) are exempt — never pruned without ambient env', async () => {
+    // No AWS/GCP env present (cleared in beforeEach), so auth resolution finds nothing;
     // managed rows must still survive because their credential is always ambient.
     await writeProviderFileRaw({
       providers: [

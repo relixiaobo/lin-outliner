@@ -15,10 +15,7 @@ mock.module('electron', () => ({
   app: { getPath: () => currentUserData },
 }));
 
-// Mirror the provider-reconcile suite: only the oauth subpath is faked so importing
-// agentSettings never reaches the network; the profile API itself is pure local fs.
 mock.module('@earendil-works/pi-ai/oauth', () => ({
-  getOAuthApiKey: async () => null,
   getOAuthProvider: (id: string) =>
     ['anthropic', 'github-copilot', 'openai-codex'].includes(id) ? { id, name: id } : undefined,
 }));

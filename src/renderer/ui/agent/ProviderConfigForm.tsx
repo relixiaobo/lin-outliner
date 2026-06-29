@@ -4,6 +4,7 @@ import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
 import { ErrorState } from '../primitives/FeedbackState';
 import { Input } from '../primitives/Input';
+import { isLocalBaseUrl } from '../../../core/localEndpoint';
 
 // The draft committed by Save. `apiKey` empty means "leave the saved key
 // unchanged"; a non-empty value replaces it. A provider is a CONNECTION only —
@@ -108,9 +109,9 @@ export function ProviderConfigForm({
     apiKey: apiKey.trim(),
   };
   // A managed provider (authNote) persists a row with nothing to fill in; an
-  // api-key / custom provider needs a credential or a base URL, or the saved row is
-  // a keyless no-op the startup reconcile prunes — a confusing "saved, then gone".
-  const hasConnection = Boolean(draft.apiKey) || hasSavedKey || Boolean(draft.baseUrl);
+  // api-key / custom provider needs credentials unless the base URL is a local
+  // endpoint. A keyless remote proxy would be saved, then pruned at startup.
+  const hasConnection = Boolean(draft.apiKey) || hasSavedKey || isLocalBaseUrl(draft.baseUrl);
   const canSave = Boolean(draft.providerId)
     && (authNote ? true : hasConnection)
     && !busy;

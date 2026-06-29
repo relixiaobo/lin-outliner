@@ -526,7 +526,7 @@ test.describe('provider config window', () => {
 
   test('saves the connection with a base URL override', async ({ page }) => {
     const config = await openProviderConfig(page, 'openai');
-    await config.getByLabel('Base URL').fill('https://proxy.example.com/v1');
+    await config.getByLabel('Base URL').fill('http://localhost:1234/v1');
     await config.getByRole('button', { name: 'Save', exact: true }).click();
 
     await expect.poll(async () => {
@@ -535,7 +535,7 @@ test.describe('provider config window', () => {
     }).toMatchObject({
       provider: {
         providerId: 'openai',
-        baseUrl: 'https://proxy.example.com/v1',
+        baseUrl: 'http://localhost:1234/v1',
         enabled: true,
       },
     });

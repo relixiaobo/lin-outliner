@@ -1,21 +1,46 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import {
+  createAssistantMessageEventStream,
+  createProvider,
+  fauxAssistantMessage,
+  fauxText,
+  type Credential,
+  type OAuthCredential,
+} from '@earendil-works/pi-ai';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import {
+  createOpenAICompatibleModel,
+  ensurePiCustomProvider,
+  piCustomProviderId,
+  piModels,
+  piProviders,
+  piStreamSimple,
+} from '../../src/main/piModels';
 
 type StoredOAuth = { refresh: string; access: string; expires: number };
 
 // ── Mutable test controls, read by the module mocks below ──
 let currentUserData = '';
-// getOAuthApiKey impl, overridden per test. Mirrors pi-ai's signature:
-// (providerId, { [id]: creds }) => { newCredentials, apiKey } | null
-let oauthApiKeyImpl: (
-  providerId: string,
-  creds: Record<string, StoredOAuth>,
-) => Promise<{ newCredentials: StoredOAuth; apiKey: string } | null> = async () => null;
+let oauthRefreshImpl: (credential: OAuthCredential) => Promise<OAuthCredential> = async (credential) => credential;
+let oauthToApiKeyImpl: (credential: OAuthCredential) => Promise<string> = async (credential) => credential.access;
 
 mock.module('electron', () => ({
-  app: { getPath: () => currentUserData },
+  app: {
+    getPath: () => currentUserData,
+    getVersion: () => 'test',
+  },
+  BrowserWindow: class {
+    static getAllWindows() {
+      return [];
+    }
+  },
+  session: {
+    fromPartition: () => ({
+      clearStorageData: async () => undefined,
+    }),
+  },
   safeStorage: {
     isEncryptionAvailable: () => { throw new Error('safeStorage should not be used'); },
     encryptString: () => { throw new Error('safeStorage should not be used'); },
@@ -23,11 +48,7 @@ mock.module('electron', () => ({
   },
 }));
 
-// Only the oauth subpath is mocked (no other suite imports it, so this can't
-// leak into tests that use the real pi-ai). The env / managed fallback is
-// exercised through real process.env + the real getEnvApiKey instead.
 mock.module('@earendil-works/pi-ai/oauth', () => ({
-  getOAuthApiKey: (providerId: string, creds: Record<string, StoredOAuth>) => oauthApiKeyImpl(providerId, creds),
   getOAuthProvider: (id: string) =>
     ['anthropic', 'github-copilot', 'openai-codex'].includes(id) ? { id, name: id } : undefined,
 }));
@@ -49,10 +70,40 @@ function restoreEnv(name: string, value: string | undefined) {
 
 beforeEach(async () => {
   currentUserData = await mkdtemp(path.join(tmpdir(), 'lin-oauth-creds-'));
-  oauthApiKeyImpl = async () => null;
+  oauthRefreshImpl = async (credential) => credential;
+  oauthToApiKeyImpl = async (credential) => credential.access;
+  piModels().setProvider(createProvider({
+    id: 'anthropic',
+    name: 'Anthropic',
+    auth: {
+      oauth: {
+        name: 'Anthropic OAuth',
+        login: async () => ({ type: 'oauth', refresh: 'r', access: 'a', expires: 999 }),
+        refresh: (credential) => oauthRefreshImpl(credential),
+        toAuth: async (credential) => ({ apiKey: await oauthToApiKeyImpl(credential) }),
+      },
+    },
+    models: [{
+      id: 'claude-test',
+      name: 'Claude Test',
+      api: 'anthropic-messages',
+      provider: 'anthropic',
+      reasoning: true,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 200000,
+      maxTokens: 8192,
+    }],
+    api: {
+      stream: () => { throw new Error('stream should not be called'); },
+      streamSimple: () => { throw new Error('streamSimple should not be called'); },
+    },
+  }));
 });
 
 afterEach(async () => {
+  piModels().deleteProvider(piCustomProviderId('openai'));
+  piModels().deleteProvider('env-api-key-test');
   await rm(currentUserData, { recursive: true, force: true });
 });
 
@@ -73,37 +124,51 @@ describe('provider credential resolver', () => {
     await deleteProviderApiKey('anthropic'); // explicit key delete
     // The oauth login must survive both key-clearing paths — proven by the
     // resolver still reaching the oauth branch.
-    oauthApiKeyImpl = async () => ({ newCredentials: { refresh: 'r', access: 'a', expires: 10 }, apiKey: 'oauth-key' });
+    oauthToApiKeyImpl = async () => 'oauth-key';
     expect(await getProviderApiKey('anthropic')).toBe('oauth-key');
     expect(await getProviderSecretStatus('anthropic')).toEqual({ providerId: 'anthropic', hasApiKey: false });
   });
 
   test('oauth credential auto-refreshes and persists the rotated tokens', async () => {
     await persistOAuthCredential('anthropic', { refresh: 'r0', access: 'a0', expires: 1 });
-    oauthApiKeyImpl = async () => ({
-      newCredentials: { refresh: 'r1', access: 'a1', expires: 999 },
-      apiKey: 'fresh-key',
-    });
+    oauthRefreshImpl = async () => ({ type: 'oauth', refresh: 'r1', access: 'a1', expires: 999 });
+    oauthToApiKeyImpl = async () => 'fresh-key';
     expect(await getProviderApiKey('anthropic')).toBe('fresh-key');
 
     // A second resolve must receive the PERSISTED rotated creds, not the originals.
-    let seen: StoredOAuth | undefined;
-    oauthApiKeyImpl = async (_id, creds) => {
-      seen = creds.anthropic;
-      return { newCredentials: creds.anthropic, apiKey: 'fresh-key-2' };
+    let seen: OAuthCredential | undefined;
+    oauthToApiKeyImpl = async (credential) => {
+      seen = credential;
+      return 'fresh-key-2';
     };
     expect(await getProviderApiKey('anthropic')).toBe('fresh-key-2');
-    expect(seen).toEqual({ refresh: 'r1', access: 'a1', expires: 999 });
+    expect(seen).toEqual({ type: 'oauth', refresh: 'r1', access: 'a1', expires: 999 });
   });
 
-  test('falls back to env / managed sentinel when nothing is stored', async () => {
+  test('concurrent oauth refreshes share the persisted post-refresh credential', async () => {
+    await persistOAuthCredential('anthropic', { refresh: 'r0', access: 'a0', expires: 1 });
+    let refreshCount = 0;
+    oauthRefreshImpl = async () => {
+      refreshCount += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return { type: 'oauth', refresh: 'r1', access: 'a1', expires: Date.now() + 60_000 };
+    };
+    oauthToApiKeyImpl = async (credential) => credential.access;
+
+    await expect(Promise.all([
+      getProviderApiKey('anthropic'),
+      getProviderApiKey('anthropic'),
+    ])).resolves.toEqual(['a1', 'a1']);
+    expect(refreshCount).toBe(1);
+  });
+
+  test('resolves only concrete api-key auth when nothing is stored', async () => {
     const saved = { openai: process.env.OPENAI_API_KEY, aws: process.env.AWS_PROFILE };
     try {
       process.env.OPENAI_API_KEY = 'env-key';
       process.env.AWS_PROFILE = 'test-profile';
-      // Real getEnvApiKey: explicit env key for openai, ambient sentinel for bedrock.
       expect(await getProviderApiKey('openai')).toBe('env-key');
-      expect(await getProviderApiKey('amazon-bedrock')).toBe('<authenticated>');
+      expect(await getProviderApiKey('amazon-bedrock')).toBeUndefined();
       expect(await getProviderApiKey('definitely-not-a-provider')).toBeUndefined();
     } finally {
       restoreEnv('OPENAI_API_KEY', saved.openai);
@@ -111,9 +176,181 @@ describe('provider credential resolver', () => {
     }
   });
 
+  test('does not flatten Cloudflare AI Gateway auth into an api-key override', async () => {
+    const saved = {
+      key: process.env.CLOUDFLARE_API_KEY,
+      account: process.env.CLOUDFLARE_ACCOUNT_ID,
+      gateway: process.env.CLOUDFLARE_GATEWAY_ID,
+    };
+    try {
+      process.env.CLOUDFLARE_API_KEY = 'cf-key';
+      process.env.CLOUDFLARE_ACCOUNT_ID = 'cf-account';
+      process.env.CLOUDFLARE_GATEWAY_ID = 'cf-gateway';
+
+      const model = piModels().getModels('cloudflare-ai-gateway')[0];
+      if (!model) throw new Error('Missing Cloudflare AI Gateway test model');
+
+      const auth = await piModels().getAuth(model);
+      expect(auth?.auth.apiKey).toBeUndefined();
+      expect(auth?.auth.headers).toMatchObject({ 'cf-aig-authorization': 'Bearer cf-key' });
+      expect(auth?.auth.baseUrl).toContain('cf-account');
+      expect(auth?.auth.baseUrl).toContain('cf-gateway');
+      expect(await getProviderApiKey('cloudflare-ai-gateway')).toBeUndefined();
+    } finally {
+      restoreEnv('CLOUDFLARE_API_KEY', saved.key);
+      restoreEnv('CLOUDFLARE_ACCOUNT_ID', saved.account);
+      restoreEnv('CLOUDFLARE_GATEWAY_ID', saved.gateway);
+    }
+  });
+
+  test('custom OpenAI-compatible providers use an internal pi provider without replacing catalog providers', async () => {
+    await setProviderApiKey('openai', 'stored-openai-key');
+    ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'https://proxy.example.com/v1', modelId: 'proxy-model' });
+
+    const internalProviderId = piCustomProviderId('openai');
+    expect(internalProviderId).not.toBe('openai');
+    expect(piModels().getProvider('openai')).toBeDefined();
+    expect(piModels().getProvider(internalProviderId)).toBeDefined();
+    expect(piProviders()).toContain('openai');
+    expect(piProviders()).not.toContain(internalProviderId);
+
+    const model = createOpenAICompatibleModel({
+      providerId: 'openai',
+      modelId: 'proxy-model',
+      baseUrl: 'https://proxy.example.com/v1',
+    });
+    expect(model.provider).toBe(internalProviderId);
+
+    const auth = await piModels().getAuth(model);
+    expect(auth?.auth.apiKey).toBe('stored-openai-key');
+  });
+
+  test('custom OpenAI-compatible providers inherit external auth without external base URL', async () => {
+    const savedOpenAIKey = process.env.OPENAI_API_KEY;
+    try {
+      process.env.OPENAI_API_KEY = 'env-openai-key';
+      ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'https://proxy.example.com/v1', modelId: 'proxy-model' });
+
+      const model = createOpenAICompatibleModel({
+        providerId: 'openai',
+        modelId: 'proxy-model',
+        baseUrl: 'https://proxy.example.com/v1',
+      });
+      const auth = await piModels().getAuth(model);
+      expect(auth?.auth.apiKey).toBe('env-openai-key');
+      expect(auth?.auth.baseUrl).toBeUndefined();
+    } finally {
+      restoreEnv('OPENAI_API_KEY', savedOpenAIKey);
+    }
+  });
+
+  test('custom OpenAI-compatible provider registration replaces stale base URLs for a model id', () => {
+    ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'http://localhost:1234/v1', modelId: 'proxy-model' });
+    ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'https://proxy.example.com/v1', modelId: 'proxy-model' });
+    ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'http://localhost:1234/v1', modelId: 'proxy-model' });
+
+    const models = piModels().getModels(piCustomProviderId('openai'));
+    expect(models.filter((model) => model.id === 'proxy-model').map((model) => model.baseUrl)).toEqual([
+      'http://localhost:1234/v1',
+    ]);
+    expect(piModels().getProvider(piCustomProviderId('openai'))?.baseUrl).toBe('http://localhost:1234/v1');
+  });
+
+  test('custom OpenAI-compatible providers prefer an inert key for local endpoints', async () => {
+    const savedOpenAIKey = process.env.OPENAI_API_KEY;
+    try {
+      process.env.OPENAI_API_KEY = 'env-openai-key';
+      await setProviderApiKey('openai', 'stored-openai-key');
+      ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'http://localhost:1234/v1', modelId: 'local-model' });
+
+      const localAuth = await piModels().getAuth(createOpenAICompatibleModel({
+        providerId: 'openai',
+        modelId: 'local-model',
+        baseUrl: 'http://localhost:1234/v1',
+      }));
+      expect(localAuth?.auth.apiKey).toBe('local-endpoint');
+    } finally {
+      restoreEnv('OPENAI_API_KEY', savedOpenAIKey);
+    }
+  });
+
+  test('custom OpenAI-compatible providers reject keyless remote endpoints', async () => {
+    const savedOpenAIKey = process.env.OPENAI_API_KEY;
+    try {
+      delete process.env.OPENAI_API_KEY;
+      ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'https://proxy.example.com/v1', modelId: 'remote-model' });
+
+      const remoteAuth = await piModels().getAuth(createOpenAICompatibleModel({
+        providerId: 'openai',
+        modelId: 'remote-model',
+        baseUrl: 'https://proxy.example.com/v1',
+      }));
+      expect(remoteAuth).toBeUndefined();
+    } finally {
+      restoreEnv('OPENAI_API_KEY', savedOpenAIKey);
+    }
+  });
+
+  test('custom OpenAI-compatible streams dispatch through the internal provider and report the external provider id', async () => {
+    const seenModels: Array<{ provider: string; api: string; baseUrl?: string }> = [];
+    piModels().setProvider(createProvider({
+      id: piCustomProviderId('openai'),
+      name: 'OpenAI proxy',
+      auth: {
+        apiKey: {
+          name: 'OpenAI proxy API key',
+          resolve: async ({ credential }) => credential?.key
+            ? { auth: { apiKey: credential.key }, source: 'request override' }
+            : undefined,
+        },
+      },
+      models: [createOpenAICompatibleModel({
+        providerId: 'openai',
+        modelId: 'gpt-5.1',
+        baseUrl: 'https://proxy.example.com/v1',
+      })],
+      api: {
+        stream: () => { throw new Error('stream should not be called'); },
+        streamSimple: (model) => {
+          seenModels.push({ provider: model.provider, api: model.api, baseUrl: model.baseUrl });
+          const stream = createAssistantMessageEventStream();
+          queueMicrotask(() => {
+            const message = {
+              ...fauxAssistantMessage(fauxText('Custom endpoint routed.')),
+              api: model.api,
+              provider: model.provider,
+              model: model.id,
+            };
+            stream.push({ type: 'start', partial: { ...message, content: [] } });
+            stream.push({ type: 'done', reason: 'stop', message });
+            stream.end(message);
+          });
+          return stream;
+        },
+      },
+    }));
+
+    const result = await piStreamSimple(createOpenAICompatibleModel({
+      providerId: 'openai',
+      modelId: 'gpt-5.1',
+      baseUrl: 'https://proxy.example.com/v1',
+    }), {
+      messages: [{ role: 'user', content: 'Ping', timestamp: Date.now() }],
+    }, { apiKey: 'test-key' }).result();
+
+    expect(seenModels).toEqual([{
+      provider: piCustomProviderId('openai'),
+      api: 'openai-completions',
+      baseUrl: 'https://proxy.example.com/v1',
+    }]);
+    expect(result.provider).toBe('openai');
+    expect(result.api).toBe('openai-completions');
+    expect(result.model).toBe('gpt-5.1');
+  });
+
   test('resolver never throws — returns undefined on failure', async () => {
     await persistOAuthCredential('anthropic', { refresh: 'r', access: 'a', expires: 1 });
-    oauthApiKeyImpl = async () => {
+    oauthRefreshImpl = async () => {
       throw new Error('network down');
     };
     expect(await getProviderApiKey('anthropic')).toBeUndefined();
@@ -130,7 +367,7 @@ describe('provider credential resolver', () => {
     expect(await getProviderApiKey('openai')).toBe('sk-openai');
     expect(await getProviderApiKey('groq')).toBe('sk-groq');
     // The anthropic oauth login survived the concurrent api-key writes.
-    oauthApiKeyImpl = async () => ({ newCredentials: { refresh: 'r', access: 'a', expires: 5 }, apiKey: 'oauth-k' });
+    oauthToApiKeyImpl = async () => 'oauth-k';
     expect(await getProviderApiKey('anthropic')).toBe('oauth-k');
   });
 });
@@ -160,5 +397,64 @@ describe('secret file at rest', () => {
     const onDisk = JSON.parse(await readFile(secretPath(), 'utf8')) as { enc?: string; credentials?: Record<string, unknown> };
     expect(onDisk.enc).toBeUndefined();
     expect(onDisk.credentials?.openai).toEqual({ type: 'api_key', key: 'sk-new' });
+  });
+
+  test('preserves pi api-key credential env across credential-store round trips', async () => {
+    piModels().setProvider(createProvider({
+      id: 'env-api-key-test',
+      name: 'Env API key test',
+      auth: {
+        apiKey: {
+          name: 'Env API key test',
+          resolve: async ({ credential }) => credential
+            ? { auth: { apiKey: credential.key }, env: credential.env, source: 'stored credential' }
+            : undefined,
+        },
+      },
+      models: [{
+        id: 'env-model',
+        name: 'Env Model',
+        api: 'openai-completions',
+        provider: 'env-api-key-test',
+        baseUrl: '',
+        reasoning: false,
+        input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 128000,
+        maxTokens: 8192,
+      }],
+      api: {
+        stream: () => { throw new Error('stream should not be called'); },
+        streamSimple: () => { throw new Error('streamSimple should not be called'); },
+      },
+    }));
+
+    const store = piModels() as unknown as {
+      credentials: {
+        modify(
+          providerId: string,
+          fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+        ): Promise<Credential | undefined>;
+      };
+    };
+    await store.credentials.modify('env-api-key-test', async () => ({
+      type: 'api_key',
+      key: 'sk-env',
+      env: { CLOUDFLARE_ACCOUNT_ID: 'acct', CLOUDFLARE_GATEWAY_ID: 'gateway' },
+    }));
+
+    const onDisk = JSON.parse(await readFile(secretPath(), 'utf8')) as { credentials?: Record<string, unknown> };
+    expect(onDisk.credentials?.['env-api-key-test']).toEqual({
+      type: 'api_key',
+      key: 'sk-env',
+      env: { CLOUDFLARE_ACCOUNT_ID: 'acct', CLOUDFLARE_GATEWAY_ID: 'gateway' },
+    });
+
+    const auth = await piModels().getAuth(piModels().getModels('env-api-key-test')[0]!);
+    expect(auth).toEqual({
+      auth: { apiKey: 'sk-env' },
+      env: { CLOUDFLARE_ACCOUNT_ID: 'acct', CLOUDFLARE_GATEWAY_ID: 'gateway' },
+      source: 'stored credential',
+    });
   });
 });

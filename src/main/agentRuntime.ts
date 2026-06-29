@@ -9,19 +9,14 @@ import {
 import {
   // pi-ai's own vocabulary: per-"session" provider resources, keyed by our conversation id.
   cleanupSessionResources as cleanupPiConversationResources,
-  completeSimple,
   createAssistantMessageEventStream,
-  getModels,
-  getProviders,
   getSupportedThinkingLevels,
   isContextOverflow,
-  streamSimple,
 } from '@earendil-works/pi-ai';
 import type {
   Api,
   AssistantMessage,
   ImageContent as PiImageContent,
-  KnownProvider,
   Message,
   Model,
   SimpleStreamOptions,
@@ -153,7 +148,6 @@ import { commandBriefText, liveCommandNodeIds, selectDueCommands, type DueComman
 import {
   getActiveProviderRuntimeConfig,
   getAgentRuntimeSettings,
-  getProviderApiKey,
   getBuiltInAgentProfile,
   setBuiltInAgentProfile,
   providerStreamOptionsFromRuntimeSettings,
@@ -162,6 +156,15 @@ import {
   type AgentProviderRuntimeConfig,
   type StoredBuiltInAgentProfile,
 } from './agentSettings';
+import {
+  createOpenAICompatibleModel,
+  ensurePiCustomProvider,
+  piCompleteSimple,
+  piExternalProviderId,
+  piFindModel,
+  piProviders,
+  piStreamSimple,
+} from './piModels';
 import { parseProviderQualifiedModel } from '../core/agentModelId';
 import {
   appendAgentToolPermissionGrant,
@@ -383,7 +386,7 @@ const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
   'image/webp',
 ]);
 
-type CompleteSimpleFn = typeof completeSimple;
+type CompleteSimpleFn = typeof piCompleteSimple;
 type ErrorReporter = (report: ErrorReport) => void | Promise<void>;
 
 /**
@@ -781,7 +784,7 @@ export class AgentRuntime {
       ),
       emitError: (conversationId, message) => this.emitError(conversationId, message),
       getActiveProviderConfig: () => this.getActiveProviderConfig(),
-      getProviderApiKey: (providerId) => this.getProviderApiKey(providerId),
+      getProviderRequestAuthOverride: (providerId) => this.getProviderRequestAuthOverride(providerId),
       resolveProviderModel: (providerConfig) => this.resolveProviderModel(providerConfig),
       beginCompaction: (conversationId, conversation, trigger) => this.beginCompaction(conversationId, conversation, trigger),
       finishCompaction: (conversationId, conversation, compactionId, lastEventType) => {
@@ -3062,19 +3065,21 @@ export class AgentRuntime {
     // Summaries run on the assistant's resolved model (handles custom endpoints,
     // where the provider connection has no catalog default).
     const model = modelOverride ?? (await this.resolveBuiltInAssistantModelEffort(providerConfig)).model;
-    const apiKey = providerConfig.apiKey ?? await this.getProviderApiKey(providerConfig.providerId);
+    const authOverride = providerConfig.apiKey
+      ? { apiKey: providerConfig.apiKey }
+      : await this.getProviderRequestAuthOverride(providerConfig.providerId);
     const runtimeSettings = await this.getRuntimeSettings();
     let messagesToSummarize = [...messages];
 
     for (let attempt = 0; ; attempt += 1) {
       throwIfAborted(signal);
       const request = buildCompactSummaryRequest(messagesToSummarize, customInstructions);
-      const response = await awaitWithAbort((this.options.completeSimpleFn ?? completeSimple)(model, {
+      const response = await awaitWithAbort((this.options.completeSimpleFn ?? piCompleteSimple)(model, {
         messages: [request],
         tools: [],
       }, {
         ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
-        apiKey,
+        ...authOverride,
         maxTokens: Math.min(model.maxTokens ?? COMPACT_SUMMARY_MAX_OUTPUT_TOKENS, COMPACT_SUMMARY_MAX_OUTPUT_TOKENS),
         // pi-ai stream option (provider cache affinity) — the lib's own field name.
         sessionId: conversationId,
@@ -4232,7 +4237,7 @@ export class AgentRuntime {
       skillBindings: [],
       modelConfig: hashJson({
         model: agent.state.model.id,
-        provider: agent.state.model.provider,
+        provider: piExternalProviderId(agent.state.model.provider),
         thinkingLevel: agent.state.thinkingLevel,
       }),
     };
@@ -4970,8 +4975,9 @@ export class AgentRuntime {
     }
   }
 
-  private getProviderApiKey(providerId: string) {
-    return this.options.providerApiKeyLoader?.(providerId) ?? getProviderApiKey(providerId);
+  private async getProviderRequestAuthOverride(providerId: string) {
+    const apiKey = await this.options.providerApiKeyLoader?.(providerId);
+    return apiKey ? { apiKey } : {};
   }
 
   private resolveProviderModel(providerConfig: AgentProviderRuntimeConfig) {
@@ -5336,7 +5342,7 @@ export class AgentRuntime {
             runId,
             messageId,
             parentMessageId,
-            providerId: message.provider,
+            providerId: piExternalProviderId(message.provider),
             modelId: message.model,
             apiId: message.api,
             createdAt: message.timestamp,
@@ -5731,7 +5737,7 @@ export class AgentRuntime {
       // later segment parents to the run's own tail (`lastMessageId`) so the run
       // stays a linear spine.
       parentMessageId: activeRun.lastMessageId ?? conversation.eventState.selectedLeafMessageId,
-      providerId: message.provider,
+      providerId: piExternalProviderId(message.provider),
       modelId: message.model,
       apiId: message.api,
     }]);
@@ -7268,7 +7274,7 @@ function createConfiguredAgent(
       tools: buildTools(),
       messages,
     },
-    streamFn: createProviderConfiguredStreamFn(options.streamFn ?? streamSimple as StreamFn, options.runtimeSettingsLoader),
+    streamFn: createProviderConfiguredStreamFn(options.streamFn ?? piStreamSimple as StreamFn, options.runtimeSettingsLoader),
     onPayload: async (payload, payloadModel) => {
       const payloadWithBreakpoints = applyAgentPromptCacheBreakpoints(payload, payloadModel, {
         enabled: options.l0CacheBreakpointEnabled ?? false,
@@ -7279,10 +7285,11 @@ function createConfiguredAgent(
       return callbackPayload ?? payloadWithBreakpoints;
     },
     getApiKey: async (provider) => {
-      if (provider === providerConfig.providerId) {
-        return providerConfig.apiKey ?? options.providerApiKeyLoader?.(provider) ?? getProviderApiKey(provider);
+      const providerId = piExternalProviderId(provider);
+      if (providerId === providerConfig.providerId) {
+        return providerConfig.apiKey ?? options.providerApiKeyLoader?.(providerId);
       }
-      return options.providerApiKeyLoader?.(provider) ?? getProviderApiKey(provider);
+      return options.providerApiKeyLoader?.(providerId);
     },
     beforeToolCall: async ({ toolCall, args }, signal) => {
       const globalPermissions = await readAgentToolPermissionConfig();
@@ -7556,14 +7563,10 @@ function resolveModelOverride(
   const providerId = parsed?.providerId ?? providerConfig.providerId;
   const modelId = parsed?.modelId ?? requested;
   const knownModel = findKnownModel(providerId, modelId);
-  if (knownModel) {
-    return providerId === providerConfig.providerId && providerConfig.baseUrl
-      ? { ...knownModel, baseUrl: providerConfig.baseUrl }
-      : knownModel;
-  }
   if (providerId === providerConfig.providerId && providerConfig.baseUrl) {
-    return createOpenAICompatibleModel({ ...providerConfig, modelId });
+    return createCustomEndpointModel(providerConfig, modelId, knownModel);
   }
+  if (knownModel) return knownModel;
   return null;
 }
 
@@ -7574,8 +7577,12 @@ function resolveModelOverride(
  */
 function resolveProviderCatalogModel(config: AgentProviderRuntimeConfig): Model<Api> | null {
   const first = rankedModels(config.providerId)[0];
+  if (config.baseUrl) {
+    const modelId = first?.id ?? '__tenon_openai_compatible_probe__';
+    return createCustomEndpointModel(config, modelId, first);
+  }
   if (!first) return null;
-  return config.baseUrl ? { ...first, baseUrl: config.baseUrl } : first;
+  return first;
 }
 
 /**
@@ -7629,6 +7636,15 @@ function defaultThinkingLevel(model: Model<Api>): AgentReasoningLevel {
   return defaultThinkingLevelFor(supported);
 }
 
+function createCustomEndpointModel(
+  config: AgentProviderRuntimeConfig,
+  modelId: string,
+  catalogModel?: Model<Api> | null,
+): Model<Api> {
+  ensurePiCustomProvider({ ...config, modelId, catalogModel });
+  return createOpenAICompatibleModel({ ...config, modelId, catalogModel });
+}
+
 /**
  * Resolve the effective model + thinking level an agent runs with, from its
  * profile's model/effort selection over a provider connection. The single seam the
@@ -7650,7 +7666,7 @@ function resolveAgentModelEffort(
 
 let knownProviderIdsCache: Set<string> | null = null;
 function isKnownProviderId(providerId: string): boolean {
-  if (!knownProviderIdsCache) knownProviderIdsCache = new Set(getProviders());
+  if (!knownProviderIdsCache) knownProviderIdsCache = new Set(piProviders());
   return knownProviderIdsCache.has(providerId);
 }
 
@@ -7741,32 +7757,10 @@ function createConfigurationErrorAgent(conversationId: string, message: string, 
 
 function findKnownModel(providerId: string, modelId: string): Model<Api> | null {
   try {
-    return getModels(providerId as KnownProvider).find((model) => model.id === modelId) as Model<Api> | undefined ?? null;
+    return piFindModel(providerId, modelId);
   } catch {
     return null;
   }
-}
-
-function createOpenAICompatibleModel(
-  config: { providerId: string; modelId: string; baseUrl?: string },
-): Model<'openai-completions'> {
-  return {
-    id: config.modelId,
-    name: config.modelId,
-    api: 'openai-completions',
-    provider: config.providerId,
-    baseUrl: config.baseUrl ?? '',
-    reasoning: false,
-    input: ['text'],
-    cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-    },
-    contextWindow: 128000,
-    maxTokens: 8192,
-  };
 }
 
 function createConfigurationErrorStreamFn(messageText: string): StreamFn {
@@ -7921,7 +7915,7 @@ function memoryDreamRunFingerprint(
     skillBindings: [MEMORY_DREAM_SKILL_NAME],
     modelConfig: hashJson({
       model: model.id,
-      provider: model.provider,
+      provider: piExternalProviderId(model.provider),
     }),
   };
 }
