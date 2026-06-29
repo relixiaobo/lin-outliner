@@ -125,6 +125,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **`node_edit` is now single-node and non-pruning (plan PR #346 + impl PR #347, codex-4)** — the agent
+  `node_edit` tool can no longer delete outline content by omission. The old whole-subtree reconcile is
+  removed: `old_string:"*"` (which replaced the entire annotated outline) now returns `subtree_edit_removed`,
+  and a multi-node outline fragment can no longer trash existing children that are absent from the desired
+  outline. Outline edits are scoped to **one node** — its root line, fields, field values, and saved-search
+  config — and apply **non-pruning upsert** semantics: omitted fields and field values are **preserved**;
+  removals are an explicit by-id `node_delete`. New fields are inserted **before** a node's ordinary children
+  (so they render in the field strip, not below the children); changing a field value's *kind* (text ↔
+  reference) is rejected up front with `invalid_field_value_kind` and a `node_delete`-then-recreate
+  instruction, **before** any mutation is applied (no partial commit). `node_create`, `move`, `merge`, and
+  `replace_with_reference_to` are unchanged. **Gate (main):** `/code-review high` + round-2 fix landed all
+  three findings (dead clear-warning / mis-reported `afterOutline`, field placement, kind-change partial
+  commit), each with a regression test; `docs/spec/agent-tool-design.md` updated in the same change.
 - **Search nodes excluded from references (PR #335, codex; follow-up PR #336, main)** — saved-search
   nodes and their query internals no longer count as reference sources in a target node's References
   footer or the relevance reference-authority graph. Excluded: materialized search-result references,

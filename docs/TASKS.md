@@ -317,22 +317,6 @@ Standalone agent items (not part of the program):
   default is sticky-at-setup vs always-newest (escalate that taste call). UI gate = light/dark visual;
   i18n en/zh. Adjacent to (not blocked by) `anthropic-auth-clarity` (that's connection *setup* UX;
   this is model *selection* UX).
-- **node-edit-orthogonal-primitives** (P1, **PM-ratified 2026-06-29, build-ready, plan-track**) —
-  make **delete-by-omission unrepresentable** in the node mutation surface. Remove `node_edit`'s
-  outline-reconcile (`old_string:"*"` + multi-node fragment) — the sole carrier of a data-loss-class
-  footgun that trashes existing children absent from a desired outline (a lossy ≤50-child read drove a
-  ≤500-child overwrite, deletion never modeled in preview). Reduce the write surface to four orthogonal,
-  id-addressed primitives — **create / edit-one / move / delete** — so no tool ever takes "the desired
-  complete subtree" and every deletion is an explicit by-id act. Mostly subtraction (drop
-  `applyOutlineRootToExistingNode` / `syncNormalChildren` / positional `syncFieldEntries` / the `"*"`
-  branch of `replaceOutline`, ~270-line engine) plus one named addition (a name-keyed `upsertField(s)`
-  reusing `syncFieldValues` / `createField`). `move` / `merge_from_node_ids` / `replace_with_reference_to`
-  stay `node_edit` actions; promoting a dedicated `node_move` is an optional cosmetic follow-up.
-  Self-contained — engine helpers have no callers outside `agentNodeTools.ts`; the only skill consumer
-  `memory-dream` already edits in place. **Shape (a), one PR.** Gate = `/code-review` + real-run verify;
-  spec sync `docs/spec/agent-tool-design.md` in the same change. See
-  `docs/plans/node-edit-orthogonal-primitives.md`.
-
 ### Files & media
 
 The file-node + preview foundation shipped — `file-attachments` (#204/#206), `agent-file-model`
@@ -468,6 +452,24 @@ anything.
 
 ## Recently completed
 
+- **node-edit-orthogonal-primitives** (`codex-4/node-edit-orthogonal-primitives`, plan PR #346 + impl PR #347,
+  codex-4, merged 2026-06-29) — makes **delete-by-omission unrepresentable** in `node_edit`. Drops the
+  outline-reconcile engine (`old_string:"*"` whole-subtree replace + multi-node fragment reconciliation:
+  `applyOutlineRootToExistingNode` / `syncNormalChildren` / positional `syncFieldEntries`+`sequenceEditPlan`,
+  ~270 lines) so no edit ever takes "the desired complete subtree". `node_edit` outline edits are now scoped
+  to **one node** (root line, fields, field values, saved-search config; depth-0 serialization +
+  `validateSingleNodeEditShape` reject child-structure edits) with **non-pruning upsert** semantics — omitted
+  fields/values are preserved; deletion is an explicit by-id `node_delete`. `move` / `merge` /
+  `replace_with_reference_to` stay `node_edit` actions. **Gate (main):** `/code-review high` (8 finder angles →
+  4 candidates verified) surfaced 3 real bugs — clear-by-omission silently no-oping while `afterOutline`
+  reported it cleared (warning was dead code); a newly-added field appended **after** ordinary children
+  (rendered below the field strip); and a field-value kind change throwing `mutation_failed` **after** a
+  partial title/tag commit. **Round-2 fix (`9c7d3a75`) resolved all three** — warning hoisted +
+  `afterOutline` re-serialized from applied state, `fieldSectionInsertIndex` inserts fields before ordinary
+  children, and a pre-flight `validateFieldValueKindUpdates` rejects kind changes with an actionable
+  `node_delete` instruction **before** mutating. Each fix carries a regression test; typecheck clean +
+  `test:core` 1084 pass / 0 fail + `docs:check` OK on `9c7d3a75`. Spec folded into
+  `docs/spec/agent-tool-design.md` in the same change; plan archived. **Shape (a), one PR.**
 - **epub-continuous-scroll** (`codex-3/epub-continuous-scroll`, PR #344, codex-3, merged 2026-06-28) —
   replaces the wheel-driven EPUB section jumps (#339) with one **continuous vertical reader** that stacks
   every spine section (including `linear="no"` covers/notes, so all TOC/anchor targets resolve to a
