@@ -47,8 +47,9 @@ future-useful updates.
   `#d-question`, and `#d-guidance` nodes should be updated, merged, moved, or
   deleted in place; create new memory only when no existing node fits.
 - All outline nodes are editable and deletable when Dream consolidation warrants
-  it. Prefer small, direct edits; use `node_delete` for obsolete, duplicate, or
-  misleading nodes rather than preserving noise.
+  it. Prefer small, direct edits to one node at a time; use `node_create` for
+  missing child nodes and `node_delete` for obsolete, duplicate, or misleading
+  nodes rather than preserving noise.
 - Use `node_search` and `node_read` to gather relevant outline context before
   writing. Do not treat `past_chats` as the only useful input.
 - Preserve provenance without over-citing. Use the run brief's
@@ -236,7 +237,8 @@ disambiguation.
    episode or child memory node is missing.
 7. Use `node_edit` to update source-date memory headlines and matching beliefs,
    episodes, questions, guidance, or related outline nodes in place. Use
-   `node_delete` when a node should be forgotten or removed during consolidation.
+   `node_create` for missing child nodes and `node_delete` when a node should be
+   forgotten or removed during consolidation.
 8. Keep the final assistant result short: report counts of episodes created,
    beliefs/questions/guidance created, updated, deleted, and skipped items. Do
    not quote raw chat.

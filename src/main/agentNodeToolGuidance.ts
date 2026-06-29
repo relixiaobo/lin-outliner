@@ -16,7 +16,9 @@ export const LIN_OUTLINE_CREATE_GUIDANCE = [
 
 export const ANNOTATED_OUTLINE_EDIT_GUIDANCE = [
   'Annotated outlines come from node_read and include %%node:id%% markers for exact follow-up edits.',
-  'Keep markers for existing nodes that should be updated or moved. Lines without markers create new nodes under the edited outline.',
+  'node_edit edits one existing node only: its own text, description, checkbox state, tags, fields, field values, or saved-search config.',
+  'Do not edit child structure through node_edit outline fragments. Use node_create for new children, node_edit move for reordering/reparenting, and node_delete for removals.',
+  'Omitted fields and field values are preserved; delete them explicitly with node_delete by id.',
   'Treat %%node:id%% as protocol metadata, not user-visible node text.',
   FINAL_ANSWER_NODE_REFERENCE_GUIDANCE,
 ].join(' ');
@@ -95,8 +97,8 @@ export const NODE_EDIT_DESCRIPTION = [
   'Edits existing outliner content.',
   '',
   'Usage:',
-  '- For text and child-structure edits, use node_read first, then pass exact old_string/new_string against the annotated outline.',
-  '- old_string "*" replaces the whole annotated outline for node_id.',
+  '- Use node_read first, then pass exact old_string/new_string against the target node line, its field lines, field value lines, or saved-search config.',
+  '- old_string "*" is not supported. node_edit no longer replaces whole subtrees.',
   `- ${ANNOTATED_OUTLINE_EDIT_GUIDANCE}`,
   `- ${DATE_FIELD_VALUE_GUIDANCE}`,
   '- Also supports user-like move operations, merging source nodes into one surviving target, and replacing a node with a reference.',
@@ -104,7 +106,7 @@ export const NODE_EDIT_DESCRIPTION = [
 ].join('\n');
 
 export const NODE_EDIT_NEW_STRING_PARAMETER_DESCRIPTION = [
-  'Replacement fragment. The full outline after replacement must parse as outline format and may keep %%node:id%% markers for existing nodes.',
+  'Replacement fragment for the target node line, field lines, field value lines, or saved-search config. It must leave the one-node editable outline parseable and may keep %%node:id%% markers for existing nodes.',
   ANNOTATED_OUTLINE_EDIT_GUIDANCE,
   DATE_FIELD_VALUE_GUIDANCE,
 ].join(' ');

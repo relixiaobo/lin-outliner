@@ -39,7 +39,7 @@ These tools are required for the first useful local agent.
 | `node_search` | outliner | No | No | Execute temporary search outlines or saved search node queries. |
 | `node_read` | outliner | No | No | Read node raw type/data, fields, and bounded children. |
 | `node_create` | outliner | Yes | Usually yes | Create outline trees, references, search/view nodes, schema nodes, or duplicates. |
-| `node_edit` | outliner | Yes | Usually yes | Edit the annotated outline for a known node using exact string replacement, or perform explicit structure operations such as move and merge. |
+| `node_edit` | outliner | Yes | Usually yes | Edit one known node's own content, fields, field values, or saved-search config using exact string replacement, or perform explicit by-id operations such as move and merge. |
 | `node_delete` | outliner | Yes | Usually yes | Trash or restore one or more nodes. |
 | `operation_history` | outliner | Yes for undo/redo | Usually yes | Inspect, undo, or redo user and agent operations. |
 | `file_read` | local | No | Usually no | Read local files with bounded output. |
@@ -490,8 +490,9 @@ structures:
 
 - `node_create.outline` inserts new structure.
 - `node_read(...)` serializes existing structure as annotated outline.
-- `node_edit.old_string/new_string` edits that serialized outline by exact string
-  replacement, then TypeScript parses and applies the result.
+- `node_edit.old_string/new_string` edits the target node's single-node editable
+  outline by exact string replacement, then TypeScript parses and applies the
+  result without treating omitted children, fields, or values as delete intent.
 
 `%%node:id%%` is the only agent-visible identity marker. It is protocol metadata,
 not node text, and the parser strips it before applying content changes. Do not
@@ -507,11 +508,13 @@ Read/create/edit symmetry:
 - `node_create` accepts the same content grammar without `%%node:id%%` markers. The
   insertion point is controlled by `parent_id` and `after_id`; omitted `parent_id`
   means today's journal node, not the currently focused UI node.
-- `node_edit` targets one existing root by `node_id`, applies exact
-  `old_string/new_string` replacement to the outline returned by `node_read`, and
-  then lets TypeScript parse the full resulting outline.
-- Precise child edits should target that child's node id directly. Parent
-  context is only needed when inserting, moving, or disambiguating repeated text.
+- `node_edit` targets one existing node by `node_id`, applies exact
+  `old_string/new_string` replacement to that node's editable outline (the root
+  line, field/value lines, or saved-search config), and then lets TypeScript parse
+  the resulting single-node outline.
+- Child creation, movement, and deletion are explicit: use `node_create`,
+  `node_edit` move, or `node_delete`. Precise child text edits target that child's
+  node id directly.
 
 ## Lin Outline Format
 
@@ -557,7 +560,9 @@ Rules:
   marker is alone or followed by whitespace; `[x]title` stays literal text.
 - `Field:: value` sets a single field value.
 - `Field::` followed by indented value lines sets a multi-value field.
-- `Field::` without values clears that field in edit results.
+- `Field::` without values is a clear request; `node_edit` preserves existing
+  values and returns a warning. Delete field entries or value nodes explicitly
+  with `node_delete`.
 - Date field values use the canonical date field language from
   `docs/spec/date-field-values.md`: `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or
   `start/end` with `/`, for example `2026-05-20/2026-05-24`. Tool prompts and
@@ -1025,7 +1030,7 @@ type NodeEditParams =
 
 interface NodeOutlineEditParams {
   node_id: string;
-  old_string: string; // exact fragment from node_read data.outline, or "*" for full outline
+  old_string: string; // exact fragment from the node's editable outline; "*" is not supported
   new_string: string;
   expected_revision?: string;
   preview_only?: boolean;
@@ -1057,38 +1062,37 @@ interface NodeReferenceReplaceParams {
 
 Outline edit semantics:
 
-- `old_string !== "*"` must match exactly once in the current annotated outline
-  for `node_id`.
-- `old_string === "*"` is a sentinel that replaces the whole annotated outline for
-  `node_id`. It is not a wildcard or regular expression; `*` has special meaning
-  only when it is the entire value.
-- `new_string` is not parsed in isolation. The full outline after replacement must
-  be valid Lin Outline Format.
-- Existing lines should preserve their `%%node:id%%` marker. New lines should omit
-  it. Removing a marked line means removing/trashing that existing node.
-- Whole-line or whole-subtree replacements are preferred. Smaller string
-  fragments are allowed when the resulting outline is still valid and the match
-  is exact.
-- For `old_string: "*"`, `new_string` must contain exactly one root line because
-  that root maps to `node_id`.
-- TypeScript replaces the matched fragment, parses the resulting whole outline, builds
-  a mutation plan, validates it, renders a preview, and then applies it after
-  approval when needed.
-- The root of a full-outline replacement maps to `node_id`. If the replacement
-  would make the root ambiguous, return an error.
+- `old_string` must match exactly once in the current editable outline for
+  `node_id`; `old_string: "*"` returns an error with guidance to use
+  `node_create`, `node_edit` move, or `node_delete`.
+- The editable outline contains the target node's root line, field entry/value
+  lines, and saved-search query lines. It does not include normal child nodes, so
+  child omission cannot express deletion.
+- `new_string` is not parsed in isolation. The full single-node outline after
+  replacement must be valid Lin Outline Format and contain exactly one root line.
+- Existing target/field/value lines should preserve their `%%node:id%%` marker.
+  Unmarked field lines create/upsert fields by name; unmarked value lines append
+  values. Omitted fields and values are preserved.
+- Annotated field value ids can update text in place only when the stored value
+  kind stays compatible. Changing a plain value into a reference, a reference into
+  text, or a reference target is rejected before mutation; delete the old value id
+  and create the replacement value explicitly.
+- TypeScript replaces the matched fragment, parses the resulting single-node
+  outline, validates it, renders a preview, and then applies it after approval
+  when needed.
+- The root line maps to `node_id`. If the root would become ambiguous, return an
+  error.
 - If the root line has a marker, it must match the `node_id` parameter.
-- Annotated ids must be unique and must belong to the edited subtree. Moving
-  external nodes into the subtree should use the explicit move form.
+- Annotated ids must be unique and must belong to the target node itself, one of
+  its field entries, or one of its field values. Moving external nodes should use
+  the explicit move form.
 - For precise child edits, prefer `node_read` to obtain the child id, then
   call `node_edit` on that child. Do not rely on sibling line numbers.
-- If an outline edit is ambiguous because identical children have meaningful
-  fields, children, references, or history, validation should reject it and tell
-  the agent to target the child node id directly.
-- Removing an existing node, reference, or field value from the resulting outline
-  is a deletion intent. It compiles to an undoable trash/clear mutation, not a
-  permanent delete.
-- Removing all values from a field compiles to `ClearField`; removing individual
-  field value nodes compiles to trashing those value nodes.
+- If a replacement introduces normal child lines under a non-search node,
+  validation rejects it with guidance to use `node_create`, `node_edit` move, or
+  `node_delete`.
+- Deletion is never represented by omission. Remove nodes, field entries, or field
+  value nodes only with `node_delete` by id.
 
 Move semantics:
 
@@ -1162,16 +1166,16 @@ Examples:
 ```json
 {
   "node_id": "node_task",
-  "old_string": "*",
+  "old_string": "- %%node:node_task%% [ ] Check weather",
   "new_string": "- %%node:node_task%% [x] Check Chengdu weather #weather"
 }
 ```
 
 ```json
 {
-  "node_id": "node_project",
-  "old_string": "  - %%node:node_task_b%% Task B\n  - %%node:node_task_c%% Task C",
-  "new_string": "  - %%node:node_task_b%% Task B\n  - [ ] Task D\n  - %%node:node_task_c%% Task C"
+  "node_id": "node_task",
+  "old_string": "  - %%node:field_status%% Status::\n    - %%node:value_open%% Open",
+  "new_string": "  - %%node:field_status%% Status::\n    - %%node:value_open%% In progress\n    - Blocked"
 }
 ```
 
@@ -1384,39 +1388,43 @@ Content edits use this sequence:
 
 ```txt
 load current node state
-  -> serialize current annotated outline
+  -> serialize current single-node editable outline
   -> check expected_revision when provided
   -> replace old_string with new_string
   -> parse the whole replacement result
-  -> validate annotated ids are unique, current, and inside the edited subtree
+  -> validate annotated ids are unique and belong to the target node, its fields, or its field values
   -> resolve tags, fields, refs, dates, search/view directives
-  -> build MutationPlan using annotated ids only for existing-node identity
-  -> validate MutationPlan
+  -> reject child-structure edits outside saved-search query config
+  -> reject annotated field value kind/target changes before mutation
   -> render preview
   -> wait for approval when required
-  -> apply MutationPlan as one transaction and one undo group
+  -> apply the single-node edit as one transaction and one undo group
 ```
 
 `old_string` matching rules:
 
-- `old_string === "*"` replaces the whole annotated outline for `node_id`.
-- Otherwise, `old_string` must match exactly once.
+- `old_string === "*"` is rejected. There is no whole-outline replacement mode.
+- `old_string` must match exactly once.
 - Zero matches means the agent is using stale context and should call
   `node_read` again.
 - Multiple matches means the agent should include more surrounding context or
   edit the child directly by node id.
-- Matching is byte-exact against the annotated outline string returned by
-  `node_read`, after normalizing line endings to `\n`.
+- Matching is byte-exact against the single-node editable outline for `node_id`,
+  after normalizing line endings to `\n`.
 
 Identity rules:
 
-- The root of a full-outline replacement maps to the `node_id` argument.
+- The root line maps to the `node_id` argument.
 - If the root line carries `%%node:id%%`, that id must match the `node_id`
   argument.
-- Existing marked lines keep identity through their marker.
-- Unmarked lines are treated as newly created content.
-- Removed marked lines are moved to Trash; they are not permanently deleted.
-- Reordered marked lines are moved to the new order.
+- Existing field and value lines keep identity through their marker.
+- Unmarked field lines upsert by field display name or create a new field.
+- Unmarked value lines append a new value unless they exactly match one existing
+  unambiguous value.
+- Removed marked lines are preserved. Delete nodes, field entries, or field value
+  nodes explicitly with `node_delete`.
+- Reordered field/value lines do not move existing nodes; use explicit move
+  operations when order matters.
 
 ### Mutation plan
 
@@ -2641,7 +2649,7 @@ coverage maps as follows:
 | `node_search` | Temporary/saved search node parser compiled to full-text, tag, field, link-relationship, and view metadata. |
 | `node_read` | `get_projection`, `backlinks`, annotated outline serialization, computed field and child summaries. |
 | `node_create` | `create_node`, `create_tag`, `create_field_def`, `create_inline_field`, `set_node_checkbox_visible`, `add_reference`, `create_search_node`, duplicate support. |
-| `node_edit` | Canonical outline exact replacement compiled to `apply_node_text_patch`, `set_node_checkbox_visible`, `toggle_done`, tag/field mutations, `move_node`, `trash_node`, `set_reference_target`, `replace_node_with_reference`, and `set_search_node`. |
+| `node_edit` | Single-node exact replacement compiled to `apply_node_text_patch`, `set_node_checkbox_visible`, `toggle_done`, tag/field upserts, value appends/updates, `move_node`, `set_reference_target`, `replace_node_with_reference`, and `set_search_node`. Merge/reference replacement may trash explicitly named source nodes; ordinary deletion belongs to `node_delete`. |
 | `node_delete` | `trash_node`, `batch_trash_nodes`, `restore_node`; permanent delete is not exposed to agent v1. |
 | `operation_history` | Loro UndoManager-backed `undo`/`redo` plus operation journal listing with origin metadata. |
 | `file_read` | Implemented TypeScript file read command with path normalization, text pagination, image content/dimensions, PDF page rendering, notebook parsing, and freshness tracking. |

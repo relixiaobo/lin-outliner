@@ -404,7 +404,7 @@ async function executeOutlineEdit(
     }));
   }
 
-  const currentOutline = serializeAnnotatedOutline(index, params.nodeId, 12, 0, 500, false);
+  const currentOutline = serializeEditableNodeOutline(index, params.nodeId);
   const replacement = replaceOutline(currentOutline, params.oldString, params.newString);
   if (!replacement.ok) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', replacement.code, replacement.error, {
@@ -432,13 +432,13 @@ async function executeOutlineEdit(
   const parsed = parseLinOutline(replacement.afterOutline, { annotations: 'allow' });
   if (!parsed.ok) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'parse_error', parsed.error.message, {
-      instructions: `Fix new_string so the complete outline remains valid outline format. Line ${parsed.error.line}, column ${parsed.error.column}.`,
+      instructions: `Fix new_string so the one-node outline remains valid outline format. Line ${parsed.error.line}, column ${parsed.error.column}.`,
       metrics: { durationMs: elapsed(started) },
     }));
   }
   if (parsed.document.roots.length !== 1) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'ambiguous_root', 'node_edit must produce exactly one root node for the target node_id.', {
-      instructions: 'Call node_create for new sibling roots, or edit a child node directly.',
+      instructions: 'Call node_create for new sibling roots, node_edit move for moves, or edit the intended child node directly by id.',
       metrics: { durationMs: elapsed(started) },
     }));
   }
@@ -476,6 +476,13 @@ async function executeOutlineEdit(
       metrics: { durationMs: elapsed(started) },
     }));
   }
+  const shapeValidation = validateSingleNodeEditShape(parsed.document);
+  if (shapeValidation) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', shapeValidation.code, shapeValidation.error, {
+      instructions: shapeValidation.instructions,
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
 
   if (params.previewOnly) {
     const data: NodeEditData = { ...dataBase, status: 'updated' };
@@ -489,28 +496,42 @@ async function executeOutlineEdit(
   const tracker = createMutationTracker();
   const warnings = [...parsed.warnings];
   const beforeProjection = index.projection;
-  let trashedNodeIds: string[] = [];
   let updatedTags: string[] = [];
   try {
-    const applied = await applyOutlineRootToExistingNode(host, params.nodeId, parsed.document.roots[0]!, tracker, warnings);
-    trashedNodeIds = applied.trashedNodeIds;
+    const valueKindValidation = validateFieldValueKindUpdates(index, params.nodeId, parsed.document.roots[0]!);
+    if (valueKindValidation) {
+      return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', valueKindValidation.code, valueKindValidation.error, {
+        instructions: valueKindValidation.instructions,
+        metrics: { durationMs: elapsed(started) },
+      }));
+    }
+  } catch (error) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'mutation_failed', errorMessage(error), {
+      instructions: 'Use node_read to refresh the target node, then retry a smaller single-node edit if needed.',
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+  try {
+    const applied = await applySingleNodeEdit(host, params.nodeId, parsed.document.roots[0]!, tracker, warnings);
     updatedTags = applied.updatedTagIds;
   } catch (error) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'mutation_failed', errorMessage(error), {
-      instructions: 'Use node_read to refresh the target node, then retry a smaller exact replacement if needed.',
+      instructions: 'Use node_read to refresh the target node, then retry a smaller single-node edit if needed.',
       metrics: { durationMs: elapsed(started) },
     }));
   }
 
   const updatedIndex = indexProjection(host.getProjection());
   const updatedNode = updatedIndex.nodes.get(params.nodeId);
-  const changedIds = changedNodeIds(beforeProjection, updatedIndex.projection);
+  const changedIds = changedNodeIds(beforeProjection, updatedIndex.projection)
+    .filter((nodeId) => updatedIndex.nodes.has(nodeId));
+  const afterOutline = updatedNode ? serializeEditableNodeOutline(updatedIndex, params.nodeId) : replacement.afterOutline;
   const data: NodeEditData = {
     ...dataBase,
+    afterOutline,
     status: 'updated',
-    affectedNodeIds: unique([params.nodeId, ...changedIds, ...tracker.createdNodeIds, ...trashedNodeIds]),
+    affectedNodeIds: unique([params.nodeId, ...changedIds, ...tracker.createdNodeIds]),
     createdNodeIds: tracker.createdNodeIds.length ? tracker.createdNodeIds : undefined,
-    trashedNodeIds: trashedNodeIds.length ? trashedNodeIds : undefined,
     matchedNodeIds: tracker.matchedNodeIds.length ? tracker.matchedNodeIds : undefined,
     updatedFields: tracker.createdFieldEntryIds.length ? tracker.createdFieldEntryIds : undefined,
     updatedTags: updatedTags.length ? updatedTags : undefined,
@@ -1191,7 +1212,14 @@ function replaceOutline(currentOutline: string, oldString: string, newString: st
 } | { ok: false; code: string; error: string; instructions: string } {
   const normalizedOld = normalizeLineEndings(oldString);
   const normalizedNew = normalizeLineEndings(newString);
-  if (normalizedOld === '*') return { ok: true, afterOutline: normalizedNew.trim() };
+  if (normalizedOld === '*') {
+    return {
+      ok: false,
+      code: 'subtree_edit_removed',
+      error: 'old_string "*" no longer replaces a whole annotated outline.',
+      instructions: 'Use node_create for new children, node_edit move for moves, node_delete for removals, or edit one node directly with an exact old_string/new_string fragment.',
+    };
+  }
   const matches = countOccurrences(currentOutline, normalizedOld);
   if (matches === 0) {
     return {
@@ -1223,13 +1251,40 @@ function countOccurrences(haystack: string, needle: string): number {
   return count;
 }
 
-async function applyOutlineRootToExistingNode(
+function serializeEditableNodeOutline(index: ProjectionIndex, nodeId: string): string {
+  return serializeAnnotatedOutline(index, nodeId, 0, 0, 500, false);
+}
+
+function validateSingleNodeEditShape(document: OutlineDocument): { code: string; error: string; instructions: string } | null {
+  const root = document.roots[0];
+  if (!root) return null;
+  if (!root.search && root.children.length > 0) {
+    return {
+      code: 'subtree_edit_removed',
+      error: 'node_edit no longer edits child structure from an outline fragment.',
+      instructions: 'Use node_create for new children, node_edit move for reordering or reparenting, node_delete for removals, or call node_edit directly on a child id.',
+    };
+  }
+  if (root.search) {
+    const queryChildCount = root.children.length;
+    if (queryChildCount !== 1) {
+      return {
+        code: 'invalid_search_condition',
+        error: 'Saved-search edits must include exactly one query root child.',
+        instructions: 'Edit the saved search config as one search outline; do not use omitted child lines to remove document children.',
+      };
+    }
+  }
+  return null;
+}
+
+async function applySingleNodeEdit(
   host: OutlinerToolHost,
   nodeId: string,
   root: OutlineNode,
   tracker: MutationTracker,
   warnings: string[],
-): Promise<{ trashedNodeIds: string[]; updatedTagIds: string[] }> {
+): Promise<{ updatedTagIds: string[] }> {
   if (root.search) {
     const spec = resolveSearchSpecFromOutlineNode(indexProjection(host.getProjection()), root);
     if ('error' in spec) throw new Error(spec.error);
@@ -1245,14 +1300,13 @@ async function applyOutlineRootToExistingNode(
     }
     await setCheckboxState(host, nodeId, root.checked);
     const updatedTagIds = await syncTags(host, nodeId, root.tags, tracker);
-    return { trashedNodeIds: [], updatedTagIds };
+    return { updatedTagIds };
   }
   if (root.view) warnings.push('View directives are only persisted on search nodes today.');
 
   const updatedTagIds = await syncOutlineNodeInPlace(host, nodeId, root, tracker, warnings);
-  const fieldSync = await syncFieldEntries(host, nodeId, root.fields, tracker, warnings);
-  const childSync = await syncNormalChildren(host, nodeId, root.children, tracker, warnings);
-  return { trashedNodeIds: unique([...fieldSync.trashedNodeIds, ...childSync.trashedNodeIds]), updatedTagIds };
+  await upsertFields(host, nodeId, root.fields, tracker, warnings);
+  return { updatedTagIds };
 }
 
 async function syncOutlineNodeInPlace(
@@ -1296,13 +1350,13 @@ async function syncOutlineNodeInPlace(
   return syncTags(host, nodeId, node.tags, tracker);
 }
 
-async function syncFieldEntries(
+async function upsertFields(
   host: OutlinerToolHost,
   parentId: string,
   fields: OutlineField[],
   tracker: MutationTracker,
   warnings: string[],
-): Promise<{ trashedNodeIds: string[] }> {
+): Promise<void> {
   const index = indexProjection(host.getProjection());
   const existingFieldIds = requiredNode(index, parentId).children.filter((childId) => {
     const child = index.nodes.get(childId);
@@ -1312,47 +1366,35 @@ async function syncFieldEntries(
   if (misplacedAnnotatedField?.nodeId) {
     throw new Error(`Annotated field id is not a field under ${parentId}: ${misplacedAnnotatedField.nodeId}`);
   }
-  const plan = sequenceEditPlan(
-    existingFieldIds,
-    fields,
-    (fieldEntryId, field) => field.nodeId === fieldEntryId,
-  );
   pushDuplicateKeyWarning('field entries', existingFieldIds.map((fieldEntryId) => fieldName(index, requiredNode(index, fieldEntryId)).toLowerCase()), warnings);
   pushDuplicateKeyWarning('desired field names', fields.map((field) => field.name.trim().toLowerCase()), warnings);
-  const trashedNodeIds: string[] = [];
-  let desiredIndex = 0;
-  for (const item of plan) {
-    if (item.existing && item.desired) {
-      const latest = indexProjection(host.getProjection());
-      const currentName = fieldName(latest, requiredNode(latest, item.existing)).trim().toLowerCase();
-      if (currentName === item.desired.name.trim().toLowerCase()) {
-        trackMatchedNode(tracker, item.existing);
-        await ensureAbsoluteChildIndex(host, item.existing, parentId, desiredIndex);
-        await syncFieldValues(host, item.existing, item.desired, tracker, warnings);
-      } else {
-        await trashNodeIds(host, [item.existing]);
-        trashedNodeIds.push(item.existing);
-        const createdId = await createField(host, parentId, item.desired, tracker, desiredIndex);
-        await ensureAbsoluteChildIndex(host, createdId, parentId, desiredIndex);
-      }
-      desiredIndex += 1;
+
+  const usedFieldIds = new Set<string>();
+  for (const field of fields) {
+    const latest = indexProjection(host.getProjection());
+    const latestExistingFieldIds = requiredNode(latest, parentId).children.filter((childId) => {
+      const child = latest.nodes.get(childId);
+      return child?.type === 'fieldEntry' && !isInTrash(latest, childId);
+    });
+    let fieldEntryId = field.nodeId;
+    if (!fieldEntryId) {
+      const key = normalizedFieldNameKey(field.name);
+      const candidates = latestExistingFieldIds.filter((candidateId) =>
+        !usedFieldIds.has(candidateId) && normalizedFieldNameKey(fieldName(latest, requiredNode(latest, candidateId))) === key);
+      fieldEntryId = candidates.length === 1 ? candidates[0] : undefined;
+    }
+    if (fieldEntryId) {
+      usedFieldIds.add(fieldEntryId);
+      trackMatchedNode(tracker, fieldEntryId);
+      await upsertFieldValues(host, fieldEntryId, field, tracker, warnings);
       continue;
     }
-    if (item.existing) {
-      await trashNodeIds(host, [item.existing]);
-      trashedNodeIds.push(item.existing);
-      continue;
-    }
-    if (item.desired) {
-      const createdId = await createField(host, parentId, item.desired, tracker, desiredIndex);
-      await ensureAbsoluteChildIndex(host, createdId, parentId, desiredIndex);
-      desiredIndex += 1;
-    }
+    const createdId = await createField(host, parentId, field, tracker, fieldSectionInsertIndex(latest, parentId));
+    usedFieldIds.add(createdId);
   }
-  return { trashedNodeIds };
 }
 
-async function syncFieldValues(
+async function upsertFieldValues(
   host: OutlinerToolHost,
   fieldEntryId: string,
   field: OutlineField,
@@ -1367,45 +1409,85 @@ async function syncFieldValues(
   if (misplacedAnnotatedValue?.nodeId) {
     throw new Error(`Annotated field value id is not a value under ${fieldEntryId}: ${misplacedAnnotatedValue.nodeId}`);
   }
-  const plan = sequenceEditPlan(
-    existingValueIds,
-    desiredValues,
-    (valueId, value) => value.nodeId === valueId,
-  );
   pushDuplicateKeyWarning('field values', existingValueIds.map((valueId) => outlineValueKeyFromProjection(index, requiredNode(index, valueId))), warnings);
   pushDuplicateKeyWarning('desired field values', desiredValues.map(outlineValueKey), warnings);
-  let desiredIndex = 0;
-  for (const item of plan) {
-    if (item.existing && item.desired) {
+  if (normalizedField.clear && existingValueIds.length > 0) {
+    warnings.push(`Field "${field.name}" was left unchanged because node_edit no longer clears values by omission; use node_delete on value ids.`);
+  }
+
+  const usedExisting = new Set<string>();
+  for (const desired of desiredValues) {
+    let targetValueId = desired.nodeId;
+    if (!targetValueId) {
+      const key = outlineValueKey(desired);
+      const candidates = existingValueIds.filter((valueId) =>
+        !usedExisting.has(valueId) && outlineValueKeyFromProjection(index, requiredNode(index, valueId)) === key);
+      targetValueId = candidates.length === 1 ? candidates[0] : undefined;
+    }
+    if (targetValueId) {
+      usedExisting.add(targetValueId);
       const latest = indexProjection(host.getProjection());
-      const current = requiredNode(latest, item.existing);
-      if (canUpdateValueInPlace(current, item.desired)) {
-        trackMatchedNode(tracker, item.existing);
-        await ensureAbsoluteChildIndex(host, item.existing, fieldEntryId, desiredIndex);
-        if (richTextOutlineText(current.content) !== item.desired.text) {
-          await host.handle('apply_node_text_patch', {
-            nodeId: item.existing,
-            patch: replaceAllRichTextPatch(richTextFromOutlineText(item.desired.text)),
-          });
-        }
-      } else {
-        await trashNodeIds(host, [item.existing]);
-        const createdId = await createFieldValue(host, fieldEntryId, item.desired, desiredIndex);
-        tracker.createdNodeIds.push(createdId);
+      const current = requiredNode(latest, targetValueId);
+      if (!canUpdateValueInPlace(current, desired)) {
+        throw new Error(`Annotated field value id cannot be changed to a different value kind: ${targetValueId}`);
       }
-      desiredIndex += 1;
+      trackMatchedNode(tracker, targetValueId);
+      if (!desired.targetId && richTextOutlineText(current.content) !== desired.text) {
+        await host.handle('apply_node_text_patch', {
+          nodeId: targetValueId,
+          patch: replaceAllRichTextPatch(richTextFromOutlineText(desired.text)),
+        });
+      }
       continue;
     }
-    if (item.existing) {
-      await trashNodeIds(host, [item.existing]);
-      continue;
+    const createdId = await createFieldValue(host, fieldEntryId, desired);
+    tracker.createdNodeIds.push(createdId);
+  }
+}
+
+function validateFieldValueKindUpdates(
+  index: ProjectionIndex,
+  parentId: string,
+  root: OutlineNode,
+): { code: string; error: string; instructions: string } | null {
+  if (root.search) return null;
+  const parent = requiredNode(index, parentId);
+  const existingFieldIds = activeFieldEntryIds(index, parent.id);
+  const usedFieldIds = new Set<string>();
+  for (const field of root.fields) {
+    let fieldEntryId = field.nodeId;
+    if (!fieldEntryId) {
+      const key = normalizedFieldNameKey(field.name);
+      const candidates = existingFieldIds.filter((candidateId) =>
+        !usedFieldIds.has(candidateId) && normalizedFieldNameKey(fieldName(index, requiredNode(index, candidateId))) === key);
+      fieldEntryId = candidates.length === 1 ? candidates[0] : undefined;
     }
-    if (item.desired) {
-      const createdId = await createFieldValue(host, fieldEntryId, item.desired, desiredIndex);
-      tracker.createdNodeIds.push(createdId);
-      desiredIndex += 1;
+    if (!fieldEntryId) continue;
+    usedFieldIds.add(fieldEntryId);
+    const normalizedField = normalizeFieldValuesForEntry(index, fieldEntryId, field);
+    if (normalizedField.clear) continue;
+    const existingValueIds = activeChildIds(index, fieldEntryId);
+    const usedValueIds = new Set<string>();
+    for (const desired of normalizedField.values) {
+      let targetValueId = desired.nodeId;
+      if (!targetValueId) {
+        const key = outlineValueKey(desired);
+        const candidates = existingValueIds.filter((valueId) =>
+          !usedValueIds.has(valueId) && outlineValueKeyFromProjection(index, requiredNode(index, valueId)) === key);
+        targetValueId = candidates.length === 1 ? candidates[0] : undefined;
+      }
+      if (!targetValueId) continue;
+      usedValueIds.add(targetValueId);
+      const current = requiredNode(index, targetValueId);
+      if (canUpdateValueInPlace(current, desired)) continue;
+      return {
+        code: 'invalid_field_value_kind',
+        error: `Annotated field value id cannot be changed to a different value kind or reference target: ${targetValueId}`,
+        instructions: 'Use node_delete on that field value id, then use node_edit or node_create to add the replacement value.',
+      };
     }
   }
+  return null;
 }
 
 function normalizeFieldValuesForEntry(index: ProjectionIndex, fieldEntryId: string, field: OutlineField): OutlineField {
@@ -1436,112 +1518,6 @@ function fieldTypeForEntry(index: ProjectionIndex, fieldEntryId: string): string
   return fieldDef?.type === 'fieldDef' ? projectFieldConfig(index.nodes, fieldDef).fieldType : 'plain';
 }
 
-async function syncNormalChildren(
-  host: OutlinerToolHost,
-  parentId: string,
-  desiredChildren: OutlineNode[],
-  tracker: MutationTracker,
-  warnings: string[],
-): Promise<{ trashedNodeIds: string[] }> {
-  const index = indexProjection(host.getProjection());
-  const existingChildIds = normalChildIds(index, parentId, false);
-  const misplacedAnnotatedChild = desiredChildren.find((child) => child.nodeId && !existingChildIds.includes(child.nodeId));
-  if (misplacedAnnotatedChild?.nodeId) {
-    throw new Error(`Annotated child id is not a child under ${parentId}: ${misplacedAnnotatedChild.nodeId}`);
-  }
-  const plan = sequenceEditPlan(
-    existingChildIds,
-    desiredChildren,
-    (childId, child) => child.nodeId === childId,
-  );
-  pushDuplicateKeyWarning('child nodes', existingChildIds.map((childId) => outlineNodeKeyFromProjection(index, requiredNode(index, childId))), warnings);
-  pushDuplicateKeyWarning('desired child nodes', desiredChildren.map(outlineNodeKey), warnings);
-  const trashedNodeIds: string[] = [];
-  let desiredNormalIndex = 0;
-  for (const item of plan) {
-    if (item.existing && item.desired) {
-      const latest = indexProjection(host.getProjection());
-      const current = requiredNode(latest, item.existing);
-      const targetIndex = absoluteIndexForNormalChild(latest, parentId, desiredNormalIndex);
-      if (canUpdateOutlineNodeInPlace(current, item.desired)) {
-        trackMatchedNode(tracker, item.existing);
-        await ensureAbsoluteChildIndex(host, item.existing, parentId, targetIndex);
-        await syncOutlineNodeInPlace(host, item.existing, item.desired, tracker, warnings);
-        if (item.desired.search) {
-          desiredNormalIndex += 1;
-          continue;
-        }
-        const fieldSync = await syncFieldEntries(host, item.existing, item.desired.fields, tracker, warnings);
-        const childSync = await syncNormalChildren(host, item.existing, item.desired.children, tracker, warnings);
-        trashedNodeIds.push(...fieldSync.trashedNodeIds, ...childSync.trashedNodeIds);
-      } else {
-        await trashNodeIds(host, [item.existing]);
-        trashedNodeIds.push(item.existing);
-        await createOutlineNode(host, item.desired, parentId, targetIndex, tracker, warnings);
-      }
-      desiredNormalIndex += 1;
-      continue;
-    }
-    if (item.existing) {
-      await trashNodeIds(host, [item.existing]);
-      trashedNodeIds.push(item.existing);
-      continue;
-    }
-    if (item.desired) {
-      const targetIndex = absoluteIndexForNormalChild(indexProjection(host.getProjection()), parentId, desiredNormalIndex);
-      await createOutlineNode(host, item.desired, parentId, targetIndex, tracker, warnings);
-      desiredNormalIndex += 1;
-    }
-  }
-  return { trashedNodeIds };
-}
-
-interface SequenceEditItem<TExisting, TDesired> {
-  existing?: TExisting;
-  desired?: TDesired;
-}
-
-function sequenceEditPlan<TExisting, TDesired>(
-  existing: TExisting[],
-  desired: TDesired[],
-  matches: (existing: TExisting, desired: TDesired) => boolean,
-): Array<SequenceEditItem<TExisting, TDesired>> {
-  const result: Array<SequenceEditItem<TExisting, TDesired>> = [];
-  const usedExisting = new Set<number>();
-
-  for (const desiredItem of desired) {
-    let matchedIndex = -1;
-    for (let index = 0; index < existing.length; index += 1) {
-      if (usedExisting.has(index)) continue;
-      if (!matches(existing[index]!, desiredItem)) continue;
-      matchedIndex = index;
-      break;
-    }
-    if (matchedIndex === -1) {
-      result.push({ desired: desiredItem });
-      continue;
-    }
-    usedExisting.add(matchedIndex);
-    result.push({ existing: existing[matchedIndex], desired: desiredItem });
-  }
-
-  existing.forEach((existingItem, index) => {
-    if (!usedExisting.has(index)) result.push({ existing: existingItem });
-  });
-
-  return result;
-}
-
-function outlineNodeKeyFromProjection(index: ProjectionIndex, node: NodeProjection): string {
-  if (node.type === 'reference') return `reference:${node.targetId ?? ''}`;
-  return `node:${node.content.text.trim().toLowerCase()}`;
-}
-
-function outlineNodeKey(node: OutlineNode): string {
-  if (node.referenceTargetId) return `reference:${node.referenceTargetId}`;
-  return `node:${node.title.trim().toLowerCase()}`;
-}
-
 function outlineValueKeyFromProjection(index: ProjectionIndex, node: NodeProjection): string {
   if (node.type === 'reference') return `reference:${node.targetId ?? ''}`;
   return `value:${nodeTitle(index, node).trim().toLowerCase()}`;
@@ -1552,16 +1528,25 @@ function outlineValueKey(value: OutlineValue): string {
   return `value:${value.text.trim().toLowerCase()}`;
 }
 
-function canUpdateOutlineNodeInPlace(current: NodeProjection, desired: OutlineNode): boolean {
-  if (desired.referenceTargetId) {
-    return current.type === 'reference' && current.targetId === desired.referenceTargetId;
-  }
-  return current.type !== 'reference' && current.type !== 'fieldEntry';
-}
-
 function canUpdateValueInPlace(current: NodeProjection, desired: OutlineValue): boolean {
   if (desired.targetId) return current.type === 'reference' && current.targetId === desired.targetId;
   return current.type !== 'reference';
+}
+
+function activeFieldEntryIds(index: ProjectionIndex, parentId: string): string[] {
+  return requiredNode(index, parentId).children.filter((childId) => {
+    const child = index.nodes.get(childId);
+    return child?.type === 'fieldEntry' && !isInTrash(index, childId);
+  });
+}
+
+function fieldSectionInsertIndex(index: ProjectionIndex, parentId: string): number {
+  const parent = requiredNode(index, parentId);
+  const firstNormalChildIndex = parent.children.findIndex((childId) => {
+    const child = index.nodes.get(childId);
+    return child !== undefined && child.type !== 'fieldEntry' && !isInTrash(index, childId);
+  });
+  return firstNormalChildIndex === -1 ? parent.children.length : firstNormalChildIndex;
 }
 
 function trackMatchedNode(tracker: MutationTracker, nodeId: string) {
@@ -1579,28 +1564,6 @@ function pushDuplicateKeyWarning(label: string, keys: string[], warnings: string
   if (duplicates.size > 0) {
     warnings.push(`Duplicate ${label} were matched by order: ${[...duplicates].join(', ')}.`);
   }
-}
-
-function absoluteIndexForNormalChild(index: ProjectionIndex, parentId: string, normalIndex: number): number {
-  const parent = requiredNode(index, parentId);
-  const fieldCount = parent.children.filter((childId) => index.nodes.get(childId)?.type === 'fieldEntry' && !isInTrash(index, childId)).length;
-  return fieldCount + normalIndex;
-}
-
-async function ensureAbsoluteChildIndex(host: OutlinerToolHost, nodeId: string, parentId: string, index: number) {
-  const latest = indexProjection(host.getProjection());
-  const node = requiredNode(latest, nodeId);
-  const parent = requiredNode(latest, parentId);
-  if (node.parentId !== parentId || parent.children.indexOf(nodeId) !== index) {
-    await host.handle('move_node', { nodeId, parentId, index });
-  }
-}
-
-async function trashNodeIds(host: OutlinerToolHost, nodeIds: string[]) {
-  const uniqueNodeIds = unique(nodeIds);
-  if (uniqueNodeIds.length === 0) return;
-  if (uniqueNodeIds.length === 1) await host.handle('trash_node', { nodeId: uniqueNodeIds[0] });
-  else await host.handle('batch_trash_nodes', { nodeIds: uniqueNodeIds });
 }
 
 async function setCheckboxState(host: OutlinerToolHost, nodeId: string, checked: boolean | null | undefined) {
@@ -2000,7 +1963,7 @@ async function createOutlineNode(
     if (existingFieldEntryId) {
       reusableFieldEntries.delete(fieldKey);
       trackMatchedNode(tracker, existingFieldEntryId);
-      await syncFieldValues(host, existingFieldEntryId, field, tracker, warnings);
+      await upsertFieldValues(host, existingFieldEntryId, field, tracker, warnings);
     } else {
       await createField(host, createdId, field, tracker);
     }
