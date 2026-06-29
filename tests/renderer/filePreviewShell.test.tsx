@@ -24,14 +24,18 @@ describe('FilePreviewShell media controls', () => {
     );
 
     expect(rendered.document.querySelector('.file-preview-video[data-preserve-selection]')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-player--video')).not.toBeNull();
+    expect(rendered.document.querySelector('media-control-bar .file-preview-pill--media-control')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-body--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media-video')).not.toBeNull();
-    expect(rendered.document.querySelector('.file-preview-pill--media')).not.toBeNull();
-    expect(rendered.document.querySelector('.file-node-preview--media > .file-preview-pill--media')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill--media')).toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--media > .file-preview-pill--media')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill--footer')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill-primary')).toBeNull();
     const video = rendered.document.querySelector('.file-preview-video');
+    expect(video?.hasAttribute('controls')).toBe(false);
+    expect(video?.getAttribute('slot')).toBe('media');
     expect(video?.getAttribute('controlsList')).toBe('nodownload noplaybackrate noremoteplayback');
     expect(video?.hasAttribute('disableRemotePlayback')).toBe(true);
     expect(video?.hasAttribute('disablePictureInPicture')).toBe(true);
@@ -47,16 +51,19 @@ describe('FilePreviewShell media controls', () => {
     );
 
     expect(rendered.document.querySelector('.file-preview-audio[data-preserve-selection]')).not.toBeNull();
-    expect(rendered.document.querySelector('.file-preview-audio-frame[data-preserve-selection]')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-media-player--audio[data-preserve-selection]')).not.toBeNull();
+    expect(rendered.document.querySelector('media-control-bar .file-preview-pill--media-control')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-body--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-body--media-audio')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media')).not.toBeNull();
     expect(rendered.document.querySelector('.file-node-preview--media-audio')).not.toBeNull();
-    expect(rendered.document.querySelector('.file-preview-pill--media')).not.toBeNull();
-    expect(rendered.document.querySelector('.file-node-preview--media > .file-preview-pill--media')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill--media')).toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--media > .file-preview-pill--media')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill--footer')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill-primary')).toBeNull();
     const audio = rendered.document.querySelector('.file-preview-audio');
+    expect(audio?.hasAttribute('controls')).toBe(false);
+    expect(audio?.getAttribute('slot')).toBe('media');
     expect(audio?.getAttribute('controlsList')).toBe('nodownload noplaybackrate noremoteplayback');
     expect((audio as HTMLMediaElement | null)?.disableRemotePlayback).toBe(true);
   });

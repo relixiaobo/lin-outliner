@@ -25,6 +25,16 @@ import type {
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import {
+  MediaControlBar,
+  MediaController,
+  MediaFullscreenButton,
+  MediaMuteButton,
+  MediaPlayButton,
+  MediaTimeDisplay,
+  MediaTimeRange,
+  MediaVolumeRange,
+} from 'media-chrome/react';
+import {
   FileTextIcon,
   FolderIcon,
   ICON_SIZE,
@@ -128,6 +138,7 @@ function clampPreviewHeight(height: number) {
 
 export interface PreviewRendererProps {
   displayMode: FilePreviewDisplayMode;
+  mediaActions?: ReactElement | null;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   onSummaryPageSelect?: (pageNumber: number) => void;
   source: PreviewFileSource;
@@ -182,8 +193,10 @@ export function PreviewRenderer({
   onScrollToPageNumberConsumed,
   source,
   scrollRootRef,
+  mediaActions,
 }: {
   displayMode: FilePreviewDisplayMode;
+  mediaActions?: ReactElement | null;
   onSummaryPageSelect?: (pageNumber: number) => void;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   scrollToPageNumber?: number | null;
@@ -205,6 +218,7 @@ export function PreviewRenderer({
       onScrollToPageNumberConsumed={onScrollToPageNumberConsumed}
       source={source}
       scrollRootRef={scrollRootRef}
+      mediaActions={mediaActions}
     />
   );
 }
@@ -322,7 +336,7 @@ export function FilePreviewShell({
   ]
     .filter(Boolean)
     .join(' ');
-  const pill = state.status !== 'loading' && !readerMode ? (
+  const pill = state.status !== 'loading' && !readerMode && !passivePlayback ? (
     // Hold the pill until the source resolves: while loading, `previewable` is
     // false, so the primary would briefly be "Open with default app" and a click
     // in that window would open the file externally instead of toggling the
@@ -335,7 +349,19 @@ export function FilePreviewShell({
       primaryOpen={primaryOpen}
       menuActions={menuActions}
       meta={meta}
-      placement={metadataFallback ? 'footer' : passivePlayback ? 'media' : 'overlay'}
+      placement={metadataFallback ? 'footer' : 'overlay'}
+    />
+  ) : null;
+  const mediaActions = state.status !== 'loading' && !readerMode && passivePlayback ? (
+    <FilePreviewPill
+      previewable={previewable}
+      expanded={expanded}
+      onToggleExpand={toggleExpanded}
+      primaryMode="none"
+      primaryOpen={primaryOpen}
+      menuActions={menuActions}
+      meta={meta}
+      placement="media-control"
     />
   ) : null;
   return (
@@ -354,11 +380,12 @@ export function FilePreviewShell({
             scrollToPageNumber={effectiveExpanded ? scrollToPageNumber : null}
             onScrollToPageNumberConsumed={consumeScrollToPageNumber}
             scrollRootRef={previewRef}
+            mediaActions={mediaActions}
           />
         )}
-        {metadataFallback || passivePlayback ? pill : null}
+        {metadataFallback ? pill : null}
       </div>
-      {metadataFallback || passivePlayback ? null : pill}
+      {metadataFallback ? null : pill}
       {previewable && !readerMode && !passivePlayback ? (
         <div
           aria-label="Resize preview"
@@ -548,7 +575,7 @@ async function toggleMediaFullscreen(ownerDocument: Document, media: HTMLVideoEl
   await media.requestFullscreen();
 }
 
-function AudioPreview({ source }: PreviewRendererProps) {
+function AudioPreview({ mediaActions, source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const { src, error } = useMediaSourceUrl(source);
   const mediaRef = useRef<HTMLAudioElement | null>(null);
@@ -559,40 +586,80 @@ function AudioPreview({ source }: PreviewRendererProps) {
   useMediaKeyboardShortcuts(mediaRef, Boolean(src));
   if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
   return (
-    <div className="file-preview-audio-frame" data-preserve-selection>
+    <MediaPreviewPlayer
+      actions={mediaActions}
+      kind="audio"
+    >
       <audio
         ref={setMediaRef}
         className="file-preview-media file-preview-audio"
-        controls
         controlsList="nodownload noplaybackrate noremoteplayback"
         data-preserve-selection
         preload="metadata"
+        slot="media"
         src={src}
         tabIndex={0}
       />
-    </div>
+    </MediaPreviewPlayer>
   );
 }
 
-function VideoPreview({ source }: PreviewRendererProps) {
+function VideoPreview({ mediaActions, source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const { src, error } = useMediaSourceUrl(source);
   const mediaRef = useRef<HTMLVideoElement | null>(null);
   useMediaKeyboardShortcuts(mediaRef, Boolean(src));
   if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
   return (
-    <video
-      ref={mediaRef}
-      className="file-preview-media file-preview-video"
-      controls
-      controlsList="nodownload noplaybackrate noremoteplayback"
+    <MediaPreviewPlayer
+      actions={mediaActions}
+      kind="video"
+    >
+      <video
+        ref={mediaRef}
+        className="file-preview-media file-preview-video"
+        controlsList="nodownload noplaybackrate noremoteplayback"
+        data-preserve-selection
+        disablePictureInPicture
+        disableRemotePlayback
+        preload="metadata"
+        slot="media"
+        src={src}
+        tabIndex={0}
+      />
+    </MediaPreviewPlayer>
+  );
+}
+
+function MediaPreviewPlayer({
+  actions,
+  children,
+  kind,
+}: {
+  actions?: ReactElement | null;
+  children: ReactElement;
+  kind: 'audio' | 'video';
+}) {
+  const isAudio = kind === 'audio';
+  return (
+    <MediaController
+      audio={isAudio}
+      className={`file-preview-media-player file-preview-media-player--${kind}`}
       data-preserve-selection
-      disablePictureInPicture
-      disableRemotePlayback
-      preload="metadata"
-      src={src}
-      tabIndex={0}
-    />
+      keyboardControl
+      noAutohide={isAudio}
+    >
+      {children}
+      <MediaControlBar className="file-preview-media-controls">
+        <MediaPlayButton className="file-preview-media-button" />
+        <MediaTimeDisplay className="file-preview-media-time" showDuration noToggle />
+        <MediaTimeRange className="file-preview-media-timeline" />
+        <MediaMuteButton className="file-preview-media-button" />
+        <MediaVolumeRange className="file-preview-media-volume" />
+        {isAudio ? null : <MediaFullscreenButton className="file-preview-media-button" />}
+        {actions}
+      </MediaControlBar>
+    </MediaController>
   );
 }
 
