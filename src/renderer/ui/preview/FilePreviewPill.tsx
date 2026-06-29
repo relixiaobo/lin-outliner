@@ -29,7 +29,7 @@ interface FilePreviewPillProps {
   /** A quiet caption (type · size · pages) shown as the `⋯` menu header. */
   meta?: string | null;
   /** Overlay preview content by default; footer keeps metadata cards in normal flow. */
-  placement?: 'overlay' | 'footer';
+  placement?: 'overlay' | 'footer' | 'media';
 }
 
 /**
@@ -77,7 +77,11 @@ export function FilePreviewPill({
 
   return (
     <div
-      className={`file-preview-pill ${placement === 'footer' ? 'file-preview-pill--footer' : ''}`}
+      className={[
+        'file-preview-pill',
+        placement === 'footer' ? 'file-preview-pill--footer' : '',
+        placement === 'media' ? 'file-preview-pill--media' : '',
+      ].filter(Boolean).join(' ')}
       data-preserve-selection
       onMouseDown={(event) => event.stopPropagation()}
     >

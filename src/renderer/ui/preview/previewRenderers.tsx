@@ -303,6 +303,7 @@ export function FilePreviewShell({
     'file-node-preview',
     `file-node-preview--${displayMode}`,
     metadataFallback ? 'file-node-preview--metadata' : '',
+    passivePlayback ? 'file-node-preview--media' : '',
     readerMode ? 'file-node-preview--reader' : '',
     resizedHeight !== undefined ? 'resized' : '',
     previewable ? (effectiveExpanded ? 'expanded' : 'collapsed') : '',
@@ -310,7 +311,12 @@ export function FilePreviewShell({
   const previewStyle = resizedHeight !== undefined
     ? ({ '--file-preview-resized-height': `${resizedHeight}px` } as CSSProperties)
     : undefined;
-  const bodyClass = ['file-node-body', metadataFallback ? 'file-node-body--metadata' : '', readerMode ? 'file-node-body--reader' : '']
+  const bodyClass = [
+    'file-node-body',
+    metadataFallback ? 'file-node-body--metadata' : '',
+    passivePlayback ? 'file-node-body--media' : '',
+    readerMode ? 'file-node-body--reader' : '',
+  ]
     .filter(Boolean)
     .join(' ');
   const pill = state.status !== 'loading' && !readerMode ? (
@@ -326,7 +332,7 @@ export function FilePreviewShell({
       primaryOpen={primaryOpen}
       menuActions={menuActions}
       meta={meta}
-      placement={metadataFallback || passivePlayback ? 'footer' : 'overlay'}
+      placement={metadataFallback ? 'footer' : passivePlayback ? 'media' : 'overlay'}
     />
   ) : null;
   return (

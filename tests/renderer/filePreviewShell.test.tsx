@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 describe('FilePreviewShell media controls', () => {
-  test('renders media action menu below the player so native scrub controls stay interactive', () => {
+  test('renders video controls in a flat media stage with same-layer actions', () => {
     const rendered = render(
       <FilePreviewShell
         state={{ status: 'ready', source: mediaSource('video/mp4') }}
@@ -24,7 +24,27 @@ describe('FilePreviewShell media controls', () => {
     );
 
     expect(rendered.document.querySelector('.file-preview-video[data-preserve-selection]')).not.toBeNull();
-    expect(rendered.document.querySelector('.file-preview-pill--footer')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-body--media')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--media')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill--media')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill--footer')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill-primary')).toBeNull();
+  });
+
+  test('renders audio controls with the same flat media stage', () => {
+    const rendered = render(
+      <FilePreviewShell
+        state={{ status: 'ready', source: mediaSource('audio/mpeg') }}
+        onOpenTarget={() => undefined}
+        menuActions={[menuAction('reveal')]}
+      />,
+    );
+
+    expect(rendered.document.querySelector('.file-preview-audio[data-preserve-selection]')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-body--media')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--media')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill--media')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill--footer')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-pill-primary')).toBeNull();
   });
 
