@@ -910,6 +910,8 @@ describe('agent node tools', () => {
     expect(result.details.data!.beforeOutline).toContain('Root');
     expect(result.details.data!.afterOutline).toContain('Root updated');
     expect(visible).toMatchObject({ ok: true });
+    expect(visible.instructions).toContain('Use node_delete for removals');
+    expect(visible.instructions).not.toContain('removed marked lines were moved to Trash');
     expect(visible).not.toHaveProperty('tool');
     expect(visible).not.toHaveProperty('status');
     expect(visible.data).not.toHaveProperty('kind');
@@ -949,6 +951,73 @@ describe('agent node tools', () => {
     ]);
     expect(core.state().nodes[ownerField]!.parentId).toBe(root);
     expect(core.state().nodes[ownerValue]!.parentId).toBe(ownerField);
+  });
+
+  test('node_edit reports ignored field clears with the current applied outline', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+    const statusField = mustFocus(core.createInlineField(root, null, 'Status', 'plain'));
+    const statusValue = mustFocus(core.createNode(statusField, null, 'Done'));
+
+    const result = await executeRawTool<{
+      status: 'updated' | 'unchanged';
+      afterOutline?: string;
+    }>(core, 'node_edit', {
+      node_id: root,
+      old_string: `  - %%node:${statusField}%% Status::\n    - %%node:${statusValue}%% Done`,
+      new_string: `  - %%node:${statusField}%% Status::`,
+    });
+
+    expect(result.details.ok).toBe(true);
+    expect(result.details.data!.afterOutline).toContain(`- %%node:${statusValue}%% Done`);
+    expect(result.details.warnings?.some((warning) =>
+      warning.includes('Status') && warning.includes('node_delete'))).toBe(true);
+    expect(core.state().nodes[statusField]!.children).toEqual([statusValue]);
+  });
+
+  test('node_edit inserts new fields before existing ordinary children', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Project'));
+    const task = mustFocus(core.createNode(root, null, 'Task'));
+
+    const envelope = await executeTool<{
+      createdNodeIds?: string[];
+      updatedFields?: string[];
+    }>(core, 'node_edit', {
+      node_id: root,
+      old_string: `- %%node:${root}%% Project`,
+      new_string: `- %%node:${root}%% Project\n  - Status:: Active`,
+    });
+
+    expect(envelope.ok).toBe(true);
+    const statusField = envelope.data!.updatedFields![0]!;
+    expect(core.state().nodes[statusField]!.type).toBe('fieldEntry');
+    expect(core.state().nodes[root]!.children).toEqual([statusField, task]);
+  });
+
+  test('node_edit rejects field value kind changes before mutating the root', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+    const target = mustFocus(core.createNode(today, null, 'Target'));
+    const statusField = mustFocus(core.createInlineField(root, null, 'Status', 'plain'));
+    const statusValue = mustFocus(core.createNode(statusField, null, 'Open'));
+    const targetRef = nodeRef(core, target, 'Target');
+
+    const envelope = await executeTool(core, 'node_edit', {
+      node_id: root,
+      old_string: `- %%node:${root}%% Task\n  - %%node:${statusField}%% Status::\n    - %%node:${statusValue}%% Open`,
+      new_string: `- %%node:${root}%% Renamed\n  - %%node:${statusField}%% Status::\n    - %%node:${statusValue}%% ${targetRef}`,
+    });
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('invalid_field_value_kind');
+    expect(envelope.instructions).toContain('node_delete');
+    expect(core.state().nodes[root]!.content.text).toBe('Task');
+    expect(core.state().nodes[statusValue]!.content.text).toBe('Open');
+    expect(core.state().nodes[statusValue]!.type).toBeUndefined();
   });
 
   test('node_edit updates saved search config without pruning ordinary children', async () => {

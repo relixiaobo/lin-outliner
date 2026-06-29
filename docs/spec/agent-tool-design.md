@@ -560,7 +560,9 @@ Rules:
   marker is alone or followed by whitespace; `[x]title` stays literal text.
 - `Field:: value` sets a single field value.
 - `Field::` followed by indented value lines sets a multi-value field.
-- `Field::` without values clears that field in edit results.
+- `Field::` without values is a clear request; `node_edit` preserves existing
+  values and returns a warning. Delete field entries or value nodes explicitly
+  with `node_delete`.
 - Date field values use the canonical date field language from
   `docs/spec/date-field-values.md`: `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or
   `start/end` with `/`, for example `2026-05-20/2026-05-24`. Tool prompts and
@@ -1071,6 +1073,10 @@ Outline edit semantics:
 - Existing target/field/value lines should preserve their `%%node:id%%` marker.
   Unmarked field lines create/upsert fields by name; unmarked value lines append
   values. Omitted fields and values are preserved.
+- Annotated field value ids can update text in place only when the stored value
+  kind stays compatible. Changing a plain value into a reference, a reference into
+  text, or a reference target is rejected before mutation; delete the old value id
+  and create the replacement value explicitly.
 - TypeScript replaces the matched fragment, parses the resulting single-node
   outline, validates it, renders a preview, and then applies it after approval
   when needed.
@@ -1389,6 +1395,7 @@ load current node state
   -> validate annotated ids are unique and belong to the target node, its fields, or its field values
   -> resolve tags, fields, refs, dates, search/view directives
   -> reject child-structure edits outside saved-search query config
+  -> reject annotated field value kind/target changes before mutation
   -> render preview
   -> wait for approval when required
   -> apply the single-node edit as one transaction and one undo group

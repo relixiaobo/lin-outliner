@@ -246,7 +246,7 @@ function nodeInstructions<TData>(envelope: ToolEnvelope<TData>, data: NodeVisibl
 function editOutcomeGuidance(outcome: NodeInstructionContext['outcome']): string {
   if (outcome === 'preview') return 'Preview only; no edit was applied. Re-run without preview_only to apply it.';
   if (outcome === 'unchanged') return 'No change was needed; the targeted nodes already match the requested content.';
-  return 'Edit applied. Marked existing nodes were updated in place; unmarked new lines were created; removed marked lines were moved to Trash.';
+  return 'Edit applied. Marked existing nodes were updated in place; unmarked new lines were created; omitted fields, values, and children were preserved. Use node_delete for removals.';
 }
 
 function resultReferences(data: NodeVisibleResult): NodeVisibleReference[] | undefined {
