@@ -165,7 +165,7 @@ describe('provider config startup reconcile (Part A)', () => {
     });
   });
 
-  test('a keyless row with a remote baseUrl is pruned', async () => {
+  test('a keyless row with a remote baseUrl survives reconcile but is not usable without auth', async () => {
     await writeProviderFileRaw({
       activeProviderId: 'my-proxy',
       providers: [
@@ -176,8 +176,12 @@ describe('provider config startup reconcile (Part A)', () => {
     await reconcileProviderConfig();
 
     const view = await getProviderSettings();
-    expect(view.providers.find((p) => p.providerId === 'my-proxy')).toBeUndefined();
-    expect(view.activeProviderId).toBeUndefined();
+    expect(view.providers.find((p) => p.providerId === 'my-proxy')).toBeDefined();
+    expect(view.activeProviderId).toBe('my-proxy');
+    expect(await getActiveProviderRuntimeConfig()).toBeNull();
+    expect((await readProviderFileRaw()).providers).toEqual([
+      { providerId: 'my-proxy', baseUrl: 'https://proxy.example.com/v1', enabled: true },
+    ]);
   });
 
   test('a stale active pointer is repointed to the surviving credentialed provider', async () => {

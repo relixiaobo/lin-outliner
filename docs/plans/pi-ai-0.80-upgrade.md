@@ -118,14 +118,21 @@ registering a provider on demand:
   replace a built-in catalog provider with the same id;
 - provider name / renderer-facing events: Tenon's `providerId`;
 - base URL: Tenon's `baseUrl`;
-- auth: explicit request key override, stored API key, or request auth inherited
-  from the external provider's pi auth (without inheriting that provider's
-  default `baseUrl`); keyless auth is accepted only for local endpoints
-  (`localhost`, loopback, `*.localhost`) and is represented as an inert client key
-  because the OpenAI SDK requires an `apiKey` option even when the endpoint does
-  not validate it;
+- auth: explicit request key override, otherwise local endpoints
+  (`localhost`, loopback, `*.localhost`) receive an inert client key before any
+  stored/ambient provider key is considered, otherwise stored API key or request
+  auth inherited from the external provider's pi auth (without inheriting that
+  provider's default `baseUrl`); keyless auth is accepted only for local
+  endpoints because the OpenAI SDK requires an `apiKey` option even when the
+  endpoint does not validate it;
 - API implementation: `openAICompletionsApi()`;
-- model: the selected/probed OpenAI-compatible model id.
+- model: the selected/probed OpenAI-compatible model id. When the id is also a
+  known catalog model, the synthetic OpenAI-compatible model keeps the catalog's
+  neutral sizing/capability metadata (`contextWindow`, `maxTokens`, `reasoning`,
+  thinking map, cost/input) while switching provider/API/base URL for dispatch;
+  provider-specific dispatch knobs such as headers/compat stay tied to the
+  custom endpoint's provider/API/base URL instead of being copied from the
+  catalog model.
 
 This keeps existing custom endpoint behavior while routing requests through the
 new pi provider collection. It also keeps any configured custom `baseUrl` on Chat

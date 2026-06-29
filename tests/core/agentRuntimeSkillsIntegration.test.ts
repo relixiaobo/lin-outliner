@@ -376,6 +376,11 @@ describe('agent runtime skill integration', () => {
     expect(seenModels[0]?.provider).toBe(piCustomProviderId('openai'));
     expect(seenModels[0]?.api).toBe('openai-completions');
     expect(seenModels[0]?.baseUrl).toBe('https://proxy.example.com/v1');
+    const catalogModel = piModels().getModel('openai', modelId);
+    expect(catalogModel).toBeDefined();
+    expect(seenModels[0]?.contextWindow).toBe(catalogModel?.contextWindow);
+    expect(seenModels[0]?.maxTokens).toBe(catalogModel?.maxTokens);
+    expect(seenModels[0]?.reasoning).toBe(catalogModel?.reasoning);
 
     const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
     const started = events.find((event) => event.type === 'assistant_message.started');

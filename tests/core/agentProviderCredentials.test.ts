@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { createAssistantMessageEventStream, createProvider, fauxAssistantMessage, fauxText, type OAuthCredential } from '@earendil-works/pi-ai';
+import {
+  createAssistantMessageEventStream,
+  createProvider,
+  fauxAssistantMessage,
+  fauxText,
+  type Credential,
+  type OAuthCredential,
+} from '@earendil-works/pi-ai';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -20,7 +27,20 @@ let oauthRefreshImpl: (credential: OAuthCredential) => Promise<OAuthCredential> 
 let oauthToApiKeyImpl: (credential: OAuthCredential) => Promise<string> = async (credential) => credential.access;
 
 mock.module('electron', () => ({
-  app: { getPath: () => currentUserData },
+  app: {
+    getPath: () => currentUserData,
+    getVersion: () => 'test',
+  },
+  BrowserWindow: class {
+    static getAllWindows() {
+      return [];
+    }
+  },
+  session: {
+    fromPartition: () => ({
+      clearStorageData: async () => undefined,
+    }),
+  },
   safeStorage: {
     isEncryptionAvailable: () => { throw new Error('safeStorage should not be used'); },
     encryptString: () => { throw new Error('safeStorage should not be used'); },
@@ -83,6 +103,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   piModels().deleteProvider(piCustomProviderId('openai'));
+  piModels().deleteProvider('env-api-key-test');
   await rm(currentUserData, { recursive: true, force: true });
 });
 
@@ -223,32 +244,51 @@ describe('provider credential resolver', () => {
     }
   });
 
-  test('custom OpenAI-compatible provider registration updates when base URL changes', () => {
+  test('custom OpenAI-compatible provider registration replaces stale base URLs for a model id', () => {
     ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'http://localhost:1234/v1', modelId: 'proxy-model' });
     ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'https://proxy.example.com/v1', modelId: 'proxy-model' });
+    ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'http://localhost:1234/v1', modelId: 'proxy-model' });
 
     const models = piModels().getModels(piCustomProviderId('openai'));
-    expect(models.some((model) => model.id === 'proxy-model' && model.baseUrl === 'http://localhost:1234/v1')).toBe(true);
-    expect(models.some((model) => model.id === 'proxy-model' && model.baseUrl === 'https://proxy.example.com/v1')).toBe(true);
+    expect(models.filter((model) => model.id === 'proxy-model').map((model) => model.baseUrl)).toEqual([
+      'http://localhost:1234/v1',
+    ]);
+    expect(piModels().getProvider(piCustomProviderId('openai'))?.baseUrl).toBe('http://localhost:1234/v1');
   });
 
-  test('custom OpenAI-compatible providers allow keyless local endpoints only', async () => {
-    ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'http://localhost:1234/v1', modelId: 'local-model' });
-    ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'https://proxy.example.com/v1', modelId: 'remote-model' });
+  test('custom OpenAI-compatible providers prefer an inert key for local endpoints', async () => {
+    const savedOpenAIKey = process.env.OPENAI_API_KEY;
+    try {
+      process.env.OPENAI_API_KEY = 'env-openai-key';
+      await setProviderApiKey('openai', 'stored-openai-key');
+      ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'http://localhost:1234/v1', modelId: 'local-model' });
 
-    const localAuth = await piModels().getAuth(createOpenAICompatibleModel({
-      providerId: 'openai',
-      modelId: 'local-model',
-      baseUrl: 'http://localhost:1234/v1',
-    }));
-    expect(localAuth?.auth.apiKey).toBe('local-endpoint');
+      const localAuth = await piModels().getAuth(createOpenAICompatibleModel({
+        providerId: 'openai',
+        modelId: 'local-model',
+        baseUrl: 'http://localhost:1234/v1',
+      }));
+      expect(localAuth?.auth.apiKey).toBe('local-endpoint');
+    } finally {
+      restoreEnv('OPENAI_API_KEY', savedOpenAIKey);
+    }
+  });
 
-    const remoteAuth = await piModels().getAuth(createOpenAICompatibleModel({
-      providerId: 'openai',
-      modelId: 'remote-model',
-      baseUrl: 'https://proxy.example.com/v1',
-    }));
-    expect(remoteAuth).toBeUndefined();
+  test('custom OpenAI-compatible providers reject keyless remote endpoints', async () => {
+    const savedOpenAIKey = process.env.OPENAI_API_KEY;
+    try {
+      delete process.env.OPENAI_API_KEY;
+      ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'https://proxy.example.com/v1', modelId: 'remote-model' });
+
+      const remoteAuth = await piModels().getAuth(createOpenAICompatibleModel({
+        providerId: 'openai',
+        modelId: 'remote-model',
+        baseUrl: 'https://proxy.example.com/v1',
+      }));
+      expect(remoteAuth).toBeUndefined();
+    } finally {
+      restoreEnv('OPENAI_API_KEY', savedOpenAIKey);
+    }
   });
 
   test('custom OpenAI-compatible streams dispatch through the internal provider and report the external provider id', async () => {
@@ -357,5 +397,64 @@ describe('secret file at rest', () => {
     const onDisk = JSON.parse(await readFile(secretPath(), 'utf8')) as { enc?: string; credentials?: Record<string, unknown> };
     expect(onDisk.enc).toBeUndefined();
     expect(onDisk.credentials?.openai).toEqual({ type: 'api_key', key: 'sk-new' });
+  });
+
+  test('preserves pi api-key credential env across credential-store round trips', async () => {
+    piModels().setProvider(createProvider({
+      id: 'env-api-key-test',
+      name: 'Env API key test',
+      auth: {
+        apiKey: {
+          name: 'Env API key test',
+          resolve: async ({ credential }) => credential
+            ? { auth: { apiKey: credential.key }, env: credential.env, source: 'stored credential' }
+            : undefined,
+        },
+      },
+      models: [{
+        id: 'env-model',
+        name: 'Env Model',
+        api: 'openai-completions',
+        provider: 'env-api-key-test',
+        baseUrl: '',
+        reasoning: false,
+        input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 128000,
+        maxTokens: 8192,
+      }],
+      api: {
+        stream: () => { throw new Error('stream should not be called'); },
+        streamSimple: () => { throw new Error('streamSimple should not be called'); },
+      },
+    }));
+
+    const store = piModels() as unknown as {
+      credentials: {
+        modify(
+          providerId: string,
+          fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+        ): Promise<Credential | undefined>;
+      };
+    };
+    await store.credentials.modify('env-api-key-test', async () => ({
+      type: 'api_key',
+      key: 'sk-env',
+      env: { CLOUDFLARE_ACCOUNT_ID: 'acct', CLOUDFLARE_GATEWAY_ID: 'gateway' },
+    }));
+
+    const onDisk = JSON.parse(await readFile(secretPath(), 'utf8')) as { credentials?: Record<string, unknown> };
+    expect(onDisk.credentials?.['env-api-key-test']).toEqual({
+      type: 'api_key',
+      key: 'sk-env',
+      env: { CLOUDFLARE_ACCOUNT_ID: 'acct', CLOUDFLARE_GATEWAY_ID: 'gateway' },
+    });
+
+    const auth = await piModels().getAuth(piModels().getModels('env-api-key-test')[0]!);
+    expect(auth).toEqual({
+      auth: { apiKey: 'sk-env' },
+      env: { CLOUDFLARE_ACCOUNT_ID: 'acct', CLOUDFLARE_GATEWAY_ID: 'gateway' },
+      source: 'stored credential',
+    });
   });
 });

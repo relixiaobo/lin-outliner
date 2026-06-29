@@ -85,7 +85,7 @@ type StoredAgentRuntimeSettings = Partial<AgentRuntimeSettings> & {
 // invent one. A provider holds at most one stored credential: signing in writes
 // an `oauth` entry, pasting a key writes an `api_key` entry, switching replaces.
 // `managed` providers never appear here; env keys are read, never stored.
-type ApiKeyCredential = { type: 'api_key'; key: string };
+type ApiKeyCredential = { type: 'api_key'; key?: string; env?: Record<string, string> };
 type OAuthStoredCredential = { type: 'oauth' } & OAuthCredentials;
 type AuthCredential = ApiKeyCredential | OAuthStoredCredential;
 
@@ -577,12 +577,12 @@ async function findUsableProvider(
  * 1. If the secrets file cannot be read, do nothing: never prune, never write.
  *    The credential picture is unknown.
  * 2. Judge a row only by DURABLE, launch-stable signals: a stored secret-file
- *    credential, a local `baseUrl`, and the provider kind. Ambient env keys are
- *    NOT consulted — they are launch-context-dependent (a Finder/Dock launch
- *    inherits no shell env), so judging on them would delete a deliberate row
- *    whenever the env happens to be absent. Managed (Bedrock/Vertex) and oauth
- *    kinds are exempt outright: managed credentials are always ambient, and oauth
- *    rows carry a stored credential.
+ *    credential, any deliberate `baseUrl`, and the provider kind. Ambient env
+ *    keys are NOT consulted — they are launch-context-dependent (a Finder/Dock
+ *    launch inherits no shell env), so judging on them would delete a deliberate
+ *    row whenever the env happens to be absent. Managed (Bedrock/Vertex) and
+ *    oauth kinds are exempt outright: managed credentials are always ambient, and
+ *    oauth rows carry a stored credential.
  */
 export async function reconcileProviderConfig(): Promise<void> {
   const { secrets, readable } = await readSecretsWithStatus();
@@ -625,14 +625,14 @@ function reconcileProviderFile(file: ProviderConfigFile, secrets: SecretFile): b
 
 /**
  * The literal bug shape, and ONLY it: a plain api-key catalog row with no durable
- * stored credential and no local `baseUrl`. Exempts managed/oauth kinds and any
- * row with a stored credential or a local endpoint. Never consults ambient env (see
- * `reconcileProviderConfig` rule 2).
+ * stored credential and no `baseUrl`. Exempts managed/oauth kinds and any row
+ * with a stored credential or deliberate endpoint. Never consults ambient env
+ * (see `reconcileProviderConfig` rule 2).
  */
 function isPrunableJunkRow(provider: AgentProviderConfig, secrets: SecretFile): boolean {
   if (getProviderAuthKind(provider.providerId) !== 'api-key') return false; // exempt managed + oauth
   if (secrets.credentials[provider.providerId]) return false;               // durable stored credential
-  if (isLocalBaseUrl(provider.baseUrl)) return false;                       // local endpoint
+  if (provider.baseUrl) return false;                                       // deliberate endpoint
   return true;
 }
 
@@ -742,12 +742,12 @@ async function mutateSecretFileAsync(mutator: (file: SecretFile) => Promise<void
 
 function toPiCredential(credential: AuthCredential | undefined): Credential | undefined {
   if (!credential) return undefined;
-  if (credential.type === 'api_key') return { type: 'api_key', key: credential.key };
+  if (credential.type === 'api_key') return { type: 'api_key', key: credential.key, env: credential.env };
   return credential;
 }
 
 function fromPiCredential(credential: Credential): AuthCredential {
-  if (credential.type === 'api_key') return { type: 'api_key', key: credential.key ?? '' };
+  if (credential.type === 'api_key') return { type: 'api_key', key: credential.key, env: credential.env };
   return credential;
 }
 

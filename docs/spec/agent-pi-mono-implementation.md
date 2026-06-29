@@ -353,7 +353,14 @@ bounded: short timeout, tiny output budget, cancellable UI.
    a reasoning-capable model reasons by default rather than silently running off.
    The catalog fallback is resolved lazily, so an explicit, resolvable model never
    triggers a catalog ranking sort.
-3. Build the provider `Model` object with the connection's auth / base URL.
+3. Build the provider `Model` object with the connection's auth / base URL. For
+   custom OpenAI-compatible endpoints, dispatch uses the internal
+   `tenon-custom:<providerId>` provider and `openai-completions`, but a known
+   catalog model id keeps its neutral sizing/capability metadata
+   (`contextWindow`, `maxTokens`, `reasoning`, thinking map, cost/input) so
+   compaction and overflow math do not fall back to generic custom-model
+   defaults. Provider-specific dispatch knobs such as model headers and
+   compatibility overrides are not copied onto the custom endpoint model.
 
 Assistant events still record the actual `providerId`, `modelId`, `usage`, and
 thinking level so Details / debug stay faithful — the connection-only storage
@@ -464,18 +471,20 @@ into the "needs a key, yet offers *Remove provider*" contradiction:
     degrading `readSecretFileSafe`.
   - **Prune only on durable signals.** A row is *junk* only if it is a plain
     `api-key`-kind catalog row with **no stored secret-file credential and no
-    `baseUrl`**. Managed (Bedrock/Vertex) and oauth kinds are exempt outright, and
-    ambient `getEnvApiKey` is **not** consulted — a Finder/Dock launch inherits no
-    shell env, so judging on env would delete a deliberate row whenever the env
-    happens to be absent. `activeProviderId` is repointed only when unset or
-    structurally dangling (no surviving row by that id), targeting the first row
-    with a durable stored credential; read paths
+    `baseUrl`**. Any `baseUrl` is a deliberate endpoint row and survives startup
+    cleanup; if it is keyless and remote, runtime usability still depends on
+    stored or ambient auth. Managed (Bedrock/Vertex) and oauth kinds are exempt
+    outright, and ambient `getEnvApiKey` is **not** consulted — a Finder/Dock
+    launch inherits no shell env, so judging on env would delete a deliberate row
+    whenever the env happens to be absent. `activeProviderId` is repointed only
+    when unset or structurally dangling (no surviving row by that id), targeting
+    the first row with a durable stored credential; read paths
     (`resolveUsableActiveProvider` / `getActiveProviderRuntimeConfig`) still fall
     back through env/managed at runtime.
 
-  A legit keyless row (a local `baseUrl`) survives. This makes the contradiction
-  structurally impossible — a junk uncredentialed row has no row after the next
-  launch — rather than papering over it in the renderer, while keeping it off the
+  A legit keyless endpoint row survives; only catalog junk rows are removed. This
+  makes the contradiction structurally impossible for the legacy junk shape
+  without deleting deliberate endpoint configuration, and keeps cleanup off the
   read path so a write never races concurrent writers. Per the pre-launch
   no-migration policy this reconcile (plus a dev `userData` wipe) is the only
   cleanup; there is no versioned migration.

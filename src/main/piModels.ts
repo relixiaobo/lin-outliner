@@ -30,6 +30,7 @@ export interface PiCustomProviderConfig {
   providerId: string;
   baseUrl?: string;
   modelId?: string;
+  catalogModel?: Model<Api> | null;
 }
 
 let credentialStorage: PiCredentialStorage | null = null;
@@ -107,16 +108,11 @@ export function ensurePiCustomProvider(config: PiCustomProviderConfig): void {
   const internalProviderId = piCustomProviderId(config.providerId);
   const modelId = config.modelId ?? '__tenon_openai_compatible_probe__';
   const existingModels = piModels().getModels(internalProviderId);
-  if (
-    piModels().getProvider(internalProviderId)
-    && existingModels.some((model) => model.id === modelId && model.baseUrl === config.baseUrl)
-  ) {
-    return;
-  }
   const model = createOpenAICompatibleModel({
     providerId: config.providerId,
     modelId,
     baseUrl: config.baseUrl,
+    catalogModel: config.catalogModel,
   });
   piModels().setProvider(createProvider({
     id: internalProviderId,
@@ -127,11 +123,11 @@ export function ensurePiCustomProvider(config: PiCustomProviderConfig): void {
         name: `${config.providerId} API key`,
         resolve: async ({ credential: requestCredential, model }) => {
           if (requestCredential?.key) return { auth: { apiKey: requestCredential.key }, source: 'request override' };
+          if (isLocalBaseUrl(model.baseUrl)) return { auth: { apiKey: 'local-endpoint' }, source: 'local endpoint' };
           const storedCredential = await readCredential(config.providerId);
           if (storedCredential?.type === 'api_key' && storedCredential.key) return { auth: { apiKey: storedCredential.key }, source: 'stored credential' };
           const externalAuth = await resolveExternalProviderRequestAuth(config.providerId);
           if (externalAuth) return externalAuth;
-          if (isLocalBaseUrl(model.baseUrl)) return { auth: { apiKey: 'local-endpoint' }, source: 'local endpoint' };
           return undefined;
         },
       },
@@ -142,24 +138,26 @@ export function ensurePiCustomProvider(config: PiCustomProviderConfig): void {
 }
 
 export function createOpenAICompatibleModel(
-  config: { providerId: string; modelId: string; baseUrl?: string },
+  config: { providerId: string; modelId: string; baseUrl?: string; catalogModel?: Model<Api> | null },
 ): Model<'openai-completions'> {
+  const catalogModel = config.catalogModel;
   return {
     id: config.modelId,
-    name: config.modelId,
+    name: catalogModel?.name ?? config.modelId,
     api: 'openai-completions',
     provider: piCustomProviderId(config.providerId),
     baseUrl: config.baseUrl ?? '',
-    reasoning: false,
-    input: ['text'],
-    cost: {
+    reasoning: catalogModel?.reasoning ?? false,
+    thinkingLevelMap: catalogModel?.thinkingLevelMap,
+    input: catalogModel?.input ?? ['text'],
+    cost: catalogModel?.cost ?? {
       input: 0,
       output: 0,
       cacheRead: 0,
       cacheWrite: 0,
     },
-    contextWindow: DEFAULT_CUSTOM_CONTEXT_WINDOW,
-    maxTokens: DEFAULT_CUSTOM_MAX_TOKENS,
+    contextWindow: catalogModel?.contextWindow ?? DEFAULT_CUSTOM_CONTEXT_WINDOW,
+    maxTokens: catalogModel?.maxTokens ?? DEFAULT_CUSTOM_MAX_TOKENS,
   };
 }
 
@@ -171,7 +169,7 @@ function ensureProviderForModel(model: Model<Api>): void {
 }
 
 function mergeCustomProviderModels(existingModels: readonly Model<Api>[], model: Model<'openai-completions'>): Model<Api>[] {
-  const next = existingModels.filter((existing) => existing.id !== model.id || existing.baseUrl !== model.baseUrl);
+  const next = existingModels.filter((existing) => existing.id !== model.id);
   next.push(model);
   return next;
 }

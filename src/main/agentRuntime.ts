@@ -7562,11 +7562,10 @@ function resolveModelOverride(
   const parsed = parseProviderQualifiedModel(requested, isKnownProviderId);
   const providerId = parsed?.providerId ?? providerConfig.providerId;
   const modelId = parsed?.modelId ?? requested;
-  if (providerId === providerConfig.providerId && providerConfig.baseUrl) {
-    ensurePiCustomProvider({ ...providerConfig, modelId });
-    return createOpenAICompatibleModel({ ...providerConfig, modelId });
-  }
   const knownModel = findKnownModel(providerId, modelId);
+  if (providerId === providerConfig.providerId && providerConfig.baseUrl) {
+    return createCustomEndpointModel(providerConfig, modelId, knownModel);
+  }
   if (knownModel) return knownModel;
   return null;
 }
@@ -7580,8 +7579,7 @@ function resolveProviderCatalogModel(config: AgentProviderRuntimeConfig): Model<
   const first = rankedModels(config.providerId)[0];
   if (config.baseUrl) {
     const modelId = first?.id ?? '__tenon_openai_compatible_probe__';
-    ensurePiCustomProvider({ ...config, modelId });
-    return createOpenAICompatibleModel({ ...config, modelId });
+    return createCustomEndpointModel(config, modelId, first);
   }
   if (!first) return null;
   return first;
@@ -7636,6 +7634,15 @@ function defaultThinkingLevel(model: Model<Api>): AgentReasoningLevel {
     AGENT_REASONING_LEVELS.has(item as AgentReasoningLevel)
   ));
   return defaultThinkingLevelFor(supported);
+}
+
+function createCustomEndpointModel(
+  config: AgentProviderRuntimeConfig,
+  modelId: string,
+  catalogModel?: Model<Api> | null,
+): Model<Api> {
+  ensurePiCustomProvider({ ...config, modelId, catalogModel });
+  return createOpenAICompatibleModel({ ...config, modelId, catalogModel });
 }
 
 /**
