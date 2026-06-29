@@ -314,6 +314,21 @@ Standalone agent items (not part of the program):
   default is sticky-at-setup vs always-newest (escalate that taste call). UI gate = light/dark visual;
   i18n en/zh. Adjacent to (not blocked by) `anthropic-auth-clarity` (that's connection *setup* UX;
   this is model *selection* UX).
+- **node-edit-orthogonal-primitives** (P1, **PM-ratified 2026-06-29, build-ready, plan-track**) —
+  make **delete-by-omission unrepresentable** in the node mutation surface. Remove `node_edit`'s
+  outline-reconcile (`old_string:"*"` + multi-node fragment) — the sole carrier of a data-loss-class
+  footgun that trashes existing children absent from a desired outline (a lossy ≤50-child read drove a
+  ≤500-child overwrite, deletion never modeled in preview). Reduce the write surface to four orthogonal,
+  id-addressed primitives — **create / edit-one / move / delete** — so no tool ever takes "the desired
+  complete subtree" and every deletion is an explicit by-id act. Mostly subtraction (drop
+  `applyOutlineRootToExistingNode` / `syncNormalChildren` / positional `syncFieldEntries` / the `"*"`
+  branch of `replaceOutline`, ~270-line engine) plus one named addition (a name-keyed `upsertField(s)`
+  reusing `syncFieldValues` / `createField`). `move` / `merge_from_node_ids` / `replace_with_reference_to`
+  stay `node_edit` actions; promoting a dedicated `node_move` is an optional cosmetic follow-up.
+  Self-contained — engine helpers have no callers outside `agentNodeTools.ts`; the only skill consumer
+  `memory-dream` already edits in place. **Shape (a), one PR.** Gate = `/code-review` + real-run verify;
+  spec sync `docs/spec/agent-tool-design.md` in the same change. See
+  `docs/plans/node-edit-orthogonal-primitives.md`.
 
 ### Files & media
 
