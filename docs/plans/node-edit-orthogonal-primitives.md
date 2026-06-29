@@ -45,7 +45,8 @@ and so *cannot* delete by omission:
 
 So the reconcile action is the *only* carrier of delete-by-omission **and** the
 *only* redundant primitive. Removing it eliminates the bug and shrinks the
-surface at once. This plan is subtraction, not addition.
+surface at once — mostly subtraction, with one small named addition (a name-keyed
+field-upsert helper; see Design).
 
 ## Design
 
@@ -72,16 +73,32 @@ children. It may set:
   **scoped to that node's own text** (exactly Claude Code's Edit on a one-line
   "file": targeted, uniqueness-checked, never delete-by-omission).
 - **description, checkbox, tags.**
-- **fields** — by **upsert-by-name**: setting field "Due" sets/creates it; it
-  never prunes unlisted fields. Remove a field by deleting it explicitly.
+- **fields** — **upsert-by-name**: setting field "Due" creates-or-updates *Due*
+  and replaces *Due*'s value(s); it never touches a field you did not name.
+  Replacing a *named* field's value(s) is commission (you named it); omitting a
+  *different* field never prunes it. Remove a field/value via `node_delete` by id.
 
-Removed: the `"*"` whole-outline mode, the multi-node fragment reconcile, and the
-engine behind them — `applyOutlineRootToExistingNode`, the children path of
-`syncOutlineNodeInPlace`, `syncNormalChildren`, `syncFieldEntries`,
-`syncFieldValues`, `sequenceEditPlan`, and the `"*"` branch of `replaceOutline`
-(`:1188-1497`). `merge_from_node_ids` and `replace_with_reference_to` are
-explicit by-id ops (merge trashes only the named `mergeFromNodeIds`, `:626`) —
-not part of the footgun; keep them (placement per OQ1).
+This is mostly subtraction, with one small, named addition for the field path:
+
+**Removed** — the `"*"` whole-outline mode, the multi-node fragment reconcile, and
+the child / full-list reconcile behind them: `applyOutlineRootToExistingNode`, the
+children path of `syncOutlineNodeInPlace`, `syncNormalChildren`, the *positional,
+prune-by-omission* `syncFieldEntries` (`:1299-1353`), and the `"*"` branch of
+`replaceOutline`.
+
+**Retained & reused** — `syncFieldValues` (`:1355`), `createField`, and
+`sequenceEditPlan` survive untouched: setting a *named* field's values is
+commission, so the value-setting machinery is exactly what upsert needs.
+
+**Added (the lone non-subtraction)** — a small **name-keyed** `upsertField(s)`
+helper: for each named field, find-by-name → `syncFieldValues` if it exists, else
+`createField`; never trash an unnamed field. It replaces `syncFieldEntries`'
+positional, prune-by-omission matching with name-keyed upsert. Naming it here so
+the "subtraction" framing stays honest — this is the one piece of new code.
+
+`merge_from_node_ids` and `replace_with_reference_to` stay as explicit by-id
+actions (merge trashes only the named `mergeFromNodeIds`, `:626`) — not part of
+the footgun (placement per the Decisions below).
 
 ### The one invariant, applied recursively
 
@@ -154,13 +171,17 @@ A repo audit confirms the change lands cleanly:
 Internal order:
 
 1. Restrict the `node_edit` **outline-edit action** to a single node in place
-   (drop `"*"` and the multi-node fragment reconcile; fields → upsert-by-name).
+   (drop `"*"` and the multi-node fragment reconcile). Add the name-keyed
+   `upsertField(s)` helper for fields (reusing `syncFieldValues` / `createField`).
    Keep the `move` / `merge_from_node_ids` / `replace_with_reference_to` actions
    unchanged. Update the schema (`agentNodeToolSchemas.ts:182`) and description.
 2. Confirm `node_create` / move / `node_delete` cover every reshape need; turn
    the removed path into a redirecting error ("node_edit no longer edits subtrees
    — use node_create, node_edit action:move, or node_delete").
-3. Delete the reconcile engine and now-dead helpers (`:1188-1497`).
+3. Delete the child / full-list reconcile — `applyOutlineRootToExistingNode`,
+   `syncNormalChildren`, the children path of `syncOutlineNodeInPlace`, positional
+   `syncFieldEntries`, the `"*"` branch of `replaceOutline` — while **retaining**
+   `syncFieldValues` / `createField` / `sequenceEditPlan` for the upsert path.
 4. Update the teaching surface from the audit — `agentNodeToolGuidance.ts:19,98,99`
    and the `memory-dream` wording if needed.
 5. Spec sync: `docs/spec/agent-tool-design.md` (the four-primitive surface);
