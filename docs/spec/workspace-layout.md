@@ -382,8 +382,9 @@ Source authority stays source-specific:
   referenced conversation and payload id. Normal conversation payloads can be
   previewed; debug-only payloads are not exposed through the normal preview
   router. Renderer code never receives a payload file path.
-- `url` targets are modeled but only render metadata/unsupported until the URL
-  reader PR ships.
+- `url` targets are first-class loose previews. Ordinary `http(s)` links from the
+  outliner and agent transcript route into Tenon as URL preview targets by default;
+  the explicit fallback action opens the URL in the system browser.
 
 Renderers are directory listing, image, PDF (`pdf.js`; every page is stacked
 vertically and scrolled to navigate — each page renders lazily as it nears the
@@ -395,12 +396,15 @@ continuous vertical scrollport with page-like gaps. Each section's wrapper is
 always present (reserving a placeholder height) but its iframe mounts lazily as
 the section nears the scroll viewport and stays mounted thereafter, so opening a
 long book never spins up every section's document at once; book bytes load only
-through the capped preview bytes API), text/source-code with Shiki, Markdown with `react-markdown` +
+through the capped preview bytes API), sandboxed static HTML (`.html`, `.htm`, or
+`text/html`) with a source-mode fallback, text/source-code with Shiki, Markdown with `react-markdown` +
 `remark-gfm`, CSV/TSV table, and fallback metadata. The PDF renderer reads bytes
 only through the preview source API, uses a bundled same-origin worker, and falls
 back to the metadata renderer if parsing or rendering fails. Markdown renderer
-output does not enable raw HTML execution; arbitrary HTML files render as text or
-fallback. EPUB sections render in `blob:` iframes, so renderer CSP permits
+output does not enable raw HTML execution. HTML file preview renders in a sandboxed
+iframe with same-origin access for host-side link interception but no script
+execution; `http(s)` links inside the frame route back through Tenon preview by
+default. EPUB sections render in `blob:` iframes, so renderer CSP permits
 `frame-src blob:` while keeping packaged `script-src 'self'`; dev adds only the
 fixed hash for Vite React Refresh's inline preamble and widens `connect-src` for
 Vite HMR. Scripted EPUB content is not a supported preview capability, and remote

@@ -2442,6 +2442,7 @@ function inferMimeType(filePath: string): string {
   if (extension === '.json') return 'application/json';
   if (extension === '.xml') return 'application/xml';
   if (extension === '.yaml' || extension === '.yml') return 'application/yaml';
+  if (extension === '.html' || extension === '.htm') return 'text/html';
   if (TEXT_ATTACHMENT_EXTENSIONS.has(extension)) return 'text/plain';
   return 'application/octet-stream';
 }

@@ -18,6 +18,20 @@ function fileSource(overrides: Partial<Extract<PreviewSourceDescriptor, { kind: 
 }
 
 describe('file preview renderers', () => {
+  test('treats HTML as previewable', () => {
+    expect(isPreviewableSource(fileSource({
+      name: 'index.html',
+      ext: 'html',
+      mimeType: 'text/html',
+    }))).toBe(true);
+
+    expect(isPreviewableSource(fileSource({
+      name: 'legacy.htm',
+      ext: 'htm',
+      mimeType: 'application/octet-stream',
+    }))).toBe(true);
+  });
+
   test('treats EPUB as previewable while generic ZIP stays metadata-only', () => {
     expect(isPreviewableSource(fileSource({
       name: 'book.epub',

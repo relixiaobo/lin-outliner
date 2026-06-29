@@ -6,6 +6,10 @@ import { formatChatSourceReferenceMarker } from '../../src/core/referenceMarkup'
 import { AgentInlineReferenceText } from '../../src/renderer/ui/agent/AgentInlineReferenceText';
 import { AgentAssistantContent } from '../../src/renderer/ui/agent/AgentMessageFrame';
 import { AgentMarkdown } from '../../src/renderer/ui/agent/AgentMarkdown';
+import {
+  PREVIEW_TARGET_OPEN_EVENT,
+  type PreviewTargetOpenDetail,
+} from '../../src/renderer/ui/preview/previewEvents';
 
 // The agent-vs-outliner file-chip split is by LOCATION, and that location is decided in
 // exactly ONE place: the live assistant message body (AgentAssistantContent) carries
@@ -20,6 +24,7 @@ import { AgentMarkdown } from '../../src/renderer/ui/agent/AgentMarkdown';
 interface Rendered {
   cleanup: () => void;
   document: Document;
+  window: Window;
 }
 
 const mounted: Rendered[] = [];
@@ -37,7 +42,7 @@ function render(node: React.ReactNode): Rendered {
   act(() => {
     root.render(node);
   });
-  const rendered: Rendered = { cleanup: () => act(() => root.unmount()), document };
+  const rendered: Rendered = { cleanup: () => act(() => root.unmount()), document, window };
   mounted.push(rendered);
   return rendered;
 }
@@ -84,6 +89,36 @@ describe('transcript file-chip location marker', () => {
     expect(ref?.querySelector('.inline-ref-chat-label')?.textContent).toBe('when the user asked in Chinese');
   });
 
+  test('AgentMarkdown routes ordinary http links to Tenon preview events', () => {
+    const rendered = render(
+      <AgentMarkdown index={0} keyPrefix="probe" text="Read [the docs](https://example.com/docs)." />,
+    );
+    const opened: PreviewTargetOpenDetail[] = [];
+    rendered.window.addEventListener(PREVIEW_TARGET_OPEN_EVENT, (event) => {
+      opened.push((event as CustomEvent<PreviewTargetOpenDetail>).detail);
+    });
+    const link = rendered.document.querySelector<HTMLAnchorElement>('a[href="https://example.com/docs"]');
+    expect(link).not.toBeNull();
+
+    act(() => {
+      const event = new rendered.window.Event('click', { bubbles: true, cancelable: true });
+      Object.defineProperties(event, {
+        ctrlKey: { value: false },
+        metaKey: { value: false },
+      });
+      link?.dispatchEvent(event);
+    });
+
+    expect(opened).toEqual([{
+      newPane: false,
+      target: {
+        kind: 'url',
+        url: 'https://example.com/docs',
+        label: 'the docs',
+      },
+    }]);
+  });
+
   test('AgentInlineReferenceText renders chat-source markers with the shared chat icon and label spans', () => {
     const marker = formatChatSourceReferenceMarker('in the weather chat', {
       kind: 'chat-source',
@@ -106,6 +141,7 @@ function installDomGlobals(window: Window) {
   Object.assign(globalThis, {
     document: window.document,
     window,
+    CustomEvent: window.CustomEvent,
     HTMLElement: window.HTMLElement,
     Node: window.Node,
   });

@@ -173,6 +173,24 @@ describe('preview source commands', () => {
     });
   });
 
+  test('resolves local HTML files as text/html preview sources', async () => {
+    const filePath = join(root, 'index.html');
+    await writeFile(filePath, '<!doctype html><title>Preview</title>');
+
+    const resolved = await handlePreviewCommand('preview_resolve_source', {
+      target: { kind: 'local-file', path: filePath, entryKind: 'file' },
+    }, previewContext()) as PreviewResolveSourceResult;
+
+    expect(resolved.source).toMatchObject({
+      kind: 'file',
+      sourceKind: 'local-file',
+      name: 'index.html',
+      ext: 'html',
+      mimeType: 'text/html',
+      entryKind: 'file',
+    });
+  });
+
   function previewContext(overrides: Partial<PreviewCommandContext> = {}): PreviewCommandContext {
     return {
       agentLocalFileRoots: [root],
@@ -194,6 +212,7 @@ describe('preview source commands', () => {
 function inferMimeType(filePath: string): string {
   const extension = extname(filePath).toLowerCase();
   if (extension === '.md' || extension === '.markdown') return 'text/markdown';
+  if (extension === '.html' || extension === '.htm') return 'text/html';
   if (extension === '.json') return 'application/json';
   return 'text/plain';
 }

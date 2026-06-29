@@ -31,6 +31,7 @@ import {
 } from './AgentInlineReferenceText';
 import { AgentChatSourceReference } from './AgentChatSourceReference';
 import { ReadOnlyCodeBlock } from '../editor/CodeBlockSurface';
+import { openUrlPreviewFromClick } from '../preview/urlPreviewRouting';
 
 interface AgentMarkdownProps {
   index?: DocumentIndex;
@@ -192,7 +193,18 @@ function useMarkdownComponents(
         );
       }
       return (
-        <a href={href} rel="noreferrer" target="_blank" {...rest}>
+        <a
+          href={href}
+          onClick={(event) => {
+            if (!href) return;
+            if (!openUrlPreviewFromClick(event.nativeEvent, href, reactNodeText(children))) return;
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          rel="noreferrer"
+          target="_blank"
+          {...rest}
+        >
           {children}
         </a>
       );

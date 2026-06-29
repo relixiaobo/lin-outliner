@@ -288,6 +288,7 @@ function extensionForMimeType(mimeType: string): string {
   if (normalized === 'text/csv') return '.csv';
   if (normalized === 'text/tab-separated-values') return '.tsv';
   if (normalized === 'text/plain') return '.txt';
+  if (normalized === 'text/html') return '.html';
   if (normalized === 'application/json') return '.json';
   if (normalized === 'application/xml' || normalized === 'text/xml') return '.xml';
   if (normalized === 'application/yaml' || normalized === 'text/yaml') return '.yaml';

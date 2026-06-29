@@ -37,6 +37,7 @@ import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
 import { formatBytes } from './fileNode';
 import { DocumentOutlineRail, type DocumentOutlineItem } from './DocumentOutlineRail';
 import { FilePreviewPill, type FilePreviewMenuAction } from './FilePreviewPill';
+import { dispatchPreviewTargetOpen } from './previewEvents';
 import {
   previewReadingPositionKey,
   readPdfReadingPosition,
@@ -151,6 +152,7 @@ const FILE_PREVIEW_RENDERERS: PreviewRendererEntry[] = [
   { id: 'epub', match: isEpubSource, component: EpubPreviewLoader },
   { id: 'audio', match: isAudioSource, component: AudioPreview },
   { id: 'video', match: isVideoSource, component: VideoPreview },
+  { id: 'html', match: isHtmlSource, component: HtmlPreview },
   { id: 'markdown', match: isMarkdownSource, component: MarkdownPreview },
   { id: 'delimited', match: isDelimitedSource, component: DelimitedPreview },
   { id: 'text', match: isTextSource, component: TextPreview },
@@ -466,6 +468,94 @@ function VideoPreview({ source }: PreviewRendererProps) {
   const { src, error } = useMediaSourceUrl(source);
   if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
   return <video className="file-preview-media file-preview-video" controls preload="metadata" src={src} />;
+}
+
+function HtmlPreview({ source }: PreviewRendererProps) {
+  const textState = usePreviewText(source.target);
+  const labels = useT().shell.filePreview;
+  const [showSource, setShowSource] = useState(false);
+  const [sourceHtml, setSourceHtml] = useState(() => plainCodeHtml(''));
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (textState.status !== 'ready') {
+      setSourceHtml(plainCodeHtml(''));
+      return () => {
+        cancelled = true;
+      };
+    }
+    setSourceHtml(plainCodeHtml(textState.text));
+    void highlightCode(textState.text, 'html').then((next) => {
+      if (!cancelled) setSourceHtml(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [textState]);
+
+  const interceptFrameLinks = useCallback(() => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+    doc.addEventListener('click', (event) => {
+      const target = event.target instanceof Element
+        ? event.target.closest<HTMLAnchorElement>('a[href]')
+        : null;
+      if (!target) return;
+      const href = target.href;
+      try {
+        const url = new URL(href);
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+        event.preventDefault();
+        dispatchPreviewTargetOpen({
+          target: {
+            kind: 'url',
+            url: url.toString(),
+            label: target.textContent?.trim() || url.toString(),
+          },
+        });
+      } catch {
+        // Let non-URL anchors behave inside the sandboxed static document.
+      }
+    });
+  }, []);
+
+  if (textState.status === 'loading') return <PreviewMessage>{labels.loading}</PreviewMessage>;
+  if (textState.status === 'error') return <PreviewMessage>{textState.error === 'too-large' ? labels.tooLarge : labels.unavailable}</PreviewMessage>;
+  return (
+    <div className="file-preview-html">
+      <div className="file-preview-html-mode" role="group" aria-label="HTML preview mode">
+        <button
+          aria-pressed={!showSource}
+          className="file-preview-html-mode-button"
+          onClick={() => setShowSource(false)}
+          type="button"
+        >
+          {labels.htmlRenderMode}
+        </button>
+        <button
+          aria-pressed={showSource}
+          className="file-preview-html-mode-button"
+          onClick={() => setShowSource(true)}
+          type="button"
+        >
+          {labels.htmlSourceMode}
+        </button>
+      </div>
+      {showSource ? (
+        <div className="file-preview-code file-preview-html-source" data-preserve-selection data-preview-text dangerouslySetInnerHTML={{ __html: sourceHtml }} />
+      ) : (
+        <iframe
+          className="file-preview-html-frame"
+          onLoad={interceptFrameLinks}
+          ref={iframeRef}
+          sandbox="allow-same-origin"
+          srcDoc={textState.text}
+          title={labels.htmlFrameTitle({ name: source.name })}
+        />
+      )}
+    </div>
+  );
 }
 
 function MarkdownPreview({ source }: PreviewRendererProps) {
@@ -1374,6 +1464,11 @@ function isAudioSource(source: PreviewFileSource): boolean {
 
 function isVideoSource(source: PreviewFileSource): boolean {
   return source.entryKind === 'file' && source.mimeType.toLowerCase().startsWith('video/');
+}
+
+function isHtmlSource(source: PreviewFileSource): boolean {
+  return source.entryKind === 'file'
+    && (source.ext === 'html' || source.ext === 'htm' || source.mimeType.toLowerCase() === 'text/html');
 }
 
 function isPdfSource(source: PreviewFileSource): boolean {
