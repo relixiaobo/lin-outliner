@@ -1,6 +1,5 @@
 import type { AfterToolCallResult } from '@earendil-works/pi-agent-core';
 import { isContextOverflow } from '@earendil-works/pi-ai';
-import { completeSimple } from '@earendil-works/pi-ai/compat';
 import type {
   Api,
   AssistantMessage,
@@ -45,10 +44,11 @@ import {
   type ToolResultBudgetState,
 } from './agentToolOutputSlimming';
 import { providerStreamOptionsFromRuntimeSettings, type AgentProviderRuntimeConfig } from './agentSettings';
+import { piCompleteSimple } from './piModels';
 import type { AgentRuntimeSettings } from '../core/types';
 import { awaitWithAbort, isAbortError, throwIfAborted } from './agentAwaitWithAbort';
 
-type CompleteSimpleFn = typeof completeSimple;
+type CompleteSimpleFn = typeof piCompleteSimple;
 
 const AUTO_COMPACT_RESERVED_OUTPUT_TOKENS = 20_000;
 const AUTO_COMPACT_BUFFER_TOKENS = 13_000;
@@ -435,7 +435,7 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
       const request = buildCompactSummaryRequest(messagesToSummarize, options.customInstructions, {
         mode: options.mode,
       });
-      const response = await awaitWithAbort((this.host.completeSimpleFn ?? completeSimple)(model, {
+      const response = await awaitWithAbort((this.host.completeSimpleFn ?? piCompleteSimple)(model, {
         messages: [request],
         tools: [],
       }, {

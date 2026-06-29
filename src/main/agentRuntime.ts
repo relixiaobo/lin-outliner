@@ -13,17 +13,10 @@ import {
   getSupportedThinkingLevels,
   isContextOverflow,
 } from '@earendil-works/pi-ai';
-import {
-  completeSimple,
-  getModels,
-  getProviders,
-  streamSimple,
-} from '@earendil-works/pi-ai/compat';
 import type {
   Api,
   AssistantMessage,
   ImageContent as PiImageContent,
-  KnownProvider,
   Message,
   Model,
   SimpleStreamOptions,
@@ -164,6 +157,14 @@ import {
   type AgentProviderRuntimeConfig,
   type StoredBuiltInAgentProfile,
 } from './agentSettings';
+import {
+  createOpenAICompatibleModel,
+  ensurePiCustomProvider,
+  piCompleteSimple,
+  piFindModel,
+  piProviders,
+  piStreamSimple,
+} from './piModels';
 import { parseProviderQualifiedModel } from '../core/agentModelId';
 import {
   appendAgentToolPermissionGrant,
@@ -385,7 +386,7 @@ const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
   'image/webp',
 ]);
 
-type CompleteSimpleFn = typeof completeSimple;
+type CompleteSimpleFn = typeof piCompleteSimple;
 type ErrorReporter = (report: ErrorReport) => void | Promise<void>;
 
 /**
@@ -3071,7 +3072,7 @@ export class AgentRuntime {
     for (let attempt = 0; ; attempt += 1) {
       throwIfAborted(signal);
       const request = buildCompactSummaryRequest(messagesToSummarize, customInstructions);
-      const response = await awaitWithAbort((this.options.completeSimpleFn ?? completeSimple)(model, {
+      const response = await awaitWithAbort((this.options.completeSimpleFn ?? piCompleteSimple)(model, {
         messages: [request],
         tools: [],
       }, {
@@ -7270,7 +7271,7 @@ function createConfiguredAgent(
       tools: buildTools(),
       messages,
     },
-    streamFn: createProviderConfiguredStreamFn(options.streamFn ?? streamSimple as StreamFn, options.runtimeSettingsLoader),
+    streamFn: createProviderConfiguredStreamFn(options.streamFn ?? piStreamSimple as StreamFn, options.runtimeSettingsLoader),
     onPayload: async (payload, payloadModel) => {
       const payloadWithBreakpoints = applyAgentPromptCacheBreakpoints(payload, payloadModel, {
         enabled: options.l0CacheBreakpointEnabled ?? false,
@@ -7564,6 +7565,7 @@ function resolveModelOverride(
       : knownModel;
   }
   if (providerId === providerConfig.providerId && providerConfig.baseUrl) {
+    ensurePiCustomProvider({ ...providerConfig, modelId });
     return createOpenAICompatibleModel({ ...providerConfig, modelId });
   }
   return null;
@@ -7575,6 +7577,7 @@ function resolveModelOverride(
  * custom endpoint with no catalog (where the agent profile must name the model).
  */
 function resolveProviderCatalogModel(config: AgentProviderRuntimeConfig): Model<Api> | null {
+  if (config.baseUrl) ensurePiCustomProvider(config);
   const first = rankedModels(config.providerId)[0];
   if (!first) return null;
   return config.baseUrl ? { ...first, baseUrl: config.baseUrl } : first;
@@ -7652,7 +7655,7 @@ function resolveAgentModelEffort(
 
 let knownProviderIdsCache: Set<string> | null = null;
 function isKnownProviderId(providerId: string): boolean {
-  if (!knownProviderIdsCache) knownProviderIdsCache = new Set(getProviders());
+  if (!knownProviderIdsCache) knownProviderIdsCache = new Set(piProviders());
   return knownProviderIdsCache.has(providerId);
 }
 
@@ -7743,32 +7746,10 @@ function createConfigurationErrorAgent(conversationId: string, message: string, 
 
 function findKnownModel(providerId: string, modelId: string): Model<Api> | null {
   try {
-    return getModels(providerId as KnownProvider).find((model) => model.id === modelId) as Model<Api> | undefined ?? null;
+    return piFindModel(providerId, modelId);
   } catch {
     return null;
   }
-}
-
-function createOpenAICompatibleModel(
-  config: { providerId: string; modelId: string; baseUrl?: string },
-): Model<'openai-completions'> {
-  return {
-    id: config.modelId,
-    name: config.modelId,
-    api: 'openai-completions',
-    provider: config.providerId,
-    baseUrl: config.baseUrl ?? '',
-    reasoning: false,
-    input: ['text'],
-    cost: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-    },
-    contextWindow: 128000,
-    maxTokens: 8192,
-  };
 }
 
 function createConfigurationErrorStreamFn(messageText: string): StreamFn {

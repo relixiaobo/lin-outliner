@@ -2,15 +2,7 @@ import * as electron from 'electron';
 import {
   getSupportedThinkingLevels,
 } from '@earendil-works/pi-ai';
-import {
-  findEnvKeys,
-  getEnvApiKey,
-  getModels,
-  getProviders,
-  completeSimple,
-} from '@earendil-works/pi-ai/compat';
-import type { Api, KnownProvider, Model, OAuthCredentials, OAuthProviderId, SimpleStreamOptions } from '@earendil-works/pi-ai';
-import { getOAuthApiKey, getOAuthProvider } from '@earendil-works/pi-ai/oauth';
+import type { Api, Credential, Model, OAuthCredentials, SimpleStreamOptions } from '@earendil-works/pi-ai';
 import { join } from 'node:path';
 import type {
   AgentDelegationPermissionMode,
@@ -29,6 +21,17 @@ import type {
 import { parseDateSchedule } from '../core/dateSchedule';
 import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile, writeJsonFile } from './jsonFileStore';
 import { compareModels } from './modelRanking';
+import {
+  configurePiCredentialStorage,
+  createOpenAICompatibleModel,
+  ensurePiCustomProvider,
+  piCompleteSimple,
+  piModelsForProvider,
+  piProviderAuthKind,
+  piProviderHasAmbientAuth,
+  piProviders,
+  piResolveAuthApiKey,
+} from './piModels';
 
 const PROVIDERS_FILE = 'agent-providers.json';
 const SECRETS_FILE = 'agent-secrets.json';
@@ -93,14 +96,8 @@ interface SecretEnvelope {
   credentials?: Record<string, AuthCredential>;
 }
 
-// pi-ai inlines `'amazon-bedrock'` / `'google-vertex'` in getEnvApiKey, so we
-// mirror that one small managed-provider set here.
-const MANAGED_PROVIDERS = new Set<string>(['amazon-bedrock', 'google-vertex']);
-
 function getProviderAuthKind(providerId: string): AgentProviderAuthKind {
-  if (getOAuthProvider(providerId as OAuthProviderId)) return 'oauth';
-  if (MANAGED_PROVIDERS.has(providerId)) return 'managed';
-  return 'api-key';
+  return piProviderAuthKind(providerId);
 }
 
 const AGENT_REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
@@ -124,6 +121,12 @@ export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
   apiKey?: string;
 }
 
+configurePiCredentialStorage({
+  read: readPiCredential,
+  modify: modifyPiCredential,
+  delete: deletePiCredential,
+});
+
 export async function getProviderSettings(): Promise<AgentProviderSettingsView> {
   // A pure read — never destructive. Junk-row cleanup happens once at startup via
   // `reconcileProviderConfig`, NOT on every read: a write on the read path both
@@ -139,8 +142,8 @@ export async function getAgentRuntimeSettings(): Promise<AgentRuntimeSettings> {
 export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRuntimeConfig | null> {
   const file = await readProviderFile();
   const secrets = await readSecretFileSafe();
-  const active = file.providers.find((provider) => provider.providerId === file.activeProviderId && providerHasCredential(provider, secrets))
-    ?? file.providers.find((provider) => providerHasCredential(provider, secrets))
+  const active = await findUsableProvider(file.providers.filter((provider) => provider.providerId === file.activeProviderId), secrets)
+    ?? await findUsableProvider(file.providers, secrets)
     ?? null;
   if (!active) return null;
   // Connection only. Do not bake the key here — this path is sync and cannot await
@@ -314,7 +317,7 @@ export async function ensureProviderConfig(providerIdInput: string): Promise<voi
 /** A provider's catalog models, sorted by the shared ranking (newest, thinking-first). */
 export function rankedModels(providerId: string): Model<Api>[] {
   try {
-    const models = getModels(providerId as KnownProvider) as Model<Api>[];
+    const models = piModelsForProvider(providerId);
     return [...models].sort((left, right) => compareModels(providerId, left, right));
   } catch {
     return [];
@@ -379,30 +382,23 @@ export async function getProviderSecretStatus(providerIdInput: string): Promise<
 }
 
 /**
- * The single resolver for a provider's usable API key. Auth-kind-agnostic: it
- * tries the stored credential, then env (which also yields the `"<authenticated>"`
- * sentinel for managed Bedrock/Vertex). For an oauth credential it auto-refreshes
- * via pi-ai's getOAuthApiKey and persists the rotated tokens. This is the body of
- * pi-agent-core's per-call `getApiKey` hook, so refresh happens at request time.
+ * The single resolver for a provider's usable API key. Auth-kind-agnostic and
+ * backed by pi `Models.getAuth()`, so OAuth refresh runs through the
+ * CredentialStore lock and persists rotated tokens before request dispatch.
  * Per that hook's contract it never throws — it returns undefined when no key.
  */
 export async function getProviderApiKey(providerIdInput: string): Promise<string | undefined> {
   try {
     const providerId = normalizeProviderId(providerIdInput);
-    const secrets = await readSecretFileSafe();
-    const cred = secrets.credentials[providerId];
-    if (cred?.type === 'api_key') return cred.key;
-    if (cred?.type === 'oauth') {
-      const { type: _type, ...stored } = cred;
-      const result = await getOAuthApiKey(providerId as OAuthProviderId, { [providerId]: stored });
-      if (result) {
-        if (oauthCredentialsChanged(stored, result.newCredentials)) {
-          await persistOAuthCredential(providerId, result.newCredentials);
-        }
-        return result.apiKey;
-      }
-    }
-    return getEnvApiKey(providerId);
+    const file = await readProviderFile();
+    const providerConfig = file.providers.find((provider) => provider.providerId === providerId);
+    if (providerConfig?.baseUrl) ensurePiCustomProvider(providerConfig);
+    const model = firstRankedModel(providerId);
+    const authModel = model
+      ?? (providerConfig?.baseUrl
+        ? createOpenAICompatibleModel({ providerId, modelId: '__tenon_openai_compatible_probe__', baseUrl: providerConfig.baseUrl })
+        : null);
+    return authModel ? piResolveAuthApiKey(authModel) : undefined;
   } catch {
     return undefined;
   }
@@ -424,18 +420,15 @@ export async function deleteProviderCredential(providerIdInput: string): Promise
   });
 }
 
-function oauthCredentialsChanged(a: OAuthCredentials, b: OAuthCredentials): boolean {
-  return a.access !== b.access || a.refresh !== b.refresh || a.expires !== b.expires;
-}
-
-function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): AgentProviderSettingsView {
-  const availableProviders = getAvailableProviders();
+async function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): Promise<AgentProviderSettingsView> {
+  const availableProviders = await getAvailableProviders();
   return {
     activeProviderId: file.activeProviderId,
     agent: normalizeAgentRuntimeSettings(file.agent),
-    providers: file.providers.map((provider): AgentProviderConfigView => {
+    providers: await Promise.all(file.providers.map(async (provider): Promise<AgentProviderConfigView> => {
+      if (provider.baseUrl) ensurePiCustomProvider(provider);
       const cred = secrets.credentials[provider.providerId];
-      const hasEnvApiKey = !!getEnvApiKey(provider.providerId);
+      const hasEnvApiKey = await piProviderHasAmbientAuth(provider.providerId);
       const authKind = getProviderAuthKind(provider.providerId);
       const oauthCred = cred?.type === 'oauth' ? cred : undefined;
       const hasStoredKey = cred?.type === 'api_key';
@@ -457,7 +450,7 @@ function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): AgentPro
         hasEnvApiKey,
         auth,
       };
-    }),
+    })),
     availableProviders,
   };
 }
@@ -518,14 +511,14 @@ function normalizeInteger(value: unknown, fallback: number | null, min: number):
   return normalized >= min ? normalized : fallback;
 }
 
-function getAvailableProviders(): AgentProviderOption[] {
-  return getProviders().map((providerId) => ({
+async function getAvailableProviders(): Promise<AgentProviderOption[]> {
+  return Promise.all(piProviders().map(async (providerId) => ({
     providerId,
     authKind: getProviderAuthKind(providerId),
-    hasEnvApiKey: !!getEnvApiKey(providerId),
-    envKeyNames: findEnvKeys(providerId) ?? [],
-    defaultBaseUrl: getModels(providerId)[0]?.baseUrl,
-    models: getModels(providerId)
+    hasEnvApiKey: await piProviderHasAmbientAuth(providerId),
+    envKeyNames: [],
+    defaultBaseUrl: piModelsForProvider(providerId)[0]?.baseUrl,
+    models: piModelsForProvider(providerId)
       .map((model): AgentModelOption => ({
         id: model.id,
         name: model.name,
@@ -535,7 +528,7 @@ function getAvailableProviders(): AgentProviderOption[] {
         maxTokens: model.maxTokens,
       }))
       .sort((left, right) => compareModels(providerId, left, right)),
-  }));
+  })));
 }
 
 function normalizeConfig(input: AgentProviderConfigInput): AgentProviderConfig {
@@ -544,12 +537,21 @@ function normalizeConfig(input: AgentProviderConfigInput): AgentProviderConfig {
   return { providerId, baseUrl, enabled: input.enabled ?? true };
 }
 
-function providerHasCredential(provider: AgentProviderConfig, secrets: SecretFile): boolean {
-  // A stored credential (api_key or oauth login), an env key, or a managed ambient
-  // sentinel all count. Kind-agnostic, mirroring the resolver. Used by the runtime
-  // active-provider resolution — which may legitimately consult ambient env — NOT
-  // by the prune, which keys only on durable signals (see `isPrunableJunkRow`).
-  return provider.enabled && Boolean(secrets.credentials[provider.providerId] || getEnvApiKey(provider.providerId));
+async function providerCanRun(provider: AgentProviderConfig, secrets: SecretFile): Promise<boolean> {
+  if (!provider.enabled) return false;
+  if (secrets.credentials[provider.providerId]) return true;
+  if (provider.baseUrl) ensurePiCustomProvider(provider);
+  return piProviderHasAmbientAuth(provider.providerId);
+}
+
+async function findUsableProvider(
+  providers: AgentProviderConfig[],
+  secrets: SecretFile,
+): Promise<AgentProviderConfig | undefined> {
+  for (const provider of providers) {
+    if (await providerCanRun(provider, secrets)) return provider;
+  }
+  return undefined;
 }
 
 /**
@@ -699,6 +701,46 @@ async function mutateSecretFile(mutator: (file: SecretFile) => void): Promise<Se
   }, PRIVATE_JSON_FILE_OPTIONS);
 }
 
+async function readPiCredential(providerId: string): Promise<Credential | undefined> {
+  return toPiCredential((await readSecretFileSafe()).credentials[providerId]);
+}
+
+async function modifyPiCredential(
+  providerId: string,
+  fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+): Promise<Credential | undefined> {
+  let nextCredential: Credential | undefined;
+  await mutateSecretFileAsync(async (secrets) => {
+    const currentCredential = toPiCredential(secrets.credentials[providerId]);
+    nextCredential = await fn(currentCredential) ?? currentCredential;
+    if (nextCredential) secrets.credentials[providerId] = fromPiCredential(nextCredential);
+  });
+  return nextCredential;
+}
+
+async function deletePiCredential(providerId: string): Promise<void> {
+  await mutateSecretFile((secrets) => {
+    delete secrets.credentials[providerId];
+  });
+}
+
+async function mutateSecretFileAsync(mutator: (file: SecretFile) => Promise<void>): Promise<SecretFile> {
+  return updateJsonFile(secretPath(), { credentials: {} }, normalizeSecretFile, async (file) => {
+    await mutator(file);
+  }, PRIVATE_JSON_FILE_OPTIONS);
+}
+
+function toPiCredential(credential: AuthCredential | undefined): Credential | undefined {
+  if (!credential) return undefined;
+  if (credential.type === 'api_key') return { type: 'api_key', key: credential.key };
+  return credential;
+}
+
+function fromPiCredential(credential: Credential): AuthCredential {
+  if (credential.type === 'api_key') return { type: 'api_key', key: credential.key ?? '' };
+  return credential;
+}
+
 function normalizeSecretFile(value: unknown): SecretFile {
   const envelope = value && typeof value === 'object' && !Array.isArray(value)
     ? value as SecretEnvelope
@@ -758,7 +800,7 @@ export async function testProviderConnection(input: {
       try {
         const models = await listOpenAiCompatibleModels(baseUrl, apiKey);
         if (models.length > 0) {
-          await completeSimple(openAiCompatibleProbeModel(providerId, models[0], baseUrl), {
+          await piCompleteSimple(createOpenAICompatibleModel({ providerId, modelId: models[0], baseUrl }), {
             messages: [{ role: 'user', content: 'Ping', timestamp: Date.now() }],
           }, { apiKey, timeoutMs: 8000, maxTokens: 1 });
           return { success: true, message: `Connection successful. ${models.length} model(s) available.` };
@@ -774,7 +816,7 @@ export async function testProviderConnection(input: {
 
     if (catalogModel) {
       const model = baseUrl ? { ...catalogModel, baseUrl } : { ...catalogModel };
-      await completeSimple(model as Model<any>, {
+      await piCompleteSimple(model as Model<any>, {
         messages: [{ role: 'user', content: 'Ping', timestamp: Date.now() }],
       }, { apiKey, timeoutMs: 8000, maxTokens: 1 });
       return { success: true, message: 'Connection successful.' };
@@ -807,26 +849,6 @@ export async function testProviderConnection(input: {
 
     return { success: false, message, statusCode };
   }
-}
-
-/**
- * A minimal OpenAI-compatible `Model` for a custom endpoint's connection probe —
- * mirrors the runtime's `createOpenAICompatibleModel` shape (kept local to avoid an
- * agentRuntime→agentSettings import cycle), enough for a bounded 1-token completion.
- */
-function openAiCompatibleProbeModel(providerId: string, modelId: string, baseUrl: string): Model<'openai-completions'> {
-  return {
-    id: modelId,
-    name: modelId,
-    api: 'openai-completions',
-    provider: providerId,
-    baseUrl,
-    reasoning: false,
-    input: ['text'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128000,
-    maxTokens: 8192,
-  };
 }
 
 /**

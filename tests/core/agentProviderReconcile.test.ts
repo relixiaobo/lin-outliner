@@ -16,10 +16,9 @@ mock.module('electron', () => ({
   app: { getPath: () => currentUserData },
 }));
 
-// Mirror the credential suite: only the oauth subpath is faked; the real pi-ai
-// (getProviders / getModels / getEnvApiKey) drives catalog + env + kind lookups.
+// Only the OAuth login subpath is faked; provider catalog/auth status comes from
+// the real pi Models collection.
 mock.module('@earendil-works/pi-ai/oauth', () => ({
-  getOAuthApiKey: async () => null,
   getOAuthProvider: (id: string) =>
     ['anthropic', 'github-copilot', 'openai-codex'].includes(id) ? { id, name: id } : undefined,
 }));
@@ -194,8 +193,8 @@ describe('provider config startup reconcile (Part A)', () => {
     expect((await readProviderFileRaw()).providers.map((p) => p.providerId)).toEqual(['openai', 'anthropic']);
   });
 
-  test('🟠 managed rows (Bedrock/Vertex) are exempt — never pruned without ambient env', async () => {
-    // No AWS/GCP env present (cleared in beforeEach), so getEnvApiKey returns nothing;
+  test('managed rows (Bedrock/Vertex) are exempt — never pruned without ambient env', async () => {
+    // No AWS/GCP env present (cleared in beforeEach), so auth resolution finds nothing;
     // managed rows must still survive because their credential is always ambient.
     await writeProviderFileRaw({
       providers: [

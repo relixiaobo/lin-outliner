@@ -1,18 +1,16 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { createProvider, type OAuthCredential } from '@earendil-works/pi-ai';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { piModels } from '../../src/main/piModels';
 
 type StoredOAuth = { refresh: string; access: string; expires: number };
 
 // ── Mutable test controls, read by the module mocks below ──
 let currentUserData = '';
-// getOAuthApiKey impl, overridden per test. Mirrors pi-ai's signature:
-// (providerId, { [id]: creds }) => { newCredentials, apiKey } | null
-let oauthApiKeyImpl: (
-  providerId: string,
-  creds: Record<string, StoredOAuth>,
-) => Promise<{ newCredentials: StoredOAuth; apiKey: string } | null> = async () => null;
+let oauthRefreshImpl: (credential: OAuthCredential) => Promise<OAuthCredential> = async (credential) => credential;
+let oauthToApiKeyImpl: (credential: OAuthCredential) => Promise<string> = async (credential) => credential.access;
 
 mock.module('electron', () => ({
   app: { getPath: () => currentUserData },
@@ -23,11 +21,7 @@ mock.module('electron', () => ({
   },
 }));
 
-// Only the oauth subpath is mocked (no other suite imports it, so this can't
-// leak into tests that use the real pi-ai). The env / managed fallback is
-// exercised through real process.env + the real getEnvApiKey instead.
 mock.module('@earendil-works/pi-ai/oauth', () => ({
-  getOAuthApiKey: (providerId: string, creds: Record<string, StoredOAuth>) => oauthApiKeyImpl(providerId, creds),
   getOAuthProvider: (id: string) =>
     ['anthropic', 'github-copilot', 'openai-codex'].includes(id) ? { id, name: id } : undefined,
 }));
@@ -49,7 +43,35 @@ function restoreEnv(name: string, value: string | undefined) {
 
 beforeEach(async () => {
   currentUserData = await mkdtemp(path.join(tmpdir(), 'lin-oauth-creds-'));
-  oauthApiKeyImpl = async () => null;
+  oauthRefreshImpl = async (credential) => credential;
+  oauthToApiKeyImpl = async (credential) => credential.access;
+  piModels().setProvider(createProvider({
+    id: 'anthropic',
+    name: 'Anthropic',
+    auth: {
+      oauth: {
+        name: 'Anthropic OAuth',
+        login: async () => ({ type: 'oauth', refresh: 'r', access: 'a', expires: 999 }),
+        refresh: (credential) => oauthRefreshImpl(credential),
+        toAuth: async (credential) => ({ apiKey: await oauthToApiKeyImpl(credential) }),
+      },
+    },
+    models: [{
+      id: 'claude-test',
+      name: 'Claude Test',
+      api: 'anthropic-messages',
+      provider: 'anthropic',
+      reasoning: true,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 200000,
+      maxTokens: 8192,
+    }],
+    api: {
+      stream: () => { throw new Error('stream should not be called'); },
+      streamSimple: () => { throw new Error('streamSimple should not be called'); },
+    },
+  }));
 });
 
 afterEach(async () => {
@@ -73,27 +95,42 @@ describe('provider credential resolver', () => {
     await deleteProviderApiKey('anthropic'); // explicit key delete
     // The oauth login must survive both key-clearing paths — proven by the
     // resolver still reaching the oauth branch.
-    oauthApiKeyImpl = async () => ({ newCredentials: { refresh: 'r', access: 'a', expires: 10 }, apiKey: 'oauth-key' });
+    oauthToApiKeyImpl = async () => 'oauth-key';
     expect(await getProviderApiKey('anthropic')).toBe('oauth-key');
     expect(await getProviderSecretStatus('anthropic')).toEqual({ providerId: 'anthropic', hasApiKey: false });
   });
 
   test('oauth credential auto-refreshes and persists the rotated tokens', async () => {
     await persistOAuthCredential('anthropic', { refresh: 'r0', access: 'a0', expires: 1 });
-    oauthApiKeyImpl = async () => ({
-      newCredentials: { refresh: 'r1', access: 'a1', expires: 999 },
-      apiKey: 'fresh-key',
-    });
+    oauthRefreshImpl = async () => ({ type: 'oauth', refresh: 'r1', access: 'a1', expires: 999 });
+    oauthToApiKeyImpl = async () => 'fresh-key';
     expect(await getProviderApiKey('anthropic')).toBe('fresh-key');
 
     // A second resolve must receive the PERSISTED rotated creds, not the originals.
-    let seen: StoredOAuth | undefined;
-    oauthApiKeyImpl = async (_id, creds) => {
-      seen = creds.anthropic;
-      return { newCredentials: creds.anthropic, apiKey: 'fresh-key-2' };
+    let seen: OAuthCredential | undefined;
+    oauthToApiKeyImpl = async (credential) => {
+      seen = credential;
+      return 'fresh-key-2';
     };
     expect(await getProviderApiKey('anthropic')).toBe('fresh-key-2');
-    expect(seen).toEqual({ refresh: 'r1', access: 'a1', expires: 999 });
+    expect(seen).toEqual({ type: 'oauth', refresh: 'r1', access: 'a1', expires: 999 });
+  });
+
+  test('concurrent oauth refreshes share the persisted post-refresh credential', async () => {
+    await persistOAuthCredential('anthropic', { refresh: 'r0', access: 'a0', expires: 1 });
+    let refreshCount = 0;
+    oauthRefreshImpl = async () => {
+      refreshCount += 1;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return { type: 'oauth', refresh: 'r1', access: 'a1', expires: Date.now() + 60_000 };
+    };
+    oauthToApiKeyImpl = async (credential) => credential.access;
+
+    await expect(Promise.all([
+      getProviderApiKey('anthropic'),
+      getProviderApiKey('anthropic'),
+    ])).resolves.toEqual(['a1', 'a1']);
+    expect(refreshCount).toBe(1);
   });
 
   test('falls back to env / managed sentinel when nothing is stored', async () => {
@@ -101,7 +138,7 @@ describe('provider credential resolver', () => {
     try {
       process.env.OPENAI_API_KEY = 'env-key';
       process.env.AWS_PROFILE = 'test-profile';
-      // Real getEnvApiKey: explicit env key for openai, ambient sentinel for bedrock.
+      // Real pi auth resolution: explicit env key for openai, ambient sentinel for bedrock.
       expect(await getProviderApiKey('openai')).toBe('env-key');
       expect(await getProviderApiKey('amazon-bedrock')).toBe('<authenticated>');
       expect(await getProviderApiKey('definitely-not-a-provider')).toBeUndefined();
@@ -113,7 +150,7 @@ describe('provider credential resolver', () => {
 
   test('resolver never throws — returns undefined on failure', async () => {
     await persistOAuthCredential('anthropic', { refresh: 'r', access: 'a', expires: 1 });
-    oauthApiKeyImpl = async () => {
+    oauthRefreshImpl = async () => {
       throw new Error('network down');
     };
     expect(await getProviderApiKey('anthropic')).toBeUndefined();
@@ -130,7 +167,7 @@ describe('provider credential resolver', () => {
     expect(await getProviderApiKey('openai')).toBe('sk-openai');
     expect(await getProviderApiKey('groq')).toBe('sk-groq');
     // The anthropic oauth login survived the concurrent api-key writes.
-    oauthApiKeyImpl = async () => ({ newCredentials: { refresh: 'r', access: 'a', expires: 5 }, apiKey: 'oauth-k' });
+    oauthToApiKeyImpl = async () => 'oauth-k';
     expect(await getProviderApiKey('anthropic')).toBe('oauth-k');
   });
 });
