@@ -1,12 +1,13 @@
-# node_edit → orthogonal primitives
+# node_edit to orthogonal primitives
 
 ## Goal
 
 Make delete-by-omission **unrepresentable** in the node mutation surface. Reduce
-that surface to four orthogonal, id-addressed primitives — **create, edit-one,
-move, delete** — so that no tool ever takes "the desired complete subtree" as an
-argument, and therefore no edit can trash a node the agent never saw. Clean
-because each tool does exactly one thing; safe by construction, not by guard.
+that surface to four orthogonal, id-addressed mutation modes — **create,
+edit-one, move, delete** — so that no tool ever takes "the desired complete
+subtree" as an argument, and therefore no edit can trash a node the agent never
+saw. Clean because each mode does exactly one thing; safe by construction, not by
+guard.
 
 ## Non-goals
 
@@ -50,13 +51,13 @@ field-upsert helper; see Design).
 
 ## Design
 
-### The four orthogonal primitives
+### The four orthogonal mutation modes
 
-| Axis | Tool | Rule |
+| Axis | Current surface | Rule |
 |---|---|---|
 | **create** | `node_create` | Author new node(s)/subtree from an outline at a position. Every node is new — nothing to reconcile, nothing deletable. *(Exists.)* |
 | **edit one** | `node_edit` | Edit **one existing node's own** content — text, description, checkbox, tags, fields — by id, in place. Never accepts a multi-node outline; never touches child structure. |
-| **move** | `node_move` | Reorder / reparent existing node(s) by id (batchable). Cannot create or delete. *(Today a `node_edit` action; promote — OQ1.)* |
+| **move** | `node_edit` `move` action | Reorder / reparent existing node(s) by id (batchable). Cannot create or delete. A dedicated `node_move` tool is an optional follow-up, not part of this PR. |
 | **delete** | `node_delete` | Trash node(s) by id. The single deletion verb. *(Exists.)* |
 
 No tool accepts a "this is the complete desired state of a container" argument.
@@ -66,17 +67,21 @@ invariant someone must keep true, but impossible to express.
 
 ### `node_edit`, restricted to one node
 
-`node_edit(node_id, …)` edits one node and returns; it has no concept of
-children. It may set:
+`node_edit(node_id, old_string, new_string, …)` edits one node and returns; it has
+no concept of children. This PR does **not** add a new `text` parameter. It may
+set:
 
-- **text** — full replacement, or an `old_string`/`new_string` surgical edit
-  **scoped to that node's own text** (exactly Claude Code's Edit on a one-line
-  "file": targeted, uniqueness-checked, never delete-by-omission).
+- **text** — an `old_string`/`new_string` edit **scoped to that node's own text
+  line** (exactly Claude Code's Edit on a one-line "file": targeted,
+  uniqueness-checked, never delete-by-omission). `old_string: "*"` is rejected
+  with redirecting guidance; it is not replaced with another whole-node sentinel.
 - **description, checkbox, tags.**
 - **fields** — **upsert-by-name**: setting field "Due" creates-or-updates *Due*
-  and replaces *Due*'s value(s); it never touches a field you did not name.
-  Replacing a *named* field's value(s) is commission (you named it); omitting a
-  *different* field never prunes it. Remove a field/value via `node_delete` by id.
+  and upserts/creates the values explicitly named in the edit; it never touches a
+  field or value you did not name. Remove a field/value via `node_delete` by id.
+- **saved-search config** — editing a saved-search node's own `%%search%%`
+  directives remains supported as a single-node config edit. It must not become a
+  child-structure reconcile path.
 
 This is mostly subtraction, with one small, named addition for the field path:
 
@@ -86,15 +91,18 @@ children path of `syncOutlineNodeInPlace`, `syncNormalChildren`, the *positional
 prune-by-omission* `syncFieldEntries` (`:1299-1353`), and the `"*"` branch of
 `replaceOutline`.
 
-**Retained & reused** — `syncFieldValues` (`:1355`), `createField`, and
-`sequenceEditPlan` survive untouched: setting a *named* field's values is
-commission, so the value-setting machinery is exactly what upsert needs.
+**Reworked & reused** — `createField` and the value creation/update helpers
+survive, but `syncFieldValues` cannot survive untouched: today's implementation
+prunes omitted values. Replace it with a non-pruning value-upsert helper (or
+change it to that semantics everywhere it is used). The helper may update an
+explicitly annotated value id in place and may append new named values; it must
+preserve omitted existing values.
 
-**Added (the lone non-subtraction)** — a small **name-keyed** `upsertField(s)`
-helper: for each named field, find-by-name → `syncFieldValues` if it exists, else
-`createField`; never trash an unnamed field. It replaces `syncFieldEntries`'
-positional, prune-by-omission matching with name-keyed upsert. Naming it here so
-the "subtraction" framing stays honest — this is the one piece of new code.
+**Added** — small name-keyed helpers: `upsertField(s)` finds an existing field by
+display name and updates it, or calls `createField` when absent; `upsertFieldValues`
+updates only explicitly named/annotated values and appends new values. They
+replace `syncFieldEntries`' positional, prune-by-omission matching and
+`syncFieldValues`' omitted-value pruning with name-keyed, non-pruning upsert.
 
 `merge_from_node_ids` and `replace_with_reference_to` stay as explicit by-id
 actions (merge trashes only the named `mergeFromNodeIds`, `:626`) — not part of
@@ -104,15 +112,15 @@ the footgun (placement per the Decisions below).
 
 **No operation deletes by omission, at any scope.** Children, fields, and field
 values are all nodes; none is ever pruned for being left out of a desired list.
-Every deletion is `node_delete`-by-id (or an explicitly named clear). That is the
-*entire* safety model — there is nothing else to enforce, because there is no
-declarative-overwrite path left to guard.
+Every deletion is `node_delete`-by-id. That is the *entire* safety model — there
+is nothing else to enforce, because there is no declarative-overwrite path left
+to guard.
 
 ### What composes to the old conveniences
 
-- "Reorganize this board" → a few `node_move`s + `node_edit`s + `node_delete`s,
-  each by id: granular, reviewable, individually undoable — and exactly what the
-  incident agent did *correctly* before it reached for `"*"`.
+- "Reorganize this board" → a few `node_edit` move actions + `node_edit`s +
+  `node_delete`s, each by id: granular, reviewable, individually undoable — and
+  exactly what the incident agent did *correctly* before it reached for `"*"`.
 - "Replace node X's contents with a fresh subtree" → `node_delete` old children +
   `node_create` new. Two explicit steps; no hidden deletion.
 - "Type out a new structure" → `node_create(outline)` — the outline-authoring
@@ -136,7 +144,9 @@ A repo audit confirms the change lands cleanly:
 - **Engine removal is self-contained.** The reconcile helpers
   (`applyOutlineRootToExistingNode`, `syncNormalChildren`, `syncFieldEntries`,
   `syncFieldValues`, `sequenceEditPlan`, `replaceOutline`) have **no callers
-  outside `agentNodeTools.ts`** — deleting them touches nothing else in `src`.
+  outside `agentNodeTools.ts`**. `syncFieldValues` does have a `node_create`
+  caller in the same file for reusable/template field entries, so changing its
+  semantics requires a focused create-path regression test.
 - **The only skill consumer already lives by the new rules.** `memory-dream`
   (`builtInSkills/memory-dream/SKILL.md`) uses `node_edit` for "small, direct
   edits … in place", `node_create` for new nodes, `node_delete` for removal — it
@@ -149,7 +159,10 @@ A repo audit confirms the change lands cleanly:
   (1800 lines), the reconcile / `*` / child-structure cases are ~5–7 (598, 799,
   822, 884, parts of 647/715/766); the `node_create` / `node_delete` / move /
   merge / reference / `node_read` / `node_search` cases survive with minor
-  adaptation.
+  adaptation. Add explicit safety tests for field entry deletion, field value
+  deletion, omitted field preservation, omitted field-value preservation,
+  reusable/template field behavior in `node_create`, and saved-search config
+  edits.
 
 ## Decisions
 
@@ -159,11 +172,13 @@ A repo audit confirms the change lands cleanly:
   safety goal does not need them promoted. Splitting them into one-tool-per-axis
   (e.g. a dedicated `node_move`) is a **documented, optional, cosmetic follow-up**,
   deliberately out of this PR to keep the safety change small and reviewable.
-- **`node_edit` text form.** Support both a full `text` replacement and an
-  `old_string`/`new_string` surgical edit **scoped to the one node** (cheap,
-  mirrors CC's Edit on a small file).
+- **`node_edit` text form.** Keep the existing `old_string`/`new_string` shape,
+  but scope it to the one node's own line (cheap, mirrors CC's Edit on a small
+  file). Do **not** add a new `text` parameter in this PR.
 - **Field / field-value removal.** Remove via `node_delete` by id; no separate
   `clear` verb. Keeps the surface minimal and every deletion explicit.
+- **Saved-search edit.** Preserve saved-search config edits as single-node edits;
+  do not allow them to prune children, fields, or field values by omission.
 
 ## Shape & build order
 
@@ -172,7 +187,8 @@ Internal order:
 
 1. Restrict the `node_edit` **outline-edit action** to a single node in place
    (drop `"*"` and the multi-node fragment reconcile). Add the name-keyed
-   `upsertField(s)` helper for fields (reusing `syncFieldValues` / `createField`).
+   `upsertField(s)` and non-pruning `upsertFieldValues` helpers for fields
+   (reusing `createField` and value creation/update pieces where safe).
    Keep the `move` / `merge_from_node_ids` / `replace_with_reference_to` actions
    unchanged. Update the schema (`agentNodeToolSchemas.ts:182`) and description.
 2. Confirm `node_create` / move / `node_delete` cover every reshape need; turn
@@ -180,10 +196,14 @@ Internal order:
    — use node_create, node_edit action:move, or node_delete").
 3. Delete the child / full-list reconcile — `applyOutlineRootToExistingNode`,
    `syncNormalChildren`, the children path of `syncOutlineNodeInPlace`, positional
-   `syncFieldEntries`, the `"*"` branch of `replaceOutline` — while **retaining**
-   `syncFieldValues` / `createField` / `sequenceEditPlan` for the upsert path.
+   `syncFieldEntries`, the omitted-value-pruning behavior of `syncFieldValues`,
+   and the `"*"` branch of `replaceOutline` — while **retaining** `createField`
+   and the value creation/update pieces for the upsert path.
 4. Update the teaching surface from the audit — `agentNodeToolGuidance.ts:19,98,99`
    and the `memory-dream` wording if needed.
 5. Spec sync: `docs/spec/agent-tool-design.md` (the four-primitive surface);
    rewrite the ~5–7 reconcile / `"*"` guard tests in
-   `tests/core/agentNodeTools.test.ts` (A6, same change).
+   `tests/core/agentNodeTools.test.ts` (A6, same change). Add the regression
+   tests named in Consumer surface so the no-omission-delete invariant is covered
+   for children, fields, field values, reusable create-path fields, and
+   saved-search config edits.
