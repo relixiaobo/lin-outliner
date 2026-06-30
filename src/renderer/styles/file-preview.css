@@ -660,7 +660,7 @@
 
 .document-outline-rail {
   --document-outline-track-width: calc(var(--space-8) + var(--space-1));
-  --document-outline-track-height: min(240px, 38vh);
+  --document-outline-track-height: min(360px, 56vh);
   --document-outline-marker-width: calc(var(--space-4) + 2px);
   --document-outline-marker-gap: var(--space-4);
 
