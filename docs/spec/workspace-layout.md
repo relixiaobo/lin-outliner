@@ -314,7 +314,11 @@ sources, but with `nodeId` set. That `nodeId` is the lifecycle switch:
 
 - Without `nodeId`, the view is a loose preview. The breadcrumb is sourced from
   the filesystem/source identity, the title is the read-only filename/source
-  label, and no children outline is mounted.
+  label, and no children outline is mounted. URL loose previews are the
+  exception to the file-like title layout: the breadcrumb/header shows the
+  webpage favicon and page title when the webview reports them, falling back to
+  the link label or URL, and the body starts directly with a single-layer webpage
+  surface that fills the available pane height.
 - With `nodeId`, the view is an ingested file node. The breadcrumb is sourced
   from the outliner ancestry, the title remains the read-only filename, and the
   file node's children outline mounts below the preview hero.
@@ -382,36 +386,61 @@ Source authority stays source-specific:
   referenced conversation and payload id. Normal conversation payloads can be
   previewed; debug-only payloads are not exposed through the normal preview
   router. Renderer code never receives a payload file path.
-- `url` targets are modeled but only render metadata/unsupported until the URL
-  reader PR ships.
+- `url` targets are first-class loose previews. Ordinary `http(s)` links from the
+  outliner and agent transcript route into a Tenon split preview pane by default.
+  URL targets normalize through one shared `http(s)`-only helper in core. The pane
+  renders the webpage through a dedicated sandboxed Electron webview that allows
+  only `http(s)` navigation, strips preload/Node privileges at attach time,
+  force-assigns the URL-preview partition, denies popups, and keeps the explicit
+  fallback action for opening the URL in the system browser. URL preview source
+  resolution is synchronous in the renderer because the source is the URL itself;
+  the pane must not show a file-preview loading overlay before the webview starts.
 
 Renderers are directory listing, image, PDF (`pdf.js`; every page is stacked
 vertically and scrolled to navigate — each page renders lazily as it nears the
 scroll viewport and is fitted to the available width, with no page-nav or zoom
-controls), EPUB (`foliate-js`; summary previews the first loaded section, while
-expanded readers stack every spine section — including `linear="no"` covers and
-note pages, so every TOC/anchor target resolves to a rendered frame — into one
-continuous vertical scrollport with page-like gaps. Each section's wrapper is
-always present (reserving a placeholder height) but its iframe mounts lazily as
-the section nears the scroll viewport and stays mounted thereafter, so opening a
-long book never spins up every section's document at once; book bytes load only
-through the capped preview bytes API), text/source-code with Shiki, Markdown with `react-markdown` +
+controls; file-only reader panes fill the available pane height while preserving
+the PDF document viewport/inset), EPUB (`foliate-js`; summary previews the first
+loaded section, while expanded readers stack every spine section — including
+`linear="no"` covers and note pages, so every TOC/anchor target resolves to a
+rendered frame — into one continuous vertical scrollport with page-like gaps.
+Each section's wrapper is always present (reserving a placeholder height) but its
+iframe mounts lazily as the section nears the scroll viewport and stays mounted
+thereafter, so opening a long book never spins up every section's document at
+once; book bytes load only through the capped preview bytes API; file-only reader
+panes fill the available pane height while preserving the EPUB document
+viewport/inset), sandboxed static HTML (`.html`, `.htm`, or
+`text/html`) with a rendered iframe that fills file-only reader panes plus a
+source-mode fallback, audio/video as flat media stages using
+native media elements with Media Chrome controls backed by the same range-capable
+internal streams used by images (including seek and HTML fullscreen), with file
+actions kept inside the same control bar plus Tenon-scoped media shortcuts while
+the player is focused or fullscreen (`Space`/`K` play-pause, arrows/`J`/`L` seek,
+`M` mute, `F` fullscreen), text/source-code with Shiki, Markdown with `react-markdown` +
 `remark-gfm`, CSV/TSV table, and fallback metadata. The PDF renderer reads bytes
 only through the preview source API, uses a bundled same-origin worker, and falls
 back to the metadata renderer if parsing or rendering fails. Markdown renderer
-output does not enable raw HTML execution; arbitrary HTML files render as text or
-fallback. EPUB sections render in `blob:` iframes, so renderer CSP permits
+output does not enable raw HTML execution. HTML file preview renders in a sandboxed
+iframe with same-origin access for host-side link interception but no script
+execution; `http(s)` links inside the frame route back through a Tenon split
+preview pane by default. EPUB sections render in `blob:` iframes, so renderer CSP permits
 `frame-src blob:` while keeping packaged `script-src 'self'`; dev adds only the
 fixed hash for Vite React Refresh's inline preamble and widens `connect-src` for
 Vite HMR. Scripted EPUB content is not a supported preview capability, and remote
 links from inside the book are intercepted and sent through the app's
 http(s)-only external-open path. Expanded PDF and EPUB readers keep the native
 scrollbar for exact position and, when the document exposes an outline/table of
-contents, overlay a right-edge outline rail whose markers use a fixed inter-item
-gap and a capped maximum height rather than stretching to fill the available
-space. The rail is a directory index rather than a precise scroll-position
-indicator; hover/focus opens the chapter popover, and both surfaces jump to
-resolved scroll positions. Reader scroll positions persist per resolved preview
+contents, overlay a left-edge outline rail whose markers sit in a vertically
+centered track that can grow up to 80% of the document viewport to show
+surrounding progress, with internal scrolling rather than stretching down the
+full document viewport. The active marker is kept centered inside that track as
+the document scrolls. The rail is a directory index rather than a precise
+scroll-position indicator; hover or keyboard focus entry from the marker rail
+opens the chapter popover already scrolled to the current active chapter, while
+focus and clicks inside the popover keep the user's current popover scroll
+position. Keyboard focus keeps the popover open for navigation, but pointer focus
+from clicking a popover item does not pin it open after the pointer leaves the
+rail. Both surfaces jump to resolved scroll positions. Reader scroll positions persist per resolved preview
 identity: PDFs restore page + page-relative offset, while EPUBs restore spine
 section + section-relative offset. Documents without outline metadata render no
 rail.

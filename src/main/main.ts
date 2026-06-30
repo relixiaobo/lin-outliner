@@ -8,8 +8,9 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
 import { DocumentService } from './documentService';
-import { AssetService } from './assetService';
+import { AssetService, mimeTypeForFilename } from './assetService';
 import { AgentRuntime } from './agentRuntime';
+import { isRendererPermissionAllowed } from './rendererPermissions';
 import { MAC_TRAFFIC_LIGHT_POSITION, MAC_WINDOW_CORNER_RADIUS } from '../core/chromeGeometry';
 import { windowMaterialKind } from '../core/windowMaterial';
 import { applyMacWindowCorner } from './nativeWindowCorner';
@@ -37,9 +38,11 @@ import {
   type AgentMessageContextMenuRequest,
 } from '../core/agentTypes';
 import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
-import { ASSET_URL_SCHEME } from '../core/assets';
+import { ASSET_URL_SCHEME, PREVIEW_LOCAL_URL_SCHEME, previewLocalUrl } from '../core/assets';
+import { normalizePreviewHttpUrl } from '../core/preview';
 import { handlePreviewCommand } from './previewSource';
 import { setBoundedMapEntry } from './boundedMap';
+import { LocalFilePreviewStreamRegistry } from './localFilePreviewStream';
 import {
   LIN_AGENT_OAUTH_EVENT_CHANNEL,
   LIN_DOCUMENT_EVENT_CHANNEL,
@@ -216,10 +219,11 @@ installMainErrorHandlers();
 // before the app `ready` event.
 app.commandLine.appendSwitch('use-mock-keychain');
 
-// Must run before the app `ready` event so the renderer can load assets with
-// regular <img>/<video> tags via `asset://<id>`.
+// Must run before the app `ready` event so the renderer can load internal
+// preview streams with regular <img>/<video> tags.
 protocol.registerSchemesAsPrivileged([
   { scheme: ASSET_URL_SCHEME, privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
+  { scheme: PREVIEW_LOCAL_URL_SCHEME, privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
 ]);
 
 // Image file extensions for the native "insert image" picker. The filter's display
@@ -305,6 +309,7 @@ const agentRuntime = new AgentRuntime(() => mainWindow, documentService, {
   dreamMemoryExtractionEnabled: true,
   errorReporter: reportError,
 });
+const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [agentLocalFileRoot, agentScratchRoot]);
 
 documentService.onProjectionChanged((event) => {
   mainWindow?.webContents.send(LIN_DOCUMENT_EVENT_CHANNEL, event);
@@ -398,14 +403,11 @@ agentRuntime.setOsNotifier(({ title, body, conversationId }) => {
 const RENDERER_DEV_URL = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
 const RENDERER_DEV_ORIGIN = RENDERER_DEV_URL ? safeOrigin(RENDERER_DEV_URL) : null;
 const RENDERER_SCRIPT_SRC = "script-src 'self'";
+const URL_PREVIEW_WEBVIEW_PARTITION = 'url-preview';
 // Hash of @vitejs/plugin-react's dev preamble for base "/". Recompute if the
 // plugin changes that injected module script.
 const VITE_REACT_REFRESH_PREAMBLE_CSP_HASH =
   "'sha256-Z2/iFzh9VMlVkEOar1f/oSHWwQk3ve1qk/C2WdsC4Xk='";
-
-// navigator.clipboard.writeText is the only renderer capability we rely on; deny
-// everything else (geolocation, media, notifications, …) by default.
-const ALLOWED_PERMISSIONS = new Set(['clipboard-sanitized-write']);
 
 // The renderer is locked to its own resources.
 // 'unsafe-inline' styles cover Shiki's inline color spans + React style props;
@@ -417,8 +419,8 @@ const RENDERER_CSP_DIRECTIVES = [
   "default-src 'self'",
   RENDERER_SCRIPT_SRC,
   "style-src 'self' 'unsafe-inline'",
-  `img-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}:`,
-  `media-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}:`,
+  `img-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}: ${PREVIEW_LOCAL_URL_SCHEME}:`,
+  `media-src 'self' data: blob: https: http: ${ASSET_URL_SCHEME}: ${PREVIEW_LOCAL_URL_SCHEME}:`,
   "font-src 'self' data:",
   "object-src 'none'",
   // EPUB preview renders book sections in blob: iframes; packaged script-src
@@ -436,12 +438,12 @@ const RENDERER_DEV_CSP_DIRECTIVES = RENDERER_CSP_DIRECTIVES.map((directive) =>
 
 const RENDERER_CSP = [
   ...RENDERER_CSP_DIRECTIVES,
-  `connect-src 'self' ${ASSET_URL_SCHEME}:`,
+  `connect-src 'self' ${ASSET_URL_SCHEME}: ${PREVIEW_LOCAL_URL_SCHEME}:`,
 ].join('; ');
 
 const RENDERER_DEV_CSP = RENDERER_DEV_ORIGIN ? [
   ...RENDERER_DEV_CSP_DIRECTIVES,
-  `connect-src 'self' ${ASSET_URL_SCHEME}: ${RENDERER_DEV_ORIGIN} ${RENDERER_DEV_ORIGIN.replace(/^http/i, 'ws')}`,
+  `connect-src 'self' ${ASSET_URL_SCHEME}: ${PREVIEW_LOCAL_URL_SCHEME}: ${RENDERER_DEV_ORIGIN} ${RENDERER_DEV_ORIGIN.replace(/^http/i, 'ws')}`,
 ].join('; ') : null;
 
 function safeOrigin(url: string): string | null {
@@ -479,14 +481,56 @@ function hardenWebContents(contents: Electron.WebContents) {
   };
   contents.on('will-navigate', guardNavigation);
   contents.on('will-redirect', guardNavigation);
+  contents.on('will-attach-webview', (event, webPreferences, params) => {
+    const src = typeof params.src === 'string' ? params.src : '';
+    const normalizedSrc = normalizePreviewHttpUrl(src);
+    if (!normalizedSrc) {
+      event.preventDefault();
+      return;
+    }
+    delete params.preload;
+    delete params.webpreferences;
+    delete webPreferences.preload;
+    webPreferences.contextIsolation = true;
+    webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
+    webPreferences.nodeIntegrationInWorker = false;
+    webPreferences.partition = URL_PREVIEW_WEBVIEW_PARTITION;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.allowRunningInsecureContent = false;
+    webPreferences.plugins = false;
+    webPreferences.safeDialogs = true;
+    webPreferences.disableDialogs = true;
+    webPreferences.navigateOnDragDrop = false;
+    params.partition = URL_PREVIEW_WEBVIEW_PARTITION;
+    params.src = normalizedSrc;
+  });
+  contents.on('did-attach-webview', (_event, webContents) => {
+    webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => {
+      callback(false);
+    });
+    webContents.session.setPermissionCheckHandler(() => false);
+    webContents.setWindowOpenHandler(({ url }) => {
+      openExternalUrl(url);
+      return { action: 'deny' };
+    });
+    const guardWebviewNavigation = (event: Electron.Event, url: string) => {
+      if (normalizePreviewHttpUrl(url)) return;
+      event.preventDefault();
+      openExternalUrl(url);
+    };
+    webContents.on('will-navigate', guardWebviewNavigation);
+    webContents.on('will-redirect', guardWebviewNavigation);
+  });
 }
 
 function configureSessionSecurity() {
   const ses = session.defaultSession;
   ses.setPermissionRequestHandler((_contents, permission, callback) => {
-    callback(ALLOWED_PERMISSIONS.has(permission));
+    callback(isRendererPermissionAllowed(permission));
   });
-  ses.setPermissionCheckHandler((_contents, permission) => ALLOWED_PERMISSIONS.has(permission));
+  ses.setPermissionCheckHandler((_contents, permission) => isRendererPermissionAllowed(permission));
   // Enforce CSP on app renderer documents. Dev admits only Vite React refresh's
   // exact inline preamble by hash and widens connect-src for Vite HMR.
   ses.webRequest.onHeadersReceived((details, callback) => {
@@ -781,6 +825,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webviewTag: true,
     },
   });
 
@@ -1321,6 +1366,10 @@ function registerIpc() {
           agentRuntime,
           assetService,
           inferMimeType,
+          localFileStreamUrl: async (file, mimeType) => {
+            const token = await localFilePreviewStreams.issue(file, mimeType);
+            return token ? previewLocalUrl(token) : null;
+          },
           localFileReferencePreview,
         });
       }
@@ -2417,18 +2466,9 @@ function safeAppPath(name: Parameters<typeof app.getPath>[0]): string | null {
 }
 
 function inferMimeType(filePath: string): string {
+  const sharedMimeType = mimeTypeForFilename(filePath);
+  if (sharedMimeType) return sharedMimeType;
   const extension = extname(filePath).toLowerCase();
-  if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg';
-  if (extension === '.png') return 'image/png';
-  if (extension === '.gif') return 'image/gif';
-  if (extension === '.webp') return 'image/webp';
-  if (extension === '.svg') return 'image/svg+xml';
-  if (extension === '.avif') return 'image/avif';
-  if (extension === '.bmp') return 'image/bmp';
-  if (extension === '.heic') return 'image/heic';
-  if (extension === '.tif' || extension === '.tiff') return 'image/tiff';
-  if (extension === '.pdf') return 'application/pdf';
-  if (extension === '.epub') return 'application/epub+zip';
   if (extension === '.doc') return 'application/msword';
   if (extension === '.docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   if (extension === '.ppt') return 'application/vnd.ms-powerpoint';
@@ -2439,7 +2479,6 @@ function inferMimeType(filePath: string): string {
   if (extension === '.xls') return 'application/vnd.ms-excel';
   if (extension === '.xlsx') return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   if (extension === '.numbers') return 'application/vnd.apple.numbers';
-  if (extension === '.json') return 'application/json';
   if (extension === '.xml') return 'application/xml';
   if (extension === '.yaml' || extension === '.yml') return 'application/yaml';
   if (TEXT_ATTACHMENT_EXTENSIONS.has(extension)) return 'text/plain';
@@ -2742,7 +2781,11 @@ if (!app.requestSingleInstanceLock()) {
     });
     protocol.handle(ASSET_URL_SCHEME, (request) => {
       const id = new URL(request.url).hostname;
-      return assetService.serve(id);
+      return assetService.serve(id, request);
+    });
+    protocol.handle(PREVIEW_LOCAL_URL_SCHEME, (request) => {
+      const token = new URL(request.url).hostname;
+      return localFilePreviewStreams.serve(token, request);
     });
     // Apply the persisted appearance preference before any window is created, so
     // the first paint (prePaintBackgroundColor → shouldUseDarkColors) already

@@ -49,7 +49,8 @@ every change MUST follow them. Full detail lives in `docs/spec/` (see
   `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`;
   `setWindowOpenHandler` deny + `shell.openExternal`; `will-navigate` /
   `will-redirect` allow only `^https?://`; permission handler allow-list
-  (`clipboard-sanitized-write` only); CSP on the packaged `file://` document;
+  (`clipboard-sanitized-write` and `fullscreen` only); CSP on the packaged
+  `file://` document;
   single-instance lock; `before-quit` flush.
 - **A4 — Commands are the mutation surface.** Document state is event-sourced;
   all mutations go through core commands. `src/core/commands.ts` and

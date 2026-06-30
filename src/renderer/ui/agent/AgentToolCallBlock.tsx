@@ -414,7 +414,7 @@ function ToolResultFileChip({ output }: { output: FileToolOutput }) {
     // Whether this chip opens in the workspace file-only reader (live transcript) or
     // the normal workspace preview pane (child-run details panel) is decided by location, not here: the
     // app-wide inline-file layer routes by a `[data-agent-transcript-chips]` ancestor,
-    // which the live assistant message body sets once (see AgentAssistantContent). In
+    // which the live transcript message frame sets once (see AgentMessageFrame). In
     // the child-run-details panel this same block has no such ancestor, so its result
     // chips keep the workspace preview — matching every other meta surface.
     <div className="agent-tool-file-output">

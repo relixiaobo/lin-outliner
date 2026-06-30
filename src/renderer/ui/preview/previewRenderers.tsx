@@ -21,9 +21,22 @@ import type {
   PreviewFileSource,
   PreviewSourceDescriptor,
   PreviewTarget,
+  PreviewUrlSource,
 } from '../../../core/preview';
+import { normalizePreviewHttpUrl } from '../../../core/preview';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
+import {
+  MediaControlBar,
+  MediaController,
+  MediaFullscreenButton,
+  MediaMuteButton,
+  MediaPlayButton,
+  MediaTimeDisplay,
+  MediaTimeRange,
+  MediaVolumeRange,
+} from 'media-chrome/react';
+import type { MediaController as MediaControllerElement } from 'media-chrome';
 import {
   FileTextIcon,
   FolderIcon,
@@ -43,6 +56,7 @@ import {
   writePdfReadingPosition,
   type PdfReadingPosition,
 } from './readingPositionStore';
+import { openUrlPreviewFromClick } from './urlPreviewRouting';
 import { usePreviewObjectUrl } from './usePreviewObjectUrl';
 
 type FilePreviewLabels = ReturnType<typeof useT>['shell']['filePreview'];
@@ -51,6 +65,11 @@ export type PreviewSourceState =
   | { status: 'loading' }
   | { status: 'ready'; source: PreviewSourceDescriptor }
   | { status: 'missing'; error?: string };
+
+export interface UrlPreviewPageMetadata {
+  faviconUrl?: string;
+  title?: string;
+}
 
 type TextState =
   | { status: 'loading' }
@@ -64,9 +83,17 @@ type TextState =
  * every render.
  */
 export function usePreviewSource(target: PreviewTarget): PreviewSourceState {
-  const [state, setState] = useState<PreviewSourceState>({ status: 'loading' });
+  const [state, setState] = useState<PreviewSourceState>(() => (
+    target.kind === 'url' ? previewSourceStateForUrlTarget(target) : { status: 'loading' }
+  ));
   useEffect(() => {
     let cancelled = false;
+    if (target.kind === 'url') {
+      setState(previewSourceStateForUrlTarget(target));
+      return () => {
+        cancelled = true;
+      };
+    }
     setState({ status: 'loading' });
     void api.resolvePreviewSource(target)
       .then((result) => {
@@ -82,6 +109,21 @@ export function usePreviewSource(target: PreviewTarget): PreviewSourceState {
     };
   }, [target]);
   return state;
+}
+
+function previewSourceStateForUrlTarget(target: Extract<PreviewTarget, { kind: 'url' }>): PreviewSourceState {
+  const url = normalizePreviewHttpUrl(target.url);
+  if (!url) return { status: 'missing', error: 'invalid-target' };
+  return {
+    status: 'ready',
+    source: {
+      kind: 'url',
+      id: `url:${url}`,
+      target: { ...target, url },
+      title: target.label?.trim() || url,
+      url,
+    },
+  };
 }
 
 const MARKDOWN_REMARK_PLUGINS = [remarkGfm];
@@ -127,8 +169,10 @@ function clampPreviewHeight(height: number) {
 
 export interface PreviewRendererProps {
   displayMode: FilePreviewDisplayMode;
+  mediaActions?: ReactElement | null;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   onSummaryPageSelect?: (pageNumber: number) => void;
+  onUrlMetadataChange?: (metadata: UrlPreviewPageMetadata) => void;
   source: PreviewFileSource;
   scrollToPageNumber?: number | null;
   onScrollToPageNumberConsumed?: () => void;
@@ -151,6 +195,7 @@ const FILE_PREVIEW_RENDERERS: PreviewRendererEntry[] = [
   { id: 'epub', match: isEpubSource, component: EpubPreviewLoader },
   { id: 'audio', match: isAudioSource, component: AudioPreview },
   { id: 'video', match: isVideoSource, component: VideoPreview },
+  { id: 'html', match: isHtmlSource, component: HtmlPreview },
   { id: 'markdown', match: isMarkdownSource, component: MarkdownPreview },
   { id: 'delimited', match: isDelimitedSource, component: DelimitedPreview },
   { id: 'text', match: isTextSource, component: TextPreview },
@@ -163,31 +208,38 @@ const FILE_PREVIEW_RENDERERS: PreviewRendererEntry[] = [
  * non-previewable one (the metadata card) gets Open-with-default-app as its primary.
  */
 export function isPreviewableSource(source: PreviewSourceDescriptor): boolean {
-  if (source.kind !== 'file') return false;
+  if (source.kind === 'url') return true;
   const entry = FILE_PREVIEW_RENDERERS.find((candidate) => candidate.match(source));
   return entry ? entry.id !== 'metadata' : false;
+}
+
+export function isPassivePlaybackSource(source: PreviewSourceDescriptor): boolean {
+  return source.kind === 'file' && (isAudioSource(source) || isVideoSource(source));
 }
 
 export function PreviewRenderer({
   displayMode,
   onSummaryPageSelect,
+  onUrlMetadataChange,
   onOpenTarget,
   scrollToPageNumber,
   onScrollToPageNumberConsumed,
   source,
   scrollRootRef,
+  mediaActions,
 }: {
   displayMode: FilePreviewDisplayMode;
+  mediaActions?: ReactElement | null;
   onSummaryPageSelect?: (pageNumber: number) => void;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   scrollToPageNumber?: number | null;
   onScrollToPageNumberConsumed?: () => void;
   source: PreviewSourceDescriptor;
+  onUrlMetadataChange?: (metadata: UrlPreviewPageMetadata) => void;
   scrollRootRef?: RefObject<HTMLElement | null>;
 }) {
-  const labels = useT().shell.filePreview;
   if (source.kind === 'url') {
-    return <PreviewMessage>{labels.unsupported}</PreviewMessage>;
+    return <UrlPreview onMetadataChange={onUrlMetadataChange} source={source} />;
   }
   const Renderer = FILE_PREVIEW_RENDERERS.find((entry) => entry.match(source))?.component ?? MetadataPreview;
   return (
@@ -199,6 +251,7 @@ export function PreviewRenderer({
       onScrollToPageNumberConsumed={onScrollToPageNumberConsumed}
       source={source}
       scrollRootRef={scrollRootRef}
+      mediaActions={mediaActions}
     />
   );
 }
@@ -216,6 +269,7 @@ export interface FilePreviewShellProps {
   initialExpanded?: boolean;
   /** Dedicated split-pane reader: full content only, with header actions outside the preview. */
   readerMode?: boolean;
+  onUrlMetadataChange?: (metadata: UrlPreviewPageMetadata) => void;
 }
 
 /**
@@ -237,6 +291,7 @@ export function FilePreviewShell({
   meta = null,
   initialExpanded = false,
   readerMode = false,
+  onUrlMetadataChange,
 }: FilePreviewShellProps) {
   const labels = useT().shell.filePreview;
   const previewRef = useRef<HTMLDivElement | null>(null);
@@ -244,8 +299,14 @@ export function FilePreviewShell({
   const [previewHeights, setPreviewHeights] = useState<{ summary?: number; full?: number }>({});
   const [scrollToPageNumber, setScrollToPageNumber] = useState<number | null>(null);
   const previewable = state.status === 'ready' && isPreviewableSource(state.source);
+  const passivePlayback = state.status === 'ready' && isPassivePlaybackSource(state.source);
+  const mediaKind = state.status === 'ready' ? mediaKindForSource(state.source) : null;
+  const urlPreview = state.status === 'ready' && state.source.kind === 'url';
+  const documentKind = state.status === 'ready' && state.source.kind === 'file'
+    ? documentKindForSource(state.source)
+    : null;
   const metadataFallback = state.status === 'ready' && !previewable;
-  const effectiveExpanded = readerMode || expanded;
+  const effectiveExpanded = readerMode || passivePlayback || urlPreview || expanded;
   const displayMode: FilePreviewDisplayMode = previewable && !effectiveExpanded ? 'summary' : 'full';
   const resizedHeight = displayMode === 'summary' ? previewHeights.summary : previewHeights.full;
   const toggleExpanded = () => {
@@ -296,6 +357,10 @@ export function FilePreviewShell({
     'file-node-preview',
     `file-node-preview--${displayMode}`,
     metadataFallback ? 'file-node-preview--metadata' : '',
+    passivePlayback ? 'file-node-preview--media' : '',
+    urlPreview ? 'file-node-preview--url' : '',
+    documentKind ? `file-node-preview--${documentKind}` : '',
+    mediaKind ? `file-node-preview--media-${mediaKind}` : '',
     readerMode ? 'file-node-preview--reader' : '',
     resizedHeight !== undefined ? 'resized' : '',
     previewable ? (effectiveExpanded ? 'expanded' : 'collapsed') : '',
@@ -303,10 +368,18 @@ export function FilePreviewShell({
   const previewStyle = resizedHeight !== undefined
     ? ({ '--file-preview-resized-height': `${resizedHeight}px` } as CSSProperties)
     : undefined;
-  const bodyClass = ['file-node-body', metadataFallback ? 'file-node-body--metadata' : '', readerMode ? 'file-node-body--reader' : '']
+  const bodyClass = [
+    'file-node-body',
+    metadataFallback ? 'file-node-body--metadata' : '',
+    passivePlayback ? 'file-node-body--media' : '',
+    urlPreview ? 'file-node-body--url' : '',
+    documentKind ? `file-node-body--${documentKind}` : '',
+    mediaKind ? `file-node-body--media-${mediaKind}` : '',
+    readerMode ? 'file-node-body--reader' : '',
+  ]
     .filter(Boolean)
     .join(' ');
-  const pill = state.status !== 'loading' && !readerMode ? (
+  const pill = state.status !== 'loading' && !readerMode && !passivePlayback && !urlPreview ? (
     // Hold the pill until the source resolves: while loading, `previewable` is
     // false, so the primary would briefly be "Open with default app" and a click
     // in that window would open the file externally instead of toggling the
@@ -315,10 +388,23 @@ export function FilePreviewShell({
       previewable={previewable}
       expanded={expanded}
       onToggleExpand={toggleExpanded}
+      primaryMode={passivePlayback ? 'none' : previewable ? 'toggle' : 'open'}
       primaryOpen={primaryOpen}
       menuActions={menuActions}
       meta={meta}
       placement={metadataFallback ? 'footer' : 'overlay'}
+    />
+  ) : null;
+  const mediaActions = state.status !== 'loading' && !readerMode && passivePlayback ? (
+    <FilePreviewPill
+      previewable={previewable}
+      expanded={expanded}
+      onToggleExpand={toggleExpanded}
+      primaryMode="none"
+      primaryOpen={primaryOpen}
+      menuActions={menuActions}
+      meta={meta}
+      placement="media-control"
     />
   ) : null;
   return (
@@ -332,17 +418,19 @@ export function FilePreviewShell({
           <PreviewRenderer
             displayMode={displayMode}
             onSummaryPageSelect={openSummaryPage}
+            onUrlMetadataChange={onUrlMetadataChange}
             source={state.source}
             onOpenTarget={onOpenTarget}
             scrollToPageNumber={effectiveExpanded ? scrollToPageNumber : null}
             onScrollToPageNumberConsumed={consumeScrollToPageNumber}
             scrollRootRef={previewRef}
+            mediaActions={mediaActions}
           />
         )}
         {metadataFallback ? pill : null}
       </div>
       {metadataFallback ? null : pill}
-      {previewable && !readerMode ? (
+      {previewable && !readerMode && !passivePlayback && !urlPreview ? (
         <div
           aria-label="Resize preview"
           aria-orientation="horizontal"
@@ -441,10 +529,67 @@ function ImagePreview({ source }: PreviewRendererProps) {
   );
 }
 
+function UrlPreview({
+  onMetadataChange,
+  source,
+}: {
+  onMetadataChange?: (metadata: UrlPreviewPageMetadata) => void;
+  source: PreviewUrlSource;
+}) {
+  const webviewRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    onMetadataChange?.({ title: source.title });
+  }, [onMetadataChange, source.title]);
+
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (!webview || !onMetadataChange) return undefined;
+    const onTitle = (event: Event) => {
+      const title = typeof (event as Event & { title?: unknown }).title === 'string'
+        ? (event as Event & { title: string }).title.trim()
+        : '';
+      if (title) onMetadataChange({ title });
+    };
+    const onFavicon = (event: Event) => {
+      const faviconUrl = firstPreviewFaviconUrl((event as Event & { favicons?: unknown }).favicons);
+      if (faviconUrl) onMetadataChange({ faviconUrl });
+    };
+    webview.addEventListener('page-title-updated', onTitle);
+    webview.addEventListener('page-favicon-updated', onFavicon);
+    return () => {
+      webview.removeEventListener('page-title-updated', onTitle);
+      webview.removeEventListener('page-favicon-updated', onFavicon);
+    };
+  }, [onMetadataChange]);
+
+  return (
+    <div className="file-preview-url" data-preserve-selection>
+      <webview
+        className="file-preview-url-webview"
+        partition="url-preview"
+        ref={webviewRef}
+        src={source.url}
+        title={source.title}
+      />
+    </div>
+  );
+}
+
+function firstPreviewFaviconUrl(favicons: unknown): string | undefined {
+  if (!Array.isArray(favicons)) return undefined;
+  for (const candidate of favicons) {
+    if (typeof candidate !== 'string') continue;
+    const normalized = normalizePreviewHttpUrl(candidate);
+    if (normalized) return normalized;
+  }
+  return undefined;
+}
+
 /**
- * Resolve a playable media URL for an audio/video source: prefer the streaming
- * `asset://` URL (uncapped, Chromium-cached, range-request friendly), falling back
- * to a bounded byte read → object URL for non-asset sources that have no stream URL.
+ * Resolve a playable media URL for an audio/video source: prefer the streaming URL
+ * (asset or trusted local file), falling back to a bounded byte read → object URL
+ * for sources that have no stream URL.
  */
 function useMediaSourceUrl(source: PreviewFileSource): { src: string | null; error?: string } {
   const bytes = usePreviewObjectUrl(source.target, {
@@ -454,18 +599,282 @@ function useMediaSourceUrl(source: PreviewFileSource): { src: string | null; err
   return source.streamUrl ? { src: source.streamUrl } : bytes;
 }
 
-function AudioPreview({ source }: PreviewRendererProps) {
-  const labels = useT().shell.filePreview;
-  const { src, error } = useMediaSourceUrl(source);
-  if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
-  return <audio className="file-preview-media file-preview-audio" controls preload="metadata" src={src} />;
+type PreviewMediaElement = HTMLAudioElement | HTMLVideoElement;
+
+function useMediaKeyboardShortcuts({
+  controllerRef,
+  enabled,
+  mediaRef,
+}: {
+  controllerRef: RefObject<MediaControllerElement | null>;
+  enabled: boolean;
+  mediaRef: RefObject<PreviewMediaElement | null>;
+}) {
+  useEffect(() => {
+    if (!enabled) return;
+    const media = mediaRef.current;
+    if (!media) return;
+    const ownerDocument = media.ownerDocument;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (!isMediaShortcutActive(ownerDocument, media, controllerRef.current, event.target)) return;
+      const key = event.key.toLowerCase();
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (key === ' ' || key === 'k') {
+        event.preventDefault();
+        void toggleMediaPlayback(media).catch(() => {});
+        return;
+      }
+      if (key === 'arrowleft' || key === 'arrowright') {
+        event.preventDefault();
+        seekMediaBy(media, key === 'arrowleft' ? -5 : 5);
+        return;
+      }
+      if (key === 'j' || key === 'l') {
+        event.preventDefault();
+        seekMediaBy(media, key === 'j' ? -10 : 10);
+        return;
+      }
+      if (key === 'm') {
+        event.preventDefault();
+        media.muted = !media.muted;
+        return;
+      }
+      if (key === 'f' && isPreviewVideoElement(media)) {
+        event.preventDefault();
+        void toggleMediaFullscreen(ownerDocument, controllerRef.current ?? media).catch(() => {});
+      }
+    };
+    ownerDocument.addEventListener('keydown', onKeyDown, true);
+    return () => ownerDocument.removeEventListener('keydown', onKeyDown, true);
+  }, [controllerRef, enabled, mediaRef]);
 }
 
-function VideoPreview({ source }: PreviewRendererProps) {
+function isMediaShortcutActive(
+  ownerDocument: Document,
+  media: PreviewMediaElement,
+  controller: MediaControllerElement | null,
+  target: EventTarget | null,
+): boolean {
+  const fullscreenElement = ownerDocument.fullscreenElement;
+  if (fullscreenElement) {
+    return fullscreenElement === media
+      || fullscreenElement.contains(media)
+      || media.contains(fullscreenElement)
+      || Boolean(controller && (fullscreenElement === controller || fullscreenElement.contains(controller)));
+  }
+  return target === media;
+}
+
+async function toggleMediaPlayback(media: PreviewMediaElement): Promise<void> {
+  if (media.paused) {
+    await media.play();
+    return;
+  }
+  media.pause();
+}
+
+function seekMediaBy(media: PreviewMediaElement, deltaSeconds: number): void {
+  if (!Number.isFinite(media.duration)) return;
+  const max = Math.max(0, media.duration);
+  media.currentTime = Math.min(max, Math.max(0, media.currentTime + deltaSeconds));
+}
+
+function isPreviewVideoElement(media: PreviewMediaElement): media is HTMLVideoElement {
+  return media.tagName.toLowerCase() === 'video';
+}
+
+async function toggleMediaFullscreen(ownerDocument: Document, target: HTMLElement): Promise<void> {
+  if (ownerDocument.fullscreenElement) {
+    await ownerDocument.exitFullscreen();
+    return;
+  }
+  await target.requestFullscreen();
+}
+
+function AudioPreview({ mediaActions, source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const { src, error } = useMediaSourceUrl(source);
+  const mediaRef = useRef<HTMLAudioElement | null>(null);
+  const controllerRef = useRef<MediaControllerElement | null>(null);
+  const setMediaRef = useCallback((element: HTMLAudioElement | null) => {
+    mediaRef.current = element;
+    if (element) element.disableRemotePlayback = true;
+  }, []);
+  useMediaKeyboardShortcuts({ controllerRef, enabled: Boolean(src), mediaRef });
   if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
-  return <video className="file-preview-media file-preview-video" controls preload="metadata" src={src} />;
+  return (
+    <MediaPreviewPlayer
+      actions={mediaActions}
+      controllerRef={controllerRef}
+      kind="audio"
+    >
+      <audio
+        ref={setMediaRef}
+        className="file-preview-media file-preview-audio"
+        controlsList="nodownload noplaybackrate noremoteplayback"
+        data-preserve-selection
+        preload="metadata"
+        slot="media"
+        src={src}
+        tabIndex={0}
+      />
+    </MediaPreviewPlayer>
+  );
+}
+
+function VideoPreview({ mediaActions, source }: PreviewRendererProps) {
+  const labels = useT().shell.filePreview;
+  const { src, error } = useMediaSourceUrl(source);
+  const mediaRef = useRef<HTMLVideoElement | null>(null);
+  const controllerRef = useRef<MediaControllerElement | null>(null);
+  useMediaKeyboardShortcuts({ controllerRef, enabled: Boolean(src), mediaRef });
+  if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
+  return (
+    <MediaPreviewPlayer
+      actions={mediaActions}
+      controllerRef={controllerRef}
+      kind="video"
+    >
+      <video
+        ref={mediaRef}
+        className="file-preview-media file-preview-video"
+        controlsList="nodownload noplaybackrate noremoteplayback"
+        data-preserve-selection
+        disablePictureInPicture
+        disableRemotePlayback
+        preload="metadata"
+        slot="media"
+        src={src}
+        tabIndex={0}
+      />
+    </MediaPreviewPlayer>
+  );
+}
+
+function MediaPreviewPlayer({
+  actions,
+  children,
+  controllerRef,
+  kind,
+}: {
+  actions?: ReactElement | null;
+  children: ReactElement;
+  controllerRef: RefObject<MediaControllerElement | null>;
+  kind: 'audio' | 'video';
+}) {
+  const isAudio = kind === 'audio';
+  return (
+    <MediaController
+      audio={isAudio}
+      className={`file-preview-media-player file-preview-media-player--${kind}`}
+      data-preserve-selection
+      keyboardControl
+      noAutohide={isAudio}
+      ref={controllerRef}
+    >
+      {children}
+      <MediaControlBar className="file-preview-media-controls">
+        <MediaPlayButton className="file-preview-media-button" />
+        <MediaTimeDisplay className="file-preview-media-time" showDuration noToggle />
+        <MediaTimeRange className="file-preview-media-timeline" />
+        <MediaMuteButton className="file-preview-media-button" />
+        <MediaVolumeRange className="file-preview-media-volume" />
+        {isAudio ? null : <MediaFullscreenButton className="file-preview-media-button" />}
+        {actions}
+      </MediaControlBar>
+    </MediaController>
+  );
+}
+
+function HtmlPreview({ source }: PreviewRendererProps) {
+  const textState = usePreviewText(source.target);
+  const labels = useT().shell.filePreview;
+  const [showSource, setShowSource] = useState(false);
+  const [sourceHtml, setSourceHtml] = useState(() => plainCodeHtml(''));
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (textState.status !== 'ready') {
+      setSourceHtml(plainCodeHtml(''));
+      return () => {
+        cancelled = true;
+      };
+    }
+    setSourceHtml(plainCodeHtml(textState.text));
+    void highlightCode(textState.text, 'html').then((next) => {
+      if (!cancelled) setSourceHtml(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [textState]);
+
+  const interceptFrameLinks = useCallback(() => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+    doc.addEventListener('click', (event) => {
+      const target = closestAnchorFromEventTarget(event.target);
+      if (!target) return;
+      if (openUrlPreviewFromClick(event, target.href, target.textContent?.trim() || target.href)) {
+        event.preventDefault();
+      } else {
+        // Let non-URL anchors behave inside the sandboxed static document.
+      }
+    });
+  }, []);
+
+  if (textState.status === 'loading') return <PreviewMessage>{labels.loading}</PreviewMessage>;
+  if (textState.status === 'error') return <PreviewMessage>{textState.error === 'too-large' ? labels.tooLarge : labels.unavailable}</PreviewMessage>;
+  return (
+    <div className={`file-preview-html ${showSource ? 'file-preview-html--source' : 'file-preview-html--render'}`}>
+      <div className="file-preview-html-mode" role="group" aria-label="HTML preview mode">
+        <button
+          aria-pressed={!showSource}
+          className="file-preview-html-mode-button"
+          onClick={() => setShowSource(false)}
+          type="button"
+        >
+          {labels.htmlRenderMode}
+        </button>
+        <button
+          aria-pressed={showSource}
+          className="file-preview-html-mode-button"
+          onClick={() => setShowSource(true)}
+          type="button"
+        >
+          {labels.htmlSourceMode}
+        </button>
+      </div>
+      {showSource ? (
+        <div className="file-preview-code file-preview-html-source" data-preserve-selection data-preview-text dangerouslySetInnerHTML={{ __html: sourceHtml }} />
+      ) : (
+        <iframe
+          className="file-preview-html-frame"
+          onLoad={interceptFrameLinks}
+          ref={iframeRef}
+          sandbox="allow-same-origin"
+          srcDoc={textState.text}
+          title={labels.htmlFrameTitle({ name: source.name })}
+        />
+      )}
+    </div>
+  );
+}
+
+function closestAnchorFromEventTarget(target: EventTarget | null): HTMLAnchorElement | null {
+  if (!target || typeof target !== 'object' || !('closest' in target)) return null;
+  const closest = (target as { closest?: unknown }).closest;
+  if (typeof closest !== 'function') return null;
+  const anchor = closest.call(target, 'a[href]');
+  return isHtmlAnchorLike(anchor) ? anchor : null;
+}
+
+function isHtmlAnchorLike(value: unknown): value is HTMLAnchorElement {
+  return typeof value === 'object'
+    && value !== null
+    && 'href' in value
+    && typeof (value as { href?: unknown }).href === 'string';
 }
 
 function MarkdownPreview({ source }: PreviewRendererProps) {
@@ -1374,6 +1783,25 @@ function isAudioSource(source: PreviewFileSource): boolean {
 
 function isVideoSource(source: PreviewFileSource): boolean {
   return source.entryKind === 'file' && source.mimeType.toLowerCase().startsWith('video/');
+}
+
+function mediaKindForSource(source: PreviewSourceDescriptor): 'audio' | 'video' | null {
+  if (source.kind !== 'file') return null;
+  if (isAudioSource(source)) return 'audio';
+  if (isVideoSource(source)) return 'video';
+  return null;
+}
+
+function documentKindForSource(source: PreviewFileSource): 'epub' | 'html' | 'pdf' | null {
+  if (isPdfSource(source)) return 'pdf';
+  if (isEpubSource(source)) return 'epub';
+  if (isHtmlSource(source)) return 'html';
+  return null;
+}
+
+function isHtmlSource(source: PreviewFileSource): boolean {
+  return source.entryKind === 'file'
+    && (source.ext === 'html' || source.ext === 'htm' || source.mimeType.toLowerCase() === 'text/html');
 }
 
 function isPdfSource(source: PreviewFileSource): boolean {

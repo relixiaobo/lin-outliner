@@ -132,6 +132,16 @@ export function previewTargetFromUnknown(value: unknown): PreviewTarget | null {
   return null;
 }
 
+export function normalizePreviewHttpUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

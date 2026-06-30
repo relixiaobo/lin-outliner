@@ -1597,9 +1597,12 @@ stable system prompt. This follows the agent runtime pattern:
   inside the agent local root. The renderer resolves it through the trusted-local-file
   gate (`resolveTrustedLocalFileReference`) and renders an inline file chip the user
   can preview, save, or insert into the outliner — the same chip an incoming
-  attachment marker renders. This is what lets a `bash`-produced binary (e.g. a
-  `.pptx`, which `file_write` cannot author) appear in the message flow instead of
-  only as a path in prose.
+  attachment marker renders. Preview source resolution issues an opaque
+  `preview-local://<token>` stream URL for trusted regular files, backed by a
+  main-process token registry and range-capable file stream; the renderer never
+  receives a `file://` URL or path-read capability. This is what lets a
+  `bash`-produced binary (e.g. a `.pptx`, which `file_write` cannot author)
+  appear in the message flow instead of only as a path in prose.
 - Uploaded images remain inline image blocks in addition to their file marker.
   The inline part uses pi-ai's native `ImageContent` contract:
   `{ type: "image", data: base64, mimeType }`.

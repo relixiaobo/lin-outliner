@@ -1,29 +1,38 @@
 import { useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import type { PreviewTarget } from '../../../core/preview';
+import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
 import { useT } from '../../i18n/I18nProvider';
-import { AddChildIcon, FolderIcon, ICON_SIZE, OpenIcon } from '../icons';
+import {
+  AddChildIcon,
+  FolderIcon,
+  ICON_SIZE,
+  OpenIcon,
+  ShowIcon,
+} from '../icons';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
+import { dispatchPreviewTargetOpen } from '../preview/previewEvents';
 import { requestAddPreviewTargetToOutline } from '../preview/previewIngest';
 
-export interface AgentTranscriptFile {
+export interface InlineFileMenuFile {
   path: string;
   name: string;
   entryKind: 'file' | 'directory';
 }
 
-interface AgentTranscriptFileMenuProps {
-  file: AgentTranscriptFile;
+interface InlineFileContextMenuProps {
+  file: InlineFileMenuFile;
+  presentation?: FilePreviewNavigationOptions['presentation'];
   x: number;
   y: number;
   onClose: () => void;
 }
 
-export function previewTargetForTranscriptFile(file: AgentTranscriptFile): PreviewTarget {
+export function previewTargetForInlineFile(file: InlineFileMenuFile): PreviewTarget {
   return {
     kind: 'local-file',
     path: file.path,
@@ -32,16 +41,13 @@ export function previewTargetForTranscriptFile(file: AgentTranscriptFile): Previ
   };
 }
 
-/**
- * The right-click menu for a file chip rendered inside the agent transcript. Unlike
- * an outliner file reference (which opens the in-app preview pane), a transcript chip
- * is a pointer to a working file on disk: its primary click opens the workspace
- * file-only reader, while this menu keeps the system actions — Open with default app, Show in
- * Finder, and promotion into today's daily note as a first-class file node ("Add to
- * Today"). Built on the shared anchored-overlay menu stack (same as NodeContextMenu /
- * FileNodeActionMenu) so it inherits roving keys, Escape, and dismissal.
- */
-export function AgentTranscriptFileMenu({ file, x, y, onClose }: AgentTranscriptFileMenuProps) {
+export function InlineFileContextMenu({
+  file,
+  presentation,
+  x,
+  y,
+  onClose,
+}: InlineFileContextMenuProps) {
   const labels = useT().agent.filePreview;
   const menuRef = useRef<HTMLDivElement | null>(null);
   // Memoize the point-anchor: a fresh object each render would re-fire the overlay's
@@ -49,20 +55,28 @@ export function AgentTranscriptFileMenu({ file, x, y, onClose }: AgentTranscript
   const menuAnchor = useMemo(() => overlayAnchorFromPoint(x, y), [x, y]);
   const menuStyle = useAnchoredOverlay(menuRef, {
     anchorRect: menuAnchor,
-    maxHeight: 240,
+    maxHeight: 280,
     placement: 'bottom-start',
     width: 220,
   });
-  // Outside-pointer dismissal only — Escape is owned by `useMenuKeyboard` (it scopes
-  // ESC to the focused surface and restores focus to the trigger).
+  // Outside-pointer dismissal only; Escape is owned by `useMenuKeyboard`.
   useDismissibleOverlay(menuRef, onClose, { escape: false });
   const { onKeyDown } = useMenuKeyboard({ surfaceRef: menuRef, onClose, kind: 'menu' });
+
+  const target = previewTargetForInlineFile(file);
+
+  const previewInTenon = () => {
+    dispatchPreviewTargetOpen({
+      ...(presentation ? { presentation } : {}),
+      target,
+    });
+  };
 
   const addToToday = () => {
     // App owns the destination: it ensures today's daily note exists (through the
     // command runner, so the new node is in the index) and creates the file node
     // under it, surfacing a failure toast on its own. Fire-and-forget here.
-    void requestAddPreviewTargetToOutline({ target: previewTargetForTranscriptFile(file) });
+    void requestAddPreviewTargetToOutline({ target });
   };
 
   const openExternally = () => {
@@ -91,6 +105,13 @@ export function AgentTranscriptFileMenu({ file, x, y, onClose }: AgentTranscript
       onKeyDown={onKeyDown}
       onMouseDown={(event) => event.stopPropagation()}
     >
+      <MenuItem
+        className="node-context-item"
+        icon={<ShowIcon size={ICON_SIZE.menu} />}
+        label={labels.previewInTenon}
+        onClick={run(previewInTenon)}
+        role="menuitem"
+      />
       {file.entryKind !== 'directory' ? (
         // A directory can't be ingested into the asset store as a file node, so
         // "Add to Today" applies to files only; a directory still opens / reveals.

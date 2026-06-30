@@ -18,6 +18,13 @@
   text-underline-offset: 0.12em;
 }
 
+.inline-ref[data-inline-ref-kind="local-file"]:hover,
+.inline-ref[data-inline-ref-kind="local-file"]:focus-visible {
+  background: var(--fill-1);
+  box-shadow: 0 0 0 var(--space-1) var(--fill-1);
+  color: var(--text-strong);
+}
+
 .inline-ref.ProseMirror-selectednode {
   border-radius: var(--radius-row);
   background: var(--row-selection-frame-bg);

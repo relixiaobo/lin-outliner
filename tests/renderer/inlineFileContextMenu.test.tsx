@@ -3,17 +3,21 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import {
-  AgentTranscriptFileMenu,
-  type AgentTranscriptFile,
-} from '../../src/renderer/ui/agent/AgentTranscriptFileMenu';
+  InlineFileContextMenu,
+  type InlineFileMenuFile,
+} from '../../src/renderer/ui/editor/InlineFileContextMenu';
 import { onAddPreviewTargetToOutlineRequest } from '../../src/renderer/ui/preview/previewIngest';
+import {
+  PREVIEW_TARGET_OPEN_EVENT,
+  type PreviewTargetOpenDetail,
+} from '../../src/renderer/ui/preview/previewEvents';
 import { getMessages } from '../../src/core/i18n';
 import type { PreviewTarget } from '../../src/core/preview';
 
-// The transcript file chip's right-click menu: Add to Today / Open with default app /
-// Show in Finder. Add-to-Today fires the ingest bridge with just the file target; App
-// owns the destination (it ensures today's date node through the command runner and
-// creates the node under it). The other two actions hit the OS seam.
+// The inline file right-click menu: Preview in Tenon / Add to Today / Open with
+// default app / Show in Finder. Add-to-Today fires the ingest bridge with just the
+// file target; App owns the destination (it ensures today's date node through the
+// command runner and creates the node under it). The system actions hit the OS seam.
 
 const labels = getMessages('en').agent.filePreview;
 
@@ -46,17 +50,18 @@ afterEach(() => {
   // teardown error (other renderer tests keep the DOM globals between cases too).
 });
 
-const FILE: AgentTranscriptFile = {
+const FILE: InlineFileMenuFile = {
   path: '/workdir/report.md',
   name: 'report.md',
   entryKind: 'file',
 };
 
-describe('AgentTranscriptFileMenu', () => {
-  test('renders the three transcript actions', () => {
+describe('InlineFileContextMenu', () => {
+  test('renders the inline file actions', () => {
     const rendered = render(FILE, {});
     const items = Array.from(rendered.document.body.querySelectorAll('.node-context-item'));
     expect(items.map((item) => item.textContent)).toEqual([
+      labels.previewInTenon,
       labels.addToToday,
       labels.openWithDefaultApp,
       labels.showInFinder,
@@ -70,9 +75,49 @@ describe('AgentTranscriptFileMenu', () => {
     );
     const items = Array.from(rendered.document.body.querySelectorAll('.node-context-item'));
     expect(items.map((item) => item.textContent)).toEqual([
+      labels.previewInTenon,
       labels.openWithDefaultApp,
       labels.showInFinder,
     ]);
+  });
+
+  test('"Preview in Tenon" dispatches the standard preview event', async () => {
+    const rendered = render(FILE, {});
+    const previews: PreviewTargetOpenDetail[] = [];
+    rendered.window.addEventListener(PREVIEW_TARGET_OPEN_EVENT, (event) => {
+      previews.push((event as CustomEvent<PreviewTargetOpenDetail>).detail);
+    });
+
+    await clickItem(rendered, labels.previewInTenon);
+
+    expect(previews).toEqual([{
+      target: {
+        kind: 'local-file',
+        path: FILE.path,
+        entryKind: 'file',
+        label: FILE.name,
+      },
+    }]);
+  });
+
+  test('"Preview in Tenon" preserves transcript reader presentation when supplied', async () => {
+    const rendered = render(FILE, {}, { presentation: 'reader' });
+    const previews: PreviewTargetOpenDetail[] = [];
+    rendered.window.addEventListener(PREVIEW_TARGET_OPEN_EVENT, (event) => {
+      previews.push((event as CustomEvent<PreviewTargetOpenDetail>).detail);
+    });
+
+    await clickItem(rendered, labels.previewInTenon);
+
+    expect(previews).toEqual([{
+      presentation: 'reader',
+      target: {
+        kind: 'local-file',
+        path: FILE.path,
+        entryKind: 'file',
+        label: FILE.name,
+      },
+    }]);
   });
 
   test('"Add to Today" fires the ingest bridge with the file target (App owns the destination)', async () => {
@@ -125,7 +170,11 @@ describe('AgentTranscriptFileMenu', () => {
   });
 });
 
-function render(file: AgentTranscriptFile, lin: LinStub): Rendered {
+function render(
+  file: InlineFileMenuFile,
+  lin: LinStub,
+  options: { presentation?: 'reader' } = {},
+): Rendered {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
   // The component reads `window.lin` (seam) and `api` reads `window.lin.invoke`; attach
@@ -136,7 +185,13 @@ function render(file: AgentTranscriptFile, lin: LinStub): Rendered {
   const root = createRoot(container);
   act(() => {
     root.render(
-      <AgentTranscriptFileMenu file={file} onClose={() => {}} x={20} y={20} />,
+      <InlineFileContextMenu
+        file={file}
+        onClose={() => {}}
+        presentation={options.presentation}
+        x={20}
+        y={20}
+      />,
     );
   });
   const rendered: Rendered = { cleanup: () => act(() => root.unmount()), document, window };
@@ -156,9 +211,14 @@ async function clickItem(rendered: Rendered, label: string) {
 }
 
 function installDomGlobals(window: Window) {
+  (window as unknown as { requestAnimationFrame: (cb: FrameRequestCallback) => number })
+    .requestAnimationFrame = (cb) => { cb(0); return 0; };
+  (window as unknown as { cancelAnimationFrame: (handle: number) => void })
+    .cancelAnimationFrame = () => { /* synchronous frame: nothing to cancel */ };
   Object.assign(globalThis, {
     document: window.document,
     window,
+    CustomEvent: window.CustomEvent,
     HTMLElement: window.HTMLElement,
     KeyboardEvent: window.KeyboardEvent,
     MouseEvent: window.MouseEvent,

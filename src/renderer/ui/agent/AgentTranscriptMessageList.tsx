@@ -23,6 +23,7 @@ interface AgentTranscriptMessageListProps {
   childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   className?: string;
   conversationId?: string | null;
+  filePreviewPresentation?: 'reader';
   index: DocumentIndex;
   isChannel?: boolean;
   messages: readonly AgentMessage[];
@@ -148,6 +149,7 @@ export function AgentTranscriptMessageList({
   childRunsByParentToolCallId,
   className = 'agent-transcript-message-list',
   conversationId,
+  filePreviewPresentation,
   index,
   isChannel = false,
   messages,
@@ -184,6 +186,7 @@ export function AgentTranscriptMessageList({
             contentKey={entry.id}
             conversationId={conversationId}
             entry={entry}
+            filePreviewPresentation={filePreviewPresentation}
             index={index}
             isLastInTurn={false}
             isChannel={isChannel}

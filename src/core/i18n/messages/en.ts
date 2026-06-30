@@ -370,6 +370,9 @@ export const en = {
       modified: ({ date }: { date: string }) => `Modified ${date}`,
       itemCount: ({ count }: { count: number }) => `${count} items`,
       imageAlt: ({ name }: { name: string }) => `${name} preview`,
+      htmlFrameTitle: ({ name }: { name: string }) => `${name} HTML preview`,
+      htmlRenderMode: 'Render',
+      htmlSourceMode: 'Source',
       epubPreviewAlt: ({ name }: { name: string }) => `${name} EPUB reader`,
       sourceLocalFile: 'Local file',
       sourceAsset: 'Asset',
@@ -997,8 +1000,9 @@ commandPalette: {
       folder: 'Folder',
       modified: ({ date }: { date: string }) => `Modified ${date}`,
       unavailable: 'File unavailable',
-      // Right-click menu on a transcript file chip.
+      // Right-click menu on an inline local-file reference.
       menuLabel: 'File actions',
+      previewInTenon: 'Preview in Tenon',
       addToToday: 'Add to Today',
       openWithDefaultApp: 'Open with default app',
       showInFinder: 'Show in Finder',

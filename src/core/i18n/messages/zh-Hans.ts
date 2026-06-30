@@ -337,6 +337,9 @@ export const zhHans: PartialMessages = {
       modified: ({ date }) => `修改于 ${date}`,
       itemCount: ({ count }) => `${count} 项`,
       imageAlt: ({ name }) => `${name} 预览`,
+      htmlFrameTitle: ({ name }) => `${name} HTML 预览`,
+      htmlRenderMode: '渲染',
+      htmlSourceMode: '源码',
       epubPreviewAlt: ({ name }) => `${name} EPUB 阅读器`,
       sourceLocalFile: '本地文件',
       sourceAsset: '资源',
@@ -914,8 +917,9 @@ commandPalette: {
       folder: '文件夹',
       modified: ({ date }) => `修改于 ${date}`,
       unavailable: '文件不可用',
-      // Right-click menu on a transcript file chip.
+      // Right-click menu on an inline local-file reference.
       menuLabel: '文件操作',
+      previewInTenon: '在 Tenon 中预览',
       addToToday: '添加到今天',
       openWithDefaultApp: '用默认应用打开',
       showInFinder: '在访达中显示',

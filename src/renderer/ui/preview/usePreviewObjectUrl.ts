@@ -9,7 +9,7 @@ import { api } from '../../api/client';
  *
  * `enabled` gates the read so a consumer that prefers a direct/stream URL pays the byte
  * read only when it needs the fallback: the preview body reads when there is no
- * `streamUrl`; an inline file image reads only after the cached `asset://` <img> errors.
+ * `streamUrl`; an inline file image reads only after its direct <img> URL errors.
  *
  * Returns the resolved object URL, or an `error` code (e.g. `'too-large'`) when the read
  * fails — keeping one copy of this async/lifecycle state machine across every consumer.

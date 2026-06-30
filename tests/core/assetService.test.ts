@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AssetService, imageDimensions, sniffMimeType } from '../../src/main/assetService';
+import { AssetService, imageDimensions, mimeTypeForFilename, sniffMimeType } from '../../src/main/assetService';
 
 function pngBytes(width: number, height: number): Uint8Array {
   const buf = Buffer.alloc(24);
@@ -113,12 +113,24 @@ describe('AssetService', () => {
     }
   });
 
-  test('serve streams the bytes with the recorded MIME and 404s missing assets', async () => {
+  test('serve streams the bytes with the recorded MIME, byte range support, and 404s missing assets', async () => {
     const meta = await service.ingest({ kind: 'buffer', data: pngBytes(10, 10) });
     const ok = await service.serve(meta.id);
     expect(ok.status).toBe(200);
     expect(ok.headers.get('content-type')).toBe('image/png');
+    expect(ok.headers.get('accept-ranges')).toBe('bytes');
+    expect(ok.headers.get('content-length')).toBe('24');
     expect(new Uint8Array(await ok.arrayBuffer())).toEqual(pngBytes(10, 10));
+
+    const partial = await service.serve(meta.id, requestWithRange('bytes=1-3'));
+    expect(partial.status).toBe(206);
+    expect(partial.headers.get('content-range')).toBe('bytes 1-3/24');
+    expect(partial.headers.get('content-length')).toBe('3');
+    expect(new Uint8Array(await partial.arrayBuffer())).toEqual(pngBytes(10, 10).slice(1, 4));
+
+    const invalid = await service.serve(meta.id, requestWithRange('bytes=100-200'));
+    expect(invalid.status).toBe(416);
+    expect(invalid.headers.get('content-range')).toBe('bytes */24');
 
     const missing = await service.serve('doesnotexist000000000');
     expect(missing.status).toBe(404);
@@ -194,6 +206,12 @@ describe('AssetService', () => {
   });
 });
 
+function requestWithRange(range: string): Pick<Request, 'headers'> {
+  const headers = new Headers();
+  headers.set('range', range);
+  return { headers };
+}
+
 describe('sniffMimeType', () => {
   test('detects common formats by magic bytes', () => {
     expect(sniffMimeType(pngBytes(1, 1))).toBe('image/png');
@@ -209,6 +227,17 @@ describe('sniffMimeType', () => {
     expect(sniffMimeType(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]), 'renamed.epub')).toBe('application/pdf');
     expect(sniffMimeType(new Uint8Array([0, 0, 0]), 'note.svg')).toBe('image/svg+xml');
     expect(sniffMimeType(new Uint8Array([0, 0, 0]), 'mystery')).toBeUndefined();
+  });
+});
+
+describe('mimeTypeForFilename', () => {
+  test('keeps local-file preview MIME inference aligned with asset ingestion', () => {
+    expect(mimeTypeForFilename('clip.mp4')).toBe('video/mp4');
+    expect(mimeTypeForFilename('clip.m4v')).toBe('video/mp4');
+    expect(mimeTypeForFilename('clip.mov')).toBe('video/quicktime');
+    expect(mimeTypeForFilename('clip.webm')).toBe('video/webm');
+    expect(mimeTypeForFilename('memo.mp3')).toBe('audio/mpeg');
+    expect(mimeTypeForFilename('memo.m4a')).toBe('audio/mp4');
   });
 });
 

@@ -1425,6 +1425,7 @@ function inferMimeType(name: string): string {
   if (lowerName.endsWith('.json')) return 'application/json';
   if (lowerName.endsWith('.xml')) return 'application/xml';
   if (lowerName.endsWith('.yaml') || lowerName.endsWith('.yml')) return 'application/yaml';
+  if (lowerName.endsWith('.html') || lowerName.endsWith('.htm')) return 'text/html';
   if (lowerName.endsWith('.ppt')) return 'application/vnd.ms-powerpoint';
   if (lowerName.endsWith('.pptx')) return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
   if (lowerName.endsWith('.key') || lowerName.endsWith('.keynote')) return 'application/vnd.apple.keynote';

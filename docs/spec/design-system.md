@@ -1120,17 +1120,26 @@ category history; see "Settings window".)
   card shell with icon, name, type/size, path, modified time, and unavailable
   state. Pointer hover waits briefly before opening to avoid accidental peeks while
   the cursor moves through dense prose; keyboard focus opens immediately. The ref
-  itself keeps the normal text-link hover treatment; the popover is the only added
-  surface and uses the elevated popover material + level-1 shadow with
-  reduced-transparency fallback.
-- Clicking a local-file inline ref opens the file or folder through the preload
-  bridge and main-process `shell.openPath` only after the main process
+  itself keeps the normal text-link hover treatment plus a neutral fill/halo that
+  does not change layout; the popover uses the elevated popover material + level-1
+  shadow with reduced-transparency fallback.
+- Clicking a path-backed local-file inline ref opens the file or folder in Tenon's
+  preview surface. Live transcript refs keep the workspace file-only reader
+  presentation; outliner, agent meta-surface, and loose refs use the normal preview
+  pane route. Right-click opens the shared inline file menu: Preview in Tenon, Add
+  to Today for files, Open with default app, and Show in Finder. The system actions
+  go through the preload bridge and main process only after the main process
   canonicalizes the path under the non-root agent local file root, stats it as a
   regular file/folder, and rejects executable or bundle-like open targets.
-  Renderer code must not navigate to `file://`, call `openExternal` for file
-  paths, or read local bytes directly. Composer local-file atoms expose the same
-  preview metadata, but click handling stays with the editor so draft text
-  remains selectable and editable.
+  Previewable local files receive an opaque `preview-local://<token>` stream URL
+  from the main process, the local-file twin of stored assets' `asset://<id>`
+  stream URL. Both internal stream schemes are range-capable byte streams so
+  native image and media elements can load large files and audio/video can seek.
+  Renderer code consumes only the shared `streamUrl` field; it must not branch on
+  source kind, navigate to `file://`, call `openExternal` for file paths, or read
+  local bytes directly. Composer local-file atoms expose the same preview
+  metadata, but click handling stays with the editor so draft text remains
+  selectable and editable.
 
 ### Fields And Definition Configuration
 
