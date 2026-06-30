@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type FocusEvent as ReactFocusEvent,
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -15,6 +16,7 @@ import { api } from '../../api/client';
 import type { FilterOperator, NodeProjection, SortDirection } from '../../api/types';
 import { projectFieldTypeById } from '../../../core/configProjection';
 import type { DocumentIndex, ToolbarDropdownRequest, ToolbarDropdownSection } from '../../state/document';
+import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import {
   CalendarIcon,
   CheckIcon,
@@ -40,10 +42,10 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxMark } from '../primitives/CheckboxMark';
 import { Input } from '../primitives/Input';
 import { SelectControl } from '../primitives/SelectControl';
-import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useAnchoredOverlay, type OverlayAnchorRect } from '../primitives/useAnchoredOverlay';
 import { resolveMenuNavigation, useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import type { CommandRunner } from '../shared';
-import { collectViewFieldChoices, type ViewConfig } from './row-model';
+import { collectViewFieldChoices, customViewFieldIdsOnRows, type ViewConfig } from './row-model';
 import {
   CREATED_FIELD,
   DAY_FIELD,
@@ -150,18 +152,53 @@ type ViewSummaryChip = {
   section: ToolbarSection;
   tone: 'display' | 'filter' | 'group' | 'sort';
   filterTarget?: FilterEditTarget;
-  filterRuleId?: string;
 };
+
+type FieldRule = { id: string; field: string };
 
 type ToolbarTooltipState = {
   label: string;
-  left: number;
-  top: number;
-  placement: 'top' | 'bottom';
+  anchorRect: OverlayAnchorRect;
 };
 
 function isNameFilterRule(rule: ViewConfig['filterRules'][number]): boolean {
   return rule.field === NAME_FIELD && rule.operator === 'contains';
+}
+
+function useRuleEditTarget<Rule extends FieldRule>(
+  rules: readonly Rule[],
+): [
+  FilterEditTarget | null,
+  (target: FilterEditTarget | null) => void,
+  Map<string, Rule>,
+  Map<string, Rule>,
+] {
+  const [editingTarget, setEditingTarget] = useState<FilterEditTarget | null>(null);
+  const ruleByField = useMemo(
+    () => new Map(rules.map((rule) => [rule.field, rule])),
+    [rules],
+  );
+  const ruleById = useMemo(
+    () => new Map(rules.map((rule) => [rule.id, rule])),
+    [rules],
+  );
+
+  useEffect(() => {
+    if (!editingTarget) return;
+    if (editingTarget.ruleId) {
+      const rule = ruleById.get(editingTarget.ruleId);
+      if (rule) {
+        if (rule.field !== editingTarget.field) setEditingTarget({ field: rule.field, ruleId: rule.id });
+        return;
+      }
+      setEditingTarget(null);
+      return;
+    }
+    const rule = ruleByField.get(editingTarget.field);
+    if (rule) setEditingTarget({ field: rule.field, ruleId: rule.id });
+  }, [editingTarget, ruleByField, ruleById]);
+
+  return [editingTarget, setEditingTarget, ruleByField, ruleById];
 }
 
 function filterOperators(t: ViewToolbarMessages): Array<{ id: FilterOperator; label: string }> {
@@ -217,11 +254,6 @@ function bySection(choices: FieldChoice[]): Array<{ section: FieldChoice['sectio
     .filter((group) => group.items.length > 0);
 }
 
-function displayNodeForToolbar(node: NodeProjection, byId: DocumentIndex['byId']): NodeProjection {
-  if (node.type === 'reference' && node.targetId) return byId.get(node.targetId) ?? node;
-  return node;
-}
-
 function collectFilterFieldChoices(
   parent: NodeProjection,
   byId: DocumentIndex['byId'],
@@ -230,18 +262,7 @@ function collectFilterFieldChoices(
 ): FieldChoice[] {
   const labelsById = new Map(choices.map((choice) => [choice.id, choice.label]));
   const systemChoices = choices.filter((choice) => choice.section === 'System fields' && choice.id !== NAME_FIELD);
-  const fields = new Set<string>();
-
-  for (const childId of parent.children) {
-    const child = byId.get(childId);
-    if (!child) continue;
-    const displayed = displayNodeForToolbar(child, byId);
-    for (const nestedId of displayed.children) {
-      const nested = byId.get(nestedId);
-      if (nested?.type !== 'fieldEntry' || !nested.fieldDefId || isSystemFieldId(nested.fieldDefId)) continue;
-      fields.add(nested.fieldDefId);
-    }
-  }
+  const fields = customViewFieldIdsOnRows(parent, byId);
 
   for (const rule of filterRules) {
     if (isNameFilterRule(rule) || isSystemFieldId(rule.field)) continue;
@@ -269,7 +290,11 @@ function summarizeView(
 ): ViewSummaryChip[] {
   const labelOf = (fieldId: string) => choices.find((choice) => choice.id === fieldId)?.label ?? fieldId;
   const chips: ViewSummaryChip[] = [];
-  const visibleDisplayCount = view.displayFields.filter((field) => field.visible && field.field !== NAME_FIELD).length;
+  const visibleDisplayCount = new Set(
+    view.displayFields
+      .filter((field) => field.visible && field.field !== NAME_FIELD)
+      .map((field) => field.field),
+  ).size;
   if (visibleDisplayCount > 0) {
     chips.push({
       id: 'display',
@@ -305,7 +330,6 @@ function summarizeView(
       section: 'filter',
       tone: 'filter',
       filterTarget: { field: rule.field, ruleId: rule.id },
-      filterRuleId: rule.id,
     });
   }
   return chips;
@@ -324,9 +348,11 @@ export function ViewToolbar({
   const [open, setOpen] = useState<OpenSection>(null);
   const [requestedFilterTarget, setRequestedFilterTarget] = useState<FilterEditTarget | null>(null);
   const [tooltip, setTooltip] = useState<ToolbarTooltipState | null>(null);
-  const choices = useMemo(() => collectViewFieldChoices(node, index.byId), [node, index.byId]);
+  const referenceSummary = useMemo(() => referenceSummaryForIndex(index), [index]);
+  const choices = useMemo(() => collectViewFieldChoices(node, index.byId, referenceSummary), [node, index.byId, referenceSummary]);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
   const displayRef = useRef<HTMLButtonElement>(null);
   const groupRef = useRef<HTMLButtonElement>(null);
   const sortRef = useRef<HTMLButtonElement>(null);
@@ -347,6 +373,14 @@ export function ViewToolbar({
     placement: 'bottom-start',
     width: open ? SECTION_WIDTHS[open] : undefined,
     layoutKey: `${open ?? ''}:${view.sortRules.length}:${view.filterRules.length}:${view.displayFields.length}`,
+  });
+  const tooltipStyle = useAnchoredOverlay(tooltipRef, {
+    anchorRect: tooltip?.anchorRect ?? null,
+    disabled: !tooltip,
+    gap: 8,
+    maxHeight: 80,
+    placement: 'top-center',
+    width: 180,
   });
 
   useEffect(() => {
@@ -410,12 +444,15 @@ export function ViewToolbar({
       return;
     }
     const rect = element.getBoundingClientRect();
-    const placement: ToolbarTooltipState['placement'] = rect.top >= 36 ? 'top' : 'bottom';
     setTooltip({
       label,
-      left: rect.left + rect.width / 2,
-      top: placement === 'top' ? rect.top - 8 : rect.bottom + 8,
-      placement,
+      anchorRect: {
+        bottom: rect.bottom,
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        width: rect.width,
+      },
     });
   };
 
@@ -428,12 +465,12 @@ export function ViewToolbar({
     return target && toolbarRef.current?.contains(target) ? target : null;
   };
 
-  const onTooltipPointerOver = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const showTooltipFromEvent = (event: ReactFocusEvent<HTMLDivElement> | ReactPointerEvent<HTMLDivElement>) => {
     const target = tooltipTargetFromEvent(event);
     if (target) showTooltipFor(target);
   };
 
-  const onTooltipPointerOut = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const hideTooltipFromEvent = (event: ReactFocusEvent<HTMLDivElement> | ReactPointerEvent<HTMLDivElement>) => {
     const target = tooltipTargetFromEvent(event);
     if (!target) return;
     const related = event.relatedTarget;
@@ -441,26 +478,14 @@ export function ViewToolbar({
     setTooltip(null);
   };
 
-  const onTooltipFocus = (event: ReactFocusEvent<HTMLDivElement>) => {
-    const target = tooltipTargetFromEvent(event);
-    if (target) showTooltipFor(target);
-  };
-
-  const onTooltipBlur = (event: ReactFocusEvent<HTMLDivElement>) => {
-    const target = tooltipTargetFromEvent(event);
-    if (!target) return;
-    const related = event.relatedTarget;
-    if (related instanceof Node && target.contains(related)) return;
-    setTooltip(null);
-  };
-
+  const includeSortSummary = open === 'sort';
   const summaryChips = useMemo(
-    () => summarizeView(view, choices, tv, { includeSort: open === 'sort' }),
-    [view, choices, tv, open],
+    () => summarizeView(view, choices, tv, { includeSort: includeSortSummary }),
+    [view, choices, tv, includeSortSummary],
   );
   const titles = sectionTitles(tv);
   const renderSummaryChip = (chip: ViewSummaryChip) => {
-    if (chip.filterRuleId) {
+    if (chip.filterTarget?.ruleId) {
       return (
         <span className={`view-toolbar-summary-chip is-${chip.tone} has-remove`} key={chip.id}>
           <ButtonControl
@@ -473,7 +498,7 @@ export function ViewToolbar({
             aria-label={tv.removeFilterRule}
             className="view-toolbar-summary-chip-remove view-toolbar-tooltip-anchor"
             data-tooltip={tv.removeFilterRule}
-            onClick={() => void run(() => api.removeFilterRule(chip.filterRuleId!))}
+            onClick={() => void run(() => api.removeFilterRule(chip.filterTarget!.ruleId!))}
           >
             <CloseIcon size={ICON_SIZE.tiny} />
           </ButtonControl>
@@ -496,11 +521,11 @@ export function ViewToolbar({
       className="view-toolbar"
       aria-label={tv.toolbarAriaLabel}
       ref={toolbarRef}
-      onBlur={onTooltipBlur}
-      onFocus={onTooltipFocus}
+      onBlur={hideTooltipFromEvent}
+      onFocus={showTooltipFromEvent}
       onPointerDown={() => setTooltip(null)}
-      onPointerOut={onTooltipPointerOut}
-      onPointerOver={onTooltipPointerOver}
+      onPointerOut={hideTooltipFromEvent}
+      onPointerOver={showTooltipFromEvent}
     >
       <div className="view-toolbar-button-row">
         <NameFilterControl
@@ -584,22 +609,26 @@ export function ViewToolbar({
         </div>,
         document.body,
       )}
-      {tooltip && createPortal(<ViewToolbarTooltip tooltip={tooltip} />, document.body)}
+      {tooltip && createPortal(<ViewToolbarTooltip ref={tooltipRef} style={tooltipStyle} tooltip={tooltip} />, document.body)}
     </div>
   );
 }
 
-function ViewToolbarTooltip({ tooltip }: { tooltip: ToolbarTooltipState }) {
+const ViewToolbarTooltip = forwardRef<HTMLDivElement, {
+  style: CSSProperties | undefined;
+  tooltip: ToolbarTooltipState;
+}>(function ViewToolbarTooltip({ style, tooltip }, ref) {
   return (
     <div
-      className={`view-toolbar-tooltip is-${tooltip.placement}`}
+      ref={ref}
+      className="view-toolbar-tooltip"
       role="tooltip"
-      style={{ left: tooltip.left, top: tooltip.top }}
+      style={style}
     >
       {tooltip.label}
     </div>
   );
-}
+});
 
 function NameFilterControl({
   nameFilter,
@@ -621,16 +650,31 @@ function NameFilterControl({
   const [draft, setDraft] = useState(nameFilter?.values[0] ?? '');
   const lastCommittedRef = useRef(nameFilter?.values[0] ?? '');
   const pendingCreateRef = useRef(false);
+  const pendingRemoveRef = useRef<string | null>(null);
   const desiredValueRef = useRef(nameFilter?.values[0] ?? '');
   const nameFilterId = nameFilter?.id;
   const committedValue = nameFilter?.values[0] ?? '';
   const active = committedValue.trim().length > 0 || open;
+  const removeNameFilter = (ruleId: string) => {
+    if (pendingRemoveRef.current === ruleId) return;
+    pendingRemoveRef.current = ruleId;
+    void run(() => api.removeFilterRule(ruleId), { applyFocus: false })
+      .finally(() => {
+        if (pendingRemoveRef.current === ruleId) pendingRemoveRef.current = null;
+      });
+  };
 
   useEffect(() => {
+    if (nameFilterId && desiredValueRef.current.trim().length === 0) {
+      lastCommittedRef.current = '';
+      removeNameFilter(nameFilterId);
+      return;
+    }
     const previous = lastCommittedRef.current;
     lastCommittedRef.current = committedValue;
-    desiredValueRef.current = committedValue;
+    if (!pendingCreateRef.current) desiredValueRef.current = committedValue;
     setDraft((current) => {
+      if (desiredValueRef.current.trim().length === 0 && committedValue.trim().length > 0) return current;
       if (open && current.trim() !== previous.trim()) return current;
       return committedValue;
     });
@@ -653,7 +697,7 @@ function NameFilterControl({
           lastCommittedRef.current = '';
           return;
         }
-        void run(() => api.removeFilterRule(nameFilterId), { applyFocus: false });
+        removeNameFilter(nameFilterId);
         lastCommittedRef.current = '';
         return;
       }
@@ -670,11 +714,6 @@ function NameFilterControl({
         void run(() => api.addFilterRule(nodeId, NAME_FIELD, 'contains', [value], 'any'), { applyFocus: false })
           .then((result) => {
             if (!result) lastCommittedRef.current = '';
-            const createdRuleId = result && 'focus' in result ? result.focus?.nodeId : undefined;
-            if (createdRuleId && desiredValueRef.current.trim().length === 0) {
-              lastCommittedRef.current = '';
-              void run(() => api.removeFilterRule(createdRuleId), { applyFocus: false });
-            }
           })
           .finally(() => {
             pendingCreateRef.current = false;
@@ -690,7 +729,7 @@ function NameFilterControl({
     setDraft('');
     setOpen(false);
     if (nameFilterId) {
-      void run(() => api.removeFilterRule(nameFilterId), { applyFocus: false });
+      removeNameFilter(nameFilterId);
     }
     lastCommittedRef.current = '';
     desiredValueRef.current = '';
@@ -724,7 +763,7 @@ function NameFilterControl({
         onBlur={() => {
           if (draft.trim()) return;
           if (nameFilterId) {
-            void run(() => api.removeFilterRule(nameFilterId), { applyFocus: false });
+            removeNameFilter(nameFilterId);
           }
           lastCommittedRef.current = '';
           desiredValueRef.current = '';
@@ -901,34 +940,11 @@ function SortSection({
 }) {
   const t = useT();
   const tv = t.outliner.viewToolbar;
-  const [editingTarget, setEditingTarget] = useState<{ field: string; ruleId?: string } | null>(null);
-  const ruleByField = useMemo(
-    () => new Map(view.sortRules.map((rule) => [rule.field, rule])),
-    [view.sortRules],
-  );
-  const ruleById = useMemo(
-    () => new Map(view.sortRules.map((rule) => [rule.id, rule])),
-    [view.sortRules],
-  );
+  const [editingTarget, setEditingTarget, ruleByField, ruleById] = useRuleEditTarget(view.sortRules);
   const sortOrderByRuleId = useMemo(
     () => new Map(view.sortRules.map((rule, index) => [rule.id, index + 1])),
     [view.sortRules],
   );
-
-  useEffect(() => {
-    if (!editingTarget) return;
-    if (editingTarget.ruleId) {
-      const rule = ruleById.get(editingTarget.ruleId);
-      if (rule) {
-        if (rule.field !== editingTarget.field) setEditingTarget({ field: rule.field, ruleId: rule.id });
-        return;
-      }
-      setEditingTarget(null);
-      return;
-    }
-    const rule = ruleByField.get(editingTarget.field);
-    if (rule) setEditingTarget({ field: rule.field, ruleId: rule.id });
-  }, [editingTarget, ruleByField, ruleById]);
 
   if (editingTarget) {
     const rule = editingTarget.ruleId
@@ -1059,7 +1075,6 @@ function FilterSection({
 }) {
   const t = useT();
   const tv = t.outliner.viewToolbar;
-  const [editingTarget, setEditingTarget] = useState<FilterEditTarget | null>(null);
   const [query, setQuery] = useState('');
   const filterRules = useMemo(
     () => view.filterRules.filter((rule) => !isNameFilterRule(rule)),
@@ -1069,14 +1084,7 @@ function FilterSection({
     () => collectFilterFieldChoices(node, index.byId, choices, view.filterRules),
     [choices, index.byId, node, view.filterRules],
   );
-  const ruleByField = useMemo(
-    () => new Map(filterRules.map((rule) => [rule.field, rule])),
-    [filterRules],
-  );
-  const ruleById = useMemo(
-    () => new Map(filterRules.map((rule) => [rule.id, rule])),
-    [filterRules],
-  );
+  const [editingTarget, setEditingTarget, ruleByField, ruleById] = useRuleEditTarget(filterRules);
 
   useEffect(() => {
     if (!requestedTarget) return;

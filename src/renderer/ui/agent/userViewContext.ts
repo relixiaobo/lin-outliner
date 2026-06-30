@@ -9,7 +9,7 @@ import { formatTag } from '../../../core/textSyntax';
 import { nodeIsDone, nodeShowsCheckbox } from '../../../core/configProjection';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
-import { buildOutlinerRows, readViewConfig } from '../../state/outlinerRows';
+import { buildOutlinerRows, flattenExpandedOutlinerRows, readViewConfig } from '../../state/outlinerRows';
 import { buildPanelBreadcrumb } from '../panelBreadcrumb';
 import { fileNodeTitle, isFileNode } from '../preview/fileNode';
 import type { WorkspacePanelState } from '../workspaceLayoutTypes';
@@ -175,7 +175,8 @@ function buildVisibleOutline(
 }
 
 function visibleNodeRows(node: NodeProjection, index: DocumentIndex, ui: UiState): Array<{ id: NodeId }> {
-  return buildOutlinerRows(node, index.byId, { expandedHiddenFields: ui.expandedHiddenFields })
+  const rows = buildOutlinerRows(node, index.byId, { expandedHiddenFields: ui.expandedHiddenFields });
+  return flattenExpandedOutlinerRows(rows, ui.expanded)
     .filter((row): row is { id: NodeId; type: 'field' | 'content' } => row.type === 'field' || row.type === 'content')
     .map((row) => ({ id: row.id }));
 }

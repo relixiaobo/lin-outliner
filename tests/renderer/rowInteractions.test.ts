@@ -15,7 +15,7 @@ import { buildReferenceCandidates } from '../../src/renderer/ui/interactions/ref
 import { getTreeReferenceBlockReason } from '../../src/renderer/ui/interactions/referenceRules';
 import { resolveSelectedReferenceShortcut } from '../../src/renderer/ui/interactions/selectedReferenceShortcuts';
 import { filterSlashCommands } from '../../src/renderer/ui/interactions/slashCommands';
-import type { ReferenceSummary } from '../../src/core/references';
+import { buildReferenceSummary, type ReferenceSummary } from '../../src/core/references';
 import {
   clampTagSelectorIndex,
   tagSelectorItemLabel,
@@ -52,7 +52,7 @@ import {
   readViewConfig,
   viewDisplayValuesFor,
 } from '../../src/renderer/ui/outliner/row-model';
-import { DAY_FIELD, DONE_FIELD, NAME_FIELD, REF_COUNT_FIELD, TAGS_FIELD } from '../../src/core/systemFields';
+import { CREATED_FIELD, DAY_FIELD, DONE_FIELD, NAME_FIELD, REF_COUNT_FIELD, TAGS_FIELD } from '../../src/core/systemFields';
 import { searchQueryOutlineText, searchQuerySummaryModel } from '../../src/renderer/ui/search/SearchQuerySummaryBar';
 import { concatRichText } from '../../src/renderer/ui/editor/richTextCodec';
 import { getMessages } from '../../src/core/i18n';
@@ -94,6 +94,8 @@ describe('row interaction resolvers', () => {
   };
   const fieldTypeConfigEntries = (defId: string, fieldType: string): Array<[string, any]> =>
     enumConfigEntries(defId, 'fieldType', fieldType);
+  const fieldChoices = (parent: any, byId: Map<string, any>) =>
+    collectViewFieldChoices(parent, byId, buildReferenceSummary(byId));
 
   test('builds view rows with hidden field reveal placeholders', () => {
     const parent = makeNode('parent', 'Parent', { children: ['field'] });
@@ -150,7 +152,7 @@ describe('row interaction resolvers', () => {
       { id: 'alpha', type: 'content' },
       { id: 'hidden:parent:hidden', type: 'hiddenField', fieldId: 'hidden', label: 'Archive' },
       {
-        id: 'filtered:parent',
+        id: 'filtered:parent:filter',
         type: 'filteredOut',
         count: 2,
         rows: [
@@ -164,7 +166,7 @@ describe('row interaction resolvers', () => {
     })).toEqual([
       { id: 'alpha', type: 'content' },
       {
-        id: 'filtered:parent',
+        id: 'filtered:parent:filter',
         type: 'filteredOut',
         count: 3,
         rows: [
@@ -309,12 +311,40 @@ describe('row interaction resolvers', () => {
     expect(buildOutlinerRows(parent as any, byId)).toEqual([
       { id: 'done', type: 'content' },
       {
-        id: 'filtered:parent',
+        id: 'filtered:parent:filter',
         type: 'filteredOut',
         count: 1,
         rows: [{ id: 'todo', type: 'content' }],
       },
     ]);
+  });
+
+  test('keys filtered-out disclosure state by the active filter rules', () => {
+    const parent = makeNode('parent', 'Parent', { children: ['view', 'done', 'todo'] });
+    const withFilter = (filterId: string) => new Map<string, any>([
+      ['parent', parent],
+      ['view', makeNode('view', '', {
+        type: 'viewDef',
+        parentId: 'parent',
+        children: [filterId],
+      })],
+      [filterId, makeNode(filterId, '', {
+        type: 'filterRule',
+        parentId: 'view',
+        filterField: DONE_FIELD,
+        filterOperator: 'is',
+        filterValueLogic: 'any',
+        filterValues: ['true'],
+      })],
+      ['done', makeNode('done', 'Done', { parentId: 'parent', completedAt: 1000 })],
+      ['todo', makeNode('todo', 'Todo', { parentId: 'parent', completedAt: 0 })],
+    ]);
+
+    const first = buildOutlinerRows(parent as any, withFilter('filter-a')).find((row) => row.type === 'filteredOut');
+    const second = buildOutlinerRows(parent as any, withFilter('filter-b')).find((row) => row.type === 'filteredOut');
+
+    expect(first?.id).toBe('filtered:parent:filter-a');
+    expect(second?.id).toBe('filtered:parent:filter-b');
   });
 
   test('derives visible display field metadata from the same field values as view rules', () => {
@@ -326,7 +356,7 @@ describe('row interaction resolvers', () => {
       ['view', makeNode('view', '', {
         type: 'viewDef',
         parentId: 'parent',
-        children: ['display-status', 'display-tags', 'display-name', 'display-empty'],
+        children: ['display-status', 'display-tags', 'display-created', 'display-name', 'display-empty'],
       })],
       ['display-status', makeNode('display-status', '', {
         type: 'displayField',
@@ -338,6 +368,12 @@ describe('row interaction resolvers', () => {
         type: 'displayField',
         parentId: 'view',
         displayField: TAGS_FIELD,
+        displayVisible: true,
+      })],
+      ['display-created', makeNode('display-created', '', {
+        type: 'displayField',
+        parentId: 'view',
+        displayField: CREATED_FIELD,
         displayVisible: true,
       })],
       ['display-name', makeNode('display-name', '', {
@@ -357,6 +393,7 @@ describe('row interaction resolvers', () => {
       ['task', makeNode('task', 'Alpha', {
         parentId: 'parent',
         children: ['status-entry'],
+        createdAt: Date.UTC(2026, 5, 30),
         tags: ['tag-project'],
       })],
       ['status-entry', makeNode('status-entry', '', {
@@ -371,8 +408,9 @@ describe('row interaction resolvers', () => {
     const view = readViewConfig(parent as any, byId);
 
     expect(viewDisplayValuesFor(byId.get('task') as any, view, byId)).toEqual([
-      { field: 'status-def', label: 'Status', values: ['In progress'] },
-      { field: TAGS_FIELD, label: 'Tags', values: ['project'] },
+      { id: 'display-status', field: 'status-def', label: 'Status', values: ['In progress'] },
+      { id: 'display-tags', field: TAGS_FIELD, label: 'Tags', values: ['project'] },
+      { id: 'display-created', field: CREATED_FIELD, label: 'Created time', values: ['2026-06-30'] },
     ]);
   });
 
@@ -462,7 +500,7 @@ describe('row interaction resolvers', () => {
 	    expect(buildOutlinerRows(parent as any, byId)).toEqual([
 	      { id: 'late', type: 'content' },
         {
-          id: 'filtered:parent',
+          id: 'filtered:parent:filter',
           type: 'filteredOut',
           count: 1,
           rows: [{ id: 'early', type: 'content' }],
@@ -529,7 +567,7 @@ describe('row interaction resolvers', () => {
       { id: 'group:daily:sys:day:2026-06-02', type: 'group', label: fmt.format(new Date(2026, 5, 2)) },
       { id: 'late', type: 'content' },
       {
-        id: 'filtered:daily',
+        id: 'filtered:daily:filter',
         type: 'filteredOut',
         count: 1,
         rows: [{ id: 'early', type: 'content' }],
@@ -559,7 +597,7 @@ describe('row interaction resolvers', () => {
       ['global-def', makeNode('global-def', 'Global only', { type: 'fieldDef' })],
     ]);
 
-    const labels = collectViewFieldChoices(parent as any, byId).map((choice) => choice.label);
+    const labels = fieldChoices(parent as any, byId).map((choice) => choice.label);
     expect(labels).toContain('Status');
     expect(labels).toContain('Orphan');
     expect(labels).not.toContain('Global only');
@@ -579,7 +617,7 @@ describe('row interaction resolvers', () => {
       ['ref', makeNode('ref', 'Referenced', { type: 'reference', parentId: 'source', targetId: 'referenced' })],
     ]);
 
-    const labels = collectViewFieldChoices(parent as any, byId).map((choice) => choice.label);
+    const labels = fieldChoices(parent as any, byId).map((choice) => choice.label);
     expect(labels).toContain('Name');
     expect(labels).toContain('Created time');
     expect(labels).toContain('Last edited time');
@@ -604,7 +642,7 @@ describe('row interaction resolvers', () => {
       ['task', makeNode('task', 'Task', { parentId: 'parent' })],
     ]);
 
-    let labels = collectViewFieldChoices(parent as any, byId).map((choice) => choice.label);
+    let labels = fieldChoices(parent as any, byId).map((choice) => choice.label);
     expect(labels).toContain('Tags');
     expect(labels).not.toContain('Done');
     expect(labels).not.toContain('Done time');
@@ -612,7 +650,7 @@ describe('row interaction resolvers', () => {
 
     byId.delete('sort-tags');
     byId.set('view', makeNode('view', '', { type: 'viewDef', parentId: 'parent', children: [] }));
-    labels = collectViewFieldChoices(parent as any, byId).map((choice) => choice.label);
+    labels = fieldChoices(parent as any, byId).map((choice) => choice.label);
     expect(labels).not.toContain('Tags');
     expect(labels).not.toContain('Done');
     expect(labels).not.toContain('Done time');

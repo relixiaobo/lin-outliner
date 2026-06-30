@@ -211,7 +211,7 @@ test.describe('definition configuration parity', () => {
     await expect(row(page, ids.alpha).getByRole('button', { name: 'Collapse' })).toBeVisible();
   });
 
-  test('nested view toolbar reads as part of the expanded child outline', async ({ page }) => {
+  test('nested view toolbar aligns with its owner row content column', async ({ page }) => {
     await showViewToolbar(page, ids.today);
     await invokeDocumentCommand(page, 'set_view_toolbar_visible', { nodeId: ids.alpha, visible: true });
 
@@ -241,7 +241,7 @@ test.describe('definition configuration parity', () => {
       };
     });
 
-    expect(geometry.nestedLeft - geometry.rootLeft).toBeGreaterThan(24);
+    expect(Math.abs(geometry.nestedLeft - geometry.rootLeft)).toBeLessThan(2);
     expect(geometry.beforeContent).not.toBe('none');
     expect(geometry.afterContent).not.toBe('none');
     expect(geometry.beforeHeight).toBe('1px');

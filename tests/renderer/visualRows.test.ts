@@ -212,18 +212,18 @@ describe('buildVisualRows depth and extras', () => {
     const collapsed = buildVisualRows('lib', byId, { expanded: new Set() });
     expect(collapsed.map((row) => row.kind)).toEqual(['content', 'filteredOut']);
     expect(collapsed.find((row) => row.kind === 'filteredOut')).toMatchObject({
-      id: 'filtered:lib',
+      id: 'filtered:lib:filter',
       count: 1,
       expanded: false,
     });
     expect(visualRowNodeIds(collapsed)).toEqual(['done']);
 
-    const expanded = buildVisualRows('lib', byId, { expanded: new Set(['filtered:lib']) });
+    const expanded = buildVisualRows('lib', byId, { expanded: new Set(['filtered:lib:filter']) });
     expect(expanded.map((row) => row.kind)).toEqual(['content', 'filteredOut', 'content']);
     expect(visualRowNodeIds(expanded)).toEqual(['done', 'todo']);
     expect(flattenVisibleRows('lib', byId, new Set(), new Set())).toEqual(['done']);
-    expect(flattenVisibleRows('lib', byId, new Set(['filtered:lib']), new Set())).toEqual(['done', 'todo']);
-    expect(buildSelectableRows('lib', byId, { expanded: new Set(['filtered:lib']) }).map((row) => row.id))
+    expect(flattenVisibleRows('lib', byId, new Set(['filtered:lib:filter']), new Set())).toEqual(['done', 'todo']);
+    expect(buildSelectableRows('lib', byId, { expanded: new Set(['filtered:lib:filter']) }).map((row) => row.id))
       .toEqual(['done', 'todo']);
   });
 

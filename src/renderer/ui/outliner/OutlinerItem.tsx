@@ -25,6 +25,7 @@ import {
   type DocumentIndex,
   type UiState,
 } from '../../state/document';
+import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import { deriveRowMemoState, rowMemoStateEqual } from '../../state/rowUiState';
 import { RichTextEditor, type EditorSplitPayload } from '../editor/RichTextEditor';
 import { FileNodeKeyboardAnchor } from './FileNodeKeyboardAnchor';
@@ -218,8 +219,9 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     && props.referencePath.includes(childParentId);
   const rowChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId);
   const parentView = readViewConfig(parentNode, props.index.byId);
+  const referenceSummary = referenceSummaryForIndex(props.index);
   const displayValues = realNode && displayed && !props.draft && !props.fieldValue
-    ? viewDisplayValuesFor(displayed, parentView, props.index.byId)
+    ? viewDisplayValuesFor(displayed, parentView, props.index.byId, { referenceSummary })
     : [];
   // A file node is a full node — the bullet drills to the node page, the chevron
   // expands an inline preview. Its row content depends on the kind: a non-image file is
@@ -2665,7 +2667,7 @@ function ViewDisplayFields({ ariaLabel, values }: { ariaLabel: string; values: V
   return (
     <div className="view-display-fields" aria-label={ariaLabel}>
       {values.map((field) => (
-        <span className="view-display-field" key={field.field}>
+        <span className="view-display-field" key={field.id}>
           <span className="view-display-field-label">{field.label}</span>
           <span className="view-display-field-value">{field.values.join(', ')}</span>
         </span>
@@ -2777,7 +2779,6 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   const prevRev = prev.index.renderRev?.get(prev.nodeId);
   const nextRev = next.index.renderRev?.get(next.nodeId);
   if (prevRev === undefined || nextRev === undefined || prevRev !== nextRev) return false;
-  if (prev.index.renderRev?.get(prev.parentId) !== next.index.renderRev?.get(next.parentId)) return false;
   if (outlinerItemFileRenderKey(prev) !== outlinerItemFileRenderKey(next)) return false;
   if (outlinerItemPinned(prev) !== outlinerItemPinned(next)) return false;
   if (!referencePathEqual(prev.referencePath, next.referencePath)) return false;

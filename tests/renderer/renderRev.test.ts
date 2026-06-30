@@ -55,6 +55,28 @@ describe('propagateDirty', () => {
     expect(affected.has('a2')).toBe(false);
   });
 
+  test('a child text edit does not mark untouched siblings dirty', () => {
+    const byId = tree();
+    const affected = propagateDirty(new Set(['a']), byId);
+    expect(affected.has('root')).toBe(true);
+    expect(affected.has('a2')).toBe(false);
+  });
+
+  test('a view rule edit marks the owner rows that read view display settings', () => {
+    const byId = byIdOf([
+      node('root', { children: ['view', 'a', 'b'] }),
+      node('view', { parentId: 'root', type: 'viewDef', children: ['display'] }),
+      node('display', { parentId: 'view', type: 'displayField', displayField: 'sys:createdAt' } as Partial<NodeProjection>),
+      node('a', { parentId: 'root' }),
+      node('b', { parentId: 'root' }),
+    ]);
+    const affected = propagateDirty(new Set(['display']), byId);
+    expect(affected.has('view')).toBe(true);
+    expect(affected.has('root')).toBe(true);
+    expect(affected.has('a')).toBe(true);
+    expect(affected.has('b')).toBe(true);
+  });
+
   test('empty input yields an empty set without walking', () => {
     expect(propagateDirty(new Set(), tree()).size).toBe(0);
   });

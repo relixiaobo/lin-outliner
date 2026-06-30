@@ -11,11 +11,12 @@ import {
   TAGS_FIELD,
   UPDATED_FIELD,
   isSystemFieldId,
+  systemFieldDisplay,
   systemFieldLabel,
   systemFieldValues,
   type SystemFieldContext,
 } from '../../core/systemFields';
-import { buildReferenceSummary, type ReferenceSummary } from '../../core/references';
+import type { ReferenceSummary } from '../../core/references';
 
 const INTERNAL_NODE_TYPES = new Set<NodeProjection['type']>([
   'queryCondition',
@@ -80,6 +81,7 @@ export interface ViewConfig {
 }
 
 export interface ViewFieldValue {
+  id: NodeId;
   field: string;
   label: string;
   values: string[];
@@ -171,6 +173,37 @@ function childText(node: NodeProjection | undefined, byId: Map<NodeId, NodeProje
     .map((childId) => childText(byId.get(childId), byId))
     .filter(Boolean)
     .join(' ');
+}
+
+function displayFieldValuesFor(
+  rowNode: NodeProjection,
+  fieldId: string,
+  byId: Map<NodeId, NodeProjection>,
+  systemFieldContext?: SystemFieldContext,
+): string[] {
+  const displayed = displayNode(rowNode, byId);
+  if (!isSystemFieldId(fieldId)) return viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext);
+  if (fieldId === NAME_FIELD) return viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext);
+
+  const display = systemFieldDisplay(displayed, fieldId, byId, systemFieldContext);
+  switch (display.kind) {
+    case 'done':
+      return [display.checked ? 'Done' : 'Not done'];
+    case 'date':
+      return display.text ? [display.text] : [];
+    case 'dayRef':
+      return display.text ? [display.text] : [];
+    case 'tags':
+      return display.tagIds.map((tagId) => byId.get(tagId)?.content.text || tagId).filter(Boolean);
+    case 'nodeRefs':
+      return display.refs.map((ref) => ref.label).filter(Boolean);
+    case 'commandSchedule':
+      return display.schedule ? [display.schedule] : [];
+    case 'text':
+      return display.text ? [display.text] : [];
+    default:
+      return [];
+  }
 }
 
 export function viewFieldValuesFor(
@@ -550,10 +583,11 @@ function applyViewSettings(
     systemFieldContext,
   );
   if (filteredOut.length === 0) return visibleRows;
+  const ruleKey = view.filterRules.map((rule) => rule.id).join('|');
   return [
     ...visibleRows,
     {
-      id: `filtered:${parent.id}`,
+      id: `filtered:${parent.id}:${ruleKey}`,
       type: 'filteredOut',
       count: filteredOut.length,
       rows: filteredOut,
@@ -570,8 +604,29 @@ export function buildOutlinerRows(
   return applyViewSettings(parent, buildChildRows(parent, byId, options), byId, options);
 }
 
+export function flattenExpandedOutlinerRows(
+  rows: readonly OutlinerRowItem[],
+  expanded: ReadonlySet<string>,
+): OutlinerRowItem[] {
+  const out: OutlinerRowItem[] = [];
+  const visitRows = (items: readonly OutlinerRowItem[]) => {
+    for (const row of items) {
+      if (row.type === 'filteredOut') {
+        out.push(row);
+        if (expanded.has(row.id)) visitRows(row.rows);
+        continue;
+      }
+      out.push(row);
+    }
+  };
+  visitRows(rows);
+  return out;
+}
+
 // A field's display label: a fixed system-field label, else the def node's title.
 export function fieldChoiceLabel(fieldId: string, byId: Map<NodeId, NodeProjection>): string {
+  const viewSystemField = SYSTEM_VIEW_FIELD_CHOICES.find((choice) => choice.id === fieldId);
+  if (viewSystemField) return viewSystemField.label;
   return systemFieldLabel(fieldId) ?? nodeTitle(byId.get(fieldId));
 }
 
@@ -586,11 +641,12 @@ export function viewDisplayValuesFor(
   systemFieldContext?: SystemFieldContext,
 ): ViewFieldValue[] {
   return visibleDisplayFields(view).flatMap((displayField): ViewFieldValue[] => {
-    const values = viewFieldValuesFor(rowNode, displayField.field, byId, systemFieldContext)
+    const values = displayFieldValuesFor(rowNode, displayField.field, byId, systemFieldContext)
       .map((value) => value.trim())
       .filter(Boolean);
     if (values.length === 0) return [];
     return [{
+      id: displayField.id,
       field: displayField.field,
       label: displayField.label?.trim() || fieldChoiceLabel(displayField.field, byId),
       values,
@@ -601,10 +657,10 @@ export function viewDisplayValuesFor(
 export function collectViewFieldChoices(
   parent: NodeProjection,
   byId: Map<NodeId, NodeProjection>,
+  referenceSummary: ReferenceSummary,
 ): Array<{ id: string; label: string; section: 'System fields' | 'Fields' }> {
   const choices = new Map<string, { label: string; section: 'System fields' | 'Fields' }>();
   const candidateRows = fieldCandidateRows(parent, byId);
-  const referenceSummary = buildReferenceSummary(byId);
 
   for (const system of SYSTEM_VIEW_FIELD_CHOICES) {
     if (systemFieldPresentInRows(system.id, candidateRows, byId, referenceSummary)) {
@@ -663,6 +719,19 @@ function fieldCandidateRows(parent: NodeProjection, byId: Map<NodeId, NodeProjec
     rows.push(child);
   }
   return rows;
+}
+
+export function customViewFieldIdsOnRows(parent: NodeProjection, byId: Map<NodeId, NodeProjection>): Set<string> {
+  const fields = new Set<string>();
+  for (const child of fieldCandidateRows(parent, byId)) {
+    const displayed = displayNode(child, byId);
+    for (const nestedId of displayed.children) {
+      const nested = byId.get(nestedId);
+      if (nested?.type !== 'fieldEntry' || !nested.fieldDefId || isSystemFieldId(nested.fieldDefId)) continue;
+      fields.add(nested.fieldDefId);
+    }
+  }
+  return fields;
 }
 
 function referencedViewFields(view: ViewConfig): Set<string> {

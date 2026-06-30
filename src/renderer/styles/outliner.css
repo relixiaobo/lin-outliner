@@ -474,7 +474,7 @@
 .view-toolbar-tooltip {
   position: fixed;
   z-index: var(--z-popover);
-  max-width: 180px;
+  max-width: min(180px, calc(100vw - var(--space-6)));
   border-radius: var(--radius-sm);
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
@@ -487,12 +487,7 @@
   padding: var(--space-2) var(--space-3);
   pointer-events: none;
   text-align: center;
-  transform: translateX(-50%);
   white-space: nowrap;
-}
-
-.view-toolbar-tooltip.is-top {
-  transform: translate(-50%, -100%);
 }
 
 /* Anchored config popover; shares the shared overlay surface look. Positioning

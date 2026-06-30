@@ -282,7 +282,9 @@ Rows that do not match the active view filter are not discarded from the
 interaction surface. The visible list shows matching rows first, then appends a
 collapsed `N items filtered out` disclosure. Expanding it reveals the filtered
 rows in the same outline renderer and keyboard-selection model; collapsing it
-hides them again without changing the persisted view settings.
+hides them again without changing the persisted view settings. The disclosure's
+renderer id includes the active filter-rule ids, so expanding an old filter does
+not silently expand a newly created filter on the same parent later.
 
 When a field-first popover drills into an editor pane, focus moves to the pane's
 back control. That keeps Escape scoped to the popover and preserves keyboard
@@ -297,9 +299,10 @@ Display fields render on each visible content/result row as quiet metadata under
 the row title and inline tags. The node name is excluded because the title already
 shows it. Empty fields are omitted per row, so adding a Display field does not
 create blank placeholders on rows that do not carry that value. The displayed
-values are derived through the same `viewFieldValuesFor` adapter that sort,
-filter, and group use, so custom fields, reference targets, and supported system
-fields stay semantically aligned across all view operations. Values render as
+values use the same field resolution as sort, filter, and group, but system
+fields render through the display adapter rather than the raw sort/filter
+adapter: dates render as `YYYY-MM-DD`, Done renders as text, and reference-like
+fields render their labels instead of raw ids/count internals. Values render as
 plain text joined by comma for now; typed chips and navigable references are a
 future display-layer enhancement, not a different view model.
 
