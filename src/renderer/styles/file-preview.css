@@ -145,6 +145,40 @@
   line-height: var(--line-ui-sm);
 }
 
+.file-preview-url {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  border-radius: var(--file-preview-page-radius);
+  background: var(--surface);
+}
+
+.file-preview-url-webview {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  border: 0;
+  background: var(--surface);
+}
+
+.file-preview-url-loading {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-raised);
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--font-ui-md);
+  line-height: var(--line-ui-md);
+}
+
 /* Audio / video players on a media file node's page. */
 .file-preview-media {
   display: block;
@@ -855,6 +889,12 @@
   --file-preview-media-width: min(640px, 100%);
 }
 
+.file-node-body--url {
+  display: flex;
+  min-height: min(70vh, 720px);
+  flex-direction: column;
+}
+
 .file-node-body--reader {
   display: flex;
   min-height: 0;
@@ -909,7 +949,8 @@
 
 .file-node-preview.expanded:has(> .file-preview-pdf--full),
 .file-node-preview.expanded:has(> .file-preview-pdf-shell--full),
-.file-node-preview.expanded:has(> .file-preview-epub--full) {
+.file-node-preview.expanded:has(> .file-preview-epub--full),
+.file-node-preview.expanded:has(> .file-preview-url) {
   height: var(--file-preview-expanded-height, min(70vh, 720px));
   overflow: hidden;
   padding-bottom: var(--file-preview-frame-padding-block);
@@ -927,7 +968,8 @@
 
 .file-node-preview--reader.expanded:has(> .file-preview-pdf--full),
 .file-node-preview--reader.expanded:has(> .file-preview-pdf-shell--full),
-.file-node-preview--reader.expanded:has(> .file-preview-epub--full) {
+.file-node-preview--reader.expanded:has(> .file-preview-epub--full),
+.file-node-preview--reader.expanded:has(> .file-preview-url) {
   height: auto;
 }
 
@@ -967,6 +1009,15 @@
 
 .file-node-preview.file-node-preview--media {
   padding-bottom: 0;
+}
+
+.file-node-preview--url {
+  display: flex;
+  min-height: min(70vh, 720px);
+}
+
+.file-node-preview--reader.file-node-preview--url {
+  min-height: 0;
 }
 
 /* The shared bottom-center action bar for every non-image file preview. It is chrome

@@ -262,6 +262,12 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
             }]
           : []),
       ];
+  const looseUrlOpenAction = !readerMode && !boundFileNode && props.target.kind === 'url' && canOpen
+    ? {
+        label: previewLabels.openInBrowser,
+        run: openOriginal,
+      }
+    : null;
   const readerOpenAction = readerMode && canOpen
     ? fileControls?.primaryOpen ?? {
         label: props.target.kind === 'url' ? previewLabels.openInBrowser : previewLabels.openWithDefault,
@@ -372,6 +378,18 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 <span className="file-preview-path-label">{segment.label}</span>
               </span>
             ))}
+            {looseUrlOpenAction ? (
+              <FilePreviewHeaderMenu
+                actions={[{
+                  key: 'open',
+                  label: looseUrlOpenAction.label,
+                  icon: OpenIcon,
+                  run: looseUrlOpenAction.run,
+                }]}
+                ariaLabel={previewLabels.actions}
+                meta={meta}
+              />
+            ) : null}
           </>
         )}
       </PanelStickyBreadcrumb>

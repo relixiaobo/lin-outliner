@@ -383,8 +383,11 @@ Source authority stays source-specific:
   previewed; debug-only payloads are not exposed through the normal preview
   router. Renderer code never receives a payload file path.
 - `url` targets are first-class loose previews. Ordinary `http(s)` links from the
-  outliner and agent transcript route into a Tenon split preview pane by default;
-  the explicit fallback action opens the URL in the system browser.
+  outliner and agent transcript route into a Tenon split preview pane by default.
+  The pane renders the webpage through a dedicated sandboxed Electron webview that
+  allows only `http(s)` navigation, strips preload/Node privileges at attach time,
+  denies popups, and keeps the explicit fallback action for opening the URL in the
+  system browser.
 
 Renderers are directory listing, image, PDF (`pdf.js`; every page is stacked
 vertically and scrolled to navigate — each page renders lazily as it nears the

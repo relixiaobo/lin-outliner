@@ -18,6 +18,16 @@ function fileSource(overrides: Partial<Extract<PreviewSourceDescriptor, { kind: 
 }
 
 describe('file preview renderers', () => {
+  test('treats URL sources as previewable web pages', () => {
+    expect(isPreviewableSource({
+      kind: 'url',
+      id: 'url:https://example.com/',
+      target: { kind: 'url', url: 'https://example.com/' },
+      title: 'Example',
+      url: 'https://example.com/',
+    })).toBe(true);
+  });
+
   test('treats HTML as previewable', () => {
     expect(isPreviewableSource(fileSource({
       name: 'index.html',

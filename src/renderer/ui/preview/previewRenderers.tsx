@@ -21,6 +21,7 @@ import type {
   PreviewFileSource,
   PreviewSourceDescriptor,
   PreviewTarget,
+  PreviewUrlSource,
 } from '../../../core/preview';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
@@ -176,7 +177,7 @@ const FILE_PREVIEW_RENDERERS: PreviewRendererEntry[] = [
  * non-previewable one (the metadata card) gets Open-with-default-app as its primary.
  */
 export function isPreviewableSource(source: PreviewSourceDescriptor): boolean {
-  if (source.kind !== 'file') return false;
+  if (source.kind === 'url') return true;
   const entry = FILE_PREVIEW_RENDERERS.find((candidate) => candidate.match(source));
   return entry ? entry.id !== 'metadata' : false;
 }
@@ -204,9 +205,8 @@ export function PreviewRenderer({
   source: PreviewSourceDescriptor;
   scrollRootRef?: RefObject<HTMLElement | null>;
 }) {
-  const labels = useT().shell.filePreview;
   if (source.kind === 'url') {
-    return <PreviewMessage>{labels.unsupported}</PreviewMessage>;
+    return <UrlPreview source={source} />;
   }
   const Renderer = FILE_PREVIEW_RENDERERS.find((entry) => entry.match(source))?.component ?? MetadataPreview;
   return (
@@ -266,8 +266,9 @@ export function FilePreviewShell({
   const previewable = state.status === 'ready' && isPreviewableSource(state.source);
   const passivePlayback = state.status === 'ready' && isPassivePlaybackSource(state.source);
   const mediaKind = state.status === 'ready' ? mediaKindForSource(state.source) : null;
+  const urlPreview = state.status === 'ready' && state.source.kind === 'url';
   const metadataFallback = state.status === 'ready' && !previewable;
-  const effectiveExpanded = readerMode || passivePlayback || expanded;
+  const effectiveExpanded = readerMode || passivePlayback || urlPreview || expanded;
   const displayMode: FilePreviewDisplayMode = previewable && !effectiveExpanded ? 'summary' : 'full';
   const resizedHeight = displayMode === 'summary' ? previewHeights.summary : previewHeights.full;
   const toggleExpanded = () => {
@@ -319,6 +320,7 @@ export function FilePreviewShell({
     `file-node-preview--${displayMode}`,
     metadataFallback ? 'file-node-preview--metadata' : '',
     passivePlayback ? 'file-node-preview--media' : '',
+    urlPreview ? 'file-node-preview--url' : '',
     mediaKind ? `file-node-preview--media-${mediaKind}` : '',
     readerMode ? 'file-node-preview--reader' : '',
     resizedHeight !== undefined ? 'resized' : '',
@@ -331,12 +333,13 @@ export function FilePreviewShell({
     'file-node-body',
     metadataFallback ? 'file-node-body--metadata' : '',
     passivePlayback ? 'file-node-body--media' : '',
+    urlPreview ? 'file-node-body--url' : '',
     mediaKind ? `file-node-body--media-${mediaKind}` : '',
     readerMode ? 'file-node-body--reader' : '',
   ]
     .filter(Boolean)
     .join(' ');
-  const pill = state.status !== 'loading' && !readerMode && !passivePlayback ? (
+  const pill = state.status !== 'loading' && !readerMode && !passivePlayback && !urlPreview ? (
     // Hold the pill until the source resolves: while loading, `previewable` is
     // false, so the primary would briefly be "Open with default app" and a click
     // in that window would open the file externally instead of toggling the
@@ -482,6 +485,39 @@ function ImagePreview({ source }: PreviewRendererProps) {
       <img alt={labels.imageAlt({ name: source.name })} src={src} />
       {isError ? <figcaption>{labels.tooLarge}</figcaption> : null}
     </figure>
+  );
+}
+
+function UrlPreview({ source }: { source: PreviewUrlSource }) {
+  const labels = useT().shell.filePreview;
+  const webviewRef = useRef<HTMLWebViewElement | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    setLoaded(false);
+  }, [source.url]);
+
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (!webview) return undefined;
+    const onLoadFinished = () => setLoaded(true);
+    webview.addEventListener('did-stop-loading', onLoadFinished);
+    return () => {
+      webview.removeEventListener('did-stop-loading', onLoadFinished);
+    };
+  }, [source.url]);
+
+  return (
+    <div className="file-preview-url" data-preserve-selection>
+      {!loaded ? <div className="file-preview-url-loading">{labels.loading}</div> : null}
+      <webview
+        className="file-preview-url-webview"
+        partition="url-preview"
+        ref={webviewRef}
+        src={source.url}
+        title={source.title}
+      />
+    </div>
   );
 }
 

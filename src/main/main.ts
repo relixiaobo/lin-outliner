@@ -402,6 +402,7 @@ agentRuntime.setOsNotifier(({ title, body, conversationId }) => {
 const RENDERER_DEV_URL = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
 const RENDERER_DEV_ORIGIN = RENDERER_DEV_URL ? safeOrigin(RENDERER_DEV_URL) : null;
 const RENDERER_SCRIPT_SRC = "script-src 'self'";
+const URL_PREVIEW_WEBVIEW_PARTITION = 'url-preview';
 // Hash of @vitejs/plugin-react's dev preamble for base "/". Recompute if the
 // plugin changes that injected module script.
 const VITE_REACT_REFRESH_PREAMBLE_CSP_HASH =
@@ -479,6 +480,56 @@ function hardenWebContents(contents: Electron.WebContents) {
   };
   contents.on('will-navigate', guardNavigation);
   contents.on('will-redirect', guardNavigation);
+  contents.on('will-attach-webview', (event, webPreferences, params) => {
+    const src = typeof params.src === 'string' ? params.src : '';
+    if (!previewHttpUrlForWebview(src) || params.partition !== URL_PREVIEW_WEBVIEW_PARTITION) {
+      event.preventDefault();
+      return;
+    }
+    delete params.preload;
+    delete params.webpreferences;
+    delete webPreferences.preload;
+    webPreferences.contextIsolation = true;
+    webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
+    webPreferences.nodeIntegrationInWorker = false;
+    webPreferences.partition = URL_PREVIEW_WEBVIEW_PARTITION;
+    webPreferences.sandbox = true;
+    webPreferences.webSecurity = true;
+    webPreferences.allowRunningInsecureContent = false;
+    webPreferences.plugins = false;
+    webPreferences.safeDialogs = true;
+    webPreferences.disableDialogs = true;
+    webPreferences.navigateOnDragDrop = false;
+    params.src = src;
+  });
+  contents.on('did-attach-webview', (_event, webContents) => {
+    webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => {
+      callback(false);
+    });
+    webContents.session.setPermissionCheckHandler(() => false);
+    webContents.setWindowOpenHandler(({ url }) => {
+      openExternalUrl(url);
+      return { action: 'deny' };
+    });
+    const guardWebviewNavigation = (event: Electron.Event, url: string) => {
+      if (previewHttpUrlForWebview(url)) return;
+      event.preventDefault();
+      openExternalUrl(url);
+    };
+    webContents.on('will-navigate', guardWebviewNavigation);
+    webContents.on('will-redirect', guardWebviewNavigation);
+  });
+}
+
+function previewHttpUrlForWebview(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
 }
 
 function configureSessionSecurity() {
@@ -781,6 +832,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webviewTag: true,
     },
   });
 
