@@ -33,6 +33,31 @@ describe('DocumentOutlineRail', () => {
     expect(track.scrollTop).toBe(40);
     expect(rendered.document.querySelectorAll('.document-outline-rail-marker.active')).toHaveLength(1);
   });
+
+  test('scrolls the popover to the active outline item on hover', async () => {
+    const rendered = renderRail();
+    const scrollRoot = rendered.document.getElementById('scroll-root');
+    if (!scrollRoot) throw new Error('Missing scroll root');
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const rail = rendered.document.querySelector<HTMLElement>('.document-outline-rail');
+    const popover = rendered.document.querySelector<HTMLElement>('.document-outline-popover');
+    if (!rail || !popover) throw new Error('Missing outline rail');
+
+    installPopoverGeometry(popover);
+    scrollRoot.scrollTop = 350;
+    await act(async () => {
+      scrollRoot.dispatchEvent(new rendered.window.Event('scroll'));
+      rail.dispatchEvent(new rendered.window.Event('mouseover', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(popover.scrollTop).toBe(96);
+    expect(rendered.document.querySelector('.document-outline-item.active')?.textContent).toBe('Section 4');
+  });
 });
 
 function renderRail(): { document: Document; window: Window } {
@@ -65,10 +90,20 @@ function renderRail(): { document: Document; window: Window } {
 }
 
 function installTrackGeometry(track: HTMLElement) {
+  Object.defineProperty(track, 'scrollTop', { configurable: true, writable: true, value: 0 });
   Object.defineProperty(track, 'clientHeight', { configurable: true, value: 100 });
   Array.from(track.children).forEach((child, index) => {
     Object.defineProperty(child, 'offsetTop', { configurable: true, value: index * 40 });
     Object.defineProperty(child, 'offsetHeight', { configurable: true, value: 20 });
+  });
+}
+
+function installPopoverGeometry(popover: HTMLElement) {
+  Object.defineProperty(popover, 'scrollTop', { configurable: true, writable: true, value: 0 });
+  Object.defineProperty(popover, 'clientHeight', { configurable: true, value: 120 });
+  Array.from(popover.children).forEach((child, index) => {
+    Object.defineProperty(child, 'offsetTop', { configurable: true, value: index * 48 });
+    Object.defineProperty(child, 'offsetHeight', { configurable: true, value: 24 });
   });
 }
 

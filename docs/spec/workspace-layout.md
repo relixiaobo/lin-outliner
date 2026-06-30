@@ -435,8 +435,8 @@ centered track with enough height to show nearby progress, with internal scrolli
 rather than stretching down the full document viewport. The active marker is kept
 centered inside that track as
 the document scrolls. The rail is a directory index rather than a precise
-scroll-position indicator; hover/focus opens the chapter popover, and both
-surfaces jump to
+scroll-position indicator; hover/focus opens the chapter popover already scrolled
+to the current active chapter, and both surfaces jump to
 resolved scroll positions. Reader scroll positions persist per resolved preview
 identity: PDFs restore page + page-relative offset, while EPUBs restore spine
 section + section-relative offset. Documents without outline metadata render no
