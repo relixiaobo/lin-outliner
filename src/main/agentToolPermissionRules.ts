@@ -93,7 +93,7 @@ export interface GlobalToolPermissionSettings {
 }
 
 export interface ToolPermissionResolutionPriorityInput {
-  decision: GlobalToolPermissionDecision;
+  decision: GlobalToolPermissionDecision | 'ask';
   descriptor: ToolActionDescriptor;
   sourceRank?: number;
 }
@@ -453,9 +453,9 @@ function diagnostic(
   return { diagnostic: { ruleValue, code, message } };
 }
 
-function decisionRank(decision: GlobalToolPermissionDecision): number {
+function decisionRank(decision: GlobalToolPermissionDecision | 'ask'): number {
   if (decision === 'deny') return 2;
-  if (decision === 'soft_block') return 1;
+  if (decision === 'soft_block' || decision === 'ask') return 1;
   return 0;
 }
 

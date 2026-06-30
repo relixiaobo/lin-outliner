@@ -15,6 +15,7 @@ import {
   matchingGrantForEffect,
   matchingSoftBlockAllowForDescriptor,
   parseGlobalToolPermissionSettings,
+  alwaysAllowRuleForDescriptor,
   softBlockAllowRuleForDescriptor,
   type AgentToolActionKind,
   type GlobalToolPermissionConfig,
@@ -409,6 +410,14 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
       },
     );
   }
+  if (effectResolution.decision === 'ask') {
+    return askForDescriptor(
+      effectResolution.descriptor,
+      access,
+      preapproved,
+      descriptors,
+    );
+  }
   if (effectResolution.decision === 'soft_block') {
     return softBlockForDescriptor(
       effectResolution.descriptor,
@@ -438,7 +447,7 @@ export function evaluateAgentToolPermission(input: AgentPermissionEvaluationInpu
 type EffectDecisionSource = AgentPermissionSource;
 
 interface EffectDecisionResolution {
-  decision: GlobalToolPermissionDecision;
+  decision: GlobalToolPermissionDecision | 'ask';
   source: EffectDecisionSource;
   descriptor: DerivedToolActionDescriptor;
   grantRuleValue?: string;
@@ -488,6 +497,13 @@ function resolveEffectDecision(
     }
 
     const grant = matchingGrantForEffect(descriptor.effect, globalPermissions);
+    if (!grant && requiresOutsideScopeApproval(descriptor)) {
+      return {
+        decision: 'ask',
+        source: 'default',
+        descriptor,
+      };
+    }
     return {
       decision: 'allow',
       source: grant ? 'trust_ledger' : 'default',
@@ -503,6 +519,12 @@ function resolveEffectDecision(
     source: 'default',
     descriptor: hiddenShellDescriptor('No permission descriptor was derived.'),
   };
+}
+
+function requiresOutsideScopeApproval(descriptor: DerivedToolActionDescriptor): boolean {
+  return descriptor.effect.reach === 'outside_scope'
+    && descriptor.effect.grant?.kind === 'scope'
+    && toolPathArgumentName(descriptor.toolName) !== null;
 }
 
 function permissionSourceRank(source: EffectDecisionSource): number {
@@ -1362,7 +1384,6 @@ function softBlockForDescriptor(
   blockRuleValue?: string,
 ): AgentPermissionSoftBlockDecision {
   const reason = descriptor.consequence;
-  const target = descriptor.requestTarget ?? descriptor.command ?? descriptor.summary;
   const alwaysAllowRule = permissionSource === 'user_blocklist'
     ? blockRuleValue
     : softBlockAllowRuleForDescriptor(descriptor);
@@ -1374,19 +1395,13 @@ function softBlockForDescriptor(
     reason,
     access,
     preapproved,
-    {
+    approvalRequestForDescriptor(descriptor, {
+      reasonLabel: 'Why blocked',
       title: descriptor.requestTitle ?? `Blocked by default: ${descriptor.title}`,
-      target,
       alwaysAllowRule,
       alwaysAllowAction,
       autoBlockMs: 10_000,
-      details: descriptor.requestDetails ?? [
-        { label: 'Action', value: descriptor.title },
-        { label: 'Target', value: target },
-        { label: 'Why blocked', value: reason },
-        { label: 'Permission kind', value: descriptor.actionKind },
-      ],
-    },
+    }),
     {
       descriptor,
       descriptors,
@@ -1394,6 +1409,57 @@ function softBlockForDescriptor(
       blockRuleValue,
     },
   );
+}
+
+function askForDescriptor(
+  descriptor: DerivedToolActionDescriptor,
+  access: AgentPermissionAccess,
+  preapproved: boolean,
+  descriptors: readonly DerivedToolActionDescriptor[],
+): AgentPermissionAskDecision {
+  const reason = descriptor.consequence;
+  const alwaysAllowRule = alwaysAllowRuleForDescriptor(descriptor);
+  return {
+    behavior: 'ask',
+    code: descriptor.code ?? descriptor.actionKind,
+    reason,
+    access,
+    preapproved,
+    request: approvalRequestForDescriptor(descriptor, {
+      reasonLabel: 'Why asking',
+      title: descriptor.requestTitle ?? `Approve ${descriptor.title}?`,
+      alwaysAllowRule,
+      alwaysAllowAction: alwaysAllowRule ? 'grant' : undefined,
+    }),
+    descriptor,
+    descriptors,
+  };
+}
+
+function approvalRequestForDescriptor(
+  descriptor: DerivedToolActionDescriptor,
+  options: {
+    title: string;
+    reasonLabel: string;
+    alwaysAllowRule?: string;
+    alwaysAllowAction?: AgentApprovalRequest['alwaysAllowAction'];
+    autoBlockMs?: number;
+  },
+): AgentApprovalRequest {
+  const target = descriptor.requestTarget ?? descriptor.command ?? descriptor.summary;
+  return {
+    title: options.title,
+    target,
+    alwaysAllowRule: options.alwaysAllowRule,
+    alwaysAllowAction: options.alwaysAllowAction,
+    autoBlockMs: options.autoBlockMs,
+    details: descriptor.requestDetails ?? [
+      { label: 'Action', value: descriptor.title },
+      { label: 'Target', value: target },
+      { label: options.reasonLabel, value: descriptor.consequence },
+      { label: 'Permission kind', value: descriptor.actionKind },
+    ],
+  };
 }
 
 export function approvalNoticeForDeniedDecision(
@@ -2006,7 +2072,8 @@ function isSensitivePath(filePath: string): boolean {
   return SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(filePath));
 }
 
-function toolPathArgumentName(toolName: string): string | null {
+export function toolPathArgumentName(toolNameInput: string): string | null {
+  const toolName = normalizeToolName(toolNameInput);
   if (toolName === 'file_read' || toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete') return 'file_path';
   if (toolName === 'file_glob' || toolName === 'file_grep') return 'path';
   return null;

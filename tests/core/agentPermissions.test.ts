@@ -23,7 +23,6 @@ describe('agent permissions', () => {
       ['file_write', { file_path: path.join(workspaceRoot, 'a.txt'), content: 'a' }],
       ['file_edit', { file_path: path.join(workspaceRoot, 'a.txt'), old_string: 'a', new_string: 'b' }],
       ['file_delete', { file_path: path.join(workspaceRoot, 'a.txt') }],
-      ['file_read', { file_path: '/tmp/outside.txt' }],
       ['node_edit', { node_id: 'node:1', old_string: 'a', new_string: 'b' }],
       ['node_delete', { node_id: 'node:1' }],
       ['web_search', { query: 'current docs' }],
@@ -43,6 +42,82 @@ describe('agent permissions', () => {
     ] as const) {
       const decision = evaluateAgentToolPermission({ toolName, args, policy: { workspaceRoot } });
       expect(decision.behavior, `${toolName} ${JSON.stringify(args)}`).toBe('allow');
+    }
+  });
+
+  test('asks before reading file paths outside the handed file scope', () => {
+    const outsideRoot = '/tmp/outside-project';
+    const cases = [
+      ['file_read', { file_path: path.join(outsideRoot, 'README.md') }, path.join(outsideRoot, 'README.md')],
+      ['file_glob', { path: outsideRoot, pattern: '**/*.ts' }, outsideRoot],
+      ['file_grep', { path: outsideRoot, pattern: 'needle' }, outsideRoot],
+    ] as const;
+
+    for (const [toolName, args, expectedScope] of cases) {
+      const decision = evaluateAgentToolPermission({
+        toolName,
+        args,
+        policy: { workspaceRoot },
+      });
+
+      expect(decision.behavior, toolName).toBe('ask');
+      if (decision.behavior !== 'ask') throw new Error(`expected ask for ${toolName}`);
+      expect(decision.code, toolName).toBe('outside_workspace_read');
+      expect(decision.request.alwaysAllowRule, toolName).toBe(`Scope(read:${expectedScope})`);
+      expect(decision.request.alwaysAllowAction, toolName).toBe('grant');
+      expect(decision.descriptor?.accessScope, toolName).toBe('outside_allowed_file_area');
+      expect(decision.descriptor?.effect.grant, toolName).toEqual({
+        kind: 'scope',
+        access: 'read',
+        root: expectedScope,
+      });
+    }
+  });
+
+  test('uses remembered scope grants for outside file reads', () => {
+    const outsideRoot = '/tmp/outside-project';
+    const decision = evaluateAgentToolPermission({
+      toolName: 'file_glob',
+      args: { path: outsideRoot, pattern: '**/*.ts' },
+      policy: {
+        workspaceRoot,
+        globalPermissions: parseGlobalToolPermissionSettings({
+          grants: [`Scope(read:${outsideRoot})`],
+        }),
+      },
+    });
+
+    expect(decision.behavior).toBe('allow');
+    expect(decision.permissionSource).toBe('trust_ledger');
+    expect(permissionResolvedByForAllowDecision(decision)).toBe('trust_ledger');
+  });
+
+  test('asks before writing file paths outside the handed file scope', () => {
+    const outsideRoot = '/tmp/outside-project';
+    const outsideFile = path.join(outsideRoot, 'notes.md');
+    const cases = [
+      ['file_write', { file_path: outsideFile, content: 'notes' }],
+      ['file_edit', { file_path: outsideFile, old_string: 'old', new_string: 'new' }],
+      ['file_delete', { file_path: outsideFile }],
+    ] as const;
+
+    for (const [toolName, args] of cases) {
+      const decision = evaluateAgentToolPermission({
+        toolName,
+        args,
+        policy: { workspaceRoot },
+      });
+
+      expect(decision.behavior, toolName).toBe('ask');
+      if (decision.behavior !== 'ask') throw new Error(`expected ask for ${toolName}`);
+      expect(decision.code, toolName).toBe('outside_workspace_write');
+      expect(decision.request.alwaysAllowRule, toolName).toBe(`Scope(write:${outsideFile})`);
+      expect(decision.request.alwaysAllowAction, toolName).toBe('grant');
+      expect(decision.descriptor?.effect.grant, toolName).toEqual({
+        kind: 'scope',
+        access: 'write',
+        root: outsideFile,
+      });
     }
   });
 
