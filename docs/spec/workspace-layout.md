@@ -430,9 +430,10 @@ Vite HMR. Scripted EPUB content is not a supported preview capability, and remot
 links from inside the book are intercepted and sent through the app's
 http(s)-only external-open path. Expanded PDF and EPUB readers keep the native
 scrollbar for exact position and, when the document exposes an outline/table of
-contents, overlay a right-edge outline rail whose markers sit in a vertically
-centered short track with internal scrolling rather than stretching down the full
-document viewport. The active marker is kept centered inside that short track as
+contents, overlay a left-edge outline rail whose markers sit in a vertically
+centered track with enough height to show nearby progress, with internal scrolling
+rather than stretching down the full document viewport. The active marker is kept
+centered inside that track as
 the document scrolls. The rail is a directory index rather than a precise
 scroll-position indicator; hover/focus opens the chapter popover, and both
 surfaces jump to

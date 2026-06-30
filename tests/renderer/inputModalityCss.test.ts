@@ -69,9 +69,12 @@ describe('input modality CSS guards', () => {
   });
 
   test('keeps document outline markers centered in a short rail', () => {
-    expect(filePreviewCss).toMatch(/\.document-outline-rail\s*\{[^}]*--document-outline-track-height:\s*min\(148px, 26vh\);/s);
-    expect(filePreviewCss).toMatch(/\.document-outline-rail\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*flex-end;/s);
+    expect(filePreviewCss).toMatch(/\.document-outline-rail\s*\{[^}]*--document-outline-track-height:\s*min\(240px, 38vh\);/s);
+    expect(filePreviewCss).toMatch(/\.document-outline-rail\s*\{[^}]*left:\s*var\(--space-5\);/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-epub--full \.document-outline-rail\s*\{[^}]*left:\s*max\(var\(--space-5\), calc\(\(100% - 720px\) \/ 2 \+ var\(--space-5\)\)\);/s);
+    expect(filePreviewCss).toMatch(/\.document-outline-rail\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*flex-start;/s);
     expect(filePreviewCss).toMatch(/\.document-outline-rail-track\s*\{[^}]*height:\s*var\(--document-outline-track-height\);[^}]*max-height:\s*var\(--document-outline-track-height\);/s);
     expect(filePreviewCss).toMatch(/\.document-outline-rail-track\s*\{[^}]*overflow-y:\s*auto;/s);
+    expect(filePreviewCss).toMatch(/\.document-outline-popover\s*\{[^}]*left:\s*0;/s);
   });
 });

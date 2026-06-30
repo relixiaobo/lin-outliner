@@ -660,25 +660,25 @@
 
 .document-outline-rail {
   --document-outline-track-width: calc(var(--space-8) + var(--space-1));
-  --document-outline-track-height: min(148px, 26vh);
+  --document-outline-track-height: min(240px, 38vh);
   --document-outline-marker-width: calc(var(--space-4) + 2px);
   --document-outline-marker-gap: var(--space-4);
 
   position: absolute;
   top: 50%;
-  right: var(--space-5);
+  left: var(--space-5);
   z-index: var(--z-popover);
   display: flex;
   width: min(320px, calc(100% - var(--space-8)));
   max-height: min(360px, 52%);
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   pointer-events: none;
   transform: translateY(-50%);
 }
 
 .file-preview-epub--full .document-outline-rail {
-  right: max(var(--space-5), calc((100% - 720px) / 2 + var(--space-5)));
+  left: max(var(--space-5), calc((100% - 720px) / 2 + var(--space-5)));
 }
 
 .document-outline-rail-track {
@@ -689,7 +689,6 @@
   flex-direction: column;
   align-items: center;
   gap: var(--document-outline-marker-gap);
-  margin-left: auto;
   overflow-y: auto;
   pointer-events: auto;
   scrollbar-width: none;
@@ -734,7 +733,7 @@
 .document-outline-popover {
   position: absolute;
   top: 50%;
-  right: 0;
+  left: 0;
   width: min(320px, 100%);
   max-height: min(360px, 52vh);
   overflow: auto;
@@ -746,7 +745,7 @@
   box-shadow: var(--shadow);
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-50%) translateX(var(--space-2));
+  transform: translateY(-50%) translateX(calc(-1 * var(--space-2)));
   transition:
     opacity var(--motion-fast),
     transform var(--motion-fast),
