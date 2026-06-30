@@ -150,7 +150,8 @@ export type AgentConversationEventType =
   | 'member.added'
   | 'member.removed'
   | 'branch.selected'
-  | 'compaction.completed';
+  | 'compaction.completed'
+  | 'context.cleared';
 
 export interface AgentConversationEventBase {
   v: typeof AGENT_EVENT_VERSION;
@@ -192,6 +193,11 @@ export type AgentConversationEvent =
   | (AgentConversationEventBase & {
       type: 'compaction.completed';
       summaryId: string;
+      source: { fromMessageId: string; throughMessageId: string };
+    })
+  | (AgentConversationEventBase & {
+      type: 'context.cleared';
+      messageId: string;
       source: { fromMessageId: string; throughMessageId: string };
     });
 
@@ -575,6 +581,7 @@ export type AgentEventType =
   | 'child_run.started'
   | 'child_run.updated'
   | 'compaction.completed'
+  | 'context.cleared'
   | 'dream.finished'
   | 'payload.created'
   | 'payload.derived'
@@ -986,6 +993,12 @@ export interface CompactionCompletedEvent extends AgentEventBase {
   trigger: AgentCompactionTrigger;
 }
 
+export interface ContextClearedEvent extends AgentEventBase {
+  type: 'context.cleared';
+  messageId: string;
+  source: AgentCompactionSourceRange;
+}
+
 export type AgentDreamMarkerStatus = 'completed' | 'failed' | 'skipped';
 
 export interface DreamFinishedEvent extends AgentEventBase {
@@ -1059,6 +1072,7 @@ export type AgentEvent =
   | ChildRunStartedEvent
   | ChildRunUpdatedEvent
   | CompactionCompletedEvent
+  | ContextClearedEvent
   | DreamFinishedEvent
   | PayloadCreatedEvent
   | PayloadDerivedEvent
@@ -1183,6 +1197,13 @@ export interface AgentCompactionRecord {
   createdAt: number;
 }
 
+export interface AgentContextClearRecord {
+  id: string;
+  messageId: string;
+  source: AgentCompactionSourceRange;
+  createdAt: number;
+}
+
 export interface AgentDreamRecord {
   id: string;
   messageId: string;
@@ -1248,6 +1269,7 @@ export interface AgentEventReplayState {
   runs: Record<string, AgentRunRecord>;
   childRuns: Record<string, AgentChildRunRecord>;
   compactionsByMessageId: Record<string, AgentCompactionRecord>;
+  contextClearsByMessageId: Record<string, AgentContextClearRecord>;
   dreamsByMessageId: Record<string, AgentDreamRecord>;
   userQuestions: Record<string, AgentUserQuestionRecord>;
   notifications: Record<string, AgentNotificationRecord>;
@@ -1285,6 +1307,7 @@ export function createEmptyAgentEventReplayState(): AgentEventReplayState {
     runs: {},
     childRuns: {},
     compactionsByMessageId: {},
+    contextClearsByMessageId: {},
     dreamsByMessageId: {},
     userQuestions: {},
     notifications: {},
@@ -1341,11 +1364,11 @@ export function getAgentEventVisibleTranscript(
   state: AgentEventReplayState,
 ): AgentEventVisibleTranscriptEntry[] {
   const entries: AgentEventVisibleTranscriptEntry[] = [];
-  const expandingCompactions = new Set<string>();
+  const expandingBoundaries = new Set<string>();
   // The single agent's transcript is the linear active path; there are no
   // off-active-path peer replies to graft in.
   for (const message of getAgentEventActivePath(state)) {
-    appendVisibleTranscriptEntry(state, entries, expandingCompactions, message, false);
+    appendVisibleTranscriptEntry(state, entries, expandingBoundaries, message, false);
   }
   return entries;
 }
@@ -1717,6 +1740,14 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
         createdAt: event.createdAt,
       };
       return;
+    case 'context.cleared':
+      state.contextClearsByMessageId[event.messageId] = {
+        id: event.eventId,
+        messageId: event.messageId,
+        source: event.source,
+        createdAt: event.createdAt,
+      };
+      return;
     case 'dream.finished':
       state.dreamsByMessageId[event.messageId] = {
         id: event.eventId,
@@ -1853,18 +1884,20 @@ function addMessage(state: AgentEventReplayState, message: AgentEventMessageReco
 function appendVisibleTranscriptEntry(
   state: AgentEventReplayState,
   entries: AgentEventVisibleTranscriptEntry[],
-  expandingCompactions: Set<string>,
+  expandingBoundaries: Set<string>,
   message: AgentEventMessageRecord,
   archived: boolean,
 ) {
-  const compaction = message.role === 'user' ? state.compactionsByMessageId[message.id] ?? null : null;
-  if (compaction && !expandingCompactions.has(compaction.messageId)) {
-    expandingCompactions.add(compaction.messageId);
-    for (const compactedMessage of pathRangeToMessage(state, compaction.source)) {
+  const boundary = message.role === 'user'
+    ? state.compactionsByMessageId[message.id] ?? state.contextClearsByMessageId[message.id] ?? null
+    : null;
+  if (boundary && !expandingBoundaries.has(boundary.messageId)) {
+    expandingBoundaries.add(boundary.messageId);
+    for (const compactedMessage of pathRangeToMessage(state, boundary.source)) {
       if (compactedMessage.id === message.id) continue;
-      appendVisibleTranscriptEntry(state, entries, expandingCompactions, compactedMessage, true);
+      appendVisibleTranscriptEntry(state, entries, expandingBoundaries, compactedMessage, true);
     }
-    expandingCompactions.delete(compaction.messageId);
+    expandingBoundaries.delete(boundary.messageId);
   }
 
   entries.push({ message, archived });

@@ -1730,7 +1730,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         rows,
         transcriptRows: rows,
         childRunIds: [],
-        entities: { messages, childRuns: {}, compactions: {}, dreams: {} },
+        entities: { messages, childRuns: {}, compactions: {}, contextClears: {}, dreams: {} },
         streaming: null,
         dmStreaming: null,
       };
@@ -2140,6 +2140,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_list_slash_commands') {
           return clone([
+            {
+              id: 'clear',
+              kind: 'runtime',
+              label: '/clear',
+              description: 'Clear model context from this point',
+              insertText: '/clear',
+            },
             {
               id: 'compact',
               kind: 'runtime',
@@ -3461,7 +3468,7 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       rows,
       transcriptRows: projectedTranscriptRows,
       childRunIds,
-      entities: { messages: entities, childRuns, compactions, dreams: {} },
+      entities: { messages: entities, childRuns, compactions, contextClears: {}, dreams: {} },
       streaming: projectionChannel ? null : streaming,
       dmStreaming: projectionChannel ? null : streaming,
     },

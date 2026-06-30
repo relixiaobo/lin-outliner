@@ -226,6 +226,146 @@ describe('agent past chats', () => {
     });
   });
 
+  test('read can recover cleared current-conversation history when opted in', async () => {
+    await withStore(async (store, service) => {
+      const conversationId = 'conversation-clear';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Cleared' },
+        {
+          ...base(conversationId, 2, 'user_message.created', userActor),
+          messageId: 'user-before-clear',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'We chose neutral focus rings before clearing context' }],
+        },
+        {
+          ...base(conversationId, 3, 'assistant_message.started', agentActor),
+          runId: 'run-before-clear',
+          messageId: 'assistant-before-clear',
+          parentMessageId: 'user-before-clear',
+          providerId: 'test',
+          modelId: 'test',
+        },
+        {
+          ...base(conversationId, 4, 'assistant_message.completed', agentActor),
+          messageId: 'assistant-before-clear',
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'Neutral focus rings were selected.' }],
+        },
+        {
+          ...base(conversationId, 5, 'context.cleared'),
+          messageId: 'clear-root',
+          source: { fromMessageId: 'user-before-clear', throughMessageId: 'assistant-before-clear' },
+        },
+        {
+          ...base(conversationId, 6, 'user_message.created', systemActor),
+          messageId: 'clear-root',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'Context cleared.' }],
+        },
+      ]);
+
+      const blocked = await service.read({ messageId: 'user-before-clear' }, { currentConversationId: conversationId });
+      expect(blocked).toMatchObject({ mode: 'error', code: 'CONVERSATION_IS_CURRENT' });
+
+      const read = await service.read(
+        { messageId: 'user-before-clear', includeCurrentConversation: true },
+        { currentConversationId: conversationId },
+      );
+      expect(read.mode).toBe('read');
+      if (read.mode !== 'read') throw new Error('Expected read result');
+      expect(read.messages.map((message) => message.messageId)).toContain('user-before-clear');
+      expect(read.messages.map((message) => message.text).join('\n')).toContain('neutral focus rings');
+    });
+  });
+
+  test('search can find cleared current-conversation history when opted in', async () => {
+    await withStore(async (store, service) => {
+      const conversationId = 'conversation-clear-search';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Cleared search' },
+        {
+          ...base(conversationId, 2, 'user_message.created', userActor),
+          messageId: 'user-before-clear-search',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'Keep the polar grid layout searchable after clear' }],
+        },
+        {
+          ...base(conversationId, 3, 'assistant_message.started', agentActor),
+          runId: 'run-before-clear-search',
+          messageId: 'assistant-before-clear-search',
+          parentMessageId: 'user-before-clear-search',
+          providerId: 'test',
+          modelId: 'test',
+        },
+        {
+          ...base(conversationId, 4, 'assistant_message.completed', agentActor),
+          messageId: 'assistant-before-clear-search',
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'Polar grid layout remains visible history.' }],
+        },
+        {
+          ...base(conversationId, 5, 'context.cleared'),
+          messageId: 'clear-root-search',
+          source: { fromMessageId: 'user-before-clear-search', throughMessageId: 'assistant-before-clear-search' },
+        },
+        {
+          ...base(conversationId, 6, 'user_message.created', systemActor),
+          messageId: 'clear-root-search',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'Context cleared.' }],
+        },
+      ]);
+
+      const hidden = await service.search({ query: 'polar grid' }, { currentConversationId: conversationId });
+      expect(hidden.mode).toBe('search');
+      if (hidden.mode !== 'search') throw new Error('Expected search result');
+      expect(hidden.hits).toEqual([]);
+
+      const shown = await service.search(
+        { query: 'polar grid', includeCurrentConversation: true },
+        { currentConversationId: conversationId },
+      );
+      expect(shown.mode).toBe('search');
+      if (shown.mode !== 'search') throw new Error('Expected search result');
+      expect(shown.hits.map((hit) => hit.messageId)).toEqual([
+        'assistant-before-clear-search',
+        'user-before-clear-search',
+      ]);
+    });
+  });
+
+  test('recent skips context clear boundary roots', async () => {
+    await withStore(async (store, service) => {
+      const conversationId = 'conversation-clear-recent';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Cleared recent' },
+        {
+          ...base(conversationId, 2, 'user_message.created', userActor),
+          messageId: 'user-before-clear-recent',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'Visible recent anchor before clear' }],
+        },
+        {
+          ...base(conversationId, 3, 'context.cleared'),
+          messageId: 'clear-root-recent',
+          source: { fromMessageId: 'user-before-clear-recent', throughMessageId: 'user-before-clear-recent' },
+        },
+        {
+          ...base(conversationId, 4, 'user_message.created', systemActor),
+          messageId: 'clear-root-recent',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'Context cleared.' }],
+        },
+      ]);
+
+      const recent = await service.recent({ includeCurrentConversation: true });
+      expect(recent.mode).toBe('recent');
+      if (recent.mode !== 'recent') throw new Error('Expected recent result');
+      expect(recent.items.map((item) => item.messageId)).toEqual(['user-before-clear-recent']);
+      expect(recent.items.map((item) => item.text).join('\n')).not.toContain('Context cleared.');
+    });
+  });
+
   test('read uses persisted tool result summaries instead of raw payload-sized content', async () => {
     await withStore(async (store, service) => {
       const conversationId = 'conversation-tool';

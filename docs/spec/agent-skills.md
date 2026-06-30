@@ -211,7 +211,17 @@ permission at call time.
 Isolated skill results stay on the normal tool-call disclosure path because they
 carry a real child-run result or error for the parent turn.
 
-Slash skills use the same loader and apply the same `allowed-tools`, `model`, and `effort` metadata. `/compact` is a built-in runtime command and is handled before slash skill resolution. `/skillify` is a built-in skill that is both user- and model-invocable; it uses ordinary `file_write` / `file_edit` only after preview and confirmation, and the skills it writes are available immediately. Explicit natural-language save/update/fix skill requests are normalized to the same direct `/skillify` prompt path, so they work even when automatic skill listing is disabled, but only while slash skills are enabled. `/research` is also both user- and model-invocable; its `allowed-tools` are only child-run preapproval for expected reads, while read-only safety comes from catalog narrowing.
+Slash skills use the same loader and apply the same `allowed-tools`, `model`,
+and `effort` metadata. `/clear` and `/compact` are built-in runtime commands and
+are handled before slash skill resolution. `/skillify` is a built-in skill that
+is both user- and model-invocable; it uses ordinary `file_write` / `file_edit`
+only after preview and confirmation, and the skills it writes are available
+immediately. Explicit natural-language save/update/fix skill requests are
+normalized to the same direct `/skillify` prompt path, so they work even when
+automatic skill listing is disabled, but only while slash skills are enabled.
+`/research` is also both user- and model-invocable; its `allowed-tools` are only
+child-run preapproval for expected reads, while read-only safety comes from
+catalog narrowing.
 
 Path-conditional mutable skills remain hidden until a touched file matches
 `paths`. Directory patterns such as `src` match files under that directory,
@@ -409,6 +419,25 @@ After compaction, the model-context branch becomes a new root user message with:
 The renderer does not show this root as a normal user bubble. `compaction.completed` is projected as a dedicated compact boundary row with the trigger (`manual`, `auto`, or `reactive`) and an expandable summary. The hidden reminders remain model-only context.
 
 The listed-skills state reminder is intentionally tiny. It prevents a restored compacted conversation from re-injecting the full skill listing after app restart.
+
+## Context Clear
+
+`/clear` starts model context over from the current point without creating a
+summary. It is a runtime command, not a slash skill, and it only matches the exact
+command with optional surrounding whitespace; text such as `/clear notes` remains
+a normal prompt.
+
+Clearing appends a root boundary message with visible text `Context cleared.`
+and selects it as the active leaf. The previous active path is recorded on a
+`context.cleared` event as the cleared source range. That source remains durable:
+the transcript still shows it as historical chat, search indexes can still find
+it, and `past_chats` can retrieve it as prior visible conversation history.
+
+The active model-context branch after the clear contains the `Context cleared.`
+boundary and later messages only. No compact summary, invoked-skill reminder,
+listed-skill reminder, or restored file-context reminder is generated. This is
+the product difference from `/compact`: compact preserves older context through a
+summary root, while clear intentionally preserves no summary.
 
 ## Memory Dream
 

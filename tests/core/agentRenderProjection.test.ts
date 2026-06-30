@@ -292,6 +292,61 @@ describe('agent render projection', () => {
     });
   });
 
+  test('projects context clears as boundary rows instead of user bubbles', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Clear' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-before-clear',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Old question' }],
+      },
+      {
+        ...base(3, 'assistant_message.started', agentActor),
+        runId: 'run-before-clear',
+        messageId: 'assistant-before-clear',
+        parentMessageId: 'user-before-clear',
+        providerId: 'test-provider',
+        modelId: 'test-model',
+      },
+      {
+        ...base(4, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-before-clear',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Old answer' }],
+      },
+      {
+        ...base(5, 'context.cleared'),
+        messageId: 'clear-root',
+        source: { fromMessageId: 'user-before-clear', throughMessageId: 'assistant-before-clear' },
+      },
+      {
+        ...base(6, 'user_message.created', systemActor),
+        messageId: 'clear-root',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Context cleared.' }],
+      },
+    ]);
+
+    const projection = buildAgentRenderProjection(state, { revision: 1 });
+
+    expect(projection.rows).toEqual([{
+      id: 'context-clear:clear-root',
+      kind: 'context-clear',
+      messageId: 'clear-root',
+      contextClearId: 'event-5',
+    }]);
+    expect(projection.transcriptRows).toEqual([
+      { id: 'archived:user:user-before-clear', kind: 'message', messageId: 'user-before-clear', archived: true },
+      { id: 'archived:assistant:assistant-before-clear', kind: 'message', messageId: 'assistant-before-clear', archived: true },
+      { id: 'context-clear:clear-root', kind: 'context-clear', messageId: 'clear-root', contextClearId: 'event-5' },
+    ]);
+    expect(projection.entities.contextClears['event-5']).toMatchObject({
+      messageId: 'clear-root',
+      source: { fromMessageId: 'user-before-clear', throughMessageId: 'assistant-before-clear' },
+    });
+  });
+
   test('projects Dream markers as boundary rows instead of user bubbles', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Dream' },

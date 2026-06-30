@@ -1525,6 +1525,9 @@ test.describe('agent composer controls', () => {
 
   test('passes slash commands through for runtime compact and skill handling', async ({ page }) => {
     const input = page.getByLabel('Agent message');
+    await input.fill('/clear');
+    await page.getByRole('button', { name: 'Send message' }).click();
+
     await input.fill('/compact keep only current project decisions');
     await page.getByRole('button', { name: 'Send message' }).click();
 
@@ -1537,6 +1540,7 @@ test.describe('agent composer controls', () => {
         .filter((call) => call.cmd === 'agent_send_message')
         .map((call) => call.args.message);
     }).toEqual([
+      '/clear',
       '/compact keep only current project decisions',
       '/auto-skill runtime-check',
     ]);
@@ -1561,10 +1565,11 @@ test.describe('agent composer controls', () => {
 
     const menu = page.getByRole('listbox', { name: 'Agent slash commands' });
     await expect(menu).toBeVisible();
+    await expect(menu.getByRole('option', { name: /\/clear/ })).toBeVisible();
     await expect(menu.getByRole('option', { name: /\/compact/ })).toBeVisible();
 
     await page.keyboard.press('Enter');
-    await expect(input).toContainText('/compact');
+    await expect(input).toContainText('/clear');
   });
 
   test('clears the composer immediately after handing off a compact command', async ({ page }) => {

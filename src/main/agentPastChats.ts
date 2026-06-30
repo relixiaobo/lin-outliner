@@ -211,6 +211,7 @@ interface VisibleConversationCacheEntry {
   messageById: Map<string, AgentEventMessageRecord>;
   messages: AgentEventMessageRecord[];
   compactionMessageIds: Set<string>;
+  contextClearMessageIds: Set<string>;
   sourceByMessageId: Map<string, AgentMemoryStreamSource>;
 }
 
@@ -312,6 +313,7 @@ export class AgentPastChatsService {
       const visible = await this.visibleConversationMessages(entryConversationId(entry));
       if (!visible.messageIds.has(entry.messageId)) continue;
       if (visible.compactionMessageIds.has(entry.messageId)) continue;
+      if (visible.contextClearMessageIds.has(entry.messageId)) continue;
       const message = visible.messageById.get(entry.messageId);
       if (!message || message.role !== 'user') continue;
       const text = cleanUserMessageText(contentText(message.content));
@@ -524,6 +526,7 @@ export class AgentPastChatsService {
       messageById: new Map(messages.map((message) => [message.id, message])),
       messages,
       compactionMessageIds: new Set(Object.keys(state.compactionsByMessageId)),
+      contextClearMessageIds: new Set(Object.keys(state.contextClearsByMessageId)),
       sourceByMessageId,
     };
     this.visibleConversationCache.set(conversationId, next);

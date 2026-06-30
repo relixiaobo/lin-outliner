@@ -427,6 +427,7 @@ type AgentEventType =
   | 'child_run.started'
   | 'child_run.updated'
   | 'compaction.completed'
+  | 'context.cleared'
   | 'dream.finished'
   | 'payload.created'
   | 'payload.derived'
@@ -893,6 +894,7 @@ Inputs:
 - event log
 - active branch projection
 - compaction events
+- context-clear events
 - payload refs expanded only when needed
 
 Output:
@@ -902,7 +904,10 @@ Message[]
 ```
 
 This projection is the only place that should translate Tenon events into pi-ai
-message shapes.
+message shapes. A `context.cleared` boundary is a root in the active branch: the
+model sees `Context cleared.` and later messages, while the cleared source range
+is excluded from automatic context assembly unless another tool, such as
+`past_chats`, explicitly retrieves it.
 
 ### Render projection
 
@@ -952,6 +957,10 @@ Rules:
   `entities.compactions`.
 - The compact root user message remains available for pi-mono projection but is
   not rendered as a normal user bubble.
+- `context.cleared` events become dedicated clear boundary rows keyed by the
+  clear root message, with source-range metadata in `entities.contextClears`.
+  The clear root user message remains available for model-context projection but
+  is not rendered as a normal user bubble.
 - Outside the protected Dream channel, historical `dream.finished` events become
   dedicated Dream boundary rows keyed by their hidden anchor message, with status,
   processed counts, and memory-change counts in `entities.dreams`. Inside the
@@ -1687,8 +1696,9 @@ The current renderer contract is `AgentRenderProjection`, carried by
   offsets, queues, and seq caches, plus tolerant torn-tail handling for
   high-write run sidecars.
 - Mixed-resolution runtime context assembly: compacted historical ranges render
-  as compaction summaries for the model path while visible transcript replay can
-  still expand archived raw/tool messages.
+  as compaction summaries for the model path, and cleared historical ranges are
+  excluded from the model path without a summary, while visible transcript replay
+  can still expand archived raw/tool messages.
 - Runtime consumers for `user_question.*` events, plus file-tool skill write
   validation/hot reload. Skill audit events are run-scoped tool-execution audit
   detail, not conversation replay state.
