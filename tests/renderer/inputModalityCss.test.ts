@@ -77,5 +77,9 @@ describe('input modality CSS guards', () => {
     expect(filePreviewCss).toMatch(/\.document-outline-rail-track\s*\{[^}]*height:\s*var\(--document-outline-track-height\);[^}]*max-height:\s*var\(--document-outline-track-height\);/s);
     expect(filePreviewCss).toMatch(/\.document-outline-rail-track\s*\{[^}]*overflow-y:\s*auto;/s);
     expect(filePreviewCss).toMatch(/\.document-outline-popover\s*\{[^}]*left:\s*0;/s);
+    expect(filePreviewCss).toContain(':root[data-input-modality="keyboard"] .document-outline-rail:has(.document-outline-popover:focus-within) .document-outline-rail-track');
+    expect(filePreviewCss).toContain(':root[data-input-modality="keyboard"] .document-outline-rail:focus-within .document-outline-popover');
+    expect(filePreviewCss).not.toMatch(/(?:^|\n)\.document-outline-rail:has\(\.document-outline-popover:focus-within\) \.document-outline-rail-track\s*\{/);
+    expect(filePreviewCss).not.toMatch(/(?:^|\n)\.document-outline-rail:focus-within \.document-outline-popover\s*\{/);
   });
 });

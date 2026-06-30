@@ -701,7 +701,7 @@
 }
 
 .document-outline-rail:hover .document-outline-rail-track,
-.document-outline-rail:has(.document-outline-popover:focus-within) .document-outline-rail-track {
+:root[data-input-modality="keyboard"] .document-outline-rail:has(.document-outline-popover:focus-within) .document-outline-rail-track {
   opacity: 0;
 }
 
@@ -755,7 +755,7 @@
 }
 
 .document-outline-rail:hover .document-outline-popover,
-.document-outline-rail:focus-within .document-outline-popover {
+:root[data-input-modality="keyboard"] .document-outline-rail:focus-within .document-outline-popover {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(-50%);

@@ -435,10 +435,12 @@ centered track that can grow up to 80% of the document viewport to show
 surrounding progress, with internal scrolling rather than stretching down the
 full document viewport. The active marker is kept centered inside that track as
 the document scrolls. The rail is a directory index rather than a precise
-scroll-position indicator; hover or focus entry from the marker rail opens the
-chapter popover already scrolled to the current active chapter, while focus and
-clicks inside the popover keep the user's current popover scroll position. Both
-surfaces jump to resolved scroll positions. Reader scroll positions persist per resolved preview
+scroll-position indicator; hover or keyboard focus entry from the marker rail
+opens the chapter popover already scrolled to the current active chapter, while
+focus and clicks inside the popover keep the user's current popover scroll
+position. Keyboard focus keeps the popover open for navigation, but pointer focus
+from clicking a popover item does not pin it open after the pointer leaves the
+rail. Both surfaces jump to resolved scroll positions. Reader scroll positions persist per resolved preview
 identity: PDFs restore page + page-relative offset, while EPUBs restore spine
 section + section-relative offset. Documents without outline metadata render no
 rail.
