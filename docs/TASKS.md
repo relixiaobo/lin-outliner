@@ -433,6 +433,23 @@ anything.
 
 ## Recently completed
 
+- **agent-file-scope-preflight** (`codex-4/agent-file-scope-preflight`, PR #349, codex-4, merged 2026-06-30,
+  fast-track) — typed file tools (`file_read`/`file_glob`/`file_grep`/`file_edit`/`file_write`/`file_delete`)
+  that target a **non-sensitive path outside the handed file area** now stop for an explicit `ask` approval
+  *before* the tool runs, instead of being default-allowed by the permission layer and then rejected by the
+  file-tool containment check (which surfaced as a `path_outside_local_root` interruption). **Allow once**
+  projects the exact `Scope(read:/path)` / `Scope(write:/path)` into the **current run's** file-tool roots
+  (run-scoped, keyed off the active run id — so it survives subsequent calls in that run but never leaks
+  across runs); **Always allow** also persists the grant. Isolated read-only skill runs, including
+  `/research`, inherit the flow so external-folder analysis continues after the parent conversation approves.
+  Bash keeps its floor-blocklist posture (gate uses the canonical `toolPathArgumentName()` predicate, which
+  excludes bash); outside **sensitive** credential reads still default-allow per the #279 posture. **Gate
+  (main):** `/code-review xhigh` (10 finder angles + sweep) — no correctness crash bugs; the dev resolved
+  all six findings across two rounds (run-scoped once-approval + new second-call test, set dedup onto the
+  shared predicate, shared `approvalRequestForDescriptor`, native `'ask'` in `decisionRank`, spec accuracy),
+  then rebased onto current `main`. A post-merge fast-track (main) deduped `runScopedGrantRuleValue` onto the
+  exported `grantRuleValue`. typecheck + `test:core` (1102 pass) + `docs:check` green.
+
 - **pi-ai-0.80-upgrade** (`codex-3/pi-ai-0.80-upgrade`, PR #348, codex-3, merged 2026-06-30) — bumps
   `@earendil-works/pi-ai` + `@earendil-works/pi-agent-core` `0.78.0 → 0.80.2` and migrates the main-process
   agent runtime off the removed global helpers (`completeSimple`/`streamSimple`/`getModels`/`getProviders`/

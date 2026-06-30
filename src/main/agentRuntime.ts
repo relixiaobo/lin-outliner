@@ -202,6 +202,7 @@ import {
   type AgentPermissionAskDecision,
   type AgentPermissionSoftBlockDecision,
 } from './agentPermissions';
+import { grantRuleValue } from './agentToolPermissionRules';
 import {
   resolveAgentPermissionAsk,
   type PermissionDeniedReason,
@@ -7207,12 +7208,6 @@ function approvalDeniedMessage(reason: PermissionDeniedReason): string {
   }
 }
 
-function runScopedGrantRuleValue(grant: AgentPermissionGrant): string {
-  if (grant.kind === 'scope') return `Scope(${grant.access}:${grant.root})`;
-  if (grant.kind === 'external') return `External(${grant.target})`;
-  return `Command(${grant.form})`;
-}
-
 function addRunScopedPermissionGrants(
   target: AgentPermissionGrant[],
   grants: readonly AgentPermissionGrant[],
@@ -7371,7 +7366,7 @@ function createConfiguredAgent(
             grants: [
               ...globalPermissions.grants,
               ...scopedPermissionGrants.map((grant) => ({
-                ruleValue: runScopedGrantRuleValue(grant),
+                ruleValue: grantRuleValue(grant),
                 grant,
               })),
             ],

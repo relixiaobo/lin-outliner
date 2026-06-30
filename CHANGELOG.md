@@ -12,7 +12,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
-- **Continuous EPUB reader + document outline rail (PR #344, codex-3)** — the expanded EPUB preview now
+- **Ask before reaching outside the handed file area (PR #349, codex-4)** — typed file tools
+  (`file_read`/`file_glob`/`file_grep`/`file_edit`/`file_write`/`file_delete`) that target a **non-sensitive
+  path outside the handed file area** now stop for an explicit approval (`ask`) **before** the tool runs,
+  instead of being default-allowed by the permission layer and then rejected by the file-tool containment
+  check (the old failure surfaced as a confusing `path_outside_local_root` tool interruption). **Allow once**
+  projects that exact `Scope(read:/path)` / `Scope(write:/path)` into the **current run's** file-tool roots —
+  run-scoped, so it covers later calls within the same run but never leaks across runs — and **Always allow**
+  also persists the grant. Isolated read-only skill runs, including `/research`, inherit the flow and can
+  continue external-folder analysis after the parent conversation approves the scope. Bash keeps its existing
+  floor-blocklist posture (the gate uses the canonical `toolPathArgumentName()` predicate, which excludes
+  bash), and outside **sensitive** credential reads still default-allow per the #279 silent-allow posture.
+  **Gate (main):** `/code-review xhigh` — no correctness crash bugs; all six review findings resolved across
+  two rounds, rebased onto current `main`; a post-merge fast-track deduped a local rule-value helper onto the
+  shared `grantRuleValue`. typecheck + `test:core` (1102 pass) + `docs:check` green.
   scrolls as **one continuous vertical reader** that stacks every spine section (covers and `linear="no"`
   note pages included, so every table-of-contents and in-text anchor resolves) like PDF pages, replacing
   the wheel-driven section jumps from #339. Sections **mount lazily** as they near the viewport
