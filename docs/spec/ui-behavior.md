@@ -206,6 +206,118 @@ For `options_from_supertag` fields, the source supertag must be an active tag
 definition. If the source tag is moved to Trash, the field's value picker no
 longer derives candidates from nodes carrying that deleted tag.
 
+## View Toolbar
+
+The node-level view toolbar is the presentation control for a node's child rows
+and for saved-search result views. It lives above the rendered child/result rows
+when the node's `viewDef.toolbarVisible` flag is true. The current supported mode
+is list, with Filter by name, Display, Group by, Sort by, and Filter by
+controls. These controls all read and write `viewDef` child nodes
+(`displayField`, `sortRule`, `filterRule`, plus the view's `groupField`) rather
+than storing renderer-local state.
+
+Nested toolbars render as part of the expanded child outline, not as detached
+cards. They remain logically inside the expanded child subtree, while their
+visual indent aligns with the owning node's title/content column instead of the
+first child row. The expanded parent guide line spans the toolbar and
+descendants. The toolbar itself carries only subtle top/bottom separators; the
+hierarchy line is the main visual divider.
+
+The leading search icon is a Tana-style **Filter by name** shortcut. Clicking it
+turns the icon into an inline editable chip. Non-empty text is written as a real
+`sys:name contains <text>` `filterRule`; clearing the chip removes that rule.
+The name rule is owned by this shortcut and is not repeated in the generic
+Filter summary chips or on the generic Filter icon.
+
+The toolbar shows compact neutral summary chips for active Display fields, Group
+by, and each non-name Filter rule. These chips sit inline in the same toolbar row
+as the icon controls rather than forming a separate summary row. Each chip is
+also a shortcut into the matching toolbar popover; Filter chips open the editor
+for that specific saved `filterRule`, not merely the first rule for that field.
+That matters because advanced states may contain multiple filters against the
+same field. A Filter summary chip reads as the field name with a trailing remove
+control; the operator/value detail lives in the editor pane, matching Tana's
+active-filter chip model. Filter state is not duplicated on the generic Filter
+icon.
+
+Sort follows Tana's separate state model: an active sort rule is represented on
+the Sort button itself, with the icon direction matching the first rule. While
+the Sort popover is open, the toolbar can also show a `Sorted by ...` summary
+chip beside the active button as editable context. Closing the popover leaves the
+compact icon state, not a persistent text chip.
+
+Toolbar popovers follow Tana's field-first shape. Display is a direct checklist
+of fields. Group is a single-select field list because it has no per-field
+settings yet. Sort starts from the shared field list and drills into the chosen
+field for direction settings; reopening Sort always returns to the field list
+first, even when a rule already exists. Existing sort rows show their priority
+number beside the direction because sorting precedence follows the persisted
+`sortRule` order. Newly selected sort fields wait for the command result before
+showing direction controls, so a fast second click cannot create duplicate rules.
+Supported system fields appear first in a
+stable Tana-like order and use view-specific labels: Created time, Date from
+calendar node, Done, Done time, Last edited time, Number of references, Owner
+node, and Tags. A system field is offered only when it exists on at least one
+current child/result row, or when an existing Display, Group, Sort, or Filter
+setting already references it so the old setting remains editable. For example,
+Tags requires at least one row with an applied tag, Done requires at least one
+row with a checkbox, Done time requires at least one completed row, and Number of
+references requires at least one row with a linked reference count. Date from
+calendar node uses date-field treatment for icons, sort/filter wording, sort
+comparisons, filter comparisons, and grouping buckets. Custom fields in the
+shared field list come from fields actually present on the current child/result
+rows, plus fields already referenced by existing Display, Group, Sort, or Filter
+settings. Fields that the data model does not yet expose as computed values,
+such as path, workspace, or editor identity, are not shown as fake empty choices.
+
+Filter uses a narrower field list than Display, Group, or Sort. The leading
+Filter by name chip owns name filtering, so Name is excluded from the generic
+Filter popover. Generic Filter still offers the real system fields supported by
+the view adapter, then contextual custom fields from the current child/result
+rows plus fields already referenced by existing non-name filter rules so old
+rules remain editable. Fields that the data model does not yet expose as computed
+values are not shown as fake empty choices.
+
+Rows that do not match the active view filter are not discarded from the
+interaction surface. The visible list shows matching rows first, then appends a
+collapsed `N items filtered out` disclosure. Expanding it reveals the filtered
+rows in the same outline renderer and keyboard-selection model; collapsing it
+hides them again without changing the persisted view settings. The disclosure's
+renderer id includes the active filter-rule ids, so expanding an old filter does
+not silently expand a newly created filter on the same parent later.
+
+When a field-first popover drills into an editor pane, focus moves to the pane's
+back control. That keeps Escape scoped to the popover and preserves keyboard
+dismissal after the clicked field row unmounts.
+
+When a row context-menu action reveals a nested View Toolbar from a collapsed
+row, the row expands in the same interaction so the toolbar becomes visible
+immediately. The menu label follows visibility in the current row: a configured
+toolbar hidden behind a collapsed row still reads as **Show view toolbar**.
+
+Display fields render on each visible content/result row as quiet metadata under
+the row title and inline tags. The node name is excluded because the title already
+shows it. Empty fields are omitted per row, so adding a Display field does not
+create blank placeholders on rows that do not carry that value. The displayed
+values use the same field resolution as sort, filter, and group, but system
+fields render through the display adapter rather than the raw sort/filter
+adapter: dates render as `YYYY-MM-DD`, Done renders as text, and reference-like
+fields render their labels instead of raw ids/count internals. Values render as
+plain text joined by comma for now; typed chips and navigable references are a
+future display-layer enhancement, not a different view model.
+
+## Search Nodes
+
+Search nodes render a compact query summary below the page title and above the
+materialized result rows while the inline query builder is closed. The summary
+shows read-only chips for the query semantics and the current materialized result
+count; it does not configure how the results are presented.
+
+The summary exposes a **View** action that reveals the same node-level View
+Toolbar used by normal node pages. Query chips describe *what the search returns*;
+the View Toolbar controls *how the result references are displayed, grouped,
+sorted, and filtered*.
+
 ## NodePanel References Footer
 
 Each `NodePanel` has a Tana-style bottom **References** section when its root node
@@ -363,13 +475,14 @@ commands so undo/redo and projection updates stay document-native.
 | File node render | A non-image file (attachment) renders as a **lightweight name row**: its **file-type icon is the bullet** (the `file` RowMarker variant — audio / video / pdf / generic), the row content is the **read-only filename** that wraps inside the content column, and tag chips follow the filename in the same inline flow. The row has no trailing action menu; file actions live in the preview surface controls. The filename is **display-only** and never opens or renames from inline typing; instead the **chevron expands an inline preview** and the **bullet drills** to the node page. An **image** is the one exception (see below). |
 | File node is a normal node | A file node behaves like any node, plus an inline preview: the **chevron expands an inline preview widget** under the row (the same widget the node page uses, started in summary mode), and the normal children outline renders below it. If the file node has no children, that outline still shows the standard trailing draft so users can add the first child note inline. It can carry child notes, tags, be moved, referenced, pinned, and opened on its node page — all for free. A non-image row mounts a read-only filename editor surface so a caret can land anywhere in the filename while ordinary input is rejected. That surface gives the row full keyboard parity — arrow nav, Enter to add a sibling, Tab to indent, Backspace to remove the node, `Cmd+V` with real files to insert file nodes after the row, and `#` to open the tag picker for the file node itself without editing the filename. Image rows use a visually-hidden focus anchor for the same keyboard parity because the visible row content is the image; applied tags still render visibly after the inline image so they can be seen and removed. |
 | File node row click & reference | Clicking inside a non-image filename places a read-only caret without an extra row-level focus frame, and clicking outside the filename selects the row; the chevron toggles the inline preview and the bullet drills to the node page. Clicking an inline image selects the image row; Maximize lives in the image row's `⋯` menu. A `reference` whose target is a file node still renders as a normal **reference row**, not with the file's icon-bullet / inline image. |
-| File node preview | The preview shows in two places: **inline** under an expanded file row, and as the **node page** hero (drill the bullet). Both render the same `FilePreviewShell` — on the node page an outliner-ancestry breadcrumb + **read-only filename title**, then the rendered file inside one rounded preview viewport, then the node's children outline. Preview shell state (expanded/collapsed, local resized heights, pending PDF page jumps, and restored PDF/EPUB reader positions) is scoped to the current resolved file identity, so navigating file A → file B in the same pane does not leak A's view state into B. Previewable files start in **summary** mode; PDFs render a compact horizontal strip of page previews for every page instead of cropping the first page, with token spacing between the filename/tag line and the preview viewport. All framed file previews keep content inside an inner inset: PDF pages, EPUB pages, markdown/code blocks, text/code previews, tables, and directory listings must not sit directly on the viewport frame, and horizontal scrollbars sit in a reserved bottom gutter rather than against the frame or over the last line. Summary PDF pages fit the preview viewport height, keep the same natural token inset on all four viewport edges, scroll horizontally inside that inset, use tight page-to-page spacing, and can be clicked (or keyboard-activated) to expand into the full vertical reader scrolled to that page; that page jump is one-shot and is consumed after it lands so resize does not snap back to the old target page. The full PDF reader scrolls inside the same inset-preserving content box, so vertically-scrolled pages do not enter the viewport's top or bottom inset. The shared bottom action bar floats over previewable content instead of occupying a blank bottom band. Its primary and `⋯` are separate controls, not a segmented control; `Expand` and `Collapse` keep the same width and height as the more button. The viewport's bottom edge can be dragged (or keyboard-resized from the handle) to change only that local preview height. For a non-previewable file, the same surface becomes a compact metadata card: it shows a concise file-kind title such as `zip` with size on the same line and modified date on a separate quiet line (no icon and no `Type` / `Size` labels) and keeps a short **Open** primary plus the `⋯` actions in the same bottom-center action location, with that bar participating in the card layout so it never covers metadata. The node-page title prefers the node display text, then the stored original filename, so old file nodes with blank text do not show `Untitled`. |
+| File node preview | The preview shows in two places: **inline** under an expanded file row, and as the **node page** hero (drill the bullet). Both render the same `FilePreviewShell` — on the node page an outliner-ancestry breadcrumb + **read-only filename title**, then the rendered file inside one rounded preview viewport, then the node's children outline. Preview shell state (expanded/collapsed, local resized heights, pending PDF page jumps, and restored PDF/EPUB reader positions) is scoped to the current resolved file identity, so navigating file A → file B in the same pane does not leak A's view state into B. Document-like previewable files start in **summary** mode; PDFs render a compact horizontal strip of page previews for every page instead of cropping the first page, with token spacing between the filename/tag line and the preview viewport. Audio/video previews are direct playback controls, so they render as a flat media stage without the document preview card chrome, Expand/Collapse primary, or resize handle; the native media element is marked as an interaction-preserving surface, but its browser controls are replaced by a Media Chrome control bar themed with Tenon tokens. The Tenon `⋯` file-action menu lives inside that same control bar beside playback, timeline, volume, and fullscreen controls, so audio and video keep one visible action layer and never spill outside the pane or cover the scrub bar. All framed file previews keep content inside an inner inset: PDF pages, EPUB pages, markdown/code blocks, text/code previews, tables, and directory listings must not sit directly on the viewport frame, and horizontal scrollbars sit in a reserved bottom gutter rather than against the frame or over the last line. Summary PDF pages fit the preview viewport height, keep the same natural token inset on all four viewport edges, scroll horizontally inside that inset, use tight page-to-page spacing, and can be clicked (or keyboard-activated) to expand into the full vertical reader scrolled to that page; that page jump is one-shot and is consumed after it lands so resize does not snap back to the old target page. The full PDF reader scrolls inside the same inset-preserving content box, so vertically-scrolled pages do not enter the viewport's top or bottom inset. The shared bottom action bar floats over previewable content instead of occupying a blank bottom band. Its primary and `⋯` are separate controls, not a segmented control; document-like previewable files use a fixed-width `Expand` / `Collapse` primary, while audio/video keep only the in-player `⋯` file-action menu. The viewport's bottom edge can be dragged (or keyboard-resized from the handle) to change only document-like preview height. For a non-previewable file, the same surface becomes a compact metadata card: it shows a concise file-kind title such as `zip` with size on the same line and modified date on a separate quiet line (no icon and no `Type` / `Size` labels) and keeps a short **Open** primary plus the `⋯` actions in the same bottom-center action location, with that bar participating in the card layout so it never covers metadata. The node-page title prefers the node display text, then the stored original filename, so old file nodes with blank text do not show `Untitled`. |
 | Image render (inline) | An image is the one file kind that renders inline as the image **itself** (an image's content is its identity) instead of an icon-bullet name row: a bounded `<img>`, with no file-type icon and no filename in the row. Its `⋯` menu floats at the image's top-right, revealed on hover; the menu's primary action maximizes it (opens the file preview). |
 | File node ⋯ menu | Non-image file rows do not carry a row-level `⋯`; the chevron opens the inline preview, and the preview surface's `⋯` carries the stored asset's system actions. An image's inline surface still has a top-right `⋯` whose primary action is **Maximize**. |
-| File node actions | All non-image file previews use the same bottom-center preview action bar so actions never move between file formats. For previewable files, its fixed-width primary toggles **Expand/Collapse**, and its separate `⋯` menu carries **Open in split pane**, **Open with default app**, **Show in Finder**, **Copy file**. `Open in split pane` opens a dedicated file-only reader pane: the pane is bound to the file node for persistence/source identity, but it renders only the file content and header actions — no outliner ancestry, node title hero, child outline, References section, Expand/Collapse primary, or preview resize handle. For non-previewable files, the same action bar shows a short **Open** primary for the default-app action and uses `⋯` for the same system actions. Open uses the OS default app after the main process revalidates the asset path and local-file policy. Reveal shows the stored asset copy. Copy puts the stored asset file on the clipboard. |
+| File node actions | Document-like non-image file previews use the same bottom-center preview action location so actions never move between document formats. For document-like previewable files, its fixed-width primary toggles **Expand/Collapse**, and its separate `⋯` menu carries **Open in split pane**, **Open with default app**, **Show in Finder**, **Copy file**. Audio/video previews have no useful expanded state, so they omit the primary and expose the same system actions through the same-layer `⋯` media control. `Open in split pane` opens a dedicated file-only reader pane: the pane is bound to the file node for persistence/source identity, but it renders only the file content and header actions — no outliner ancestry, node title hero, child outline, References section, Expand/Collapse primary, or preview resize handle. PDF/EPUB/HTML file-only readers fill the available pane height; PDF and EPUB still keep their internal document viewport/inset so pages and section frames never sit directly on the pane edge. For non-previewable files, the same action bar shows a short **Open** primary for the default-app action and uses `⋯` for the same system actions. Open uses the OS default app after the main process revalidates the asset path and local-file policy. Reveal shows the stored asset copy. Copy puts the stored asset file on the clipboard. |
+| Media preview controls | Audio and video previews stay visually single-layer: they do not add the document preview's outer frame/background/inset around the player. The playable media surface itself is the only visible container and carries the shared file outer edge treatment (`--file-preview-frame-radius` plus `--inset-hairline`) so its corner and border quality matches other file previews without adding another wrapper. They still omit document-specific Expand/Collapse, resize, and bottom floating action chrome. Media Chrome playback/mute/fullscreen buttons and the Tenon `⋯` file-action button use the product icon-control geometry (`--control-size-xl` hit area with `--icon-size-md` glyphs), hover/focus deepens `--text-secondary` to `--text-primary`, and icon-only controls do not add `--fill-*` hover boxes. Timeline and volume ranges keep transparent hover backgrounds and fixed control height so scrubbing never shifts the bar or visually overlaps the file-action menu. |
 | Missing asset metadata | The preview shows an unavailable message; the row stays an ordinary file name row with a display-only filename and exposes no broken system actions. |
-| Non-node source preview | A source with no node (agent payload, loose inline local-file ref, url) opens the same `file-preview` surface in its loose state: source/path breadcrumb, read-only filename/source title, and the shared preview, but no children outline. Previewable and non-previewable loose sources use the same bottom-center action location; non-previewable sources render it as the metadata card footer to avoid overlaying metadata. The primary action opens the source — **Open in browser** for a url, **Open with default app** for an on-disk source; the `⋯` menu offers **Show in Finder** for an on-disk source (local file / asset) and **add to outline** for ingestible kinds (below). |
-| Agent transcript file preview | Live agent transcript file chips are local working-file pointers. A click opens a file-only reader in the center workspace area, reusing the active/available workspace pane rather than adding a split pane or previewing in the agent dock. The reader uses the same file preview content shell as workspace file previews, starts in full reader mode, has no Expand/Collapse or resize handle, and shows only the compact reader header with filename and `⋯` actions. The `⋯` menu keeps the system actions: **Open with default app**, **Show in Finder**, and **Add to outline** for ingestible files. |
+| Non-node source preview | A source with no node (agent payload, loose inline local-file ref, url) opens the same `file-preview` surface in its loose state: source/path breadcrumb, read-only filename/source title, and the shared preview, but no children outline. URL sources are previewable but not file-like: the breadcrumb/header shows the webpage favicon and title when the webview reports them, falling back to the link label or URL, and the body starts directly with the sandboxed URL preview webview. URL previews are single-layer like audio/video: no document preview outer frame, duplicate large file heading, loading overlay, Expand/Collapse primary, resize handle, or bottom floating action bar over the page. The webview surface itself carries the shared outer edge treatment (`--file-preview-frame-radius` plus `--inset-hairline`) and fills the available pane height. URL previews expose **Open in browser** from the header `⋯`. Other previewable and non-previewable loose sources use the same bottom-center action location; non-previewable sources render it as the metadata card footer to avoid overlaying metadata. The primary action opens an on-disk source with its default app; the `⋯` menu offers **Show in Finder** for an on-disk source (local file / asset) and **add to outline** for ingestible kinds (below). Stored assets expose `asset://<id>` and trusted local files expose `preview-local://<token>` through the same `streamUrl` field, so image/audio/video renderers do not branch on whether the source came from the outliner or an agent working file. |
+| Agent transcript file preview | Live agent transcript file chips are local working-file pointers, including user attachment chips, user inline file references, assistant prose references, and assistant-produced file result chips. A click opens a file-only reader in the center workspace area, reusing the active/available workspace pane rather than adding a split pane or previewing in the agent dock. The reader uses the same file preview content shell as workspace file previews, starts in full reader mode, has no Expand/Collapse or resize handle, and shows only the compact reader header with filename and `⋯` actions. The `⋯` menu keeps the system actions: **Open with default app**, **Show in Finder**, and **Add to outline** for ingestible files. |
 | Add a non-node source to the outline | The loose preview's `⋯` menu offers "add to outline" for ingestible kinds (`local-file`, `agent-payload`; not `url`): it copies the source into the asset store, creates a file node under Today, and binds the same mounted preview surface to that node in place. After that it is an ingested node with outliner ancestry, a children outline, and file-node actions. |
 
 ## Reference And Inline Reference Matrix

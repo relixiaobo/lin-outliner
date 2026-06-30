@@ -343,8 +343,9 @@
   --shell-padding-bottom: var(--layout-gap);
   --shell-gap: var(--layout-gap);
   --panel-gap: var(--layout-gap);
-  /* Control box sizes — a tight 3-step ladder (20 / 24 / 28). */
+  /* Control box sizes — a tight 4-step ladder (20 / 22 / 24 / 28). */
   --control-size-xs: 20px;
+  --control-size-sm: 22px;
   --control-size-md: 24px;
   --control-size-xl: 28px;
   --breadcrumb-height: var(--control-size-xl);

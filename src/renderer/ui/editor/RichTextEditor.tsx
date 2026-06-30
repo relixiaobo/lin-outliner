@@ -34,6 +34,7 @@ import { createInlineMarkShortcutTransaction } from './inlineMarkShortcuts';
 import { moveInlineCodeCaretAcrossBoundary, setDomSelectionAtDocSide } from './inlineCodeBoundaryNavigation';
 import { pmSchema } from './pmSchema';
 import { targetFromInlineReferenceElement } from './inlineReferenceAttrs';
+import { openUrlPreviewFromClick } from '../preview/urlPreviewRouting';
 import {
   applyCursorPlacement,
   selectionForPlacement,
@@ -527,18 +528,27 @@ export function RichTextEditor(props: RichTextEditorProps) {
           }
           return false;
         },
-        click(_viewInstance, event) {
+        click(viewInstance, event) {
           if (event.shiftKey) return false;
           const targetElement = event.target instanceof HTMLElement
             ? event.target.closest<HTMLElement>('[data-inline-ref-kind]')
             : null;
           const target = targetElement ? targetFromInlineReferenceElement(targetElement) : null;
-          if (!target || target.kind === 'local-file' || !propsRef.current.onInlineReferenceClick) return false;
+          if (target && target.kind !== 'local-file' && propsRef.current.onInlineReferenceClick) {
+            event.preventDefault();
+            event.stopPropagation();
+            propsRef.current.onInlineReferenceClick(target, {
+              newPane: wantsNewPaneFromClick(event),
+            });
+            return true;
+          }
+          const link = event.target instanceof HTMLElement
+            ? event.target.closest<HTMLAnchorElement>('a[href]')
+            : null;
+          if (!link || !viewInstance.dom.contains(link)) return false;
+          if (!openUrlPreviewFromClick(event, link.href, link.textContent ?? undefined)) return false;
           event.preventDefault();
           event.stopPropagation();
-          propsRef.current.onInlineReferenceClick(target, {
-            newPane: wantsNewPaneFromClick(event),
-          });
           return true;
         },
         paste(viewInstance, event) {

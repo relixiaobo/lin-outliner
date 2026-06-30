@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { AgentActor, AgentEvent, AgentPrincipal } from '../../src/core/agentEventLog';
+import { buildAgentRenderProjection } from '../../src/core/agentRenderProjection';
 import {
   AgentEventStore,
   agentCheckpointFileName,
@@ -269,6 +270,36 @@ describe('agent event store', () => {
       expect(replayed.latestSeq).toBe(2);
       expect(replayed.messages['message-1']?.content).toEqual([{ type: 'text', text: 'Hello' }]);
       expect(replayed.dreamsByMessageId).toEqual({});
+    });
+  });
+
+  test('falls back to log replay when a checkpoint predates context clear replay state', async () => {
+    await withStore(async (store) => {
+      const conversationId = 'conversation-1';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Untitled' },
+        {
+          ...base(conversationId, 2, 'user_message.created', userActor),
+          messageId: 'message-1',
+          parentMessageId: null,
+          content: [{ type: 'text', text: 'Hello before checkpoint' }],
+        },
+      ]);
+      const checkpoint = await store.writeCheckpoint(conversationId, await store.replay(conversationId));
+      expect(checkpoint?.seq).toBe(2);
+
+      const checkpointPath = store.checkpointPath(conversationId, 2);
+      const raw = JSON.parse(await readFile(checkpointPath, 'utf8')) as {
+        state: Record<string, unknown>;
+      };
+      delete raw.state.contextClearsByMessageId;
+      await writeFile(checkpointPath, `${JSON.stringify(raw)}\n`, 'utf8');
+
+      const replayed = await store.replay(conversationId);
+
+      expect(replayed.latestSeq).toBe(2);
+      expect(replayed.contextClearsByMessageId).toEqual({});
+      expect(() => buildAgentRenderProjection(replayed, { revision: 1 })).not.toThrow();
     });
   });
 

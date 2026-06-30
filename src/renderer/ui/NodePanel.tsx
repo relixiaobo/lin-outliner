@@ -59,7 +59,7 @@ import { buildOutlinerRows } from './outliner/row-model';
 import { TriggerPopover } from './outliner/TriggerPopover';
 import { ButtonControl } from './primitives/ButtonControl';
 import { IconButton } from './primitives/IconButton';
-import { SearchQueryBuilderPanel } from './search/SearchQuerySummaryBar';
+import { SearchQueryBuilderPanel, SearchQuerySummaryBar } from './search/SearchQuerySummaryBar';
 import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
 import { BacklinksSection } from './BacklinksSection';
@@ -787,6 +787,13 @@ export function NodePanel(props: NodePanelProps) {
               onClose={() => setSearchQueryOpen(false)}
             />
           )}
+          {rootNode?.type === 'search' && !searchQueryOpen && (
+            <SearchQuerySummaryBar
+              index={props.index}
+              nodeId={resolvedRootId}
+              run={props.run}
+            />
+          )}
           {panelIsoDate && (
             <PanelDateNavigation
               dateNoteCounts={dateNoteCounts}
@@ -802,6 +809,8 @@ export function NodePanel(props: NodePanelProps) {
             y={contextMenu.y}
             node={rootNode}
             targetId={resolvedRootId}
+            visualRowId={resolvedRootId}
+            viewToolbarVisibleInRow={true}
             openId={resolvedRootId}
             selectedIds={props.ui.selectedIds}
             index={props.index}
@@ -817,6 +826,7 @@ export function NodePanel(props: NodePanelProps) {
                 cursorEnd(),
               ));
             }}
+            onRevealViewToolbar={() => {}}
             onOpenViewSection={(nodeId, section) => {
               props.setUi((prev) => ({
                 ...prev,

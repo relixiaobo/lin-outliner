@@ -292,6 +292,8 @@ import {
 } from '../core/localDate';
 import type { AgentPermissionGrant } from '../core/agentPermissionModel';
 
+const CLEAR_COMMAND_PATTERN = /^\/clear\s*$/;
+
 const EMPTY_USAGE = {
   input: 0,
   output: 0,
@@ -542,6 +544,10 @@ export function builtInModelEffortChanged(
     value && value.trim() && value.trim() !== 'inherit' ? value.trim() : 'inherit';
   const normEffort = (value?: string | null) => (value && value.trim() ? value.trim() : '');
   return normModel(prev.model) !== normModel(next.model) || normEffort(prev.effort) !== normEffort(next.effort);
+}
+
+function parseClearSlashCommand(input: string): boolean {
+  return CLEAR_COMMAND_PATTERN.test(input.trim());
 }
 
 interface AgentConversationState {
@@ -1245,6 +1251,13 @@ export class AgentRuntime {
     const runtimeSettings = await this.refreshRuntimeSettings(conversation);
     const commands: AgentSlashCommandView[] = [];
 
+    commands.push({
+      id: 'clear',
+      kind: 'runtime',
+      label: '/clear',
+      description: 'Clear model context from this point',
+      insertText: '/clear',
+    });
     if (runtimeSettings.compactEnabled) {
       commands.push({
         id: 'compact',
@@ -1907,6 +1920,10 @@ export class AgentRuntime {
       const attachments = materialized.attachments;
       const messageText = rewriteFileReferenceMarkerPaths(message, materialized.pathMap);
       if (!messageText.trim() && attachments.length === 0) return;
+      const clearCommand = attachments.length === 0 && parseClearSlashCommand(messageText);
+      if (clearCommand && this.hasActiveRuns(conversation)) {
+        throw new Error('Cannot clear context while a Channel run is active.');
+      }
       if (this.hasActiveRuns(conversation)) {
         if (attachments.length > 0) {
           throw new Error('Attachments cannot be queued while the agent is running.');
@@ -1920,6 +1937,10 @@ export class AgentRuntime {
         : null;
       if (compactCommand) {
         await this.compactConversation(conversationId, conversation, compactCommand.instructions);
+        return;
+      }
+      if (clearCommand) {
+        await this.clearConversationContext(conversationId, conversation);
         return;
       }
       conversation.skillRuntime.resetRunPermissionRules();
@@ -5314,6 +5335,45 @@ export class AgentRuntime {
     );
 
     await this.appendConversationEvents(conversationId, conversation, inputs);
+    this.reanchorActiveRunAfterCompaction(conversation, leafMessageId);
+  }
+
+  private reanchorActiveRunAfterCompaction(conversation: AgentConversationState, leafMessageId: string) {
+    const activeRun = conversation.activeRun;
+    if (!activeRun) return;
+    activeRun.lastMessageId = leafMessageId;
+    activeRun.toolOutputPayloads.clear();
+    activeRun.toolCallMessageIds.clear();
+  }
+
+  private async appendContextClearRootEvent(
+    conversationId: string,
+    conversation: AgentConversationState,
+    source?: AgentCompactionSourceRange,
+  ) {
+    const messageId = this.createMessageId('user');
+    const actor = systemActor();
+    await this.appendConversationEvents(conversationId, conversation, [
+      {
+        type: 'context.cleared',
+        actor,
+        messageId,
+        source: source ?? { fromMessageId: messageId, throughMessageId: messageId },
+      },
+      {
+        type: 'user_message.created',
+        actor,
+        createdAt: Date.now(),
+        messageId,
+        parentMessageId: null,
+        content: textPersistedContent('Context cleared.'),
+      },
+      {
+        type: 'branch.selected',
+        actor,
+        leafMessageId: messageId,
+      },
+    ]);
   }
 
   private async buildPreservedMessageEvents(
@@ -5648,6 +5708,43 @@ export class AgentRuntime {
       updateAgentState: true,
     });
     conversation.skillRuntime.resetRunPermissionRules();
+  }
+
+  private async clearConversationContext(conversationId: string, conversation: AgentConversationState) {
+    this.assertNoActiveChannelRound(conversation);
+    const activePath = getAgentEventActivePath(conversation.eventState);
+    const firstMessageId = activePath[0]?.id;
+    const lastMessageId = activePath.at(-1)?.id;
+    if (!firstMessageId || !lastMessageId) {
+      await this.appendContextClearRootEvent(conversationId, conversation);
+    } else {
+      await this.appendContextClearRootEvent(conversationId, conversation, {
+        fromMessageId: firstMessageId,
+        throughMessageId: lastMessageId,
+      });
+    }
+
+    conversation.agent.state.messages = await this.deriveRuntimePiMessages(conversationId, conversation.eventState) as never;
+    this.resetModelContextStateAfterClear(conversationId, conversation);
+    this.emitProjection(conversationId, 'context_cleared');
+  }
+
+  private resetModelContextStateAfterClear(conversationId: string, conversation: AgentConversationState) {
+    conversation.autoCompactConsecutiveFailures = 0;
+    conversation.reactiveCompactRequested = false;
+    conversation.activeRun = null;
+    conversation.lastRun = null;
+    conversation.activeRuns.clear();
+    conversation.pendingChildRunNotifications.length = 0;
+    this.releaseQueuedFollowUpSkillListing(conversation);
+    conversation.agent.clearFollowUpQueue();
+    conversation.agent.clearSteeringQueue();
+    this.userViewContextReminderTracker.reset(conversationId);
+    conversation.localWorkspace.readFileState.clear();
+    conversation.toolResultBudgetState = createToolResultBudgetState();
+    conversation.skillRuntime.resetConversationState();
+    conversation.skillRuntime.resetRunPermissionRules();
+    this.cleanupProviderConversationResources(conversationId);
   }
 
   private async handlePiAgentEvent(conversationId: string, conversation: AgentConversationState, event: PiAgentEvent) {

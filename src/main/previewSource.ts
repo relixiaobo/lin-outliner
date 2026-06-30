@@ -6,6 +6,7 @@ import type { AgentPayloadRef } from '../core/agentEventLog';
 import { assetUrl } from '../core/assets';
 import type { PreviewCommand } from '../core/commands';
 import {
+  normalizePreviewHttpUrl,
   previewTargetFromUnknown,
   previewTargetKey,
   type PreviewDirectoryEntry,
@@ -40,6 +41,7 @@ export interface PreviewCommandContext {
   agentRuntime: Pick<AgentRuntime, 'previewPayload' | 'previewPayloadBytes'>;
   assetService: Pick<AssetService, 'lookup' | 'pathFor'>;
   inferMimeType: (filePath: string) => string;
+  localFileStreamUrl?: (file: TrustedLocalFileReference, mimeType: string) => Promise<string | null>;
   localFileReferencePreview: (file: TrustedLocalFileReference) => Promise<LocalFilePreviewMetadata>;
 }
 
@@ -82,6 +84,9 @@ async function previewSourceForTarget(
     const file = await resolveTrustedLocalFileReference(target.path, context.agentLocalFileRoots);
     if (!file) return null;
     const metadata = await context.localFileReferencePreview(file);
+    const streamUrl = metadata.entryKind === 'file'
+      ? await context.localFileStreamUrl?.(file, metadata.mimeType)
+      : null;
     const normalizedTarget: PreviewTarget = {
       ...target,
       path: file.path,
@@ -100,6 +105,7 @@ async function previewSourceForTarget(
       sizeBytes: metadata.sizeBytes,
       lastModified: metadata.lastModified,
       displayPath: metadata.path,
+      ...(streamUrl ? { streamUrl } : {}),
       ...(metadata.iconDataUrl ? { iconDataUrl: metadata.iconDataUrl } : {}),
       ...(metadata.thumbnailDataUrl ? { thumbnailDataUrl: metadata.thumbnailDataUrl } : {}),
     };
@@ -147,7 +153,7 @@ async function previewSourceForTarget(
     };
   }
 
-  const url = previewHttpUrl(target.url);
+  const url = normalizePreviewHttpUrl(target.url);
   if (!url) return null;
   return {
     kind: 'url',
@@ -288,6 +294,7 @@ function extensionForMimeType(mimeType: string): string {
   if (normalized === 'text/csv') return '.csv';
   if (normalized === 'text/tab-separated-values') return '.tsv';
   if (normalized === 'text/plain') return '.txt';
+  if (normalized === 'text/html') return '.html';
   if (normalized === 'application/json') return '.json';
   if (normalized === 'application/xml' || normalized === 'text/xml') return '.xml';
   if (normalized === 'application/yaml' || normalized === 'text/yaml') return '.yaml';
@@ -305,14 +312,4 @@ function agentPayloadPreviewName(payload: AgentPayloadRef): string {
   const summary = payload.summary?.replace(/\s+/gu, ' ').trim();
   if (summary) return summary;
   return `${payload.id}${extensionForMimeType(payload.mimeType)}`;
-}
-
-function previewHttpUrl(value: string): string | null {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
-    return url.toString();
-  } catch {
-    return null;
-  }
 }

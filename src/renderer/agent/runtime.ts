@@ -27,6 +27,7 @@ import type {
   AgentRenderActiveCompaction,
   AgentRenderActiveDream,
   AgentRenderCompactionEntity,
+  AgentRenderContextClearEntity,
   AgentRenderDreamEntity,
   AgentRenderMemberView,
   AgentRenderMessageEntity,
@@ -90,6 +91,12 @@ export interface AgentActiveCompactionEntry {
 
 export type AgentCompactionEntry = AgentCompletedCompactionEntry | AgentActiveCompactionEntry;
 
+export interface AgentContextClearEntry {
+  id: string;
+  kind: 'context-clear';
+  contextClear: AgentRenderContextClearEntity;
+}
+
 export interface AgentCompletedDreamEntry {
   id: string;
   kind: 'dream';
@@ -118,6 +125,7 @@ export interface AgentChildRunEntry {
 export type AgentConversationEntry =
   | AgentMessageEntry
   | AgentCompactionEntry
+  | AgentContextClearEntry
   | AgentDreamEntry
   | AgentChildRunEntry;
 
@@ -140,7 +148,7 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   rows: [],
   transcriptRows: [],
   childRunIds: [],
-  entities: { messages: {}, childRuns: {}, compactions: {}, dreams: {} },
+  entities: { messages: {}, childRuns: {}, compactions: {}, contextClears: {}, dreams: {} },
   streaming: null,
 };
 
@@ -255,6 +263,17 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
           kind: 'compaction',
           status: 'completed',
           compaction,
+        });
+      }
+      continue;
+    }
+    if (row.kind === 'context-clear') {
+      const contextClear = projection.entities.contextClears[row.contextClearId];
+      if (contextClear) {
+        entries.push({
+          id: row.id,
+          kind: 'context-clear',
+          contextClear,
         });
       }
       continue;

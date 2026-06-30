@@ -12,6 +12,25 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Clear model context with `/clear` (PR #352, codex-4)** — `/clear` now appends a persisted
+  `context.cleared` boundary in the current Channel, renders it as a dedicated `Context cleared.`
+  transcript row, and starts subsequent automatic model context from that boundary without generating
+  a compact summary. Pre-clear messages stay visible in transcript history and remain searchable/readable
+  through explicit `past_chats` access, while `/compact` remains the summary-preserving continuation
+  path. The runtime resets conversation-scoped model-context caches across the boundary, and checkpoint /
+  recent-chat regression tests cover the new replay state and synthetic-root filtering. **Gate (main):**
+  deep review found two integration bugs; both were fixed before merge. Verified with typecheck, targeted
+  core/renderer suites, `docs:check`, and `git diff --check`.
+- **Preview-first links and HTML renderer (PR #345, codex)** — ordinary `http(s)` links from the
+  outliner, agent transcript, and local preview bodies now open in a Tenon split preview pane by default.
+  URL previews render as a hardened `webview` with an http(s)-only source, fixed partition, denied
+  popups/permissions, stripped preload/webpreferences, and an explicit "open original" escape hatch.
+  Local-file, asset, and agent-payload previews gain Range-capable `preview-local://` streams for large
+  media so audio/video can seek without whole-file reads; local `.html`/`.htm` files render as sandboxed
+  static iframes with host-side link interception and no script execution. **Gate (main):** deep review
+  found one P2 iframe-realm link-routing bug; round-2 fix resolved it with a cross-realm regression test.
+  Verified with typecheck, relevant core/renderer targeted suites, full `test:renderer` before the final
+  iframe fix, post-fix targeted regression, `docs:check`, and `git diff --check`.
 - **Ask before reaching outside the handed file area (PR #349, codex-4)** — typed file tools
   (`file_read`/`file_glob`/`file_grep`/`file_edit`/`file_write`/`file_delete`) that target a **non-sensitive
   path outside the handed file area** now stop for an explicit approval (`ask`) **before** the tool runs,
@@ -78,6 +97,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Active-run tail re-anchored after compact (PR #351, codex-2)** — auto compact during an
+  in-flight provider run no longer leaves the run's in-memory tail pointing at the pre-compact
+  assistant/tool branch. Later assistant or tool-result segments from that same run now append after
+  the post-compact leaf, so the next model-context build does not re-enter the oversized
+  summarized-away path and loop through compaction again. Stale transient tool payload/call state is
+  cleared at the same boundary. `docs/spec/agent-skills.md` records the invariant. **Gate (main):**
+  deep review found no blocking findings; typecheck, `docs:check`, targeted runtime/event-log tests,
+  full `test:core` (1116 pass), and `git diff --check` green.
 - **Runs-panel title robustness + verifier double-serialization (main, direct-to-`main`, 2026-06-28)** —
   follow-up polish on the agent-goal feature (#343): the Work/Runs row title (also used as the row's
   `aria-label`) now collapses a free-form `objective` to a single whitespace-normalized line capped at 120
@@ -137,6 +164,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   `agent-self-modification` updated to record M1 shipped-then-removed.
 
 ### Changed
+
+- **Tana-style view toolbar polish (PR #350, codex-2)** — node and saved-search result toolbars now use a
+  field-first interaction model: a real leading name-filter chip writes `sys:name contains` filter rules;
+  Display/Group/Sort/Filter menus open as contextual popovers; filter summary chips target the exact saved
+  rule id, including multiple filters on the same field; Sort shows priority metadata and blocks duplicate
+  pending adds; and filtered-out rows use a clearer expandable disclosure. Nested toolbars align with their
+  owner row column, portal tooltips replace duplicated native/CSS tips, and search-result summary bars route
+  into the same toolbar path. `docs/spec/ui-behavior.md` synced. **Gate (main):** review found two race bugs
+  (stale filter-chip input reuse and pending-sort duplicate creation); round-2 fix `d30c67f8` resolved both
+  with regression E2E. Verified: `definition-config` E2E 15/0, `search-query-builder` E2E 2/0,
+  `test:renderer` 633/0, `docs:check`, and `git diff --check`.
 
 - **pi-ai / pi-agent-core upgraded `0.78.0 → 0.80.2` with a clean `Models` migration (PR #348, codex-3)** —
   the main-process agent runtime moves off the removed pi global helpers

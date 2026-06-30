@@ -266,6 +266,43 @@ describe('agent user view context', () => {
       ],
     }]);
   });
+
+  test('includes expanded filtered-out rows in the visible outline', () => {
+    const index = buildIndex(projection([
+      node('workspace', 'Workspace', { children: ['today'] }),
+      node('today', 'Today', { parentId: 'workspace', children: ['view', 'done', 'todo'] }),
+      node('view', '', { parentId: 'today', type: 'viewDef', children: ['filter'] }),
+      node('filter', '', {
+        parentId: 'view',
+        type: 'filterRule',
+        filterField: 'sys:done',
+        filterOperator: 'is',
+        filterValues: ['true'],
+      }),
+      node('done', 'Done task', { parentId: 'today', completedAt: 1000 }),
+      node('todo', 'Todo task', { parentId: 'today' }),
+    ]));
+
+    const context = buildAgentUserViewContext({
+      activePanelId: 'panel-1',
+      panels: [{
+        id: 'panel-1',
+        type: 'workspace',
+        view: { kind: 'outliner', rootId: 'today' },
+        size: 1,
+        backStack: [],
+        forwardStack: [],
+      }],
+      index,
+      ui: ui({ expanded: new Set(['filtered:today:filter']) }),
+    });
+
+    expect(context.nodePanels[0]?.visibleOutline).toEqual([
+      { nodeId: 'today', title: 'Today', depth: 0 },
+      { nodeId: 'done', title: '[x] Done task', depth: 1 },
+      { nodeId: 'todo', title: 'Todo task', depth: 1 },
+    ]);
+  });
 });
 
 // composerCurrentNodeId is the shared resolver for "the node this conversation is

@@ -117,6 +117,7 @@ function projection(
       }])),
       childRuns: options.childRuns ?? {},
       compactions: {},
+      contextClears: {},
       dreams: options.dreams ?? {},
     },
     streaming: options.streamingMessageId ? {
@@ -669,6 +670,45 @@ describe('agent runtime store', () => {
       kind: 'compaction',
       status: 'completed',
       compaction: restoredProjection.entities.compactions['compact-1'],
+    }]);
+    unsubscribe();
+  });
+
+  test('keeps context clear rows as visible boundary entries', async () => {
+    const restoredProjection = projection([]);
+    restoredProjection.rows = [{
+      id: 'context-clear:clear-root',
+      kind: 'context-clear',
+      messageId: 'clear-root',
+      contextClearId: 'clear-1',
+    }];
+    restoredProjection.transcriptRows = restoredProjection.rows;
+    restoredProjection.entities.messages['clear-root'] = {
+      id: 'clear-root',
+      role: 'user',
+      status: 'completed',
+      parentMessageId: null,
+      content: [{ type: 'text', text: 'Context cleared.' }],
+      createdAt: 10,
+      updatedAt: 10,
+      branches: null,
+    };
+    restoredProjection.entities.contextClears['clear-1'] = {
+      id: 'clear-1',
+      messageId: 'clear-root',
+      source: { fromMessageId: 'u1', throughMessageId: 'a1' },
+      createdAt: 10,
+    };
+    const fake = createFakeClient({ latestConversation: conversation('saved', restoredProjection) });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    expect(store.getSnapshot().entries).toEqual([{
+      id: 'context-clear:clear-root',
+      kind: 'context-clear',
+      contextClear: restoredProjection.entities.contextClears['clear-1'],
     }]);
     unsubscribe();
   });

@@ -4,7 +4,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
+  type FocusEvent as ReactFocusEvent,
   type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type RefObject,
 } from 'react';
@@ -13,8 +16,8 @@ import { api } from '../../api/client';
 import type { FilterOperator, NodeProjection, SortDirection } from '../../api/types';
 import { projectFieldTypeById } from '../../../core/configProjection';
 import type { DocumentIndex, ToolbarDropdownRequest, ToolbarDropdownSection } from '../../state/document';
+import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import {
-  AddIcon,
   CalendarIcon,
   CheckIcon,
   CheckboxIcon,
@@ -28,6 +31,7 @@ import {
   ICON_SIZE,
   OptionsIcon,
   PlainTextIcon,
+  SearchIcon,
   SortAscIcon,
   SortDescIcon,
 } from '../icons';
@@ -38,18 +42,20 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxMark } from '../primitives/CheckboxMark';
 import { Input } from '../primitives/Input';
 import { SelectControl } from '../primitives/SelectControl';
-import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
+import { useAnchoredOverlay, type OverlayAnchorRect } from '../primitives/useAnchoredOverlay';
 import { resolveMenuNavigation, useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import type { CommandRunner } from '../shared';
-import { collectViewFieldChoices, type ViewConfig } from './row-model';
+import { collectViewFieldChoices, customViewFieldIdsOnRows, type ViewConfig } from './row-model';
 import {
   CREATED_FIELD,
+  DAY_FIELD,
   DONE_AT_FIELD,
   DONE_FIELD,
   NAME_FIELD,
   REF_COUNT_FIELD,
   TAGS_FIELD,
   UPDATED_FIELD,
+  isSystemFieldId,
 } from '../../../core/systemFields';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
@@ -60,7 +66,7 @@ type FilterKind = 'boolean' | 'date' | 'number' | 'options' | 'text';
 
 function filterFieldKind(fieldId: string, byId: DocumentIndex['byId']): FilterKind {
   if (fieldId === DONE_FIELD) return 'boolean';
-  if (fieldId === CREATED_FIELD || fieldId === UPDATED_FIELD || fieldId === DONE_AT_FIELD) return 'date';
+  if (fieldId === CREATED_FIELD || fieldId === DAY_FIELD || fieldId === UPDATED_FIELD || fieldId === DONE_AT_FIELD) return 'date';
   if (fieldId === REF_COUNT_FIELD) return 'number';
   if (fieldId === NAME_FIELD || fieldId === TAGS_FIELD) return 'text';
   const fieldType = projectFieldTypeById(byId, fieldId);
@@ -77,6 +83,10 @@ const OPERATORS_BY_KIND: Record<'text' | 'date' | 'number', FilterOperator[]> = 
   date: ['is', 'after', 'before', 'is_empty', 'is_not_empty'],
   number: ['is', 'gt', 'lt', 'is_empty', 'is_not_empty'],
 };
+
+function defaultFilterOperator(kind: FilterKind): FilterOperator {
+  return kind === 'text' ? 'contains' : 'is';
+}
 
 type IconComponent = ComponentType<{ size?: number; className?: string }>;
 const KIND_ICONS: Record<FilterKind, IconComponent> = {
@@ -132,6 +142,64 @@ interface ViewToolbarProps {
 type ToolbarSection = ToolbarDropdownSection;
 type OpenSection = ToolbarSection | null;
 type FieldChoice = { id: string; label: string; section: 'System fields' | 'Fields' };
+type FilterEditTarget = {
+  field: string;
+  ruleId?: string;
+};
+type ViewSummaryChip = {
+  id: string;
+  label: string;
+  section: ToolbarSection;
+  tone: 'display' | 'filter' | 'group' | 'sort';
+  filterTarget?: FilterEditTarget;
+};
+
+type FieldRule = { id: string; field: string };
+
+type ToolbarTooltipState = {
+  label: string;
+  anchorRect: OverlayAnchorRect;
+};
+
+function isNameFilterRule(rule: ViewConfig['filterRules'][number]): boolean {
+  return rule.field === NAME_FIELD && rule.operator === 'contains';
+}
+
+function useRuleEditTarget<Rule extends FieldRule>(
+  rules: readonly Rule[],
+): [
+  FilterEditTarget | null,
+  (target: FilterEditTarget | null) => void,
+  Map<string, Rule>,
+  Map<string, Rule>,
+] {
+  const [editingTarget, setEditingTarget] = useState<FilterEditTarget | null>(null);
+  const ruleByField = useMemo(
+    () => new Map(rules.map((rule) => [rule.field, rule])),
+    [rules],
+  );
+  const ruleById = useMemo(
+    () => new Map(rules.map((rule) => [rule.id, rule])),
+    [rules],
+  );
+
+  useEffect(() => {
+    if (!editingTarget) return;
+    if (editingTarget.ruleId) {
+      const rule = ruleById.get(editingTarget.ruleId);
+      if (rule) {
+        if (rule.field !== editingTarget.field) setEditingTarget({ field: rule.field, ruleId: rule.id });
+        return;
+      }
+      setEditingTarget(null);
+      return;
+    }
+    const rule = ruleByField.get(editingTarget.field);
+    if (rule) setEditingTarget({ field: rule.field, ruleId: rule.id });
+  }, [editingTarget, ruleByField, ruleById]);
+
+  return [editingTarget, setEditingTarget, ruleByField, ruleById];
+}
 
 function filterOperators(t: ViewToolbarMessages): Array<{ id: FilterOperator; label: string }> {
   return [
@@ -168,8 +236,8 @@ function sectionTitles(t: ViewToolbarMessages): Record<ToolbarSection, string> {
 const SECTION_WIDTHS: Record<ToolbarSection, number> = {
   display: 264,
   group: 264,
-  sort: 520,
-  filter: 560,
+  sort: 320,
+  filter: 360,
 };
 
 function normalizeValues(raw: string): string[] {
@@ -186,22 +254,85 @@ function bySection(choices: FieldChoice[]): Array<{ section: FieldChoice['sectio
     .filter((group) => group.items.length > 0);
 }
 
-// One muted line restating what the view is currently doing, so the active
-// state is legible without opening each menu. Empty when the view is default.
-function summarizeView(view: ViewConfig, choices: FieldChoice[], t: ViewToolbarMessages): string {
+function collectFilterFieldChoices(
+  parent: NodeProjection,
+  byId: DocumentIndex['byId'],
+  choices: FieldChoice[],
+  filterRules: ViewConfig['filterRules'],
+): FieldChoice[] {
+  const labelsById = new Map(choices.map((choice) => [choice.id, choice.label]));
+  const systemChoices = choices.filter((choice) => choice.section === 'System fields' && choice.id !== NAME_FIELD);
+  const fields = customViewFieldIdsOnRows(parent, byId);
+
+  for (const rule of filterRules) {
+    if (isNameFilterRule(rule) || isSystemFieldId(rule.field)) continue;
+    fields.add(rule.field);
+  }
+
+  const customChoices = [...fields]
+    .map((fieldId): FieldChoice => ({
+      id: fieldId,
+      label: labelsById.get(fieldId) ?? fieldId,
+      section: 'Fields',
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+
+  return [...systemChoices, ...customChoices];
+}
+
+// Compact chips restate what the view is currently doing, so the active state is
+// legible without opening each menu. Empty when the view is default.
+function summarizeView(
+  view: ViewConfig,
+  choices: FieldChoice[],
+  t: ViewToolbarMessages,
+  options: { includeSort: boolean },
+): ViewSummaryChip[] {
   const labelOf = (fieldId: string) => choices.find((choice) => choice.id === fieldId)?.label ?? fieldId;
-  const parts: string[] = [];
-  if (view.groupField) parts.push(t.summaryGroupedBy({ field: labelOf(view.groupField) }));
-  if (view.sortRules.length > 0) {
+  const chips: ViewSummaryChip[] = [];
+  const visibleDisplayCount = new Set(
+    view.displayFields
+      .filter((field) => field.visible && field.field !== NAME_FIELD)
+      .map((field) => field.field),
+  ).size;
+  if (visibleDisplayCount > 0) {
+    chips.push({
+      id: 'display',
+      label: t.summaryDisplayCount(visibleDisplayCount),
+      section: 'display',
+      tone: 'display',
+    });
+  }
+  if (view.groupField) {
+    chips.push({
+      id: 'group',
+      label: t.summaryGroupedBy({ field: labelOf(view.groupField) }),
+      section: 'group',
+      tone: 'group',
+    });
+  }
+  if (options.includeSort && view.sortRules.length > 0) {
     const [first] = view.sortRules;
     const arrow = first.direction === 'desc' ? '↓' : '↑';
     const more = view.sortRules.length > 1 ? ` +${view.sortRules.length - 1}` : '';
-    parts.push(t.summarySortedBy({ field: labelOf(first.field), arrow: `${arrow}${more}` }));
+    chips.push({
+      id: 'sort',
+      label: t.summarySortedBy({ field: labelOf(first.field), arrow: `${arrow}${more}` }),
+      section: 'sort',
+      tone: 'sort',
+    });
   }
-  if (view.filterRules.length > 0) {
-    parts.push(t.summaryFilterCount(view.filterRules.length));
+  for (const rule of view.filterRules) {
+    if (isNameFilterRule(rule)) continue;
+    chips.push({
+      id: `filter:${rule.id}`,
+      label: labelOf(rule.field),
+      section: 'filter',
+      tone: 'filter',
+      filterTarget: { field: rule.field, ruleId: rule.id },
+    });
   }
-  return parts.join(' · ');
+  return chips;
 }
 
 export function ViewToolbar({
@@ -215,13 +346,20 @@ export function ViewToolbar({
   const t = useT();
   const tv = t.outliner.viewToolbar;
   const [open, setOpen] = useState<OpenSection>(null);
-  const choices = useMemo(() => collectViewFieldChoices(node, index.byId), [node, index.byId]);
+  const [requestedFilterTarget, setRequestedFilterTarget] = useState<FilterEditTarget | null>(null);
+  const [tooltip, setTooltip] = useState<ToolbarTooltipState | null>(null);
+  const referenceSummary = useMemo(() => referenceSummaryForIndex(index), [index]);
+  const choices = useMemo(() => collectViewFieldChoices(node, index.byId, referenceSummary), [node, index.byId, referenceSummary]);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
   const displayRef = useRef<HTMLButtonElement>(null);
   const groupRef = useRef<HTMLButtonElement>(null);
   const sortRef = useRef<HTMLButtonElement>(null);
   const filterRef = useRef<HTMLButtonElement>(null);
+  const nameFilter = view.filterRules.find(isNameFilterRule);
+  const firstSortRule = view.sortRules[0];
+  const SortStateIcon = firstSortRule?.direction === 'desc' ? SortDescIcon : SortAscIcon;
   const buttonRefs: Record<ToolbarSection, RefObject<HTMLButtonElement | null>> = {
     display: displayRef,
     group: groupRef,
@@ -235,6 +373,14 @@ export function ViewToolbar({
     placement: 'bottom-start',
     width: open ? SECTION_WIDTHS[open] : undefined,
     layoutKey: `${open ?? ''}:${view.sortRules.length}:${view.filterRules.length}:${view.displayFields.length}`,
+  });
+  const tooltipStyle = useAnchoredOverlay(tooltipRef, {
+    anchorRect: tooltip?.anchorRect ?? null,
+    disabled: !tooltip,
+    gap: 8,
+    maxHeight: 80,
+    placement: 'top-center',
+    width: 180,
   });
 
   useEffect(() => {
@@ -282,22 +428,116 @@ export function ViewToolbar({
   });
 
   const toggle = (section: ToolbarSection) => {
+    if (section !== 'filter') setRequestedFilterTarget(null);
     setOpen((current) => (current === section ? null : section));
   };
 
-  const visibleDisplayCount = view.displayFields.filter((field) => field.visible).length;
-  const summary = useMemo(
-    () => summarizeView(view, choices, tv),
-    [view, choices, tv],
+  const openSummaryChip = (chip: ViewSummaryChip) => {
+    setRequestedFilterTarget(chip.filterTarget ?? null);
+    setOpen(chip.section);
+  };
+
+  const showTooltipFor = (element: HTMLElement) => {
+    const label = element.dataset.tooltip?.trim();
+    if (!label) {
+      setTooltip(null);
+      return;
+    }
+    const rect = element.getBoundingClientRect();
+    setTooltip({
+      label,
+      anchorRect: {
+        bottom: rect.bottom,
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        width: rect.width,
+      },
+    });
+  };
+
+  const tooltipTargetFromEvent = (
+    event: ReactFocusEvent<HTMLDivElement> | ReactPointerEvent<HTMLDivElement>,
+  ): HTMLElement | null => {
+    const target = event.target instanceof Element
+      ? event.target.closest<HTMLElement>('.view-toolbar-tooltip-anchor[data-tooltip]')
+      : null;
+    return target && toolbarRef.current?.contains(target) ? target : null;
+  };
+
+  const showTooltipFromEvent = (event: ReactFocusEvent<HTMLDivElement> | ReactPointerEvent<HTMLDivElement>) => {
+    const target = tooltipTargetFromEvent(event);
+    if (target) showTooltipFor(target);
+  };
+
+  const hideTooltipFromEvent = (event: ReactFocusEvent<HTMLDivElement> | ReactPointerEvent<HTMLDivElement>) => {
+    const target = tooltipTargetFromEvent(event);
+    if (!target) return;
+    const related = event.relatedTarget;
+    if (related instanceof Node && target.contains(related)) return;
+    setTooltip(null);
+  };
+
+  const includeSortSummary = open === 'sort';
+  const summaryChips = useMemo(
+    () => summarizeView(view, choices, tv, { includeSort: includeSortSummary }),
+    [view, choices, tv, includeSortSummary],
   );
   const titles = sectionTitles(tv);
+  const renderSummaryChip = (chip: ViewSummaryChip) => {
+    if (chip.filterTarget?.ruleId) {
+      return (
+        <span className={`view-toolbar-summary-chip is-${chip.tone} has-remove`} key={chip.id}>
+          <ButtonControl
+            className="view-toolbar-summary-chip-main"
+            onClick={() => openSummaryChip(chip)}
+          >
+            <span className="view-toolbar-summary-chip-label">{chip.label}</span>
+          </ButtonControl>
+          <ButtonControl
+            aria-label={tv.removeFilterRule}
+            className="view-toolbar-summary-chip-remove view-toolbar-tooltip-anchor"
+            data-tooltip={tv.removeFilterRule}
+            onClick={() => void run(() => api.removeFilterRule(chip.filterTarget!.ruleId!))}
+          >
+            <CloseIcon size={ICON_SIZE.tiny} />
+          </ButtonControl>
+        </span>
+      );
+    }
+    return (
+      <ButtonControl
+        className={`view-toolbar-summary-chip is-${chip.tone}`}
+        key={chip.id}
+        onClick={() => openSummaryChip(chip)}
+      >
+        <span className="view-toolbar-summary-chip-label">{chip.label}</span>
+      </ButtonControl>
+    );
+  };
 
   return (
-    <div className="view-toolbar" aria-label={tv.toolbarAriaLabel} ref={toolbarRef}>
+    <div
+      className="view-toolbar"
+      aria-label={tv.toolbarAriaLabel}
+      ref={toolbarRef}
+      onBlur={hideTooltipFromEvent}
+      onFocus={showTooltipFromEvent}
+      onPointerDown={() => setTooltip(null)}
+      onPointerOut={hideTooltipFromEvent}
+      onPointerOver={showTooltipFromEvent}
+    >
       <div className="view-toolbar-button-row">
+        <NameFilterControl
+          nameFilter={nameFilter}
+          nodeId={node.id}
+          run={run}
+          label={tv.filterByName}
+          clearLabel={tv.clearNameFilter}
+          placeholder={tv.nameFilterPlaceholder}
+        />
         <ToolbarButton
           ref={displayRef}
-          active={visibleDisplayCount > 0}
           label={tv.display}
           open={open === 'display'}
           onClick={() => toggle('display')}
@@ -306,7 +546,6 @@ export function ViewToolbar({
         </ToolbarButton>
         <ToolbarButton
           ref={groupRef}
-          active={view.groupField != null}
           label={tv.groupBy}
           open={open === 'group'}
           onClick={() => toggle('group')}
@@ -316,21 +555,19 @@ export function ViewToolbar({
         <ToolbarButton
           ref={sortRef}
           active={view.sortRules.length > 0}
-          badge={view.sortRules.length}
           label={tv.sortBy}
           open={open === 'sort'}
           onClick={() => toggle('sort')}
         >
-          {view.sortRules[0]?.direction === 'desc' ? (
-            <SortDescIcon size={ICON_SIZE.menu} />
-          ) : (
-            <SortAscIcon size={ICON_SIZE.menu} />
-          )}
+          <SortStateIcon size={ICON_SIZE.menu} />
         </ToolbarButton>
+        {summaryChips.length > 0 && (
+          <div className="view-toolbar-summary" aria-label={tv.summaryAriaLabel}>
+            {summaryChips.map(renderSummaryChip)}
+          </div>
+        )}
         <ToolbarButton
           ref={filterRef}
-          active={view.filterRules.length > 0}
-          badge={view.filterRules.length}
           label={tv.filterBy}
           open={open === 'filter'}
           onClick={() => toggle('filter')}
@@ -338,8 +575,6 @@ export function ViewToolbar({
           <FilterIcon size={ICON_SIZE.menu} />
         </ToolbarButton>
       </div>
-
-      {summary && <div className="view-toolbar-summary">{summary}</div>}
 
       {open && createPortal(
         <div
@@ -361,27 +596,223 @@ export function ViewToolbar({
             <SortSection byId={index.byId} choices={choices} node={node} run={run} view={view} />
           )}
           {open === 'filter' && (
-            <FilterSection choices={choices} index={index} node={node} run={run} view={view} />
+            <FilterSection
+              choices={choices}
+              index={index}
+              node={node}
+              requestedTarget={requestedFilterTarget}
+              run={run}
+              view={view}
+              onRequestedTargetConsumed={() => setRequestedFilterTarget(null)}
+            />
           )}
         </div>,
         document.body,
       )}
+      {tooltip && createPortal(<ViewToolbarTooltip ref={tooltipRef} style={tooltipStyle} tooltip={tooltip} />, document.body)}
+    </div>
+  );
+}
+
+const ViewToolbarTooltip = forwardRef<HTMLDivElement, {
+  style: CSSProperties | undefined;
+  tooltip: ToolbarTooltipState;
+}>(function ViewToolbarTooltip({ style, tooltip }, ref) {
+  return (
+    <div
+      ref={ref}
+      className="view-toolbar-tooltip"
+      role="tooltip"
+      style={style}
+    >
+      {tooltip.label}
+    </div>
+  );
+});
+
+function NameFilterControl({
+  nameFilter,
+  nodeId,
+  run,
+  label,
+  clearLabel,
+  placeholder,
+}: {
+  nameFilter: ViewConfig['filterRules'][number] | undefined;
+  nodeId: string;
+  run: CommandRunner;
+  label: string;
+  clearLabel: string;
+  placeholder: string;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(nameFilter?.values[0] ?? '');
+  const lastCommittedRef = useRef(nameFilter?.values[0] ?? '');
+  const pendingCreateRef = useRef(false);
+  const pendingRemoveRef = useRef<string | null>(null);
+  const desiredValueRef = useRef(nameFilter?.values[0] ?? '');
+  const nameFilterId = nameFilter?.id;
+  const committedValue = nameFilter?.values[0] ?? '';
+  const active = committedValue.trim().length > 0 || open;
+  const removeNameFilter = (ruleId: string) => {
+    if (pendingRemoveRef.current === ruleId) return;
+    pendingRemoveRef.current = ruleId;
+    void run(() => api.removeFilterRule(ruleId), { applyFocus: false })
+      .finally(() => {
+        if (pendingRemoveRef.current === ruleId) pendingRemoveRef.current = null;
+      });
+  };
+
+  useEffect(() => {
+    if (nameFilterId && desiredValueRef.current.trim().length === 0) {
+      lastCommittedRef.current = '';
+      removeNameFilter(nameFilterId);
+      return;
+    }
+    const previous = lastCommittedRef.current;
+    lastCommittedRef.current = committedValue;
+    if (!pendingCreateRef.current) desiredValueRef.current = committedValue;
+    setDraft((current) => {
+      if (desiredValueRef.current.trim().length === 0 && committedValue.trim().length > 0) return current;
+      if (open && current.trim() !== previous.trim()) return current;
+      return committedValue;
+    });
+  }, [committedValue, nameFilterId, open, run]);
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => inputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const value = draft.trim();
+    if (value === lastCommittedRef.current.trim()) return undefined;
+    const timer = window.setTimeout(() => {
+      desiredValueRef.current = value;
+      if (value.length === 0) {
+        if (!nameFilterId) {
+          lastCommittedRef.current = '';
+          return;
+        }
+        removeNameFilter(nameFilterId);
+        lastCommittedRef.current = '';
+        return;
+      }
+      if (nameFilterId) {
+        lastCommittedRef.current = value;
+        void run(() => api.updateFilterRule(nameFilterId, {
+          operator: 'contains',
+          valueLogic: 'any',
+          values: [value],
+        }), { applyFocus: false });
+      } else if (!pendingCreateRef.current) {
+        pendingCreateRef.current = true;
+        lastCommittedRef.current = value;
+        void run(() => api.addFilterRule(nodeId, NAME_FIELD, 'contains', [value], 'any'), { applyFocus: false })
+          .then((result) => {
+            if (!result) lastCommittedRef.current = '';
+          })
+          .finally(() => {
+            pendingCreateRef.current = false;
+          });
+      } else {
+        return;
+      }
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [draft, nameFilterId, nodeId, open, run]);
+
+  const clear = () => {
+    setDraft('');
+    setOpen(false);
+    if (nameFilterId) {
+      removeNameFilter(nameFilterId);
+    }
+    lastCommittedRef.current = '';
+    desiredValueRef.current = '';
+  };
+
+  if (!active) {
+    return (
+      <ButtonControl
+        aria-label={label}
+        className="view-toolbar-pill view-toolbar-tooltip-anchor"
+        data-tooltip={label}
+        onClick={() => setOpen(true)}
+      >
+        <SearchIcon size={ICON_SIZE.menu} />
+      </ButtonControl>
+    );
+  }
+
+  return (
+    <div className="view-toolbar-name-filter">
+      <SearchIcon className="view-toolbar-name-filter-icon" size={ICON_SIZE.menu} />
+      <Input
+        ref={inputRef}
+        className="view-toolbar-name-filter-input"
+        label={label}
+        placeholder={placeholder}
+        size="sm"
+        spellCheck={false}
+        value={draft}
+        variant="bare"
+        onBlur={() => {
+          if (draft.trim()) return;
+          if (nameFilterId) {
+            removeNameFilter(nameFilterId);
+          }
+          lastCommittedRef.current = '';
+          desiredValueRef.current = '';
+          setOpen(false);
+        }}
+        onChange={(event) => {
+          if (!open) setOpen(true);
+          setDraft(event.currentTarget.value);
+        }}
+        onKeyDown={(event) => {
+          if (isImeComposingEvent(event)) return;
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            setDraft(committedValue);
+            desiredValueRef.current = committedValue;
+            setOpen(false);
+            return;
+          }
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            event.currentTarget.blur();
+          }
+        }}
+      />
+      <ButtonControl
+        aria-label={clearLabel}
+        className="view-toolbar-name-filter-clear view-toolbar-tooltip-anchor"
+        data-tooltip={clearLabel}
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={clear}
+      >
+        <CloseIcon size={ICON_SIZE.menu} />
+      </ButtonControl>
     </div>
   );
 }
 
 const ToolbarButton = forwardRef<HTMLButtonElement, {
-  active: boolean;
-  badge?: number;
+  active?: boolean;
   label: string;
   open: boolean;
   onClick: () => void;
   children: ReactNode;
-}>(function ToolbarButton({ active, badge, label, open, onClick, children }, ref) {
+}>(function ToolbarButton({ active = false, label, open, onClick, children }, ref) {
   const classes = [
     'view-toolbar-pill',
+    'view-toolbar-tooltip-anchor',
+    active ? 'is-active' : '',
     open ? 'is-open' : '',
-    active && !open ? 'is-active' : '',
   ].filter(Boolean).join(' ');
   return (
     <ButtonControl
@@ -389,11 +820,10 @@ const ToolbarButton = forwardRef<HTMLButtonElement, {
       aria-expanded={open}
       aria-label={label}
       className={classes}
-      title={label}
+      data-tooltip={label}
       onClick={onClick}
     >
       {children}
-      {badge && badge > 0 ? <span className="view-toolbar-pill-count">{badge}</span> : null}
     </ButtonControl>
   );
 });
@@ -510,67 +940,152 @@ function SortSection({
 }) {
   const t = useT();
   const tv = t.outliner.viewToolbar;
+  const [editingTarget, setEditingTarget, ruleByField, ruleById] = useRuleEditTarget(view.sortRules);
+  const pendingSortFieldsRef = useRef<Set<string>>(new Set());
+  const [pendingSortFields, setPendingSortFields] = useState<Set<string>>(() => new Set());
+  const sortOrderByRuleId = useMemo(
+    () => new Map(view.sortRules.map((rule, index) => [rule.id, index + 1])),
+    [view.sortRules],
+  );
+  const markPendingSortField = (field: string) => {
+    if (pendingSortFieldsRef.current.has(field)) return false;
+    pendingSortFieldsRef.current.add(field);
+    setPendingSortFields((current) => current.has(field) ? current : new Set(current).add(field));
+    return true;
+  };
+  const dropPendingSortField = (field: string) => {
+    pendingSortFieldsRef.current.delete(field);
+    setPendingSortFields((current) => {
+      if (!current.has(field)) return current;
+      const next = new Set(current);
+      next.delete(field);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    setPendingSortFields((current) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const field of current) {
+        if (ruleByField.has(field)) {
+          pendingSortFieldsRef.current.delete(field);
+          changed = true;
+          continue;
+        }
+        next.add(field);
+      }
+      return changed ? next : current;
+    });
+  }, [ruleByField]);
+
+  if (editingTarget) {
+    const rule = editingTarget.ruleId
+      ? ruleById.get(editingTarget.ruleId)
+      : ruleByField.get(editingTarget.field);
+    const editingField = rule?.field ?? editingTarget.field;
+    const label = choices.find((choice) => choice.id === editingField)?.label ?? tv.fieldFallback;
+    const directionLabels = sortDirectionLabels(tv)[filterFieldKind(editingField, byId)];
+    return (
+      <div className="view-toolbar-sort-editor">
+        <ButtonControl autoFocus className="view-toolbar-filter-back" onClick={() => setEditingTarget(null)}>
+          <ChevronLeftIcon size={ICON_SIZE.menu} />
+          <span>{label}</span>
+        </ButtonControl>
+        {rule ? (
+          <RadioOptionGroup className="view-toolbar-options" label={tv.sortDirectionLabel}>
+            <OptionRow
+              icon={<SortAscIcon size={ICON_SIZE.menu} />}
+              label={directionLabels.asc}
+              selected={rule.direction === 'asc'}
+              tabIndex={rule.direction === 'desc' ? -1 : 0}
+              variant="radio"
+              onSelect={() => {
+                void run(() => api.updateSortRule(rule.id, editingField, 'asc'));
+              }}
+            />
+            <OptionRow
+              icon={<SortDescIcon size={ICON_SIZE.menu} />}
+              label={directionLabels.desc}
+              selected={rule.direction === 'desc'}
+              tabIndex={rule.direction === 'desc' ? 0 : -1}
+              variant="radio"
+              onSelect={() => {
+                void run(() => api.updateSortRule(rule.id, editingField, 'desc'));
+              }}
+            />
+          </RadioOptionGroup>
+        ) : (
+          <div className="view-toolbar-empty">{tv.addingSort}</div>
+        )}
+        {rule && (
+          <div className="view-toolbar-rule-actions">
+            <ButtonControl
+              aria-label={tv.removeSortRule}
+              className="view-toolbar-reset"
+              onClick={() => {
+                void run(() => api.removeSortRule(rule.id));
+                setEditingTarget(null);
+              }}
+            >
+              {tv.removeSort}
+            </ButtonControl>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className="view-toolbar-rules">
-      {view.sortRules.map((rule, index) => {
-        const directionLabel = sortDirectionLabel(rule.field, byId, rule.direction, tv);
-        return (
-        <div className="view-toolbar-rule" key={rule.id}>
-          <span className="view-toolbar-rule-label">{index === 0 ? tv.sortBy : tv.thenBy}</span>
-          <SelectControl
-            label={tv.sortFieldLabel}
-            size="sm"
-            value={rule.field}
-            variant="boxed"
-            onChange={(event) => {
-              void run(() => api.updateSortRule(rule.id, event.currentTarget.value, rule.direction));
-            }}
-          >
-            {choices.map((choice) => (
-              <option key={choice.id} value={choice.id}>{choice.label}</option>
-            ))}
-          </SelectControl>
-          <ButtonControl
-            className="view-toolbar-rule-direction"
-            title={directionLabel}
-            onClick={() => {
-              const next: SortDirection = rule.direction === 'desc' ? 'asc' : 'desc';
-              void run(() => api.updateSortRule(rule.id, rule.field, next));
-            }}
-          >
-            {rule.direction === 'desc' ? (
-              <SortDescIcon size={ICON_SIZE.menu} />
-            ) : (
-              <SortAscIcon size={ICON_SIZE.menu} />
-            )}
-            <span>{directionLabel}</span>
-          </ButtonControl>
-          <ButtonControl
-            aria-label={tv.removeSortRule}
-            className="view-toolbar-rule-remove"
-            title={tv.remove}
-            onClick={() => void run(() => api.removeSortRule(rule.id))}
-          >
-            <CloseIcon size={ICON_SIZE.menu} />
-          </ButtonControl>
-        </div>
-        );
-      })}
-      <div className="view-toolbar-rule-actions">
-        <AddFieldSelect
-          choices={choices}
-          label={view.sortRules.length > 0 ? tv.addSort : tv.sortFieldLabel}
-          onSelect={(field) => void run(() => api.addSortRule(node.id, field, 'asc'))}
-        />
-        {view.sortRules.length > 0 && (
+    <div className="view-toolbar-sort">
+      <div className="view-toolbar-options">
+        {bySection(choices).map((group) => (
+          <div className="view-toolbar-option-group" key={group.section}>
+            <div className="view-toolbar-option-section">{group.section}</div>
+            {group.items.map((choice) => {
+              const rule = ruleByField.get(choice.id);
+              const pending = pendingSortFields.has(choice.id);
+              const directionLabel = rule ? sortDirectionLabel(choice.id, byId, rule.direction, tv) : null;
+              const order = rule ? sortOrderByRuleId.get(rule.id) : undefined;
+              return (
+                <ButtonControl
+                  key={choice.id}
+                  className={`view-toolbar-option view-toolbar-filter-field ${rule || pending ? 'is-selected' : ''}`}
+                  disabled={pending && !rule}
+                  onClick={() => {
+                    if (pending && !rule) return;
+                    if (rule) {
+                      setEditingTarget({ field: choice.id, ruleId: rule.id });
+                      return;
+                    }
+                    if (!markPendingSortField(choice.id)) return;
+                    void run(() => api.addSortRule(node.id, choice.id, 'asc'))
+                      .finally(() => dropPendingSortField(choice.id));
+                    setEditingTarget({ field: choice.id });
+                  }}
+                >
+                  <FieldKindIcon byId={byId} fieldId={choice.id} />
+                  <span className="view-toolbar-option-label">{choice.label}</span>
+                  {directionLabel && order ? (
+                    <span className="view-toolbar-option-meta">{tv.sortPriorityMeta({ index: order, direction: directionLabel })}</span>
+                  ) : null}
+                  <ChevronRightIcon className="view-toolbar-field-chevron" size={ICON_SIZE.menu} />
+                </ButtonControl>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      {view.sortRules.length > 0 && (
+        <div className="view-toolbar-rule-actions">
           <ButtonControl
             className="view-toolbar-reset"
             onClick={() => void run(() => api.clearSortRules(node.id))}
           >
             {tv.reset}
           </ButtonControl>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -583,25 +1098,50 @@ function FilterSection({
   choices,
   index,
   node,
+  requestedTarget,
   run,
   view,
+  onRequestedTargetConsumed,
 }: {
   choices: FieldChoice[];
   index: DocumentIndex;
   node: NodeProjection;
+  requestedTarget: FilterEditTarget | null;
   run: CommandRunner;
   view: ViewConfig;
+  onRequestedTargetConsumed: () => void;
 }) {
   const t = useT();
   const tv = t.outliner.viewToolbar;
-  const [editingField, setEditingField] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const ruleByField = useMemo(
-    () => new Map(view.filterRules.map((rule) => [rule.field, rule])),
+  const filterRules = useMemo(
+    () => view.filterRules.filter((rule) => !isNameFilterRule(rule)),
     [view.filterRules],
   );
+  const filterChoices = useMemo(
+    () => collectFilterFieldChoices(node, index.byId, choices, view.filterRules),
+    [choices, index.byId, node, view.filterRules],
+  );
+  const [editingTarget, setEditingTarget, ruleByField, ruleById] = useRuleEditTarget(filterRules);
 
-  if (editingField) {
+  useEffect(() => {
+    if (!requestedTarget) return;
+    const rule = requestedTarget.ruleId ? ruleById.get(requestedTarget.ruleId) : undefined;
+    const field = rule?.field ?? requestedTarget.field;
+    if (!filterChoices.some((choice) => choice.id === field) && !ruleByField.has(field)) {
+      onRequestedTargetConsumed();
+      return;
+    }
+    setEditingTarget({ field, ruleId: rule?.id ?? requestedTarget.ruleId });
+    setQuery('');
+    onRequestedTargetConsumed();
+  }, [filterChoices, onRequestedTargetConsumed, requestedTarget, ruleByField, ruleById]);
+
+  if (editingTarget) {
+    const rule = editingTarget.ruleId
+      ? ruleById.get(editingTarget.ruleId)
+      : ruleByField.get(editingTarget.field);
+    const editingField = rule?.field ?? editingTarget.field;
     const label = choices.find((choice) => choice.id === editingField)?.label ?? tv.fieldFallback;
     const kind = filterFieldKind(editingField, index.byId);
     const options = kind === 'options'
@@ -613,38 +1153,43 @@ function FilterSection({
         kind={kind}
         label={label}
         options={options}
-        rule={ruleByField.get(editingField)}
+        rule={rule}
         run={run}
-        onBack={() => setEditingField(null)}
+        onBack={() => setEditingTarget(null)}
       />
     );
   }
 
   const normalized = query.trim().toLowerCase();
   const matches = normalized
-    ? choices.filter((choice) => choice.label.toLowerCase().includes(normalized))
-    : choices;
+    ? filterChoices.filter((choice) => choice.label.toLowerCase().includes(normalized))
+    : filterChoices;
 
   const openField = (field: string) => {
-    if (!ruleByField.has(field)) {
-      void run(() => api.addFilterRule(node.id, field, 'contains', [], 'any'));
+    const rule = ruleByField.get(field);
+    if (!rule) {
+      void run(() => api.addFilterRule(node.id, field, defaultFilterOperator(filterFieldKind(field, index.byId)), [], 'any'));
+      setEditingTarget({ field });
+      return;
     }
-    setEditingField(field);
+    setEditingTarget({ field, ruleId: rule.id });
   };
 
   return (
     <div className="view-toolbar-filter">
-      <Input
-        autoFocus
-        className="view-toolbar-filter-search"
-        label={tv.filterFieldPlaceholder}
-        placeholder={tv.filterFieldPlaceholder}
-        size="sm"
-        spellCheck={false}
-        value={query}
-        variant="boxed"
-        onChange={(event) => setQuery(event.target.value)}
-      />
+      {filterChoices.length > 0 && (
+        <Input
+          autoFocus
+          className="view-toolbar-filter-search"
+          label={tv.filterFieldPlaceholder}
+          placeholder={tv.filterFieldPlaceholder}
+          size="sm"
+          spellCheck={false}
+          value={query}
+          variant="boxed"
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      )}
       <div className="view-toolbar-options">
         {matches.length === 0 && <div className="view-toolbar-empty">{tv.noMatchingFields}</div>}
         {bySection(matches).map((group) => (
@@ -667,11 +1212,22 @@ function FilterSection({
           </div>
         ))}
       </div>
-      {view.filterRules.length > 0 && (
+      {filterRules.length > 0 && (
         <div className="view-toolbar-rule-actions">
           <ButtonControl
             className="view-toolbar-reset"
-            onClick={() => void run(() => api.clearFilterRules(node.id))}
+            onClick={() => {
+              const hasNameFilter = view.filterRules.some(isNameFilterRule);
+              if (!hasNameFilter) {
+                void run(() => api.clearFilterRules(node.id));
+                return;
+              }
+              void (async () => {
+                for (const rule of filterRules) {
+                  await run(() => api.removeFilterRule(rule.id), { applyFocus: false });
+                }
+              })();
+            }}
           >
             {tv.reset}
           </ButtonControl>
@@ -701,7 +1257,7 @@ function FilterRuleEditor({
   const tv = useT().outliner.viewToolbar;
   return (
     <div className="view-toolbar-filter-editor">
-      <ButtonControl className="view-toolbar-filter-back" onClick={onBack}>
+      <ButtonControl autoFocus className="view-toolbar-filter-back" onClick={onBack}>
         <ChevronLeftIcon size={ICON_SIZE.menu} />
         <span>{label}</span>
       </ButtonControl>
@@ -801,6 +1357,13 @@ function OperatorFilterBody({ kind, rule, run }: { kind: FilterKind; rule: Filte
   const operators = filterOperators(tv).filter((operator) => allowed.includes(operator.id));
   const needsValue = !VALUELESS_OPERATORS.has(rule.operator);
   const dateValue = /^\d{4}-\d{2}-\d{2}/.test(rule.values[0] ?? '') ? rule.values[0]!.slice(0, 10) : '';
+  const textValue = rule.values.join(', ');
+  const [draftValue, setDraftValue] = useState(textValue);
+
+  useEffect(() => {
+    setDraftValue(textValue);
+  }, [rule.id, textValue]);
+
   return (
     <div className="view-toolbar-rule view-toolbar-rule-filter">
       <SelectControl
@@ -830,11 +1393,12 @@ function OperatorFilterBody({ kind, rule, run }: { kind: FilterKind; rule: Filte
         />
       ) : needsValue ? (
         <Input
-          defaultValue={rule.values.join(', ')}
           label={tv.filterValuesLabel}
           placeholder={tv.filterValuePlaceholder}
           size="sm"
+          value={draftValue}
           variant="boxed"
+          onChange={(event) => setDraftValue(event.currentTarget.value)}
           onBlur={(event) => {
             void run(() => api.updateFilterRule(rule.id, { values: normalizeValues(event.currentTarget.value) }));
           }}
@@ -928,35 +1492,5 @@ function RadioOptionGroup({
     <div aria-label={label} className={className} onKeyDown={onKeyDown} ref={ref} role="radiogroup">
       {children}
     </div>
-  );
-}
-
-function AddFieldSelect({
-  label,
-  choices,
-  onSelect,
-}: {
-  label: string;
-  choices: FieldChoice[];
-  onSelect: (field: string) => void;
-}) {
-  return (
-    <label className="view-toolbar-add-field">
-      <AddIcon size={ICON_SIZE.menu} />
-      <SelectControl
-        label={label}
-        value=""
-        onChange={(event) => {
-          const field = event.currentTarget.value || NAME_FIELD;
-          onSelect(field);
-          event.currentTarget.value = '';
-        }}
-      >
-        <option value="">{label}</option>
-        {choices.map((choice) => (
-          <option key={choice.id} value={choice.id}>{choice.label}</option>
-        ))}
-      </SelectControl>
-    </label>
   );
 }

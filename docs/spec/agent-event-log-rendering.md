@@ -427,6 +427,7 @@ type AgentEventType =
   | 'child_run.started'
   | 'child_run.updated'
   | 'compaction.completed'
+  | 'context.cleared'
   | 'dream.finished'
   | 'payload.created'
   | 'payload.derived'
@@ -716,20 +717,26 @@ while the full path stays on the preview/open path.
 A transcript chip is a **pointer to a working file on disk**, so a **click opens
 the center workspace area's file-only reader** with the same preview content shell
 used by file preview panes. It reuses the active / available workspace pane rather
-than adding a split pane or previewing in the agent dock. A **right-click** opens
-the bespoke `AgentTranscriptFileMenu` — *Add to Today* (copy the source into the
-asset store and create a file node under today's daily note), *Open with default
-app*, *Show in Finder*. The split is **by location**, not by
-node data: a chip is a transcript chip when it has a `[data-agent-transcript-chips]`
-ancestor. That marker is set in exactly **one** place — the live assistant message
-body (`AgentAssistantContent`) — so every chip a live turn renders (answer prose,
-interim narration, and `file_write` / `file_edit` result chips) opens in the
-workspace file-only reader, while the **same** components on meta surfaces (compaction / child-run summaries and
-the child-run-details panel) have no such ancestor and keep the workspace preview.
-An outliner file reference is a node-model field, never under this marker, so it
-too keeps its workspace preview-pane click-to-open and native context menu unchanged.
-(The working file is path-addressed; durability is what Save-to-outliner / Export
-are for — see `docs/plans/agent-file-artifact-model.md`.)
+than adding a split pane or previewing in the agent dock. The split is **by
+location**, not by node data: a chip is a transcript chip when it has a
+`[data-agent-transcript-chips]` ancestor. That marker is set in exactly **one**
+place per live transcript message row (`AgentMessageFrame`, only when the row's
+caller opts into reader presentation) — so every chip a live turn renders (user
+attachment chips, user inline file references, answer prose, interim narration,
+and `file_write` / `file_edit` result chips) opens in the workspace file-only
+reader, while the **same** components on meta surfaces (compaction / child-run
+summaries and the child-run-details panel) have no such ancestor and keep the
+workspace preview.
+
+All path-backed inline local-file references share `InlineFileContextMenu` on
+right-click: *Preview in Tenon*, *Add to Today* (files only; copy the source into
+the asset store and create a file node under today's daily note), *Open with
+default app*, *Show in Finder*. For transcript chips, *Preview in Tenon* preserves
+the file-only reader presentation; for outliner and meta-surface inline file refs,
+it uses the normal preview pane route. Pathless inline file refs remain inert
+metadata. (The working file is path-addressed; durability is what
+Save-to-outliner / Export are for — see
+`docs/plans/agent-file-artifact-model.md`.)
 
 `chat-source` inline references use the same chip renderer but navigate to agent
 history instead of files. A click on a `conversation` source opens the agent dock,
@@ -893,6 +900,7 @@ Inputs:
 - event log
 - active branch projection
 - compaction events
+- context-clear events
 - payload refs expanded only when needed
 
 Output:
@@ -902,7 +910,10 @@ Message[]
 ```
 
 This projection is the only place that should translate Tenon events into pi-ai
-message shapes.
+message shapes. A `context.cleared` boundary is a root in the active branch: the
+model sees `Context cleared.` and later messages, while the cleared source range
+is excluded from automatic context assembly unless another tool, such as
+`past_chats`, explicitly retrieves it.
 
 ### Render projection
 
@@ -952,6 +963,10 @@ Rules:
   `entities.compactions`.
 - The compact root user message remains available for pi-mono projection but is
   not rendered as a normal user bubble.
+- `context.cleared` events become dedicated clear boundary rows keyed by the
+  clear root message, with source-range metadata in `entities.contextClears`.
+  The clear root user message remains available for model-context projection but
+  is not rendered as a normal user bubble.
 - Outside the protected Dream channel, historical `dream.finished` events become
   dedicated Dream boundary rows keyed by their hidden anchor message, with status,
   processed counts, and memory-change counts in `entities.dreams`. Inside the
@@ -1687,8 +1702,9 @@ The current renderer contract is `AgentRenderProjection`, carried by
   offsets, queues, and seq caches, plus tolerant torn-tail handling for
   high-write run sidecars.
 - Mixed-resolution runtime context assembly: compacted historical ranges render
-  as compaction summaries for the model path while visible transcript replay can
-  still expand archived raw/tool messages.
+  as compaction summaries for the model path, and cleared historical ranges are
+  excluded from the model path without a summary, while visible transcript replay
+  can still expand archived raw/tool messages.
 - Runtime consumers for `user_question.*` events, plus file-tool skill write
   validation/hot reload. Skill audit events are run-scoped tool-execution audit
   detail, not conversation replay state.

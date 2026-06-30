@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
+import { getAgentEventActivePath } from '../../src/core/agentEventLog';
 import type { AgentRenderProjection } from '../../src/core/agentRenderProjection';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
@@ -530,6 +531,74 @@ describe('agent runtime skill integration', () => {
     expect(firstWindow.some((row) => row.role === 'user')).toBe(true);
     expect(firstWindow.map((row) => row.parts.map((part) => part.body).join(' ')).join(' '))
       .toContain('First request before manual compact.');
+  });
+
+  test('clears automatic model context without compacting visible transcript history', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-clear-context-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-clear-context-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const contextTexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage(fauxText('First answer before clear.')),
+        fauxAssistantMessage(fauxText('Second answer after clear.')),
+      ],
+      (_model, context) => {
+        contextTexts.push(JSON.stringify(context.messages));
+      },
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+        completeSimpleFn: async (model) => normalizeAssistantMessage(
+          fauxAssistantMessage('<analysis>unexpected compact</analysis><summary>Unexpected compact.</summary>'),
+          model as Model<Api>,
+        ),
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(created.conversationId, 'First request before clear.');
+    await runtime.sendMessage(created.conversationId, '/clear');
+    await runtime.sendMessage(created.conversationId, 'Second request after clear.');
+
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(contextTexts).toHaveLength(2);
+    expect(contextTexts[0]).toContain('First request before clear.');
+    expect(contextTexts[1]).toContain('Context cleared.');
+    expect(contextTexts[1]).toContain('Second request after clear.');
+    expect(contextTexts[1]).not.toContain('First request before clear.');
+    expect(contextTexts[1]).not.toContain('First answer before clear.');
+
+    const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
+    expect(events.some((event) => event.type === 'context.cleared')).toBe(true);
+    expect(events.some((event) => event.type === 'compaction.completed')).toBe(false);
+
+    const restored = await runtime.restoreConversation(created.conversationId);
+    const activeText = projectionTexts(restored.renderProjection).join('\n');
+    const transcriptText = restored.renderProjection.transcriptRows
+      .map((row) => textFromContent(restored.renderProjection.entities.messages[row.messageId]?.content))
+      .join('\n');
+    const clearRow = restored.renderProjection.rows.find((row) => row.kind === 'context-clear');
+    expect(clearRow?.kind).toBe('context-clear');
+    expect(activeText).toContain('Context cleared.');
+    expect(activeText).toContain('Second request after clear.');
+    expect(activeText).not.toContain('First request before clear.');
+    expect(transcriptText).toContain('First request before clear.');
+    expect(transcriptText).toContain('First answer before clear.');
   });
 
   test('a regenerated turn run still splices its triggering user message into round 0', async () => {
@@ -2497,6 +2566,94 @@ describe('agent runtime skill integration', () => {
       summary: 'Auto compact summary.',
       trigger: 'auto',
     });
+  });
+
+  test('continues an in-flight run from the compact root after auto compact', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-auto-compact-tail-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-auto-compact-tail-data-'));
+    roots.push(localRoot, dataRoot);
+    const filePath = path.join(localRoot, 'large-notes.txt');
+    await writeFile(
+      filePath,
+      Array.from({ length: 600 }, (_, index) => `line-${index}: ${'x'.repeat(48)}`).join('\n'),
+      'utf8',
+    );
+
+    const contextTexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('file_read', { file_path: filePath }, { id: 'tool-read-before-auto-compact' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Continued from compact root.')),
+      ],
+      (_model, context) => {
+        contextTexts.push(JSON.stringify(context.messages));
+      },
+    );
+    const compactModel: Model<Api> = {
+      id: 'compact-tail-test-model',
+      name: 'Compact Tail Test Model',
+      provider: 'openai',
+      api: 'openai-completions',
+      baseUrl: '',
+      reasoning: false,
+      input: ['text'],
+      contextWindow: 20_000,
+      maxTokens: 1_000,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          modelId: 'compact-tail-test-model',
+          reasoningLevel: 'low',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        providerModelResolver: () => compactModel,
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: false,
+          slashSkillsEnabled: true,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+        }),
+        streamFn: script.streamFn,
+        completeSimpleFn: async (model) => normalizeAssistantMessage(
+          fauxAssistantMessage('<analysis>auto compact tail</analysis><summary>Tool output summarized.</summary>'),
+          model as Model<Api>,
+        ),
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(created.conversationId, 'Read the large notes and continue.');
+
+    expect(script.pendingCount()).toBe(0);
+    expect(contextTexts[1]).toContain('Conversation compacted.');
+    expect(contextTexts[1]).toContain('Tool output summarized.');
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+
+    const store = new AgentEventStore(dataRoot);
+    const events = await store.readEvents(created.conversationId);
+    const compaction = events.find((event) => event.type === 'compaction.completed');
+    if (!compaction || compaction.type !== 'compaction.completed') throw new Error('Expected auto compaction event.');
+    const replay = await store.replay(created.conversationId);
+    const activePath = getAgentEventActivePath(replay);
+    expect(activePath.map((message) => message.id)).toEqual([
+      compaction.messageId,
+      expect.stringMatching(/^assistant-/),
+    ]);
+    expect(activePath[1]?.parentMessageId).toBe(compaction.messageId);
   });
 
   test('reactively compacts and retries after a prompt-too-long model error', async () => {

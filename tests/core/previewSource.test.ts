@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import type { AgentPayloadRef } from '../../src/core/agentEventLog';
-import type { PreviewListDirectoryResult, PreviewReadTextResult, PreviewResolveSourceResult } from '../../src/core/preview';
+import { normalizePreviewHttpUrl, type PreviewListDirectoryResult, type PreviewReadTextResult, type PreviewResolveSourceResult } from '../../src/core/preview';
+import { PREVIEW_LOCAL_URL_SCHEME } from '../../src/core/assets';
 import { handlePreviewCommand, type PreviewCommandContext } from '../../src/main/previewSource';
 import type { TrustedLocalFileReference } from '../../src/main/localFileReferenceSecurity';
 
@@ -173,6 +174,72 @@ describe('preview source commands', () => {
     });
   });
 
+  test('resolves local HTML files as text/html preview sources', async () => {
+    const filePath = join(root, 'index.html');
+    await writeFile(filePath, '<!doctype html><title>Preview</title>');
+
+    const resolved = await handlePreviewCommand('preview_resolve_source', {
+      target: { kind: 'local-file', path: filePath, entryKind: 'file' },
+    }, previewContext()) as PreviewResolveSourceResult;
+
+    expect(resolved.source).toMatchObject({
+      kind: 'file',
+      sourceKind: 'local-file',
+      name: 'index.html',
+      ext: 'html',
+      mimeType: 'text/html',
+      entryKind: 'file',
+    });
+  });
+
+  test('resolves local MP4 files as video preview sources', async () => {
+    const filePath = join(root, 'clip.mp4');
+    await writeFile(filePath, new Uint8Array([0, 0, 0, 0]));
+    const issued: Array<{ path: string; mimeType: string }> = [];
+
+    const resolved = await handlePreviewCommand('preview_resolve_source', {
+      target: { kind: 'local-file', path: filePath, entryKind: 'file' },
+    }, previewContext({
+      localFileStreamUrl: async (file, mimeType) => {
+        issued.push({ path: file.path, mimeType });
+        return `${PREVIEW_LOCAL_URL_SCHEME}://token-1`;
+      },
+    })) as PreviewResolveSourceResult;
+
+    expect(resolved.source).toMatchObject({
+      kind: 'file',
+      sourceKind: 'local-file',
+      name: 'clip.mp4',
+      ext: 'mp4',
+      mimeType: 'video/mp4',
+      entryKind: 'file',
+      streamUrl: `${PREVIEW_LOCAL_URL_SCHEME}://token-1`,
+    });
+    expect(issued).toEqual([{ path: await realpath(filePath), mimeType: 'video/mp4' }]);
+  });
+
+  test('normalizes only http(s) URL preview sources', async () => {
+    expect(normalizePreviewHttpUrl('https://example.com/docs')).toBe('https://example.com/docs');
+    expect(normalizePreviewHttpUrl('file:///tmp/report.html')).toBeNull();
+    expect(normalizePreviewHttpUrl('javascript:alert(1)')).toBeNull();
+
+    const resolved = await handlePreviewCommand('preview_resolve_source', {
+      target: { kind: 'url', url: 'https://example.com/docs', label: 'Example docs' },
+    }, previewContext()) as PreviewResolveSourceResult;
+    expect(resolved.source).toEqual({
+      kind: 'url',
+      id: 'url:https://example.com/docs',
+      target: { kind: 'url', url: 'https://example.com/docs', label: 'Example docs' },
+      title: 'Example docs',
+      url: 'https://example.com/docs',
+    });
+
+    const rejected = await handlePreviewCommand('preview_resolve_source', {
+      target: { kind: 'url', url: 'file:///tmp/report.html' },
+    }, previewContext()) as PreviewResolveSourceResult;
+    expect(rejected.source).toBeNull();
+  });
+
   function previewContext(overrides: Partial<PreviewCommandContext> = {}): PreviewCommandContext {
     return {
       agentLocalFileRoots: [root],
@@ -194,7 +261,9 @@ describe('preview source commands', () => {
 function inferMimeType(filePath: string): string {
   const extension = extname(filePath).toLowerCase();
   if (extension === '.md' || extension === '.markdown') return 'text/markdown';
+  if (extension === '.html' || extension === '.htm') return 'text/html';
   if (extension === '.json') return 'application/json';
+  if (extension === '.mp4') return 'video/mp4';
   return 'text/plain';
 }
 

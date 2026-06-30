@@ -337,6 +337,9 @@ export const zhHans: PartialMessages = {
       modified: ({ date }) => `修改于 ${date}`,
       itemCount: ({ count }) => `${count} 项`,
       imageAlt: ({ name }) => `${name} 预览`,
+      htmlFrameTitle: ({ name }) => `${name} HTML 预览`,
+      htmlRenderMode: '渲染',
+      htmlSourceMode: '源码',
       epubPreviewAlt: ({ name }) => `${name} EPUB 阅读器`,
       sourceLocalFile: '本地文件',
       sourceAsset: '资源',
@@ -451,23 +454,31 @@ commandPalette: {
       recentsTitle: '暂无最近节点',
       recentsBody: '你打开的节点会显示在这里。',
     },
+    filteredOut: {
+      count: ({ count }) => `${count} 个项目已被筛选掉`,
+    },
     // 节点子项上方的视图工具栏：显示字段、分组、排序规则与渐进式筛选编辑器。
     viewToolbar: {
       toolbarAriaLabel: '视图工具栏',
+      filterByName: '按名称筛选',
+      nameFilterPlaceholder: '名称',
+      clearNameFilter: '清除名称筛选',
       display: '显示',
       groupBy: '分组',
       sortBy: '排序',
       filterBy: '筛选',
-      thenBy: '然后按',
       noGrouping: '不分组',
       reset: '重置',
       remove: '移除',
       removeSortRule: '移除排序规则',
       removeFilterRule: '移除筛选规则',
       removeFilter: '移除筛选',
-      addSort: '添加排序',
+      removeSort: '移除排序',
+      addingSort: '正在添加排序…',
       addingFilter: '正在添加筛选…',
+      sortPriorityMeta: ({ index, direction }: { index: number; direction: string }) => `${index}. ${direction}`,
       sortFieldLabel: '排序字段',
+      sortDirectionLabel: '排序方向',
       filterOperatorLabel: '筛选运算符',
       filterDateLabel: '筛选日期',
       filterValuesLabel: '筛选值',
@@ -501,11 +512,12 @@ commandPalette: {
       booleanNotDone: '未完成',
       booleanYes: '是',
       booleanNo: '否',
-      // 当前视图状态的灰色单行摘要。
+      // 当前视图状态摘要 chips 与显示字段元数据。
+      summaryAriaLabel: '当前视图设置',
+      displayedFieldsAriaLabel: '显示字段',
+      summaryDisplayCount: (count: number) => `${count} 个显示字段`,
       summaryGroupedBy: ({ field }: { field: string }) => `按 ${field} 分组`,
       summarySortedBy: ({ field, arrow }: { field: string; arrow: string }) => `按 ${field} 排序 ${arrow}`,
-      // TODO plural via Intl
-      summaryFilterCount: (count: number) => `${count} 个筛选`,
     },
     // 只读系统字段值（Done 复选框、日期、标签徽章、文本）。
     systemField: {
@@ -914,8 +926,9 @@ commandPalette: {
       folder: '文件夹',
       modified: ({ date }) => `修改于 ${date}`,
       unavailable: '文件不可用',
-      // Right-click menu on a transcript file chip.
+      // Right-click menu on an inline local-file reference.
       menuLabel: '文件操作',
+      previewInTenon: '在 Tenon 中预览',
       addToToday: '添加到今天',
       openWithDefaultApp: '用默认应用打开',
       showInFinder: '在访达中显示',
@@ -999,6 +1012,7 @@ commandPalette: {
       workedFor: ({ duration }) => `用时 ${duration}`,
       compactingConversation: '正在压缩对话',
       conversationCompacted: '对话已压缩',
+      contextCleared: '上下文已清除。',
       compacting: '正在压缩',
       compacted: '已压缩',
       compactionTrigger: {
@@ -1267,6 +1281,8 @@ commandPalette: {
     summary: {
       rulesAriaLabel: '搜索规则',
       noRules: '暂无规则',
+      viewTitle: '显示视图工具栏',
+      viewLabel: '显示视图工具栏',
       refreshTitle: '刷新',
       refreshLabel: '刷新搜索结果',
     },

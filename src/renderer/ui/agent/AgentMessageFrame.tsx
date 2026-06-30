@@ -4,19 +4,25 @@ import { useT } from '../../i18n/I18nProvider';
 
 export function AgentMessageFrame({
   children,
+  filePreviewPresentation,
   messageId,
   onContextMenu,
   role,
 }: {
   children: ReactNode;
+  filePreviewPresentation?: 'reader';
   messageId?: string | null;
   onContextMenu?: MouseEventHandler<HTMLDivElement>;
   role: 'assistant' | 'user';
 }) {
+  const transcriptMarkerProps = filePreviewPresentation === 'reader'
+    ? { 'data-agent-transcript-chips': true }
+    : {};
   return (
     <div
       className={`agent-message-row ${role}`}
       data-agent-message-id={messageId ?? undefined}
+      {...transcriptMarkerProps}
       onContextMenu={onContextMenu}
     >
       {children}
@@ -46,18 +52,8 @@ export function AgentAssistantContent({
   children: ReactNode;
   highlighted?: boolean;
 }) {
-  // `data-agent-transcript-chips` marks the live transcript, and it is the SINGLE
-  // source of truth for "is this the live transcript". Every file chip an assistant
-  // message renders — final-answer prose, interim narration, and file_write/file_edit
-  // result chips — sits inside this wrapper, so the app-wide InlineFilePreviewLayer
-  // (which routes by `closest('[data-agent-transcript-chips]')`) opens them in the
-  // workspace file-only reader and offers the transcript context menu. Meta surfaces render the
-  // very same components WITHOUT this ancestor — compaction/child-run boundaries are
-  // sibling rows, and the child-run-details + PoV-inspector panels are sibling
-  // panels — so their chips keep the safe in-app preview default. The agent-vs-outliner
-  // split is by location; this is the one place that location is decided.
   return (
-    <div className={`agent-assistant-content${highlighted ? ' is-highlighted' : ''}`} data-agent-transcript-chips>
+    <div className={`agent-assistant-content${highlighted ? ' is-highlighted' : ''}`}>
       {children}
     </div>
   );

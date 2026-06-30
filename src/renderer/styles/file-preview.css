@@ -4,7 +4,7 @@
   flex-direction: column;
 }
 
-.outline-panel-surface .file-preview-panel--reader {
+.outline-panel-surface .file-preview-panel--fill {
   overflow: hidden;
   padding-bottom: 0;
 }
@@ -13,9 +13,10 @@
   min-width: 0;
 }
 
-.file-preview-panel--reader .file-preview-content {
+.file-preview-panel--fill .file-preview-content {
   display: flex;
   width: 100%;
+  height: 100%;
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
@@ -145,21 +146,221 @@
   line-height: var(--line-ui-sm);
 }
 
+.file-preview-url {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  border-radius: var(--file-preview-frame-radius);
+  background: var(--surface);
+  box-shadow: var(--inset-hairline);
+  clip-path: inset(0 round var(--file-preview-frame-radius));
+}
+
+.file-preview-url-favicon {
+  display: block;
+  width: 13px;
+  height: 13px;
+  border-radius: var(--radius-2xs);
+}
+
+.file-preview-url-webview {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  border: 0;
+  border-radius: inherit;
+  background: var(--surface);
+}
+
 /* Audio / video players on a media file node's page. */
 .file-preview-media {
   display: block;
-  margin: var(--space-4) auto;
+  margin: 0;
+}
+
+.file-preview-media-player {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--file-preview-frame-radius);
+  background: transparent;
+  box-shadow: var(--inset-hairline);
+  color: var(--text-main);
+  --media-background-color: transparent;
+  --media-primary-color: var(--text-main);
+  --media-secondary-color: transparent;
+  --media-text-color: var(--text-main);
+  --media-control-background: transparent;
+  --media-control-hover-background: transparent;
+  --media-control-height: var(--control-size-xl);
+  --media-control-padding: 0;
+  --media-button-padding: 0;
+  --media-button-icon-width: var(--icon-size-md);
+  --media-button-icon-height: var(--icon-size-md);
+  --media-icon-color: var(--text-secondary);
+  --media-button-icon-transition: fill var(--motion-fast);
+  --media-time-range-height: var(--control-size-xl);
+  --media-range-padding: 0;
+  --media-range-padding-left: var(--space-2);
+  --media-range-padding-right: var(--space-2);
+  --media-range-track-height: 3px;
+  --media-range-track-background: var(--fill-selected);
+  --media-range-bar-color: var(--text-main);
+  --media-range-thumb-background: var(--text-main);
+  --media-range-thumb-width: 10px;
+  --media-range-thumb-height: 10px;
+  --media-volume-range-width: 58px;
+  --media-font-size: var(--font-ui-xs);
+  --media-font-weight: 500;
+  --media-font-family: var(--font-sans);
+  --media-cursor: default;
+  --media-focus-box-shadow: var(--focus-ring-shadow);
+}
+
+.file-preview-media-player--audio {
+  min-height: calc(var(--media-control-height) + var(--space-2));
+  --media-control-bar-display: flex;
+  --media-slot-display: none;
 }
 
 .file-preview-audio {
-  width: min(480px, 100%);
+  width: 100%;
+  min-width: 0;
 }
 
 .file-preview-video {
+  width: 100%;
   max-width: 100%;
   max-height: calc(100vh - 160px);
+  background: color-mix(in srgb, var(--ink) 92%, transparent);
+}
+
+.file-preview-media-controls {
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: inherit;
+  padding: 2px var(--space-2);
+  background: var(--fill-hover);
+  box-shadow: none;
+}
+
+.file-preview-media-player--video .file-preview-media-controls {
+  border-radius: 0;
+  border-top: 1px solid var(--border-subtle);
+  box-shadow: none;
+}
+
+.file-preview-media-button,
+.file-preview-media-time,
+.file-preview-media-timeline,
+.file-preview-media-volume {
+  flex: 0 0 auto;
+}
+
+.file-preview-media-button {
+  width: var(--control-size-xl);
+  height: var(--control-size-xl);
+  color: var(--text-secondary);
+  transition: color var(--motion-fast);
+}
+
+.file-preview-media-button:hover,
+.file-preview-media-button:focus-visible {
+  --media-icon-color: var(--text-primary);
+  color: var(--text-primary);
+}
+
+.file-preview-media-timeline {
+  min-width: 80px;
+  flex: 1 1 auto;
+}
+
+.file-preview-media-time {
+  min-width: 72px;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.file-preview-media-player--audio .file-preview-media-time {
+  min-width: 88px;
+}
+
+.file-preview-media-volume {
+  width: 58px;
+}
+
+.file-preview-html {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.file-preview-html--render {
+  flex: 1 1 auto;
+}
+
+.file-preview-html-mode {
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  flex: 0 0 auto;
+  gap: var(--space-1);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--surface-soft);
+  background: var(--fill-1);
+  padding: var(--space-1);
+}
+
+.file-preview-html-mode-button {
+  min-height: var(--control-size-sm);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm);
+  padding: 0 var(--space-3);
+}
+
+.file-preview-html-mode-button:hover,
+.file-preview-html-mode-button:focus-visible {
+  color: var(--text);
+}
+
+.file-preview-html-mode-button[aria-pressed='true'] {
+  background: var(--fill-2);
+  color: var(--text-strong);
+}
+
+.file-preview-html-frame {
+  display: block;
+  width: 100%;
+  min-height: 420px;
+  flex: 1 1 auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: white;
+}
+
+.file-preview-html-source {
+  min-height: 420px;
+}
+
+.file-node-preview--reader .file-preview-html,
+.file-node-preview--reader .file-preview-html-frame {
+  min-height: 0;
 }
 
 .file-preview-markdown {
@@ -344,6 +545,7 @@
   display: grid;
   min-width: 0;
   height: 100%;
+  min-height: 0;
 }
 
 .file-preview-pdf-shell--full > .file-preview-pdf--full {
@@ -366,6 +568,8 @@
 
 .file-preview-pdf--full {
   height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
   flex-direction: column;
   overflow-x: hidden;
   overflow-y: auto;
@@ -456,31 +660,36 @@
 
 .document-outline-rail {
   --document-outline-track-width: calc(var(--space-8) + var(--space-1));
+  --document-outline-track-height: 100%;
   --document-outline-marker-width: calc(var(--space-4) + 2px);
   --document-outline-marker-gap: var(--space-4);
 
   position: absolute;
   top: 50%;
-  right: var(--space-5);
+  left: var(--space-5);
   z-index: var(--z-popover);
+  display: flex;
   width: min(320px, calc(100% - var(--space-8)));
-  max-height: min(360px, 52%);
+  height: 80%;
+  max-height: 80%;
+  align-items: center;
+  justify-content: flex-start;
   pointer-events: none;
   transform: translateY(-50%);
 }
 
 .file-preview-epub--full .document-outline-rail {
-  right: max(var(--space-5), calc((100% - 720px) / 2 + var(--space-5)));
+  left: max(var(--space-5), calc((100% - 720px) / 2 + var(--space-5)));
 }
 
 .document-outline-rail-track {
   display: flex;
   width: var(--document-outline-track-width);
-  max-height: inherit;
+  height: var(--document-outline-track-height);
+  max-height: var(--document-outline-track-height);
   flex-direction: column;
   align-items: center;
   gap: var(--document-outline-marker-gap);
-  margin-left: auto;
   overflow-y: auto;
   pointer-events: auto;
   scrollbar-width: none;
@@ -492,7 +701,7 @@
 }
 
 .document-outline-rail:hover .document-outline-rail-track,
-.document-outline-rail:has(.document-outline-popover:focus-within) .document-outline-rail-track {
+:root[data-input-modality="keyboard"] .document-outline-rail:has(.document-outline-popover:focus-within) .document-outline-rail-track {
   opacity: 0;
 }
 
@@ -525,7 +734,7 @@
 .document-outline-popover {
   position: absolute;
   top: 50%;
-  right: 0;
+  left: 0;
   width: min(320px, 100%);
   max-height: min(360px, 52vh);
   overflow: auto;
@@ -537,7 +746,7 @@
   box-shadow: var(--shadow);
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-50%) translateX(var(--space-2));
+  transform: translateY(-50%) translateX(calc(-1 * var(--space-2)));
   transition:
     opacity var(--motion-fast),
     transform var(--motion-fast),
@@ -546,7 +755,7 @@
 }
 
 .document-outline-rail:hover .document-outline-popover,
-.document-outline-rail:focus-within .document-outline-popover {
+:root[data-input-modality="keyboard"] .document-outline-rail:focus-within .document-outline-popover {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(-50%);
@@ -685,6 +894,29 @@
   max-width: 100%;
 }
 
+.file-node-body--media {
+  display: inline-block;
+  width: var(--file-preview-media-width, min(760px, 100%));
+  max-width: 100%;
+  margin-bottom: var(--space-4);
+}
+
+.file-node-body--media-audio {
+  --file-preview-media-width: min(640px, 100%);
+}
+
+.file-node-body--reader:is(.file-node-body--epub, .file-node-body--html, .file-node-body--pdf) {
+  flex: 1 1 auto;
+}
+
+.file-node-body--url {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+
 .file-node-body--reader {
   display: flex;
   min-height: 0;
@@ -755,10 +987,8 @@
   flex: 1 1 auto;
 }
 
-.file-node-preview--reader.expanded:has(> .file-preview-pdf--full),
-.file-node-preview--reader.expanded:has(> .file-preview-pdf-shell--full),
-.file-node-preview--reader.expanded:has(> .file-preview-epub--full) {
-  height: auto;
+.file-node-preview--reader.expanded:is(.file-node-preview--epub, .file-node-preview--html, .file-node-preview--pdf, .file-node-preview--url) {
+  height: 100%;
 }
 
 .file-node-preview.expanded.resized {
@@ -782,6 +1012,50 @@
 
 .file-node-preview--metadata .file-preview-metadata {
   max-width: min(360px, 100%);
+}
+
+.file-node-preview--media {
+  position: relative;
+  display: block;
+  max-width: 100%;
+  overflow: visible;
+  border-radius: var(--file-preview-page-radius);
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.file-node-preview.file-node-preview--media {
+  padding-bottom: 0;
+}
+
+.file-node-preview--url {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.file-node-preview.file-node-preview--url {
+  max-height: none;
+  padding-bottom: 0;
+}
+
+.file-node-preview--reader.file-node-preview--url {
+  min-height: 0;
+}
+
+.file-node-preview--reader:is(.file-node-preview--epub, .file-node-preview--html, .file-node-preview--pdf) {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.file-node-preview--reader:is(.file-node-preview--epub, .file-node-preview--pdf) > :is(.file-preview-epub--full, .file-preview-pdf-shell--full) {
+  flex: 1 1 auto;
 }
 
 /* The shared bottom-center action bar for every non-image file preview. It is chrome
@@ -810,6 +1084,65 @@
   width: fit-content;
   margin: var(--space-5) auto 0;
   transform: none;
+}
+
+.file-preview-pill--media {
+  top: var(--space-2);
+  right: var(--space-2);
+  bottom: auto;
+  left: auto;
+  transform: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast);
+}
+
+.file-preview-pill--media-control {
+  position: static;
+  bottom: auto;
+  left: auto;
+  align-self: center;
+  flex: 0 0 auto;
+  gap: 0;
+  transform: none;
+  opacity: 1;
+  pointer-events: auto;
+  color: var(--text-secondary);
+  --file-preview-action-size: var(--control-size-xl);
+}
+
+.file-preview-pill--media-control .file-preview-pill-more {
+  width: var(--file-preview-action-size);
+  height: var(--file-preview-action-size);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  color: inherit;
+  padding: 0;
+}
+
+.file-preview-pill--media-control .file-preview-pill-more:hover,
+.file-preview-pill--media-control .file-preview-pill-more[aria-expanded='true'] {
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.file-preview-pill--media-control .file-preview-pill-more svg {
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
+}
+
+.file-preview-pill--media-control .file-preview-pill-more:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+}
+
+.file-node-body--media:hover .file-preview-pill--media,
+.file-node-body--media:focus-within .file-preview-pill--media,
+.file-preview-pill--media:has(.file-preview-pill-more[aria-expanded='true']) {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .file-preview-resize-handle {

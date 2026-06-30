@@ -176,6 +176,13 @@
   color: var(--text-muted);
 }
 
+.agent-context-clear-label,
+.agent-context-clear-label:hover,
+.agent-context-clear-label:focus-visible {
+  background: transparent;
+  color: var(--text-muted);
+}
+
 .agent-compaction-chevron {
   flex: 0 0 auto;
   transition: transform var(--motion-fast);

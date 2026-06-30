@@ -186,7 +186,45 @@ describe('buildVisualRows depth and extras', () => {
       node('c1', { parentId: 'view' }),
     ]);
     const rows = buildVisualRows('lib', byId, { expanded: new Set(['view']) });
-    expect(rows.some((r) => r.kind === 'toolbar' && r.nodeId === 'view')).toBe(true);
+    const toolbar = rows.find((r) => r.kind === 'toolbar' && r.nodeId === 'view');
+    expect(toolbar).toMatchObject({ depth: 1, indentDepth: 0 });
+  });
+
+  test('keeps filtered-out rows collapsed until their disclosure is expanded', () => {
+    const byId = byIdOf([
+      node('lib', { children: ['view', 'done', 'todo'] }),
+      node('view', {
+        parentId: 'lib',
+        type: 'viewDef',
+        children: ['filter'],
+      } as Partial<NodeProjection>),
+      node('filter', {
+        parentId: 'view',
+        type: 'filterRule',
+        filterField: 'sys:done',
+        filterOperator: 'is',
+        filterValues: ['true'],
+      } as Partial<NodeProjection>),
+      node('done', { parentId: 'lib', completedAt: 1000 }),
+      node('todo', { parentId: 'lib', completedAt: 0 }),
+    ]);
+
+    const collapsed = buildVisualRows('lib', byId, { expanded: new Set() });
+    expect(collapsed.map((row) => row.kind)).toEqual(['content', 'filteredOut']);
+    expect(collapsed.find((row) => row.kind === 'filteredOut')).toMatchObject({
+      id: 'filtered:lib:filter',
+      count: 1,
+      expanded: false,
+    });
+    expect(visualRowNodeIds(collapsed)).toEqual(['done']);
+
+    const expanded = buildVisualRows('lib', byId, { expanded: new Set(['filtered:lib:filter']) });
+    expect(expanded.map((row) => row.kind)).toEqual(['content', 'filteredOut', 'content']);
+    expect(visualRowNodeIds(expanded)).toEqual(['done', 'todo']);
+    expect(flattenVisibleRows('lib', byId, new Set(), new Set())).toEqual(['done']);
+    expect(flattenVisibleRows('lib', byId, new Set(['filtered:lib:filter']), new Set())).toEqual(['done', 'todo']);
+    expect(buildSelectableRows('lib', byId, { expanded: new Set(['filtered:lib:filter']) }).map((row) => row.id))
+      .toEqual(['done', 'todo']);
   });
 
   test('root toolbar can be suppressed with showRootToolbar=false', () => {
@@ -197,6 +235,7 @@ describe('buildVisualRows depth and extras', () => {
     const withToolbar = buildVisualRows('lib', byId, { expanded: new Set() });
     const without = buildVisualRows('lib', byId, { expanded: new Set(), showRootToolbar: false });
     expect(withToolbar.some((r) => r.kind === 'toolbar')).toBe(true);
+    expect(withToolbar.find((r) => r.kind === 'toolbar')).toMatchObject({ depth: 0, indentDepth: 0 });
     expect(without.some((r) => r.kind === 'toolbar')).toBe(false);
   });
 });

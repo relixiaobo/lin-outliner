@@ -378,14 +378,20 @@ that settled shape.
   file refs, and persisted tool-output rows; shipped directory, text/code, markdown,
   image, CSV/TSV, and fallback metadata renderers. Outcome: every file-shaped source
   opens the same panel, and common formats render.
-- [ ] **PR 2 - PDF.** Add pdf.js canvas renderer over local-file, asset, and
-  agent-payload sources; bundle the worker; add page/zoom toolbar; preserve
-  fallback for parse failures.
-- [ ] **PR 3 - Media streaming.** Add Range-capable local/asset/payload streams
-  and audio/video renderers; codec failures fall back to metadata card. This also
-  removes the current whole-file-read limitation for large asset media.
+- [x] **PR 2 - PDF** — **merged #227**. Added pdf.js canvas renderer over
+  local-file, asset, and agent-payload sources; bundled the worker; added
+  page/zoom toolbar; preserved fallback for parse failures.
+- [x] **PR 3 - Media streaming, preview-first links, URL preview, and HTML** —
+  **merged #345**. Added Range-capable local/asset/payload streams and
+  audio/video renderers; URL targets now open in a hardened split preview
+  webview; ordinary `http(s)` links route to preview targets by default; local
+  `.html`/`.htm` files render in a sandboxed static iframe with host-side link
+  interception. This removes the whole-file-read limitation for large asset
+  media.
 - [ ] **PR 4 - Office.** Add docx/xlsx/pptx best-effort renderers after library
   verification; reuse CSV/table infrastructure; sanitize all generated HTML.
-- [ ] **PR 5 - URL reader.** Add URL `PreviewTarget`, main fetch/extract/sanitize,
-  remote image policy, link-mark router wiring, "Open original", and optional
-  `ReferenceTarget.remote-url` interface-first if first-class URL refs are needed.
+- [ ] **PR 5 - Static URL reader, if still desired.** The `url` `PreviewTarget`,
+  link-mark router wiring, hardened webview preview, and "Open original" escape
+  hatch shipped in #345. A future reader-mode PR would add main fetch/extract/
+  sanitize plus a remote image policy, and optional `ReferenceTarget.remote-url`
+  interface-first if first-class URL refs are needed.

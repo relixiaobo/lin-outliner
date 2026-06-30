@@ -1,5 +1,5 @@
 import type { NodeId, NodeProjection } from '../api/types';
-import { buildOutlinerRows } from './outlinerRows';
+import { buildOutlinerRows, type OutlinerRowItem } from './outlinerRows';
 import {
   isSyntheticSystemReferenceId,
   systemReferenceValueIds,
@@ -78,34 +78,41 @@ export function buildSelectableRows(
     const parent = byId.get(parentId);
     if (!parent) return;
     const rows = buildOutlinerRows(parent, byId, { expandedHiddenFields });
-    for (const row of rows) {
-      if (row.type !== 'field' && row.type !== 'content') continue;
-      result.push(selectableRowFor({
-        id: row.id,
-        parentId,
-        panelRootId,
-        byId,
-      }));
-      if (row.type === 'field') {
-        const fieldEntry = byId.get(row.id);
-        const existingChildren = new Set(fieldEntry?.children ?? []);
-        for (const syntheticId of systemReferenceValueIds(fieldEntry, byId)) {
-          if (existingChildren.has(syntheticId)) continue;
-          result.push(selectableRowFor({
-            id: syntheticId,
-            parentId: row.id,
-            panelRootId,
-            byId,
-          }));
+    const visitRows = (currentRows: OutlinerRowItem[]) => {
+      for (const row of currentRows) {
+        if (row.type === 'filteredOut') {
+          if (options.expanded.has(row.id)) visitRows(row.rows);
+          continue;
+        }
+        if (row.type !== 'field' && row.type !== 'content') continue;
+        result.push(selectableRowFor({
+          id: row.id,
+          parentId,
+          panelRootId,
+          byId,
+        }));
+        if (row.type === 'field') {
+          const fieldEntry = byId.get(row.id);
+          const existingChildren = new Set(fieldEntry?.children ?? []);
+          for (const syntheticId of systemReferenceValueIds(fieldEntry, byId)) {
+            if (existingChildren.has(syntheticId)) continue;
+            result.push(selectableRowFor({
+              id: syntheticId,
+              parentId: row.id,
+              panelRootId,
+              byId,
+            }));
+          }
+        }
+        const shouldDescend = row.type === 'field' || options.expanded.has(row.id);
+        if (shouldDescend) {
+          const childParentId = selectableChildParentId(row.id, byId);
+          if (!childParentId || referencePath.includes(childParentId)) continue;
+          visit(childParentId, [...referencePath, childParentId]);
         }
       }
-      const shouldDescend = row.type === 'field' || options.expanded.has(row.id);
-      if (shouldDescend) {
-        const childParentId = selectableChildParentId(row.id, byId);
-        if (!childParentId || referencePath.includes(childParentId)) continue;
-        visit(childParentId, [...referencePath, childParentId]);
-      }
-    }
+    };
+    visitRows(rows);
   };
 
   visit(panelRootId, [panelRootId]);

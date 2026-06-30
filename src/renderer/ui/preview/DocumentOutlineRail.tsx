@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type FocusEvent,
   type RefObject,
 } from 'react';
 import { useT } from '../../i18n/I18nProvider';
@@ -34,6 +35,8 @@ export function DocumentOutlineRail({
   const [markers, setMarkers] = useState<DocumentOutlineMarker[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
   const markersRef = useRef<DocumentOutlineMarker[]>([]);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const trackRef = useRef<HTMLDivElement | null>(null);
   const activeFrameRef = useRef<number | null>(null);
   const measureFrameRef = useRef<number | null>(null);
 
@@ -44,11 +47,7 @@ export function DocumentOutlineRail({
       return;
     }
 
-    const activeTop = scrollRoot.scrollTop + 1;
-    let nextActiveIndex = 0;
-    for (let index = 0; index < nextMarkers.length; index += 1) {
-      if (nextMarkers[index]!.top <= activeTop) nextActiveIndex = index;
-    }
+    const nextActiveIndex = activeOutlineIndexForScrollTop(scrollRoot.scrollTop, nextMarkers);
     setActiveIndex((current) => current === nextActiveIndex ? current : nextActiveIndex);
   }, [scrollRootRef]);
 
@@ -113,6 +112,10 @@ export function DocumentOutlineRail({
     };
   }, [layoutVersion, scheduleActiveIndex, scheduleMeasure, scrollRootRef]);
 
+  useEffect(() => {
+    centerActiveOutlineItem(trackRef.current, activeIndex);
+  }, [activeIndex, markers.length]);
+
   if (markers.length === 0) return null;
 
   const jumpToMarker = (index: number) => {
@@ -121,14 +124,28 @@ export function DocumentOutlineRail({
     if (!marker || !scrollRoot) return;
     scrollRoot.scrollTo({ top: marker.top, behavior: 'smooth' });
   };
+  const syncPopoverToActive = () => {
+    const scrollRoot = scrollRootRef.current;
+    const nextActiveIndex = scrollRoot
+      ? activeOutlineIndexForScrollTop(scrollRoot.scrollTop, markersRef.current)
+      : activeIndex;
+    centerActiveOutlineItem(popoverRef.current, nextActiveIndex);
+  };
+  const syncPopoverToActiveOnFocus = (event: FocusEvent<HTMLElement>) => {
+    const target = event.target;
+    if (target instanceof Node && popoverRef.current?.contains(target)) return;
+    syncPopoverToActive();
+  };
 
   return (
     <nav
       aria-label={labels.documentOutline}
       className="document-outline-rail"
       data-document-outline-rail
+      onFocus={syncPopoverToActiveOnFocus}
+      onMouseEnter={syncPopoverToActive}
     >
-      <div className="document-outline-rail-track">
+      <div className="document-outline-rail-track" ref={trackRef}>
         {markers.map((marker, index) => (
           <button
             aria-label={labels.documentOutlineJump({ title: marker.title })}
@@ -140,7 +157,7 @@ export function DocumentOutlineRail({
           />
         ))}
       </div>
-      <div className="document-outline-popover">
+      <div className="document-outline-popover" ref={popoverRef}>
         {markers.map((marker, index) => (
           <button
             className={`document-outline-item ${index === activeIndex ? 'active' : ''}`}
@@ -168,4 +185,27 @@ function outlineMarkersEqual(left: DocumentOutlineMarker[], right: DocumentOutli
       && marker.level === other.level
       && Math.abs(marker.top - other.top) < 1;
   });
+}
+
+function centerActiveOutlineItem(container: HTMLElement | null, activeIndex: number) {
+  if (activeIndex < 0 || !container) return;
+  const activeItem = container.children.item(activeIndex);
+  if (!(activeItem instanceof HTMLElement)) return;
+  const nextTop = activeItem.offsetTop - (container.clientHeight - activeItem.offsetHeight) / 2;
+  const targetTop = Math.max(0, nextTop);
+  if (typeof container.scrollTo === 'function') {
+    container.scrollTo({ top: targetTop, behavior: 'auto' });
+  } else {
+    container.scrollTop = targetTop;
+  }
+}
+
+function activeOutlineIndexForScrollTop(scrollTop: number, markers: DocumentOutlineMarker[]): number {
+  if (markers.length === 0) return -1;
+  const activeTop = scrollTop + 1;
+  let activeIndex = 0;
+  for (let index = 0; index < markers.length; index += 1) {
+    if (markers[index]!.top <= activeTop) activeIndex = index;
+  }
+  return activeIndex;
 }

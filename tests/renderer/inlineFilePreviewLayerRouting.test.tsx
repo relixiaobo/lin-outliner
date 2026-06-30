@@ -7,6 +7,7 @@ import {
   PREVIEW_TARGET_OPEN_EVENT,
   type PreviewTargetOpenDetail,
 } from '../../src/renderer/ui/preview/previewEvents';
+import { getMessages } from '../../src/core/i18n';
 
 interface Rendered {
   cleanup: () => void;
@@ -18,6 +19,7 @@ interface LinStub {
   openLocalFile?: (options: { path: string }) => Promise<unknown>;
 }
 
+const labels = getMessages('en').agent.filePreview;
 const mounted: Rendered[] = [];
 
 afterEach(() => {
@@ -77,6 +79,68 @@ describe('InlineFilePreviewLayer routing', () => {
       },
     }]);
   });
+
+  test('non-transcript file chips open the inline file menu on right-click', async () => {
+    const rendered = render({});
+    const chip = localFileChip(rendered.document);
+    rendered.document.body.appendChild(chip);
+
+    await contextMenu(rendered, chip);
+
+    expect(menuLabels(rendered)).toEqual([
+      labels.previewInTenon,
+      labels.addToToday,
+      labels.openWithDefaultApp,
+      labels.showInFinder,
+    ]);
+  });
+
+  test('non-transcript menu preview action keeps the standard preview-pane route', async () => {
+    const rendered = render({});
+    const workspacePreviews: PreviewTargetOpenDetail[] = [];
+    rendered.window.addEventListener(PREVIEW_TARGET_OPEN_EVENT, (event) => {
+      workspacePreviews.push((event as CustomEvent<PreviewTargetOpenDetail>).detail);
+    });
+    const chip = localFileChip(rendered.document);
+    rendered.document.body.appendChild(chip);
+
+    await contextMenu(rendered, chip);
+    await clickMenuItem(rendered, labels.previewInTenon);
+
+    expect(workspacePreviews).toEqual([{
+      target: {
+        kind: 'local-file',
+        path: '/workdir/report.md',
+        entryKind: 'file',
+        label: 'report.md',
+      },
+    }]);
+  });
+
+  test('live transcript menu preview action keeps the file-only reader route', async () => {
+    const rendered = render({});
+    const workspacePreviews: PreviewTargetOpenDetail[] = [];
+    rendered.window.addEventListener(PREVIEW_TARGET_OPEN_EVENT, (event) => {
+      workspacePreviews.push((event as CustomEvent<PreviewTargetOpenDetail>).detail);
+    });
+    const transcriptRoot = rendered.document.createElement('div');
+    transcriptRoot.setAttribute('data-agent-transcript-chips', 'true');
+    transcriptRoot.appendChild(localFileChip(rendered.document));
+    rendered.document.body.appendChild(transcriptRoot);
+
+    await contextMenu(rendered, transcriptRoot.querySelector('[data-inline-ref-kind="local-file"]'));
+    await clickMenuItem(rendered, labels.previewInTenon);
+
+    expect(workspacePreviews).toEqual([{
+      presentation: 'reader',
+      target: {
+        kind: 'local-file',
+        path: '/workdir/report.md',
+        entryKind: 'file',
+        label: 'report.md',
+      },
+    }]);
+  });
 });
 
 function render(lin: LinStub): Rendered {
@@ -116,7 +180,37 @@ async function click(rendered: Rendered, target: Element | null) {
   });
 }
 
+async function contextMenu(rendered: Rendered, target: Element | null) {
+  if (!target) throw new Error('Missing file chip');
+  await act(async () => {
+    const event = new rendered.window.Event('contextmenu', { bubbles: true, cancelable: true });
+    Object.defineProperties(event, {
+      clientX: { value: 24 },
+      clientY: { value: 28 },
+    });
+    target.dispatchEvent(event);
+  });
+}
+
+async function clickMenuItem(rendered: Rendered, label: string) {
+  const item = Array.from(rendered.document.body.querySelectorAll('.node-context-item'))
+    .find((node) => node.textContent === label);
+  if (!item) throw new Error(`Missing menu item: ${label}`);
+  await act(async () => {
+    item.dispatchEvent(new rendered.window.Event('click', { bubbles: true, cancelable: true }));
+  });
+}
+
+function menuLabels(rendered: Rendered): string[] {
+  return Array.from(rendered.document.body.querySelectorAll('.node-context-item'))
+    .map((item) => item.textContent ?? '');
+}
+
 function installDomGlobals(window: Window) {
+  (window as unknown as { requestAnimationFrame: (cb: FrameRequestCallback) => number })
+    .requestAnimationFrame = (cb) => { cb(0); return 0; };
+  (window as unknown as { cancelAnimationFrame: (handle: number) => void })
+    .cancelAnimationFrame = () => { /* synchronous frame: nothing to cancel */ };
   Object.assign(globalThis, {
     CustomEvent: window.CustomEvent,
     document: window.document,

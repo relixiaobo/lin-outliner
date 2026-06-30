@@ -21,8 +21,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343**) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332; authored ratified plan agent-process-stable-disclosure #297) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345**) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -87,9 +87,9 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
    API-key/Claude-Pro control); presentation-only, light/dark gate.
 6. **`agent-skills-authoring` diff/preview** (P1 tail) — the remaining creative-UX; NL save-as-skill
    routing already shipped (#271).
-7. **`file-preview` PR3** (P2) — media streaming / Office / URL reader; next slice of a shipping plan,
-   retires the `media-types` whole-file-read limit. (EPUB reader shipped #339/#344 as a registered
-   `PreviewTarget` renderer; PDF #227, web-native #210 already in.)
+7. **`file-preview` tail** (P2) — Office best-effort renderers and any later static URL-reader extraction.
+   Media streaming, direct URL preview, preview-first links, and sandboxed local HTML shipped in #345
+   (EPUB #339/#344, PDF #227, web-native basics #210 already in).
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
@@ -324,14 +324,10 @@ archived `done` (see Recently completed). Remaining active work:
 - **file-preview** (P2, plan refreshed PR #209) — in-app preview panel for every file-shaped
   source via a source-owned `PreviewTarget` (`local-file` / `asset` / `agent-payload` / `url`):
   one shell + renderer registry, per-source main-process byte authority. **PR 1 shipped (#210,
-  shell + web-native basics); PR 2 shipped (#227, PDF renderer)** — remaining: **media streaming
-  (PR 3) / Office / URL reader**. PR 3 also retires the `media-types` whole-file-read limitation.
-  See `docs/plans/file-preview.md`.
-- **media-types** (P2, *no plan file*) — audio/video players + PDF thumbnail on the
-  `BlockNodeRow` shell **shipped with #206** (inline `<audio>`/`<video controls>`
-  + `pdftoppm` thumbnail). Remaining: `serve()` needs a streaming/range response
-  for large media (today's whole-file read works but is memory-heavy and breaks
-  seeking on big files) — tracked as `file-preview` PR 3 (media streaming).
+  shell + web-native basics); PR 2 shipped (#227, PDF renderer); PR 3 shipped (#345,
+  Range-capable streams + media renderers, direct URL preview, preview-first links, sandboxed local
+  HTML)** — remaining: **Office** and optional static URL-reader extraction if PM wants reader-mode
+  pages beyond the hardened webview preview. See `docs/plans/file-preview.md`.
 - **file-as-node follow-up** (low, pre-release bug, *no plan file*) — restoring a persisted pane
   whose top view was an `asset` file-preview drops the whole pane instead of salvaging its outliner
   anchor / backStack (`useWorkspaceLayout` `sanitizePanel`). Dev-only userData, narrow same-day
@@ -358,9 +354,6 @@ archived `done` (see Recently completed). Remaining active work:
   are extracted. Full detail in the archived plan `docs/plans/archive/i18n-multi-language.md`.
 - **floating-toolbar-polish** (P3) — heading-mark toggle + `#` selection
   extract in the floating editor toolbar.
-- **view-toolbar-name-filter** (P3, *no plan file*) — quick incremental name filter as the
-  view toolbar's first control (Tana-style); needs backend/data-model support.
-  Optional follow-ons: `is_not` for options filters; relative-date operands.
 - **embed-strategy** (P3, decision-only, **no deadline**) — decide live iframe vs
   cached-metadata embeds (Option B recommended), or fall back to Option C and remove
   the dead `embedType`/`embedId` schema in a future data-model cleanup. See
@@ -432,6 +425,64 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **clear-context-boundary** (`codex-4/clear-context-boundary`, PR #352, codex-4,
+  merged 2026-06-30) — adds `/clear` as a persisted model-context boundary for the
+  current Channel. The command appends a `context.cleared` event plus a dedicated
+  transcript row (`Context cleared.`), selects that boundary as the new active root,
+  and leaves pre-clear history visible/searchable/readable through transcript and
+  `past_chats` paths while excluding it from ordinary model-context assembly. `/compact`
+  remains the summary-preserving continuation path; `/clear` carries no summary,
+  invoked-skill reminder, listed-skill reminder, or restored file-context reminder.
+  Runtime-only context caches are reset across the boundary. **Gate (main):** deep
+  review found two integration bugs (old checkpoints missing the new replay-state map
+  could crash projection, and `past_chats.recent` surfaced the synthetic clear root);
+  codex-4 fixed both with regression tests. Verified on the final PR head and merge:
+  typecheck, targeted event-store/event-log/render-projection/past-chats/runtime/store
+  tests, `docs:check`, and `git diff --check`. Plan archived `done`
+  (`docs/plans/archive/clear-context-boundary.md`). Plan-track, **shape (a)** one PR.
+
+- **agent-compact-tail-reanchor** (`codex-2/agent-compact-tail-reanchor`, PR #351, codex-2,
+  merged 2026-06-30, fast-track) — fixes repeated auto-compaction loops when compaction happens
+  during an active provider run. The compact event log was already correct, but the in-memory active
+  run tail could still point at the pre-compact assistant/tool chain; later assistant or tool-result
+  segments from the same run could append back onto the summarized-away branch and make the next
+  model-context build see the oversized path again. The runtime now re-anchors the active run tail to
+  the post-compact leaf and clears stale transient tool payload/call state after appending the
+  compaction root. `docs/spec/agent-skills.md` records the invariant. **Gate (main):** deep review found
+  no blocking findings. Verified: typecheck, `docs:check`, targeted skills-integration regression,
+  event-log/render-projection/debug-view targeted tests, `test:core` 1116/0, and `git diff --check`.
+  Fast-track, **shape (a)**, *no plan file*.
+
+- **view-toolbar-tana-polish** (`codex-2/view-toolbar-tana-polish`, PR #350, codex-2,
+  merged 2026-06-30, fast-track) — polishes the node/saved-search view toolbar around the Tana
+  interaction model. The toolbar now has a real leading name-filter chip backed by `sys:name contains`
+  `filterRule` state, field-first Display/Group/Sort/Filter popovers, exact filter-rule summary chips
+  (including duplicate filters on the same field), sort priority metadata, stable portal tooltips, and
+  clearer filtered-out row affordances. Nested toolbars align with their owner row column instead of the
+  first child row. Search-result summary bars expose the same result-view toolbar path. **Gate (main):**
+  review found two race bugs (stale uncontrolled filter values when switching chips, and duplicate sort
+  adds after backing out of a pending add); codex-2 fixed both in `d30c67f8` with regression tests.
+  Verified on the PR head with targeted toolbar/search E2E, `test:renderer` 633/0, `docs:check`, and
+  `git diff --check`; unmerged-head `typecheck`/`test:core` were blocked by the then-base branch's
+  pi-ai helper mismatch. After merge onto current `main`, the final gate passed with typecheck,
+  `test:core` 1115/0, `test:renderer` 668/0, toolbar/search E2E, `docs:check`, and `git diff --check`.
+  Fast-track, **shape (a)**, *no plan file*.
+
+- **preview-first-links-html-renderer** (`codex/preview-first-links-html-renderer`, PR #345, codex,
+  merged 2026-06-30) — completes the next file-preview slice: ordinary `http(s)` links from the outliner,
+  agent transcript, and local preview bodies now open in a Tenon split preview pane by default; URL previews
+  render as a hardened `webview` with an http(s)-only source, fixed partition, denied popups/permissions,
+  stripped preload/webpreferences, and an explicit "open original" escape hatch. Local-file, asset, and
+  agent-payload previews gain Range-capable `preview-local://` streams for large media so audio/video can
+  seek without whole-file reads; local `.html`/`.htm` files render as sandboxed static iframes with host-side
+  link interception and no script execution. Inline file refs share one context menu, while transcript chips
+  open file-only reader panes and plain workspace chips use the normal preview route. **Gate (main):**
+  deep review found one P2 iframe-realm link-routing bug; round-2 fix resolved it with a cross-realm
+  regression test. Verified with typecheck, relevant core/renderer targeted suites, full `test:renderer`
+  before the final iframe fix, post-fix targeted regression, `docs:check`, and `git diff --check`.
+  Plan-track slice of `file-preview`, **shape (b)** independent PR; the plan remains active for Office and
+  any future static URL-reader extraction.
 
 - **agent-file-scope-preflight** (`codex-4/agent-file-scope-preflight`, PR #349, codex-4, merged 2026-06-30,
   fast-track) — typed file tools (`file_read`/`file_glob`/`file_grep`/`file_edit`/`file_write`/`file_delete`)
