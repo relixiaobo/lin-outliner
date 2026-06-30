@@ -660,7 +660,7 @@
 
 .document-outline-rail {
   --document-outline-track-width: calc(var(--space-8) + var(--space-1));
-  --document-outline-track-height: min(360px, 56vh);
+  --document-outline-track-height: 100%;
   --document-outline-marker-width: calc(var(--space-4) + 2px);
   --document-outline-marker-gap: var(--space-4);
 
@@ -670,7 +670,8 @@
   z-index: var(--z-popover);
   display: flex;
   width: min(320px, calc(100% - var(--space-8)));
-  max-height: min(360px, 52%);
+  height: 80%;
+  max-height: 80%;
   align-items: center;
   justify-content: flex-start;
   pointer-events: none;
