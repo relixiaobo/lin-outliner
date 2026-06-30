@@ -176,6 +176,54 @@ describe('FilePreviewShell URL previews', () => {
     expect(rendered.document.querySelector('.file-preview-html-frame')).not.toBeNull();
   });
 
+  test('marks PDF and EPUB readers so document viewports can fill the pane', async () => {
+    const previewBytesMock = {
+      lin: {
+        invoke: (command: string) => {
+          if (command === 'preview_read_bytes') return Promise.resolve({ bytes: null, error: 'missing' });
+          return Promise.resolve(null);
+        },
+      },
+    };
+    const pdf = render(
+      <FilePreviewShell
+        state={{ status: 'loading' }}
+        onOpenTarget={() => undefined}
+        readerMode
+      />,
+    );
+
+    expect(pdf.document.querySelector('.file-node-body--reader')).not.toBeNull();
+
+    const pdfReady = render(
+      <FilePreviewShell
+        state={{ status: 'ready', source: pdfSource() }}
+        onOpenTarget={() => undefined}
+        readerMode
+      />,
+      previewBytesMock,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(pdfReady.document.querySelector('.file-node-body--reader.file-node-body--pdf')).not.toBeNull();
+    expect(pdfReady.document.querySelector('.file-node-preview--reader.file-node-preview--pdf')).not.toBeNull();
+
+    const epubReady = render(
+      <FilePreviewShell
+        state={{ status: 'ready', source: epubSource() }}
+        onOpenTarget={() => undefined}
+        readerMode
+      />,
+      previewBytesMock,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(epubReady.document.querySelector('.file-node-body--reader.file-node-body--epub')).not.toBeNull();
+    expect(epubReady.document.querySelector('.file-node-preview--reader.file-node-preview--epub')).not.toBeNull();
+  });
+
   test('resolves URL targets synchronously without preview IPC loading', async () => {
     const invocations: string[] = [];
     const rendered = render(
@@ -238,6 +286,34 @@ function htmlSource(): PreviewFileSource {
     name: 'page.html',
     ext: 'html',
     mimeType: 'text/html',
+    entryKind: 'file',
+    sizeBytes: 1024,
+  };
+}
+
+function pdfSource(): PreviewFileSource {
+  return {
+    kind: 'file',
+    sourceKind: 'asset',
+    id: 'asset:pdf',
+    target: { kind: 'asset', assetId: 'asset-pdf' },
+    name: 'document.pdf',
+    ext: 'pdf',
+    mimeType: 'application/pdf',
+    entryKind: 'file',
+    sizeBytes: 1024,
+  };
+}
+
+function epubSource(): PreviewFileSource {
+  return {
+    kind: 'file',
+    sourceKind: 'asset',
+    id: 'asset:book',
+    target: { kind: 'asset', assetId: 'asset-book' },
+    name: 'book.epub',
+    ext: 'epub',
+    mimeType: 'application/epub+zip',
     entryKind: 'file',
     sizeBytes: 1024,
   };

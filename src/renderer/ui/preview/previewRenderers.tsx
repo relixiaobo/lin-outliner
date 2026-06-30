@@ -301,7 +301,9 @@ export function FilePreviewShell({
   const passivePlayback = state.status === 'ready' && isPassivePlaybackSource(state.source);
   const mediaKind = state.status === 'ready' ? mediaKindForSource(state.source) : null;
   const urlPreview = state.status === 'ready' && state.source.kind === 'url';
-  const htmlPreview = state.status === 'ready' && state.source.kind === 'file' && isHtmlSource(state.source);
+  const documentKind = state.status === 'ready' && state.source.kind === 'file'
+    ? documentKindForSource(state.source)
+    : null;
   const metadataFallback = state.status === 'ready' && !previewable;
   const effectiveExpanded = readerMode || passivePlayback || urlPreview || expanded;
   const displayMode: FilePreviewDisplayMode = previewable && !effectiveExpanded ? 'summary' : 'full';
@@ -356,7 +358,7 @@ export function FilePreviewShell({
     metadataFallback ? 'file-node-preview--metadata' : '',
     passivePlayback ? 'file-node-preview--media' : '',
     urlPreview ? 'file-node-preview--url' : '',
-    htmlPreview ? 'file-node-preview--html' : '',
+    documentKind ? `file-node-preview--${documentKind}` : '',
     mediaKind ? `file-node-preview--media-${mediaKind}` : '',
     readerMode ? 'file-node-preview--reader' : '',
     resizedHeight !== undefined ? 'resized' : '',
@@ -370,7 +372,7 @@ export function FilePreviewShell({
     metadataFallback ? 'file-node-body--metadata' : '',
     passivePlayback ? 'file-node-body--media' : '',
     urlPreview ? 'file-node-body--url' : '',
-    htmlPreview ? 'file-node-body--html' : '',
+    documentKind ? `file-node-body--${documentKind}` : '',
     mediaKind ? `file-node-body--media-${mediaKind}` : '',
     readerMode ? 'file-node-body--reader' : '',
   ]
@@ -1751,6 +1753,13 @@ function mediaKindForSource(source: PreviewSourceDescriptor): 'audio' | 'video' 
   if (source.kind !== 'file') return null;
   if (isAudioSource(source)) return 'audio';
   if (isVideoSource(source)) return 'video';
+  return null;
+}
+
+function documentKindForSource(source: PreviewFileSource): 'epub' | 'html' | 'pdf' | null {
+  if (isPdfSource(source)) return 'pdf';
+  if (isEpubSource(source)) return 'epub';
+  if (isHtmlSource(source)) return 'html';
   return null;
 }
 

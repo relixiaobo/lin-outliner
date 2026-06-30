@@ -545,6 +545,7 @@
   display: grid;
   min-width: 0;
   height: 100%;
+  min-height: 0;
 }
 
 .file-preview-pdf-shell--full > .file-preview-pdf--full {
@@ -567,6 +568,8 @@
 
 .file-preview-pdf--full {
   height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
   flex-direction: column;
   overflow-x: hidden;
   overflow-y: auto;
@@ -897,7 +900,7 @@
   --file-preview-media-width: min(640px, 100%);
 }
 
-.file-node-body--reader.file-node-body--html {
+.file-node-body--reader:is(.file-node-body--epub, .file-node-body--html, .file-node-body--pdf) {
   flex: 1 1 auto;
 }
 
@@ -979,11 +982,8 @@
   flex: 1 1 auto;
 }
 
-.file-node-preview--reader.expanded:has(> .file-preview-pdf--full),
-.file-node-preview--reader.expanded:has(> .file-preview-pdf-shell--full),
-.file-node-preview--reader.expanded:has(> .file-preview-epub--full),
-.file-node-preview--reader.expanded:has(> .file-preview-url) {
-  height: auto;
+.file-node-preview--reader.expanded:is(.file-node-preview--epub, .file-node-preview--html, .file-node-preview--pdf, .file-node-preview--url) {
+  height: 100%;
 }
 
 .file-node-preview.expanded.resized {
@@ -1043,10 +1043,14 @@
   min-height: 0;
 }
 
-.file-node-preview--reader.file-node-preview--html {
+.file-node-preview--reader:is(.file-node-preview--epub, .file-node-preview--html, .file-node-preview--pdf) {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
+}
+
+.file-node-preview--reader:is(.file-node-preview--epub, .file-node-preview--pdf) > :is(.file-preview-epub--full, .file-preview-pdf-shell--full) {
+  flex: 1 1 auto;
 }
 
 /* The shared bottom-center action bar for every non-image file preview. It is chrome
