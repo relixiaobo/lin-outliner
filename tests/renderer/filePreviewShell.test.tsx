@@ -6,6 +6,10 @@ import type { PreviewFileSource, PreviewTarget, PreviewUrlSource } from '../../s
 import { MoreIcon } from '../../src/renderer/ui/icons';
 import type { FilePreviewMenuAction } from '../../src/renderer/ui/preview/FilePreviewPill';
 import { FilePreviewShell, usePreviewSource } from '../../src/renderer/ui/preview/previewRenderers';
+import {
+  PREVIEW_TARGET_OPEN_EVENT,
+  type PreviewTargetOpenDetail,
+} from '../../src/renderer/ui/preview/previewEvents';
 
 const mounted: Array<{ cleanup: () => void }> = [];
 
@@ -183,6 +187,64 @@ describe('FilePreviewShell URL previews', () => {
     expect(rendered.document.querySelector('.file-node-preview--reader.file-node-preview--html')).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-html--render')).not.toBeNull();
     expect(rendered.document.querySelector('.file-preview-html-frame')).not.toBeNull();
+  });
+
+  test('routes HTML iframe links through preview targets across iframe realms', async () => {
+    const opened: PreviewTargetOpenDetail[] = [];
+    const rendered = render(
+      <FilePreviewShell
+        state={{ status: 'ready', source: htmlSource() }}
+        onOpenTarget={() => undefined}
+        readerMode
+      />,
+      {
+        lin: {
+          invoke: (command) => {
+            if (command === 'preview_read_text') {
+              return Promise.resolve({ text: '<a href="https://example.com/from-html">Open docs</a>' });
+            }
+            return Promise.resolve(null);
+          },
+        },
+      },
+    );
+    rendered.window.addEventListener(PREVIEW_TARGET_OPEN_EVENT, (event) => {
+      opened.push((event as CustomEvent<PreviewTargetOpenDetail>).detail);
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const iframe = rendered.document.querySelector<HTMLIFrameElement>('.file-preview-html-frame');
+    if (!iframe) throw new Error('Missing HTML preview frame');
+    const frame = parseHTML('<!doctype html><html><body><a href="https://example.com/from-html">Open docs</a></body></html>');
+    const anchor = frame.document.querySelector('a');
+    if (!anchor) throw new Error('Missing frame anchor');
+    Object.defineProperty(iframe, 'contentDocument', { configurable: true, value: frame.document });
+
+    const originalElement = globalThis.Element;
+    class ParentRealmElement {}
+    await act(async () => {
+      try {
+        Object.defineProperty(globalThis, 'Element', { configurable: true, value: ParentRealmElement });
+        expect(anchor instanceof globalThis.Element).toBe(false);
+        iframe.dispatchEvent(new rendered.window.Event('load', { bubbles: true }));
+        anchor.dispatchEvent(new frame.window.Event('click', { bubbles: true, cancelable: true }));
+        await Promise.resolve();
+      } finally {
+        Object.defineProperty(globalThis, 'Element', { configurable: true, value: originalElement });
+      }
+    });
+
+    expect(opened).toEqual([{
+      newPane: true,
+      target: {
+        kind: 'url',
+        label: 'Open docs',
+        url: 'https://example.com/from-html',
+      },
+    }]);
   });
 
   test('marks PDF and EPUB readers so document viewports can fill the pane', async () => {
@@ -371,7 +433,9 @@ function render(
 
 function installDomGlobals(window: Window) {
   Object.assign(globalThis, {
+    CustomEvent: window.CustomEvent,
     document: window.document,
+    Element: window.Element,
     HTMLElement: window.HTMLElement,
     Node: window.Node,
     window,

@@ -814,9 +814,7 @@ function HtmlPreview({ source }: PreviewRendererProps) {
     const doc = iframeRef.current?.contentDocument;
     if (!doc) return;
     doc.addEventListener('click', (event) => {
-      const target = event.target instanceof Element
-        ? event.target.closest<HTMLAnchorElement>('a[href]')
-        : null;
+      const target = closestAnchorFromEventTarget(event.target);
       if (!target) return;
       if (openUrlPreviewFromClick(event, target.href, target.textContent?.trim() || target.href)) {
         event.preventDefault();
@@ -862,6 +860,21 @@ function HtmlPreview({ source }: PreviewRendererProps) {
       )}
     </div>
   );
+}
+
+function closestAnchorFromEventTarget(target: EventTarget | null): HTMLAnchorElement | null {
+  if (!target || typeof target !== 'object' || !('closest' in target)) return null;
+  const closest = (target as { closest?: unknown }).closest;
+  if (typeof closest !== 'function') return null;
+  const anchor = closest.call(target, 'a[href]');
+  return isHtmlAnchorLike(anchor) ? anchor : null;
+}
+
+function isHtmlAnchorLike(value: unknown): value is HTMLAnchorElement {
+  return typeof value === 'object'
+    && value !== null
+    && 'href' in value
+    && typeof (value as { href?: unknown }).href === 'string';
 }
 
 function MarkdownPreview({ source }: PreviewRendererProps) {
