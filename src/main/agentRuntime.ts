@@ -5314,6 +5314,15 @@ export class AgentRuntime {
     );
 
     await this.appendConversationEvents(conversationId, conversation, inputs);
+    this.reanchorActiveRunAfterCompaction(conversation, leafMessageId);
+  }
+
+  private reanchorActiveRunAfterCompaction(conversation: AgentConversationState, leafMessageId: string) {
+    const activeRun = conversation.activeRun;
+    if (!activeRun) return;
+    activeRun.lastMessageId = leafMessageId;
+    activeRun.toolOutputPayloads.clear();
+    activeRun.toolCallMessageIds.clear();
   }
 
   private async buildPreservedMessageEvents(
