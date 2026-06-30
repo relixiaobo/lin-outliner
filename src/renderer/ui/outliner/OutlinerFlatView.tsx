@@ -636,7 +636,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
         const node = byId.get(row.nodeId);
         if (!node) return null;
         return (
-          <div className="view-toolbar-flat-scope" style={flatDepthStyle(row.depth)}>
+          <div className="view-toolbar-flat-scope" style={flatDepthStyle(row.indentDepth)}>
             <ViewToolbar
               node={node}
               view={readViewConfig(node, byId)}

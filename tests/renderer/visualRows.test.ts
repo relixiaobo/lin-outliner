@@ -186,7 +186,8 @@ describe('buildVisualRows depth and extras', () => {
       node('c1', { parentId: 'view' }),
     ]);
     const rows = buildVisualRows('lib', byId, { expanded: new Set(['view']) });
-    expect(rows.some((r) => r.kind === 'toolbar' && r.nodeId === 'view')).toBe(true);
+    const toolbar = rows.find((r) => r.kind === 'toolbar' && r.nodeId === 'view');
+    expect(toolbar).toMatchObject({ depth: 1, indentDepth: 0 });
   });
 
   test('keeps filtered-out rows collapsed until their disclosure is expanded', () => {
@@ -234,6 +235,7 @@ describe('buildVisualRows depth and extras', () => {
     const withToolbar = buildVisualRows('lib', byId, { expanded: new Set() });
     const without = buildVisualRows('lib', byId, { expanded: new Set(), showRootToolbar: false });
     expect(withToolbar.some((r) => r.kind === 'toolbar')).toBe(true);
+    expect(withToolbar.find((r) => r.kind === 'toolbar')).toMatchObject({ depth: 0, indentDepth: 0 });
     expect(without.some((r) => r.kind === 'toolbar')).toBe(false);
   });
 });

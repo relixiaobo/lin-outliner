@@ -12,7 +12,7 @@ import { resolveTrailingDraftAfterId } from './trailingDraftPlacement';
 // into reference targets exactly like `flattenVisibleRows`, but keeps every row
 // kind plus per-level toolbars and trailing drafts, and carries cumulative depth.
 export type VisualRow =
-  | { kind: 'toolbar'; key: string; nodeId: NodeId; depth: number; parentId: NodeId }
+  | { kind: 'toolbar'; key: string; nodeId: NodeId; depth: number; indentDepth: number; parentId: NodeId }
   | { kind: 'group'; key: string; label: string; depth: number; parentId: NodeId }
   | { kind: 'filteredOut'; key: string; id: string; count: number; depth: number; parentId: NodeId; expanded: boolean }
   | { kind: 'hiddenField'; key: string; fieldId: NodeId; label: string; depth: number; parentId: NodeId }
@@ -89,7 +89,14 @@ export function buildVisualRows(
     const isRoot = referencePath.length === 1;
     const view = readViewConfig(parent, byId);
     if (view.toolbarVisible && (!isRoot || options.showRootToolbar !== false)) {
-      out.push({ kind: 'toolbar', key: `toolbar>${prefix}`, nodeId: parentId, depth, parentId });
+      out.push({
+        kind: 'toolbar',
+        key: `toolbar>${prefix}`,
+        nodeId: parentId,
+        depth,
+        indentDepth: Math.max(depth - 1, 0),
+        parentId,
+      });
     }
 
     const builtRows = buildOutlinerRows(parent, byId, { expandedHiddenFields });

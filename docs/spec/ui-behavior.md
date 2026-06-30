@@ -217,10 +217,11 @@ controls. These controls all read and write `viewDef` child nodes
 than storing renderer-local state.
 
 Nested toolbars render as part of the expanded child outline, not as detached
-cards. They inherit the child depth so the toolbar buttons align with the child
-rows, while the expanded parent guide line spans the toolbar and descendants.
-The toolbar itself carries only subtle top/bottom separators; the hierarchy line
-is the main visual divider.
+cards. They remain logically inside the expanded child subtree, while their
+visual indent aligns with the owning node's title/content column instead of the
+first child row. The expanded parent guide line spans the toolbar and
+descendants. The toolbar itself carries only subtle top/bottom separators; the
+hierarchy line is the main visual divider.
 
 The leading search icon is a Tana-style **Filter by name** shortcut. Clicking it
 turns the icon into an inline editable chip. Non-empty text is written as a real
