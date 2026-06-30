@@ -6,6 +6,7 @@ import type { AgentPayloadRef } from '../core/agentEventLog';
 import { assetUrl } from '../core/assets';
 import type { PreviewCommand } from '../core/commands';
 import {
+  normalizePreviewHttpUrl,
   previewTargetFromUnknown,
   previewTargetKey,
   type PreviewDirectoryEntry,
@@ -152,7 +153,7 @@ async function previewSourceForTarget(
     };
   }
 
-  const url = previewHttpUrl(target.url);
+  const url = normalizePreviewHttpUrl(target.url);
   if (!url) return null;
   return {
     kind: 'url',
@@ -311,14 +312,4 @@ function agentPayloadPreviewName(payload: AgentPayloadRef): string {
   const summary = payload.summary?.replace(/\s+/gu, ' ').trim();
   if (summary) return summary;
   return `${payload.id}${extensionForMimeType(payload.mimeType)}`;
-}
-
-function previewHttpUrl(value: string): string | null {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
-    return url.toString();
-  } catch {
-    return null;
-  }
 }

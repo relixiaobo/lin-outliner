@@ -314,7 +314,9 @@ sources, but with `nodeId` set. That `nodeId` is the lifecycle switch:
 
 - Without `nodeId`, the view is a loose preview. The breadcrumb is sourced from
   the filesystem/source identity, the title is the read-only filename/source
-  label, and no children outline is mounted.
+  label, and no children outline is mounted. URL loose previews are the
+  exception to the file-like title layout: the breadcrumb/header shows the page
+  label or URL and the body starts directly with the webpage.
 - With `nodeId`, the view is an ingested file node. The breadcrumb is sourced
   from the outliner ancestry, the title remains the read-only filename, and the
   file node's children outline mounts below the preview hero.
@@ -384,10 +386,13 @@ Source authority stays source-specific:
   router. Renderer code never receives a payload file path.
 - `url` targets are first-class loose previews. Ordinary `http(s)` links from the
   outliner and agent transcript route into a Tenon split preview pane by default.
-  The pane renders the webpage through a dedicated sandboxed Electron webview that
-  allows only `http(s)` navigation, strips preload/Node privileges at attach time,
-  denies popups, and keeps the explicit fallback action for opening the URL in the
-  system browser.
+  URL targets normalize through one shared `http(s)`-only helper in core. The pane
+  renders the webpage through a dedicated sandboxed Electron webview that allows
+  only `http(s)` navigation, strips preload/Node privileges at attach time,
+  force-assigns the URL-preview partition, denies popups, and keeps the explicit
+  fallback action for opening the URL in the system browser. URL preview source
+  resolution is synchronous in the renderer because the source is the URL itself;
+  the pane must not show a file-preview loading overlay before the webview starts.
 
 Renderers are directory listing, image, PDF (`pdf.js`; every page is stacked
 vertically and scrolled to navigate — each page renders lazily as it nears the

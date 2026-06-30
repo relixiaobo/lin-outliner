@@ -39,6 +39,7 @@ import {
 } from '../core/agentTypes';
 import type { AgentAuthoringInput, AgentStorageLocation } from '../core/agentTypes';
 import { ASSET_URL_SCHEME, PREVIEW_LOCAL_URL_SCHEME, previewLocalUrl } from '../core/assets';
+import { normalizePreviewHttpUrl } from '../core/preview';
 import { handlePreviewCommand } from './previewSource';
 import { setBoundedMapEntry } from './boundedMap';
 import { LocalFilePreviewStreamRegistry } from './localFilePreviewStream';
@@ -482,7 +483,8 @@ function hardenWebContents(contents: Electron.WebContents) {
   contents.on('will-redirect', guardNavigation);
   contents.on('will-attach-webview', (event, webPreferences, params) => {
     const src = typeof params.src === 'string' ? params.src : '';
-    if (!previewHttpUrlForWebview(src) || params.partition !== URL_PREVIEW_WEBVIEW_PARTITION) {
+    const normalizedSrc = normalizePreviewHttpUrl(src);
+    if (!normalizedSrc) {
       event.preventDefault();
       return;
     }
@@ -501,7 +503,8 @@ function hardenWebContents(contents: Electron.WebContents) {
     webPreferences.safeDialogs = true;
     webPreferences.disableDialogs = true;
     webPreferences.navigateOnDragDrop = false;
-    params.src = src;
+    params.partition = URL_PREVIEW_WEBVIEW_PARTITION;
+    params.src = normalizedSrc;
   });
   contents.on('did-attach-webview', (_event, webContents) => {
     webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => {
@@ -513,23 +516,13 @@ function hardenWebContents(contents: Electron.WebContents) {
       return { action: 'deny' };
     });
     const guardWebviewNavigation = (event: Electron.Event, url: string) => {
-      if (previewHttpUrlForWebview(url)) return;
+      if (normalizePreviewHttpUrl(url)) return;
       event.preventDefault();
       openExternalUrl(url);
     };
     webContents.on('will-navigate', guardWebviewNavigation);
     webContents.on('will-redirect', guardWebviewNavigation);
   });
-}
-
-function previewHttpUrlForWebview(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
-    return parsed.toString();
-  } catch {
-    return null;
-  }
 }
 
 function configureSessionSecurity() {

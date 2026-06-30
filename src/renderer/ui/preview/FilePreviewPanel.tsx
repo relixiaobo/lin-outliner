@@ -17,7 +17,7 @@ import { useT } from '../../i18n/I18nProvider';
 import { type DocumentIndex, type UiState } from '../../state/document';
 import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import { BacklinksSection } from '../BacklinksSection';
-import { AddChildIcon, FolderIcon, ICON_SIZE, LibraryIcon, MoreIcon, OpenIcon } from '../icons';
+import { AddChildIcon, FolderIcon, ICON_SIZE, LibraryIcon, MoreIcon, OpenIcon, UrlIcon } from '../icons';
 import { buildOutlinerRows } from '../outliner/row-model';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { MenuItem } from '../primitives/MenuItem';
@@ -95,6 +95,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const boundFileNode = isFileNode(rootNode) ? rootNode : null;
   const fileRoot = readerMode ? null : boundFileNode;
   const nodeTarget = boundFileNode ? fileNodeTarget(boundFileNode) : null;
+  const looseUrlPreview = !readerMode && !boundFileNode && props.target.kind === 'url';
   const previewTitle = state.status === 'ready'
     ? sourceTitle(state.source)
     : props.target.label ?? targetTitleFallback(props.target);
@@ -304,7 +305,11 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
         canGoBack={props.canGoBack}
         closeLabel={t.nodePanel.closePanel}
         currentTitle={title}
-        origin={readerMode ? null : fileRoot ? (
+        origin={readerMode ? null : looseUrlPreview ? (
+          <span className="panel-breadcrumb-origin file-preview-path-origin" aria-hidden="true">
+            <UrlIcon size={PANEL_BREADCRUMB_ORIGIN_ICON_SIZE} />
+          </span>
+        ) : fileRoot ? (
           <ButtonControl
             aria-label={t.nodePanel.openLibrary}
             className="panel-breadcrumb-origin"
@@ -370,6 +375,26 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
               );
             })}
           </>
+        ) : looseUrlPreview ? (
+          <>
+            <span className="panel-breadcrumb-segment panel-breadcrumb-current file-preview-url-title">
+              <span className="panel-breadcrumb-current-label" data-current-page-title title={title}>
+                {title}
+              </span>
+            </span>
+            {looseUrlOpenAction ? (
+              <FilePreviewHeaderMenu
+                actions={[{
+                  key: 'open',
+                  label: looseUrlOpenAction.label,
+                  icon: OpenIcon,
+                  run: looseUrlOpenAction.run,
+                }]}
+                ariaLabel={previewLabels.actions}
+                meta={meta}
+              />
+            ) : null}
+          </>
         ) : (
           <>
             {looseBreadcrumbSegments.map((segment) => (
@@ -394,7 +419,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
         )}
       </PanelStickyBreadcrumb>
       <div className="panel-inner file-preview-content">
-        {!readerMode ? (
+        {!readerMode && !looseUrlPreview ? (
           <header className="panel-header">
             <div className="panel-title-row" ref={titleRowRef}>
               <div className="panel-title-editor" aria-label={t.nodePanel.pageTitleAriaLabel}>
@@ -461,7 +486,12 @@ function looseBreadcrumbFor(
     : target.kind === 'local-file' ? target.path : null;
   if (path) return collapsePathSegments(path);
   if (target.kind === 'agent-payload') return [{ key: 'agent-payload', label: labels.sourceAgentPayload }];
-  if (target.kind === 'url') return [{ key: 'url', label: labels.sourceUrl }];
+  if (target.kind === 'url') {
+    const title = state.status === 'ready' && state.source.kind === 'url'
+      ? state.source.title
+      : target.label ?? target.url;
+    return [{ key: 'url-title', label: title }];
+  }
   return [{ key: previewTargetFallbackKey(target), label: target.label ?? targetTitleFallback(target) }];
 }
 

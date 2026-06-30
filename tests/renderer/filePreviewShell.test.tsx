@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import type { PreviewFileSource } from '../../src/core/preview';
+import type { PreviewFileSource, PreviewTarget, PreviewUrlSource } from '../../src/core/preview';
 import { MoreIcon } from '../../src/renderer/ui/icons';
 import type { FilePreviewMenuAction } from '../../src/renderer/ui/preview/FilePreviewPill';
-import { FilePreviewShell } from '../../src/renderer/ui/preview/previewRenderers';
+import { FilePreviewShell, usePreviewSource } from '../../src/renderer/ui/preview/previewRenderers';
 
 const mounted: Array<{ cleanup: () => void }> = [];
 
@@ -127,6 +127,56 @@ describe('FilePreviewShell media controls', () => {
   });
 });
 
+describe('FilePreviewShell URL previews', () => {
+  test('renders URL previews as a direct webpage surface without file controls', () => {
+    const rendered = render(
+      <FilePreviewShell
+        state={{ status: 'ready', source: urlSource() }}
+        onOpenTarget={() => undefined}
+        menuActions={[menuAction('open')]}
+      />,
+    );
+
+    const webview = rendered.document.querySelector('.file-preview-url-webview');
+    expect(webview).not.toBeNull();
+    expect(webview?.getAttribute('partition')).toBe('url-preview');
+    expect(webview?.getAttribute('src')).toBe('https://example.com/docs');
+    expect(webview?.getAttribute('title')).toBe('Example docs');
+    expect(rendered.document.querySelector('.file-node-body--url')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--url.expanded')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-message')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-pill')).toBeNull();
+    expect(rendered.document.querySelector('.file-preview-resize-handle')).toBeNull();
+  });
+
+  test('resolves URL targets synchronously without preview IPC loading', async () => {
+    const invocations: string[] = [];
+    const rendered = render(
+      <PreviewSourceProbe target={{ kind: 'url', url: 'https://example.com/docs', label: 'Example docs' }} />,
+      {
+        lin: {
+          invoke: (command) => {
+            invocations.push(command);
+            return Promise.resolve({ source: null });
+          },
+        },
+      },
+    );
+
+    const output = rendered.document.querySelector('output');
+    expect(output?.getAttribute('data-status')).toBe('ready');
+    expect(output?.getAttribute('data-kind')).toBe('url');
+    expect(output?.getAttribute('data-url')).toBe('https://example.com/docs');
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(invocations).toEqual([]);
+    expect(rendered.document.querySelector('output')?.getAttribute('data-status')).toBe('ready');
+  });
+});
+
 function mediaSource(mimeType: string): PreviewFileSource {
   return {
     kind: 'file',
@@ -142,6 +192,29 @@ function mediaSource(mimeType: string): PreviewFileSource {
   };
 }
 
+function urlSource(): PreviewUrlSource {
+  return {
+    kind: 'url',
+    id: 'url:https://example.com/docs',
+    target: { kind: 'url', url: 'https://example.com/docs', label: 'Example docs' },
+    title: 'Example docs',
+    url: 'https://example.com/docs',
+  };
+}
+
+function PreviewSourceProbe({ target }: { target: PreviewTarget }) {
+  const state = usePreviewSource(target);
+  return (
+    <output
+      data-kind={state.status === 'ready' ? state.source.kind : ''}
+      data-status={state.status}
+      data-url={state.status === 'ready' && state.source.kind === 'url' ? state.source.url : ''}
+    >
+      {state.status}
+    </output>
+  );
+}
+
 function menuAction(key: string): FilePreviewMenuAction {
   return {
     key,
@@ -151,9 +224,15 @@ function menuAction(key: string): FilePreviewMenuAction {
   };
 }
 
-function render(node: React.ReactNode): { document: Document; window: Window } {
+function render(
+  node: React.ReactNode,
+  options: {
+    lin?: { invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown> };
+  } = {},
+): { document: Document; window: Window } {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
+  if (options.lin) (window as unknown as { lin: typeof options.lin }).lin = options.lin;
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
   const root = createRoot(container);

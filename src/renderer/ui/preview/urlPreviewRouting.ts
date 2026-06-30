@@ -1,8 +1,8 @@
-import type { PreviewTarget } from '../../../core/preview';
+import { normalizePreviewHttpUrl, type PreviewTarget } from '../../../core/preview';
 import { dispatchPreviewTargetOpen } from './previewEvents';
 
 export function previewTargetForUrl(url: string, label?: string): Extract<PreviewTarget, { kind: 'url' }> | null {
-  const normalized = normalizePreviewUrl(url);
+  const normalized = normalizePreviewHttpUrl(url);
   if (!normalized) return null;
   const trimmedLabel = label?.trim();
   return {
@@ -24,14 +24,4 @@ export function openUrlPreviewFromClick(
     target,
   });
   return true;
-}
-
-function normalizePreviewUrl(value: string): string | null {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
-    return url.toString();
-  } catch {
-    return null;
-  }
 }

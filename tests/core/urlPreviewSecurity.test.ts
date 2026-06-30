@@ -33,8 +33,10 @@ describe('URL preview webview security posture', () => {
     expect(MAIN_SRC).toContain('webPreferences.navigateOnDragDrop = false');
     expect(MAIN_SRC).toContain('delete params.preload');
     expect(MAIN_SRC).toContain('delete params.webpreferences');
-    expect(MAIN_SRC).toContain('previewHttpUrlForWebview(src)');
-    expect(MAIN_SRC).toContain('params.partition !== URL_PREVIEW_WEBVIEW_PARTITION');
+    expect(MAIN_SRC).toContain('normalizePreviewHttpUrl(src)');
+    expect(MAIN_SRC).toContain('normalizePreviewHttpUrl(url)');
+    expect(MAIN_SRC).toContain('params.partition = URL_PREVIEW_WEBVIEW_PARTITION');
+    expect(MAIN_SRC).not.toContain('params.partition !== URL_PREVIEW_WEBVIEW_PARTITION');
     expect(MAIN_SRC).toContain('webContents.session.setPermissionRequestHandler');
     expect(MAIN_SRC).toContain('webContents.session.setPermissionCheckHandler');
   });
@@ -43,7 +45,8 @@ describe('URL preview webview security posture', () => {
     const webview = PREVIEW_RENDERERS_SRC.match(/<webview[\s\S]*?\/>/)?.[0] ?? '';
     expect(webview).toContain('<webview');
     expect(webview).toContain('partition="url-preview"');
-    expect(PREVIEW_RENDERERS_SRC).toContain("addEventListener('did-stop-loading'");
+    expect(PREVIEW_RENDERERS_SRC).not.toContain("addEventListener('did-stop-loading'");
+    expect(PREVIEW_RENDERERS_SRC).not.toContain('file-preview-url-loading');
     expect(webview).not.toContain('preload=');
     expect(webview).not.toContain('nodeintegration');
     expect(webview).not.toContain('disablewebsecurity');

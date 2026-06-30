@@ -23,6 +23,7 @@ import type {
   PreviewTarget,
   PreviewUrlSource,
 } from '../../../core/preview';
+import { normalizePreviewHttpUrl } from '../../../core/preview';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import {
@@ -76,9 +77,17 @@ type TextState =
  * every render.
  */
 export function usePreviewSource(target: PreviewTarget): PreviewSourceState {
-  const [state, setState] = useState<PreviewSourceState>({ status: 'loading' });
+  const [state, setState] = useState<PreviewSourceState>(() => (
+    target.kind === 'url' ? previewSourceStateForUrlTarget(target) : { status: 'loading' }
+  ));
   useEffect(() => {
     let cancelled = false;
+    if (target.kind === 'url') {
+      setState(previewSourceStateForUrlTarget(target));
+      return () => {
+        cancelled = true;
+      };
+    }
     setState({ status: 'loading' });
     void api.resolvePreviewSource(target)
       .then((result) => {
@@ -94,6 +103,21 @@ export function usePreviewSource(target: PreviewTarget): PreviewSourceState {
     };
   }, [target]);
   return state;
+}
+
+function previewSourceStateForUrlTarget(target: Extract<PreviewTarget, { kind: 'url' }>): PreviewSourceState {
+  const url = normalizePreviewHttpUrl(target.url);
+  if (!url) return { status: 'missing', error: 'invalid-target' };
+  return {
+    status: 'ready',
+    source: {
+      kind: 'url',
+      id: `url:${url}`,
+      target: { ...target, url },
+      title: target.label?.trim() || url,
+      url,
+    },
+  };
 }
 
 const MARKDOWN_REMARK_PLUGINS = [remarkGfm];
@@ -389,7 +413,7 @@ export function FilePreviewShell({
         {metadataFallback ? pill : null}
       </div>
       {metadataFallback ? null : pill}
-      {previewable && !readerMode && !passivePlayback ? (
+      {previewable && !readerMode && !passivePlayback && !urlPreview ? (
         <div
           aria-label="Resize preview"
           aria-orientation="horizontal"
@@ -489,31 +513,11 @@ function ImagePreview({ source }: PreviewRendererProps) {
 }
 
 function UrlPreview({ source }: { source: PreviewUrlSource }) {
-  const labels = useT().shell.filePreview;
-  const webviewRef = useRef<HTMLWebViewElement | null>(null);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    setLoaded(false);
-  }, [source.url]);
-
-  useEffect(() => {
-    const webview = webviewRef.current;
-    if (!webview) return undefined;
-    const onLoadFinished = () => setLoaded(true);
-    webview.addEventListener('did-stop-loading', onLoadFinished);
-    return () => {
-      webview.removeEventListener('did-stop-loading', onLoadFinished);
-    };
-  }, [source.url]);
-
   return (
     <div className="file-preview-url" data-preserve-selection>
-      {!loaded ? <div className="file-preview-url-loading">{labels.loading}</div> : null}
       <webview
         className="file-preview-url-webview"
         partition="url-preview"
-        ref={webviewRef}
         src={source.url}
         title={source.title}
       />

@@ -167,18 +167,6 @@
   background: var(--surface);
 }
 
-.file-preview-url-loading {
-  position: absolute;
-  inset: 0;
-  z-index: var(--z-raised);
-  display: grid;
-  place-items: center;
-  background: var(--surface);
-  color: var(--text-muted);
-  font-size: var(--font-ui-md);
-  line-height: var(--line-ui-md);
-}
-
 /* Audio / video players on a media file node's page. */
 .file-preview-media {
   display: block;

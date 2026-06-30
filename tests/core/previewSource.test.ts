@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import type { AgentPayloadRef } from '../../src/core/agentEventLog';
-import type { PreviewListDirectoryResult, PreviewReadTextResult, PreviewResolveSourceResult } from '../../src/core/preview';
+import { normalizePreviewHttpUrl, type PreviewListDirectoryResult, type PreviewReadTextResult, type PreviewResolveSourceResult } from '../../src/core/preview';
 import { PREVIEW_LOCAL_URL_SCHEME } from '../../src/core/assets';
 import { handlePreviewCommand, type PreviewCommandContext } from '../../src/main/previewSource';
 import type { TrustedLocalFileReference } from '../../src/main/localFileReferenceSecurity';
@@ -216,6 +216,28 @@ describe('preview source commands', () => {
       streamUrl: `${PREVIEW_LOCAL_URL_SCHEME}://token-1`,
     });
     expect(issued).toEqual([{ path: await realpath(filePath), mimeType: 'video/mp4' }]);
+  });
+
+  test('normalizes only http(s) URL preview sources', async () => {
+    expect(normalizePreviewHttpUrl('https://example.com/docs')).toBe('https://example.com/docs');
+    expect(normalizePreviewHttpUrl('file:///tmp/report.html')).toBeNull();
+    expect(normalizePreviewHttpUrl('javascript:alert(1)')).toBeNull();
+
+    const resolved = await handlePreviewCommand('preview_resolve_source', {
+      target: { kind: 'url', url: 'https://example.com/docs', label: 'Example docs' },
+    }, previewContext()) as PreviewResolveSourceResult;
+    expect(resolved.source).toEqual({
+      kind: 'url',
+      id: 'url:https://example.com/docs',
+      target: { kind: 'url', url: 'https://example.com/docs', label: 'Example docs' },
+      title: 'Example docs',
+      url: 'https://example.com/docs',
+    });
+
+    const rejected = await handlePreviewCommand('preview_resolve_source', {
+      target: { kind: 'url', url: 'file:///tmp/report.html' },
+    }, previewContext()) as PreviewResolveSourceResult;
+    expect(rejected.source).toBeNull();
   });
 
   function previewContext(overrides: Partial<PreviewCommandContext> = {}): PreviewCommandContext {
