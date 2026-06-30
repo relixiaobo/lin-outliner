@@ -57,7 +57,7 @@ export function buildReadItem(index: ProjectionIndex, nodeId: string, params: No
     breadcrumb: breadcrumb(index, nodeId),
     children: buildChildrenPage(index, nodeId, params.depth, params.childOffset, params.childLimit, params.includeDeleted),
     backlinks: params.includeBacklinks ? backlinks(index, nodeId, params.includeDeleted) : undefined,
-    revision: revisionOf(node),
+    revision: editableOutlineRevision(index, nodeId),
     outline: serializeOutline(index, nodeId, params.depth, params.childOffset, params.childLimit, params.includeDeleted),
   };
 }
@@ -137,6 +137,15 @@ export function serializeAnnotatedOutline(
   return serializeAnnotatedOutlineNode(index, nodeId, depth, 0, childOffset, childLimit, includeDeleted).join('\n');
 }
 
+export function serializeEditableNodeOutline(index: ProjectionIndex, nodeId: string): string {
+  return serializeAnnotatedOutline(index, nodeId, 0, 0, 500, false);
+}
+
+export function editableOutlineRevision(index: ProjectionIndex, nodeId: string): string {
+  const node = requiredNode(index, nodeId);
+  return `${revisionOf(node)}:${stableTextHash(serializeEditableNodeOutline(index, nodeId))}`;
+}
+
 function serializeAnnotatedOutlineNode(
   index: ProjectionIndex,
   nodeId: string,
@@ -148,6 +157,15 @@ function serializeAnnotatedOutlineNode(
 ): string[] {
   const node = requiredNode(index, nodeId);
   const indent = '  '.repeat(level);
+  if (node.type === 'codeBlock') {
+    const lines = serializeCodeBlockOutlineNode(node, indent, nodeMarker(nodeId));
+    if (depth <= 0) return lines;
+    const childIds = normalChildIds(index, nodeId, includeDeleted).slice(childOffset, childOffset + childLimit);
+    for (const childId of childIds) {
+      lines.push(...serializeAnnotatedOutlineNode(index, childId, depth - 1, level + 1, 0, childLimit, includeDeleted));
+    }
+    return lines;
+  }
   const lines = [`${indent}- ${nodeMarker(nodeId)}${outlineNodeText(index, node)}`];
   for (const field of fieldReads(index, node, includeDeleted)) {
     const fieldIndent = '  '.repeat(level + 1);
@@ -173,6 +191,15 @@ function nodeMarker(nodeId: string): string {
   return `%%node:${nodeId}%% `;
 }
 
+function stableTextHash(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
 function serializeOutlineNode(
   index: ProjectionIndex,
   nodeId: string,
@@ -184,6 +211,15 @@ function serializeOutlineNode(
 ): string[] {
   const node = requiredNode(index, nodeId);
   const indent = '  '.repeat(level);
+  if (node.type === 'codeBlock') {
+    const lines = serializeCodeBlockOutlineNode(node, indent);
+    if (depth <= 0) return lines;
+    const childIds = normalChildIds(index, nodeId, includeDeleted).slice(childOffset, childOffset + childLimit);
+    for (const childId of childIds) {
+      lines.push(...serializeOutlineNode(index, childId, depth - 1, level + 1, 0, childLimit, includeDeleted));
+    }
+    return lines;
+  }
   const lines = [`${indent}- ${outlineNodeText(index, node)}`];
   for (const field of fieldReads(index, node, includeDeleted)) {
     const fieldIndent = '  '.repeat(level + 1);
@@ -221,6 +257,35 @@ function outlineNodeText(index: ProjectionIndex, node: NodeProjection): string {
   if (node.description) parts.push(`- ${node.description}`);
   parts.push(...tagLabels(index, node));
   return parts.join(' ').trim();
+}
+
+function serializeCodeBlockOutlineNode(node: NodeProjection, indent: string, marker = ''): string[] {
+  const language = node.type === 'codeBlock' ? node.codeLanguage ?? '' : '';
+  const body = node.content.text.replace(/\r\n?/gu, '\n').split('\n');
+  const fence = codeFenceFor(body);
+  const lines = [`${indent}- ${marker}${fence}${language}`];
+  for (const line of body) lines.push(`${indent}${line}`);
+  lines.push(`${indent}${fence}`);
+  return lines;
+}
+
+function codeFenceFor(lines: readonly string[]): string {
+  const backtickLength = longestLeadingFenceRun(lines, '`');
+  const tildeLength = longestLeadingFenceRun(lines, '~');
+  const char = backtickLength <= tildeLength ? '`' : '~';
+  const length = Math.max(3, (char === '`' ? backtickLength : tildeLength) + 1);
+  return char.repeat(length);
+}
+
+function longestLeadingFenceRun(lines: readonly string[], char: '`' | '~'): number {
+  let longest = 0;
+  for (const line of lines) {
+    const trimmed = line.trimStart();
+    let count = 0;
+    while (trimmed[count] === char) count += 1;
+    if (count >= 3) longest = Math.max(longest, count);
+  }
+  return longest;
 }
 
 export function pageHasMore(page: ChildrenPage): boolean {

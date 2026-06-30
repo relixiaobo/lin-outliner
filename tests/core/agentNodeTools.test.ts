@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { buildTextSearchIndex } from '../../src/core/searchEngine';
-import { TRASH_ID } from '../../src/core/types';
+import { plainText, replaceAllRichTextPatch, TRASH_ID } from '../../src/core/types';
 import { createNodeTools, visibleOperationHistory, type OutlinerToolHost } from '../../src/main/agentNodeTools';
 import type { OperationHistoryData } from '../../src/main/agentNodeToolTypes';
 import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
@@ -29,6 +29,8 @@ function hostFor(core: Core, overrides: Partial<OutlinerToolHost> = {}): Outline
       if (command === 'create_rich_text_node') return core.createRichTextContentNode(String(args.parentId), nullableNumber(args.index), args.content as any);
       if (command === 'apply_node_text_patch') return core.applyNodeTextPatch(String(args.nodeId), args.patch as any);
       if (command === 'update_node_description') return core.updateNodeDescription(String(args.nodeId), nullableString(args.description));
+      if (command === 'set_code_block') return core.setCodeBlock(String(args.nodeId), nullableString(args.codeLanguage) ?? undefined);
+      if (command === 'set_code_language') return core.setCodeLanguage(String(args.nodeId), String(args.codeLanguage ?? ''));
       if (command === 'set_node_checkbox_visible') return core.setNodeCheckboxVisible(String(args.nodeId), Boolean(args.visible));
       if (command === 'toggle_done') return core.toggleDone(String(args.nodeId));
       if (command === 'create_tag') return core.createTag(String(args.name ?? ''));
@@ -118,18 +120,32 @@ describe('agent node tools', () => {
     const nodeEdit = tools.find((tool) => tool.name === 'node_edit')!;
     const nodeSearch = tools.find((tool) => tool.name === 'node_search')!;
     const history = tools.find((tool) => tool.name === 'operation_history')!;
+    const nodeCreateOutlineDescription = (nodeCreate.parameters as any).properties.outline.description as string;
 
     expect(nodeRead.description).toContain('Use node_read before node_edit');
     expect(nodeCreate.description).toContain('Usage:');
     expect(nodeCreate.description).toContain('YYYY-MM-DDTHH:mm');
+    expect(nodeCreate.description).toContain('Use child nodes for ordinary notes');
+    expect(nodeCreate.description).toContain('Prefer nested child lines over node descriptions');
+    expect(nodeCreate.description).toContain('Prefer ordinary child nodes over Field:: lines');
+    expect(nodeCreate.description).toContain('Use [ ]/[x] only for real tasks');
+    expect(nodeCreate.description).toContain('Use %%search%% only when creating a saved search/view');
+    expect(nodeCreateOutlineDescription).toContain('Use "Title - description" only when the user explicitly asks');
+    expect(nodeCreateOutlineDescription).toContain('Markdown inline syntax creates rich-text marks');
     expect(JSON.stringify(nodeCreate.parameters)).toContain("today's journal node, not the current UI selection");
     expect(nodeSearch.description).toContain('DONE_LAST_DAYS value:: 7');
+    expect(nodeSearch.description).toContain('Use node_search for temporary lookup');
     expect(nodeSearch.description).toContain('Do not express done state as FIELD_IS');
     expect(nodeSearch.description).toContain('Use DATE_OVERLAPS only for values stored in a date field');
     expect(JSON.stringify(nodeSearch.parameters)).toContain('Plain field names');
     expect(JSON.stringify(nodeSearch.parameters)).toContain('Date field values use YYYY-MM-DD');
-    expect(nodeEdit.description).toContain('old_string "*" is not supported');
+    expect(nodeEdit.description).toContain('Set operation explicitly');
+    expect(JSON.stringify(nodeEdit.parameters)).toContain('replace_outline');
+    expect(nodeEdit.description).toContain('old_string "*" only to replace');
+    expect(nodeEdit.description).toContain('target root line only');
     expect(JSON.stringify(nodeEdit.parameters)).toContain('Date field values use YYYY-MM-DD');
+    expect(JSON.stringify(nodeEdit.parameters)).toContain('edits require expected_revision');
+    expect(JSON.stringify(nodeEdit.parameters)).toContain('leading %%node:id%% marker may be omitted');
     expect(JSON.stringify(nodeEdit.parameters)).toContain('Include enough surrounding lines');
     expect(history.description).toContain('Use action "list" first');
   });
@@ -168,6 +184,72 @@ describe('agent node tools', () => {
     const fieldEntry = core.state().nodes[fieldEntryId]!;
     expect(fieldEntry.type).toBe('fieldEntry');
     expect(fieldEntry.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['Active']);
+  });
+
+  test('node_create materializes markdown inline marks and links as rich text', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+
+    const result = await executeRawTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: '- Ship **bold** *italic* ~~old~~ ==hot== `code` [site](https://example.com)',
+    });
+
+    expect(result.details.ok).toBe(true);
+    const nodeId = result.details.data!.createdRootIds[0]!;
+    expect(core.state().nodes[nodeId]!.content).toEqual({
+      text: 'Ship bold italic old hot code site',
+      marks: [
+        { start: 5, end: 9, type: 'bold' },
+        { start: 10, end: 16, type: 'italic' },
+        { start: 17, end: 20, type: 'strike' },
+        { start: 21, end: 24, type: 'highlight' },
+        { start: 25, end: 29, type: 'code' },
+        { start: 30, end: 34, type: 'link', attrs: { href: 'https://example.com' } },
+      ],
+      inlineRefs: [],
+    });
+    expect(result.contentText).toContain('Ship **bold** *italic* ~~old~~ ==hot== `code` [site](https://example.com)');
+  });
+
+  test('node_create materializes fenced outline entries as code block rows', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+
+    const result = await executeRawTool<{ createdRootIds: string[]; createdNodeIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: '- Snippet\n  - ```ts\n  const x = 1\n  const y = 2\n  ```',
+    });
+
+    expect(result.details.ok).toBe(true);
+    const rootId = result.details.data!.createdRootIds[0]!;
+    const codeId = core.state().nodes[rootId]!.children[0]!;
+    expect(core.state().nodes[codeId]).toMatchObject({
+      type: 'codeBlock',
+      codeLanguage: 'typescript',
+      content: { text: 'const x = 1\nconst y = 2' },
+    });
+    const visible = parseVisibleToolResult<{ data?: { outline?: string } }>(result.contentText);
+    expect(visible.data!.outline).toContain(`  - %%node:${codeId}%% \`\`\`typescript\n  const x = 1\n  const y = 2\n  \`\`\``);
+  });
+
+  test('node_read serializes code block fences that do not collide with body fence runs', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+
+    const result = await executeRawTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: '- ````ts\n```literal\n````',
+    });
+
+    expect(result.details.ok).toBe(true);
+    const codeId = result.details.data!.createdRootIds[0]!;
+    expect(core.state().nodes[codeId]).toMatchObject({
+      type: 'codeBlock',
+      content: { text: '```literal' },
+    });
+    const read = await executeTool<{ items: Array<{ outline?: string }> }>(core, 'node_read', { node_id: codeId, depth: 0 });
+    expect(read.data!.items[0]!.outline).toBe('- ~~~typescript\n```literal\n~~~');
   });
 
   test('node_create fills existing tag-template date fields with canonical values', async () => {
@@ -653,16 +735,79 @@ describe('agent node tools', () => {
     expect(core.state().nodes[statusField]!.children).toContain(blockedValue);
   });
 
-  test('node_edit rejects whole-outline replacement and preserves children', async () => {
+  test('node_edit requires expected_revision for non-preview whole editable outline replacement', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+
+    const envelope = await executeTool(core, 'node_edit', {
+      node_id: root,
+      old_string: '*',
+      new_string: '- [x] Renamed #edited',
+    });
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('expected_revision_required');
+    expect(core.state().nodes[root]!.content.text).toBe('Task');
+  });
+
+  test('node_edit replaces the whole editable outline with revision guard', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+    const statusField = mustFocus(core.createInlineField(root, null, 'Status', 'plain'));
+    const statusValue = mustFocus(core.createNode(statusField, null, 'Open'));
+    const read = await executeTool<{ items: Array<{ revision: string }> }>(core, 'node_read', { node_id: root, depth: 0 });
+
+    const envelope = await executeTool<{ afterOutline?: string; matchedNodeIds?: string[] }>(core, 'node_edit', {
+      node_id: root,
+      old_string: '*',
+      new_string: `- [x] Renamed #edited\n  - %%node:${statusField}%% Status::\n    - %%node:${statusValue}%% Closed`,
+      expected_revision: read.data!.items[0]!.revision,
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.afterOutline).toContain(`- %%node:${root}%% [x] Renamed #edited`);
+    expect(envelope.data!.matchedNodeIds).toEqual(expect.arrayContaining([root, statusField, statusValue]));
+    expect(core.state().nodes[root]!.content.text).toBe('Renamed');
+    expect(core.state().nodes[statusValue]!.content.text).toBe('Closed');
+    expect(core.state().nodes[root]!.completedAt).toBeGreaterThan(0);
+  });
+
+  test('node_edit whole editable outline revision covers field value changes', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+    const statusField = mustFocus(core.createInlineField(root, null, 'Status', 'plain'));
+    const statusValue = mustFocus(core.createNode(statusField, null, 'Open'));
+    const read = await executeTool<{ items: Array<{ revision: string }> }>(core, 'node_read', { node_id: root, depth: 0 });
+
+    core.applyNodeTextPatch(statusValue, replaceAllRichTextPatch(plainText('User changed')));
+
+    const envelope = await executeTool(core, 'node_edit', {
+      node_id: root,
+      old_string: '*',
+      new_string: `- Task\n  - %%node:${statusField}%% Status::\n    - %%node:${statusValue}%% Closed`,
+      expected_revision: read.data!.items[0]!.revision,
+    });
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('revision_mismatch');
+    expect(core.state().nodes[statusValue]!.content.text).toBe('User changed');
+  });
+
+  test('node_edit rejects whole editable outline replacement with child structure and preserves children', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const root = mustFocus(core.createNode(today, null, 'Task'));
     const oldChild = mustFocus(core.createNode(root, null, 'Old child'));
+    const read = await executeTool<{ items: Array<{ revision: string }> }>(core, 'node_read', { node_id: root, depth: 0 });
 
     const envelope = await executeTool(core, 'node_edit', {
       node_id: root,
       old_string: '*',
       new_string: '- [x] Renamed - Done #edited\n  - Status:: Complete\n  - New child',
+      expected_revision: read.data!.items[0]!.revision,
     });
 
     expect(envelope.ok).toBe(false);
@@ -681,14 +826,53 @@ describe('agent node tools', () => {
     // old_string === new_string leaves the outline byte-identical → unchanged.
     const result = await executeRawTool<{ status: 'updated' | 'unchanged' }>(core, 'node_edit', {
       node_id: root,
-      old_string: 'Task',
-      new_string: 'Task',
+      old_string: '- Task',
+      new_string: '- Task',
     });
     const visible = parseVisibleToolResult<{ instructions?: string }>(result.contentText);
 
     expect(result.details.status).toBe('unchanged');
     expect(visible.instructions).toContain('No change was needed');
     expect(visible.instructions).not.toContain('Edit applied');
+  });
+
+  test('node_edit accepts explicit replace_outline operation and returns the next revision visibly', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+
+    const result = await executeRawTool<{ status: 'updated' | 'unchanged'; revisions?: Record<string, string> }>(core, 'node_edit', {
+      operation: 'replace_outline',
+      node_id: root,
+      old_string: '- Task',
+      new_string: '- Renamed',
+    });
+    const visible = parseVisibleToolResult<{ data?: { outline?: string; revisions?: Record<string, string> } }>(result.contentText);
+
+    expect(result.details.ok).toBe(true);
+    expect(result.details.data!.action).toBe('replace_outline');
+    expect(result.details.data!.revisions?.[root]).toBeTruthy();
+    expect(visible.data!.outline).toContain(`- %%node:${root}%% Renamed`);
+    expect(visible.data!.revisions?.[root]).toBe(result.details.data!.revisions?.[root]);
+  });
+
+  test('node_edit operation rejects fields from a different operation', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+
+    const envelope = await executeTool(core, 'node_edit', {
+      operation: 'move',
+      node_id: root,
+      old_string: '- Task',
+      new_string: '- Renamed',
+      move: { after_id: null },
+    });
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('invalid_args');
+    expect(envelope.error?.message).toContain('operation "move" cannot be combined with');
+    expect(core.state().nodes[root]!.content.text).toBe('Task');
   });
 
   test('node_edit preserves rich text metadata on unchanged titles and field values', async () => {
@@ -724,8 +908,8 @@ describe('agent node tools', () => {
 
     const envelope = await executeTool<{ status: 'updated' | 'unchanged' }>(core, 'node_edit', {
       node_id: root,
-      old_string: `  - %%node:${fieldEntryId}%% Status::\n    - %%node:${valueId}%% Open ${valueMarker}`,
-      new_string: `  - %%node:${fieldEntryId}%% Status::\n    - %%node:${valueId}%% Open ${valueMarker}\n    - Waiting`,
+      old_string: `  - %%node:${fieldEntryId}%% Status::\n    - %%node:${valueId}%% *Open* ${valueMarker}`,
+      new_string: `  - %%node:${fieldEntryId}%% Status::\n    - %%node:${valueId}%% *Open* ${valueMarker}\n    - Waiting`,
     });
 
     expect(envelope.ok).toBe(true);
@@ -780,6 +964,30 @@ describe('agent node tools', () => {
     const fieldEntryId = core.state().nodes[root]!.children[0]!;
     const fieldDefId = core.state().nodes[fieldEntryId]!.fieldDefId!;
     expect(core.state().nodes[fieldDefId]!.content.text).toBe(`Review ${staleMarker}`);
+  });
+
+  test('node_edit updates code block fenced text as plain code', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: '- ```ts\nconst x = 1\n```',
+    });
+    const nodeId = created.data!.createdRootIds[0]!;
+
+    const envelope = await executeTool<{ status: 'updated' | 'unchanged'; afterOutline?: string }>(core, 'node_edit', {
+      node_id: nodeId,
+      old_string: `- %%node:${nodeId}%% \`\`\`typescript\nconst x = 1\n\`\`\``,
+      new_string: `- %%node:${nodeId}%% \`\`\`typescript\nconst x = **1**\n\`\`\``,
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(core.state().nodes[nodeId]!.content).toEqual({
+      text: 'const x = **1**',
+      marks: [],
+      inlineRefs: [],
+    });
+    expect(envelope.data!.afterOutline).toContain('const x = **1**');
   });
 
   test('node_edit rejects out-of-root local-file markers from agent outlines', async () => {
@@ -882,6 +1090,62 @@ describe('agent node tools', () => {
     expect(core.state().nodes[root]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual(['Task C']);
   });
 
+  test('node_edit accepts target root line fragments without repeating the node marker', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+
+    const envelope = await executeTool<{
+      afterOutline?: string;
+      matchedNodeIds?: string[];
+    }>(core, 'node_edit', {
+      node_id: root,
+      old_string: '- Task',
+      new_string: '- [x] Task #done',
+    });
+
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data!.afterOutline).toContain(`- %%node:${root}%% [x] Task #done`);
+    expect(envelope.data!.matchedNodeIds).toContain(root);
+    expect(core.state().nodes[root]!.content.text).toBe('Task');
+    expect(core.state().nodes[root]!.completedAt).toBeGreaterThan(0);
+  });
+
+  test('node_edit does not rewrite a mismatched root marker from old_string', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Task'));
+
+    const envelope = await executeTool(core, 'node_edit', {
+      node_id: root,
+      old_string: '- %%node:other%% Task',
+      new_string: '- Task updated',
+    });
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('old_string_not_found');
+    expect(core.state().nodes[root]!.content.text).toBe('Task');
+  });
+
+  test('node_edit root shorthand does not fall back to matching field values', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const root = mustFocus(core.createNode(today, null, 'Project'));
+    const statusField = mustFocus(core.createInlineField(root, null, 'Status', 'plain'));
+    const statusValue = mustFocus(core.createNode(statusField, null, 'Task'));
+
+    const envelope = await executeTool(core, 'node_edit', {
+      node_id: root,
+      old_string: '- Task',
+      new_string: '- Task renamed',
+    });
+
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error?.code).toBe('old_string_not_found');
+    expect(core.state().nodes[root]!.content.text).toBe('Project');
+    expect(core.state().nodes[statusValue]!.content.text).toBe('Task');
+  });
+
   test('node_edit model-visible result returns current annotated outline after apply', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -919,8 +1183,9 @@ describe('agent node tools', () => {
     expect(visible.data).not.toHaveProperty('status');
     expect(visible.data!.outline).toContain(`%%node:${root}%% Root updated`);
     expect(visible.data!.outline).toContain('Task A');
-    expect(visible.data!.changes!.updated).toEqual(result.details.data!.affectedNodeIds);
+    expect(visible.data).not.toHaveProperty('changes');
     expect(JSON.stringify(visible)).not.toContain('beforeOutline');
+    expect(JSON.stringify(visible)).not.toContain('"updated"');
   });
 
   test('node_edit preserves omitted fields and field values', async () => {

@@ -155,6 +155,7 @@ export interface NodeDeleteParams {
 }
 
 export interface NodeEditParams {
+  operation?: NodeEditOperation;
   nodeId?: string;
   nodeIds?: string[];
   oldString?: string;
@@ -165,6 +166,8 @@ export interface NodeEditParams {
   replaceWithReferenceTo?: string;
   previewOnly?: boolean;
 }
+
+export type NodeEditOperation = 'replace_outline' | 'move' | 'merge' | 'replace_with_reference';
 
 export interface NodeEditMoveParams {
   parentId?: string;
@@ -208,7 +211,7 @@ export interface NodeDeleteData {
 }
 
 export interface NodeEditData {
-  action: 'outline_edit' | 'move' | 'merge' | 'replace_with_reference';
+  action: NodeEditOperation;
   status: 'updated' | 'unchanged';
   affectedNodeIds: string[];
   createdNodeIds?: string[];
@@ -302,8 +305,9 @@ export interface NodeVisibleSearchResult {
 }
 
 export interface NodeVisibleMutationResult {
-  changes: NodeVisibleChanges;
+  changes?: NodeVisibleChanges;
   outline?: string;
+  revisions?: Record<string, string>;
 }
 
 export interface NodeVisibleCountResult {
@@ -353,7 +357,7 @@ export interface ResolvedSearchSpec {
 }
 
 export type NormalizedEditParams =
-  | (NodeEditParams & { action: 'outline_edit'; nodeId: string; oldString: string; newString: string })
+  | (NodeEditParams & { action: 'replace_outline'; nodeId: string; oldString: string; newString: string })
   | (NodeEditParams & { action: 'move'; move: NodeEditMoveParams; nodeIds: string[] })
   | (NodeEditParams & { action: 'merge'; nodeId: string; mergeFromNodeIds: string[] })
   | (NodeEditParams & { action: 'replace_with_reference'; nodeId: string; replaceWithReferenceTo: string })

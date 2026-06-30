@@ -135,18 +135,14 @@ export function visibleDeleteResult(data: NodeDeleteData, previewOnly: boolean):
 
 export function visibleEditResult(data: NodeEditData, previewOnly: boolean, index?: ProjectionIndex): NodeVisiblePayload {
   const readableIds = readableEditNodeIds(data);
+  const outline = previewOnly
+    ? data.afterOutline
+    : index ? serializeAnnotatedOutlines(index, readableIds, 3, 0, 50, false) : undefined;
+  const changes = visibleEditChanges(data, previewOnly, Boolean(outline));
   const visible: NodeVisibleMutationResult = compactVisibleResult({
-    outline: previewOnly
-      ? data.afterOutline
-      : index ? serializeAnnotatedOutlines(index, readableIds, 3, 0, 50, false) : undefined,
-    changes: previewOnly
-      ? {}
-      : compactChanges({
-        updated: data.status === 'updated' ? editUpdatedNodeIds(data) : undefined,
-        created: data.createdNodeIds,
-        moved: data.movedNodeIds,
-        trashed: data.trashedNodeIds,
-      }) ?? {},
+    outline,
+    revisions: data.revisions,
+    changes,
   });
   // A non-preview edit can still be a real no-op (afterOutline == current).
   const outcome = previewOnly ? 'preview' : data.status === 'updated' ? 'applied' : 'unchanged';
@@ -170,6 +166,16 @@ function editUpdatedNodeIds(data: NodeEditData): string[] {
     ...(data.trashedNodeIds ?? []),
   ]);
   return data.affectedNodeIds.filter((nodeId) => !nonUpdatedIds.has(nodeId));
+}
+
+function visibleEditChanges(data: NodeEditData, previewOnly: boolean, hasOutline: boolean): NodeVisibleChanges | undefined {
+  if (previewOnly || hasOutline) return undefined;
+  return compactChanges({
+    updated: data.status === 'updated' ? editUpdatedNodeIds(data) : undefined,
+    created: data.createdNodeIds,
+    moved: data.movedNodeIds,
+    trashed: data.trashedNodeIds,
+  }) ?? {};
 }
 
 function readableEditNodeIds(data: NodeEditData): string[] {

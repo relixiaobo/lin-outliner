@@ -48,13 +48,19 @@ function ui(patch: Partial<UiState> = {}): UiState {
     selectedId: null,
     selectedIds: new Set(),
     selectionAnchorId: null,
+    selectionRootId: null,
+    selectionSource: null,
     focusRequest: null,
     pendingInputChar: null,
+    pendingReferenceConversion: null,
+    pendingReferenceTypeAhead: null,
+    trailingDraftPlacement: null,
     expanded: new Set(),
     expandedHiddenFields: new Set(),
     editingDescriptionId: null,
     commandOpen: false,
     batchTagSelectorOpen: false,
+    toolbarDropdownRequest: null,
     ...patch,
   };
 }
@@ -141,6 +147,70 @@ describe('agent user view context', () => {
         visibleOutlineTruncated: false,
       },
     ]);
+  });
+
+  test('summarizes selected rows when no row editor is focused', () => {
+    const index = buildIndex(projection([
+      node('workspace', 'Workspace', { children: ['root'] }),
+      node('root', 'Library', { parentId: 'workspace', children: ['today'] }),
+      node('today', '2026-05-19', { parentId: 'root', children: ['child-1', 'child-2'] }),
+      node('child-1', 'First selected', { parentId: 'today' }),
+      node('child-2', 'Second selected', { parentId: 'today' }),
+    ]));
+
+    const context = buildAgentUserViewContext({
+      activePanelId: 'panel-1',
+      panels: [{
+        id: 'panel-1',
+        type: 'workspace',
+        view: { kind: 'outliner', rootId: 'today' },
+        size: 1,
+        backStack: [],
+        forwardStack: [],
+      }],
+      index,
+      ui: ui({
+        focusedPanelId: 'panel-1',
+        selectedIds: new Set(['child-2', 'child-1']),
+        selectionRootId: 'today',
+      }),
+    });
+
+    expect(context.selectedNodes).toEqual([
+      { nodeId: 'child-1', title: 'First selected', panelId: 'panel-1', surface: 'selection' },
+      { nodeId: 'child-2', title: 'Second selected', panelId: 'panel-1', surface: 'selection' },
+    ]);
+  });
+
+  test('omits selected rows while a row editor is focused', () => {
+    const index = buildIndex(projection([
+      node('workspace', 'Workspace', { children: ['root'] }),
+      node('root', 'Library', { parentId: 'workspace', children: ['today'] }),
+      node('today', '2026-05-19', { parentId: 'root', children: ['child-1'] }),
+      node('child-1', 'Focused task', { parentId: 'today' }),
+    ]));
+
+    const context = buildAgentUserViewContext({
+      activePanelId: 'panel-1',
+      panels: [{
+        id: 'panel-1',
+        type: 'workspace',
+        view: { kind: 'outliner', rootId: 'today' },
+        size: 1,
+        backStack: [],
+        forwardStack: [],
+      }],
+      index,
+      ui: ui({
+        focusedId: 'child-1',
+        focusedPanelId: 'panel-1',
+        focusSurface: 'row',
+        selectedIds: new Set(['child-1']),
+        selectionRootId: 'today',
+      }),
+    });
+
+    expect(context.selectedNodes).toBeUndefined();
   });
 
   test('treats an ingested file-preview panel as a visible node panel', () => {

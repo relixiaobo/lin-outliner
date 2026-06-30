@@ -6552,12 +6552,16 @@ function normalizeAgentUserViewContext(input: unknown): AgentUserViewContext | n
   const referencedNodes = Array.isArray(input.referencedNodes)
     ? input.referencedNodes.slice(0, 20).map(normalizeUserViewNode).filter((node): node is AgentUserViewNode => Boolean(node))
     : [];
+  const selectedNodes = Array.isArray(input.selectedNodes)
+    ? input.selectedNodes.slice(0, 50).map(normalizeUserViewNode).filter((node): node is AgentUserViewNode => Boolean(node))
+    : [];
 
   return {
     activePanelId: nullableCompactString(input.activePanelId, 160),
     focusedPanelId: nullableCompactString(input.focusedPanelId, 160),
     focusSurface: nullableCompactString(input.focusSurface, 80),
     focusedNode: normalizeUserViewNode(input.focusedNode),
+    ...(selectedNodes.length > 0 ? { selectedNodes } : {}),
     nodePanels,
     ...(referencedNodes.length > 0 ? { referencedNodes } : {}),
   };

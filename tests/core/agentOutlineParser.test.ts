@@ -74,4 +74,34 @@ describe('agent outline parser', () => {
     expect(parsed.document.roots[2]?.title).toBe('[x]pending');
     expect(parsed.document.roots[2]?.checked).toBeUndefined();
   });
+
+  test('rejects unclosed code fences', () => {
+    const parsed = parseLinOutline([
+      '- ```ts',
+      'const x = 1',
+      '- Next node',
+    ].join('\n'));
+
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.error.code).toBe('unclosed_code_fence');
+    expect(parsed.error.line).toBe(1);
+    expect(parsed.error.message).toContain('closing ``` fence');
+  });
+
+  test('supports longer code fences when the body contains shorter fences', () => {
+    const parsed = parseLinOutline([
+      '- ````ts',
+      '```literal',
+      '````',
+    ].join('\n'));
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.document.roots[0]).toMatchObject({
+      codeBlock: true,
+      codeLanguage: 'typescript',
+      title: '```literal',
+    });
+  });
 });
