@@ -148,6 +148,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **Tana-style view toolbar polish (PR #350, codex-2)** — node and saved-search result toolbars now use a
+  field-first interaction model: a real leading name-filter chip writes `sys:name contains` filter rules;
+  Display/Group/Sort/Filter menus open as contextual popovers; filter summary chips target the exact saved
+  rule id, including multiple filters on the same field; Sort shows priority metadata and blocks duplicate
+  pending adds; and filtered-out rows use a clearer expandable disclosure. Nested toolbars align with their
+  owner row column, portal tooltips replace duplicated native/CSS tips, and search-result summary bars route
+  into the same toolbar path. `docs/spec/ui-behavior.md` synced. **Gate (main):** review found two race bugs
+  (stale filter-chip input reuse and pending-sort duplicate creation); round-2 fix `d30c67f8` resolved both
+  with regression E2E. Verified: `definition-config` E2E 15/0, `search-query-builder` E2E 2/0,
+  `test:renderer` 633/0, `docs:check`, and `git diff --check`.
+
 - **pi-ai / pi-agent-core upgraded `0.78.0 → 0.80.2` with a clean `Models` migration (PR #348, codex-3)** —
   the main-process agent runtime moves off the removed pi global helpers
   (`completeSimple`/`streamSimple`/`getModels`/`getProviders`/`getProviderApiKey`/`getOAuthApiKey`) onto the

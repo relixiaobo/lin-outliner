@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345**) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332; authored ratified plan agent-process-stable-disclosure #297) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -354,9 +354,6 @@ archived `done` (see Recently completed). Remaining active work:
   are extracted. Full detail in the archived plan `docs/plans/archive/i18n-multi-language.md`.
 - **floating-toolbar-polish** (P3) — heading-mark toggle + `#` selection
   extract in the floating editor toolbar.
-- **view-toolbar-name-filter** (P3, *no plan file*) — quick incremental name filter as the
-  view toolbar's first control (Tana-style); needs backend/data-model support.
-  Optional follow-ons: `is_not` for options filters; relative-date operands.
 - **embed-strategy** (P3, decision-only, **no deadline**) — decide live iframe vs
   cached-metadata embeds (Option B recommended), or fall back to Option C and remove
   the dead `embedType`/`embedId` schema in a future data-model cleanup. See
@@ -428,6 +425,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **view-toolbar-tana-polish** (`codex-2/view-toolbar-tana-polish`, PR #350, codex-2,
+  merged 2026-06-30, fast-track) — polishes the node/saved-search view toolbar around the Tana
+  interaction model. The toolbar now has a real leading name-filter chip backed by `sys:name contains`
+  `filterRule` state, field-first Display/Group/Sort/Filter popovers, exact filter-rule summary chips
+  (including duplicate filters on the same field), sort priority metadata, stable portal tooltips, and
+  clearer filtered-out row affordances. Nested toolbars align with their owner row column instead of the
+  first child row. Search-result summary bars expose the same result-view toolbar path. **Gate (main):**
+  review found two race bugs (stale uncontrolled filter values when switching chips, and duplicate sort
+  adds after backing out of a pending add); codex-2 fixed both in `d30c67f8` with regression tests.
+  Verified on the PR head with targeted toolbar/search E2E, `test:renderer` 633/0, `docs:check`, and
+  `git diff --check`; unmerged-head `typecheck`/`test:core` were blocked by the then-base branch's
+  pi-ai helper mismatch. After merge onto current `main`, the final gate passed with typecheck,
+  `test:core` 1115/0, `test:renderer` 668/0, toolbar/search E2E, `docs:check`, and `git diff --check`.
+  Fast-track, **shape (a)**, *no plan file*.
 
 - **preview-first-links-html-renderer** (`codex/preview-first-links-html-renderer`, PR #345, codex,
   merged 2026-06-30) — completes the next file-preview slice: ordinary `http(s)` links from the outliner,
