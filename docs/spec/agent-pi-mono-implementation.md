@@ -361,6 +361,12 @@ bounded: short timeout, tiny output budget, cancellable UI.
    compaction and overflow math do not fall back to generic custom-model
    defaults. Provider-specific dispatch knobs such as model headers and
    compatibility overrides are not copied onto the custom endpoint model.
+   The custom endpoint's request-auth resolver prefers, in order: an explicit
+   request key → a deliberately-stored `api_key` → (local endpoints only) an
+   inert client key → the external provider's ambient auth. A keyless localhost
+   server stays runnable through the inert key, but an **ambient** provider key
+   (env / OAuth / managed) is never forwarded to localhost; a keyless *remote*
+   endpoint resolves no credential and fails rather than borrowing one.
 
 Assistant events still record the actual `providerId`, `modelId`, `usage`, and
 thinking level so Details / debug stay faithful — the connection-only storage

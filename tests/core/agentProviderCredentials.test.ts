@@ -256,19 +256,24 @@ describe('provider credential resolver', () => {
     expect(piModels().getProvider(piCustomProviderId('openai'))?.baseUrl).toBe('http://localhost:1234/v1');
   });
 
-  test('custom OpenAI-compatible providers prefer an inert key for local endpoints', async () => {
+  test('local endpoints use a stored key but never the ambient env key', async () => {
     const savedOpenAIKey = process.env.OPENAI_API_KEY;
     try {
       process.env.OPENAI_API_KEY = 'env-openai-key';
-      await setProviderApiKey('openai', 'stored-openai-key');
       ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'http://localhost:1234/v1', modelId: 'local-model' });
-
-      const localAuth = await piModels().getAuth(createOpenAICompatibleModel({
+      const model = createOpenAICompatibleModel({
         providerId: 'openai',
         modelId: 'local-model',
         baseUrl: 'http://localhost:1234/v1',
-      }));
-      expect(localAuth?.auth.apiKey).toBe('local-endpoint');
+      });
+
+      // No stored key: a local endpoint falls back to the inert sentinel and never
+      // forwards the ambient OPENAI_API_KEY to localhost.
+      expect((await piModels().getAuth(model))?.auth.apiKey).toBe('local-endpoint');
+
+      // A deliberately-stored key wins (e.g. a local proxy fronted by a master key).
+      await setProviderApiKey('openai', 'stored-openai-key');
+      expect((await piModels().getAuth(model))?.auth.apiKey).toBe('stored-openai-key');
     } finally {
       restoreEnv('OPENAI_API_KEY', savedOpenAIKey);
     }

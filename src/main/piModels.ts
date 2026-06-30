@@ -123,9 +123,14 @@ export function ensurePiCustomProvider(config: PiCustomProviderConfig): void {
         name: `${config.providerId} API key`,
         resolve: async ({ credential: requestCredential, model }) => {
           if (requestCredential?.key) return { auth: { apiKey: requestCredential.key }, source: 'request override' };
-          if (isLocalBaseUrl(model.baseUrl)) return { auth: { apiKey: 'local-endpoint' }, source: 'local endpoint' };
+          // A deliberately-stored key wins everywhere (e.g. a local proxy fronted by a
+          // master key). Only AFTER that does a local endpoint fall back to an inert
+          // client key — so a keyless localhost server stays runnable, but we never
+          // forward an AMBIENT provider key (env / OAuth / managed) to localhost. Remote
+          // endpoints get no such sentinel and must resolve a real credential or fail.
           const storedCredential = await readCredential(config.providerId);
           if (storedCredential?.type === 'api_key' && storedCredential.key) return { auth: { apiKey: storedCredential.key }, source: 'stored credential' };
+          if (isLocalBaseUrl(model.baseUrl)) return { auth: { apiKey: 'local-endpoint' }, source: 'local endpoint' };
           const externalAuth = await resolveExternalProviderRequestAuth(config.providerId);
           if (externalAuth) return externalAuth;
           return undefined;

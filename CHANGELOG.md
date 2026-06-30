@@ -136,8 +136,9 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
   managed credentials, provider-specific headers/env, and the Cloudflare AI Gateway baseUrl shape — now
   resolves at request time via `Models.applyAuth()` instead of being flattened into an `apiKey` string.
   Keyless endpoints are allowed for localhost/loopback/`*.localhost` only (shared `isLocalBaseUrl`
-  predicate in `src/core/localEndpoint.ts`), and such local endpoints use an inert client key rather than
-  any stored or ambient cloud key. Picks up upstream provider-metadata, billing-hazard, and vulnerable-dep
+  predicate in `src/core/localEndpoint.ts`); a local endpoint uses a deliberately-stored key when one
+  exists (e.g. a local proxy fronted by a master key) and otherwise an inert client key — an **ambient**
+  provider key (env / OAuth / managed) is never forwarded to localhost. Picks up upstream provider-metadata, billing-hazard, and vulnerable-dep
   fixes. Gated by `/code-review xhigh` (10 finder angles + sweep) with a round-2 pass that preserved real
   model context windows behind custom endpoints, kept `api_key` credential `env` across the store
   round-trip, and stopped pruning keyless-remote provider rows at startup.
