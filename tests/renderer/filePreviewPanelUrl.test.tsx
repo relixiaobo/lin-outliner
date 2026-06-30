@@ -26,6 +26,32 @@ describe('FilePreviewPanel URL preview chrome', () => {
     expect(rendered.document.querySelector('.file-preview-message')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-url-webview')?.getAttribute('src')).toBe('https://example.com/docs');
   });
+
+  test('updates the breadcrumb from webview page title and favicon events', async () => {
+    const rendered = renderUrlPanel();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const webview = rendered.document.querySelector('.file-preview-url-webview');
+    if (!webview) throw new Error('Missing URL webview');
+
+    await act(async () => {
+      const titleEvent = new rendered.window.Event('page-title-updated');
+      Object.defineProperty(titleEvent, 'title', { value: 'vega / vega-lite' });
+      webview.dispatchEvent(titleEvent);
+
+      const faviconEvent = new rendered.window.Event('page-favicon-updated');
+      Object.defineProperty(faviconEvent, 'favicons', { value: ['https://github.githubassets.com/favicons/favicon.svg'] });
+      webview.dispatchEvent(faviconEvent);
+      await Promise.resolve();
+    });
+
+    expect(rendered.document.querySelector('.file-preview-url-title')?.textContent).toContain('vega / vega-lite');
+    const favicon = rendered.document.querySelector<HTMLImageElement>('.file-preview-url-favicon');
+    expect(favicon?.getAttribute('src')).toBe('https://github.githubassets.com/favicons/favicon.svg');
+  });
 });
 
 function renderUrlPanel(): { document: Document; window: Window } {

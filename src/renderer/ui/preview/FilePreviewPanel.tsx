@@ -46,6 +46,7 @@ import {
   sourceTitle,
   targetTitleFallback,
   usePreviewSource,
+  type UrlPreviewPageMetadata,
 } from './previewRenderers';
 
 const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 13;
@@ -100,6 +101,8 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     ? sourceTitle(state.source)
     : props.target.label ?? targetTitleFallback(props.target);
   const title = boundFileNode ? fileNodeTitle(boundFileNode) || previewTitle : previewTitle;
+  const [urlPageMetadata, setUrlPageMetadata] = useState<UrlPreviewPageMetadata>({});
+  const displayTitle = looseUrlPreview ? urlPageMetadata.title ?? title : title;
   const canOpen = state.status === 'ready' && canOpenPreviewSource(state.source);
   const canReveal = state.status === 'ready' && canRevealPreviewSource(state.source);
   const canAdd = canAddPreviewTargetToOutline(props.target);
@@ -130,6 +133,25 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     expandedHiddenFields: props.ui.expandedHiddenFields,
     systemFieldContext,
   }), [fileRoot, props.index.byId, props.ui.expandedHiddenFields, systemFieldContext]);
+
+  useEffect(() => {
+    if (!looseUrlPreview) {
+      setUrlPageMetadata({});
+      return;
+    }
+    setUrlPageMetadata({ title });
+  }, [looseUrlPreview, targetKey, title]);
+
+  const handleUrlMetadataChange = useCallback((metadata: UrlPreviewPageMetadata) => {
+    setUrlPageMetadata((prev) => {
+      const next = {
+        ...prev,
+        ...(metadata.title ? { title: metadata.title } : {}),
+        ...(metadata.faviconUrl ? { faviconUrl: metadata.faviconUrl } : {}),
+      };
+      return next.title === prev.title && next.faviconUrl === prev.faviconUrl ? prev : next;
+    });
+  }, []);
 
   const openOriginal = useCallback(() => {
     if (state.status !== 'ready') return;
@@ -297,17 +319,21 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     <main
       className={`main-panel file-preview-panel ${readerMode ? 'file-preview-panel--reader' : ''}`}
       ref={mainPanelRef}
-      aria-label={title}
+      aria-label={displayTitle}
       onScroll={handlePanelScroll}
     >
       <PanelStickyBreadcrumb
         breadcrumbAriaLabel={t.nodePanel.breadcrumbAriaLabel}
         canGoBack={props.canGoBack}
         closeLabel={t.nodePanel.closePanel}
-        currentTitle={title}
+        currentTitle={displayTitle}
         origin={readerMode ? null : looseUrlPreview ? (
           <span className="panel-breadcrumb-origin file-preview-path-origin" aria-hidden="true">
-            <UrlIcon size={PANEL_BREADCRUMB_ORIGIN_ICON_SIZE} />
+            {urlPageMetadata.faviconUrl ? (
+              <img className="file-preview-url-favicon" alt="" src={urlPageMetadata.faviconUrl} />
+            ) : (
+              <UrlIcon size={PANEL_BREADCRUMB_ORIGIN_ICON_SIZE} />
+            )}
           </span>
         ) : fileRoot ? (
           <ButtonControl
@@ -332,8 +358,8 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
         {readerMode ? (
           <>
             <span className="panel-breadcrumb-segment panel-breadcrumb-current file-preview-reader-title">
-              <span className="panel-breadcrumb-current-label" data-current-page-title title={title}>
-                {title}
+              <span className="panel-breadcrumb-current-label" data-current-page-title title={displayTitle}>
+                {displayTitle}
               </span>
             </span>
             {readerMenuActions.length > 0 ? (
@@ -378,8 +404,8 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
         ) : looseUrlPreview ? (
           <>
             <span className="panel-breadcrumb-segment panel-breadcrumb-current file-preview-url-title">
-              <span className="panel-breadcrumb-current-label" data-current-page-title title={title}>
-                {title}
+              <span className="panel-breadcrumb-current-label" data-current-page-title title={displayTitle}>
+                {displayTitle}
               </span>
             </span>
             {looseUrlOpenAction ? (
@@ -437,6 +463,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
           meta={meta}
           initialExpanded={readerMode}
           readerMode={readerMode}
+          onUrlMetadataChange={looseUrlPreview ? handleUrlMetadataChange : undefined}
         />
         {fileRoot && (
           <>

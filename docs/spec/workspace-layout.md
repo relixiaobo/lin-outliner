@@ -315,8 +315,9 @@ sources, but with `nodeId` set. That `nodeId` is the lifecycle switch:
 - Without `nodeId`, the view is a loose preview. The breadcrumb is sourced from
   the filesystem/source identity, the title is the read-only filename/source
   label, and no children outline is mounted. URL loose previews are the
-  exception to the file-like title layout: the breadcrumb/header shows the page
-  label or URL and the body starts directly with the webpage.
+  exception to the file-like title layout: the breadcrumb/header shows the
+  webpage favicon and page title when the webview reports them, falling back to
+  the link label or URL, and the body starts directly with the webpage.
 - With `nodeId`, the view is an ingested file node. The breadcrumb is sourced
   from the outliner ancestry, the title remains the read-only filename, and the
   file node's children outline mounts below the preview hero.

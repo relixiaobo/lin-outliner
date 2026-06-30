@@ -152,8 +152,14 @@
   min-height: 0;
   flex: 1 1 auto;
   overflow: hidden;
-  border-radius: var(--file-preview-page-radius);
   background: var(--surface);
+}
+
+.file-preview-url-favicon {
+  display: block;
+  width: 13px;
+  height: 13px;
+  border-radius: var(--radius-2xs);
 }
 
 .file-preview-url-webview {
@@ -1002,6 +1008,14 @@
 .file-node-preview--url {
   display: flex;
   min-height: min(70vh, 720px);
+  overflow: hidden;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.file-node-preview.file-node-preview--url {
+  padding-bottom: 0;
 }
 
 .file-node-preview--reader.file-node-preview--url {

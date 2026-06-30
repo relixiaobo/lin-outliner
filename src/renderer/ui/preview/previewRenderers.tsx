@@ -65,6 +65,11 @@ export type PreviewSourceState =
   | { status: 'ready'; source: PreviewSourceDescriptor }
   | { status: 'missing'; error?: string };
 
+export interface UrlPreviewPageMetadata {
+  faviconUrl?: string;
+  title?: string;
+}
+
 type TextState =
   | { status: 'loading' }
   | { status: 'ready'; text: string }
@@ -166,6 +171,7 @@ export interface PreviewRendererProps {
   mediaActions?: ReactElement | null;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   onSummaryPageSelect?: (pageNumber: number) => void;
+  onUrlMetadataChange?: (metadata: UrlPreviewPageMetadata) => void;
   source: PreviewFileSource;
   scrollToPageNumber?: number | null;
   onScrollToPageNumberConsumed?: () => void;
@@ -213,6 +219,7 @@ export function isPassivePlaybackSource(source: PreviewSourceDescriptor): boolea
 export function PreviewRenderer({
   displayMode,
   onSummaryPageSelect,
+  onUrlMetadataChange,
   onOpenTarget,
   scrollToPageNumber,
   onScrollToPageNumberConsumed,
@@ -227,10 +234,11 @@ export function PreviewRenderer({
   scrollToPageNumber?: number | null;
   onScrollToPageNumberConsumed?: () => void;
   source: PreviewSourceDescriptor;
+  onUrlMetadataChange?: (metadata: UrlPreviewPageMetadata) => void;
   scrollRootRef?: RefObject<HTMLElement | null>;
 }) {
   if (source.kind === 'url') {
-    return <UrlPreview source={source} />;
+    return <UrlPreview onMetadataChange={onUrlMetadataChange} source={source} />;
   }
   const Renderer = FILE_PREVIEW_RENDERERS.find((entry) => entry.match(source))?.component ?? MetadataPreview;
   return (
@@ -260,6 +268,7 @@ export interface FilePreviewShellProps {
   initialExpanded?: boolean;
   /** Dedicated split-pane reader: full content only, with header actions outside the preview. */
   readerMode?: boolean;
+  onUrlMetadataChange?: (metadata: UrlPreviewPageMetadata) => void;
 }
 
 /**
@@ -281,6 +290,7 @@ export function FilePreviewShell({
   meta = null,
   initialExpanded = false,
   readerMode = false,
+  onUrlMetadataChange,
 }: FilePreviewShellProps) {
   const labels = useT().shell.filePreview;
   const previewRef = useRef<HTMLDivElement | null>(null);
@@ -402,6 +412,7 @@ export function FilePreviewShell({
           <PreviewRenderer
             displayMode={displayMode}
             onSummaryPageSelect={openSummaryPage}
+            onUrlMetadataChange={onUrlMetadataChange}
             source={state.source}
             onOpenTarget={onOpenTarget}
             scrollToPageNumber={effectiveExpanded ? scrollToPageNumber : null}
@@ -512,17 +523,61 @@ function ImagePreview({ source }: PreviewRendererProps) {
   );
 }
 
-function UrlPreview({ source }: { source: PreviewUrlSource }) {
+function UrlPreview({
+  onMetadataChange,
+  source,
+}: {
+  onMetadataChange?: (metadata: UrlPreviewPageMetadata) => void;
+  source: PreviewUrlSource;
+}) {
+  const webviewRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    onMetadataChange?.({ title: source.title });
+  }, [onMetadataChange, source.title]);
+
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (!webview || !onMetadataChange) return undefined;
+    const onTitle = (event: Event) => {
+      const title = typeof (event as Event & { title?: unknown }).title === 'string'
+        ? (event as Event & { title: string }).title.trim()
+        : '';
+      if (title) onMetadataChange({ title });
+    };
+    const onFavicon = (event: Event) => {
+      const faviconUrl = firstPreviewFaviconUrl((event as Event & { favicons?: unknown }).favicons);
+      if (faviconUrl) onMetadataChange({ faviconUrl });
+    };
+    webview.addEventListener('page-title-updated', onTitle);
+    webview.addEventListener('page-favicon-updated', onFavicon);
+    return () => {
+      webview.removeEventListener('page-title-updated', onTitle);
+      webview.removeEventListener('page-favicon-updated', onFavicon);
+    };
+  }, [onMetadataChange]);
+
   return (
     <div className="file-preview-url" data-preserve-selection>
       <webview
         className="file-preview-url-webview"
         partition="url-preview"
+        ref={webviewRef}
         src={source.url}
         title={source.title}
       />
     </div>
   );
+}
+
+function firstPreviewFaviconUrl(favicons: unknown): string | undefined {
+  if (!Array.isArray(favicons)) return undefined;
+  for (const candidate of favicons) {
+    if (typeof candidate !== 'string') continue;
+    const normalized = normalizePreviewHttpUrl(candidate);
+    if (normalized) return normalized;
+  }
+  return undefined;
 }
 
 /**
