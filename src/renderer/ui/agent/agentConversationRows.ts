@@ -22,7 +22,7 @@ export interface AgentConversationRenderRow {
 }
 
 export function isBoundaryEntry(entry: AgentConversationEntry): boolean {
-  return entry.kind === 'compaction' || entry.kind === 'dream' || entry.kind === 'child-run';
+  return entry.kind === 'compaction' || entry.kind === 'context-clear' || entry.kind === 'dream' || entry.kind === 'child-run';
 }
 
 export function getEntryRole(entry: AgentConversationEntry): 'user' | 'assistant' | 'system' {
@@ -32,6 +32,7 @@ export function getEntryRole(entry: AgentConversationEntry): 'user' | 'assistant
 export function getEntryTimestamp(entry: AgentConversationEntry): number {
   if (entry.kind === 'dream') return entry.status === 'active' ? entry.dream.startedAt : entry.dream.createdAt;
   if (entry.kind === 'child-run') return entry.childRun.startedAt;
+  if (entry.kind === 'context-clear') return entry.contextClear.createdAt;
   if (entry.kind !== 'compaction') return entry.message.timestamp;
   return entry.status === 'active' ? entry.compaction.startedAt : entry.compaction.createdAt;
 }

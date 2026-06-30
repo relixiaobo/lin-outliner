@@ -348,6 +348,65 @@ describe('agent event log', () => {
     ]);
   });
 
+  test('context clear keeps history visible but removes it from runtime context', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Clear' },
+      {
+        ...base(2, 'user_message.created', userActor),
+        messageId: 'user-before-clear',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Old question' }],
+      },
+      {
+        ...base(3, 'assistant_message.started', agentActor),
+        runId: 'run-before-clear',
+        messageId: 'assistant-before-clear',
+        parentMessageId: 'user-before-clear',
+        providerId: 'test',
+        modelId: 'test',
+      },
+      {
+        ...base(4, 'assistant_message.completed', agentActor),
+        messageId: 'assistant-before-clear',
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Old answer' }],
+      },
+      {
+        ...base(5, 'context.cleared'),
+        messageId: 'clear-root',
+        source: { fromMessageId: 'user-before-clear', throughMessageId: 'assistant-before-clear' },
+      },
+      {
+        ...base(6, 'user_message.created', systemActor),
+        messageId: 'clear-root',
+        parentMessageId: null,
+        content: [{ type: 'text', text: 'Context cleared.' }],
+      },
+      {
+        ...base(7, 'user_message.created', userActor),
+        messageId: 'user-after-clear',
+        parentMessageId: 'clear-root',
+        content: [{ type: 'text', text: 'New question' }],
+      },
+    ]);
+
+    expect(getAgentEventRuntimeTranscriptPath(state).map((message) => message.id)).toEqual([
+      'clear-root',
+      'user-after-clear',
+    ]);
+    expect(JSON.stringify(deriveAgentPiMessages(state))).not.toContain('Old question');
+    expect(JSON.stringify(deriveAgentPiMessages(state))).toContain('Context cleared.');
+    expect(getAgentEventVisibleTranscript(state).map((entry) => ({
+      id: entry.message.id,
+      archived: entry.archived,
+    }))).toEqual([
+      { id: 'user-before-clear', archived: true },
+      { id: 'assistant-before-clear', archived: true },
+      { id: 'clear-root', archived: false },
+      { id: 'user-after-clear', archived: false },
+    ]);
+  });
+
   test('uses mixed-resolution runtime history after compaction', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Compaction with tools' },

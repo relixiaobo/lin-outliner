@@ -52,6 +52,7 @@ import {
   WarningIcon,
 } from '../icons';
 import { AgentCompactionBoundary } from './AgentCompactionBoundary';
+import { AgentContextClearBoundary } from './AgentContextClearBoundary';
 import { AgentDreamBoundary } from './AgentDreamBoundary';
 import { AgentComposer } from './AgentComposer';
 import { DreamLauncher } from './DreamLauncher';
@@ -1223,6 +1224,9 @@ export function AgentChatPanel({
   function renderConversationRow(row: AgentConversationRenderRow, highlighted = false): ReactNode {
     if (row.entry.kind === 'compaction') {
       return <AgentCompactionBoundary entry={row.entry} />;
+    }
+    if (row.entry.kind === 'context-clear') {
+      return <AgentContextClearBoundary entry={row.entry} />;
     }
     if (row.entry.kind === 'dream') {
       return <AgentDreamBoundary entry={row.entry} />;

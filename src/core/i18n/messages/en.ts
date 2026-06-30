@@ -1101,6 +1101,7 @@ commandPalette: {
       workedFor: ({ duration }: { duration: string }) => `Worked for ${duration}`,
       compactingConversation: 'Compacting conversation',
       conversationCompacted: 'Conversation compacted',
+      contextCleared: 'Context cleared.',
       compacting: 'Compacting',
       compacted: 'Compacted',
       compactionTrigger: {

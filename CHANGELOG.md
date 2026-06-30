@@ -12,6 +12,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Clear model context with `/clear` (PR #352, codex-4)** — `/clear` now appends a persisted
+  `context.cleared` boundary in the current Channel, renders it as a dedicated `Context cleared.`
+  transcript row, and starts subsequent automatic model context from that boundary without generating
+  a compact summary. Pre-clear messages stay visible in transcript history and remain searchable/readable
+  through explicit `past_chats` access, while `/compact` remains the summary-preserving continuation
+  path. The runtime resets conversation-scoped model-context caches across the boundary, and checkpoint /
+  recent-chat regression tests cover the new replay state and synthetic-root filtering. **Gate (main):**
+  deep review found two integration bugs; both were fixed before merge. Verified with typecheck, targeted
+  core/renderer suites, `docs:check`, and `git diff --check`.
 - **Preview-first links and HTML renderer (PR #345, codex)** — ordinary `http(s)` links from the
   outliner, agent transcript, and local preview bodies now open in a Tenon split preview pane by default.
   URL previews render as a hardened `webview` with an http(s)-only source, fixed partition, denied

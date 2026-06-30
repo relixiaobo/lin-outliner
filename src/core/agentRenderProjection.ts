@@ -5,6 +5,7 @@ import {
   type AgentActor,
   type AgentCompactionRecord,
   type AgentCompactionTrigger,
+  type AgentContextClearRecord,
   type AgentDreamRecord,
   type AgentEventMessageRecord,
   type AgentEventReplayState,
@@ -19,7 +20,7 @@ import {
   agentMentionToken,
 } from './agentChannel';
 
-export type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction' | 'dream' | 'child-run';
+export type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction' | 'context-clear' | 'dream' | 'child-run';
 
 export type AgentRenderRow =
   | {
@@ -33,6 +34,13 @@ export type AgentRenderRow =
       kind: 'compaction';
       messageId: string;
       compactionId: string;
+      archived?: boolean;
+    }
+  | {
+      id: string;
+      kind: 'context-clear';
+      messageId: string;
+      contextClearId: string;
       archived?: boolean;
     }
   | {
@@ -161,6 +169,13 @@ export interface AgentRenderCompactionEntity {
   createdAt: number;
 }
 
+export interface AgentRenderContextClearEntity {
+  id: string;
+  messageId: string;
+  source: AgentContextClearRecord['source'];
+  createdAt: number;
+}
+
 export interface AgentRenderActiveCompaction {
   id: string;
   trigger: AgentCompactionTrigger;
@@ -247,6 +262,7 @@ export interface AgentRenderEntities {
   messages: Record<string, AgentRenderMessageEntity>;
   childRuns: Record<string, AgentRenderChildRunEntity>;
   compactions: Record<string, AgentRenderCompactionEntity>;
+  contextClears: Record<string, AgentRenderContextClearEntity>;
   dreams: Record<string, AgentRenderDreamEntity>;
 }
 
@@ -288,6 +304,7 @@ export interface AgentRenderProjectionPatch {
     messages: Record<string, AgentRenderMessageEntity>;
     childRuns: Record<string, AgentRenderChildRunEntity>;
     compactions: Record<string, AgentRenderCompactionEntity>;
+    contextClears: Record<string, AgentRenderContextClearEntity>;
     dreams: Record<string, AgentRenderDreamEntity>;
   }>;
   streaming?: AgentStreamingRenderState | null;
@@ -310,6 +327,9 @@ export function applyAgentRenderProjectionPatch(
         compactions: patch.entities.compactions
           ? { ...projection.entities.compactions, ...patch.entities.compactions }
           : projection.entities.compactions,
+        contextClears: patch.entities.contextClears
+          ? { ...projection.entities.contextClears, ...patch.entities.contextClears }
+          : projection.entities.contextClears,
         dreams: patch.entities.dreams
           ? { ...projection.entities.dreams, ...patch.entities.dreams }
           : projection.entities.dreams,
@@ -334,6 +354,7 @@ function patchOnlyReplacesExistingEntities(
   return Object.keys(patch.entities?.messages ?? {}).every((id) => projection.entities.messages[id])
     && Object.keys(patch.entities?.childRuns ?? {}).every((id) => projection.entities.childRuns[id])
     && Object.keys(patch.entities?.compactions ?? {}).every((id) => projection.entities.compactions[id])
+    && Object.keys(patch.entities?.contextClears ?? {}).every((id) => projection.entities.contextClears[id])
     && Object.keys(patch.entities?.dreams ?? {}).every((id) => projection.entities.dreams[id]);
 }
 
@@ -363,7 +384,7 @@ export function buildAgentRenderProjection(
   }
 
   const activePath = getAgentEventActivePath(state);
-  const entities: AgentRenderEntities = { messages: {}, childRuns: {}, compactions: {}, dreams: {} };
+  const entities: AgentRenderEntities = { messages: {}, childRuns: {}, compactions: {}, contextClears: {}, dreams: {} };
   // The runs that are LIVE right now (in-memory active runs the runtime passes in),
   // NOT every run whose persisted status is `running`. A run left `running` by a
   // crash/quit is absent here, so its interrupted turn is never mistaken for an
@@ -468,6 +489,11 @@ function buildTranscriptRows(
       appendCompactionRow(rows, entities, state, entry.message, compaction, entry.archived);
       continue;
     }
+    const contextClear = contextClearForMessage(state, entry.message);
+    if (contextClear) {
+      appendContextClearRow(rows, entities, state, entry.message, contextClear, entry.archived);
+      continue;
+    }
     const dream = dreamForMessage(state, entry.message);
     if (dream && state.conversation?.id !== DEFAULT_DREAM_CHANNEL_ID) {
       appendDreamRow(rows, entities, state, entry.message, dream, entry.archived);
@@ -552,6 +578,11 @@ function appendActiveRow(
     appendCompactionRow(rows, entities, state, message, compaction, false);
     return;
   }
+  const contextClear = contextClearForMessage(state, message);
+  if (contextClear) {
+    appendContextClearRow(rows, entities, state, message, contextClear, false);
+    return;
+  }
   const dream = dreamForMessage(state, message);
   if (dream && state.conversation?.id !== DEFAULT_DREAM_CHANNEL_ID) {
     appendDreamRow(rows, entities, state, message, dream, false);
@@ -595,6 +626,26 @@ function appendCompactionRow(
   });
   entities.messages[message.id] = toRenderMessageEntity(state, message);
   entities.compactions[compaction.id] = toRenderCompactionEntity(compaction);
+}
+
+function appendContextClearRow(
+  rows: AgentRenderRow[],
+  entities: AgentRenderEntities,
+  state: AgentEventReplayState,
+  message: AgentEventMessageRecord,
+  contextClear: AgentContextClearRecord,
+  archived: boolean,
+) {
+  const prefix = archived ? 'archived:' : '';
+  rows.push({
+    id: `${prefix}context-clear:${message.id}`,
+    kind: 'context-clear',
+    messageId: message.id,
+    contextClearId: contextClear.id,
+    archived: archived || undefined,
+  });
+  entities.messages[message.id] = toRenderMessageEntity(state, message);
+  entities.contextClears[contextClear.id] = toRenderContextClearEntity(contextClear);
 }
 
 function appendDreamRow(
@@ -709,6 +760,15 @@ function toRenderCompactionEntity(record: AgentCompactionRecord): AgentRenderCom
   };
 }
 
+function toRenderContextClearEntity(record: AgentContextClearRecord): AgentRenderContextClearEntity {
+  return {
+    id: record.id,
+    messageId: record.messageId,
+    source: record.source,
+    createdAt: record.createdAt,
+  };
+}
+
 function toRenderDreamEntity(record: AgentDreamRecord): AgentRenderDreamEntity {
   return {
     id: record.id,
@@ -733,6 +793,14 @@ function compactionForMessage(
 ): AgentCompactionRecord | null {
   if (message.role !== 'user') return null;
   return state.compactionsByMessageId[message.id] ?? null;
+}
+
+function contextClearForMessage(
+  state: AgentEventReplayState,
+  message: AgentEventMessageRecord,
+): AgentContextClearRecord | null {
+  if (message.role !== 'user') return null;
+  return state.contextClearsByMessageId[message.id] ?? null;
 }
 
 function dreamForMessage(

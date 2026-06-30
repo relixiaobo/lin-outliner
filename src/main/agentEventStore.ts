@@ -1945,6 +1945,13 @@ function retainConversationStreamEventAfterRunPrune(
       || prunedMessageIds.has(event.source.throughMessageId)
     ) return null;
   }
+  if (event.type === 'context.cleared') {
+    if (prunedMessageIds.has(event.messageId)) return null;
+    if (
+      prunedMessageIds.has(event.source.fromMessageId)
+      || prunedMessageIds.has(event.source.throughMessageId)
+    ) return null;
+  }
   if (event.type === 'dream.finished' && prunedMessageIds.has(event.messageId)) return null;
   return event;
 }
@@ -1972,6 +1979,7 @@ function isRunLogEvent(event: AgentEvent): boolean {
     case 'follow_up.queued':
     case 'follow_up.applied':
     case 'compaction.completed':
+    case 'context.cleared':
     case 'dream.finished':
     case 'checkpoint.created':
       return false;
@@ -2422,6 +2430,7 @@ function normalizeCheckpoint(value: unknown, conversationId: string): AgentEvent
   if (!isRecord(state.conversation) || state.conversation.id !== conversationId) return null;
   if (!isRecord(state.messages) || !isRecord(state.payloads) || !isRecord(state.runs)) return null;
   if (!isRecord(state.childRuns) || !isRecord(state.compactionsByMessageId)) return null;
+  if (!isRecord(state.contextClearsByMessageId)) return null;
   if (!isRecord(state.dreamsByMessageId) || !isRecord(state.userQuestions)) return null;
   if (!Array.isArray(state.rootMessageIds)) return null;
   if (!isRecord(state.childrenByParentId) || !isRecord(state.derivedPayloadsBySourceId)) return null;

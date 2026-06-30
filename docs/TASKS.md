@@ -426,6 +426,22 @@ anything.
 
 ## Recently completed
 
+- **clear-context-boundary** (`codex-4/clear-context-boundary`, PR #352, codex-4,
+  merged 2026-06-30) — adds `/clear` as a persisted model-context boundary for the
+  current Channel. The command appends a `context.cleared` event plus a dedicated
+  transcript row (`Context cleared.`), selects that boundary as the new active root,
+  and leaves pre-clear history visible/searchable/readable through transcript and
+  `past_chats` paths while excluding it from ordinary model-context assembly. `/compact`
+  remains the summary-preserving continuation path; `/clear` carries no summary,
+  invoked-skill reminder, listed-skill reminder, or restored file-context reminder.
+  Runtime-only context caches are reset across the boundary. **Gate (main):** deep
+  review found two integration bugs (old checkpoints missing the new replay-state map
+  could crash projection, and `past_chats.recent` surfaced the synthetic clear root);
+  codex-4 fixed both with regression tests. Verified on the final PR head and merge:
+  typecheck, targeted event-store/event-log/render-projection/past-chats/runtime/store
+  tests, `docs:check`, and `git diff --check`. Plan archived `done`
+  (`docs/plans/archive/clear-context-boundary.md`). Plan-track, **shape (a)** one PR.
+
 - **agent-compact-tail-reanchor** (`codex-2/agent-compact-tail-reanchor`, PR #351, codex-2,
   merged 2026-06-30, fast-track) — fixes repeated auto-compaction loops when compaction happens
   during an active provider run. The compact event log was already correct, but the in-memory active

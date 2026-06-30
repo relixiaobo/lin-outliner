@@ -1012,6 +1012,7 @@ commandPalette: {
       workedFor: ({ duration }) => `用时 ${duration}`,
       compactingConversation: '正在压缩对话',
       conversationCompacted: '对话已压缩',
+      contextCleared: '上下文已清除。',
       compacting: '正在压缩',
       compacted: '已压缩',
       compactionTrigger: {

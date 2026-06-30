@@ -533,6 +533,74 @@ describe('agent runtime skill integration', () => {
       .toContain('First request before manual compact.');
   });
 
+  test('clears automatic model context without compacting visible transcript history', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-clear-context-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-clear-context-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const contextTexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage(fauxText('First answer before clear.')),
+        fauxAssistantMessage(fauxText('Second answer after clear.')),
+      ],
+      (_model, context) => {
+        contextTexts.push(JSON.stringify(context.messages));
+      },
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+        completeSimpleFn: async (model) => normalizeAssistantMessage(
+          fauxAssistantMessage('<analysis>unexpected compact</analysis><summary>Unexpected compact.</summary>'),
+          model as Model<Api>,
+        ),
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(created.conversationId, 'First request before clear.');
+    await runtime.sendMessage(created.conversationId, '/clear');
+    await runtime.sendMessage(created.conversationId, 'Second request after clear.');
+
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(contextTexts).toHaveLength(2);
+    expect(contextTexts[0]).toContain('First request before clear.');
+    expect(contextTexts[1]).toContain('Context cleared.');
+    expect(contextTexts[1]).toContain('Second request after clear.');
+    expect(contextTexts[1]).not.toContain('First request before clear.');
+    expect(contextTexts[1]).not.toContain('First answer before clear.');
+
+    const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
+    expect(events.some((event) => event.type === 'context.cleared')).toBe(true);
+    expect(events.some((event) => event.type === 'compaction.completed')).toBe(false);
+
+    const restored = await runtime.restoreConversation(created.conversationId);
+    const activeText = projectionTexts(restored.renderProjection).join('\n');
+    const transcriptText = restored.renderProjection.transcriptRows
+      .map((row) => textFromContent(restored.renderProjection.entities.messages[row.messageId]?.content))
+      .join('\n');
+    const clearRow = restored.renderProjection.rows.find((row) => row.kind === 'context-clear');
+    expect(clearRow?.kind).toBe('context-clear');
+    expect(activeText).toContain('Context cleared.');
+    expect(activeText).toContain('Second request after clear.');
+    expect(activeText).not.toContain('First request before clear.');
+    expect(transcriptText).toContain('First request before clear.');
+    expect(transcriptText).toContain('First answer before clear.');
+  });
+
   test('a regenerated turn run still splices its triggering user message into round 0', async () => {
     // Regression guard for the trigger-splice edge: regenerate re-runs the turn
     // under a NEW run id whose `run.started.trigger` resolves (via the
