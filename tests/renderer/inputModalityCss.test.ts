@@ -48,11 +48,19 @@ describe('input modality CSS guards', () => {
   });
 
   test('keeps URL previews single-layer without the document preview frame', () => {
+    expect(filePreviewCss).toMatch(/\.outline-panel-surface \.file-preview-panel--fill\s*\{[^}]*overflow:\s*hidden;[^}]*padding-bottom:\s*0;/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-panel--fill \.file-preview-content\s*\{[^}]*height:\s*100%;[^}]*flex:\s*1 1 auto;/s);
     expect(filePreviewCss).toMatch(/\.file-node-preview--url\s*\{[^}]*background:\s*transparent;/s);
     expect(filePreviewCss).toMatch(/\.file-node-preview--url\s*\{[^}]*box-shadow:\s*none;/s);
     expect(filePreviewCss).toMatch(/\.file-node-preview--url\s*\{[^}]*padding:\s*0;/s);
     expect(filePreviewCss).toMatch(/\.file-node-preview\.file-node-preview--url\s*\{[^}]*padding-bottom:\s*0;/s);
-    expect(filePreviewCss).not.toMatch(/\.file-preview-url\s*\{[^}]*border-radius:/s);
+    expect(filePreviewCss).toMatch(/\.file-node-preview\.file-node-preview--url\s*\{[^}]*max-height:\s*none;/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-url\s*\{[^}]*border-radius:\s*var\(--file-preview-frame-radius\);/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-url\s*\{[^}]*box-shadow:\s*var\(--inset-hairline\);/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-url\s*\{[^}]*clip-path:\s*inset\(0 round var\(--file-preview-frame-radius\)\);/s);
+    expect(filePreviewCss).toMatch(/\.file-preview-url-webview\s*\{[^}]*border-radius:\s*inherit;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-url-favicon\s*\{[^}]*width:\s*13px;[^}]*height:\s*13px;/s);
+    expect(filePreviewCss).toMatch(/\.file-node-body--reader\.file-node-body--html\s*\{[^}]*flex:\s*1 1 auto;/s);
+    expect(filePreviewCss).toMatch(/\.file-node-preview--reader\.file-node-preview--html\s*\{[^}]*display:\s*flex;[^}]*flex:\s*1 1 auto;[^}]*flex-direction:\s*column;/s);
   });
 });

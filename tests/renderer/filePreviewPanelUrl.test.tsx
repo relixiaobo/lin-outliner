@@ -22,6 +22,8 @@ describe('FilePreviewPanel URL preview chrome', () => {
     });
 
     expect(rendered.document.querySelector('.file-preview-url-title')?.textContent).toContain('Example docs');
+    expect(rendered.document.querySelector('.file-preview-panel--fill')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-content')).not.toBeNull();
     expect(rendered.document.querySelector('.panel-title-file-heading')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-message')).toBeNull();
     expect(rendered.document.querySelector('.file-preview-url-webview')?.getAttribute('src')).toBe('https://example.com/docs');

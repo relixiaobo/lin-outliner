@@ -315,9 +315,11 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
     ? looseBreadcrumbFor(props.target, state, previewLabels)
     : [];
 
+  const fillPreviewPane = readerMode || looseUrlPreview;
+
   return (
     <main
-      className={`main-panel file-preview-panel ${readerMode ? 'file-preview-panel--reader' : ''}`}
+      className={`main-panel file-preview-panel ${readerMode ? 'file-preview-panel--reader' : ''} ${fillPreviewPane ? 'file-preview-panel--fill' : ''}`}
       ref={mainPanelRef}
       aria-label={displayTitle}
       onScroll={handlePanelScroll}

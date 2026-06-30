@@ -149,6 +149,33 @@ describe('FilePreviewShell URL previews', () => {
     expect(rendered.document.querySelector('.file-preview-resize-handle')).toBeNull();
   });
 
+  test('marks HTML previews so reader panes can fill the available height', async () => {
+    const rendered = render(
+      <FilePreviewShell
+        state={{ status: 'ready', source: htmlSource() }}
+        onOpenTarget={() => undefined}
+        readerMode
+      />,
+      {
+        lin: {
+          invoke: (command) => {
+            if (command === 'preview_read_text') return Promise.resolve({ text: '<main>Hello</main>' });
+            return Promise.resolve(null);
+          },
+        },
+      },
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(rendered.document.querySelector('.file-node-body--reader.file-node-body--html')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-node-preview--reader.file-node-preview--html')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-html--render')).not.toBeNull();
+    expect(rendered.document.querySelector('.file-preview-html-frame')).not.toBeNull();
+  });
+
   test('resolves URL targets synchronously without preview IPC loading', async () => {
     const invocations: string[] = [];
     const rendered = render(
@@ -199,6 +226,20 @@ function urlSource(): PreviewUrlSource {
     target: { kind: 'url', url: 'https://example.com/docs', label: 'Example docs' },
     title: 'Example docs',
     url: 'https://example.com/docs',
+  };
+}
+
+function htmlSource(): PreviewFileSource {
+  return {
+    kind: 'file',
+    sourceKind: 'asset',
+    id: 'asset:page',
+    target: { kind: 'asset', assetId: 'asset-page' },
+    name: 'page.html',
+    ext: 'html',
+    mimeType: 'text/html',
+    entryKind: 'file',
+    sizeBytes: 1024,
   };
 }
 

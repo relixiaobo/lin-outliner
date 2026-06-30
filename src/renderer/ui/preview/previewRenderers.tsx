@@ -301,6 +301,7 @@ export function FilePreviewShell({
   const passivePlayback = state.status === 'ready' && isPassivePlaybackSource(state.source);
   const mediaKind = state.status === 'ready' ? mediaKindForSource(state.source) : null;
   const urlPreview = state.status === 'ready' && state.source.kind === 'url';
+  const htmlPreview = state.status === 'ready' && state.source.kind === 'file' && isHtmlSource(state.source);
   const metadataFallback = state.status === 'ready' && !previewable;
   const effectiveExpanded = readerMode || passivePlayback || urlPreview || expanded;
   const displayMode: FilePreviewDisplayMode = previewable && !effectiveExpanded ? 'summary' : 'full';
@@ -355,6 +356,7 @@ export function FilePreviewShell({
     metadataFallback ? 'file-node-preview--metadata' : '',
     passivePlayback ? 'file-node-preview--media' : '',
     urlPreview ? 'file-node-preview--url' : '',
+    htmlPreview ? 'file-node-preview--html' : '',
     mediaKind ? `file-node-preview--media-${mediaKind}` : '',
     readerMode ? 'file-node-preview--reader' : '',
     resizedHeight !== undefined ? 'resized' : '',
@@ -368,6 +370,7 @@ export function FilePreviewShell({
     metadataFallback ? 'file-node-body--metadata' : '',
     passivePlayback ? 'file-node-body--media' : '',
     urlPreview ? 'file-node-body--url' : '',
+    htmlPreview ? 'file-node-body--html' : '',
     mediaKind ? `file-node-body--media-${mediaKind}` : '',
     readerMode ? 'file-node-body--reader' : '',
   ]
@@ -801,7 +804,7 @@ function HtmlPreview({ source }: PreviewRendererProps) {
   if (textState.status === 'loading') return <PreviewMessage>{labels.loading}</PreviewMessage>;
   if (textState.status === 'error') return <PreviewMessage>{textState.error === 'too-large' ? labels.tooLarge : labels.unavailable}</PreviewMessage>;
   return (
-    <div className="file-preview-html">
+    <div className={`file-preview-html ${showSource ? 'file-preview-html--source' : 'file-preview-html--render'}`}>
       <div className="file-preview-html-mode" role="group" aria-label="HTML preview mode">
         <button
           aria-pressed={!showSource}

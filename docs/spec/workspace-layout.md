@@ -317,7 +317,8 @@ sources, but with `nodeId` set. That `nodeId` is the lifecycle switch:
   label, and no children outline is mounted. URL loose previews are the
   exception to the file-like title layout: the breadcrumb/header shows the
   webpage favicon and page title when the webview reports them, falling back to
-  the link label or URL, and the body starts directly with the webpage.
+  the link label or URL, and the body starts directly with a single-layer webpage
+  surface that fills the available pane height.
 - With `nodeId`, the view is an ingested file node. The breadcrumb is sourced
   from the outliner ancestry, the title remains the read-only filename, and the
   file node's children outline mounts below the preview hero.
@@ -406,7 +407,8 @@ always present (reserving a placeholder height) but its iframe mounts lazily as
 the section nears the scroll viewport and stays mounted thereafter, so opening a
 long book never spins up every section's document at once; book bytes load only
 through the capped preview bytes API), sandboxed static HTML (`.html`, `.htm`, or
-`text/html`) with a source-mode fallback, audio/video as flat media stages using
+`text/html`) with a rendered iframe that fills file-only reader panes plus a
+source-mode fallback, audio/video as flat media stages using
 native media elements with Media Chrome controls backed by the same range-capable
 internal streams used by images (including seek and HTML fullscreen), with file
 actions kept inside the same control bar plus Tenon-scoped media shortcuts while

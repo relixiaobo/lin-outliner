@@ -4,7 +4,7 @@
   flex-direction: column;
 }
 
-.outline-panel-surface .file-preview-panel--reader {
+.outline-panel-surface .file-preview-panel--fill {
   overflow: hidden;
   padding-bottom: 0;
 }
@@ -13,9 +13,10 @@
   min-width: 0;
 }
 
-.file-preview-panel--reader .file-preview-content {
+.file-preview-panel--fill .file-preview-content {
   display: flex;
   width: 100%;
+  height: 100%;
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
@@ -152,7 +153,10 @@
   min-height: 0;
   flex: 1 1 auto;
   overflow: hidden;
+  border-radius: var(--file-preview-frame-radius);
   background: var(--surface);
+  box-shadow: var(--inset-hairline);
+  clip-path: inset(0 round var(--file-preview-frame-radius));
 }
 
 .file-preview-url-favicon {
@@ -170,6 +174,7 @@
   min-height: 0;
   flex: 1 1 auto;
   border: 0;
+  border-radius: inherit;
   background: var(--surface);
 }
 
@@ -296,9 +301,13 @@
 .file-preview-html {
   display: flex;
   min-width: 0;
-  min-height: 100%;
+  min-height: 0;
   flex-direction: column;
   gap: var(--space-3);
+}
+
+.file-preview-html--render {
+  flex: 1 1 auto;
 }
 
 .file-preview-html-mode {
@@ -347,6 +356,11 @@
 
 .file-preview-html-source {
   min-height: 420px;
+}
+
+.file-node-preview--reader .file-preview-html,
+.file-node-preview--reader .file-preview-html-frame {
+  min-height: 0;
 }
 
 .file-preview-markdown {
@@ -883,10 +897,16 @@
   --file-preview-media-width: min(640px, 100%);
 }
 
+.file-node-body--reader.file-node-body--html {
+  flex: 1 1 auto;
+}
+
 .file-node-body--url {
   display: flex;
-  min-height: min(70vh, 720px);
+  min-height: 0;
+  flex: 1 1 auto;
   flex-direction: column;
+  margin-bottom: 0;
 }
 
 .file-node-body--reader {
@@ -943,8 +963,7 @@
 
 .file-node-preview.expanded:has(> .file-preview-pdf--full),
 .file-node-preview.expanded:has(> .file-preview-pdf-shell--full),
-.file-node-preview.expanded:has(> .file-preview-epub--full),
-.file-node-preview.expanded:has(> .file-preview-url) {
+.file-node-preview.expanded:has(> .file-preview-epub--full) {
   height: var(--file-preview-expanded-height, min(70vh, 720px));
   overflow: hidden;
   padding-bottom: var(--file-preview-frame-padding-block);
@@ -1007,7 +1026,8 @@
 
 .file-node-preview--url {
   display: flex;
-  min-height: min(70vh, 720px);
+  min-height: 0;
+  flex: 1 1 auto;
   overflow: hidden;
   background: transparent;
   box-shadow: none;
@@ -1015,11 +1035,18 @@
 }
 
 .file-node-preview.file-node-preview--url {
+  max-height: none;
   padding-bottom: 0;
 }
 
 .file-node-preview--reader.file-node-preview--url {
   min-height: 0;
+}
+
+.file-node-preview--reader.file-node-preview--html {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
 }
 
 /* The shared bottom-center action bar for every non-image file preview. It is chrome
