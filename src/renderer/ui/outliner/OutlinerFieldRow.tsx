@@ -762,6 +762,8 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
           y={contextMenu.y}
           node={entry}
           targetId={props.entryId}
+          visualRowId={props.entryId}
+          viewToolbarVisibleInRow={false}
           openId={drillDownId}
           selectedIds={props.ui.selectedIds}
           index={props.index}
@@ -777,6 +779,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
               cursorEnd(),
             ));
           }}
+          onRevealViewToolbar={() => {}}
           onOpenViewSection={(nodeId, section) => {
             props.setUi((prev) => ({
               ...prev,

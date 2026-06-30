@@ -206,6 +206,118 @@ For `options_from_supertag` fields, the source supertag must be an active tag
 definition. If the source tag is moved to Trash, the field's value picker no
 longer derives candidates from nodes carrying that deleted tag.
 
+## View Toolbar
+
+The node-level view toolbar is the presentation control for a node's child rows
+and for saved-search result views. It lives above the rendered child/result rows
+when the node's `viewDef.toolbarVisible` flag is true. The current supported mode
+is list, with Filter by name, Display, Group by, Sort by, and Filter by
+controls. These controls all read and write `viewDef` child nodes
+(`displayField`, `sortRule`, `filterRule`, plus the view's `groupField`) rather
+than storing renderer-local state.
+
+Nested toolbars render as part of the expanded child outline, not as detached
+cards. They remain logically inside the expanded child subtree, while their
+visual indent aligns with the owning node's title/content column instead of the
+first child row. The expanded parent guide line spans the toolbar and
+descendants. The toolbar itself carries only subtle top/bottom separators; the
+hierarchy line is the main visual divider.
+
+The leading search icon is a Tana-style **Filter by name** shortcut. Clicking it
+turns the icon into an inline editable chip. Non-empty text is written as a real
+`sys:name contains <text>` `filterRule`; clearing the chip removes that rule.
+The name rule is owned by this shortcut and is not repeated in the generic
+Filter summary chips or on the generic Filter icon.
+
+The toolbar shows compact neutral summary chips for active Display fields, Group
+by, and each non-name Filter rule. These chips sit inline in the same toolbar row
+as the icon controls rather than forming a separate summary row. Each chip is
+also a shortcut into the matching toolbar popover; Filter chips open the editor
+for that specific saved `filterRule`, not merely the first rule for that field.
+That matters because advanced states may contain multiple filters against the
+same field. A Filter summary chip reads as the field name with a trailing remove
+control; the operator/value detail lives in the editor pane, matching Tana's
+active-filter chip model. Filter state is not duplicated on the generic Filter
+icon.
+
+Sort follows Tana's separate state model: an active sort rule is represented on
+the Sort button itself, with the icon direction matching the first rule. While
+the Sort popover is open, the toolbar can also show a `Sorted by ...` summary
+chip beside the active button as editable context. Closing the popover leaves the
+compact icon state, not a persistent text chip.
+
+Toolbar popovers follow Tana's field-first shape. Display is a direct checklist
+of fields. Group is a single-select field list because it has no per-field
+settings yet. Sort starts from the shared field list and drills into the chosen
+field for direction settings; reopening Sort always returns to the field list
+first, even when a rule already exists. Existing sort rows show their priority
+number beside the direction because sorting precedence follows the persisted
+`sortRule` order. Newly selected sort fields wait for the command result before
+showing direction controls, so a fast second click cannot create duplicate rules.
+Supported system fields appear first in a
+stable Tana-like order and use view-specific labels: Created time, Date from
+calendar node, Done, Done time, Last edited time, Number of references, Owner
+node, and Tags. A system field is offered only when it exists on at least one
+current child/result row, or when an existing Display, Group, Sort, or Filter
+setting already references it so the old setting remains editable. For example,
+Tags requires at least one row with an applied tag, Done requires at least one
+row with a checkbox, Done time requires at least one completed row, and Number of
+references requires at least one row with a linked reference count. Date from
+calendar node uses date-field treatment for icons, sort/filter wording, sort
+comparisons, filter comparisons, and grouping buckets. Custom fields in the
+shared field list come from fields actually present on the current child/result
+rows, plus fields already referenced by existing Display, Group, Sort, or Filter
+settings. Fields that the data model does not yet expose as computed values,
+such as path, workspace, or editor identity, are not shown as fake empty choices.
+
+Filter uses a narrower field list than Display, Group, or Sort. The leading
+Filter by name chip owns name filtering, so Name is excluded from the generic
+Filter popover. Generic Filter still offers the real system fields supported by
+the view adapter, then contextual custom fields from the current child/result
+rows plus fields already referenced by existing non-name filter rules so old
+rules remain editable. Fields that the data model does not yet expose as computed
+values are not shown as fake empty choices.
+
+Rows that do not match the active view filter are not discarded from the
+interaction surface. The visible list shows matching rows first, then appends a
+collapsed `N items filtered out` disclosure. Expanding it reveals the filtered
+rows in the same outline renderer and keyboard-selection model; collapsing it
+hides them again without changing the persisted view settings. The disclosure's
+renderer id includes the active filter-rule ids, so expanding an old filter does
+not silently expand a newly created filter on the same parent later.
+
+When a field-first popover drills into an editor pane, focus moves to the pane's
+back control. That keeps Escape scoped to the popover and preserves keyboard
+dismissal after the clicked field row unmounts.
+
+When a row context-menu action reveals a nested View Toolbar from a collapsed
+row, the row expands in the same interaction so the toolbar becomes visible
+immediately. The menu label follows visibility in the current row: a configured
+toolbar hidden behind a collapsed row still reads as **Show view toolbar**.
+
+Display fields render on each visible content/result row as quiet metadata under
+the row title and inline tags. The node name is excluded because the title already
+shows it. Empty fields are omitted per row, so adding a Display field does not
+create blank placeholders on rows that do not carry that value. The displayed
+values use the same field resolution as sort, filter, and group, but system
+fields render through the display adapter rather than the raw sort/filter
+adapter: dates render as `YYYY-MM-DD`, Done renders as text, and reference-like
+fields render their labels instead of raw ids/count internals. Values render as
+plain text joined by comma for now; typed chips and navigable references are a
+future display-layer enhancement, not a different view model.
+
+## Search Nodes
+
+Search nodes render a compact query summary below the page title and above the
+materialized result rows while the inline query builder is closed. The summary
+shows read-only chips for the query semantics and the current materialized result
+count; it does not configure how the results are presented.
+
+The summary exposes a **View** action that reveals the same node-level View
+Toolbar used by normal node pages. Query chips describe *what the search returns*;
+the View Toolbar controls *how the result references are displayed, grouped,
+sorted, and filtered*.
+
 ## NodePanel References Footer
 
 Each `NodePanel` has a Tana-style bottom **References** section when its root node

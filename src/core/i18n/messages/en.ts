@@ -506,24 +506,32 @@ commandPalette: {
       recentsTitle: 'No recent nodes',
       recentsBody: 'Nodes you open will show up here.',
     },
+    filteredOut: {
+      count: ({ count }: { count: number }) => `${count} item${count === 1 ? '' : 's'} filtered out`,
+    },
     // The view toolbar above a node's children: display fields, group-by, sort
     // rules, and the progressive filter editor.
     viewToolbar: {
       toolbarAriaLabel: 'View toolbar',
+      filterByName: 'Filter by name',
+      nameFilterPlaceholder: 'Name',
+      clearNameFilter: 'Clear name filter',
       display: 'Display',
       groupBy: 'Group by',
       sortBy: 'Sort by',
       filterBy: 'Filter by',
-      thenBy: 'Then by',
       noGrouping: 'No grouping',
       reset: 'Reset',
       remove: 'Remove',
       removeSortRule: 'Remove sort rule',
       removeFilterRule: 'Remove filter rule',
       removeFilter: 'Remove filter',
-      addSort: 'Add sort',
+      removeSort: 'Remove sort',
+      addingSort: 'Adding sort…',
       addingFilter: 'Adding filter…',
+      sortPriorityMeta: ({ index, direction }: { index: number; direction: string }) => `${index}. ${direction}`,
       sortFieldLabel: 'Sort field',
+      sortDirectionLabel: 'Sort direction',
       filterOperatorLabel: 'Filter operator',
       filterDateLabel: 'Filter date',
       filterValuesLabel: 'Filter values',
@@ -557,11 +565,12 @@ commandPalette: {
       booleanNotDone: 'Not done',
       booleanYes: 'Yes',
       booleanNo: 'No',
-      // The muted one-line summary of the active view.
+      // Compact active-view chips and displayed field metadata.
+      summaryAriaLabel: 'Active view settings',
+      displayedFieldsAriaLabel: 'Displayed fields',
+      summaryDisplayCount: (count: number) => `${count} displayed field${count > 1 ? 's' : ''}`,
       summaryGroupedBy: ({ field }: { field: string }) => `Grouped by ${field}`,
       summarySortedBy: ({ field, arrow }: { field: string; arrow: string }) => `Sorted by ${field} ${arrow}`,
-      // TODO plural via Intl
-      summaryFilterCount: (count: number) => `${count} filter${count > 1 ? 's' : ''}`,
     },
     // Read-only system field values (Done checkbox, date, tag badges, text).
     systemField: {
@@ -1378,6 +1387,8 @@ commandPalette: {
     summary: {
       rulesAriaLabel: 'Search rules',
       noRules: 'No rules',
+      viewTitle: 'Show view toolbar',
+      viewLabel: 'Show view toolbar',
       refreshTitle: 'Refresh',
       refreshLabel: 'Refresh search results',
     },

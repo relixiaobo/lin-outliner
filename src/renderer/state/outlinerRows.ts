@@ -1,18 +1,22 @@
 import { parseDateFieldValueRange, type FilterOperator, type NodeId, type NodeProjection, type SortDirection, type ViewMode } from '../api/types';
-import { projectFieldConfig, projectFieldTypeById } from '../../core/configProjection';
+import { nodeShowsCheckbox, projectFieldConfig, projectFieldTypeById } from '../../core/configProjection';
 import {
   CREATED_FIELD,
+  DAY_FIELD,
   DONE_AT_FIELD,
   DONE_FIELD,
   NAME_FIELD,
+  OWNER_FIELD,
   REF_COUNT_FIELD,
   TAGS_FIELD,
   UPDATED_FIELD,
   isSystemFieldId,
+  systemFieldDisplay,
   systemFieldLabel,
   systemFieldValues,
   type SystemFieldContext,
 } from '../../core/systemFields';
+import type { ReferenceSummary } from '../../core/references';
 
 const INTERNAL_NODE_TYPES = new Set<NodeProjection['type']>([
   'queryCondition',
@@ -35,6 +39,7 @@ export type OutlinerRowItem =
   // context until the user types and it materializes.
   | { id: NodeId; type: 'content'; draft?: boolean; afterId?: NodeId | null }
   | { id: string; type: 'group'; label: string }
+  | { id: string; type: 'filteredOut'; count: number; rows: OutlinerRowItem[] }
   | { id: string; type: 'hiddenField'; fieldId: NodeId; label: string };
 
 export interface RowBuildOptions {
@@ -73,6 +78,13 @@ export interface ViewConfig {
   sortRules: ViewSortRule[];
   filterRules: ViewFilterRule[];
   displayFields: ViewDisplayField[];
+}
+
+export interface ViewFieldValue {
+  id: NodeId;
+  field: string;
+  label: string;
+  values: string[];
 }
 
 export function hiddenFieldKey(parentId: NodeId, fieldEntryId: NodeId): string {
@@ -163,7 +175,38 @@ function childText(node: NodeProjection | undefined, byId: Map<NodeId, NodeProje
     .join(' ');
 }
 
-function fieldValuesFor(
+function displayFieldValuesFor(
+  rowNode: NodeProjection,
+  fieldId: string,
+  byId: Map<NodeId, NodeProjection>,
+  systemFieldContext?: SystemFieldContext,
+): string[] {
+  const displayed = displayNode(rowNode, byId);
+  if (!isSystemFieldId(fieldId)) return viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext);
+  if (fieldId === NAME_FIELD) return viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext);
+
+  const display = systemFieldDisplay(displayed, fieldId, byId, systemFieldContext);
+  switch (display.kind) {
+    case 'done':
+      return [display.checked ? 'Done' : 'Not done'];
+    case 'date':
+      return display.text ? [display.text] : [];
+    case 'dayRef':
+      return display.text ? [display.text] : [];
+    case 'tags':
+      return display.tagIds.map((tagId) => byId.get(tagId)?.content.text || tagId).filter(Boolean);
+    case 'nodeRefs':
+      return display.refs.map((ref) => ref.label).filter(Boolean);
+    case 'commandSchedule':
+      return display.schedule ? [display.schedule] : [];
+    case 'text':
+      return display.text ? [display.text] : [];
+    default:
+      return [];
+  }
+}
+
+export function viewFieldValuesFor(
   rowNode: NodeProjection,
   fieldId: string,
   byId: Map<NodeId, NodeProjection>,
@@ -192,7 +235,7 @@ function fieldTextFor(
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
 ): string {
-  return fieldValuesFor(rowNode, fieldId, byId, systemFieldContext).join(' ');
+  return viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext).join(' ');
 }
 
 function fieldNumberFor(
@@ -201,7 +244,7 @@ function fieldNumberFor(
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
 ): number | null {
-  const value = fieldValuesFor(rowNode, fieldId, byId, systemFieldContext)[0];
+  const value = viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext)[0];
   if (value === undefined) return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
@@ -230,6 +273,49 @@ function isHiddenFieldEntry(entry: NodeProjection, byId: Map<NodeId, NodeProject
   return false;
 }
 
+function isViewDateField(fieldId: string, byId: Map<NodeId, NodeProjection>): boolean {
+  if (fieldId === CREATED_FIELD || fieldId === UPDATED_FIELD || fieldId === DONE_AT_FIELD || fieldId === DAY_FIELD) return true;
+  return projectFieldTypeById(byId, fieldId) === 'date';
+}
+
+function parseDateValueSpan(value: string): { startMs: number; endExclusiveMs: number } | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^-?\d+$/.test(trimmed)) {
+    const ms = Number(trimmed);
+    return Number.isFinite(ms) ? { startMs: ms, endExclusiveMs: ms + 1 } : null;
+  }
+  return parseDateFieldValueRange(trimmed);
+}
+
+function dateSpanForFieldValue(
+  fieldId: string,
+  value: string,
+): { startMs: number; endExclusiveMs: number } | null {
+  const span = parseDateValueSpan(value);
+  if (span) return span;
+  if (fieldId !== DAY_FIELD) return null;
+  const match = value.trim().match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  return match ? parseDateValueSpan(match[0]) : null;
+}
+
+function fieldDateFor(
+  rowNode: NodeProjection,
+  fieldId: string,
+  byId: Map<NodeId, NodeProjection>,
+  systemFieldContext?: SystemFieldContext,
+): number | null {
+  if (!isViewDateField(fieldId, byId)) return null;
+  const value = viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext)[0];
+  if (value === undefined) return null;
+  return dateSpanForFieldValue(fieldId, value)?.startMs ?? null;
+}
+
+function isViewNumberField(fieldId: string, byId: Map<NodeId, NodeProjection>): boolean {
+  if (fieldId === REF_COUNT_FIELD) return true;
+  return projectFieldTypeById(byId, fieldId) === 'number';
+}
+
 function compareRowsByField(
   left: OutlinerRowItem,
   right: OutlinerRowItem,
@@ -243,7 +329,12 @@ function compareRowsByField(
   const rightNode = byId.get(right.id);
   if (!leftNode || !rightNode) return 0;
 
-  if ([CREATED_FIELD, UPDATED_FIELD, DONE_AT_FIELD, REF_COUNT_FIELD].includes(fieldId)) {
+  if (isViewDateField(fieldId, byId)) {
+    const leftDate = fieldDateFor(leftNode, fieldId, byId, systemFieldContext) ?? Number.POSITIVE_INFINITY;
+    const rightDate = fieldDateFor(rightNode, fieldId, byId, systemFieldContext) ?? Number.POSITIVE_INFINITY;
+    return leftDate - rightDate;
+  }
+  if (isViewNumberField(fieldId, byId)) {
     const leftNumber = fieldNumberFor(leftNode, fieldId, byId, systemFieldContext) ?? Number.POSITIVE_INFINITY;
     const rightNumber = fieldNumberFor(rightNode, fieldId, byId, systemFieldContext) ?? Number.POSITIVE_INFINITY;
     return leftNumber - rightNumber;
@@ -259,44 +350,37 @@ function compareRowsByField(
   return leftText.localeCompare(rightText, undefined, { numeric: true, sensitivity: 'base' });
 }
 
-function filterRows(
+function partitionFilterRows(
   view: ViewConfig,
   rows: OutlinerRowItem[],
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
-): OutlinerRowItem[] {
-  if (view.filterRules.length === 0) return rows;
-  return rows.filter((row) => {
-    if (row.type !== 'content' && row.type !== 'field') return true;
+): { visible: OutlinerRowItem[]; filteredOut: OutlinerRowItem[] } {
+  if (view.filterRules.length === 0) return { visible: rows, filteredOut: [] };
+  const visible: OutlinerRowItem[] = [];
+  const filteredOut: OutlinerRowItem[] = [];
+  for (const row of rows) {
+    if (row.type !== 'content' && row.type !== 'field') {
+      visible.push(row);
+      continue;
+    }
     const node = byId.get(row.id);
-    if (!node) return false;
-    return view.filterRules.every((rule) => rowMatchesFilter(node, rule, byId, systemFieldContext));
-  });
-}
-
-function isDateFilterField(fieldId: string, byId: Map<NodeId, NodeProjection>): boolean {
-  if (fieldId === CREATED_FIELD || fieldId === UPDATED_FIELD || fieldId === DONE_AT_FIELD) return true;
-  return projectFieldTypeById(byId, fieldId) === 'date';
-}
-
-// Resolves a date filter operand to an absolute [start, endExclusive) span. Handles
-// both system date fields (stored as epoch-ms strings) and custom date fields
-// (ISO local dates/ranges), so after/before/is compare uniformly across them.
-function dateFilterSpan(value: string): { startMs: number; endExclusiveMs: number } | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (/^-?\d+$/.test(trimmed)) {
-    const ms = Number(trimmed);
-    return Number.isFinite(ms) ? { startMs: ms, endExclusiveMs: ms + 1 } : null;
+    if (node && view.filterRules.every((rule) => rowMatchesFilter(node, rule, byId, systemFieldContext))) {
+      visible.push(row);
+    } else {
+      filteredOut.push(row);
+    }
   }
-  return parseDateFieldValueRange(trimmed);
+  return { visible, filteredOut };
 }
 
 function rowMatchesDateFilter(rule: ViewFilterRule, values: string[], expected: string[]): boolean {
-  const fieldSpans = values.map(dateFilterSpan).filter((span): span is { startMs: number; endExclusiveMs: number } => span !== null);
+  const fieldSpans = values
+    .map((value) => dateSpanForFieldValue(rule.field, value))
+    .filter((span): span is { startMs: number; endExclusiveMs: number } => span !== null);
   if (fieldSpans.length === 0) return false;
   const matchOne = (target: string) => {
-    const span = dateFilterSpan(target);
+    const span = parseDateValueSpan(target);
     if (!span) return false;
     if (rule.operator === 'before') return fieldSpans.some((field) => field.startMs < span.startMs);
     if (rule.operator === 'after') return fieldSpans.some((field) => field.startMs >= span.endExclusiveMs);
@@ -312,7 +396,7 @@ function rowMatchesFilter(
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
 ): boolean {
-  const values = fieldValuesFor(node, rule.field, byId, systemFieldContext);
+  const values = viewFieldValuesFor(node, rule.field, byId, systemFieldContext);
   const normalizedValues = values.map((value) => value.toLocaleLowerCase());
   const expected = rule.values.map((value) => value.trim().toLocaleLowerCase()).filter(Boolean);
 
@@ -320,7 +404,7 @@ function rowMatchesFilter(
   if (rule.operator === 'is_not_empty') return values.some((value) => value.trim());
   if (expected.length === 0) return true;
 
-  if (isDateFilterField(rule.field, byId)) {
+  if (isViewDateField(rule.field, byId)) {
     return rowMatchesDateFilter(rule, values, rule.values.map((value) => value.trim()).filter(Boolean));
   }
 
@@ -395,8 +479,8 @@ function groupBucket(
     return { key: isTrue ? 'true' : 'false', label: isTrue ? onLabel : offLabel, sortKey: isTrue ? '0' : '1' };
   }
 
-  if (isDateFilterField(fieldId, byId)) {
-    const span = dateFilterSpan(trimmed[0]);
+  if (isViewDateField(fieldId, byId)) {
+    const span = dateSpanForFieldValue(fieldId, trimmed[0]);
     if (span) {
       const date = new Date(span.startMs);
       const dayKey = localDayKey(date);
@@ -427,7 +511,7 @@ function groupRows(
       continue;
     }
     const node = byId.get(row.id);
-    const values = node ? fieldValuesFor(node, fieldId, byId, systemFieldContext) : [];
+    const values = node ? viewFieldValuesFor(node, fieldId, byId, systemFieldContext) : [];
     const bucket = groupBucket(fieldId, values, byId);
     const group = groups.get(bucket.key) ?? { label: bucket.label, sortKey: bucket.sortKey, rows: [] };
     group.rows.push(row);
@@ -489,13 +573,26 @@ function applyViewSettings(
 ): OutlinerRowItem[] {
   const view = readViewConfig(parent, byId);
   const systemFieldContext = options.systemFieldContext;
-  return groupRows(
+  const sortedRows = sortRows(view, rows, byId, systemFieldContext);
+  const { visible, filteredOut } = partitionFilterRows(view, sortedRows, byId, systemFieldContext);
+  const visibleRows = groupRows(
     parent,
     view,
-    sortRows(view, filterRows(view, rows, byId, systemFieldContext), byId, systemFieldContext),
+    visible,
     byId,
     systemFieldContext,
   );
+  if (filteredOut.length === 0) return visibleRows;
+  const ruleKey = view.filterRules.map((rule) => rule.id).join('|');
+  return [
+    ...visibleRows,
+    {
+      id: `filtered:${parent.id}:${ruleKey}`,
+      type: 'filteredOut',
+      count: filteredOut.length,
+      rows: filteredOut,
+    },
+  ];
 }
 
 export function buildOutlinerRows(
@@ -507,40 +604,175 @@ export function buildOutlinerRows(
   return applyViewSettings(parent, buildChildRows(parent, byId, options), byId, options);
 }
 
+export function flattenExpandedOutlinerRows(
+  rows: readonly OutlinerRowItem[],
+  expanded: ReadonlySet<string>,
+): OutlinerRowItem[] {
+  const out: OutlinerRowItem[] = [];
+  const visitRows = (items: readonly OutlinerRowItem[]) => {
+    for (const row of items) {
+      if (row.type === 'filteredOut') {
+        out.push(row);
+        if (expanded.has(row.id)) visitRows(row.rows);
+        continue;
+      }
+      out.push(row);
+    }
+  };
+  visitRows(rows);
+  return out;
+}
+
 // A field's display label: a fixed system-field label, else the def node's title.
 export function fieldChoiceLabel(fieldId: string, byId: Map<NodeId, NodeProjection>): string {
+  const viewSystemField = SYSTEM_VIEW_FIELD_CHOICES.find((choice) => choice.id === fieldId);
+  if (viewSystemField) return viewSystemField.label;
   return systemFieldLabel(fieldId) ?? nodeTitle(byId.get(fieldId));
+}
+
+export function visibleDisplayFields(view: ViewConfig): ViewDisplayField[] {
+  return view.displayFields.filter((field) => field.visible && field.field !== NAME_FIELD);
+}
+
+export function viewDisplayValuesFor(
+  rowNode: NodeProjection,
+  view: ViewConfig,
+  byId: Map<NodeId, NodeProjection>,
+  systemFieldContext?: SystemFieldContext,
+): ViewFieldValue[] {
+  return visibleDisplayFields(view).flatMap((displayField): ViewFieldValue[] => {
+    const values = displayFieldValuesFor(rowNode, displayField.field, byId, systemFieldContext)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (values.length === 0) return [];
+    return [{
+      id: displayField.id,
+      field: displayField.field,
+      label: displayField.label?.trim() || fieldChoiceLabel(displayField.field, byId),
+      values,
+    }];
+  });
 }
 
 export function collectViewFieldChoices(
   parent: NodeProjection,
   byId: Map<NodeId, NodeProjection>,
+  referenceSummary: ReferenceSummary,
 ): Array<{ id: string; label: string; section: 'System fields' | 'Fields' }> {
-  const choices = new Map<string, { label: string; section: 'System fields' | 'Fields' }>([
-    [NAME_FIELD, { label: 'Name', section: 'System fields' }],
-    [CREATED_FIELD, { label: 'Created', section: 'System fields' }],
-    [UPDATED_FIELD, { label: 'Last edited', section: 'System fields' }],
-    [DONE_FIELD, { label: 'Done', section: 'System fields' }],
-    [DONE_AT_FIELD, { label: 'Done time', section: 'System fields' }],
-    [TAGS_FIELD, { label: 'Tags', section: 'System fields' }],
-    [REF_COUNT_FIELD, { label: 'References', section: 'System fields' }],
-  ]);
-  for (const childId of parent.children) {
-    const child = byId.get(childId);
-    if (!child) continue;
+  const choices = new Map<string, { label: string; section: 'System fields' | 'Fields' }>();
+  const candidateRows = fieldCandidateRows(parent, byId);
+
+  for (const system of SYSTEM_VIEW_FIELD_CHOICES) {
+    if (systemFieldPresentInRows(system.id, candidateRows, byId, referenceSummary)) {
+      choices.set(system.id, { label: system.label, section: 'System fields' });
+    }
+  }
+
+  for (const child of candidateRows) {
     const displayed = displayNode(child, byId);
     for (const nestedId of displayed.children) {
       const nested = byId.get(nestedId);
-      if (nested?.type !== 'fieldEntry' || !nested.fieldDefId) continue;
+      if (nested?.type !== 'fieldEntry' || !nested.fieldDefId || isSystemFieldId(nested.fieldDefId)) continue;
       choices.set(nested.fieldDefId, { label: fieldChoiceLabel(nested.fieldDefId, byId), section: 'Fields' });
     }
   }
-  for (const node of byId.values()) {
-    if (node.type === 'fieldDef') {
-      choices.set(node.id, { label: fieldChoiceLabel(node.id, byId), section: 'Fields' });
+
+  const view = readViewConfig(parent, byId);
+  for (const fieldId of referencedViewFields(view)) {
+    if (isSystemFieldId(fieldId)) {
+      const system = SYSTEM_VIEW_FIELD_CHOICES.find((choice) => choice.id === fieldId);
+      if (system) choices.set(system.id, { label: system.label, section: 'System fields' });
+      continue;
     }
+    choices.set(fieldId, { label: fieldChoiceLabel(fieldId, byId), section: 'Fields' });
   }
+
   return [...choices.entries()]
     .map(([id, choice]) => ({ id, ...choice }))
-    .sort((a, b) => a.section.localeCompare(b.section) || a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+    .sort((a, b) => {
+      if (a.section !== b.section) return a.section === 'System fields' ? -1 : 1;
+      if (a.section === 'System fields') return (SYSTEM_VIEW_FIELD_ORDER.get(a.id) ?? 999) - (SYSTEM_VIEW_FIELD_ORDER.get(b.id) ?? 999);
+      return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
+    });
+}
+
+const SYSTEM_VIEW_FIELD_CHOICES = [
+  { id: NAME_FIELD, label: 'Name' },
+  { id: CREATED_FIELD, label: 'Created time' },
+  { id: DAY_FIELD, label: 'Date from calendar node' },
+  { id: DONE_FIELD, label: 'Done' },
+  { id: DONE_AT_FIELD, label: 'Done time' },
+  { id: UPDATED_FIELD, label: 'Last edited time' },
+  { id: REF_COUNT_FIELD, label: 'Number of references' },
+  { id: OWNER_FIELD, label: 'Owner node' },
+  { id: TAGS_FIELD, label: 'Tags' },
+];
+
+const SYSTEM_VIEW_FIELD_ORDER = new Map(SYSTEM_VIEW_FIELD_CHOICES.map((choice, index) => [choice.id, index]));
+
+function fieldCandidateRows(parent: NodeProjection, byId: Map<NodeId, NodeProjection>): NodeProjection[] {
+  const rows: NodeProjection[] = [];
+  for (const childId of parent.children) {
+    const child = byId.get(childId);
+    if (!child) continue;
+    if (child.type && INTERNAL_NODE_TYPES.has(child.type)) continue;
+    rows.push(child);
+  }
+  return rows;
+}
+
+export function customViewFieldIdsOnRows(parent: NodeProjection, byId: Map<NodeId, NodeProjection>): Set<string> {
+  const fields = new Set<string>();
+  for (const child of fieldCandidateRows(parent, byId)) {
+    const displayed = displayNode(child, byId);
+    for (const nestedId of displayed.children) {
+      const nested = byId.get(nestedId);
+      if (nested?.type !== 'fieldEntry' || !nested.fieldDefId || isSystemFieldId(nested.fieldDefId)) continue;
+      fields.add(nested.fieldDefId);
+    }
+  }
+  return fields;
+}
+
+function referencedViewFields(view: ViewConfig): Set<string> {
+  const fields = new Set<string>();
+  for (const display of view.displayFields) {
+    fields.add(display.field);
+  }
+  if (view.groupField) {
+    fields.add(view.groupField);
+  }
+  for (const rule of view.sortRules) {
+    fields.add(rule.field);
+  }
+  for (const rule of view.filterRules) {
+    fields.add(rule.field);
+  }
+  return fields;
+}
+
+function systemFieldPresentInRows(
+  fieldId: string,
+  rows: NodeProjection[],
+  byId: Map<NodeId, NodeProjection>,
+  referenceSummary: ReferenceSummary,
+): boolean {
+  if (fieldId === NAME_FIELD || fieldId === CREATED_FIELD || fieldId === UPDATED_FIELD) return rows.length > 0;
+  if (fieldId === OWNER_FIELD) return rows.some((row) => Boolean(displayNode(row, byId).parentId));
+  if (fieldId === DONE_FIELD) return rows.some((row) => nodeShowsCheckbox(byId, displayNode(row, byId)));
+  if (fieldId === TAGS_FIELD) return rows.some((row) => displayNode(row, byId).tags.length > 0);
+  if (fieldId === DONE_AT_FIELD) return rows.some((row) => {
+    const completedAt = displayNode(row, byId).completedAt;
+    return completedAt !== undefined && completedAt > 0;
+  });
+  if (fieldId === DAY_FIELD) {
+    return rows.some((row) => viewFieldValuesFor(row, DAY_FIELD, byId).length > 0);
+  }
+  if (fieldId === REF_COUNT_FIELD) {
+    return rows.some((row) => {
+      const displayed = displayNode(row, byId);
+      return (referenceSummary.countsByTarget.get(displayed.id)?.linked ?? 0) > 0;
+    });
+  }
+  return false;
 }

@@ -13,6 +13,7 @@ import {
   ReferenceIcon,
   RefreshIcon,
   SearchIcon,
+  ShowToolbarIcon,
   type AppIcon,
 } from '../icons';
 import { Button } from '../primitives/Button';
@@ -243,6 +244,10 @@ export function SearchQuerySummaryBar({ index, nodeId, run }: SearchQuerySummary
     }
   };
 
+  const showViewToolbar = async () => {
+    await run(() => api.setViewToolbarVisible(nodeId, true), { applyFocus: false });
+  };
+
   return (
     <div className="search-query-summary-bar">
       <div className="search-query-summary-main">
@@ -257,15 +262,25 @@ export function SearchQuerySummaryBar({ index, nodeId, run }: SearchQuerySummary
           {t.search.resultCount({ count: model.resultCount })}
         </span>
       </div>
-      <IconButton
-        className={`search-query-refresh-button ${refreshing ? 'is-refreshing' : ''}`}
-        disabled={refreshing}
-        icon={RefreshIcon}
-        label={summary.refreshLabel}
-        onClick={() => void refresh()}
-        title={summary.refreshTitle}
-        variant="toolbar"
-      />
+      <div className="search-query-summary-actions">
+        <IconButton
+          className="search-query-toolbar-button"
+          icon={ShowToolbarIcon}
+          label={summary.viewLabel}
+          onClick={() => void showViewToolbar()}
+          title={summary.viewTitle}
+          variant="toolbar"
+        />
+        <IconButton
+          className={`search-query-toolbar-button search-query-refresh-button ${refreshing ? 'is-refreshing' : ''}`}
+          disabled={refreshing}
+          icon={RefreshIcon}
+          label={summary.refreshLabel}
+          onClick={() => void refresh()}
+          title={summary.refreshTitle}
+          variant="toolbar"
+        />
+      </div>
     </div>
   );
 }

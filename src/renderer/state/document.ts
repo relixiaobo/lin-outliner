@@ -21,7 +21,7 @@ import {
   resolveSelectableReferenceTargetId,
   selectableChildParentId,
 } from './selectableRows';
-import { buildOutlinerRows } from './outlinerRows';
+import { buildOutlinerRows, type OutlinerRowItem } from './outlinerRows';
 
 export interface DocumentIndex {
   projection: DocumentProjection;
@@ -292,14 +292,21 @@ export function flattenVisibleRows(
     const parent = byId.get(parentId);
     if (!parent) return;
     const rows = buildOutlinerRows(parent, byId, { expandedHiddenFields });
-    for (const row of rows) {
-      if (row.type !== 'field' && row.type !== 'content') continue;
-      result.push(row.id);
-      if (!isRowExpanded(row.id, byId, expanded)) continue;
-      const childParentId = outlinerChildParentId(row.id, byId);
-      if (!childParentId || referencePath.includes(childParentId)) continue;
-      visit(childParentId, [...referencePath, childParentId]);
+    const visitRows = (currentRows: OutlinerRowItem[]) => {
+      for (const row of currentRows) {
+        if (row.type === 'filteredOut') {
+          if (expanded.has(row.id)) visitRows(row.rows);
+          continue;
+        }
+        if (row.type !== 'field' && row.type !== 'content') continue;
+        result.push(row.id);
+        if (!isRowExpanded(row.id, byId, expanded)) continue;
+        const childParentId = outlinerChildParentId(row.id, byId);
+        if (!childParentId || referencePath.includes(childParentId)) continue;
+        visit(childParentId, [...referencePath, childParentId]);
+      }
     }
+    visitRows(rows);
   };
   visit(rootId, [rootId]);
   return result;

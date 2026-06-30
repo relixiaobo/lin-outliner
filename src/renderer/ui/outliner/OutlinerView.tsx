@@ -10,7 +10,7 @@ import { buildOutlinerRows, hiddenFieldKey, readViewConfig, type OutlinerRowItem
 import { useTrailingDraftId } from './draftRow';
 import { insertTrailingDraftRow, resolveTrailingDraftAfterId } from '../../state/trailingDraftPlacement';
 import { ViewToolbar } from './ViewToolbar';
-import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
+import { FilteredOutHeading, HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 import type { FieldValueContext } from '../fields/fieldValueEditors';
 import { OutlinerEmptyState } from './OutlinerEmptyState';
 
@@ -50,7 +50,11 @@ interface OutlinerViewProps {
 }
 
 function countRenderableChildRows(rows: readonly OutlinerRowItem[]): number {
-  return rows.filter((row) => row.type === 'content' && !row.draft).length;
+  return rows.reduce((count, row) => {
+    if (row.type === 'content' && !row.draft) return count + 1;
+    if (row.type === 'filteredOut') return count + row.count;
+    return count;
+  }, 0);
 }
 
 export function OutlinerView(props: OutlinerViewProps) {
@@ -143,6 +147,21 @@ export function OutlinerView(props: OutlinerViewProps) {
         renderGroup={(row) => (
           <ViewGroupHeading label={row.label} />
         )}
+        renderFilteredOut={(row) => (
+          <FilteredOutHeading
+            count={row.count}
+            expanded={props.ui.expanded.has(row.id)}
+            onToggle={() => {
+              props.setUi((prev) => {
+                const expanded = new Set(prev.expanded);
+                if (expanded.has(row.id)) expanded.delete(row.id);
+                else expanded.add(row.id);
+                return { ...prev, expanded };
+              });
+            }}
+          />
+        )}
+        isFilteredOutExpanded={(row) => props.ui.expanded.has(row.id)}
         renderHiddenField={(row) => (
           <HiddenFieldReveal
             label={row.label}

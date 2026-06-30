@@ -161,11 +161,30 @@ export function propagateDirty(
     if (!ids) return;
     for (const id of ids) if (!affected.has(id)) stack.push(id);
   };
+  const enqueueViewOwnerRows = (node: NodeProjection | undefined) => {
+    if (!node) return;
+    const viewDef = node.type === 'viewDef'
+      ? node
+      : node.parentId
+        ? byId.get(node.parentId)
+        : undefined;
+    if (viewDef?.type !== 'viewDef' || !viewDef.parentId) return;
+    const owner = byId.get(viewDef.parentId);
+    if (!owner) return;
+    for (const childId of owner.children) {
+      const child = byId.get(childId);
+      if (!child || child.type === 'viewDef' || child.type === 'sortRule' || child.type === 'filterRule' || child.type === 'displayField') continue;
+      if (!affected.has(childId)) stack.push(childId);
+    }
+  };
   while (stack.length > 0) {
     const id = stack.pop()!;
     if (affected.has(id)) continue;
     affected.add(id);
     const node = byId.get(id);
+    if (node?.type === 'viewDef' || node?.type === 'sortRule' || node?.type === 'filterRule' || node?.type === 'displayField') {
+      enqueueViewOwnerRows(node);
+    }
     if (node?.parentId && !affected.has(node.parentId)) stack.push(node.parentId);
     for (const category of REVERSE_CATEGORIES) enqueue(edges[category].get(id));
   }

@@ -25,6 +25,7 @@ import {
   type DocumentIndex,
   type UiState,
 } from '../../state/document';
+import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import { deriveRowMemoState, rowMemoStateEqual } from '../../state/rowUiState';
 import { RichTextEditor, type EditorSplitPayload } from '../editor/RichTextEditor';
 import { FileNodeKeyboardAnchor } from './FileNodeKeyboardAnchor';
@@ -86,7 +87,12 @@ import { NodeDescription } from './NodeDescription';
 import { OutlinerRowShell } from './OutlinerRowShell';
 import { OutlinerView } from './OutlinerView';
 import { animateOutlinerRowMovementAfterNextCommit } from './rowMoveAnimation';
-import { buildOutlinerRows } from './row-model';
+import {
+  buildOutlinerRows,
+  readViewConfig,
+  viewDisplayValuesFor,
+  type ViewFieldValue,
+} from './row-model';
 import { draftCreateIndex, previousDraftSiblingId } from '../../state/trailingDraftPlacement';
 import { IndentGuide } from './IndentGuide';
 import { RowLeading } from './RowLeading';
@@ -212,6 +218,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     && Boolean(referenceTargetId)
     && props.referencePath.includes(childParentId);
   const rowChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId);
+  const parentView = readViewConfig(parentNode, props.index.byId);
+  const referenceSummary = referenceSummaryForIndex(props.index);
+  const displayValues = realNode && displayed && !props.draft && !props.fieldValue
+    ? viewDisplayValuesFor(displayed, parentView, props.index.byId, { referenceSummary })
+    : [];
   // A file node is a full node — the bullet drills to the node page, the chevron
   // expands an inline preview. Its row content depends on the kind: a non-image file is
   // a lightweight name row (file-type bullet, read-only filename, hover ⋯ menu); an
@@ -2328,6 +2339,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               )}
             </span>
           )}
+          <ViewDisplayFields ariaLabel={t.outliner.viewToolbar.displayedFieldsAriaLabel} values={displayValues} />
           {dateFieldValue && props.fieldValue && (
             <DateValuePicker
               anchorRef={optionAnchorRef}
@@ -2465,6 +2477,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           y={contextMenu.y}
           node={node}
           targetId={targetEditId}
+          visualRowId={props.nodeId}
+          viewToolbarVisibleInRow={row.expanded}
           openId={drillDownId}
           // The live selection from uiRef, not the memoized props.ui: a selected
           // row skips re-render when *another* row joins/leaves the block
@@ -2484,6 +2498,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               descriptionFocusTarget,
               cursorEnd(),
             ));
+          }}
+          onRevealViewToolbar={(visualRowId) => {
+            props.setUi((prev) => {
+              if (prev.expanded.has(visualRowId)) return prev;
+              const expanded = new Set(prev.expanded);
+              expanded.add(visualRowId);
+              return { ...prev, expanded };
+            });
           }}
           onOpenViewSection={(nodeId, section) => {
             props.setUi((prev) => ({
@@ -2637,6 +2659,20 @@ function SelectedReferenceOptionPicker({
       </PopoverListbox>
     </div>,
     document.body,
+  );
+}
+
+function ViewDisplayFields({ ariaLabel, values }: { ariaLabel: string; values: ViewFieldValue[] }) {
+  if (values.length === 0) return null;
+  return (
+    <div className="view-display-fields" aria-label={ariaLabel}>
+      {values.map((field) => (
+        <span className="view-display-field" key={field.id}>
+          <span className="view-display-field-label">{field.label}</span>
+          <span className="view-display-field-value">{field.values.join(', ')}</span>
+        </span>
+      ))}
+    </div>
   );
 }
 
