@@ -36,6 +36,7 @@ import {
   MediaTimeRange,
   MediaVolumeRange,
 } from 'media-chrome/react';
+import type { MediaController as MediaControllerElement } from 'media-chrome';
 import {
   FileTextIcon,
   FolderIcon,
@@ -600,14 +601,22 @@ function useMediaSourceUrl(source: PreviewFileSource): { src: string | null; err
 
 type PreviewMediaElement = HTMLAudioElement | HTMLVideoElement;
 
-function useMediaKeyboardShortcuts(ref: RefObject<PreviewMediaElement | null>, enabled: boolean) {
+function useMediaKeyboardShortcuts({
+  controllerRef,
+  enabled,
+  mediaRef,
+}: {
+  controllerRef: RefObject<MediaControllerElement | null>;
+  enabled: boolean;
+  mediaRef: RefObject<PreviewMediaElement | null>;
+}) {
   useEffect(() => {
     if (!enabled) return;
-    const media = ref.current;
+    const media = mediaRef.current;
     if (!media) return;
     const ownerDocument = media.ownerDocument;
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (!isMediaShortcutActive(ownerDocument, media, event.target)) return;
+      if (!isMediaShortcutActive(ownerDocument, media, controllerRef.current, event.target)) return;
       const key = event.key.toLowerCase();
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (key === ' ' || key === 'k') {
@@ -632,20 +641,27 @@ function useMediaKeyboardShortcuts(ref: RefObject<PreviewMediaElement | null>, e
       }
       if (key === 'f' && isPreviewVideoElement(media)) {
         event.preventDefault();
-        void toggleMediaFullscreen(ownerDocument, media).catch(() => {});
+        void toggleMediaFullscreen(ownerDocument, controllerRef.current ?? media).catch(() => {});
       }
     };
     ownerDocument.addEventListener('keydown', onKeyDown, true);
     return () => ownerDocument.removeEventListener('keydown', onKeyDown, true);
-  }, [enabled, ref]);
+  }, [controllerRef, enabled, mediaRef]);
 }
 
 function isMediaShortcutActive(
   ownerDocument: Document,
   media: PreviewMediaElement,
+  controller: MediaControllerElement | null,
   target: EventTarget | null,
 ): boolean {
-  if (ownerDocument.fullscreenElement) return media.contains(ownerDocument.fullscreenElement);
+  const fullscreenElement = ownerDocument.fullscreenElement;
+  if (fullscreenElement) {
+    return fullscreenElement === media
+      || fullscreenElement.contains(media)
+      || media.contains(fullscreenElement)
+      || Boolean(controller && (fullscreenElement === controller || fullscreenElement.contains(controller)));
+  }
   return target === media;
 }
 
@@ -667,27 +683,29 @@ function isPreviewVideoElement(media: PreviewMediaElement): media is HTMLVideoEl
   return media.tagName.toLowerCase() === 'video';
 }
 
-async function toggleMediaFullscreen(ownerDocument: Document, media: HTMLVideoElement): Promise<void> {
+async function toggleMediaFullscreen(ownerDocument: Document, target: HTMLElement): Promise<void> {
   if (ownerDocument.fullscreenElement) {
     await ownerDocument.exitFullscreen();
     return;
   }
-  await media.requestFullscreen();
+  await target.requestFullscreen();
 }
 
 function AudioPreview({ mediaActions, source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const { src, error } = useMediaSourceUrl(source);
   const mediaRef = useRef<HTMLAudioElement | null>(null);
+  const controllerRef = useRef<MediaControllerElement | null>(null);
   const setMediaRef = useCallback((element: HTMLAudioElement | null) => {
     mediaRef.current = element;
     if (element) element.disableRemotePlayback = true;
   }, []);
-  useMediaKeyboardShortcuts(mediaRef, Boolean(src));
+  useMediaKeyboardShortcuts({ controllerRef, enabled: Boolean(src), mediaRef });
   if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
   return (
     <MediaPreviewPlayer
       actions={mediaActions}
+      controllerRef={controllerRef}
       kind="audio"
     >
       <audio
@@ -708,11 +726,13 @@ function VideoPreview({ mediaActions, source }: PreviewRendererProps) {
   const labels = useT().shell.filePreview;
   const { src, error } = useMediaSourceUrl(source);
   const mediaRef = useRef<HTMLVideoElement | null>(null);
-  useMediaKeyboardShortcuts(mediaRef, Boolean(src));
+  const controllerRef = useRef<MediaControllerElement | null>(null);
+  useMediaKeyboardShortcuts({ controllerRef, enabled: Boolean(src), mediaRef });
   if (!src) return <PreviewMessage>{error === 'too-large' ? labels.tooLarge : labels.loading}</PreviewMessage>;
   return (
     <MediaPreviewPlayer
       actions={mediaActions}
+      controllerRef={controllerRef}
       kind="video"
     >
       <video
@@ -734,10 +754,12 @@ function VideoPreview({ mediaActions, source }: PreviewRendererProps) {
 function MediaPreviewPlayer({
   actions,
   children,
+  controllerRef,
   kind,
 }: {
   actions?: ReactElement | null;
   children: ReactElement;
+  controllerRef: RefObject<MediaControllerElement | null>;
   kind: 'audio' | 'video';
 }) {
   const isAudio = kind === 'audio';
@@ -748,6 +770,7 @@ function MediaPreviewPlayer({
       data-preserve-selection
       keyboardControl
       noAutohide={isAudio}
+      ref={controllerRef}
     >
       {children}
       <MediaControlBar className="file-preview-media-controls">

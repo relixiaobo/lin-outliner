@@ -105,7 +105,7 @@ describe('FilePreviewShell media controls', () => {
     expect(mediaState(video).muted).toBe(true);
   });
 
-  test('video fullscreen shortcut works while the media is already fullscreen', async () => {
+  test('video fullscreen shortcuts use the media controller fullscreen surface', async () => {
     const rendered = render(
       <FilePreviewShell
         state={{ status: 'ready', source: mediaSource('video/mp4') }}
@@ -114,9 +114,13 @@ describe('FilePreviewShell media controls', () => {
       />,
     );
     const video = rendered.document.querySelector('.file-preview-video');
+    const controller = rendered.document.querySelector('.file-preview-media-player--video');
     if (!(video instanceof rendered.window.HTMLElement)) throw new Error('Missing video');
+    if (!(controller instanceof rendered.window.HTMLElement)) throw new Error('Missing controller');
     installMediaState(video, { paused: true, currentTime: 0, duration: 60 });
-    installFullscreenState(rendered.document, video);
+    const videoFullscreen = installFullscreenRequestState(video);
+    const controllerFullscreen = installFullscreenRequestState(controller);
+    installFullscreenState(rendered.document, controller);
 
     await keydown(rendered, rendered.document.body, ' ');
     expect(mediaState(video).playCalls).toBe(1);
@@ -124,6 +128,11 @@ describe('FilePreviewShell media controls', () => {
 
     await keydown(rendered, rendered.document.body, 'f');
     expect(fullscreenState(rendered.document).exitCalls).toBe(1);
+
+    installFullscreenState(rendered.document, null);
+    await keydown(rendered, video, 'f');
+    expect(controllerFullscreen.requestFullscreenCalls).toBe(1);
+    expect(videoFullscreen.requestFullscreenCalls).toBe(0);
   });
 });
 
@@ -377,7 +386,6 @@ interface TestMediaState {
   paused: boolean;
   pauseCalls: number;
   playCalls: number;
-  requestFullscreenCalls: number;
 }
 
 function installMediaState(
@@ -389,7 +397,6 @@ function installMediaState(
     muted: false,
     pauseCalls: 0,
     playCalls: 0,
-    requestFullscreenCalls: 0,
   };
   Object.defineProperties(media, {
     currentTime: {
@@ -429,10 +436,6 @@ function installMediaState(
       state.paused = false;
       return Promise.resolve();
     },
-    requestFullscreen: () => {
-      state.requestFullscreenCalls += 1;
-      return Promise.resolve();
-    },
   });
 }
 
@@ -444,7 +447,11 @@ interface TestFullscreenState {
   exitCalls: number;
 }
 
-function installFullscreenState(document: Document, element: Element) {
+interface TestFullscreenRequestState {
+  requestFullscreenCalls: number;
+}
+
+function installFullscreenState(document: Document, element: Element | null) {
   const state: TestFullscreenState = { exitCalls: 0 };
   Object.defineProperties(document, {
     fullscreenElement: {
@@ -466,6 +473,17 @@ function installFullscreenState(document: Document, element: Element) {
 
 function fullscreenState(document: Document): TestFullscreenState {
   return (document as Document & { __fullscreenState: TestFullscreenState }).__fullscreenState;
+}
+
+function installFullscreenRequestState(element: Element): TestFullscreenRequestState {
+  const state: TestFullscreenRequestState = { requestFullscreenCalls: 0 };
+  Object.assign(element, {
+    requestFullscreen: () => {
+      state.requestFullscreenCalls += 1;
+      return Promise.resolve();
+    },
+  });
+  return state;
 }
 
 async function keydown(rendered: { window: Window }, target: Element | Document, key: string) {
