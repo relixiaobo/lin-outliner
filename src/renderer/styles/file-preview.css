@@ -660,6 +660,7 @@
 
 .document-outline-rail {
   --document-outline-track-width: calc(var(--space-8) + var(--space-1));
+  --document-outline-track-height: min(148px, 26vh);
   --document-outline-marker-width: calc(var(--space-4) + 2px);
   --document-outline-marker-gap: var(--space-4);
 
@@ -667,8 +668,11 @@
   top: 50%;
   right: var(--space-5);
   z-index: var(--z-popover);
+  display: flex;
   width: min(320px, calc(100% - var(--space-8)));
   max-height: min(360px, 52%);
+  align-items: center;
+  justify-content: flex-end;
   pointer-events: none;
   transform: translateY(-50%);
 }
@@ -680,7 +684,8 @@
 .document-outline-rail-track {
   display: flex;
   width: var(--document-outline-track-width);
-  max-height: inherit;
+  height: var(--document-outline-track-height);
+  max-height: var(--document-outline-track-height);
   flex-direction: column;
   align-items: center;
   gap: var(--document-outline-marker-gap);

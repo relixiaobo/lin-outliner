@@ -34,6 +34,7 @@ export function DocumentOutlineRail({
   const [markers, setMarkers] = useState<DocumentOutlineMarker[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
   const markersRef = useRef<DocumentOutlineMarker[]>([]);
+  const trackRef = useRef<HTMLDivElement | null>(null);
   const activeFrameRef = useRef<number | null>(null);
   const measureFrameRef = useRef<number | null>(null);
 
@@ -113,6 +114,20 @@ export function DocumentOutlineRail({
     };
   }, [layoutVersion, scheduleActiveIndex, scheduleMeasure, scrollRootRef]);
 
+  useEffect(() => {
+    if (activeIndex < 0) return;
+    const track = trackRef.current;
+    const activeMarker = track?.children.item(activeIndex);
+    if (!(activeMarker instanceof HTMLElement) || !track) return;
+    const nextTop = activeMarker.offsetTop - (track.clientHeight - activeMarker.offsetHeight) / 2;
+    const targetTop = Math.max(0, nextTop);
+    if (typeof track.scrollTo === 'function') {
+      track.scrollTo({ top: targetTop, behavior: 'auto' });
+    } else {
+      track.scrollTop = targetTop;
+    }
+  }, [activeIndex, markers.length]);
+
   if (markers.length === 0) return null;
 
   const jumpToMarker = (index: number) => {
@@ -128,7 +143,7 @@ export function DocumentOutlineRail({
       className="document-outline-rail"
       data-document-outline-rail
     >
-      <div className="document-outline-rail-track">
+      <div className="document-outline-rail-track" ref={trackRef}>
         {markers.map((marker, index) => (
           <button
             aria-label={labels.documentOutlineJump({ title: marker.title })}

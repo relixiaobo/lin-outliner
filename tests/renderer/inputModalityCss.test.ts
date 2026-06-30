@@ -67,4 +67,11 @@ describe('input modality CSS guards', () => {
     expect(filePreviewCss).toMatch(/\.file-preview-pdf-shell--full\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;/s);
     expect(filePreviewCss).toMatch(/\.file-preview-pdf--full\s*\{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*flex:\s*1 1 auto;/s);
   });
+
+  test('keeps document outline markers centered in a short rail', () => {
+    expect(filePreviewCss).toMatch(/\.document-outline-rail\s*\{[^}]*--document-outline-track-height:\s*min\(148px, 26vh\);/s);
+    expect(filePreviewCss).toMatch(/\.document-outline-rail\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*flex-end;/s);
+    expect(filePreviewCss).toMatch(/\.document-outline-rail-track\s*\{[^}]*height:\s*var\(--document-outline-track-height\);[^}]*max-height:\s*var\(--document-outline-track-height\);/s);
+    expect(filePreviewCss).toMatch(/\.document-outline-rail-track\s*\{[^}]*overflow-y:\s*auto;/s);
+  });
 });
