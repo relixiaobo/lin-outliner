@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type FocusEvent,
   type RefObject,
 } from 'react';
 import { useT } from '../../i18n/I18nProvider';
@@ -130,13 +131,18 @@ export function DocumentOutlineRail({
       : activeIndex;
     centerActiveOutlineItem(popoverRef.current, nextActiveIndex);
   };
+  const syncPopoverToActiveOnFocus = (event: FocusEvent<HTMLElement>) => {
+    const target = event.target;
+    if (target instanceof Node && popoverRef.current?.contains(target)) return;
+    syncPopoverToActive();
+  };
 
   return (
     <nav
       aria-label={labels.documentOutline}
       className="document-outline-rail"
       data-document-outline-rail
-      onFocus={syncPopoverToActive}
+      onFocus={syncPopoverToActiveOnFocus}
       onMouseEnter={syncPopoverToActive}
     >
       <div className="document-outline-rail-track" ref={trackRef}>

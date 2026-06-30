@@ -431,13 +431,14 @@ links from inside the book are intercepted and sent through the app's
 http(s)-only external-open path. Expanded PDF and EPUB readers keep the native
 scrollbar for exact position and, when the document exposes an outline/table of
 contents, overlay a left-edge outline rail whose markers sit in a vertically
-centered track that can grow up to 80% of the document viewport to show surrounding progress,
-with internal scrolling rather than stretching down the full document viewport. The active marker is kept
-centered inside that track as
+centered track that can grow up to 80% of the document viewport to show
+surrounding progress, with internal scrolling rather than stretching down the
+full document viewport. The active marker is kept centered inside that track as
 the document scrolls. The rail is a directory index rather than a precise
-scroll-position indicator; hover/focus opens the chapter popover already scrolled
-to the current active chapter, and both surfaces jump to
-resolved scroll positions. Reader scroll positions persist per resolved preview
+scroll-position indicator; hover or focus entry from the marker rail opens the
+chapter popover already scrolled to the current active chapter, while focus and
+clicks inside the popover keep the user's current popover scroll position. Both
+surfaces jump to resolved scroll positions. Reader scroll positions persist per resolved preview
 identity: PDFs restore page + page-relative offset, while EPUBs restore spine
 section + section-relative offset. Documents without outline metadata render no
 rail.

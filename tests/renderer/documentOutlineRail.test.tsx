@@ -58,6 +58,49 @@ describe('DocumentOutlineRail', () => {
     expect(popover.scrollTop).toBe(96);
     expect(rendered.document.querySelector('.document-outline-item.active')?.textContent).toBe('Section 4');
   });
+
+  test('does not recenter the popover when clicking a different outline item', async () => {
+    const rendered = renderRail();
+    const scrollRoot = rendered.document.getElementById('scroll-root');
+    if (!scrollRoot) throw new Error('Missing scroll root');
+    const scrollCalls = installScrollToSpy(scrollRoot);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const rail = rendered.document.querySelector<HTMLElement>('.document-outline-rail');
+    const popover = rendered.document.querySelector<HTMLElement>('.document-outline-popover');
+    if (!rail || !popover) throw new Error('Missing outline rail');
+
+    installPopoverGeometry(popover);
+    scrollRoot.scrollTop = 350;
+    await act(async () => {
+      scrollRoot.dispatchEvent(new rendered.window.Event('scroll'));
+      rail.dispatchEvent(new rendered.window.Event('mouseover', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(popover.scrollTop).toBe(96);
+
+    popover.scrollTop = 0;
+    const targetItem = rendered.document.querySelectorAll<HTMLElement>('.document-outline-item').item(1);
+    if (!targetItem) throw new Error('Missing target outline item');
+
+    await act(async () => {
+      targetItem.dispatchEvent(new rendered.window.Event('focusin', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(popover.scrollTop).toBe(0);
+
+    await act(async () => {
+      targetItem.dispatchEvent(new rendered.window.Event('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(scrollCalls).toEqual([{ behavior: 'smooth', top: 100 }]);
+  });
 });
 
 function renderRail(): { document: Document; window: Window } {
@@ -105,6 +148,19 @@ function installPopoverGeometry(popover: HTMLElement) {
     Object.defineProperty(child, 'offsetTop', { configurable: true, value: index * 48 });
     Object.defineProperty(child, 'offsetHeight', { configurable: true, value: 24 });
   });
+}
+
+function installScrollToSpy(scrollRoot: HTMLElement) {
+  const scrollCalls: Array<{ behavior?: ScrollBehavior; top: number }> = [];
+  scrollRoot.scrollTo = ((options?: ScrollToOptions | number, y?: number) => {
+    const top = typeof options === 'number' ? y ?? 0 : options?.top ?? 0;
+    scrollRoot.scrollTop = top;
+    scrollCalls.push({
+      behavior: typeof options === 'number' ? undefined : options?.behavior,
+      top,
+    });
+  }) as typeof scrollRoot.scrollTo;
+  return scrollCalls;
 }
 
 function installDomGlobals(window: Window) {
