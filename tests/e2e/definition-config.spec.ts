@@ -200,6 +200,51 @@ test.describe('definition configuration parity', () => {
     await expect(dialog.locator('.view-toolbar-option', { hasText: 'Created time' })).toContainText('1. Old → New');
   });
 
+  test('view toolbar sort blocks duplicate pending adds after back navigation', async ({ page }) => {
+    await showViewToolbar(page, ids.today);
+    await page.evaluate(() => {
+      const win = window as typeof window & {
+        __LIN_E2E_SORT_DELAY__?: { attempts: number; release: () => void };
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      const originalInvoke = win.lin!.invoke.bind(win.lin);
+      let releasePending: (() => void) | null = null;
+      win.__LIN_E2E_SORT_DELAY__ = {
+        attempts: 0,
+        release: () => releasePending?.(),
+      };
+      win.lin!.invoke = async <T,>(cmd: string, args?: Record<string, unknown>) => {
+        if (cmd === 'add_sort_rule') {
+          win.__LIN_E2E_SORT_DELAY__!.attempts += 1;
+          await new Promise<void>((resolve) => {
+            releasePending = resolve;
+          });
+        }
+        return originalInvoke<T>(cmd, args);
+      };
+    });
+
+    const toolbar = page.locator('.view-toolbar');
+    await toolbar.getByRole('button', { name: 'Sort by' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Sort by' });
+    await dialog.getByRole('button', { name: /Created time/ }).click();
+    await expect(dialog.getByText('Adding sort…')).toBeVisible();
+
+    await dialog.locator('.view-toolbar-filter-back').click();
+    const createdButton = dialog.getByRole('button', { name: /Created time/ });
+    await expect(createdButton).toBeDisabled();
+    await expect.poll(async () => page.evaluate(() => {
+      const win = window as typeof window & { __LIN_E2E_SORT_DELAY__?: { attempts: number } };
+      return win.__LIN_E2E_SORT_DELAY__?.attempts ?? 0;
+    })).toBe(1);
+
+    await page.evaluate(() => {
+      const win = window as typeof window & { __LIN_E2E_SORT_DELAY__?: { release: () => void } };
+      win.__LIN_E2E_SORT_DELAY__?.release();
+    });
+    await expect(toolbar.locator('.view-toolbar-summary-chip', { hasText: 'Sorted by Created time ↑' })).toBeVisible();
+  });
+
   test('row context menu expands a collapsed node when revealing its view toolbar', async ({ page }) => {
     await invokeDocumentCommand(page, 'set_view_toolbar_visible', { nodeId: ids.alpha, visible: true });
     await expect(row(page, ids.alpha).locator('.view-toolbar')).toHaveCount(0);
@@ -349,11 +394,24 @@ test.describe('definition configuration parity', () => {
     const dialog = page.getByRole('dialog', { name: 'Filter by' });
     await expect(dialog.getByLabel('Filter operator')).toHaveValue('contains');
     await expect(dialog.getByLabel('Filter values')).toHaveValue('project');
-    await page.keyboard.press('Escape');
+    await dialog.getByLabel('Filter values').fill('stale');
 
     await filterChips.nth(1).locator('.view-toolbar-summary-chip-main').click();
     await expect(dialog.getByLabel('Filter operator')).toHaveValue('not_contains');
     await expect(dialog.getByLabel('Filter values')).toHaveValue('archive');
+    await dialog.getByLabel('Filter values').blur();
+
+    await expect.poll(async () => page.evaluate(() => {
+      const win = window as typeof window & {
+        __LIN_E2E__?: { projection: () => { nodes: Array<Record<string, unknown>> } };
+      };
+      return win.__LIN_E2E__!.projection().nodes
+        .filter((node) => node.type === 'filterRule' && node.filterField === 'sys:tags')
+        .map((node) => [node.filterOperator, node.filterValues]);
+    })).toEqual([
+      ['contains', ['stale']],
+      ['not_contains', ['archive']],
+    ]);
   });
 
   test('view toolbar filter keeps filtered-out rows behind an expandable disclosure', async ({ page }) => {

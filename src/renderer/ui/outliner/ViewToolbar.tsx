@@ -941,10 +941,43 @@ function SortSection({
   const t = useT();
   const tv = t.outliner.viewToolbar;
   const [editingTarget, setEditingTarget, ruleByField, ruleById] = useRuleEditTarget(view.sortRules);
+  const pendingSortFieldsRef = useRef<Set<string>>(new Set());
+  const [pendingSortFields, setPendingSortFields] = useState<Set<string>>(() => new Set());
   const sortOrderByRuleId = useMemo(
     () => new Map(view.sortRules.map((rule, index) => [rule.id, index + 1])),
     [view.sortRules],
   );
+  const markPendingSortField = (field: string) => {
+    if (pendingSortFieldsRef.current.has(field)) return false;
+    pendingSortFieldsRef.current.add(field);
+    setPendingSortFields((current) => current.has(field) ? current : new Set(current).add(field));
+    return true;
+  };
+  const dropPendingSortField = (field: string) => {
+    pendingSortFieldsRef.current.delete(field);
+    setPendingSortFields((current) => {
+      if (!current.has(field)) return current;
+      const next = new Set(current);
+      next.delete(field);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    setPendingSortFields((current) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const field of current) {
+        if (ruleByField.has(field)) {
+          pendingSortFieldsRef.current.delete(field);
+          changed = true;
+          continue;
+        }
+        next.add(field);
+      }
+      return changed ? next : current;
+    });
+  }, [ruleByField]);
 
   if (editingTarget) {
     const rule = editingTarget.ruleId
@@ -1011,18 +1044,23 @@ function SortSection({
             <div className="view-toolbar-option-section">{group.section}</div>
             {group.items.map((choice) => {
               const rule = ruleByField.get(choice.id);
+              const pending = pendingSortFields.has(choice.id);
               const directionLabel = rule ? sortDirectionLabel(choice.id, byId, rule.direction, tv) : null;
               const order = rule ? sortOrderByRuleId.get(rule.id) : undefined;
               return (
                 <ButtonControl
                   key={choice.id}
-                  className={`view-toolbar-option view-toolbar-filter-field ${rule ? 'is-selected' : ''}`}
+                  className={`view-toolbar-option view-toolbar-filter-field ${rule || pending ? 'is-selected' : ''}`}
+                  disabled={pending && !rule}
                   onClick={() => {
+                    if (pending && !rule) return;
                     if (rule) {
                       setEditingTarget({ field: choice.id, ruleId: rule.id });
                       return;
                     }
-                    void run(() => api.addSortRule(node.id, choice.id, 'asc'));
+                    if (!markPendingSortField(choice.id)) return;
+                    void run(() => api.addSortRule(node.id, choice.id, 'asc'))
+                      .finally(() => dropPendingSortField(choice.id));
                     setEditingTarget({ field: choice.id });
                   }}
                 >
@@ -1319,6 +1357,13 @@ function OperatorFilterBody({ kind, rule, run }: { kind: FilterKind; rule: Filte
   const operators = filterOperators(tv).filter((operator) => allowed.includes(operator.id));
   const needsValue = !VALUELESS_OPERATORS.has(rule.operator);
   const dateValue = /^\d{4}-\d{2}-\d{2}/.test(rule.values[0] ?? '') ? rule.values[0]!.slice(0, 10) : '';
+  const textValue = rule.values.join(', ');
+  const [draftValue, setDraftValue] = useState(textValue);
+
+  useEffect(() => {
+    setDraftValue(textValue);
+  }, [rule.id, textValue]);
+
   return (
     <div className="view-toolbar-rule view-toolbar-rule-filter">
       <SelectControl
@@ -1348,11 +1393,12 @@ function OperatorFilterBody({ kind, rule, run }: { kind: FilterKind; rule: Filte
         />
       ) : needsValue ? (
         <Input
-          defaultValue={rule.values.join(', ')}
           label={tv.filterValuesLabel}
           placeholder={tv.filterValuePlaceholder}
           size="sm"
+          value={draftValue}
           variant="boxed"
+          onChange={(event) => setDraftValue(event.currentTarget.value)}
           onBlur={(event) => {
             void run(() => api.updateFilterRule(rule.id, { values: normalizeValues(event.currentTarget.value) }));
           }}
