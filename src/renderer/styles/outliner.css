@@ -262,9 +262,31 @@
 }
 
 .view-toolbar {
+  position: relative;
   display: block;
-  margin: 2px 0 8px var(--row-selection-start);
+  width: min(100%, 760px);
+  margin: 2px 0 6px var(--row-selection-start);
+  padding: var(--space-1) 0;
   color: var(--muted);
+}
+
+.view-toolbar::before,
+.view-toolbar::after {
+  position: absolute;
+  right: var(--space-6);
+  left: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  content: "";
+  pointer-events: none;
+}
+
+.view-toolbar::before {
+  top: 0;
+}
+
+.view-toolbar::after {
+  bottom: 0;
 }
 
 .view-toolbar-button-row {
@@ -272,15 +294,143 @@
   align-items: center;
   gap: var(--space-2);
   min-height: var(--control-size-xl);
+  flex-wrap: wrap;
 }
 
-/* Restates the active group/sort/filter dimensions in words, so the view's
-   state reads at a glance without opening each menu. */
-.view-toolbar-summary {
-  padding: var(--space-hairline) var(--space-1) 0;
+.view-toolbar-name-filter {
+  display: inline-flex;
+  height: var(--control-size-xl);
+  min-width: 78px;
+  max-width: min(220px, 40vw);
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--control-active);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  color: var(--text);
+}
+
+.view-toolbar-name-filter-icon {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.view-toolbar-name-filter-input {
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 0;
+  color: var(--text);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm-tight);
+}
+
+.view-toolbar-name-filter-input::placeholder {
   color: var(--muted-2);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta-tight);
+}
+
+.view-toolbar-name-filter-clear {
+  display: inline-flex;
+  width: var(--control-size-sm);
+  height: var(--control-size-sm);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+}
+
+.view-toolbar-name-filter-clear:hover,
+.view-toolbar-name-filter-clear:active {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--text);
+}
+
+/* Restates active display/group/filter dimensions inline with the toolbar
+   actions. Sort only uses this while its popover is open; the closed state lives
+   on the sort button icon. */
+.view-toolbar-summary {
+  display: flex;
+  max-width: min(520px, 100%);
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: 0;
+  color: var(--muted-2);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm-tight);
+}
+
+.view-toolbar-summary-chip {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  min-height: calc(var(--control-size-xl) - 2px);
+  padding: 0 var(--space-3);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+.view-toolbar-summary-chip.is-filter {
+  background: var(--control-active);
+  color: var(--text);
+}
+
+.view-toolbar-summary-chip:hover,
+.view-toolbar-summary-chip:active {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--text);
+}
+
+.view-toolbar-summary-chip.is-filter:hover,
+.view-toolbar-summary-chip.is-filter:active {
+  background: var(--control-active);
+}
+
+.view-toolbar-summary-chip.has-remove {
+  padding: 0;
+}
+
+.view-toolbar-summary-chip-main {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+  min-height: calc(var(--control-size-xl) - 2px);
+  padding: 0 var(--space-1) 0 var(--space-3);
+  color: inherit;
+}
+
+.view-toolbar-summary-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.view-toolbar-summary-chip-remove {
+  display: inline-flex;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  margin-right: var(--space-1);
+  color: var(--muted);
+}
+
+.view-toolbar-summary-chip-remove:hover,
+.view-toolbar-summary-chip-remove:active {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--text);
 }
 
 .view-toolbar-pill {
@@ -299,30 +449,50 @@
   color: var(--text);
 }
 
-.view-toolbar-pill.is-active,
+.view-toolbar-pill.is-active {
+  background: var(--control-active);
+  color: var(--text);
+}
+
+.view-toolbar-pill.is-active:hover {
+  color: var(--text);
+}
+
 .view-toolbar-pill.is-open {
   background: var(--control-active);
   color: var(--text);
 }
 
-/* Neutral count badge marks an active rule-based dimension (sort/filter)
-   without leaning on brand color, per the design-system active-state rule. */
-.view-toolbar-pill-count {
-  position: absolute;
-  top: -2px;
-  right: -2px;
-  display: inline-flex;
-  min-width: 14px;
-  height: 14px;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-pill);
-  background: var(--text-main);
-  padding: 0 calc(var(--space-1) + var(--space-hairline));
-  color: var(--panel-bg);
-  font-size: var(--font-ui-2xs);
-  font-weight: 600;
-  line-height: 1;
+.view-toolbar-pill.is-active.is-open {
+  color: var(--text);
+}
+
+.view-toolbar-tooltip-anchor {
+  position: relative;
+}
+
+.view-toolbar-tooltip {
+  position: fixed;
+  z-index: var(--z-popover);
+  max-width: 180px;
+  border-radius: var(--radius-sm);
+  background: var(--material-popover);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: var(--font-meta);
+  font-weight: 500;
+  line-height: var(--line-meta-tight);
+  padding: var(--space-2) var(--space-3);
+  pointer-events: none;
+  text-align: center;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.view-toolbar-tooltip.is-top {
+  transform: translate(-50%, -100%);
 }
 
 /* Anchored config popover; shares the shared overlay surface look. Positioning
@@ -390,6 +560,13 @@
   white-space: nowrap;
 }
 
+.view-toolbar-option-meta {
+  flex: 0 0 auto;
+  color: var(--muted-2);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
+}
+
 /* Field-type glyph that precedes a field name in display/group/filter lists. */
 .view-toolbar-field-kind {
   flex: none;
@@ -416,6 +593,13 @@
   flex-direction: column;
   gap: var(--space-3);
   padding: 0 var(--space-2) var(--space-2);
+}
+
+.view-toolbar-sort,
+.view-toolbar-sort-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
 }
 
 .view-toolbar-rule {
@@ -486,29 +670,6 @@
   align-items: center;
   gap: var(--space-4);
   margin-top: var(--space-1);
-}
-
-.view-toolbar-add-field {
-  display: inline-flex;
-  height: 26px;
-  align-items: center;
-  gap: var(--space-2);
-  border-radius: var(--radius-row);
-  padding: 0 var(--space-3);
-  color: var(--muted);
-}
-
-.view-toolbar-add-field:hover {
-  background: var(--control-hover);
-  color: var(--text);
-}
-
-.view-toolbar-add-field select {
-  height: 24px;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  color: inherit;
 }
 
 .view-toolbar-reset {
@@ -647,6 +808,13 @@
   gap: var(--space-3);
 }
 
+.search-query-summary-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .search-query-chip-list {
   display: flex;
   min-width: 0;
@@ -687,6 +855,7 @@
   color: var(--muted-2);
 }
 
+.search-query-toolbar-button,
 .search-query-refresh-button {
   display: inline-flex;
   width: 26px;
@@ -698,10 +867,12 @@
   color: var(--muted);
 }
 
+.search-query-toolbar-button:hover:not(:disabled),
 .search-query-refresh-button:hover:not(:disabled) {
   color: var(--text);
 }
 
+.search-query-toolbar-button:disabled,
 .search-query-refresh-button:disabled {
   opacity: 0.7;
 }
@@ -723,6 +894,32 @@
   font-weight: 600;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.filtered-out-heading {
+  display: inline-flex;
+  align-self: flex-start;
+  min-height: var(--control-size-md);
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 var(--space-1) var(--row-selection-start);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: var(--font-ui-sm);
+  font-weight: 600;
+  line-height: var(--line-ui-sm);
+  padding: 0 var(--space-3);
+}
+
+.filtered-out-heading:hover,
+.filtered-out-heading:active {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.filtered-out-heading-chevron {
+  flex: 0 0 auto;
+  color: var(--muted-2);
 }
 
 .hidden-field-reveal {
@@ -2014,6 +2211,44 @@
 .node-description:focus-visible {
   color: var(--text-sub);
   box-shadow: none;
+}
+
+.view-display-fields {
+  display: flex;
+  max-width: min(560px, 100%);
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: var(--space-hairline) 0 0;
+  color: var(--muted-2);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta-tight);
+  user-select: none;
+}
+
+.view-display-field {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: baseline;
+  gap: var(--space-1);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  padding: 0 var(--space-2);
+}
+
+.view-display-field-label {
+  flex: 0 0 auto;
+  color: var(--muted-2);
+  font-weight: 500;
+}
+
+.view-display-field-value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .panel-title-editor .node-description {

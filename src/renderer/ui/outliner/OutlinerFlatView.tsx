@@ -24,7 +24,7 @@ import { RENDER_PROBE_ENABLED } from './renderProbe';
 import { OutlinerFieldRow } from './OutlinerFieldRow';
 import { OutlinerItem } from './OutlinerItem';
 import { ViewToolbar } from './ViewToolbar';
-import { HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
+import { FilteredOutHeading, HiddenFieldReveal, ViewGroupHeading } from './OutlinerViewChrome';
 import { OutlinerEmptyState } from './OutlinerEmptyState';
 import { IndentGuide } from './IndentGuide';
 import {
@@ -32,6 +32,7 @@ import {
   nearestScrollContainer,
   usePendingDisclosureAnchor,
 } from '../interactions/disclosureScrollAnchor';
+import { MAX_OUTLINE_INDENT_DEPTH } from '../workspaceResponsiveLayout';
 
 // The flat renderer is the default outliner path. The old recursive renderer is
 // retained as a reload-scoped diagnostic fallback while parity work settles.
@@ -98,6 +99,10 @@ function descendantEndIndexFor(rows: readonly VisualRow[], rowIndex: number): nu
 
 function rowCanAnchorGuide(row: VisualRow): row is Extract<VisualRow, { kind: 'content' | 'field' }> {
   return row.kind === 'content' || row.kind === 'field';
+}
+
+function flatDepthStyle(depth: number): CSSProperties {
+  return { marginLeft: Math.min(depth, MAX_OUTLINE_INDENT_DEPTH) * 28 };
 }
 
 function sameFlatGuides(a: readonly FlatGuideGeometry[], b: readonly FlatGuideGeometry[]): boolean {
@@ -313,7 +318,12 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
 
   const virtualize = rows.length > VIRTUALIZE_MIN_ROWS;
   const rootChildCount = useMemo(
-    () => rows.filter((row) => row.parentId === props.parentId && row.kind !== 'toolbar' && !(row.kind === 'content' && row.draft)).length,
+    () => rows.reduce((count, row) => {
+      if (row.parentId !== props.parentId || row.kind === 'toolbar') return count;
+      if (row.kind === 'content') return row.draft ? count : count + 1;
+      if (row.kind === 'filteredOut') return count + row.count;
+      return count + 1;
+    }, 0),
     [rows, props.parentId],
   );
 
@@ -626,24 +636,41 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
         const node = byId.get(row.nodeId);
         if (!node) return null;
         return (
-          <ViewToolbar
-            node={node}
-            view={readViewConfig(node, byId)}
-            index={index}
-            run={props.run}
-            dropdownRequest={ui.toolbarDropdownRequest}
-            onDropdownRequestConsumed={(request) => {
-              props.setUi((prev) => (
-                prev.toolbarDropdownRequest === request
-                  ? { ...prev, toolbarDropdownRequest: null }
-                  : prev
-              ));
-            }}
-          />
+          <div className="view-toolbar-flat-scope" style={flatDepthStyle(row.depth)}>
+            <ViewToolbar
+              node={node}
+              view={readViewConfig(node, byId)}
+              index={index}
+              run={props.run}
+              dropdownRequest={ui.toolbarDropdownRequest}
+              onDropdownRequestConsumed={(request) => {
+                props.setUi((prev) => (
+                  prev.toolbarDropdownRequest === request
+                    ? { ...prev, toolbarDropdownRequest: null }
+                    : prev
+                ));
+              }}
+            />
+          </div>
         );
       }
       case 'group':
         return <ViewGroupHeading label={row.label} />;
+      case 'filteredOut':
+        return (
+          <FilteredOutHeading
+            count={row.count}
+            expanded={row.expanded}
+            onToggle={() => {
+              props.setUi((prev) => {
+                const expanded = new Set(prev.expanded);
+                if (expanded.has(row.id)) expanded.delete(row.id);
+                else expanded.add(row.id);
+                return { ...prev, expanded };
+              });
+            }}
+          />
+        );
       case 'hiddenField':
         return (
           <HiddenFieldReveal

@@ -1,5 +1,5 @@
 import type { NodeId, NodeProjection } from '../api/types';
-import { buildOutlinerRows, readViewConfig } from './outlinerRows';
+import { buildOutlinerRows, readViewConfig, type OutlinerRowItem } from './outlinerRows';
 import { outlinerChildParentId } from './document';
 import type { TrailingDraftPlacement } from './document';
 import { resolveTrailingDraftAfterId } from './trailingDraftPlacement';
@@ -14,6 +14,7 @@ import { resolveTrailingDraftAfterId } from './trailingDraftPlacement';
 export type VisualRow =
   | { kind: 'toolbar'; key: string; nodeId: NodeId; depth: number; parentId: NodeId }
   | { kind: 'group'; key: string; label: string; depth: number; parentId: NodeId }
+  | { kind: 'filteredOut'; key: string; id: string; count: number; depth: number; parentId: NodeId; expanded: boolean }
   | { kind: 'hiddenField'; key: string; fieldId: NodeId; label: string; depth: number; parentId: NodeId }
   | {
     kind: 'field';
@@ -131,50 +132,72 @@ export function buildVisualRows(
       draftInserted = true;
     };
 
-    for (let i = 0; i < builtRows.length; i += 1) {
-      const row = builtRows[i];
-      if (row.type === 'group') {
-        out.push({ kind: 'group', key: `group>${prefix}>${row.id}`, label: row.label, depth, parentId });
-        continue;
-      }
-      if (row.type === 'hiddenField') {
+    const pushRows = (
+      rows: OutlinerRowItem[],
+      rowDepth: number,
+      rowKeyPath: NodeId[],
+    ) => {
+      const rowPrefix = rowKeyPath.join('>');
+      for (let i = 0; i < rows.length; i += 1) {
+        const row = rows[i];
+        if (row.type === 'group') {
+          out.push({ kind: 'group', key: `group>${rowPrefix}>${row.id}`, label: row.label, depth: rowDepth, parentId });
+          continue;
+        }
+        if (row.type === 'filteredOut') {
+          const expandedSection = expanded.has(row.id);
+          out.push({
+            kind: 'filteredOut',
+            key: `filtered>${rowPrefix}>${row.id}`,
+            id: row.id,
+            count: row.count,
+            depth: rowDepth,
+            parentId,
+            expanded: expandedSection,
+          });
+          if (expandedSection) pushRows(row.rows, rowDepth, [...rowKeyPath, row.id]);
+          continue;
+        }
+        if (row.type === 'hiddenField') {
+          out.push({
+            kind: 'hiddenField',
+            key: `hidden>${rowPrefix}>${row.id}`,
+            fieldId: row.fieldId,
+            label: row.label,
+            depth: rowDepth,
+            parentId,
+          });
+          continue;
+        }
+        if (row.type === 'field') {
+          out.push({
+            kind: 'field',
+            key: `${rowPrefix}>${row.id}`,
+            nodeId: row.id,
+            depth: rowDepth,
+            parentId,
+            referencePath,
+            isFirstInFieldGroup: rows[i - 1]?.type !== 'field',
+            isLastInFieldGroup: rows[i + 1]?.type !== 'field',
+          });
+          if (expanded.has(row.id)) descend(row.id, rowDepth, referencePath, rowKeyPath);
+          maybePushDraftAfter(row.id);
+          continue;
+        }
         out.push({
-          kind: 'hiddenField',
-          key: `hidden>${prefix}>${row.id}`,
-          fieldId: row.fieldId,
-          label: row.label,
-          depth,
-          parentId,
-        });
-        continue;
-      }
-      if (row.type === 'field') {
-        out.push({
-          kind: 'field',
-          key: `${prefix}>${row.id}`,
+          kind: 'content',
+          key: `${rowPrefix}>${row.id}`,
           nodeId: row.id,
-          depth,
+          depth: rowDepth,
           parentId,
           referencePath,
-          isFirstInFieldGroup: builtRows[i - 1]?.type !== 'field',
-          isLastInFieldGroup: builtRows[i + 1]?.type !== 'field',
         });
-        if (expanded.has(row.id)) descend(row.id, depth, referencePath, keyPath);
+        if (expanded.has(row.id)) descend(row.id, rowDepth, referencePath, rowKeyPath);
         maybePushDraftAfter(row.id);
-        continue;
       }
-      // content
-      out.push({
-        kind: 'content',
-        key: `${prefix}>${row.id}`,
-        nodeId: row.id,
-        depth,
-        parentId,
-        referencePath,
-      });
-      if (expanded.has(row.id)) descend(row.id, depth, referencePath, keyPath);
-      maybePushDraftAfter(row.id);
-    }
+    };
+
+    pushRows(builtRows, depth, keyPath);
 
     if (draftId && !draftInserted) pushDraft();
   };

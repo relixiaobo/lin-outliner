@@ -45,8 +45,14 @@ import {
   resolveOutlinerDropBatchMove,
   resolveOutlinerDropMove,
 } from '../../src/renderer/ui/interactions/dragDrop';
-import { buildOutlinerRows, hiddenFieldKey } from '../../src/renderer/ui/outliner/row-model';
-import { DONE_FIELD, NAME_FIELD, REF_COUNT_FIELD } from '../../src/core/systemFields';
+import {
+  buildOutlinerRows,
+  collectViewFieldChoices,
+  hiddenFieldKey,
+  readViewConfig,
+  viewDisplayValuesFor,
+} from '../../src/renderer/ui/outliner/row-model';
+import { DAY_FIELD, DONE_FIELD, NAME_FIELD, REF_COUNT_FIELD, TAGS_FIELD } from '../../src/core/systemFields';
 import { searchQueryOutlineText, searchQuerySummaryModel } from '../../src/renderer/ui/search/SearchQuerySummaryBar';
 import { concatRichText } from '../../src/renderer/ui/editor/richTextCodec';
 import { getMessages } from '../../src/core/i18n';
@@ -143,10 +149,31 @@ describe('row interaction resolvers', () => {
     expect(buildOutlinerRows(parent as any, byId)).toEqual([
       { id: 'alpha', type: 'content' },
       { id: 'hidden:parent:hidden', type: 'hiddenField', fieldId: 'hidden', label: 'Archive' },
+      {
+        id: 'filtered:parent',
+        type: 'filteredOut',
+        count: 2,
+        rows: [
+          { id: 'status', type: 'field' },
+          { id: 'beta', type: 'content' },
+        ],
+      },
     ]);
     expect(buildOutlinerRows(parent as any, byId, {
       expandedHiddenFields: new Set([hiddenFieldKey('parent', 'hidden')]),
-    })).toEqual([{ id: 'alpha', type: 'content' }]);
+    })).toEqual([
+      { id: 'alpha', type: 'content' },
+      {
+        id: 'filtered:parent',
+        type: 'filteredOut',
+        count: 3,
+        rows: [
+          { id: 'status', type: 'field' },
+          { id: 'hidden', type: 'field' },
+          { id: 'beta', type: 'content' },
+        ],
+      },
+    ]);
   });
 
   test('hides search query condition nodes from normal outliner rows', () => {
@@ -215,7 +242,7 @@ describe('row interaction resolvers', () => {
 	    ].join('\n'));
 	  });
 
-	  test('applies sort, filter, and group view settings to row models', () => {
+  test('applies sort, filter, and group view settings to row models', () => {
 	    const parent = makeNode('parent', 'Parent', {
 	      children: ['view', 'b', 'a', 'c'],
 	    });
@@ -256,6 +283,99 @@ describe('row interaction resolvers', () => {
 	    ]);
 	  });
 
+  test('keeps non-matching filtered rows in a collapsed disclosure section', () => {
+    const parent = makeNode('parent', 'Parent', {
+      children: ['view', 'done', 'todo'],
+    });
+    const byId = new Map<string, any>([
+      ['parent', parent],
+      ['view', makeNode('view', '', {
+        type: 'viewDef',
+        parentId: 'parent',
+        children: ['filter'],
+      })],
+      ['filter', makeNode('filter', '', {
+        type: 'filterRule',
+        parentId: 'view',
+        filterField: DONE_FIELD,
+        filterOperator: 'is',
+        filterValueLogic: 'any',
+        filterValues: ['true'],
+      })],
+      ['done', makeNode('done', 'Done', { parentId: 'parent', completedAt: 1000 })],
+      ['todo', makeNode('todo', 'Todo', { parentId: 'parent', completedAt: 0 })],
+    ]);
+
+    expect(buildOutlinerRows(parent as any, byId)).toEqual([
+      { id: 'done', type: 'content' },
+      {
+        id: 'filtered:parent',
+        type: 'filteredOut',
+        count: 1,
+        rows: [{ id: 'todo', type: 'content' }],
+      },
+    ]);
+  });
+
+  test('derives visible display field metadata from the same field values as view rules', () => {
+    const parent = makeNode('parent', 'Parent', {
+      children: ['view', 'task'],
+    });
+    const byId = new Map<string, any>([
+      ['parent', parent],
+      ['view', makeNode('view', '', {
+        type: 'viewDef',
+        parentId: 'parent',
+        children: ['display-status', 'display-tags', 'display-name', 'display-empty'],
+      })],
+      ['display-status', makeNode('display-status', '', {
+        type: 'displayField',
+        parentId: 'view',
+        displayField: 'status-def',
+        displayVisible: true,
+      })],
+      ['display-tags', makeNode('display-tags', '', {
+        type: 'displayField',
+        parentId: 'view',
+        displayField: TAGS_FIELD,
+        displayVisible: true,
+      })],
+      ['display-name', makeNode('display-name', '', {
+        type: 'displayField',
+        parentId: 'view',
+        displayField: NAME_FIELD,
+        displayVisible: true,
+      })],
+      ['display-empty', makeNode('display-empty', '', {
+        type: 'displayField',
+        parentId: 'view',
+        displayField: 'missing-def',
+        displayVisible: true,
+      })],
+      ['status-def', makeNode('status-def', 'Status', { type: 'fieldDef' })],
+      ['tag-project', makeNode('tag-project', 'project', { type: 'tagDef' })],
+      ['task', makeNode('task', 'Alpha', {
+        parentId: 'parent',
+        children: ['status-entry'],
+        tags: ['tag-project'],
+      })],
+      ['status-entry', makeNode('status-entry', '', {
+        type: 'fieldEntry',
+        parentId: 'task',
+        fieldDefId: 'status-def',
+        children: ['status-value'],
+      })],
+      ['status-value', makeNode('status-value', 'In progress', { parentId: 'status-entry' })],
+    ]);
+
+    const view = readViewConfig(parent as any, byId);
+
+    expect(viewDisplayValuesFor(byId.get('task') as any, view, byId)).toEqual([
+      { field: 'status-def', label: 'Status', values: ['In progress'] },
+      { field: TAGS_FIELD, label: 'Tags', values: ['project'] },
+    ]);
+  });
+
   test('sorts References through the shared system field summary context', () => {
     const parent = makeNode('parent', 'Parent', { children: ['view', 'empty', 'referenced'] });
     const byId = new Map<string, any>([
@@ -282,6 +402,35 @@ describe('row interaction resolvers', () => {
     expect(buildOutlinerRows(parent as any, byId, { systemFieldContext: { referenceSummary } })).toEqual([
       { id: 'referenced', type: 'content' },
       { id: 'empty', type: 'content' },
+    ]);
+  });
+
+  test('sorts custom number fields numerically', () => {
+    const parent = makeNode('parent', 'Parent', { children: ['view', 'ten', 'two'] });
+    const byId = new Map<string, any>([
+      ['parent', parent],
+      ['view', makeNode('view', '', {
+        type: 'viewDef',
+        parentId: 'parent',
+        children: ['sort'],
+      })],
+      ['sort', makeNode('sort', '', {
+        type: 'sortRule',
+        parentId: 'view',
+        sortField: 'score-def',
+        sortDirection: 'asc',
+      })],
+      ['score-def', makeNode('score-def', 'Score', { type: 'fieldDef', children: ['score-def::cfg:fieldType'] })],
+      ...fieldTypeConfigEntries('score-def', 'number'),
+      ['ten', makeNode('ten', 'Ten', { parentId: 'parent', children: ['ten-score'] })],
+      ['ten-score', makeNode('ten-score', '10', { type: 'fieldEntry', parentId: 'ten', fieldDefId: 'score-def' })],
+      ['two', makeNode('two', 'Two', { parentId: 'parent', children: ['two-score'] })],
+      ['two-score', makeNode('two-score', '2', { type: 'fieldEntry', parentId: 'two', fieldDefId: 'score-def' })],
+    ]);
+
+    expect(buildOutlinerRows(parent as any, byId)).toEqual([
+      { id: 'two', type: 'content' },
+      { id: 'ten', type: 'content' },
     ]);
   });
 
@@ -312,6 +461,12 @@ describe('row interaction resolvers', () => {
 
 	    expect(buildOutlinerRows(parent as any, byId)).toEqual([
 	      { id: 'late', type: 'content' },
+        {
+          id: 'filtered:parent',
+          type: 'filteredOut',
+          count: 1,
+          rows: [{ id: 'early', type: 'content' }],
+        },
 	    ]);
 	  });
 
@@ -339,6 +494,130 @@ describe('row interaction resolvers', () => {
 	      { id: 'c', type: 'content' },
 	    ]);
 	  });
+
+  test('sorts, filters, and groups calendar-day system fields as dates', () => {
+    const fmt = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    const parent = makeNode('daily', 'Daily notes', { children: ['view', 'late', 'early'] });
+    const byId = new Map<string, any>([
+      ['daily', parent],
+      ['day-tag', makeNode('day-tag', 'day', { type: 'tagDef' })],
+      ['view', makeNode('view', '', {
+        type: 'viewDef',
+        parentId: 'daily',
+        children: ['sort', 'filter'],
+        groupField: DAY_FIELD,
+      })],
+      ['sort', makeNode('sort', '', {
+        type: 'sortRule',
+        parentId: 'view',
+        sortField: DAY_FIELD,
+        sortDirection: 'asc',
+      })],
+      ['filter', makeNode('filter', '', {
+        type: 'filterRule',
+        parentId: 'view',
+        filterField: DAY_FIELD,
+        filterOperator: 'after',
+        filterValueLogic: 'any',
+        filterValues: ['2026-06-01'],
+      })],
+      ['late', makeNode('late', '2026-06-02', { parentId: 'daily', tags: ['day-tag'] })],
+      ['early', makeNode('early', '2026-05-31', { parentId: 'daily', tags: ['day-tag'] })],
+    ]);
+
+    expect(buildOutlinerRows(parent as any, byId)).toEqual([
+      { id: 'group:daily:sys:day:2026-06-02', type: 'group', label: fmt.format(new Date(2026, 5, 2)) },
+      { id: 'late', type: 'content' },
+      {
+        id: 'filtered:daily',
+        type: 'filteredOut',
+        count: 1,
+        rows: [{ id: 'early', type: 'content' }],
+      },
+    ]);
+  });
+
+  test('view field choices use contextual fields plus fields referenced by the view', () => {
+    const parent = makeNode('parent', 'Parent', { children: ['view', 'task'] });
+    const byId = new Map<string, any>([
+      ['parent', parent],
+      ['view', makeNode('view', '', { type: 'viewDef', parentId: 'parent', children: ['display-orphan'] })],
+      ['display-orphan', makeNode('display-orphan', '', {
+        type: 'displayField',
+        parentId: 'view',
+        displayField: 'orphan-def',
+        displayVisible: true,
+      })],
+      ['task', makeNode('task', 'Task', { parentId: 'parent', children: ['status-entry'] })],
+      ['status-entry', makeNode('status-entry', 'Active', {
+        type: 'fieldEntry',
+        parentId: 'task',
+        fieldDefId: 'status-def',
+      })],
+      ['status-def', makeNode('status-def', 'Status', { type: 'fieldDef' })],
+      ['orphan-def', makeNode('orphan-def', 'Orphan', { type: 'fieldDef' })],
+      ['global-def', makeNode('global-def', 'Global only', { type: 'fieldDef' })],
+    ]);
+
+    const labels = collectViewFieldChoices(parent as any, byId).map((choice) => choice.label);
+    expect(labels).toContain('Status');
+    expect(labels).toContain('Orphan');
+    expect(labels).not.toContain('Global only');
+  });
+
+  test('view field choices hide system fields that have no values in the current rows', () => {
+    const parent = makeNode('parent', 'Parent', { children: ['plain', 'checkbox', 'done', 'tagged', 'referenced'] });
+    const byId = new Map<string, any>([
+      ['parent', parent],
+      ['plain', makeNode('plain', 'Plain', { parentId: 'parent' })],
+      ['checkbox', makeNode('checkbox', 'Checkbox', { parentId: 'parent', completedAt: 0 })],
+      ['done', makeNode('done', 'Done', { parentId: 'parent', completedAt: 1000 })],
+      ['tagged', makeNode('tagged', 'Tagged', { parentId: 'parent', tags: ['tag-project'] })],
+      ['tag-project', makeNode('tag-project', 'project', { type: 'tagDef' })],
+      ['referenced', makeNode('referenced', 'Referenced', { parentId: 'parent' })],
+      ['source', makeNode('source', 'Source', { parentId: 'other', children: ['ref'] })],
+      ['ref', makeNode('ref', 'Referenced', { type: 'reference', parentId: 'source', targetId: 'referenced' })],
+    ]);
+
+    const labels = collectViewFieldChoices(parent as any, byId).map((choice) => choice.label);
+    expect(labels).toContain('Name');
+    expect(labels).toContain('Created time');
+    expect(labels).toContain('Last edited time');
+    expect(labels).toContain('Owner node');
+    expect(labels).toContain('Done');
+    expect(labels).toContain('Done time');
+    expect(labels).toContain('Tags');
+    expect(labels).toContain('Number of references');
+    expect(labels).not.toContain('Global only');
+  });
+
+  test('view field choices omit empty system fields but keep existing view references editable', () => {
+    const parent = makeNode('parent', 'Parent', { children: ['view', 'task'] });
+    const byId = new Map<string, any>([
+      ['parent', parent],
+      ['view', makeNode('view', '', { type: 'viewDef', parentId: 'parent', children: ['sort-tags'] })],
+      ['sort-tags', makeNode('sort-tags', '', {
+        type: 'sortRule',
+        parentId: 'view',
+        sortField: TAGS_FIELD,
+      })],
+      ['task', makeNode('task', 'Task', { parentId: 'parent' })],
+    ]);
+
+    let labels = collectViewFieldChoices(parent as any, byId).map((choice) => choice.label);
+    expect(labels).toContain('Tags');
+    expect(labels).not.toContain('Done');
+    expect(labels).not.toContain('Done time');
+    expect(labels).not.toContain('Number of references');
+
+    byId.delete('sort-tags');
+    byId.set('view', makeNode('view', '', { type: 'viewDef', parentId: 'parent', children: [] }));
+    labels = collectViewFieldChoices(parent as any, byId).map((choice) => choice.label);
+    expect(labels).not.toContain('Tags');
+    expect(labels).not.toContain('Done');
+    expect(labels).not.toContain('Done time');
+    expect(labels).not.toContain('Number of references');
+  });
 
 	  test('groups the done field into Done / Not done buckets', () => {
 	    const parent = makeNode('parent', 'Parent', { children: ['view', 'done1', 'open1'] });

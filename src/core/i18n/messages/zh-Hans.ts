@@ -451,9 +451,15 @@ commandPalette: {
       recentsTitle: '暂无最近节点',
       recentsBody: '你打开的节点会显示在这里。',
     },
+    filteredOut: {
+      count: ({ count }) => `${count} 个项目已被筛选掉`,
+    },
     // 节点子项上方的视图工具栏：显示字段、分组、排序规则与渐进式筛选编辑器。
     viewToolbar: {
       toolbarAriaLabel: '视图工具栏',
+      filterByName: '按名称筛选',
+      nameFilterPlaceholder: '名称',
+      clearNameFilter: '清除名称筛选',
       display: '显示',
       groupBy: '分组',
       sortBy: '排序',
@@ -465,9 +471,13 @@ commandPalette: {
       removeSortRule: '移除排序规则',
       removeFilterRule: '移除筛选规则',
       removeFilter: '移除筛选',
+      removeSort: '移除排序',
       addSort: '添加排序',
+      addingSort: '正在添加排序…',
       addingFilter: '正在添加筛选…',
+      sortPriorityMeta: ({ index, direction }: { index: number; direction: string }) => `${index}. ${direction}`,
       sortFieldLabel: '排序字段',
+      sortDirectionLabel: '排序方向',
       filterOperatorLabel: '筛选运算符',
       filterDateLabel: '筛选日期',
       filterValuesLabel: '筛选值',
@@ -501,11 +511,12 @@ commandPalette: {
       booleanNotDone: '未完成',
       booleanYes: '是',
       booleanNo: '否',
-      // 当前视图状态的灰色单行摘要。
+      // 当前视图状态摘要 chips 与显示字段元数据。
+      summaryAriaLabel: '当前视图设置',
+      displayedFieldsAriaLabel: '显示字段',
+      summaryDisplayCount: (count: number) => `${count} 个显示字段`,
       summaryGroupedBy: ({ field }: { field: string }) => `按 ${field} 分组`,
       summarySortedBy: ({ field, arrow }: { field: string; arrow: string }) => `按 ${field} 排序 ${arrow}`,
-      // TODO plural via Intl
-      summaryFilterCount: (count: number) => `${count} 个筛选`,
     },
     // 只读系统字段值（Done 复选框、日期、标签徽章、文本）。
     systemField: {
@@ -1267,6 +1278,8 @@ commandPalette: {
     summary: {
       rulesAriaLabel: '搜索规则',
       noRules: '暂无规则',
+      viewTitle: '显示视图工具栏',
+      viewLabel: '显示视图工具栏',
       refreshTitle: '刷新',
       refreshLabel: '刷新搜索结果',
     },

@@ -60,6 +60,8 @@ interface NodeContextMenuProps {
   y: number;
   node: NodeProjection;
   targetId: NodeId;
+  visualRowId: NodeId;
+  viewToolbarVisibleInRow: boolean;
   openId: NodeId;
   selectedIds: Set<NodeId>;
   index: DocumentIndex;
@@ -68,6 +70,7 @@ interface NodeContextMenuProps {
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   onTogglePin: (nodeId: NodeId) => void;
   onEditDescription: () => void;
+  onRevealViewToolbar: (visualRowId: NodeId, nodeId: NodeId) => void;
   onOpenViewSection: (nodeId: NodeId, section: ToolbarDropdownSection) => void;
   onClose: () => void;
 }
@@ -115,6 +118,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const target = props.index.byId.get(props.targetId) ?? props.node;
   const pinned = props.isPinned;
   const view = readViewConfig(target, props.index.byId);
+  const viewToolbarVisibleInRow = view.toolbarVisible && props.viewToolbarVisibleInRow;
   const trashId = props.index.projection.trashId;
   const isTrashRoot = props.node.id === trashId;
   const trashed = !isTrashRoot && isNodeInTrash(props.index, props.node.id);
@@ -263,6 +267,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
 
   const openViewSection = (section: ToolbarDropdownSection) => {
     void props.run(() => api.setViewToolbarVisible(props.targetId, true)).then(() => {
+      props.onRevealViewToolbar(props.visualRowId, props.targetId);
       props.onOpenViewSection(props.targetId, section);
     });
   };
@@ -381,9 +386,12 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       />
       <div className="node-context-separator" role="separator" />
       {item(
-        view.toolbarVisible ? tc.hideViewToolbar : tc.showViewToolbar,
-        view.toolbarVisible ? <HideToolbarIcon size={ICON_SIZE.menu} /> : <ShowToolbarIcon size={ICON_SIZE.menu} />,
-        () => void props.run(() => api.setViewToolbarVisible(props.targetId, !view.toolbarVisible)).then(props.onClose),
+        viewToolbarVisibleInRow ? tc.hideViewToolbar : tc.showViewToolbar,
+        viewToolbarVisibleInRow ? <HideToolbarIcon size={ICON_SIZE.menu} /> : <ShowToolbarIcon size={ICON_SIZE.menu} />,
+        () => void props.run(() => api.setViewToolbarVisible(props.targetId, !viewToolbarVisibleInRow)).then(() => {
+          if (!viewToolbarVisibleInRow) props.onRevealViewToolbar(props.visualRowId, props.targetId);
+          props.onClose();
+        }),
       )}
       {item(tc.filterBy, <FilterIcon size={ICON_SIZE.menu} />, () => openViewSection('filter'))}
       {item(tc.sortBy, <SortAscIcon size={ICON_SIZE.menu} />, () => openViewSection('sort'))}

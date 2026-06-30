@@ -86,7 +86,12 @@ import { NodeDescription } from './NodeDescription';
 import { OutlinerRowShell } from './OutlinerRowShell';
 import { OutlinerView } from './OutlinerView';
 import { animateOutlinerRowMovementAfterNextCommit } from './rowMoveAnimation';
-import { buildOutlinerRows } from './row-model';
+import {
+  buildOutlinerRows,
+  readViewConfig,
+  viewDisplayValuesFor,
+  type ViewFieldValue,
+} from './row-model';
 import { draftCreateIndex, previousDraftSiblingId } from '../../state/trailingDraftPlacement';
 import { IndentGuide } from './IndentGuide';
 import { RowLeading } from './RowLeading';
@@ -212,6 +217,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     && Boolean(referenceTargetId)
     && props.referencePath.includes(childParentId);
   const rowChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId);
+  const parentView = readViewConfig(parentNode, props.index.byId);
+  const displayValues = realNode && displayed && !props.draft && !props.fieldValue
+    ? viewDisplayValuesFor(displayed, parentView, props.index.byId)
+    : [];
   // A file node is a full node — the bullet drills to the node page, the chevron
   // expands an inline preview. Its row content depends on the kind: a non-image file is
   // a lightweight name row (file-type bullet, read-only filename, hover ⋯ menu); an
@@ -2328,6 +2337,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               )}
             </span>
           )}
+          <ViewDisplayFields ariaLabel={t.outliner.viewToolbar.displayedFieldsAriaLabel} values={displayValues} />
           {dateFieldValue && props.fieldValue && (
             <DateValuePicker
               anchorRef={optionAnchorRef}
@@ -2465,6 +2475,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           y={contextMenu.y}
           node={node}
           targetId={targetEditId}
+          visualRowId={props.nodeId}
+          viewToolbarVisibleInRow={row.expanded}
           openId={drillDownId}
           // The live selection from uiRef, not the memoized props.ui: a selected
           // row skips re-render when *another* row joins/leaves the block
@@ -2484,6 +2496,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
               descriptionFocusTarget,
               cursorEnd(),
             ));
+          }}
+          onRevealViewToolbar={(visualRowId) => {
+            props.setUi((prev) => {
+              if (prev.expanded.has(visualRowId)) return prev;
+              const expanded = new Set(prev.expanded);
+              expanded.add(visualRowId);
+              return { ...prev, expanded };
+            });
           }}
           onOpenViewSection={(nodeId, section) => {
             props.setUi((prev) => ({
@@ -2640,6 +2660,20 @@ function SelectedReferenceOptionPicker({
   );
 }
 
+function ViewDisplayFields({ ariaLabel, values }: { ariaLabel: string; values: ViewFieldValue[] }) {
+  if (values.length === 0) return null;
+  return (
+    <div className="view-display-fields" aria-label={ariaLabel}>
+      {values.map((field) => (
+        <span className="view-display-field" key={field.field}>
+          <span className="view-display-field-label">{field.label}</span>
+          <span className="view-display-field-value">{field.values.join(', ')}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function referencePathEqual(a: readonly NodeId[], b: readonly NodeId[]): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
@@ -2743,6 +2777,7 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   const prevRev = prev.index.renderRev?.get(prev.nodeId);
   const nextRev = next.index.renderRev?.get(next.nodeId);
   if (prevRev === undefined || nextRev === undefined || prevRev !== nextRev) return false;
+  if (prev.index.renderRev?.get(prev.parentId) !== next.index.renderRev?.get(next.parentId)) return false;
   if (outlinerItemFileRenderKey(prev) !== outlinerItemFileRenderKey(next)) return false;
   if (outlinerItemPinned(prev) !== outlinerItemPinned(next)) return false;
   if (!referencePathEqual(prev.referencePath, next.referencePath)) return false;
