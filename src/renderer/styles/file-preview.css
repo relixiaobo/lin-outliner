@@ -158,6 +158,7 @@
   overflow: hidden;
   border-radius: var(--file-preview-page-radius);
   background: transparent;
+  box-shadow: var(--inset-hairline);
   color: var(--text-main);
   --media-background-color: transparent;
   --media-primary-color: var(--text-main);
@@ -192,7 +193,6 @@
 
 .file-preview-media-player--audio {
   min-height: calc(var(--media-control-height) + var(--space-2));
-  box-shadow: none;
   --media-control-bar-display: flex;
   --media-slot-display: none;
 }
@@ -958,11 +958,15 @@
   position: relative;
   display: block;
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible;
+  border-radius: var(--file-preview-page-radius);
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
 }
 
 .file-node-preview.file-node-preview--media {
-  padding-bottom: var(--file-preview-frame-padding-block);
+  padding-bottom: 0;
 }
 
 /* The shared bottom-center action bar for every non-image file preview. It is chrome
