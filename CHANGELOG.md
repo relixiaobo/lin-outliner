@@ -125,6 +125,23 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
+- **pi-ai / pi-agent-core upgraded `0.78.0 → 0.80.2` with a clean `Models` migration (PR #348, codex-3)** —
+  the main-process agent runtime moves off the removed pi global helpers
+  (`completeSimple`/`streamSimple`/`getModels`/`getProviders`/`getProviderApiKey`/`getOAuthApiKey`) onto the
+  `Models` instance API. A new composition root (`src/main/piModels.ts`) wraps one
+  `builtinModels({ credentials })`, wires the existing `agent-secrets.json` as pi's `CredentialStore`
+  (OAuth refresh persists under the existing file lock), and routes custom OpenAI-compatible endpoints
+  through internal `tenon-custom:<id>` providers while keeping the external provider id on renderer,
+  event-log, and run-fingerprint surfaces. Provider auth — stored keys, ambient env, OAuth refresh,
+  managed credentials, provider-specific headers/env, and the Cloudflare AI Gateway baseUrl shape — now
+  resolves at request time via `Models.applyAuth()` instead of being flattened into an `apiKey` string.
+  Keyless endpoints are allowed for localhost/loopback/`*.localhost` only (shared `isLocalBaseUrl`
+  predicate in `src/core/localEndpoint.ts`), and such local endpoints use an inert client key rather than
+  any stored or ambient cloud key. Picks up upstream provider-metadata, billing-hazard, and vulnerable-dep
+  fixes. Gated by `/code-review xhigh` (10 finder angles + sweep) with a round-2 pass that preserved real
+  model context windows behind custom endpoints, kept `api_key` credential `env` across the store
+  round-trip, and stopped pruning keyless-remote provider rows at startup.
+
 - **`node_edit` is now single-node and non-pruning (plan PR #346 + impl PR #347, codex-4)** — the agent
   `node_edit` tool can no longer delete outline content by omission. The old whole-subtree reconcile is
   removed: `old_string:"*"` (which replaced the entire annotated outline) now returns `subtree_edit_removed`,

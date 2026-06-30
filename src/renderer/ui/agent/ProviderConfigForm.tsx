@@ -110,7 +110,9 @@ export function ProviderConfigForm({
   };
   // A managed provider (authNote) persists a row with nothing to fill in; an
   // api-key / custom provider needs credentials unless the base URL is a local
-  // endpoint. A keyless remote proxy would be saved, then pruned at startup.
+  // endpoint. A keyless remote proxy has no way to authenticate, so we block
+  // saving one rather than persist an unusable connection (startup reconcile
+  // keeps any baseUrl row it finds — it does not prune keyless-remote).
   const hasConnection = Boolean(draft.apiKey) || hasSavedKey || isLocalBaseUrl(draft.baseUrl);
   const canSave = Boolean(draft.providerId)
     && (authNote ? true : hasConnection)
