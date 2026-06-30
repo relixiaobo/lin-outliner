@@ -65,7 +65,7 @@ export function richTextToMarkdownReferenceMarkup(content: RichText): string {
   for (const ref of refs) {
     add(ref.offset, inlineRefMarker(ref), 10);
   }
-  for (const mark of markdownSerializableMarks(content.marks)) {
+  for (const mark of marksOutsideSkippedRanges(markdownSerializableMarks(content.marks), skippedRanges, content.text.length)) {
     const delimiters = markDelimiters(mark);
     if (!delimiters) continue;
     add(mark.start, delimiters.open, 20);
@@ -128,6 +128,49 @@ function markdownSerializableMarks(marks: readonly TextMark[]): TextMark[] {
   const withoutHeading = marks.filter((mark) => mark !== heading);
   if (!heading) return withoutHeading;
   return withoutHeading;
+}
+
+function marksOutsideSkippedRanges(
+  marks: readonly TextMark[],
+  skippedRanges: ReadonlyArray<{ start: number; end: number }>,
+  textLength: number,
+): TextMark[] {
+  if (skippedRanges.length === 0) return [...marks];
+  const normalizedRanges = skippedRanges
+    .map((range) => ({
+      start: Math.min(Math.max(0, range.start), textLength),
+      end: Math.min(Math.max(0, range.end), textLength),
+    }))
+    .filter((range) => range.end > range.start)
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+
+  const result: TextMark[] = [];
+  for (const mark of marks) {
+    const markStart = Math.min(Math.max(0, Math.trunc(mark.start)), textLength);
+    const markEnd = Math.min(Math.max(0, Math.trunc(mark.end)), textLength);
+    let segments: Array<{ start: number; end: number }> = markEnd > markStart
+      ? [{ start: markStart, end: markEnd }]
+      : [];
+    for (const skipped of normalizedRanges) {
+      segments = segments.flatMap((segment) => subtractRange(segment, skipped));
+      if (segments.length === 0) break;
+    }
+    for (const segment of segments) {
+      result.push({ ...mark, start: segment.start, end: segment.end });
+    }
+  }
+  return result;
+}
+
+function subtractRange(
+  segment: { start: number; end: number },
+  range: { start: number; end: number },
+): Array<{ start: number; end: number }> {
+  if (range.end <= segment.start || range.start >= segment.end) return [segment];
+  const next: Array<{ start: number; end: number }> = [];
+  if (range.start > segment.start) next.push({ start: segment.start, end: range.start });
+  if (range.end < segment.end) next.push({ start: range.end, end: segment.end });
+  return next;
 }
 
 function markDelimiters(mark: TextMark): { open: string; close: string } | null {

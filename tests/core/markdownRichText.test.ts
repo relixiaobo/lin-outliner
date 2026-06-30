@@ -40,4 +40,32 @@ describe('markdown rich text outline bridge', () => {
       }],
     })).toBe(`See ${formatNodeReferenceMarker('Alpha', 'node-alpha')}`);
   });
+
+  test('drops marks that only cover stored inline reference display text', () => {
+    const marker = formatNodeReferenceMarker('Alpha', 'node-alpha');
+
+    expect(richTextToMarkdownReferenceMarkup({
+      text: 'See Alpha',
+      marks: [{ start: 4, end: 9, type: 'bold' }],
+      inlineRefs: [{
+        offset: 4,
+        target: { kind: 'node', nodeId: 'node-alpha' },
+        displayName: 'Alpha',
+      }],
+    })).toBe(`See ${marker}`);
+  });
+
+  test('clips marks around skipped inline reference display text', () => {
+    const marker = formatNodeReferenceMarker('Alpha', 'node-alpha');
+
+    expect(richTextToMarkdownReferenceMarkup({
+      text: 'See Alpha today',
+      marks: [{ start: 0, end: 15, type: 'bold' }],
+      inlineRefs: [{
+        offset: 4,
+        target: { kind: 'node', nodeId: 'node-alpha' },
+        displayName: 'Alpha',
+      }],
+    })).toBe(`**See **${marker}** today**`);
+  });
 });
