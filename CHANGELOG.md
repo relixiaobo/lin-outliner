@@ -12,6 +12,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Preview-first links and HTML renderer (PR #345, codex)** — ordinary `http(s)` links from the
+  outliner, agent transcript, and local preview bodies now open in a Tenon split preview pane by default.
+  URL previews render as a hardened `webview` with an http(s)-only source, fixed partition, denied
+  popups/permissions, stripped preload/webpreferences, and an explicit "open original" escape hatch.
+  Local-file, asset, and agent-payload previews gain Range-capable `preview-local://` streams for large
+  media so audio/video can seek without whole-file reads; local `.html`/`.htm` files render as sandboxed
+  static iframes with host-side link interception and no script execution. **Gate (main):** deep review
+  found one P2 iframe-realm link-routing bug; round-2 fix resolved it with a cross-realm regression test.
+  Verified with typecheck, relevant core/renderer targeted suites, full `test:renderer` before the final
+  iframe fix, post-fix targeted regression, `docs:check`, and `git diff --check`.
 - **Ask before reaching outside the handed file area (PR #349, codex-4)** — typed file tools
   (`file_read`/`file_glob`/`file_grep`/`file_edit`/`file_write`/`file_delete`) that target a **non-sensitive
   path outside the handed file area** now stop for an explicit approval (`ask`) **before** the tool runs,

@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343**) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
@@ -87,9 +87,9 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
    API-key/Claude-Pro control); presentation-only, light/dark gate.
 6. **`agent-skills-authoring` diff/preview** (P1 tail) — the remaining creative-UX; NL save-as-skill
    routing already shipped (#271).
-7. **`file-preview` PR3** (P2) — media streaming / Office / URL reader; next slice of a shipping plan,
-   retires the `media-types` whole-file-read limit. (EPUB reader shipped #339/#344 as a registered
-   `PreviewTarget` renderer; PDF #227, web-native #210 already in.)
+7. **`file-preview` tail** (P2) — Office best-effort renderers and any later static URL-reader extraction.
+   Media streaming, direct URL preview, preview-first links, and sandboxed local HTML shipped in #345
+   (EPUB #339/#344, PDF #227, web-native basics #210 already in).
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
@@ -324,14 +324,10 @@ archived `done` (see Recently completed). Remaining active work:
 - **file-preview** (P2, plan refreshed PR #209) — in-app preview panel for every file-shaped
   source via a source-owned `PreviewTarget` (`local-file` / `asset` / `agent-payload` / `url`):
   one shell + renderer registry, per-source main-process byte authority. **PR 1 shipped (#210,
-  shell + web-native basics); PR 2 shipped (#227, PDF renderer)** — remaining: **media streaming
-  (PR 3) / Office / URL reader**. PR 3 also retires the `media-types` whole-file-read limitation.
-  See `docs/plans/file-preview.md`.
-- **media-types** (P2, *no plan file*) — audio/video players + PDF thumbnail on the
-  `BlockNodeRow` shell **shipped with #206** (inline `<audio>`/`<video controls>`
-  + `pdftoppm` thumbnail). Remaining: `serve()` needs a streaming/range response
-  for large media (today's whole-file read works but is memory-heavy and breaks
-  seeking on big files) — tracked as `file-preview` PR 3 (media streaming).
+  shell + web-native basics); PR 2 shipped (#227, PDF renderer); PR 3 shipped (#345,
+  Range-capable streams + media renderers, direct URL preview, preview-first links, sandboxed local
+  HTML)** — remaining: **Office** and optional static URL-reader extraction if PM wants reader-mode
+  pages beyond the hardened webview preview. See `docs/plans/file-preview.md`.
 - **file-as-node follow-up** (low, pre-release bug, *no plan file*) — restoring a persisted pane
   whose top view was an `asset` file-preview drops the whole pane instead of salvaging its outliner
   anchor / backStack (`useWorkspaceLayout` `sanitizePanel`). Dev-only userData, narrow same-day
@@ -432,6 +428,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **preview-first-links-html-renderer** (`codex/preview-first-links-html-renderer`, PR #345, codex,
+  merged 2026-06-30) — completes the next file-preview slice: ordinary `http(s)` links from the outliner,
+  agent transcript, and local preview bodies now open in a Tenon split preview pane by default; URL previews
+  render as a hardened `webview` with an http(s)-only source, fixed partition, denied popups/permissions,
+  stripped preload/webpreferences, and an explicit "open original" escape hatch. Local-file, asset, and
+  agent-payload previews gain Range-capable `preview-local://` streams for large media so audio/video can
+  seek without whole-file reads; local `.html`/`.htm` files render as sandboxed static iframes with host-side
+  link interception and no script execution. Inline file refs share one context menu, while transcript chips
+  open file-only reader panes and plain workspace chips use the normal preview route. **Gate (main):**
+  deep review found one P2 iframe-realm link-routing bug; round-2 fix resolved it with a cross-realm
+  regression test. Verified with typecheck, relevant core/renderer targeted suites, full `test:renderer`
+  before the final iframe fix, post-fix targeted regression, `docs:check`, and `git diff --check`.
+  Plan-track slice of `file-preview`, **shape (b)** independent PR; the plan remains active for Office and
+  any future static URL-reader extraction.
 
 - **agent-file-scope-preflight** (`codex-4/agent-file-scope-preflight`, PR #349, codex-4, merged 2026-06-30,
   fast-track) — typed file tools (`file_read`/`file_glob`/`file_grep`/`file_edit`/`file_write`/`file_delete`)
