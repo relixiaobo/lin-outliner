@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe('RichTextEditor link preview routing', () => {
-  test('routes ordinary http links to Tenon preview events', () => {
+  test('routes ordinary http links to Tenon split-pane preview events', () => {
     const rendered = renderEditor({
       text: 'Docs',
       marks: [{ start: 0, end: 4, type: 'link', attrs: { href: 'https://example.com/docs' } }],
@@ -41,7 +41,7 @@ describe('RichTextEditor link preview routing', () => {
     });
 
     expect(opened).toEqual([{
-      newPane: false,
+      newPane: true,
       target: {
         kind: 'url',
         url: 'https://example.com/docs',

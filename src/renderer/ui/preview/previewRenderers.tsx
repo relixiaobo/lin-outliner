@@ -47,13 +47,13 @@ import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
 import { formatBytes } from './fileNode';
 import { DocumentOutlineRail, type DocumentOutlineItem } from './DocumentOutlineRail';
 import { FilePreviewPill, type FilePreviewMenuAction } from './FilePreviewPill';
-import { dispatchPreviewTargetOpen } from './previewEvents';
 import {
   previewReadingPositionKey,
   readPdfReadingPosition,
   writePdfReadingPosition,
   type PdfReadingPosition,
 } from './readingPositionStore';
+import { openUrlPreviewFromClick } from './urlPreviewRouting';
 import { usePreviewObjectUrl } from './usePreviewObjectUrl';
 
 type FilePreviewLabels = ReturnType<typeof useT>['shell']['filePreview'];
@@ -695,19 +695,9 @@ function HtmlPreview({ source }: PreviewRendererProps) {
         ? event.target.closest<HTMLAnchorElement>('a[href]')
         : null;
       if (!target) return;
-      const href = target.href;
-      try {
-        const url = new URL(href);
-        if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+      if (openUrlPreviewFromClick(event, target.href, target.textContent?.trim() || target.href)) {
         event.preventDefault();
-        dispatchPreviewTargetOpen({
-          target: {
-            kind: 'url',
-            url: url.toString(),
-            label: target.textContent?.trim() || url.toString(),
-          },
-        });
-      } catch {
+      } else {
         // Let non-URL anchors behave inside the sandboxed static document.
       }
     });

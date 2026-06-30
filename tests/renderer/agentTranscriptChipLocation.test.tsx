@@ -156,7 +156,7 @@ describe('transcript file-chip location marker', () => {
     expect(ref?.querySelector('.inline-ref-chat-label')?.textContent).toBe('when the user asked in Chinese');
   });
 
-  test('AgentMarkdown routes ordinary http links to Tenon preview events', () => {
+  test('AgentMarkdown routes ordinary http links to Tenon split-pane preview events', () => {
     const rendered = render(
       <AgentMarkdown index={0} keyPrefix="probe" text="Read [the docs](https://example.com/docs)." />,
     );
@@ -177,7 +177,7 @@ describe('transcript file-chip location marker', () => {
     });
 
     expect(opened).toEqual([{
-      newPane: false,
+      newPane: true,
       target: {
         kind: 'url',
         url: 'https://example.com/docs',

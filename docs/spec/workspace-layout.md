@@ -383,7 +383,7 @@ Source authority stays source-specific:
   previewed; debug-only payloads are not exposed through the normal preview
   router. Renderer code never receives a payload file path.
 - `url` targets are first-class loose previews. Ordinary `http(s)` links from the
-  outliner and agent transcript route into Tenon as URL preview targets by default;
+  outliner and agent transcript route into a Tenon split preview pane by default;
   the explicit fallback action opens the URL in the system browser.
 
 Renderers are directory listing, image, PDF (`pdf.js`; every page is stacked
@@ -408,8 +408,8 @@ only through the preview source API, uses a bundled same-origin worker, and fall
 back to the metadata renderer if parsing or rendering fails. Markdown renderer
 output does not enable raw HTML execution. HTML file preview renders in a sandboxed
 iframe with same-origin access for host-side link interception but no script
-execution; `http(s)` links inside the frame route back through Tenon preview by
-default. EPUB sections render in `blob:` iframes, so renderer CSP permits
+execution; `http(s)` links inside the frame route back through a Tenon split
+preview pane by default. EPUB sections render in `blob:` iframes, so renderer CSP permits
 `frame-src blob:` while keeping packaged `script-src 'self'`; dev adds only the
 fixed hash for Vite React Refresh's inline preamble and widens `connect-src` for
 Vite HMR. Scripted EPUB content is not a supported preview capability, and remote

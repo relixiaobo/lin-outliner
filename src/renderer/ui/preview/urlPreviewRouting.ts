@@ -1,5 +1,4 @@
 import type { PreviewTarget } from '../../../core/preview';
-import { wantsNewPaneFromClick } from '../shared';
 import { dispatchPreviewTargetOpen } from './previewEvents';
 
 export function previewTargetForUrl(url: string, label?: string): Extract<PreviewTarget, { kind: 'url' }> | null {
@@ -14,14 +13,14 @@ export function previewTargetForUrl(url: string, label?: string): Extract<Previe
 }
 
 export function openUrlPreviewFromClick(
-  event: Pick<MouseEvent, 'ctrlKey' | 'metaKey'>,
+  _event: Pick<MouseEvent, 'ctrlKey' | 'metaKey'>,
   url: string,
   label?: string,
 ): boolean {
   const target = previewTargetForUrl(url, label);
   if (!target) return false;
   dispatchPreviewTargetOpen({
-    newPane: wantsNewPaneFromClick(event),
+    newPane: true,
     target,
   });
   return true;

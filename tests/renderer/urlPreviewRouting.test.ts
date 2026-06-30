@@ -25,7 +25,7 @@ describe('URL preview routing', () => {
     expect(previewTargetForUrl('/relative')).toBeNull();
   });
 
-  test('dispatches URL preview open events instead of opening the browser directly', () => {
+  test('dispatches URL preview open events into a split pane by default', () => {
     const { window } = parseHTML('<!doctype html><html><body></body></html>');
     Object.assign(globalThis, {
       CustomEvent: window.CustomEvent,
@@ -36,7 +36,7 @@ describe('URL preview routing', () => {
       opened.push((event as CustomEvent<PreviewTargetOpenDetail>).detail);
     });
 
-    const routed = openUrlPreviewFromClick({ ctrlKey: true, metaKey: false }, 'https://example.com/a', 'A');
+    const routed = openUrlPreviewFromClick({ ctrlKey: false, metaKey: false }, 'https://example.com/a', 'A');
 
     expect(routed).toBe(true);
     expect(opened).toEqual([{
