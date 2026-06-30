@@ -88,6 +88,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Active-run tail re-anchored after compact (PR #351, codex-2)** — auto compact during an
+  in-flight provider run no longer leaves the run's in-memory tail pointing at the pre-compact
+  assistant/tool branch. Later assistant or tool-result segments from that same run now append after
+  the post-compact leaf, so the next model-context build does not re-enter the oversized
+  summarized-away path and loop through compaction again. Stale transient tool payload/call state is
+  cleared at the same boundary. `docs/spec/agent-skills.md` records the invariant. **Gate (main):**
+  deep review found no blocking findings; typecheck, `docs:check`, targeted runtime/event-log tests,
+  full `test:core` (1116 pass), and `git diff --check` green.
 - **Runs-panel title robustness + verifier double-serialization (main, direct-to-`main`, 2026-06-28)** —
   follow-up polish on the agent-goal feature (#343): the Work/Runs row title (also used as the row's
   `aria-label`) now collapses a free-form `objective` to a single whitespace-normalized line capped at 120

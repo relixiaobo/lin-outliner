@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345**) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350; authored ratified plan agent-process-stable-disclosure #297) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -425,6 +425,18 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-compact-tail-reanchor** (`codex-2/agent-compact-tail-reanchor`, PR #351, codex-2,
+  merged 2026-06-30, fast-track) — fixes repeated auto-compaction loops when compaction happens
+  during an active provider run. The compact event log was already correct, but the in-memory active
+  run tail could still point at the pre-compact assistant/tool chain; later assistant or tool-result
+  segments from the same run could append back onto the summarized-away branch and make the next
+  model-context build see the oversized path again. The runtime now re-anchors the active run tail to
+  the post-compact leaf and clears stale transient tool payload/call state after appending the
+  compaction root. `docs/spec/agent-skills.md` records the invariant. **Gate (main):** deep review found
+  no blocking findings. Verified: typecheck, `docs:check`, targeted skills-integration regression,
+  event-log/render-projection/debug-view targeted tests, `test:core` 1116/0, and `git diff --check`.
+  Fast-track, **shape (a)**, *no plan file*.
 
 - **view-toolbar-tana-polish** (`codex-2/view-toolbar-tana-polish`, PR #350, codex-2,
   merged 2026-06-30, fast-track) — polishes the node/saved-search view toolbar around the Tana
