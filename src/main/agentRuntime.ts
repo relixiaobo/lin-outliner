@@ -5314,6 +5314,7 @@ export class AgentRuntime {
     );
 
     await this.appendConversationEvents(conversationId, conversation, inputs);
+    return leafMessageId;
   }
 
   private async buildPreservedMessageEvents(

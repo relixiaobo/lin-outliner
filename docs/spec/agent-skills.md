@@ -406,6 +406,12 @@ After compaction, the model-context branch becomes a new root user message with:
 - hidden listed-skills state reminder
 - hidden restored file context reminder, when recent file reads fit the restore budget
 
+If compaction happens while a provider run is still active, the run's in-memory
+message tail is re-anchored to the post-compact leaf (the compact root, or the
+last preserved tail message for reactive compaction). Any later assistant or
+tool-result segment from that same run must append after the compacted branch,
+not after the pre-compact tail that was just summarized away.
+
 The renderer does not show this root as a normal user bubble. `compaction.completed` is projected as a dedicated compact boundary row with the trigger (`manual`, `auto`, or `reactive`) and an expandable summary. The hidden reminders remain model-only context.
 
 The listed-skills state reminder is intentionally tiny. It prevents a restored compacted conversation from re-injecting the full skill listing after app restart.
@@ -515,6 +521,7 @@ Replicated behavior:
 - Reactive compact after a provider context-length error, then retry from the compacted root.
 - Retry compact-summary requests that are themselves too large by dropping oldest API-round groups and inserting a synthetic truncation marker when needed.
 - Preserve the latest reactive user/tool tail after compact so the failed turn can continue.
+- Re-anchor any still-active run to the post-compact leaf before appending later assistant/tool segments.
 - Restore invoked skill content after compact with per-skill and total budgets.
 - Preserve listed-skill state after compact without re-injecting the full listing.
 - Restore recent full text file reads after compact, bounded to 5 files, about 5k tokens per file, and about 50k tokens total.

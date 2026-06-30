@@ -88,7 +88,14 @@ export interface AgentRuntimeContextConversation {
 export interface AgentRuntimeActiveRunState {
   id: string;
   lastSubmittedUserPrompt: UserMessage | null;
+  /**
+   * The in-flight run's current message tail. Compaction inserts a fresh root
+   * while the provider may keep the same run alive, so the next segment must
+   * chain from the post-compact leaf rather than the compacted-away tail.
+   */
+  lastMessageId: string | null;
   toolOutputPayloads: Map<string, { payload: AgentPayloadRef; label: string }>;
+  toolCallMessageIds: Map<string, string>;
 }
 
 export type AgentRuntimeContextEventInput = {
@@ -114,7 +121,7 @@ export interface AgentRuntimeContextHost<TConversation extends AgentRuntimeConte
     source: AgentCompactionSourceRange,
     trigger: AgentCompactionTrigger,
     preservedMessages: readonly AgentMessage[],
-  ): Promise<void>;
+  ): Promise<string>;
   persistToolOutputPayload(
     conversationId: string,
     toolCallId: string,
@@ -267,7 +274,7 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
         createPostCompactRestoredFilesReminder(restoredFiles),
         { recentMessagesPreserved: compactPlan.messagesToKeep.length > 0 },
       );
-      await this.host.appendCompactionRootEvent(
+      const postCompactLeafMessageId = await this.host.appendCompactionRootEvent(
         conversationId,
         conversation,
         compactMessage,
@@ -276,6 +283,11 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
         options.trigger,
         compactPlan.messagesToKeep,
       );
+      if (conversation.activeRun) {
+        conversation.activeRun.lastMessageId = postCompactLeafMessageId;
+        conversation.activeRun.toolOutputPayloads.clear();
+        conversation.activeRun.toolCallMessageIds.clear();
+      }
       const postCompactMessages = await this.host.deriveRuntimePiMessages(conversationId, conversation.eventState, conversation);
       conversation.toolResultBudgetState = restoreToolResultBudgetStateFromMessages(getAgentEventActivePath(conversation.eventState));
       if (options.updateAgentState) conversation.agent.state.messages = postCompactMessages as never;
