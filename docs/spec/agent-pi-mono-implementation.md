@@ -361,7 +361,11 @@ bounded: short timeout, tiny output budget, cancellable UI.
    `openai-completions`). A known catalog model id also keeps its neutral
    sizing/capability metadata (`contextWindow`, `maxTokens`, `reasoning`,
    thinking map, cost/input`) so compaction and overflow math do not fall back to
-   generic custom-model defaults. Provider-specific dispatch knobs such as model
+   generic custom-model defaults. Provider prompt-cache affinity stays enabled for
+   official OpenAI Responses requests, but custom OpenAI-compatible Responses
+   endpoints run with cache retention `none` so Tenon does not send
+   `prompt_cache_key` / session-affinity headers to gateways whose Responses cache
+   implementation may differ. Provider-specific dispatch knobs such as model
    headers and compatibility overrides are not copied onto the custom endpoint
    model.
    The custom endpoint's request-auth resolver prefers, in order: an explicit

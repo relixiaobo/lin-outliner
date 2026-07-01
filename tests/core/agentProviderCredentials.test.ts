@@ -58,6 +58,7 @@ const {
   deleteProviderApiKey,
   getProviderApiKey,
   getProviderSecretStatus,
+  providerStreamOptionsFromRuntimeSettings,
   persistOAuthCredential,
   testProviderConnection,
 } = await import('../../src/main/agentSettings');
@@ -278,6 +279,35 @@ describe('provider credential resolver', () => {
     expect(model.reasoning).toBe(true);
   });
 
+  test('custom Responses endpoints disable provider prompt cache affinity', () => {
+    const catalogModel = piModels().getModel('openai', 'gpt-5.5');
+    const runtimeSettings = {
+      providerTimeoutMs: null,
+      providerMaxRetries: null,
+      providerMaxRetryDelayMs: 60_000,
+      providerCacheRetention: 'short' as const,
+    };
+
+    expect(providerStreamOptionsFromRuntimeSettings(runtimeSettings, createOpenAICompatibleModel({
+      providerId: 'openai',
+      modelId: 'gpt-5.5',
+      baseUrl: 'https://proxy.example.com/v1',
+      catalogModel,
+    }))).toMatchObject({ cacheRetention: 'none' });
+
+    expect(providerStreamOptionsFromRuntimeSettings(runtimeSettings, {
+      ...catalogModel!,
+      baseUrl: 'https://api.openai.com/v1',
+    })).toMatchObject({ cacheRetention: 'short' });
+
+    expect(providerStreamOptionsFromRuntimeSettings(undefined, createOpenAICompatibleModel({
+      providerId: 'openai',
+      modelId: 'gpt-5.5',
+      baseUrl: 'https://proxy.example.com/v1',
+      catalogModel,
+    }))).toMatchObject({ cacheRetention: 'none' });
+  });
+
   test('custom OpenAI-compatible unknown models fall back to chat completions', () => {
     const model = createOpenAICompatibleModel({
       providerId: 'openai',
@@ -402,6 +432,7 @@ describe('provider credential resolver', () => {
   test('custom endpoint connection probes preserve the discovered catalog model API', async () => {
     const restoreFetch = mockModelList(['gpt-5.5']);
     const seenModels: Array<{ provider: string; api: string; id: string; baseUrl?: string }> = [];
+    const seenOptions: Array<{ cacheRetention?: string }> = [];
     try {
       piModels().setProvider(createProvider({
         id: piCustomProviderId('openai'),
@@ -422,8 +453,9 @@ describe('provider credential resolver', () => {
         })],
         api: {
           stream: () => { throw new Error('stream should not be called'); },
-          streamSimple: (model) => {
+          streamSimple: (model, _context, options) => {
             seenModels.push({ provider: model.provider, api: model.api, id: model.id, baseUrl: model.baseUrl });
+            seenOptions.push({ cacheRetention: options?.cacheRetention });
             const stream = createAssistantMessageEventStream();
             queueMicrotask(() => {
               const message = {
@@ -453,6 +485,7 @@ describe('provider credential resolver', () => {
         id: 'gpt-5.5',
         baseUrl: 'https://proxy.example.com/v1',
       }]);
+      expect(seenOptions).toEqual([{ cacheRetention: 'none' }]);
     } finally {
       restoreFetch();
     }

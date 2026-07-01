@@ -441,7 +441,7 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
         messages: [request],
         tools: [],
       }, {
-        ...providerStreamOptionsFromRuntimeSettings(options.runtimeSettings),
+        ...providerStreamOptionsFromRuntimeSettings(options.runtimeSettings, model),
         ...authOverride,
         maxTokens: Math.min(model.maxTokens ?? COMPACT_SUMMARY_MAX_OUTPUT_TOKENS, COMPACT_SUMMARY_MAX_OUTPUT_TOKENS),
         // pi-ai stream option (provider cache affinity) — the lib's own field name.
