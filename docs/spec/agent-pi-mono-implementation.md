@@ -355,12 +355,15 @@ bounded: short timeout, tiny output budget, cancellable UI.
    triggers a catalog ranking sort.
 3. Build the provider `Model` object with the connection's auth / base URL. For
    custom OpenAI-compatible endpoints, dispatch uses the internal
-   `tenon-custom:<providerId>` provider and `openai-completions`, but a known
-   catalog model id keeps its neutral sizing/capability metadata
-   (`contextWindow`, `maxTokens`, `reasoning`, thinking map, cost/input) so
-   compaction and overflow math do not fall back to generic custom-model
-   defaults. Provider-specific dispatch knobs such as model headers and
-   compatibility overrides are not copied onto the custom endpoint model.
+   `tenon-custom:<providerId>` provider, while the model's API adapter follows
+   the known catalog model when one exists (`gpt-5.x` OpenAI models keep
+   `openai-responses`; unknown proxy-only models default to
+   `openai-completions`). A known catalog model id also keeps its neutral
+   sizing/capability metadata (`contextWindow`, `maxTokens`, `reasoning`,
+   thinking map, cost/input`) so compaction and overflow math do not fall back to
+   generic custom-model defaults. Provider-specific dispatch knobs such as model
+   headers and compatibility overrides are not copied onto the custom endpoint
+   model.
    The custom endpoint's request-auth resolver prefers, in order: an explicit
    request key → a deliberately-stored `api_key` → (local endpoints only) an
    inert client key → the external provider's ambient auth. A keyless localhost

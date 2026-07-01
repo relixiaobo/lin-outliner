@@ -330,12 +330,15 @@ describe('agent runtime skill integration', () => {
     }
   });
 
-  test('routes custom OpenAI-compatible endpoint models through pi custom provider while logging the configured provider', async () => {
+  test('routes custom OpenAI-compatible catalog models through pi custom provider while preserving their API', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-custom-provider-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-custom-provider-data-'));
     roots.push(localRoot, dataRoot);
 
-    const modelId = piModels().getModels('openai')[0]?.id ?? 'gpt-5.1';
+    const modelId = 'gpt-5.5';
+    const catalogModel = piModels().getModel('openai', modelId);
+    expect(catalogModel).toBeDefined();
+    expect(catalogModel?.api).toBe('openai-responses');
     const { setBuiltInAgentProfile } = await import('../../src/main/agentSettings');
     await setBuiltInAgentProfile('built-in:tenon:assistant', { model: modelId });
     const seenModels: Model<Api>[] = [];
@@ -375,10 +378,8 @@ describe('agent runtime skill integration', () => {
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
     expect(seenModels).toHaveLength(1);
     expect(seenModels[0]?.provider).toBe(piCustomProviderId('openai'));
-    expect(seenModels[0]?.api).toBe('openai-completions');
+    expect(seenModels[0]?.api).toBe('openai-responses');
     expect(seenModels[0]?.baseUrl).toBe('https://proxy.example.com/v1');
-    const catalogModel = piModels().getModel('openai', modelId);
-    expect(catalogModel).toBeDefined();
     expect(seenModels[0]?.contextWindow).toBe(catalogModel?.contextWindow);
     expect(seenModels[0]?.maxTokens).toBe(catalogModel?.maxTokens);
     expect(seenModels[0]?.reasoning).toBe(catalogModel?.reasoning);
@@ -389,7 +390,7 @@ describe('agent runtime skill integration', () => {
       type: 'assistant_message.started',
       providerId: 'openai',
       modelId,
-      apiId: 'openai-completions',
+      apiId: 'openai-responses',
     });
   });
 

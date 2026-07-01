@@ -27,6 +27,7 @@ import {
   createOpenAICompatibleModel,
   ensurePiCustomProvider,
   piCompleteSimple,
+  piFindModel,
   piModels,
   piModelsForProvider,
   piProviderAuthKind,
@@ -810,7 +811,13 @@ export async function testProviderConnection(input: {
       try {
         const models = await listOpenAiCompatibleModels(baseUrl, requestAuth.listHeaders);
         if (models.length > 0) {
-          await piCompleteSimple(createOpenAICompatibleModel({ providerId, modelId: models[0], baseUrl }), {
+          const discoveredModelId = models[0]!;
+          await piCompleteSimple(createOpenAICompatibleModel({
+            providerId,
+            modelId: discoveredModelId,
+            baseUrl,
+            catalogModel: piFindModel(providerId, discoveredModelId),
+          }), {
             messages: [{ role: 'user', content: 'Ping', timestamp: Date.now() }],
           }, { ...authOverride, timeoutMs: 8000, maxTokens: 1 });
           return { success: true, message: `Connection successful. ${models.length} model(s) available.` };
