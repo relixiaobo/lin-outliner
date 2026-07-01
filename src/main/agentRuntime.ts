@@ -3098,7 +3098,7 @@ export class AgentRuntime {
         messages: [request],
         tools: [],
       }, {
-        ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
+        ...providerStreamOptionsFromRuntimeSettings(runtimeSettings, model),
         ...authOverride,
         maxTokens: Math.min(model.maxTokens ?? COMPACT_SUMMARY_MAX_OUTPUT_TOKENS, COMPACT_SUMMARY_MAX_OUTPUT_TOKENS),
         // pi-ai stream option (provider cache affinity) — the lib's own field name.
@@ -7265,7 +7265,7 @@ function createProviderConfiguredStreamFn(
     const runtimeSettings = await loadRuntimeSettingsForStream(runtimeSettingsLoader);
     return sourceFn(model, context, {
       ...options,
-      ...providerStreamOptionsFromRuntimeSettings(runtimeSettings),
+      ...providerStreamOptionsFromRuntimeSettings(runtimeSettings, model),
     } satisfies SimpleStreamOptions);
   });
 }

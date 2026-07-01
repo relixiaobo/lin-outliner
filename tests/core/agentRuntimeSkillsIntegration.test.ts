@@ -465,6 +465,76 @@ describe('agent runtime skill integration', () => {
     });
   });
 
+  test('disables provider prompt cache affinity for custom Responses endpoints', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-custom-cache-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-custom-cache-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const providerOptions: SimpleStreamOptions[] = [];
+    const compactOptions: SimpleStreamOptions[] = [];
+    const catalogModel = piModels().getModel('openai', 'gpt-5.5') as Model<Api>;
+    const customModel = createOpenAICompatibleModel({
+      providerId: 'openai',
+      modelId: 'gpt-5.5',
+      baseUrl: 'https://proxy.example.com/v1',
+      catalogModel,
+    });
+    const script = scriptedStream(
+      [
+        (_context, options) => {
+          providerOptions.push(options ?? {});
+          return fauxAssistantMessage(fauxText('Custom provider options received.'));
+        },
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+          baseUrl: 'https://proxy.example.com/v1',
+        }),
+        providerModelResolver: () => customModel,
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: true,
+          slashSkillsEnabled: true,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+          providerTimeoutMs: null,
+          providerMaxRetries: null,
+          providerMaxRetryDelayMs: 60_000,
+          providerCacheRetention: 'short',
+        }),
+        streamFn: script.streamFn,
+        completeSimpleFn: async (model, _context, options) => {
+          compactOptions.push(options ?? {});
+          return normalizeAssistantMessage(
+            fauxAssistantMessage('<analysis>custom compact</analysis><summary>Custom compact summary.</summary>'),
+            model as Model<Api>,
+          );
+        },
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(created.conversationId, 'Check custom provider cache settings.');
+    await runtime.sendMessage(created.conversationId, '/compact');
+
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(providerOptions[0]).toMatchObject({ cacheRetention: 'none' });
+    expect(compactOptions[0]).toMatchObject({ cacheRetention: 'none' });
+  });
+
   test('exposes each user request as its own turn run in the debug view (compaction is not a run)', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-compact-debug-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-compact-debug-data-'));
