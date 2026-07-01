@@ -106,6 +106,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Agent work divider timing and folding (PR #357, codex-2)** — agent turns now keep one
+  persistent `Working / Working for ...` divider timed from run start while active, then collapse
+  to `Worked for ...` after sealing without an extra top-level disclosure. Nested thinking/tool
+  rows remain available inside the divider, repeated tool calls summarize as grouped activity, and
+  answered lone-reasoning turns stay folded by default while resultless lone-reasoning turns still
+  open for readability. **Gate (main):** code review found one answered-turn disclosure regression;
+  codex-2 fixed it with E2E coverage. Merge verified with typecheck, targeted renderer tests,
+  `docs:check`, and `git diff --check`; local `agent-process` E2E could not start because this
+  sandbox denied the Vite dev-server port bind.
 - **Custom Responses stability and compaction accounting (PR #356, codex)** —
   custom OpenAI-compatible Responses endpoints now use a compatibility request profile that promotes
   leading system/developer input to top-level `instructions`, keeps low verbosity, and enables automatic

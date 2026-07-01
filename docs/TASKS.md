@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356**) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351; authored ratified plan agent-process-stable-disclosure #297) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -425,6 +425,19 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-work-divider-timing** (`codex-2/agent-work-divider-timer`, PR #357, codex-2,
+  merged 2026-07-01, fast-track) — fixes the Codex-style agent work divider so active turns
+  keep one persistent `Working / Working for ...` header timed from run start, sealed turns
+  collapse to `Worked for ...`, and resultless process blocks still surface useful work without
+  adding a second top-level disclosure. Thinking/tool activity now keeps the nested Codex-style
+  rows, grouped tool runs summarize repeated calls, and answered turns keep lone reasoning folded
+  by default while resultless lone-reasoning turns still open for readability. `docs/spec/agent-event-log-rendering.md`
+  records the as-built rendering contract. **Gate (main):** code review found one answered-turn
+  reasoning disclosure regression; codex-2 fixed it before merge with E2E coverage. Verified on
+  the merge: typecheck, targeted renderer tests, `docs:check`, and `git diff --check`. Local
+  `agent-process` E2E could not start because this sandbox denied the Vite dev-server port bind.
+  Fast-track, **shape (a)**, *no plan file*.
 
 - **custom-responses-root-fix** (`codex/custom-responses-root-fix`, PR #356, codex,
   merged 2026-07-01, fast-track) — follows #354/#355 by making custom OpenAI-compatible Responses
