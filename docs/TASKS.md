@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345**) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
@@ -439,6 +439,17 @@ anything.
   fixed it with a regression. Verified on final PR head and merge: typecheck, targeted provider/runtime
   tests, full `test:core` 1146/0, `docs:check`, and `git diff --check`. Fast-track, **shape (a)**,
   *no plan file*.
+
+- **custom-responses-cache-stability** (`codex/custom-responses-cache-stability`, PR #355, codex,
+  merged 2026-07-01, fast-track) — follows #354 by disabling provider prompt-cache affinity for custom
+  OpenAI-compatible Responses endpoints. Normal agent turns, compact summary requests, and provider
+  connection probes now all derive stream `cacheRetention` from the resolved model: official
+  `https://api.openai.com/v1` Responses requests keep the configured retention, while non-official
+  Responses base URLs force `cacheRetention: "none"` so Tenon does not send `prompt_cache_key` or
+  session-affinity headers to gateways with divergent cache support. `docs/spec/agent-pi-mono-implementation.md`
+  records the as-built policy. **Gate (main):** code review found no reportable findings. Verified on
+  the final PR head and merge: targeted provider/runtime tests, typecheck, and `docs:check`.
+  Fast-track, **shape (a)**, *no plan file*.
 
 - **agent-node-edit-behavior** (`codex-3/node-description-guidance`, PR #353, codex-3,
   merged 2026-07-01, fast-track) — makes agent-facing outline edits closer to normal

@@ -106,6 +106,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Custom Responses gateways disable prompt-cache affinity (PR #355, codex)** —
+  custom OpenAI-compatible endpoints that preserve the `openai-responses` request shape now force
+  provider stream `cacheRetention: "none"` for non-official base URLs across normal agent turns,
+  compact summary requests, and provider connection probes. This stops Tenon from sending
+  `prompt_cache_key` / session-affinity headers to gateways whose Responses cache implementation may
+  differ, while official `https://api.openai.com/v1` Responses requests keep the configured cache
+  retention. `docs/spec/agent-pi-mono-implementation.md` records the intended custom endpoint behavior.
+  **Gate (main):** code review found no reportable findings. Verified with targeted provider/runtime
+  tests, typecheck, and `docs:check`.
 - **Custom OpenAI endpoints keep the Responses API for catalog models (PR #354, codex)** —
   custom OpenAI-compatible provider rows now preserve the catalog model's API adapter when the selected
   model is known, so Responses models such as `gpt-5.5` keep `openai-responses` instead of being routed
