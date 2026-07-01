@@ -972,11 +972,14 @@ Rules:
   processed counts, and memory-change counts in `entities.dreams`. Inside the
   Dream channel, `dream.finished` is metadata attached to the visible manual or
   scheduled anchor, so the anchor remains an ordinary message row and the
-  assistant/tool transcript stays inline. Users can trigger a manual run only
-  from Settings, and durable Dream history is surfaced in Settings → Agent
-  "Memory & activity" via the `agent_list_dream_history` IPC. Dream runs do not
-  appear in the Work/Runs view; `AgentRenderDreamTaskEntity.principal` remains
-  the Dream subject for audit labeling.
+  assistant/tool transcript stays inline. The anchor may carry hidden
+  `<system-reminder>` model context; system-line rendering strips those hidden
+  blocks and shows only the human-readable manual/scheduled anchor summary. Users
+  can trigger a manual run only from Settings, and durable Dream history is
+  surfaced in Settings → Agent "Memory & activity" via the
+  `agent_list_dream_history` IPC. Dream runs do not appear in the Work/Runs view;
+  `AgentRenderDreamTaskEntity.principal` remains the Dream subject for audit
+  labeling.
 - `child_run.*` events back `entities.childRuns` — the conversation's permanent
   record of a run, whose final result is an expandable summary with a "View full
   run" link into the full transcript. **Where** that record renders depends on
