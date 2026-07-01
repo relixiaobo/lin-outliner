@@ -106,6 +106,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Disclosure scroll anchoring stays stable through delayed measurements (PR #358, codex-4)** —
+  expanding or collapsing long virtualized outliner rows now keeps the clicked chevron visually
+  anchored across multiple row-measurement frames, while releasing that temporary anchor as soon as
+  the user scrolls or signals scroll intent so the helper does not pull the viewport back. The shared
+  disclosure anchor helper updates its expected scroll position after its own restorations and cleans
+  up frame/listener state when the anchor expires. `docs/spec/ui-behavior.md` records the outliner
+  behavior. **Gate (main):** code review found one P1 user-scroll override regression; codex-4 fixed
+  it with renderer coverage. Merge verified with typecheck, targeted renderer tests, targeted
+  outliner E2E, and `git diff --check`.
 - **Agent work divider timing and folding (PR #357, codex-2)** — agent turns now keep one
   persistent `Working / Working for ...` divider timed from run start while active, then collapse
   to `Worked for ...` after sealing without an extra top-level disclosure. Nested thinking/tool
