@@ -574,22 +574,41 @@ describe('agent runtime skill integration', () => {
     ]);
   });
 
-  test('lowers the auto-compact threshold for custom Responses endpoints', async () => {
-    const { autoCompactThreshold } = await import('../../src/main/agentRuntimeContext');
+  test('uses Codex-style auto-compact accounting from provider usage', async () => {
+    const { agentMessagesAutoCompactTokens, autoCompactThreshold } = await import('../../src/main/agentRuntimeContext');
 
     expect(autoCompactThreshold({
       api: 'openai-responses',
       baseUrl: 'https://proxy.example.com/v1',
       contextWindow: 272000,
       maxTokens: 128000,
-    } as never)).toBe(160000);
+    } as never)).toBe(244800);
 
     expect(autoCompactThreshold({
       api: 'openai-responses',
       baseUrl: 'https://api.openai.com/v1',
       contextWindow: 272000,
       maxTokens: 128000,
-    } as never)).toBe(239000);
+    } as never)).toBe(244800);
+
+    const observed = normalizeAssistantMessage({
+      ...fauxAssistantMessage(fauxText('Observed usage.')),
+      usage: { ...EMPTY_USAGE, totalTokens: 42_000 },
+    }, {
+      api: 'openai-responses',
+      provider: 'openai',
+      id: 'gpt-5.5',
+      name: 'gpt-5.5',
+      baseUrl: 'https://proxy.example.com/v1',
+      reasoning: true,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    });
+    expect(agentMessagesAutoCompactTokens([
+      { role: 'user', content: [{ type: 'text', text: 'start' }], timestamp: 1 },
+      observed,
+      { role: 'user', content: [{ type: 'text', text: 'x'.repeat(4_000) }], timestamp: 2 },
+    ])).toBeGreaterThan(42_000);
   });
 
   test('exposes each user request as its own turn run in the debug view (compaction is not a run)', async () => {
@@ -2727,7 +2746,7 @@ describe('agent runtime skill integration', () => {
       baseUrl: '',
       reasoning: false,
       input: ['text'],
-      contextWindow: 20_000,
+      contextWindow: 12_000,
       maxTokens: 1_000,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     };

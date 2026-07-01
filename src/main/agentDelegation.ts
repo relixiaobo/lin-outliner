@@ -47,13 +47,12 @@ import {
   collectAgentMessageToolResultBudgetSelections,
   createToolResultBudgetState,
   DEFAULT_MAX_TOOL_RESULT_CHARS,
-  estimateAgentMessagesTokens,
   MAX_TOOL_RESULTS_PER_BATCH_CHARS,
   piToolResultTextContent,
   restoreToolResultBudgetStateFromAgentMessages,
   type ToolResultBudgetState,
 } from './agentToolOutputSlimming';
-import { autoCompactThreshold } from './agentRuntimeContext';
+import { agentMessagesAutoCompactTokens, autoCompactThreshold } from './agentRuntimeContext';
 import { NEVA_AGENT_PERSONA } from './agentSystemPrompt';
 import { isAbortError, throwIfAborted } from './agentAwaitWithAbort';
 import {
@@ -1533,7 +1532,7 @@ export class AgentDelegationRuntime {
     const threshold = autoCompactThreshold(model);
     if (!Number.isFinite(threshold) || threshold <= 0) return null;
     const systemPrompt = run.agent?.state.systemPrompt ?? '';
-    if (estimateAgentMessagesTokens(messages, systemPrompt) < threshold) return null;
+    if (agentMessagesAutoCompactTokens(messages, systemPrompt) < threshold) return null;
     return this.compactRunMessages(run, messages, 'auto', signal);
   }
 

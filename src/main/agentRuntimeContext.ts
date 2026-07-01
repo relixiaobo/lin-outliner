@@ -7,7 +7,7 @@ import type {
   Model,
   TextContent as PiTextContent,
 } from '@earendil-works/pi-ai';
-import type { AgentMessage, UserMessage } from '../core/agentTypes';
+import type { AgentMessage, Usage, UserMessage } from '../core/agentTypes';
 import {
   getAgentEventActivePath,
   type AgentActor,
@@ -44,15 +44,14 @@ import {
   type ToolResultBudgetState,
 } from './agentToolOutputSlimming';
 import { providerStreamOptionsFromRuntimeSettings, type AgentProviderRuntimeConfig } from './agentSettings';
-import { customOpenAIResponsesPayloadProfileOption, isCustomOpenAIResponsesEndpoint } from './openAIResponsesCompat';
+import { customOpenAIResponsesPayloadProfileOption } from './openAIResponsesCompat';
 import { piCompleteSimple } from './piModels';
 import type { AgentRuntimeSettings } from '../core/types';
 import { awaitWithAbort, isAbortError, throwIfAborted } from './agentAwaitWithAbort';
 
 type CompleteSimpleFn = typeof piCompleteSimple;
 
-const AUTO_COMPACT_RESERVED_OUTPUT_TOKENS = 20_000;
-const AUTO_COMPACT_BUFFER_TOKENS = 13_000;
+const AUTO_COMPACT_CONTEXT_WINDOW_PERCENT = 0.9;
 const AUTO_COMPACT_MAX_FAILURES = 3;
 const COMPACT_MAX_PTL_RETRIES = 3;
 const COMPACT_SUMMARY_MAX_OUTPUT_TOKENS = 20_000;
@@ -394,8 +393,7 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
     const model = this.host.resolveProviderModel(providerConfig);
     const threshold = autoCompactThreshold(model);
     if (!Number.isFinite(threshold) || threshold <= 0) return false;
-    const tokens = estimateAgentMessagesTokens(messages, DEFAULT_AGENT_SYSTEM_PROMPT);
-    return tokens >= threshold;
+    return agentMessagesAutoCompactTokens(messages, DEFAULT_AGENT_SYSTEM_PROMPT) >= threshold;
   }
 
   private async tryAutoCompact(conversationId: string, conversation: TConversation, signal?: AbortSignal): Promise<AgentMessage[] | null> {
@@ -471,20 +469,14 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
 }
 
 export function autoCompactThreshold(model: Model<Api>): number {
-  if (isCustomOpenAIResponsesEndpoint(model)) {
-    return customOpenAIResponsesAutoCompactThreshold(model);
-  }
   const contextWindow = model.contextWindow ?? 128000;
-  const reservedOutput = Math.min(model.maxTokens ?? 8192, AUTO_COMPACT_RESERVED_OUTPUT_TOKENS);
-  const effectiveWindow = Math.max(0, contextWindow - reservedOutput);
-  return effectiveWindow - AUTO_COMPACT_BUFFER_TOKENS;
+  return Math.floor(contextWindow * AUTO_COMPACT_CONTEXT_WINDOW_PERCENT);
 }
 
-function customOpenAIResponsesAutoCompactThreshold(model: Model<Api>): number {
-  const contextWindow = model.contextWindow ?? 128000;
-  const reservedOutput = Math.min(model.maxTokens ?? 8192, AUTO_COMPACT_RESERVED_OUTPUT_TOKENS);
-  const effectiveWindow = Math.max(0, contextWindow - reservedOutput);
-  return Math.min(effectiveWindow - AUTO_COMPACT_BUFFER_TOKENS, 160_000);
+export function agentMessagesAutoCompactTokens(messages: readonly AgentMessage[], systemPrompt?: string): number {
+  const observedTokens = latestObservedContextTokens(messages);
+  if (observedTokens !== null) return observedTokens;
+  return estimateAgentMessagesTokens(messages, systemPrompt);
 }
 
 function compactionSourceForPlan(
@@ -519,4 +511,21 @@ function toolActor(toolName: string, toolCallId: string): AgentActor {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function latestObservedContextTokens(messages: readonly AgentMessage[]): number | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== 'assistant') continue;
+    const tokens = usageContextTokens(message.usage);
+    if (tokens === null) continue;
+    const tail = messages.slice(index + 1);
+    return tokens + (tail.length > 0 ? estimateAgentMessagesTokens(tail) : 0);
+  }
+  return null;
+}
+
+function usageContextTokens(usage: Usage | undefined): number | null {
+  if (!usage || !Number.isFinite(usage.totalTokens) || usage.totalTokens <= 0) return null;
+  return usage.totalTokens;
 }

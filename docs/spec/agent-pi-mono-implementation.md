@@ -371,13 +371,15 @@ bounded: short timeout, tiny output budget, cancellable UI.
    parallel tool calls when tools are present. This keeps Tenon's generic
    OpenAI-compatible dispatch closer to the stable Codex-style Responses shape
    without copying provider-specific model headers or compatibility overrides onto
-   the custom endpoint model. Their automatic compaction threshold is capped below
-   the catalog context-window threshold because gateways can add their own request
-   wrapping and are more sensitive to very large replayed histories. If a custom
-   Responses stream terminates after a complete tool call has already arrived but
-   before the final terminal response event, Tenon treats that narrow case as a
-   `toolUse` completion and continues to execute the tool instead of discarding the
-   complete tool call as a provider failure.
+   the custom endpoint model. Automatic compaction follows the Codex-style token
+   accounting policy for all providers: the threshold is 90% of the model context
+   window, and Tenon prefers the latest provider-reported context usage plus any
+   locally-added tail after that response; local message estimation is only the
+   fallback when no provider usage has been observed yet. If a custom Responses
+   stream terminates after a complete tool call has already arrived but before the
+   final terminal response event, Tenon treats that narrow case as a `toolUse`
+   completion and continues to execute the tool instead of discarding the complete
+   tool call as a provider failure.
    The custom endpoint's request-auth resolver prefers, in order: an explicit
    request key → a deliberately-stored `api_key` → (local endpoints only) an
    inert client key → the external provider's ambient auth. A keyless localhost
