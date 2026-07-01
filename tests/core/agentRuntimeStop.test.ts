@@ -201,6 +201,39 @@ describe('agent runtime stop', () => {
     await send;
   });
 
+  test('restoring an idle conversation still rebuilds runtime state', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-restore-idle-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-restore-idle-data-'));
+    roots.push(localRoot, dataRoot);
+
+    let providerConfigLoads = 0;
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => {
+          providerConfigLoads += 1;
+          return {
+            providerId: 'openai',
+            enabled: true,
+            apiKey: 'test-key',
+          };
+        },
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    const restored = await runtime.restoreConversation(created.conversationId);
+
+    expect(restored.conversationId).toBe(created.conversationId);
+    expect(restored.renderProjection.runActive).toBe(false);
+    expect(providerConfigLoads).toBe(2);
+  });
+
   test('records a provider run failure as an inline failed assistant message', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-fail-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-fail-data-'));

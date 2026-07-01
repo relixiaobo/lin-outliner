@@ -865,7 +865,9 @@ export class AgentRuntime {
       return this.restoreOrCreateDreamChannel();
     }
     const existing = this.conversations.get(conversationId);
-    if (existing) return this.conversationResponse(conversationId, existing);
+    // View restores must not abort a background run. Idle restores may still rebuild
+    // the runtime so provider/profile setting changes take effect on the next turn.
+    if (existing && this.hasActiveRuns(existing)) return this.conversationResponse(conversationId, existing);
     const eventState = await this.loadEventState(conversationId);
     if (!eventState.conversation) {
       throw new Error(`Agent conversation not found: ${conversationId}`);
@@ -924,7 +926,7 @@ export class AgentRuntime {
 
   private async restoreOrCreateGeneralChannel() {
     const existing = this.conversations.get(DEFAULT_GENERAL_CHANNEL_ID);
-    if (existing) return this.conversationResponse(DEFAULT_GENERAL_CHANNEL_ID, existing);
+    if (existing && this.hasActiveRuns(existing)) return this.conversationResponse(DEFAULT_GENERAL_CHANNEL_ID, existing);
     const eventState = await this.ensureGeneralChannelEventState();
     const conversation = await this.createConversationWithEventState(eventState);
     return this.conversationResponse(DEFAULT_GENERAL_CHANNEL_ID, conversation);
@@ -932,7 +934,7 @@ export class AgentRuntime {
 
   private async restoreOrCreateDreamChannel() {
     const existing = this.conversations.get(DEFAULT_DREAM_CHANNEL_ID);
-    if (existing) return this.conversationResponse(DEFAULT_DREAM_CHANNEL_ID, existing);
+    if (existing && this.hasActiveRuns(existing)) return this.conversationResponse(DEFAULT_DREAM_CHANNEL_ID, existing);
     const eventState = await this.ensureDreamChannelEventState();
     const conversation = await this.createConversationWithEventState(eventState);
     return this.conversationResponse(DEFAULT_DREAM_CHANNEL_ID, conversation);
