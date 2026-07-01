@@ -1,6 +1,6 @@
-This directory is the source root for resource-backed built-in skills.
+This directory is the source root for Tenon-owned resource-backed built-in skills.
 
-Each shipped skill lives in a child directory:
+Each Tenon-owned resource-backed skill lives in a child directory:
 
 ```text
 <skill-name>/
@@ -10,6 +10,12 @@ Each shipped skill lives in a child directory:
   assets/
 ```
 
-The Electron package copies this directory to `Resources/built-in-skills`.
+The Electron package does not copy this directory directly. `bun run skills:sync`
+stages these Tenon-owned skills plus enabled external linlab skills into
+`build/generated/built-in-skills`, then `electron-builder` copies that generated
+root to `Resources/built-in-skills`.
+
 Keep built-in skill files immutable at runtime; user and agent-authored skills
-belong under `.agents/skills` instead.
+belong under `.agents/skills` instead. Shared reusable skills that are not
+Tenon-specific belong in the `linlab-skills` repository and should be enabled
+through the build-time staging list rather than forked here.

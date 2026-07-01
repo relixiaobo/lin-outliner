@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { execFile as execFileCallback } from 'node:child_process';
-import { mkdtemp, mkdir, realpath, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -11,11 +11,13 @@ import {
   parseNaturalLanguageSkillifyRequest,
   parseSkillSlashCommand,
   resolveBuiltInSkillResourceRoot,
+  resolveExternalBuiltInSkillRoots,
   resolveSkillContentTarget,
   skillContentHash,
   type AgentSkillProvenanceRecord,
   type AgentSkillProvenanceStore,
 } from '../../src/main/agentSkills';
+import { resolveLinlabSkillsRoot } from '../../src/main/builtInSkillConfig';
 
 const execFile = promisify(execFileCallback);
 
@@ -678,6 +680,9 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
     const listing = await runtime.buildSkillListingReminderText(200_000);
     const expected = ['presentation', 'document', 'data-analysis'];
+    const linlabSkillsRoot = await realpath(resolveLinlabSkillsRoot({
+      repoRoot: path.resolve(import.meta.dir, '..', '..'),
+    }));
 
     for (const name of expected) {
       const skill = await runtime.getSkill(name);
@@ -691,7 +696,7 @@ describe('agent skills', () => {
         canUndoLastAgentEdit: false,
         allowedTools: [],
       });
-      expect(skill?.rootDir).toContain(path.join('src', 'main', 'builtInSkills', name));
+      expect(skill?.rootDir).toBe(path.join(linlabSkillsRoot, name));
       expect(skill?.skillFile).toBe(path.join(skill?.rootDir ?? '', 'SKILL.md'));
       expect(typeof skill?.contentHash).toBe('string');
       expect(listing).toContain(`- ${name}:`);
@@ -701,8 +706,56 @@ describe('agent skills', () => {
       if (!invocation.ok || !skill) continue;
       expect(invocation.renderedContent).toContain(`Base directory for this skill: ${skill.rootDir}`);
       expect(invocation.renderedContent).not.toContain('${AGENT_SKILL_DIR}');
-      expect(invocation.renderedContent).toContain('portable baseline tools');
+      expect(invocation.renderedContent).not.toContain('{baseDir}');
+      if (name === 'data-analysis') {
+        expect(invocation.renderedContent).toContain('pandas + duckdb');
+      } else {
+        expect(invocation.renderedContent).toContain('portable baseline tools');
+      }
     }
+  });
+
+  test('presentation skill keeps explicit PPTX requests on the dependency-backed route', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+    const invocation = await runtime.invokeSkill({ skill: 'presentation', trigger: 'agent' });
+
+    expect(invocation.ok).toBe(true);
+    if (!invocation.ok) return;
+    expect(invocation.renderedContent).toContain('Use PPTX when the user explicitly asks for PowerPoint');
+    expect(invocation.renderedContent).toContain('first prefer a real PPTX generation/editing library');
+    expect(invocation.renderedContent).toContain('try to install or enable it in the local task environment');
+    expect(invocation.renderedContent).toContain('Do not silently downgrade an explicit PPTX request');
+    expect(invocation.renderedContent).toContain('do not hand-author OOXML ZIP packages as a substitute');
+  });
+
+  test('document skill keeps explicit DOCX requests on the dependency-backed route', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+    const invocation = await runtime.invokeSkill({ skill: 'document', trigger: 'agent' });
+
+    expect(invocation.ok).toBe(true);
+    if (!invocation.ok) return;
+    expect(invocation.renderedContent).toContain('Use DOCX when the user needs Word compatibility');
+    expect(invocation.renderedContent).toContain('first prefer a real DOCX library');
+    expect(invocation.renderedContent).toContain('try to install or enable it in the local task environment');
+    expect(invocation.renderedContent).toContain('Do not silently downgrade an explicit DOCX/Word request');
+    expect(invocation.renderedContent).toContain('do not hand-author WordprocessingML ZIP packages as a substitute');
+  });
+
+  test('data-analysis built-in comes from linlab and keeps required analysis runtimes explicit', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+    const skill = await runtime.getSkill('data-analysis');
+    const invocation = await runtime.invokeSkill({ skill: 'data-analysis', trigger: 'agent' });
+    const linlabSkillsRoot = await realpath(resolveLinlabSkillsRoot({
+      repoRoot: path.resolve(import.meta.dir, '..', '..'),
+    }));
+
+    expect(skill?.rootDir).toBe(path.join(linlabSkillsRoot, 'data-analysis'));
+    expect(invocation.ok).toBe(true);
+    if (!invocation.ok) return;
+    expect(invocation.renderedContent).toContain('python3 -m pip install -r');
+    expect(invocation.renderedContent).toContain('pandas + duckdb');
+    expect(invocation.renderedContent).toContain('query_duckdb.py');
+    expect(invocation.renderedContent).not.toContain('{baseDir}');
   });
 
   test('loads bundled built-in skills with real resource directories', async () => {
@@ -797,6 +850,23 @@ describe('agent skills', () => {
         includeUserSkills: false,
         additionalSkillDirectories: [],
         builtInSkillDirectories: [skillsDir],
+      }),
+    ).toBeNull();
+  });
+
+  test('does not resolve explicit built-in skill root files as writable skill targets', async () => {
+    const { skillDir } = await createBundledBuiltInSkillFixture('root-built-in', {
+      frontmatter: ['description: Root built-in skill'],
+      body: 'Use explicit root instructions.',
+    });
+
+    expect(
+      resolveSkillContentTarget(path.join(skillDir, 'SKILL.md'), {
+        root: path.dirname(path.dirname(skillDir)),
+        includeUserSkills: false,
+        additionalSkillDirectories: [path.dirname(skillDir)],
+        builtInSkillDirectories: [],
+        builtInSkillRoots: [skillDir],
       }),
     ).toBeNull();
   });
@@ -941,6 +1011,32 @@ describe('agent skills', () => {
       .toBe(path.join(repoRoot, 'src', 'main', 'builtInSkills'));
     expect(resolveBuiltInSkillResourceRoot({ isPackaged: true, resourcesPath }))
       .toBe(path.join(resourcesPath, 'built-in-skills'));
+  });
+
+  test('resolves enabled linlab built-in skill roots only for dev mode', () => {
+    const repoRoot = path.join(path.sep, 'repo');
+    const moduleDir = path.join(repoRoot, 'out', 'main');
+    const linlabSkillsRoot = path.join(path.sep, 'shared', 'linlab-skills');
+
+    expect(resolveExternalBuiltInSkillRoots({ isPackaged: false, moduleDir, linlabSkillsRoot }))
+      .toEqual([
+        path.join(linlabSkillsRoot, 'data-analysis'),
+        path.join(linlabSkillsRoot, 'presentation'),
+        path.join(linlabSkillsRoot, 'document'),
+      ]);
+    expect(resolveExternalBuiltInSkillRoots({ isPackaged: true, linlabSkillsRoot }))
+      .toEqual([]);
+  });
+
+  test('resolves the default linlab skills checkout from tmp worktree clones', () => {
+    const checkoutParent = path.join(path.sep, 'Users', 'me', 'Coding');
+    const repoRoot = path.join(checkoutParent, 'lin-outliner', 'tmp', 'worktrees', 'skill-sync');
+    const moduleDir = path.join(repoRoot, 'out', 'main');
+
+    expect(resolveLinlabSkillsRoot({ repoRoot, env: {} }))
+      .toBe(path.join(checkoutParent, 'linlab-skills'));
+    expect(resolveExternalBuiltInSkillRoots({ isPackaged: false, moduleDir, env: {} })[0])
+      .toBe(path.join(checkoutParent, 'linlab-skills', 'data-analysis'));
   });
 
   test('ships research as a built-in read-only isolated skill', async () => {
@@ -1488,6 +1584,34 @@ describe('agent skills', () => {
 
     expect((await runtime.getSkill('late-dynamic'))?.ratified).toBe(true);
     expect(text).toContain('late-dynamic');
+  });
+});
+
+describe('built-in skill resource packaging', () => {
+  test('stages enabled linlab skills into the packaged built-in resource root', async () => {
+    const repoRoot = path.resolve(import.meta.dir, '..', '..');
+    const linlabSkillsRoot = resolveLinlabSkillsRoot({ repoRoot });
+    const ignoredLocalArtifact = path.join(linlabSkillsRoot, 'data-analysis', 'analysis_runs', 'local-output.txt');
+
+    await mkdir(path.dirname(ignoredLocalArtifact), { recursive: true });
+    await writeFile(ignoredLocalArtifact, 'local only', 'utf8');
+    try {
+      await execFile('bun', ['scripts/sync-built-in-skills.ts'], { cwd: repoRoot });
+    } finally {
+      await rm(ignoredLocalArtifact, { force: true });
+    }
+    const generatedRoot = path.join(repoRoot, 'build', 'generated', 'built-in-skills');
+    const dataSkill = await readFile(path.join(generatedRoot, 'data-analysis', 'SKILL.md'), 'utf8');
+    const presentationSkill = await readFile(path.join(generatedRoot, 'presentation', 'SKILL.md'), 'utf8');
+    const documentSkill = await readFile(path.join(generatedRoot, 'document', 'SKILL.md'), 'utf8');
+
+    expect(dataSkill).toContain('pandas + duckdb');
+    await expect(readFile(path.join(generatedRoot, 'data-analysis', 'evals', 'README.md'), 'utf8')).rejects.toThrow();
+    await expect(readFile(path.join(generatedRoot, 'data-analysis', 'scripts', '__pycache__'), 'utf8')).rejects.toThrow();
+    await expect(readFile(path.join(generatedRoot, 'data-analysis', 'analysis_runs', 'local-output.txt'), 'utf8')).rejects.toThrow();
+    expect(presentationSkill).toContain('Presentation');
+    expect(documentSkill).toContain('Document');
+    expect(await readFile(path.join(generatedRoot, 'memory-dream', 'SKILL.md'), 'utf8')).toContain('Memory Dream');
   });
 });
 
