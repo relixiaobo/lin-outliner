@@ -35,6 +35,7 @@ import {
   piProviders,
   piResolveAuthApiKey,
 } from './piModels';
+import { customOpenAIResponsesPayloadProfileOption } from './openAIResponsesCompat';
 
 const PROVIDERS_FILE = 'agent-providers.json';
 const SECRETS_FILE = 'agent-secrets.json';
@@ -276,34 +277,9 @@ export function providerStreamOptionsFromRuntimeSettings(
     options.maxRetryDelayMs = settings.providerMaxRetryDelayMs;
   }
   if (settings?.providerCacheRetention) {
-    options.cacheRetention = cacheRetentionForModel(settings.providerCacheRetention, model);
-  } else if (shouldDisablePromptCacheAffinity(model)) {
-    options.cacheRetention = 'none';
+    options.cacheRetention = settings.providerCacheRetention;
   }
   return options;
-}
-
-function cacheRetentionForModel(
-  retention: AgentRuntimeSettings['providerCacheRetention'],
-  model?: Pick<Model<Api>, 'api' | 'baseUrl'> | null,
-): AgentRuntimeSettings['providerCacheRetention'] {
-  return shouldDisablePromptCacheAffinity(model) ? 'none' : retention;
-}
-
-// OpenAI-compatible gateways vary in their Responses prompt-cache support. Keep
-// official OpenAI cached, but avoid sending cache affinity fields to proxies.
-function shouldDisablePromptCacheAffinity(model?: Pick<Model<Api>, 'api' | 'baseUrl'> | null): boolean {
-  return model?.api === 'openai-responses'
-    && Boolean(model.baseUrl)
-    && !isOfficialOpenAIBaseUrl(model.baseUrl);
-}
-
-function isOfficialOpenAIBaseUrl(baseUrl: string): boolean {
-  try {
-    return new URL(baseUrl).hostname === 'api.openai.com';
-  } catch {
-    return baseUrl.includes('api.openai.com');
-  }
 }
 
 export async function upsertProviderConfig(input: AgentProviderConfigInput) {
@@ -849,6 +825,7 @@ export async function testProviderConnection(input: {
           }, {
             ...authOverride,
             ...providerStreamOptionsFromRuntimeSettings({ ...DEFAULT_AGENT_RUNTIME_SETTINGS, providerCacheRetention: 'short' }, model),
+            ...customOpenAIResponsesPayloadProfileOption(),
             timeoutMs: 8000,
             maxTokens: 1,
           });
@@ -870,6 +847,7 @@ export async function testProviderConnection(input: {
       }, {
         ...authOverride,
         ...providerStreamOptionsFromRuntimeSettings({ ...DEFAULT_AGENT_RUNTIME_SETTINGS, providerCacheRetention: 'short' }, model),
+        ...customOpenAIResponsesPayloadProfileOption(),
         timeoutMs: 8000,
         maxTokens: 1,
       });

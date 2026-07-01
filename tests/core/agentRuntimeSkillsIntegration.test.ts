@@ -465,13 +465,15 @@ describe('agent runtime skill integration', () => {
     });
   });
 
-  test('disables provider prompt cache affinity for custom Responses endpoints', async () => {
+  test('keeps cache affinity and applies the Responses compatibility profile for custom endpoints', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-custom-cache-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-custom-cache-data-'));
     roots.push(localRoot, dataRoot);
 
     const providerOptions: SimpleStreamOptions[] = [];
     const compactOptions: SimpleStreamOptions[] = [];
+    const payloads: unknown[] = [];
+    const payloadWrites: Promise<void>[] = [];
     const catalogModel = piModels().getModel('openai', 'gpt-5.5') as Model<Api>;
     const customModel = createOpenAICompatibleModel({
       providerId: 'openai',
@@ -483,6 +485,15 @@ describe('agent runtime skill integration', () => {
       [
         (_context, options) => {
           providerOptions.push(options ?? {});
+          payloadWrites.push(Promise.resolve(options?.onPayload?.({
+            input: [
+              { role: 'developer', content: 'Runtime system prompt.' },
+              { role: 'user', content: [{ type: 'input_text', text: 'Ping' }] },
+            ],
+            tools: [{ type: 'function', name: 'runtime_probe' }],
+          }, customModel)).then((payload) => {
+            payloads.push(payload ?? null);
+          }));
           return fauxAssistantMessage(fauxText('Custom provider options received.'));
         },
       ],
@@ -518,6 +529,13 @@ describe('agent runtime skill integration', () => {
         streamFn: script.streamFn,
         completeSimpleFn: async (model, _context, options) => {
           compactOptions.push(options ?? {});
+          payloads.push(await options?.onPayload?.({
+            input: [
+              { role: 'developer', content: 'Compact system prompt.' },
+              { role: 'user', content: [{ type: 'input_text', text: 'Summarize' }] },
+            ],
+            tools: [],
+          }, model as Model<Api>) ?? null);
           return normalizeAssistantMessage(
             fauxAssistantMessage('<analysis>custom compact</analysis><summary>Custom compact summary.</summary>'),
             model as Model<Api>,
@@ -529,10 +547,49 @@ describe('agent runtime skill integration', () => {
     const created = await runtime.restoreLatestConversation();
     await runtime.sendMessage(created.conversationId, 'Check custom provider cache settings.');
     await runtime.sendMessage(created.conversationId, '/compact');
+    await Promise.all(payloadWrites);
 
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
-    expect(providerOptions[0]).toMatchObject({ cacheRetention: 'none' });
-    expect(compactOptions[0]).toMatchObject({ cacheRetention: 'none' });
+    expect(providerOptions[0]).toMatchObject({ cacheRetention: 'short' });
+    expect(compactOptions[0]).toMatchObject({ cacheRetention: 'short' });
+    expect(payloads).toEqual([
+      {
+        instructions: 'Runtime system prompt.',
+        input: [
+          { role: 'user', content: [{ type: 'input_text', text: 'Ping' }] },
+        ],
+        text: { verbosity: 'low' },
+        tool_choice: 'auto',
+        parallel_tool_calls: true,
+        tools: [{ type: 'function', name: 'runtime_probe' }],
+      },
+      {
+        instructions: 'Compact system prompt.',
+        input: [
+          { role: 'user', content: [{ type: 'input_text', text: 'Summarize' }] },
+        ],
+        text: { verbosity: 'low' },
+        tools: [],
+      },
+    ]);
+  });
+
+  test('lowers the auto-compact threshold for custom Responses endpoints', async () => {
+    const { autoCompactThreshold } = await import('../../src/main/agentRuntimeContext');
+
+    expect(autoCompactThreshold({
+      api: 'openai-responses',
+      baseUrl: 'https://proxy.example.com/v1',
+      contextWindow: 272000,
+      maxTokens: 128000,
+    } as never)).toBe(160000);
+
+    expect(autoCompactThreshold({
+      api: 'openai-responses',
+      baseUrl: 'https://api.openai.com/v1',
+      contextWindow: 272000,
+      maxTokens: 128000,
+    } as never)).toBe(239000);
   });
 
   test('exposes each user request as its own turn run in the debug view (compaction is not a run)', async () => {

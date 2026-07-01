@@ -3,6 +3,7 @@ import {
   createAssistantMessageEventStream,
   fauxAssistantMessage,
   fauxText,
+  fauxToolCall,
   type Api,
   type Context,
   type Model,
@@ -37,6 +38,15 @@ const MODEL: Model<Api> = {
   contextWindow: 128000,
   maxTokens: 8192,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+};
+
+const CUSTOM_RESPONSES_MODEL: Model<Api> = {
+  ...MODEL,
+  id: 'gpt-5.5',
+  provider: 'tenon-custom:openai',
+  api: 'openai-responses',
+  baseUrl: 'https://proxy.example.com/v1',
+  reasoning: true,
 };
 
 describe('agent stream abort settling', () => {
@@ -112,14 +122,59 @@ describe('agent stream abort settling', () => {
     expect(event.value.error.stopReason).toBe('error');
     expect(event.value.error.errorMessage).toBe('stream setup failed');
   });
+
+  test('salvages completed custom Responses tool calls when the stream terminates before response.completed', async () => {
+    const source = createAssistantMessageEventStream();
+    const abortCtrl = new AbortController();
+    const wrapped = wrapStreamWithAbortSettling(source, { abortCtrl, model: CUSTOM_RESPONSES_MODEL });
+    const message = normalizeAssistant(
+      fauxAssistantMessage([
+        fauxText('I will update the node.'),
+        fauxToolCall('node_create', { parent_id: 'node:root', outline: '- Done' }),
+      ], { stopReason: 'error', errorMessage: 'terminated' }),
+      CUSTOM_RESPONSES_MODEL,
+    );
+    const iterator = wrapped[Symbol.asyncIterator]();
+
+    source.push({ type: 'error', reason: 'error', error: message });
+    source.end(message);
+
+    const event = await iterator.next();
+    expect(event.value.type).toBe('done');
+    if (event.value.type !== 'done') throw new Error('Expected done event.');
+    expect(event.value.reason).toBe('toolUse');
+    expect(event.value.message.stopReason).toBe('toolUse');
+    expect(event.value.message.errorMessage).toBeUndefined();
+    await expect(wrapped.result()).resolves.toMatchObject({ stopReason: 'toolUse' });
+  });
+
+  test('does not salvage terminated non-custom Responses errors', async () => {
+    const source = createAssistantMessageEventStream();
+    const abortCtrl = new AbortController();
+    const wrapped = wrapStreamWithAbortSettling(source, { abortCtrl, model: MODEL });
+    const message = normalizeAssistant(
+      fauxAssistantMessage([
+        fauxToolCall('node_create', { parent_id: 'node:root', outline: '- Done' }),
+      ], { stopReason: 'error', errorMessage: 'terminated' }),
+    );
+    const iterator = wrapped[Symbol.asyncIterator]();
+
+    source.push({ type: 'error', reason: 'error', error: message });
+    source.end(message);
+
+    const event = await iterator.next();
+    expect(event.value.type).toBe('error');
+    if (event.value.type !== 'error') throw new Error('Expected error event.');
+    expect(event.value.error.stopReason).toBe('error');
+  });
 });
 
-function normalizeAssistant(message: ReturnType<typeof fauxAssistantMessage>) {
+function normalizeAssistant(message: ReturnType<typeof fauxAssistantMessage>, model: Model<Api> = MODEL) {
   return {
     ...message,
-    api: MODEL.api,
-    provider: MODEL.provider,
-    model: MODEL.id,
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
     usage: message.usage ?? EMPTY_USAGE,
     timestamp: message.timestamp ?? Date.now(),
   };

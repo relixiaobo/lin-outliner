@@ -121,6 +121,10 @@ import { agentDefinitionDisplayName } from './agentDefinitionDisplay';
 import { DEFAULT_AGENT_SYSTEM_PROMPT, composeAgentPrompt } from './agentSystemPrompt';
 import { applyAgentPromptCacheBreakpoints } from './agentProviderCacheBreakpoints';
 import {
+  applyCustomOpenAIResponsesPayloadProfile,
+  customOpenAIResponsesPayloadProfileOption,
+} from './openAIResponsesCompat';
+import {
   deriveDebugConversation,
   deriveDebugRun,
   extractRunSnapshotFromPayload,
@@ -3099,6 +3103,7 @@ export class AgentRuntime {
         tools: [],
       }, {
         ...providerStreamOptionsFromRuntimeSettings(runtimeSettings, model),
+        ...customOpenAIResponsesPayloadProfileOption(),
         ...authOverride,
         maxTokens: Math.min(model.maxTokens ?? COMPACT_SUMMARY_MAX_OUTPUT_TOKENS, COMPACT_SUMMARY_MAX_OUTPUT_TOKENS),
         // pi-ai stream option (provider cache affinity) — the lib's own field name.
@@ -7266,6 +7271,12 @@ function createProviderConfiguredStreamFn(
     return sourceFn(model, context, {
       ...options,
       ...providerStreamOptionsFromRuntimeSettings(runtimeSettings, model),
+      onPayload: async (payload, payloadModel) => {
+        const profiledPayload = applyCustomOpenAIResponsesPayloadProfile(payload, payloadModel);
+        const payloadForCallback = profiledPayload ?? payload;
+        const callbackPayload = await options.onPayload?.(payloadForCallback, payloadModel);
+        return callbackPayload ?? profiledPayload;
+      },
     } satisfies SimpleStreamOptions);
   });
 }

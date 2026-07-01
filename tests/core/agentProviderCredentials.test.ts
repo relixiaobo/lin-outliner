@@ -279,7 +279,7 @@ describe('provider credential resolver', () => {
     expect(model.reasoning).toBe(true);
   });
 
-  test('custom Responses endpoints disable provider prompt cache affinity', () => {
+  test('custom Responses endpoints keep configured provider prompt cache affinity', () => {
     const catalogModel = piModels().getModel('openai', 'gpt-5.5');
     const runtimeSettings = {
       providerTimeoutMs: null,
@@ -293,7 +293,7 @@ describe('provider credential resolver', () => {
       modelId: 'gpt-5.5',
       baseUrl: 'https://proxy.example.com/v1',
       catalogModel,
-    }))).toMatchObject({ cacheRetention: 'none' });
+    }))).toMatchObject({ cacheRetention: 'short' });
 
     expect(providerStreamOptionsFromRuntimeSettings(runtimeSettings, {
       ...catalogModel!,
@@ -305,7 +305,7 @@ describe('provider credential resolver', () => {
       modelId: 'gpt-5.5',
       baseUrl: 'https://proxy.example.com/v1',
       catalogModel,
-    }))).toMatchObject({ cacheRetention: 'none' });
+    }))).not.toHaveProperty('cacheRetention');
   });
 
   test('custom OpenAI-compatible unknown models fall back to chat completions', () => {
@@ -433,6 +433,7 @@ describe('provider credential resolver', () => {
     const restoreFetch = mockModelList(['gpt-5.5']);
     const seenModels: Array<{ provider: string; api: string; id: string; baseUrl?: string }> = [];
     const seenOptions: Array<{ cacheRetention?: string }> = [];
+    const seenPayloads: unknown[] = [];
     try {
       piModels().setProvider(createProvider({
         id: piCustomProviderId('openai'),
@@ -457,7 +458,15 @@ describe('provider credential resolver', () => {
             seenModels.push({ provider: model.provider, api: model.api, id: model.id, baseUrl: model.baseUrl });
             seenOptions.push({ cacheRetention: options?.cacheRetention });
             const stream = createAssistantMessageEventStream();
-            queueMicrotask(() => {
+            queueMicrotask(async () => {
+              const payload = await options?.onPayload?.({
+                input: [
+                  { role: 'developer', content: 'Connection probe system prompt.' },
+                  { role: 'user', content: [{ type: 'input_text', text: 'Ping' }] },
+                ],
+                tools: [{ type: 'function', name: 'probe' }],
+              }, model) ?? null;
+              seenPayloads.push(payload);
               const message = {
                 ...fauxAssistantMessage(fauxText('Connection probe routed.')),
                 api: model.api,
@@ -485,7 +494,17 @@ describe('provider credential resolver', () => {
         id: 'gpt-5.5',
         baseUrl: 'https://proxy.example.com/v1',
       }]);
-      expect(seenOptions).toEqual([{ cacheRetention: 'none' }]);
+      expect(seenOptions).toEqual([{ cacheRetention: 'short' }]);
+      expect(seenPayloads).toEqual([{
+        instructions: 'Connection probe system prompt.',
+        input: [
+          { role: 'user', content: [{ type: 'input_text', text: 'Ping' }] },
+        ],
+        text: { verbosity: 'low' },
+        tool_choice: 'auto',
+        parallel_tool_calls: true,
+        tools: [{ type: 'function', name: 'probe' }],
+      }]);
     } finally {
       restoreFetch();
     }

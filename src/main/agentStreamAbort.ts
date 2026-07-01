@@ -6,6 +6,7 @@ import {
   type Model,
 } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
+import { isCustomOpenAIResponsesEndpoint } from './openAIResponsesCompat';
 
 const EMPTY_USAGE = {
   input: 0,
@@ -49,6 +50,13 @@ export function wrapStreamWithAbortSettling(
 
   const settleWithTerminalMessage = (message: AssistantMessage, reason: 'aborted' | 'error') => {
     if (settled) return;
+    const salvage = salvageTerminatedCustomResponsesToolUse(message, model, reason);
+    if (salvage) {
+      settled = true;
+      out.push({ type: 'done', reason: 'toolUse', message: salvage });
+      out.end(salvage);
+      return;
+    }
     settled = true;
     out.push({ type: 'error', reason, error: message });
     out.end(message);
@@ -76,7 +84,18 @@ export function wrapStreamWithAbortSettling(
       for await (const event of source) {
         if (settled) break;
         if ('partial' in event) latestPartial = event.partial;
-        if (event.type === 'done' || event.type === 'error') settled = true;
+        if (event.type === 'error') {
+          const salvage = salvageTerminatedCustomResponsesToolUse(event.error, model, event.reason);
+          if (salvage) {
+            settled = true;
+            out.push({ type: 'done', reason: 'toolUse', message: salvage });
+            out.end(salvage);
+            break;
+          }
+          settled = true;
+        } else if (event.type === 'done') {
+          settled = true;
+        }
         out.push(event);
       }
       if (!settled) {
@@ -136,4 +155,29 @@ function abortMessage(reason: unknown): string {
   if (reason instanceof Error && reason.message) return reason.message;
   if (typeof reason === 'string' && reason) return reason;
   return 'Aborted';
+}
+
+function salvageTerminatedCustomResponsesToolUse(
+  message: AssistantMessage,
+  model: Model<Api>,
+  reason: 'aborted' | 'error',
+): AssistantMessage | null {
+  if (reason !== 'error') return null;
+  if (!isCustomOpenAIResponsesEndpoint(model)) return null;
+  if (!isTerminatedResponsesStreamError(message.errorMessage)) return null;
+  const hasToolCall = message.content.some((part) => part.type === 'toolCall');
+  if (!hasToolCall) return null;
+  const { errorMessage: _errorMessage, ...rest } = message;
+  return {
+    ...rest,
+    stopReason: 'toolUse',
+  };
+}
+
+function isTerminatedResponsesStreamError(errorMessage: string | undefined): boolean {
+  if (!errorMessage) return false;
+  const lower = errorMessage.toLowerCase();
+  return lower === 'terminated'
+    || lower.includes('stream ended before a terminal response event')
+    || lower.includes('terminated while');
 }

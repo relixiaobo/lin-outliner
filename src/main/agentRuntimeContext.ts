@@ -44,6 +44,7 @@ import {
   type ToolResultBudgetState,
 } from './agentToolOutputSlimming';
 import { providerStreamOptionsFromRuntimeSettings, type AgentProviderRuntimeConfig } from './agentSettings';
+import { customOpenAIResponsesPayloadProfileOption, isCustomOpenAIResponsesEndpoint } from './openAIResponsesCompat';
 import { piCompleteSimple } from './piModels';
 import type { AgentRuntimeSettings } from '../core/types';
 import { awaitWithAbort, isAbortError, throwIfAborted } from './agentAwaitWithAbort';
@@ -442,6 +443,7 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
         tools: [],
       }, {
         ...providerStreamOptionsFromRuntimeSettings(options.runtimeSettings, model),
+        ...customOpenAIResponsesPayloadProfileOption(),
         ...authOverride,
         maxTokens: Math.min(model.maxTokens ?? COMPACT_SUMMARY_MAX_OUTPUT_TOKENS, COMPACT_SUMMARY_MAX_OUTPUT_TOKENS),
         // pi-ai stream option (provider cache affinity) — the lib's own field name.
@@ -469,10 +471,20 @@ export class AgentRuntimeContextManager<TConversation extends AgentRuntimeContex
 }
 
 export function autoCompactThreshold(model: Model<Api>): number {
+  if (isCustomOpenAIResponsesEndpoint(model)) {
+    return customOpenAIResponsesAutoCompactThreshold(model);
+  }
   const contextWindow = model.contextWindow ?? 128000;
   const reservedOutput = Math.min(model.maxTokens ?? 8192, AUTO_COMPACT_RESERVED_OUTPUT_TOKENS);
   const effectiveWindow = Math.max(0, contextWindow - reservedOutput);
   return effectiveWindow - AUTO_COMPACT_BUFFER_TOKENS;
+}
+
+function customOpenAIResponsesAutoCompactThreshold(model: Model<Api>): number {
+  const contextWindow = model.contextWindow ?? 128000;
+  const reservedOutput = Math.min(model.maxTokens ?? 8192, AUTO_COMPACT_RESERVED_OUTPUT_TOKENS);
+  const effectiveWindow = Math.max(0, contextWindow - reservedOutput);
+  return Math.min(effectiveWindow - AUTO_COMPACT_BUFFER_TOKENS, 160_000);
 }
 
 function compactionSourceForPlan(

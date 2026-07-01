@@ -361,13 +361,23 @@ bounded: short timeout, tiny output budget, cancellable UI.
    `openai-completions`). A known catalog model id also keeps its neutral
    sizing/capability metadata (`contextWindow`, `maxTokens`, `reasoning`,
    thinking map, cost/input`) so compaction and overflow math do not fall back to
-   generic custom-model defaults. Provider prompt-cache affinity stays enabled for
-   official OpenAI Responses requests, but custom OpenAI-compatible Responses
-   endpoints run with cache retention `none` so Tenon does not send
-   `prompt_cache_key` / session-affinity headers to gateways whose Responses cache
-   implementation may differ. Provider-specific dispatch knobs such as model
-   headers and compatibility overrides are not copied onto the custom endpoint
-   model.
+   generic custom-model defaults. Provider prompt-cache affinity follows the
+   runtime cache setting for both official OpenAI and custom OpenAI-compatible
+   Responses endpoints, so cache-capable gateways can return cache-read usage
+   instead of forcing every turn to resend the full long transcript. Custom
+   Responses endpoints additionally receive Tenon's compatibility payload profile:
+   leading system/developer input is promoted to top-level `instructions`, text
+   verbosity is set to `low`, and tool requests include automatic tool choice plus
+   parallel tool calls when tools are present. This keeps Tenon's generic
+   OpenAI-compatible dispatch closer to the stable Codex-style Responses shape
+   without copying provider-specific model headers or compatibility overrides onto
+   the custom endpoint model. Their automatic compaction threshold is capped below
+   the catalog context-window threshold because gateways can add their own request
+   wrapping and are more sensitive to very large replayed histories. If a custom
+   Responses stream terminates after a complete tool call has already arrived but
+   before the final terminal response event, Tenon treats that narrow case as a
+   `toolUse` completion and continues to execute the tool instead of discarding the
+   complete tool call as a provider failure.
    The custom endpoint's request-auth resolver prefers, in order: an explicit
    request key → a deliberately-stored `api_key` → (local endpoints only) an
    inert client key → the external provider's ambient auth. A keyless localhost
@@ -561,9 +571,11 @@ remaining stable prompt each keep a `cache_control` breakpoint; the provider's
 existing last-tool and last-user breakpoints remain, so the request stays within
 Anthropic's four-breakpoint budget. If Anthropic OAuth injected its own identity
 system block with a breakpoint, Tenon removes that extra breakpoint before the
-request leaves the runtime. The split is enabled only for fresh child runs;
-forked child runs, non-Anthropic providers, and prompts not produced by the
-unified composer keep the provider payload unchanged.
+request leaves the runtime. The split is enabled only for fresh child runs; in
+this L0-breakpoint pass, forked child runs, non-Anthropic providers, and prompts
+not produced by the unified composer are left unchanged. Provider compatibility
+passes such as the custom OpenAI-compatible Responses profile described above may
+still reshape the final outbound payload after this prompt-cache breakpoint pass.
 
 Whatever varies per conversation or per run is **environment**, not identity, so
 it rides the per-turn `environment` reminder
