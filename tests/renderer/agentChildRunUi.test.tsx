@@ -161,7 +161,6 @@ describe('agent child run UI', () => {
     );
 
     await waitForText(rendered, 'Inspect the current UI.');
-    expect(rendered.container.textContent).toContain('Thought · Read node "today"');
     expect(rendered.container.textContent).toContain('The UI path is ready.');
     expect(rendered.container.textContent).not.toContain('Daily note content.');
     // The thinking's first line shows as the dim gist beside the "Thought" label

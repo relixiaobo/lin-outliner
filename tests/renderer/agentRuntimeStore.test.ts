@@ -16,6 +16,7 @@ import type { AgentConversation, AgentCreateConversationOptions } from '../../sr
 import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
 import type {
   AgentRenderActiveCompaction,
+  AgentRenderActiveRun,
   AgentRenderActiveDream,
   AgentRenderDreamEntity,
   AgentRenderProjection,
@@ -73,6 +74,8 @@ function projection(
     revision?: number;
     streamingMessageId?: string;
     activeCompaction?: AgentRenderActiveCompaction | null;
+    activeRuns?: AgentRenderActiveRun[];
+    activeRunId?: string | null;
     activeDream?: AgentRenderActiveDream | null;
     dreams?: Record<string, AgentRenderDreamEntity>;
     childRuns?: Record<string, AgentRenderChildRunEntity>;
@@ -88,7 +91,8 @@ function projection(
     conversationId: 'saved',
     revision: options.revision ?? 1,
     conversationTitle: 'Saved conversation',
-    activeRunId: options.isStreaming ? 'run-1' : null,
+    activeRuns: options.activeRuns ?? [],
+    activeRunId: options.activeRunId ?? (options.isStreaming ? 'run-1' : null),
     activeCompaction: options.activeCompaction ?? null,
     activeDream: options.activeDream ?? null,
     runActive: !!options.isStreaming,
@@ -873,13 +877,18 @@ describe('agent runtime store', () => {
       conversationId: 'saved',
       lastEventType: null,
       revision: 1,
-      renderProjection: projection([{ nodeId: 'u1', message: user, branches: null }], { isStreaming: true, revision: 1 }),
+      renderProjection: projection([{ nodeId: 'u1', message: user, branches: null }], {
+        activeRuns: [{ runId: 'run-1', agentId: 'agent-1', startedAt: 45 }],
+        isStreaming: true,
+        revision: 1,
+      }),
       timestamp: 100,
     });
 
     const pendingAssistant = store.getSnapshot().entries[1];
     expect(pendingAssistant?.kind).toBe('message');
-    expect(pendingAssistant?.id).toBe('active-assistant-42');
+    expect(pendingAssistant?.id).toBe('active-assistant:run-1');
+    expect(pendingAssistant?.runStartedAtMs).toBe(45);
     expect(pendingAssistant?.message.role).toBe('assistant');
     expect(pendingAssistant?.message.content).toEqual([]);
 
@@ -891,14 +900,51 @@ describe('agent runtime store', () => {
       renderProjection: projection([
         { nodeId: 'u1', message: user, branches: null },
         { nodeId: 'assistant-stream', message: assistantMessage('hi', 50), branches: null },
-      ], { isStreaming: true, streamingMessageId: 'assistant-stream', revision: 2 }),
+      ], {
+        activeRuns: [{ runId: 'run-1', agentId: 'agent-1', startedAt: 45 }],
+        isStreaming: true,
+        streamingMessageId: 'assistant-stream',
+        revision: 2,
+      }),
       timestamp: 101,
     });
 
     const streamingAssistant = store.getSnapshot().entries[1];
-    expect(streamingAssistant?.id).toBe('active-assistant-42');
+    expect(streamingAssistant?.id).toBe('active-assistant:run-1');
     expect(streamingAssistant?.message.role).toBe('assistant');
     expect(streamingAssistant?.message.content).toEqual([{ type: 'text', text: 'hi' }]);
+    unsubscribe();
+  });
+
+  test('anchors a retry placeholder to the active run instead of the old user message timestamp', async () => {
+    const user = userMessage('hello', 42);
+    const restored = conversation('saved', projection([
+      { nodeId: 'u1', message: user, branches: null },
+    ]));
+    const fake = createFakeClient({ latestConversation: restored });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+    await flushMicrotasks();
+
+    fake.emit({
+      type: 'projection',
+      conversationId: 'saved',
+      lastEventType: 'message_retry_started',
+      revision: 2,
+      renderProjection: projection([{ nodeId: 'u1', message: user, branches: null }], {
+        activeRunId: 'retry-run',
+        activeRuns: [{ runId: 'retry-run', agentId: 'agent-1', startedAt: 5_000 }],
+        isStreaming: true,
+        revision: 2,
+      }),
+      timestamp: 100,
+    });
+
+    const pendingAssistant = store.getSnapshot().entries[1];
+    expect(pendingAssistant?.kind).toBe('message');
+    expect(pendingAssistant?.id).toBe('active-assistant:retry-run');
+    expect(pendingAssistant?.runStartedAtMs).toBe(5_000);
+    expect(pendingAssistant?.message.timestamp).toBe(5_000);
     unsubscribe();
   });
 

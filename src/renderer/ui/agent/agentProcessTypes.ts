@@ -4,7 +4,7 @@ export interface AgentExpandState {
 }
 
 // Compact, locale-neutral wall-clock label for an agent run (e.g. "<1s", "5s",
-// "1m 3s", "1h 2m"). Shared by the collapsed "Worked for …" process header and
+// "1m 3s", "1h 2m"). Shared by the "Worked for ..." work divider and
 // the child-run detail panel so the two never drift; seconds are dropped once
 // the duration reaches whole minutes to keep the label short.
 // Codex's duration format (`qd`/`Jd`): roll up through days, keep every non-zero

@@ -1,11 +1,9 @@
-// Persisted per-conversation disclosure state for the agent transcript — the
-// renderer-side analog of Codex's `collapsedTurnsById`. A user's expand/collapse
-// of a process fold (or any disclosure inside it) is keyed by conversationId then
-// by disclosure id, and survives reload, conversation switch, and the row remount
-// when a streaming placeholder becomes its sealed entity (the state lives here, in
-// a module-level store, not in per-row component state). Absence of an entry means
-// "use the caller's default", so the auto-collapse-on-answer-start default still
-// applies until the user makes an explicit choice — which then always wins.
+// Persisted per-conversation disclosure state for interactive agent transcript
+// details such as reasoning rows and tool-activity groups. The top-level
+// "Working/Worked for" work divider is intentionally not a disclosure. A user's
+// expand/collapse is keyed by conversationId then by disclosure id, and survives
+// reload, conversation switch, and row remounts. Absence of an entry means "use
+// the caller's default" until the user makes an explicit choice.
 
 type Overrides = Readonly<Record<string, boolean>>;
 

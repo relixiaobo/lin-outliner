@@ -37,7 +37,10 @@ export interface AgentTurnProcessProjection {
   id: string;
   items: AgentTurnProcessItem[];
   liveStartedAtMs: number | null;
+  showSummaryRow: boolean;
+  showWorkDivider: boolean;
   sealed: boolean;
+  stopped: boolean;
   surfaceResultlessProcess: boolean;
   turnFailedWithoutProse: boolean;
   workedForMs: number | null;
@@ -170,8 +173,9 @@ export function projectAssistantTurn({
   const finalIsProse = finalTextBlocks.some(({ block }) => block.text.trim().length > 0);
   const processSettled = finalIsProse && !turnActive;
   const turnInterruptedAndSettled = turnInterrupted && !turnActive;
-  const turnFailedWithoutProse = turnInterruptedAndSettled && !finalIsProse;
-  const surfaceResultlessProcess = !finalIsProse && (turnInterruptedAndSettled || (!isChannel && !turnActive));
+  const stopped = turnInterruptedAndSettled && message.stopReason === 'aborted';
+  const turnFailedWithoutProse = turnInterruptedAndSettled && !finalIsProse && !stopped;
+  const surfaceResultlessProcess = !finalIsProse && !stopped && (turnInterruptedAndSettled || (!isChannel && !turnActive));
 
   const finalMessages: AgentTurnMessageItem[] = finalTextBlocks.map(({ block, sourceIndex }, index) => {
     const hasLaterText = finalTextBlocks.slice(index + 1).some((candidate) => candidate.block.text.trim().length > 0);
@@ -183,7 +187,12 @@ export function projectAssistantTurn({
     };
   });
 
-  if (lastProcessIndex < 0 && !turnActive) {
+  const showWorkDivider = turnActive
+    || stopped
+    || (workedForMs !== null && finalIsProse && !turnInterruptedAndSettled);
+  const showSummaryRow = lastProcessIndex >= 0 && !showWorkDivider && !turnFailedWithoutProse;
+
+  if (lastProcessIndex < 0 && !showWorkDivider) {
     return { finalMessages, process: null };
   }
 
@@ -206,7 +215,10 @@ export function projectAssistantTurn({
       id: processId,
       items,
       liveStartedAtMs: runStartedAtMs,
+      showSummaryRow,
+      showWorkDivider,
       sealed: processSettled,
+      stopped,
       surfaceResultlessProcess,
       turnFailedWithoutProse,
       workedForMs,

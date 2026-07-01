@@ -1032,57 +1032,42 @@ Rules:
   Stop, while follow-up/steering remains an internal `run_steer` runtime/tool
   capability instead of a permanent detail-page input.
 - Long output rows are collapsed by default.
-- **Result-first turn fold (one flat level).** Every assistant turn renders
+- **Result-first turn process (one flat level).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last
-  thinking/tool block and shows as prose. **One** turn-level process fold
-  (`AgentProcessBlock`, Codex's per-turn collapse — *machine C*) sits above that
-  final answer and collapses/expands every earlier block. The fold renders the
-  whole pre-answer body through a single `AgentProcessTimeline`: interim narration
-  text ("let me check X first") is a row inside that timeline, reasoning renders as
-  thinking rows, and adjacent tool calls fold into counted tool-activity groups
-  (*machine B*, below). There is **no second per-narration "process group" nesting**
-  — the turn fold is the only collapse level above the activity groups. A turn with
-  no thinking/tools is a direct answer and renders without a fold. This is one
-  mechanism with no per-mode forks and no single-tool inline special case. The
-  turn partition (process vs final answer), the synthetic Working/Worked-for
-  process item, and the stable disclosure ids are computed by a pure
-  `agentTurnProjection` module (`projectAssistantTurn` → `AgentTurnProcessProjection`)
-  that sits between the `AgentRenderProjection` message and the React components,
-  so `AgentProcessBlock` / `AgentProcessTimeline` consume a ready projection
-  rather than re-deriving message-flow semantics. The
-  timeline body has **no left rail or indent**: every row's leading icon column
-  left-aligns with the divider text above it, so the pre-answer body reads as a
-  flat list under the "Working / Worked for {t}" header, not an indented sub-tree
-  (Codex's layout).
-- **Codex-style auto-collapse + persistent divider.** The turn fold mirrors
-  Codex's *machine C*: while the turn is **working and has not started its answer**
-  the body shows **expanded** (the user watches reasoning + tool activity stream
-  1:1); the moment the **final answer starts** (`answerStarted` — trailing prose
-  appears) the body **auto-collapses** to the divider with the answer streaming
-  below. The header is a **persistent** divider that stays put through expand and
-  auto-collapse — the live "Working" / "Working for {t}" clock while active, the
-  "Worked for {t}" resting line once sealed — so it never disappears when the body
-  opens. The fold renders immediately for an active assistant turn, even before the
-  first thinking/tool block, so later tool events do not insert a new header above
-  already-streamed text. A tool-free live answer keeps its prose in the normal
-  answer position (not inside process narration), so the same markdown subtree
-  survives the live→sealed transition. A **user toggle is sticky** for that process
-  id and overrides the auto default through the live→sealed transition. The toggle
-  is **persisted per conversation** (`agentDisclosureStore`, a localStorage-backed
-  store keyed by conversationId → disclosure id — the renderer analog of Codex's
-  `collapsedTurnsById`), so an explicit expand/collapse survives reload, conversation
-  switch, and the row remount; absence of a stored choice means the auto default
-  applies. (A detached preview row with no conversationId keeps ephemeral state.)
-  In the **expanded** timeline the spinner is per row: while the turn is
-  live, **every un-settled tool row** (no result, no `outcome`, no child run) spins,
-  not just the most recent one — so when an assistant fans out a parallel tool batch,
-  the earlier calls never flash red in the frame before the runtime populates
-  `pendingToolCallIds`. The same un-settled rule drives the collapsed activity-group
-  summary and the process header's counted "Ran N commands" status, so a parallel
-  batch is never miscounted as failed mid-turn. A call settles (and stops spinning)
-  the instant it gains a result, an `outcome`, or a child run; once the turn ends, an
-  un-settled call falls through to its real error/incomplete state rather than
-  spinning forever.
+  thinking/tool block and shows as prose. Earlier work renders above it as a flat
+  `AgentProcessTimeline`: interim narration text ("let me check X first") is a row
+  inside that timeline, reasoning renders as thinking rows, and adjacent tool calls
+  fold into counted tool-activity groups (below). There is **no top-level process
+  disclosure** around the whole turn. The turn partition (process vs final answer),
+  the synthetic Working/Worked-for divider, and stable inner disclosure ids are
+  computed by the pure `agentTurnProjection` module (`projectAssistantTurn` →
+  `AgentTurnProcessProjection`) between the `AgentRenderProjection` message and the
+  React components, so `AgentProcessBlock` / `AgentProcessTimeline` consume a ready
+  projection rather than re-deriving message-flow semantics. The timeline body has
+  **no left rail or indent**: every row's leading icon column left-aligns with the
+  divider text above it, so the pre-answer body reads as a flat list under the
+  "Working / Worked for {t}" row, not an indented sub-tree.
+- **Non-interactive work divider.** `AgentProcessBlock` renders the live/sealed run
+  status as a **non-interactive** divider, matching Codex.app's `Working for …` /
+  `Worked for …` row. While a turn is active, the row is **not collapsible**: it is
+  text plus a spinner, with no `aria-expanded`, no chevron, and no stored process
+  override. The timeline below remains visible; only the inner reasoning rows and
+  tool-activity groups are disclosures. When a completed visible process has no
+  work duration (or deliberately suppresses `Worked for …`, as resultless work
+  does), the same non-interactive position shows a static activity summary row
+  instead of a work-duration divider. Direct live answers still get the temporary
+  `Working` divider while their answer prose stays in the normal answer position,
+  so the same markdown subtree survives the live->sealed transition. Direct sealed
+  answers with run timing show `Worked for {duration}` above the answer even when
+  there were no thinking/tool items. Interactive disclosure state persists only for
+  those inner details via `agentDisclosureStore`, keyed by conversationId and
+  disclosure id. In the timeline, while the turn is live, **every un-settled tool
+  row** (no result, no `outcome`, no child run) spins, not just the most recent one
+  — so when an assistant fans out a parallel tool batch, earlier calls never flash
+  red in the frame before the runtime populates `pendingToolCallIds`. A call settles
+  (and stops spinning) the instant it gains a result, an `outcome`, or a child run;
+  once the turn ends, an un-settled call falls through to its real error/incomplete
+  state rather than spinning forever.
   - A **resultless** turn (last visible block is a thought/tool — no trailing
     answer prose) drives two SEPARATE decisions, decoupled so a cleanly-completed
     turn never mislabels:
@@ -1099,51 +1084,41 @@ Rules:
       already recovering it — **retry / reactive-compaction** — would otherwise
       paint the live, streaming turn RED ("Interrupted after thinking") even as
       its stop button and streaming process are on screen.
-    - **Surfacing the process** (auto-expand so its interim work / error context
-      isn't buried — `surfaceResultlessProcess`) fires for a genuine interruption
-      AND — per the result-first design — for a sealed resultless turn the user
-      watched stream 1:1. A surfaced resultless
-      turn also suppresses the "Worked for …" resting header (which would read as a
-      clean unit of work and hide that there is no answer), falling back to the
+    - **Surfacing the process** (show the interim work / error context instead of
+      a clean work-duration divider — `surfaceResultlessProcess`) fires for a
+      genuine interruption AND — per the result-first design — for a sealed
+      resultless turn the user watched stream 1:1. A surfaced resultless turn also
+      suppresses the "Worked for …" resting divider (which would read as a clean
+      unit of work and hide that there is no answer), falling back to the
       descriptive group summary.
   - (Tying the *label* to the run's real status — not to the mere absence of
     trailing prose — is what fixed the recurring resultless-turn mislabel: the old
     `turnEnded && !finalIsProse` rule painted every result-less turn red regardless
     of outcome. Keying the result-first *split* off the *trailing* answer, not *any*
-    text in the turn, still stops a surfaced resultless turn from burying interim
-    narration behind a collapsed header.)
-  - **Default-open states:** a working turn with no answer yet (auto-expand, above)
-    and a surfaced resultless turn. Every other steady state — answer streaming, or
-    sealed — defaults collapsed. The **sticky override wins**: once a user toggles
-    the block it keeps that choice through live→sealed; completion only updates the
-    same disclosure row's header.
-- **Persistent live divider.** While the turn is active the header is the ticking
+    text in the turn, still stops a surfaced resultless turn from presenting
+    interim narration as a clean completed answer.)
+- **Work divider timing.** While the turn is active the divider is the ticking
   clock — bare **"Working"** under one second (no number, so it never flickers a
   "0s"), then **"Working for {t}"** once a whole second elapses. The clock is
-  driven by `runStartedAtMs` (the producing run's `startedAt`, threaded onto the
-  message entity **only while the run is running**; a `useElapsedTick` hook
-  re-renders once a second and is gated on the live segment, so a sealed/crashed
-  run never keeps ticking). The divider is the header **whether the body is
-  collapsed or expanded** — it stays put through the auto-collapse. The single
-  activity spinner rides the trailing slot only while the process is **collapsed
-  AND working**; once the body expands the spinner moves to the running tool row in
-  the timeline. The trailing affordance is a **`chevron-right`** that rotates 90° to
-  point down when the body opens (not a flipping up/down caret), and — unlike the
-  reasoning/group chevrons — it stays **visible at rest** on this turn-fold header
-  (Codex shows `Worked for 5m 29s ›`). A faint **full-width hairline**
-  (`.agent-process-rule`, `currentColor` /20 ≈ Codex `border-current/20`) sits under
-  the resting fold line, just above the answer — shown only in the collapsed
-  Working/Worked state (an interrupted RED label is not a divider, and an expanded
-  body provides its own structure). Once the turn **seals**, the header reads
-  **"Worked for {duration}"** (codex-style; duration = the producing run's
-  `updatedAt − startedAt`, threaded as `runDurationMs` on the message entity
+  driven by the active run's `startedAt`. Real assistant entities receive
+  `runStartedAtMs` from their producing run while it is running; the temporary
+  assistant placeholder, before any assistant entity exists, anchors to
+  `projection.activeRuns[activeRunId].startedAt` and only falls back to the last
+  user message timestamp when no active-run metadata is available. This prevents
+  retry/regenerate/edit-resend from counting from an old user message. The
+  `useElapsedTick` hook re-renders once a second and is gated on the live segment,
+  so a sealed/crashed run never keeps ticking. Once the turn **seals**, the divider
+  reads **"Worked for {duration}"** (codex-style; duration = the producing run's
+  `updatedAt - startedAt`, threaded as `runDurationMs` on the message entity
   **only once the run is sealed** — a still-`running` run, whether live or left
   running after a crash, has `updatedAt === startedAt` and so no meaningful
   wall-clock, and is left unknown rather than shown as "<1s"; a multi-run turn
-  sums each run's wall-clock). When the duration is unknown the header falls back
-  to the static group summary — a **counted, kind-named, tense-aware** activity
-  line ("Ran 3 commands · read 2 nodes", "Thought · searching the web"), not a
-  generic "used N tools". A tool call's
+  sums each run's wall-clock). User-stopped runs read **"You stopped after
+  {duration}"** when duration is known, otherwise **"You stopped"**. When the
+  duration is unknown and the turn is not live/stopped, the process shows a static
+  summary row in place of the work divider — a **counted, kind-named,
+  tense-aware** activity line ("Ran 3 commands · read 2 nodes", "Thought ·
+  searching the web"), not a generic "used N tools". A tool call's
   **settled outcome** is authoritative for its status: replay stamps
   `outcome: 'completed' | 'failed'` onto the `toolCall` content part from the
   `tool_call.completed` / `tool_call.failed` events (independent of whether a
@@ -1163,7 +1138,7 @@ Rules:
   descriptive group summary rather than the "Worked for …" resting header.
 - **Consecutive tool calls fold into one counted activity group** (Codex's
   render-group split, `splitTimelineIntoGroups`/`summarizeToolActivity` in
-  `agentRenderGroups.ts`). Inside the expanded process timeline, a maximal run of
+  `agentRenderGroups.ts`). Inside the visible process timeline, a maximal run of
   ≥2 adjacent **non-child-run** tool calls collapses into a single
   `AgentToolActivityGroup` disclosure whose header is the counted summary,
   expandable to the member rows. A thinking or narration block — a child-run
@@ -1178,8 +1153,7 @@ Rules:
   N distinct files. The summary uses the **per-kind** running/done tense so a
   finished command beside a still-running search reads "Ran a command · searching"
   — never a group-global mislabel. This
-  is Codex's per-tool-activity-group collapse (machine B) nested inside the
-  per-turn process fold.
+  is Codex's per-tool-activity-group collapse inside the flat turn timeline.
 - **Per-step glyph by exception** (Codex machine A, `progress-step-row`). A tool row
   leads with its **tool-type icon by default — success carries NO badge**. The
   past-tense verb ("Fetched web …", "Read a node") already reads as success, so a
@@ -1195,7 +1169,7 @@ Rules:
   remains **deferred**: our projection does not cheaply distinguish it from `running`.
   The ✕ ring fades out with the glyph when the disclosure chevron reveals on hover.
 - **Reasoning folds like a tool step; narration is body prose.** Inside the
-  expanded turn (machine C) the three kinds of block render at three different
+  turn timeline the three kinds of block render at three different
   weights, matching Codex's typed items — they are NOT one uniform body:
   - **Interim narration** is the assistant's own SPEECH (Codex `assistant-message`,
     `text-primary` = full foreground) → shown in **full** at the same bright
@@ -1234,7 +1208,7 @@ Rules:
   stream is lost.
 - **One assistant-turn renderer.** The conversation transcript and the child-run
   task detail timeline both render assistant content through the
-  same assistant turn/process fold components. The task detail panel reads a raw
+  same assistant turn process components. The task detail panel reads a raw
   child-run transcript, but only adapts it into normal transcript rows; it does
   not own separate thinking/tool/result UI. A running task only marks the
   transcript's last assistant turn live when that turn is actually unfinished

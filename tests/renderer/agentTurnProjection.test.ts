@@ -66,6 +66,20 @@ describe('projectAssistantTurn', () => {
     ]);
   });
 
+  test('adds a work divider for a direct text answer when run timing is known', () => {
+    const turn = project(assistant([{ type: 'text', text: 'Final answer' }]), {
+      workedForMs: 3_000,
+    });
+
+    expect(turn.finalMessages.map((item) => item.text)).toEqual(['Final answer']);
+    expect(turn.process).toMatchObject({
+      items: [],
+      showWorkDivider: true,
+      stopped: false,
+      workedForMs: 3_000,
+    });
+  });
+
   test('partitions process items from trailing final answer prose', () => {
     const turn = project(assistant([
       { type: 'thinking', thinking: 'Inspect the outline' },
@@ -79,6 +93,8 @@ describe('projectAssistantTurn', () => {
     expect(turn.finalMessages.map((item) => item.text)).toEqual(['Done.']);
     expect(turn.process?.answerStarted).toBe(true);
     expect(turn.process?.sealed).toBe(true);
+    expect(turn.process?.showSummaryRow).toBe(false);
+    expect(turn.process?.showWorkDivider).toBe(true);
     expect(turn.process?.workedForMs).toBe(3_000);
     expect(turn.process?.items.map((item) => item.type)).toEqual(['reasoning', 'toolCall']);
     expect(turn.process?.items.map((item) => item.id)).toEqual([
@@ -86,6 +102,24 @@ describe('projectAssistantTurn', () => {
       'tool:tool-a',
     ]);
     expect(turn.process?.items[1]).toMatchObject({ outcome: 'completed' });
+  });
+
+  test('keeps a static summary row when a completed process has no run timing', () => {
+    const turn = project(assistant([
+      { type: 'thinking', thinking: 'Inspect the outline' },
+      toolCall('tool-a'),
+      { type: 'text', text: 'Done.' },
+    ]), {
+      toolCallOutcomes: new Map([['tool-a', 'completed']]),
+    });
+
+    expect(turn.finalMessages.map((item) => item.text)).toEqual(['Done.']);
+    expect(turn.process).toMatchObject({
+      answerStarted: true,
+      showSummaryRow: true,
+      showWorkDivider: false,
+      workedForMs: null,
+    });
   });
 
   test('keeps interim narration inside the process before the final answer', () => {
@@ -115,6 +149,8 @@ describe('projectAssistantTurn', () => {
       id: 'process:message-a',
       items: [],
       liveStartedAtMs: 10,
+      showSummaryRow: false,
+      showWorkDivider: true,
       sealed: false,
     });
     expect(turn.finalMessages[0]).toMatchObject({
@@ -132,6 +168,9 @@ describe('projectAssistantTurn', () => {
     expect(turn.process).toMatchObject({
       answerStarted: false,
       sealed: false,
+      showSummaryRow: true,
+      showWorkDivider: false,
+      stopped: false,
       surfaceResultlessProcess: true,
       turnFailedWithoutProse: false,
       workedForMs: 5_000,
@@ -148,6 +187,26 @@ describe('projectAssistantTurn', () => {
     expect(turn.process).toMatchObject({
       surfaceResultlessProcess: true,
       turnFailedWithoutProse: true,
+    });
+  });
+
+  test('projects a stopped turn as a work divider instead of an interrupted process', () => {
+    const turn = project(assistant([
+      { type: 'thinking', thinking: 'Still checking' },
+    ], {
+      stopReason: 'aborted',
+    }), {
+      turnInterrupted: true,
+      workedForMs: 7_000,
+    });
+
+    expect(turn.process).toMatchObject({
+      showSummaryRow: false,
+      showWorkDivider: true,
+      stopped: true,
+      surfaceResultlessProcess: false,
+      turnFailedWithoutProse: false,
+      workedForMs: 7_000,
     });
   });
 

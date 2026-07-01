@@ -511,10 +511,10 @@ function AgentMessageRowComponent({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [usageHoverOpen, setUsageHoverOpen] = useState(false);
   const detailsButtonRef = useRef<HTMLButtonElement | null>(null);
-  // Disclosure (process fold + inner tool/reasoning) expand state. A row in a
+  // Disclosure expand state for interactive reasoning/tool details. A row in a
   // conversation reads from the persisted per-conversation store so a user's
-  // expand/collapse survives reload, conversation switch, and the streaming→sealed
-  // remount; a detached preview row (no conversationId) keeps ephemeral local state.
+  // expand/collapse survives reload, conversation switch, and streaming->sealed
+  // remounts; a detached preview row (no conversationId) keeps ephemeral local state.
   const [localOverrides, setLocalOverrides] = useState<Record<string, boolean>>({});
   const subscribe = useCallback(
     (onChange: () => void) => (conversationId ? subscribeDisclosure(conversationId, onChange) : NOOP_UNSUBSCRIBE),
@@ -793,7 +793,7 @@ function AgentMessageRowComponent({
       <AgentAssistantContent highlighted={highlighted}>
         {hasError ? <AgentMessageError message={displayError} /> : null}
         {assistantBlocks}
-        {stopped && !turnActive ? (
+        {stopped && !turnActive && assistantBlocks.length === 0 ? (
           <div className="agent-message-stopped">
             <StopIcon size={ICON_SIZE.menu} aria-hidden />
             <span>{t.agent.message.stopped}</span>

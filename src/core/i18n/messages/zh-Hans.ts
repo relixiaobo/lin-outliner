@@ -979,6 +979,8 @@ commandPalette: {
       // ticking "处理中 {t}".
       working: '处理中',
       workingFor: ({ duration }) => `处理中 ${duration}`,
+      stopped: '你已停止',
+      stoppedAfter: ({ duration }) => `你在 ${duration} 后停止`,
       interrupted: '已中断',
       interruptedAfterThinking: '思考后中断',
       thoughtInterrupted: '已思考（中断）',

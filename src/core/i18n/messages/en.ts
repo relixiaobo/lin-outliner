@@ -1064,6 +1064,8 @@ commandPalette: {
       // number so it never flickers a "0s"), then the ticking "Working for {t}".
       working: 'Working',
       workingFor: ({ duration }: { duration: string }) => `Working for ${duration}`,
+      stopped: 'You stopped',
+      stoppedAfter: ({ duration }: { duration: string }) => `You stopped after ${duration}`,
       interrupted: 'Interrupted',
       interruptedAfterThinking: 'Interrupted after thinking',
       thoughtInterrupted: 'Thought (interrupted)',
