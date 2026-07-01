@@ -1,7 +1,8 @@
 import type { ToolCall } from '../../../core/agentTypes';
 import type { Messages } from '../../../core/i18n';
-import { toolActivityKind, type ToolActivityKind, type ToolStatus } from './AgentToolCallBlock';
+import type { ToolStatus } from './AgentToolCallBlock';
 import type { AgentTurnProcessItem, AgentTurnToolCallItem } from './agentTurnProjection';
+import { agentToolPresentation, type ToolActivityKind } from './agentToolPresentation';
 
 // Render-group splitting for the agent process timeline, mirroring Codex's
 // `split-items-into-render-groups`. A run of CONSECUTIVE tool-call items folds
@@ -54,25 +55,35 @@ const KIND_ORDER: ToolActivityKind[] = [
   'fileCreate',
   'fileEdit',
   'fileDelete',
-  'read',
-  'search',
+  'fileRead',
+  'fileSearch',
+  'nodeCreate',
+  'nodeEdit',
+  'nodeDelete',
+  'nodeRead',
+  'nodeSearch',
+  'run',
   'web',
   'memory',
   'skill',
+  'question',
+  'history',
   'other',
 ];
 
 // Tools whose count dedupes by subject: editing the same node/file twice reads as
 // "Edited a file", not two (Codex counts distinct subjects via Set.size). The arg
 // keys are the model's raw wire shape — snake_case (`node_id`, `file_path`), and a
-// node tool may carry a `node_ids` array for a batch operation. `fileCreate` is
-// intentionally absent: a created node has no stable pre-execution id, so creating
-// N nodes under one parent is N distinct creations (count every call), never a
-// dedup-by-parent collapse. Commands and web/memory/skill also count every call.
+// node tool may carry a `node_ids` array for a batch operation. Create and search
+// kinds are intentionally absent: creations have no stable pre-execution id, and
+// search calls describe compound queries rather than a single subject.
 const DEDUP_SUBJECT_KEYS: Partial<Record<ToolActivityKind, readonly string[]>> = {
-  fileEdit: ['file_path', 'path', 'node_id', 'node_ids'],
-  fileDelete: ['node_id', 'node_ids', 'path'],
-  read: ['node_id', 'node_ids', 'file_path', 'path'],
+  fileEdit: ['file_path', 'path'],
+  fileDelete: ['file_path', 'path'],
+  fileRead: ['file_path', 'path'],
+  nodeEdit: ['node_id', 'node_ids'],
+  nodeDelete: ['node_id', 'node_ids'],
+  nodeRead: ['node_id', 'node_ids'],
 };
 
 // The distinct subjects a single tool call touches, for Set-dedup counting. A
@@ -118,7 +129,7 @@ export function summarizeToolActivity(
   const buckets = new Map<ToolActivityKind, Bucket>();
   const seen = new Set<string>();
   for (const member of members) {
-    const kind = toolActivityKind(member.toolCall.name);
+    const kind = agentToolPresentation(member.toolCall).activityKind;
     const running = member.status === 'pending';
     let bucket = buckets.get(kind);
     for (const key of subjectKeys(kind, member.toolCall)) {
@@ -164,16 +175,32 @@ function toolActivityPhrase(
       return running ? labels.fileEditRun({ count }) : labels.fileEdit({ count });
     case 'fileDelete':
       return running ? labels.fileDeleteRun({ count }) : labels.fileDelete({ count });
-    case 'read':
-      return running ? labels.readRun({ count }) : labels.read({ count });
-    case 'search':
-      return running ? labels.searchRun() : labels.search();
+    case 'fileRead':
+      return running ? labels.fileReadRun({ count }) : labels.fileRead({ count });
+    case 'fileSearch':
+      return running ? labels.fileSearchRun() : labels.fileSearch();
+    case 'nodeCreate':
+      return running ? labels.nodeCreateRun({ count }) : labels.nodeCreate({ count });
+    case 'nodeEdit':
+      return running ? labels.nodeEditRun({ count }) : labels.nodeEdit({ count });
+    case 'nodeDelete':
+      return running ? labels.nodeDeleteRun({ count }) : labels.nodeDelete({ count });
+    case 'nodeRead':
+      return running ? labels.nodeReadRun({ count }) : labels.nodeRead({ count });
+    case 'nodeSearch':
+      return running ? labels.nodeSearchRun() : labels.nodeSearch();
+    case 'run':
+      return running ? labels.runRun({ count }) : labels.run({ count });
     case 'web':
       return running ? labels.webRun() : labels.web();
     case 'memory':
       return running ? labels.memoryRun() : labels.memory();
     case 'skill':
       return running ? labels.skillRun({ count }) : labels.skill({ count });
+    case 'question':
+      return running ? labels.questionRun({ count }) : labels.question({ count });
+    case 'history':
+      return running ? labels.historyRun() : labels.history();
     case 'other':
       return running ? labels.otherRun({ count }) : labels.other({ count });
   }

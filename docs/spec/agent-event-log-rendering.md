@@ -1148,12 +1148,19 @@ Rules:
   tool call (rich inline content), and a **loaded-skill chip** (a compact
   glanceable affordance, not an expandable row) — **breaks the run** (reasoning is
   a hard boundary); a lone tool call renders standalone, never wrapped. The summary
-  buckets members by activity kind (`toolActivityKind`), dedupes file/read kinds by
-  subject (editing the same node twice reads "Edited a file") keyed on the model's
-  **raw snake_case wire args** (`node_id`, `file_path`), expanding a `node_ids`
-  batch to one subject per id so a 5-node read counts as 5. Node *creation* is not
-  deduped — a new node has no pre-execution id, so N creations under one parent are
-  N distinct files. The summary uses the **per-kind** running/done tense so a
+  buckets members by the centralized tool presentation registry
+  (`agentToolPresentation.ts`). The registry is the single renderer source for
+  both per-tool glyphs and counted activity kinds, so a tool row and its folded
+  group describe the same subject. File tools (`file_read`, `file_grep`,
+  `file_glob`, `file_write`, `file_edit`, `file_delete`) and outliner node tools
+  (`node_read`, `node_search`, `node_create`, `node_edit`, `node_delete`) are
+  deliberately separate kinds: a node operation never reads as a local file
+  operation. Read/edit/delete subject dedupe is keyed on the model's **raw
+  snake_case wire args** (`node_id`, `node_ids`, `file_path`, `path`), expanding a
+  `node_ids` batch to one subject per id so a 5-node read counts as 5. Create and
+  search kinds are not deduped — a new file/node has no pre-execution id, and a
+  search call is a compound query rather than one stable subject. The summary uses
+  the **per-kind** running/done tense so a
   finished command beside a still-running search reads "Ran a command · searching"
   — never a group-global mislabel. This
   is Codex's per-tool-activity-group collapse inside the flat turn timeline.
@@ -1161,16 +1168,19 @@ Rules:
   leads with its **tool-type icon by default — success carries NO badge**. The
   past-tense verb ("Fetched web …", "Read a node") already reads as success, so a
   green success check is redundant noise; a **done** step shows its plain tool icon.
-  Only states that need attention get a glyph: **running** the spinning ring;
-  **failed** a red ✕ inside a subtle danger ring (`--status-danger` /40 border, /15
-  fill) + red row text — the only badged state, reserved for a **confirmed failure**
-  (an error result or a failed outcome). A tool that simply never settled — no
-  result, no outcome, not running, turn over (e.g. the tail of an interrupted batch)
-  — is **`incomplete`** and likewise shows the neutral tool icon; **done and
-  incomplete are not visually distinguished** (neither needs a badge — only a failure
-  stands out). Codex's `pending` (declared-but-not-*started*, a dim hollow ring)
-  remains **deferred**: our projection does not cheaply distinguish it from `running`.
-  The ✕ ring fades out with the glyph when the disclosure chevron reveals on hover.
+  Unknown tools use a neutral generic-tool glyph, never a warning triangle; warning
+  glyphs are reserved for real warning/error surfaces. Only states that need
+  attention override the tool glyph: **running** uses the spinning ring; **failed**
+  uses the dedicated error glyph inside a subtle danger ring (`--status-danger` /40
+  border, /15 fill) + red row text — the only badged state, reserved for a
+  **confirmed failure** (an error result or a failed outcome). A tool that simply
+  never settled — no result, no outcome, not running, turn over (e.g. the tail of
+  an interrupted batch) — is **`incomplete`** and likewise shows the neutral tool
+  icon; **done and incomplete are not visually distinguished** (neither needs a
+  badge — only a failure stands out). Codex's `pending`
+  (declared-but-not-*started*, a dim hollow ring) remains **deferred**: our
+  projection does not cheaply distinguish it from `running`. The error ring fades
+  out with the glyph when the disclosure chevron reveals on hover.
 - **Reasoning folds like a tool step; narration is body prose.** Inside the
   turn timeline the three kinds of block render at three different
   weights, matching Codex's typed items — they are NOT one uniform body:

@@ -101,7 +101,7 @@ describe('agent child run UI', () => {
       />,
     );
 
-    expect(rendered.container.textContent).toContain('Ran a command · using a tool');
+    expect(rendered.container.textContent).toContain('Ran a command · managing an agent run');
   });
 
   test('loads a child run transcript and keeps nested tool calls expandable', async () => {

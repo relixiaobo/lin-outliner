@@ -119,7 +119,7 @@ describe('agent process summary', () => {
       workedForMs: null,
       process,
       toolCallLabels,
-    })).toBe('Thought · read a node · searched');
+    })).toBe('Thought · read a node · searched nodes');
   });
 
   test('summarizes solo completed tool by tool status', () => {

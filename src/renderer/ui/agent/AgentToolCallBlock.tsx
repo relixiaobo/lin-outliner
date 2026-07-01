@@ -7,24 +7,14 @@ import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import { InlineFileReference } from '../editor/InlineFileReference';
 import {
-  AgentIcon,
   AddChildIcon,
-  BrainIcon,
   CheckIcon,
-  CloseIcon,
   CopyIcon,
   FileTextIcon,
   ICON_SIZE,
   LoaderIcon,
-  NodeCreateToolIcon,
-  NodeEditToolIcon,
-  RestoreIcon,
-  SearchIcon,
   SkillIcon,
-  TerminalIcon,
-  TrashIcon,
-  UrlIcon,
-  WarningIcon,
+  ToolErrorIcon,
 } from '../icons';
 import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
@@ -38,6 +28,7 @@ import {
 } from './AgentInlineReferenceText';
 import { PlainReadOnlyCodeBlock, ReadOnlyCodeBlock } from '../editor/CodeBlockSurface';
 import { AgentToolCallDisclosure } from './AgentToolCallDisclosure';
+import { getToolIcon } from './agentToolPresentation';
 
 interface AgentToolCallBlockProps {
   defaultExpanded?: boolean;
@@ -60,22 +51,6 @@ interface AgentToolCallBlockProps {
 // failure: `error` is reserved for a confirmed failure (an error result or a
 // failed outcome), so a never-run tool renders neutral, not an alarming red ✕.
 export type ToolStatus = 'pending' | 'done' | 'error' | 'incomplete';
-
-// Activity bucket for the counted tool-activity summary (Codex's
-// "Ran 3 commands · read 2 files"). Maps our tool names onto Codex's verb
-// families; `other` is the catch-all (unknown tools contribute a generic
-// "used a tool" fragment, they never blank the whole summary).
-export type ToolActivityKind =
-  | 'command'
-  | 'fileCreate'
-  | 'fileEdit'
-  | 'fileDelete'
-  | 'read'
-  | 'search'
-  | 'web'
-  | 'memory'
-  | 'skill'
-  | 'other';
 
 type ResultPart =
   | { type: 'imagePlaceholder' }
@@ -106,53 +81,6 @@ export function getToolCallStatus(
   // settled turn left this call with no result and no outcome: it never completed,
   // but that is `incomplete` (neutral), not a failure.
   return pendingToolCallIds.has(toolCallId) || toolActive ? 'pending' : 'incomplete';
-}
-
-export function toolActivityKind(name: string): ToolActivityKind {
-  switch (name) {
-    case 'bash':
-      return 'command';
-    case 'file_write':
-    case 'node_create':
-      return 'fileCreate';
-    case 'file_edit':
-    case 'node_edit':
-      return 'fileEdit';
-    case 'node_delete':
-      return 'fileDelete';
-    case 'node_read':
-      return 'read';
-    case 'node_search':
-      return 'search';
-    case 'web_search':
-    case 'web_fetch':
-      return 'web';
-    case 'recall':
-    case 'dream':
-      return 'memory';
-    case 'skill':
-      return 'skill';
-    default:
-      return 'other';
-  }
-}
-
-export function getToolIcon(toolCall: ToolCall) {
-  if (isRunControlTool(toolCall.name)) return AgentIcon;
-  if (toolCall.name === 'node_create') return NodeCreateToolIcon;
-  if (toolCall.name === 'node_read') return FileTextIcon;
-  if (toolCall.name === 'node_edit') return NodeEditToolIcon;
-  if (toolCall.name === 'recall') return BrainIcon;
-  if (toolCall.name === 'dream') return BrainIcon;
-  if (toolCall.name === 'node_search' || toolCall.name === 'web_search') return SearchIcon;
-  if (toolCall.name === 'node_delete') {
-    return toolCall.arguments.restore === true ? RestoreIcon : TrashIcon;
-  }
-  if (toolCall.name === 'web_fetch') return UrlIcon;
-  if (toolCall.name === 'bash') return TerminalIcon;
-  if (toolCall.name === 'file_edit') return NodeEditToolIcon;
-  if (toolCall.name === 'file_write') return NodeCreateToolIcon;
-  return WarningIcon;
 }
 
 function pickSubject(args: Record<string, unknown>, ...keys: string[]): string | null {
@@ -757,7 +685,7 @@ export function AgentToolCallBlock({
   // `incomplete` both show the neutral tool icon; only a real failure stands out
   // (red ✕ in a danger ring, via the `is-error` CSS).
   const StatusIcon = status === 'error'
-    ? CloseIcon
+    ? ToolErrorIcon
     : status === 'pending'
       ? LoaderIcon
       : getToolIcon(toolCall);
