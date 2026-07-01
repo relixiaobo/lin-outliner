@@ -106,6 +106,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Custom Responses stability and compaction accounting (PR #356, codex)** —
+  custom OpenAI-compatible Responses endpoints now use a compatibility request profile that promotes
+  leading system/developer input to top-level `instructions`, keeps low verbosity, and enables automatic
+  parallel tool calls when tools are present. Custom Responses prompt-cache affinity is restored so
+  cache-capable gateways can return provider usage, while auto compact now follows Codex-style
+  provider-usage-led accounting across providers: it triggers near 90% of the model context window,
+  prefers latest provider-reported total tokens plus locally-added tail, and falls back to local
+  estimation before provider usage exists. Terminated custom Responses streams are salvaged only after
+  a complete tool call reaches `toolcall_end`, avoiding execution of partial streamed arguments.
+  **Gate (main):** code review found one P1 partial-tool-call salvage bug; codex fixed it with a
+  regression. Verified with targeted stream/compat tests, typecheck, and `git diff --check`.
 - **Custom Responses gateways disable prompt-cache affinity (PR #355, codex)** —
   custom OpenAI-compatible endpoints that preserve the `openai-responses` request shape now force
   provider stream `cacheRetention: "none"` for non-official base URLs across normal agent turns,
