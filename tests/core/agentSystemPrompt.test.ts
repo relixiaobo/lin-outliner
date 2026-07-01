@@ -29,6 +29,7 @@ describe('agent system prompt composer', () => {
     }).map((block) => block.id)).toEqual([
       'system-context',
       'communication-and-safety',
+      'skill-dependencies',
       'memory',
       'persona',
       'profile-skills',
@@ -38,6 +39,7 @@ describe('agent system prompt composer', () => {
   test('the default agent prompt is composed from universal firmware, memory module, and Neva persona', () => {
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('# System context');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('# Communication and safety');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('# Skill dependencies');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('# Memory');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('Use node_search over the d- tag family');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('Use past_chats to read raw prior chat spans');
@@ -45,6 +47,7 @@ describe('agent system prompt composer', () => {
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('You are Neva.');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('still water');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('agree in order to be agreeable');
+    expect(DEFAULT_AGENT_SYSTEM_PROMPT).toContain('Do not silently replace the skill');
     expect(DEFAULT_AGENT_SYSTEM_PROMPT.indexOf('# System context')).toBeLessThan(DEFAULT_AGENT_SYSTEM_PROMPT.indexOf('# Memory'));
     expect(DEFAULT_AGENT_SYSTEM_PROMPT.indexOf('# Memory')).toBeLessThan(DEFAULT_AGENT_SYSTEM_PROMPT.indexOf('You are Neva.'));
   });
@@ -76,6 +79,8 @@ describe('agent system prompt composer', () => {
     expect(prompt).toContain('# System context');
     expect(prompt).toContain('# Communication and safety');
     expect(prompt).toContain('Permission-denied or out-of-boundary');
+    expect(prompt).toContain('# Skill dependencies');
+    expect(prompt).toContain('verify whether the dependency is already available');
     expect(prompt).toContain('You are "Reviewer" (@reviewer).');
     expect(prompt).toContain('# Agent instructions');
     expect(prompt).toContain('REVIEWER_AGENT_BODY');

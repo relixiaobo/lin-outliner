@@ -18,6 +18,12 @@ import { systemReminder } from '../core/agentAttachments';
 // other's bindings at module-evaluation time, so the cycle is safe under ESM.
 import { AgentSkillAuthoringError, validateAgentSkillContentWrite } from './agentSkillAuthoring';
 import {
+  BUILT_IN_SKILL_RESOURCE_DIR_NAME,
+  BUILT_IN_SKILL_SOURCE_DIR,
+  ENABLED_LINLAB_BUILT_IN_SKILLS,
+  LINLAB_SKILLS_ROOT_ENV,
+} from './builtInSkillConfig';
+import {
   errorEnvelope,
   successEnvelope,
   type ToolEnvelope,
@@ -26,8 +32,6 @@ import {
 export const SKILL_TOOL_NAME = 'skill';
 
 const SKILL_FILE_NAME = 'SKILL.md';
-const BUILT_IN_SKILL_RESOURCE_DIR_NAME = 'built-in-skills';
-const BUILT_IN_SKILL_SOURCE_DIR = 'src/main/builtInSkills';
 const SKILL_LISTING_CONTEXT_PERCENT = 0.01;
 const CHARS_PER_TOKEN = 4;
 const DEFAULT_SKILL_LISTING_CHAR_BUDGET = 8_000;
@@ -216,6 +220,7 @@ export interface SkillLoadOptions {
   includeUserSkills?: boolean;
   additionalSkillDirectories?: string[];
   builtInSkillDirectories?: string[];
+  builtInSkillRoots?: string[];
   builtInSkills?: BuiltInSkillInput[];
   conversationId?: string;
   permissionScopeProvider?: () => string | null;
@@ -228,6 +233,10 @@ export interface BuiltInSkillResourceRootOptions {
   isPackaged?: boolean;
   resourcesPath?: string;
   moduleDir?: string;
+}
+
+export interface ExternalBuiltInSkillRootOptions extends BuiltInSkillResourceRootOptions {
+  linlabSkillsRoot?: string;
 }
 
 /**
@@ -956,6 +965,7 @@ class SkillRegistry {
   private readonly root: string;
   private readonly includeUserSkills: boolean;
   private readonly builtInSkillDirectories: string[];
+  private readonly builtInSkillRoots: string[];
   private readonly builtInSkills: BuiltInSkillInput[];
   private readonly builtInReadOnlyIsolatedSkills: Set<string>;
   private additionalSkillDirectories: string[];
@@ -977,6 +987,13 @@ class SkillRegistry {
     this.includeUserSkills = options.includeUserSkills ?? true;
     this.builtInSkillDirectories = normalizeBuiltInSkillDirectories(
       options.builtInSkillDirectories ?? [resolveBuiltInSkillResourceRoot()],
+      this.root,
+    );
+    const defaultBuiltInSkillRoots = options.builtInSkillDirectories === undefined
+      ? resolveExternalBuiltInSkillRoots()
+      : [];
+    this.builtInSkillRoots = normalizeBuiltInSkillDirectories(
+      options.builtInSkillRoots ?? defaultBuiltInSkillRoots,
       this.root,
     );
     this.builtInSkills = options.builtInSkills ?? [...DEFAULT_BUILT_IN_SKILLS];
@@ -1179,6 +1196,7 @@ class SkillRegistry {
       includeUserSkills: this.includeUserSkills,
       additionalSkillDirectories: this.additionalSkillDirectories,
       builtInSkillDirectories: this.builtInSkillDirectories,
+      builtInSkillRoots: this.builtInSkillRoots,
     });
   }
 
@@ -1263,6 +1281,12 @@ class SkillRegistry {
       for (const dir of this.builtInSkillDirectories) {
         const loaded = await loadSkillsFromDir(dir, 'built-in');
         for (const skill of loaded) {
+          await this.addLoadedSkill(skill);
+        }
+      }
+      for (const dir of this.builtInSkillRoots) {
+        const skill = await loadSkillFromRoot(dir, 'built-in');
+        if (skill) {
           await this.addLoadedSkill(skill);
         }
       }
@@ -1370,6 +1394,17 @@ export function resolveBuiltInSkillResourceRoot(options: BuiltInSkillResourceRoo
   return path.resolve(moduleDir, '../../', BUILT_IN_SKILL_SOURCE_DIR);
 }
 
+export function resolveExternalBuiltInSkillRoots(options: ExternalBuiltInSkillRootOptions = {}): string[] {
+  const isPackaged = options.isPackaged ?? appIsPackaged();
+  if (isPackaged) return [];
+  const moduleDir = options.moduleDir ?? fileURLToPath(new URL('.', import.meta.url));
+  const localBuiltInRoot = resolveBuiltInSkillResourceRoot({ isPackaged: false, moduleDir });
+  const linlabSkillsRoot = options.linlabSkillsRoot
+    ?? process.env[LINLAB_SKILLS_ROOT_ENV]
+    ?? path.resolve(localBuiltInRoot, '../../../..', 'linlab-skills');
+  return ENABLED_LINLAB_BUILT_IN_SKILLS.map((name) => path.join(linlabSkillsRoot, name));
+}
+
 function appIsPackaged(): boolean {
   try {
     const electron = requireForElectron('electron') as typeof import('electron');
@@ -1419,6 +1454,7 @@ export interface SkillDirConfig {
   includeUserSkills: boolean;
   additionalSkillDirectories: readonly string[];
   builtInSkillDirectories?: readonly string[];
+  builtInSkillRoots?: readonly string[];
 }
 
 function targetInsideSkillsDir(
@@ -1453,7 +1489,7 @@ export function resolveSkillContentTarget(
 ): AgentSkillContentTarget | null {
   const filePath = path.resolve(filePathInput);
   const filePathIdentity = canonicalDirectoryIdentity(filePath);
-  for (const dir of config.builtInSkillDirectories ?? []) {
+  for (const dir of [...(config.builtInSkillDirectories ?? []), ...(config.builtInSkillRoots ?? [])]) {
     const builtInDir = path.resolve(dir);
     if (filePathIdentity === builtInDir || isPathInside(filePathIdentity, builtInDir)) return null;
   }
@@ -1491,30 +1527,40 @@ async function loadSkillsFromDir(
   for (const entry of entries) {
     if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
     const rootDir = path.join(skillsDir, entry.name);
-    const skillFile = path.join(rootDir, SKILL_FILE_NAME);
-    let raw: string;
-    try {
-      raw = await readFile(skillFile, 'utf8');
-    } catch {
-      continue;
-    }
-
-    try {
-      const parsed = parseSkillMarkdown(raw);
-      skills.push(createSkillDefinition({
-        name: entry.name,
-        rootDir,
-        skillFile,
-        source,
-        body: parsed.body,
-        frontmatter: parsed.frontmatter,
-        contentHash: skillContentHash(raw),
-      }));
-    } catch (error) {
-      console.warn(`Skipping invalid skill ${skillFile}: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    const skill = await loadSkillFromRoot(rootDir, source, entry.name);
+    if (skill) skills.push(skill);
   }
   return skills;
+}
+
+async function loadSkillFromRoot(
+  rootDir: string,
+  source: SkillDefinition['source'],
+  name = path.basename(rootDir),
+): Promise<SkillDefinition | null> {
+  const skillFile = path.join(rootDir, SKILL_FILE_NAME);
+  let raw: string;
+  try {
+    raw = await readFile(skillFile, 'utf8');
+  } catch {
+    return null;
+  }
+
+  try {
+    const parsed = parseSkillMarkdown(raw);
+    return createSkillDefinition({
+      name,
+      rootDir,
+      skillFile,
+      source,
+      body: parsed.body,
+      frontmatter: parsed.frontmatter,
+      contentHash: skillContentHash(raw),
+    });
+  } catch (error) {
+    console.warn(`Skipping invalid skill ${skillFile}: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
 }
 
 /**
@@ -1649,7 +1695,9 @@ async function renderSkillContent(
     : skill.body;
   content = substituteArguments(content, args, true, skill.argumentNames);
   if (skillDir) {
-    content = content.replace(/\$\{AGENT_SKILL_DIR\}/g, skillDir);
+    content = content
+      .replace(/\$\{AGENT_SKILL_DIR\}/g, skillDir)
+      .replace(/\{baseDir\}/g, skillDir);
   }
   content = content.replace(/\$\{AGENT_CONVERSATION_ID\}/g, conversationId);
   return executeShellCommandsInSkillContent(content, skill, executeSkillShell, signal);

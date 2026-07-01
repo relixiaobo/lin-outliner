@@ -71,11 +71,12 @@ realpath containment:
 - **active skill resource roots**: when an inline skill has been invoked and has a
   real resource directory, that skill directory is projected into the typed file
   boundary as a read-only root so the agent can load referenced support files
-  such as `references/*.md` through `file_read`. In dev this may be a source-tree
-  `src/main/builtInSkills/<skill>` path; in packaged builds it is the copied
-  app-resource `built-in-skills/<skill>` directory. Restored history only counts
-  if that path still matches the currently registered skill, so transcript text
-  cannot grant arbitrary reads. It never grants write access and does not expose
+  such as `references/*.md` through `file_read`. In dev this may be either a
+  Tenon-owned `src/main/builtInSkills/<skill>` path or an enabled
+  `linlab-skills/<skill>` path; in packaged builds it is the copied app-resource
+  `built-in-skills/<skill>` directory. Restored history only counts if that path
+  still matches the currently registered skill, so transcript text cannot grant
+  arbitrary reads. It never grants write access and does not expose
   sibling skills or arbitrary parent folders.
 - **handed folders**: users may hand Tenon a real folder from Settings ->
   Security. That records a legacy `Scope(write:/absolute/folder)` grant and the

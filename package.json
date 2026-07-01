@@ -16,11 +16,12 @@
     "dev:codex-4": "ELECTRON_USER_DATA_DIR=\"$HOME/.lin-outliner-codex-4\" electron-vite dev",
     "dev:anti": "ELECTRON_USER_DATA_DIR=\"$HOME/.lin-outliner-anti\" electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",
+    "skills:sync": "bun scripts/sync-built-in-skills.ts",
     "preview": "vite preview",
     "app:dev": "electron-vite dev",
     "renderer:dev": "vite --host 127.0.0.1",
     "build:native": "node-gyp rebuild --directory=native/window-corner --runtime=electron --target=$(node -p \"require('electron/package.json').version\") --dist-url=https://electronjs.org/headers && node-gyp rebuild --directory=native/browser-tab --runtime=electron --target=$(node -p \"require('electron/package.json').version\") --dist-url=https://electronjs.org/headers",
-    "app:build": "bun run build:native && electron-vite build && electron-builder",
+    "app:build": "bun run build:native && electron-vite build && bun run skills:sync && electron-builder",
     "typecheck": "tsc --noEmit",
     "docs:check": "bun scripts/docs-check.ts",
     "test:core": "bun test --path-ignore-patterns 'tmp/**' tests/core",
@@ -91,11 +92,10 @@
         "to": "icon.png"
       },
       {
-        "from": "src/main/builtInSkills",
+        "from": "build/generated/built-in-skills",
         "to": "built-in-skills",
         "filter": [
-          "**/*",
-          "!README.md"
+          "**/*"
         ]
       }
     ],

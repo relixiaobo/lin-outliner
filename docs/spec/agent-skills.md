@@ -42,8 +42,9 @@ codebase search, explicit file/nodes/read tool selection, caller-scaled
 thoroughness (`quick`, `medium`, `very thorough`), parallel independent
 read/search calls, and a compact evidence-backed report.
 
-`/presentation`, `/document`, and `/data-analysis` are resource-backed built-ins
-that ship as portable skill folders under `src/main/builtInSkills`. They are
+`/presentation`, `/document`, and `/data-analysis` are user-visible
+resource-backed built-ins sourced from the sibling `linlab-skills` repository
+during development and staged into the app bundle during packaging. They are
 goal-oriented skills rather than file-extension adapters:
 
 - `/presentation` covers slide decks, talks, PPTX inspection, browser HTML
@@ -61,20 +62,18 @@ goal-oriented skills rather than file-extension adapters:
   geometry gaps, comment references, headers/footers, and notes; the Markdown
   inspector reports heading hierarchy, long paragraphs, wide tables, local
   assets, remote images, and placeholder text.
-- `/data-analysis` covers data profiling, portable data-contract validation,
-  workbook inspection, analytical planning, reproducible transformations,
-  chart/report output, workbook handoff, and analytical verification. Its
-  standard-library scripts profile CSV/TSV/JSON/JSONL files for types,
-  missingness, duplicates, candidate keys, dates, outliers, and suggested
-  contracts; validate lightweight contracts; and inspect XLSX packages for
-  hidden sheets, formulas, formula error literals, defined names, tables,
-  charts, external links, and calculation-mode risks.
+- `/data-analysis` covers trustworthy file/database analysis, profiling before
+  trusting data, DuckDB/SQL analysis, join fan-out checks, triangulation,
+  findings ledgers, house-styled charts/tables, and self-contained HTML reports.
+  Its required Python dependencies are explicit in the skill's
+  `requirements.txt`; the agent should install the needed tier when allowed
+  instead of replacing the workflow with a lower-fidelity approximation.
 
-Each of these built-ins includes its own `SKILL.md`, route-specific references,
-portable scripts, schemas, and lightweight templates. The app does not inject
-those support files automatically; the skill body points the model at
-`${AGENT_SKILL_DIR}` so the agent can load or execute only the resources relevant
-to the current task.
+Each resource-backed built-in includes its own `SKILL.md`, route-specific
+references, scripts, assets, and templates. The app does not inject those
+support files automatically; the skill body points the model at
+`${AGENT_SKILL_DIR}` or `{baseDir}` so the agent can load or execute only the
+resources relevant to the current task.
 
 Built-ins can be either resource-backed app folders or code-registered inline
 instructions. Resource-backed built-ins use the standard skill folder shape:
@@ -87,14 +86,20 @@ instructions. Resource-backed built-ins use the standard skill folder shape:
   assets/
 ```
 
-The Electron package copies the source-controlled built-in skill root into
-`Resources/built-in-skills`, and the runtime resolves that packaged resource
-path instead of depending on the current working directory. Like cc-2.1 bundled
-skills, built-ins only receive a `Base directory` prefix when they have real
-extracted reference files. Inline built-ins such as `/skillify` and `/research`
-have no extracted files, so their prompts contain only the skill body.
-Post-compact bookkeeping records all built-ins as `built-in:<name>` rather than
-an editable file path.
+`bun run skills:sync` stages Tenon-owned built-ins plus enabled linlab built-ins
+into `build/generated/built-in-skills`. The Electron package copies that
+generated root into `Resources/built-in-skills`, and the packaged runtime
+resolves that resource path instead of depending on the current working
+directory or a user's local `linlab-skills` checkout. Development runs load
+Tenon-owned built-ins from `src/main/builtInSkills` and the enabled linlab
+built-in roots directly, so source changes are visible without staging. The
+current Tenon-owned resource-backed built-in is the private `memory-dream`
+runtime skill; the user-visible portable artifact skills are sourced from
+linlab. Like cc-2.1 bundled skills, built-ins only receive a `Base directory`
+prefix when they have real extracted reference files. Inline built-ins such as
+`/skillify` and `/research` have no extracted files, so their prompts contain
+only the skill body. Post-compact bookkeeping records all built-ins as
+`built-in:<name>` rather than an editable file path.
 
 Default mutable skill directories are always enabled:
 
@@ -150,21 +155,36 @@ without a directory prefix:
 <skill body>
 ```
 
-Argument placeholders are `$ARGUMENTS`, `$ARGUMENTS[n]`, `$0`, `$name`, `${AGENT_SKILL_DIR}`, and `${AGENT_CONVERSATION_ID}`.
-For mutable skills and resource-backed built-ins, `${AGENT_SKILL_DIR}` resolves
-to the skill directory. For built-in skills without extracted reference files,
-`${AGENT_SKILL_DIR}` is not substituted because there is no real directory to
-read from.
+Argument placeholders are `$ARGUMENTS`, `$ARGUMENTS[n]`, `$0`, `$name`,
+`${AGENT_SKILL_DIR}`, `{baseDir}`, and `${AGENT_CONVERSATION_ID}`. For mutable
+skills and resource-backed built-ins, `${AGENT_SKILL_DIR}` and `{baseDir}` both
+resolve to the skill directory. For built-in skills without extracted reference
+files, directory placeholders are not substituted because there is no real
+directory to read from.
 
 Skill bodies may include embedded shell commands using fenced blocks that start with ```` ```! ```` or inline `!` command spans. Commands are expanded only when the skill is invoked, after argument and environment placeholder substitution. They execute through the same local bash runner and permission policy used by normal agent tool calls; in `restricted` mode the skill must grant a matching `allowed-tools` rule such as `Bash(git status:*)`.
 
 Additional files inside a mutable or resource-backed built-in skill directory
 are not inserted automatically. Skills should refer to them with
-`${AGENT_SKILL_DIR}` and ask the agent to read or execute only the specific files
-needed for the task. This keeps the default context small while still supporting
-progressive disclosure for reference Markdown files, scripts, and assets.
+`${AGENT_SKILL_DIR}` or `{baseDir}` and ask the agent to read or execute only the
+specific files needed for the task. This keeps the default context small while
+still supporting progressive disclosure for reference Markdown files, scripts,
+and assets.
 Built-in skills without extracted reference files have no adjacent files to
 read.
+
+Skill-named dependencies are binding at the agent-instruction level. When a
+loaded or selected skill names a required library, command-line tool, runtime,
+or script, Neva must first verify whether that dependency is already available
+and then install or enable it through the ordinary task environment when
+permissions, network, and policy allow. The model must not silently replace the
+dependency-backed route with a hand-written approximation, a different output
+format, or an unrelated tool merely because the dependency is missing. If the
+dependency path is blocked by permissions, unavailable network, persistent
+system changes, cost, or conflicting safety/project constraints, Neva explains
+the blocker and asks for the needed decision before using a lower-fidelity
+fallback. Any unavoidable fallback states what behavior, fidelity,
+compatibility, or verification it gives up.
 
 ## Runtime Flow
 
@@ -376,7 +396,8 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | Automatic listing | Supported. New model-invocable skills are listed once per conversation and persisted across compact restore. Mutable skills are default-ratified; path-conditional skills still wait for a matching touched file. |
 | Skill invocation | Supported through the `skill` tool and slash composer adapter. Both paths share rendering, permissions, model, and effort handling. |
 | Embedded shell | Supported for `bash` only, at invocation time, after argument and placeholder substitution. |
-| Reference files and scripts | Supported through `${AGENT_SKILL_DIR}` plus normal `file_read` or `bash` calls. They are not bulk-loaded. For invoked inline skills with resource directories, the runtime exposes that exact skill directory as a read-only file-tool root so references can be read in both dev source-tree runs and packaged app-resource runs. |
+| Reference files and scripts | Supported through `${AGENT_SKILL_DIR}` / `{baseDir}` plus normal `file_read` or `bash` calls. They are not bulk-loaded. For invoked inline skills with resource directories, the runtime exposes that exact skill directory as a read-only file-tool root so references can be read in both dev source-tree runs and packaged app-resource runs. |
+| Skill dependencies | Binding guidance. When a loaded skill names a required library, command, runtime, or script, the global system prompt tells Neva to verify and install/enable that dependency when allowed instead of silently changing route. Blocked installs require an explanation and decision before a lower-fidelity fallback. |
 | `allowed-tools` | Supported as run-scoped preapproval metadata, not as a tool visibility list. |
 | `model` and `effort` | Supported as one-turn `pi-agent-core` loop updates. |
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery for mutable skills. Built-ins load immediately even when they declare `paths`. |
@@ -389,7 +410,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
 | `skillify` | Supported as the built-in user- and model-invocable Skillify v2 workflow (`when_to_use`-gated to explicit user save requests). It uses the Tenon `.agents/skills/<skill-name>/SKILL.md` shape, previews the complete file or focused update diff, confirms through the instruction-layer `ask_user_question` path when available, and writes with existing file write/edit tools. |
 | `research` | Supported as a built-in user- and model-invocable `execution: isolated` workflow with no `agent` override. It starts an isolated child run of the current agent, filters its declared read tools through the `AgentToolActionKind` read-only catalog, and returns a compact findings/evidence report. |
-| `presentation`, `document`, `data-analysis` | Supported as immutable resource-backed built-ins with portable `references/`, `scripts/`, and `assets/`. They are goal-oriented workflows; PPTX, DOCX, XLSX, Markdown, HTML, PDF, CSV, and JSON are handled as input/output routes rather than skill identities. `/document` includes archetype/form-factor guidance plus DOCX/Markdown semantic QA. `/data-analysis` includes profiling, lightweight data contracts, workbook risk inspection, and workbook/report delivery guidance. |
+| `presentation`, `document`, `data-analysis` | Supported as immutable resource-backed built-ins sourced from enabled `linlab-skills` folders and staged into the packaged app. They are goal-oriented workflows; PPTX, DOCX, XLSX, Markdown, HTML, PDF, CSV, and JSON are handled as input/output routes rather than skill identities. `/presentation` keeps explicit PowerPoint/PPTX requests on the PPTX route: missing PPTX libraries or office automation should be installed/enabled when allowed, and HTML/PDF/hand-authored OOXML are lower-fidelity fallbacks that require an explained blocker. `/document` includes archetype/form-factor guidance plus DOCX/Markdown semantic QA, and explicit Word/DOCX requests stay on the DOCX route before Markdown/plain-text/PDF or hand-authored WordprocessingML fallbacks. `/data-analysis` keeps dependency-backed pandas/DuckDB/script workflows explicit. |
 | Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background conversation review that silently rewrites skills is not supported. |
 | Per-skill invocation permission suggestions | Not supported as a dedicated UI. The `skill` tool still goes through the global runtime permission policy, and the skill's own `allowed-tools` narrow downstream tool calls. |
 
