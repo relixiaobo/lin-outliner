@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
 import { emitAgentProjection, ids, openMockedApp } from './outlinerMock';
 
 const usage = {
@@ -293,7 +294,7 @@ test.describe('typography tokens', () => {
       ],
     };
 
-    await emitAgentProjection(page, 'mock-agent-conversation', {
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
       systemPrompt: '',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -301,7 +302,7 @@ test.describe('typography tokens', () => {
       messages: [user, assistant],
       conversation: [
         { nodeId: 'user-node', message: user, branches: null },
-        { nodeId: 'assistant-node', message: assistant, branches: null },
+        { nodeId: 'assistant-node', message: assistant, branches: null, runDurationMs: 3_000 },
       ],
       streamingMessage: null,
       isStreaming: false,
@@ -327,7 +328,7 @@ test.describe('typography tokens', () => {
       fontSize: '16px',
       lineHeight: '26px',
     });
-    await expect(cssTextMetrics(page, '.agent-process-toggle')).resolves.toEqual({
+    await expect(cssTextMetrics(page, '.agent-work-divider')).resolves.toEqual({
       fontSize: '12px',
       lineHeight: '18px',
     });

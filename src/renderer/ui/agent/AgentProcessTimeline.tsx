@@ -35,6 +35,7 @@ export function isToolCallRowActive(
 }
 
 interface AgentProcessTimelineProps {
+  answerStarted: boolean;
   expandState: AgentExpandState;
   id: string;
   index: DocumentIndex;
@@ -49,6 +50,7 @@ interface AgentProcessTimelineProps {
 }
 
 export function AgentProcessTimeline({
+  answerStarted,
   expandState,
   id,
   index,
@@ -71,12 +73,11 @@ export function AgentProcessTimeline({
     ),
     [items],
   );
-  // A lone thought (no tools, no narration) renders as an always-open body; any
-  // richer process renders the per-item timeline below. The item union is
-  // exactly reasoning|toolCall|narration, so "one item and it's a thought"
-  // captures the solo case without three throwaway classification passes.
+  // A lone thought only opens by default when it is the whole resultless process.
+  // If the turn has a final answer, reasoning still folds like a tool step so
+  // ordinary answered turns do not spill full thinking above the answer.
   const onlyItem = visibleItems.length === 1 ? visibleItems[0]! : null;
-  const soloThinkingItem = onlyItem?.type === 'reasoning' ? onlyItem : null;
+  const soloResultlessThinkingItem = !answerStarted && onlyItem?.type === 'reasoning' ? onlyItem : null;
 
   // Fold runs of consecutive tool calls into one counted activity group; thinking
   // / narration break the run (Codex's render-group split). A loaded-skill chip
@@ -144,15 +145,15 @@ export function AgentProcessTimeline({
 
   return (
     <div className="agent-process-timeline">
-      {soloThinkingItem ? (
+      {soloResultlessThinkingItem ? (
         <AgentThinkingBody
           expandState={expandState}
-          id={soloThinkingItem.id}
+          id={soloResultlessThinkingItem.id}
           index={index}
-          keyPrefix={soloThinkingItem.id}
+          keyPrefix={soloResultlessThinkingItem.id}
           onNodeReferenceOpen={onNodeReferenceOpen}
-          streaming={soloThinkingItem.streaming}
-          text={soloThinkingItem.text}
+          streaming={soloResultlessThinkingItem.streaming}
+          text={soloResultlessThinkingItem.text}
         />
       ) : (
         groups.map((group) => {

@@ -78,7 +78,8 @@
   opacity: 1;
 }
 
-.agent-process-toggle {
+.agent-work-divider,
+.agent-process-summary-row {
   display: flex;
   max-width: 100%;
   align-items: center;
@@ -90,19 +91,11 @@
   text-align: left;
 }
 
-.agent-process-toggle:hover {
-  color: var(--text-soft);
-}
-
-.agent-process-toggle:hover .agent-disclosure-indicator.is-interactive .agent-disclosure-status,
-.agent-process-toggle:focus-visible .agent-disclosure-indicator.is-interactive .agent-disclosure-status,
 .agent-tool-call-toggle:hover:not(:disabled) .agent-disclosure-indicator.is-interactive .agent-disclosure-status,
 .agent-tool-call-toggle:focus-visible:not(:disabled) .agent-disclosure-indicator.is-interactive .agent-disclosure-status {
   opacity: 0;
 }
 
-.agent-process-toggle:hover .agent-disclosure-indicator.is-interactive .agent-disclosure-chevron,
-.agent-process-toggle:focus-visible .agent-disclosure-indicator.is-interactive .agent-disclosure-chevron,
 .agent-tool-call-toggle:hover:not(:disabled) .agent-disclosure-indicator.is-interactive .agent-disclosure-chevron,
 .agent-tool-call-toggle:focus-visible:not(:disabled) .agent-disclosure-indicator.is-interactive .agent-disclosure-chevron {
   opacity: 1;
@@ -115,31 +108,9 @@
   white-space: nowrap;
 }
 
-/* Trailing disclosure chevron for the icon-free "Worked for …" header. Faint at
-   rest (it is an affordance, not a focal mark), deepens on hover/focus of the
-   toggle. Unlike the reasoning/group chevrons it stays VISIBLE at rest — Codex's
-   collapsed-turn header shows "Worked for 5m 29s ›". `chevron-right` rotates 90°
-   to point down when the timeline is expanded. */
-.agent-process-chevron {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-  transition: transform var(--motion-fast), color var(--motion-fast);
-}
-
-.agent-process-chevron.is-expanded {
-  transform: rotate(90deg);
-}
-
-.agent-process-toggle:hover .agent-process-chevron,
-.agent-process-toggle:focus-visible .agent-process-chevron {
-  color: var(--text-soft);
-}
-
-/* Codex's "Worked for" divider rule: a faint full-width hairline under the resting
-   fold line, just above the answer. Lives below the toggle (a block-level sibling,
-   so full content width) rather than as a toggle border, which would only span the
-   label+chevron and push the chevron to the far edge. `currentColor` carries the
-   block's text color so it dims with the label; @20% matches Codex `border-current/20`. */
+/* Codex's work divider rule: a faint full-width hairline below the non-interactive
+   "Working for …" / "Worked for …" status row. `currentColor` carries the block's
+   text color so it dims with the label; @20% matches Codex `border-current/20`. */
 .agent-process-rule {
   margin-top: var(--space-2);
   border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent);
@@ -151,18 +122,17 @@
   flex-direction: column;
   gap: var(--space-3);
   margin-top: var(--space-2);
-  /* No left rail or indent (Codex machine C): the process body left-aligns with
-     the "Working / Worked for {t}" divider text above it — each row's leading
+  /* No left rail or indent: the process body left-aligns with the
+     "Working / Worked for {t}" divider text above it — each row's leading
      icon column starts at the same edge as the header text, so the reasoning and
      tool rows read as a flat list under the divider, not an indented sub-tree. */
 }
 
 /* Reasoning + interim narration inside the flattened turn timeline. Codex renders
-   the process as the SAME body prose as the final answer — just the part collapsed
-   behind the "Worked for {t}" fold (machine C) — so both render at CONTENT register
-   (full markdown, answer-sized type), NOT as dim meta rows. The nested
-   `.agent-markdown` trims its own leading/trailing block margins, so no
-   first/last-child reset is needed here.
+   interim assistant narration as the SAME body prose as the final answer, so both
+   render at CONTENT register (full markdown, answer-sized type), NOT as dim meta
+   rows. The nested `.agent-markdown` trims its own leading/trailing block margins,
+   so no first/last-child reset is needed here.
 
    Codex splits these by type, so they get different size AND color:
    - Narration is interim assistant SPEECH (Codex `assistant-message`, `text-primary`)

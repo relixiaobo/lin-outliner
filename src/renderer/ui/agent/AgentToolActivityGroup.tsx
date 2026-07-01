@@ -25,8 +25,8 @@ interface AgentToolActivityGroupProps {
 
 // A run of consecutive tool calls, folded into one counted-summary disclosure
 // ("Ran 3 commands · read 2 files"), expandable to the individual tool rows.
-// This is Codex's per-tool-activity-group collapse (machine B), nested inside the
-// per-turn process fold (machine C).
+// This is the transcript's interactive activity disclosure; the top-level
+// "Working/Worked for" work divider remains non-interactive.
 export function AgentToolActivityGroup({
   conversationId,
   expandState,

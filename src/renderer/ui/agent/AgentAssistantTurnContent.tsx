@@ -45,13 +45,9 @@ export function renderAssistantBlocks(
   });
 
   if (turn.process) {
-    // ONE turn-level process fold (Codex machine C). It renders the whole
-    // pre-answer body — reasoning, interim narration, and the grouped
-    // tool-activity — through AgentProcessTimeline (the inner per-group collapse
-    // is machine B). While the turn is still WORKING it shows the body expanded
-    // with a live "Working for {t}" header; the moment the final answer starts
-    // (`answerStarted`) it auto-collapses to the "Worked for {t}" divider with the
-    // answer streaming below.
+    // Codex-style turn process: a non-interactive work divider plus the visible
+    // reasoning/interim narration/tool timeline. Only the inner reasoning/tool
+    // groups are disclosures; the top-level "Working/Worked for" row is not.
     rendered.push(
       <AgentProcessBlock
         childRunsByParentToolCallId={childRunsByParentToolCallId}

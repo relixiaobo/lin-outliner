@@ -29,10 +29,10 @@ const readResult: ToolResultMessage = {
 };
 
 describe('agent process summary', () => {
-  // The live divider is the PERSISTENT "Working for {t}" clock (Codex machine C):
-  // once the run clock is known it is the header whether the body is collapsed or
-  // expanded. Clock-less live entries stay on bare "Working" rather than replacing
-  // the divider with a thought/tool summary.
+  // The live divider is the persistent "Working for {t}" clock: once the run
+  // clock is known it is the non-interactive status row. Clock-less live entries
+  // stay on bare "Working" rather than replacing the divider with a thought/tool
+  // summary.
   test('live header shows the persistent "Working for {t}" clock once the run clock is known', () => {
     const live = {
       firstThinkingText: 'Identify relevant outline nodes',
@@ -105,7 +105,7 @@ describe('agent process summary', () => {
     expect(summarizeProcess(live)).toBe('Working');
   });
 
-  test('summarizes mixed completed process as one collapsed process row', () => {
+  test('summarizes mixed completed process as one activity status row', () => {
     expect(summarizeProcess({
       firstThinkingText: 'Identify relevant outline nodes',
       thinkingCount: 1,
@@ -156,7 +156,7 @@ describe('agent process summary', () => {
     })).toBe('Interrupted after thinking');
   });
 
-  test('sealed turn collapses to "Worked for {duration}" when the run wall-clock is known', () => {
+  test('sealed turn reports "Worked for {duration}" when the run wall-clock is known', () => {
     expect(summarizeProcess({
       firstThinkingText: 'Identify relevant outline nodes',
       thinkingCount: 1,
@@ -189,6 +189,24 @@ describe('agent process summary', () => {
       process,
       toolCallLabels,
     })).toBe('Interrupted after thinking');
+  });
+
+  test('stopped turn reports the user stop duration', () => {
+    expect(summarizeProcess({
+      firstThinkingText: 'Identify relevant outline nodes',
+      thinkingCount: 1,
+      pendingToolCallIds: new Set(),
+      results: new Map(),
+      toolCalls: [readTool],
+      turnActive: false,
+      liveElapsedMs: null,
+      stopped: true,
+      turnFailedWithoutProse: false,
+      surfaceResultlessProcess: false,
+      workedForMs: 8_000,
+      process,
+      toolCallLabels,
+    })).toBe('You stopped after 8s');
   });
 
   test('a surfaced resultless turn shows its descriptive summary, never "Worked for" (DM #240)', () => {

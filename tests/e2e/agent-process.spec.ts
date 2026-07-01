@@ -135,12 +135,9 @@ test.describe('agent process disclosure', () => {
     await expect(assistantRows).toHaveCount(1);
     const row = assistantRows.last();
     const liveProcess = row.locator('.agent-process-block').first();
-    const liveProcessToggle = liveProcess.locator('.agent-process-toggle').first();
-    // No answer yet → the body auto-expands (Codex machine C) under the persistent
-    // "Working" divider.
     await expect(liveProcess.locator('.agent-process-title').first()).toHaveText('Working');
-    await expect(liveProcessToggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(liveProcessToggle).not.toBeDisabled();
+    await expect(liveProcess.locator('.agent-work-divider')).toHaveCount(1);
+    await expect(liveProcess.locator('.agent-process-toggle')).toHaveCount(0);
     const indicator = row.getByLabel('Assistant is responding');
     await expect(indicator).toBeVisible();
     const before = await indicator.boundingBox();
@@ -161,9 +158,8 @@ test.describe('agent process disclosure', () => {
 
     await expect(assistantRows).toHaveCount(1);
     const streamedText = row.getByText('你好，我在。');
-    // Answer streaming → auto-collapsed back to the "Working" divider.
     await expect(liveProcess.locator('.agent-process-title').first()).toHaveText('Working');
-    await expect(liveProcessToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(liveProcess.locator('.agent-process-toggle')).toHaveCount(0);
     await expect(streamedText).toBeVisible();
     const textBox = await streamedText.boundingBox();
     const after = await indicator.boundingBox();
@@ -439,7 +435,7 @@ test.describe('agent process disclosure', () => {
     expect(calls.some((call) => call.cmd === 'create_image_node')).toBe(true);
   });
 
-  test('keeps completed process collapsed and expands thinking and tool details on demand', async ({ page }) => {
+  test('keeps completed process details visible with thinking and tool details available on demand', async ({ page }) => {
     const assistant = {
       role: 'assistant',
       api: 'responses',
@@ -511,16 +507,15 @@ test.describe('agent process disclosure', () => {
     });
 
     const process = page.locator('.agent-process-block').first();
-    const processToggle = process.locator('.agent-process-toggle').first();
+    await expect(process.locator('.agent-work-divider')).toHaveCount(0);
+    await expect(process.locator('.agent-process-summary-row')).toHaveCount(1);
     await expect(process.locator('.agent-process-title').first()).toHaveText('Thought · read a node · searched');
-    await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(process.locator('.agent-process-toggle')).toHaveCount(0);
     await expect(page.getByText('Current outline focuses on design-system inventory')).toBeVisible();
-
-    await processToggle.click();
-    await expect(processToggle).toHaveAttribute('aria-expanded', 'true');
 
     // The two consecutive tools fold into ONE counted tool-activity group inside
     // the flattened timeline; expand it to reach the individual tool rows.
+    await expect(process.locator('.agent-process-timeline')).toHaveCount(1);
     const activityToggle = process.locator('.agent-tool-activity-toggle').first();
     await expect(activityToggle).toHaveAttribute('aria-expanded', 'false');
     await activityToggle.click();
@@ -572,7 +567,7 @@ test.describe('agent process disclosure', () => {
     expect(toolCodeMetrics!.whiteSpace).toBe('pre');
   });
 
-  test('collapses a sealed turn to a "Worked for {duration}" header when run timing is known', async ({ page }) => {
+  test('renders a sealed turn with a non-interactive "Worked for {duration}" divider when run timing is known', async ({ page }) => {
     const assistant = {
       role: 'assistant',
       api: 'responses',
@@ -619,12 +614,68 @@ test.describe('agent process disclosure', () => {
 
     const process = page.locator('.agent-process-block').first();
     await expect(process.locator('.agent-process-title').first()).toHaveText('Worked for 1m 3s');
-    await expect(process.locator('.agent-process-toggle').first()).toHaveAttribute('aria-expanded', 'false');
+    await expect(process.locator('.agent-work-divider')).toHaveCount(1);
+    await expect(process.locator('.agent-process-toggle')).toHaveCount(0);
+    await expect(process.locator('.agent-process-timeline')).toHaveCount(1);
     // The final answer renders as prose OUTSIDE the fold.
     await expect(page.getByText('Done — the outline is updated.')).toBeVisible();
   });
 
-  test('updates a collapsed live process header in place when the turn settles', async ({ page }) => {
+  test('keeps a lone reasoning item folded when the turn has a final answer', async ({ page }) => {
+    const assistant = {
+      role: 'assistant',
+      api: 'responses',
+      provider: 'openai',
+      model: 'gpt-5.4',
+      usage,
+      stopReason: 'stop',
+      timestamp: 1_800_000_001_050,
+      content: [
+        {
+          type: 'thinking',
+          thinking: [
+            'Check whether this answer needs a source.',
+            'This second line should remain hidden until the thought row opens.',
+          ].join('\n'),
+        },
+        { type: 'text', text: 'It can be answered directly.' },
+      ],
+    };
+
+    await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
+      conversationTitle: 'Agent System',
+      systemPrompt: '',
+      model: { id: 'gpt-5.4', provider: 'openai' },
+      thinkingLevel: 'medium',
+      messages: [assistant],
+      conversation: [{
+        nodeId: 'assistant-node-lone-reasoning',
+        message: assistant,
+        branches: null,
+        runDurationMs: 4_000,
+      }],
+      streamingMessage: null,
+      isStreaming: false,
+      pendingToolCallIds: [],
+      errorMessage: null,
+    });
+
+    const process = page.locator('.agent-process-block').first();
+    const reasoning = process.locator('.agent-process-reasoning').first();
+    const reasoningToggle = reasoning.locator('.agent-reasoning-toggle');
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Worked for 4s');
+    await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(reasoning.locator('.agent-reasoning-headline')).toHaveText('Thought');
+    await expect(reasoning.locator('.agent-reasoning-gist')).toContainText('Check whether this answer needs a source.');
+    await expect(reasoning).not.toContainText('This second line should remain hidden');
+    await expect(page.getByText('It can be answered directly.')).toBeVisible();
+
+    await reasoningToggle.click();
+    await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(reasoning).toContainText('This second line should remain hidden until the thought row opens.');
+  });
+
+  test('updates a live work divider in place when the turn settles', async ({ page }) => {
     const assistant = {
       role: 'assistant',
       api: 'responses',
@@ -636,7 +687,7 @@ test.describe('agent process disclosure', () => {
       content: [
         { type: 'thinking', thinking: 'Checking the selected outline node.' },
         { type: 'toolCall', id: 'tool-read-live-collapsed', name: 'node_read', arguments: { node_id: 'node-alpha' } },
-        { type: 'text', text: 'The answer stays outside the process fold.' },
+        { type: 'text', text: 'The answer stays outside the work divider.' },
       ],
     };
     const toolResult = {
@@ -662,11 +713,11 @@ test.describe('agent process disclosure', () => {
     });
 
     const process = page.locator('.agent-process-block').first();
-    const processToggle = process.locator('.agent-process-toggle').first();
-    const beforeBox = await processToggle.boundingBox();
+    const divider = process.locator('.agent-work-divider').first();
+    const beforeBox = await divider.boundingBox();
     expect(beforeBox).toBeTruthy();
-    await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(process.locator('.agent-process-title').first()).toHaveText('Working');
+    await expect(process.locator('.agent-process-toggle')).toHaveCount(0);
 
     await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
@@ -686,15 +737,14 @@ test.describe('agent process disclosure', () => {
       errorMessage: null,
     }, 2);
 
-    await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(process.locator('.agent-process-title').first()).toHaveText('Worked for 9s');
-    const afterBox = await processToggle.boundingBox();
+    const afterBox = await divider.boundingBox();
     expect(afterBox).toBeTruthy();
     expect(Math.abs(afterBox!.y - beforeBox!.y)).toBeLessThan(1);
-    await expect(page.getByText('The answer stays outside the process fold.')).toBeVisible();
+    await expect(page.getByText('The answer stays outside the work divider.')).toBeVisible();
   });
 
-  test('keeps live DM process collapsed by default and preserves user expansion after settle', async ({ page }) => {
+  test('keeps live DM process details visible while the work divider settles', async ({ page }) => {
     const assistant = {
       role: 'assistant',
       api: 'responses',
@@ -732,19 +782,11 @@ test.describe('agent process disclosure', () => {
     });
 
     const process = page.locator('.agent-process-block').first();
-    const processToggle = process.locator('.agent-process-toggle').first();
-    await expect(processToggle).toHaveAttribute('aria-expanded', 'false');
-    await expect(processToggle).not.toBeDisabled();
     await expect(process.locator('.agent-process-title').first()).toHaveText('Working');
-    // Collapsed: no timeline body rendered.
-    await expect(process.locator('.agent-process-timeline')).toHaveCount(0);
-    await expect(page.getByText('The final answer is now streaming below the process.')).toBeVisible();
-
-    await processToggle.click();
-    await expect(processToggle).toHaveAttribute('aria-expanded', 'true');
-    // Expanded: the flattened timeline shows the reasoning row inline.
+    await expect(process.locator('.agent-process-toggle')).toHaveCount(0);
     await expect(process.locator('.agent-process-timeline')).toHaveCount(1);
-    await expect(process.locator('.agent-process-reasoning')).toContainText('Read the source node before answering.');
+    await expect(page.getByText('The final answer is now streaming below the process.')).toBeVisible();
+    await expect(process.locator('.agent-process-reasoning')).toContainText('Thought');
 
     await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'Agent System',
@@ -765,12 +807,13 @@ test.describe('agent process disclosure', () => {
     }, 2);
 
     await expect(process.locator('.agent-process-title').first()).toHaveText('Worked for 1m 3s');
-    await expect(process.locator('.agent-process-toggle').first()).toHaveAttribute('aria-expanded', 'true');
-    await expect(process.locator('.agent-process-toggle').first()).not.toBeDisabled();
+    await expect(process.locator('.agent-work-divider')).toHaveCount(1);
+    await expect(process.locator('.agent-process-toggle')).toHaveCount(0);
+    await expect(process.locator('.agent-process-timeline')).toHaveCount(1);
     await expect(page.getByText('The final answer is now streaming below the process.')).toBeVisible();
   });
 
-  test('keeps tool-free streaming prose outside the temporary Working fold', async ({ page }) => {
+  test('keeps tool-free streaming prose outside the temporary Working divider', async ({ page }) => {
     const assistant = {
       role: 'assistant',
       api: 'responses',
@@ -817,15 +860,15 @@ test.describe('agent process disclosure', () => {
       errorMessage: null,
     }, 2);
 
-    await expect(page.locator('.agent-process-block')).toHaveCount(0);
+    await expect(page.locator('.agent-process-title').first()).toHaveText('Worked for 3s');
     await expect(page.getByText('A direct answer is streaming without tools.')).toBeVisible();
   });
 
-  test('auto-expands a sealed turn that ended on a tool, surfacing its interim text instead of hiding it', async ({ page }) => {
+  test('surfaces a sealed turn that ended on a tool without a misleading worked divider', async ({ page }) => {
     // Regression: a turn whose last visible block is a tool/thought has NO trailing
-    // answer prose. Its interim text must NOT silently fold behind a collapsed
+    // answer prose. Its interim text must NOT silently sit behind a clean
     // "Worked for" header — keying the result on ANY text would do exactly that.
-    // With no result the process auto-expands so the interim narration stays read.
+    // With no result the process timeline stays visible so the interim narration stays read.
     const assistant = {
       role: 'assistant',
       api: 'responses',
@@ -869,9 +912,11 @@ test.describe('agent process disclosure', () => {
     });
 
     const process = page.locator('.agent-process-block').first();
-    // Resultless sealed turn → auto-expanded (not collapsed to "Worked for …").
-    await expect(process.locator('.agent-process-toggle').first()).toHaveAttribute('aria-expanded', 'true');
-    await expect(process.locator('.agent-process-title').first()).not.toHaveText(/Worked for/);
+    // Resultless sealed turn → no misleading "Worked for …" divider.
+    await expect(process.locator('.agent-process-toggle')).toHaveCount(0);
+    await expect(process.locator('.agent-work-divider')).toHaveCount(0);
+    await expect(process.locator('.agent-process-summary-row')).toHaveCount(1);
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Read node "node-alpha"');
     // The interim text is visible inside the fold, not hidden.
     await expect(page.getByText('Let me read the alpha node before answering.')).toBeVisible();
   });
@@ -950,9 +995,12 @@ test.describe('agent process disclosure', () => {
     });
 
     const process = page.locator('.agent-process-block').first();
-    // Resultless DM turn → auto-expanded; the lone skill tool renders directly in
-    // the flattened timeline (no nested process group).
-    await expect(process.locator('.agent-process-toggle').first()).toHaveAttribute('aria-expanded', 'true');
+    // Resultless DM turn → the lone skill tool renders directly in the flattened
+    // timeline (no nested process group and no top-level process disclosure).
+    await expect(process.locator('.agent-process-toggle')).toHaveCount(0);
+    await expect(process.locator('.agent-work-divider')).toHaveCount(0);
+    await expect(process.locator('.agent-process-summary-row')).toHaveCount(1);
+    await expect(process.locator('.agent-process-title').first()).toHaveText('Used 2 skills');
 
     const loadedCall = page.locator('.agent-tool-call').filter({ has: page.locator('.agent-loaded-skill') });
     const loaded = loadedCall.locator('.agent-loaded-skill');
@@ -1325,10 +1373,8 @@ test.describe('agent process disclosure', () => {
     await expect.poll(() => clipboardText(page)).toContain('Full persisted tool output from payload');
     expect(await clipboardText(page)).not.toContain('Preview only');
 
-    // The lone tool call folds into the result-first process block. This turn has a
-    // trailing answer, so it rests collapsed — open the turn fold, then the lone tool
-    // row inside the flattened timeline (no nested process group anymore).
-    await row.locator('.agent-process-toggle').first().click();
+    // The lone tool call stays in the always-visible flattened timeline; only the
+    // tool row itself is a disclosure.
     await row.locator('.agent-tool-call-toggle').click();
     await row.getByRole('button', { name: 'Preview output' }).click();
     const panel = page.locator('.outline-panel-surface.active-panel.is-file-preview');

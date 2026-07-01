@@ -1261,9 +1261,8 @@ export function AgentChatPanel({
         ?? (detailSpeakerAgentId ? `@${agentMentionToken(detailSpeakerAgentId)}` : dmAgentLabel)
         ?? t.agent.message.roleAssistant
       : t.agent.message.you;
-    // Result-first turn: the turn renders its final answer as prose with the
-    // working process — thinking, tools, interim narration — folded behind the
-    // collapsed "Worked for …" disclosure (renderAssistantBlocks).
+    // Result-first turn: the turn renders its final answer as prose, with earlier
+    // thinking, tools, and interim narration handled by renderAssistantBlocks.
     const copyAssistantTurn = row.isLastInTurn && getEntryRole(row.entry) === 'assistant'
       ? copyAssistantTurnForRow(row.key, row.endIndex)
       : undefined;

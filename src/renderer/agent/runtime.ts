@@ -62,7 +62,7 @@ export interface AgentMessageEntry {
    * tool call from spinning forever. Omitted when no call has settled.
    */
   toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>;
-  /** Wall-clock the producing run took, for the collapsed "Worked for …" header; null when unknown. */
+  /** Wall-clock the producing run took, for the "Worked for ..." work divider; null when unknown. */
   runDurationMs: number | null;
   /** Producing run's start, for the live "Working for {t}" ticker; null unless the run is still running. */
   runStartedAtMs: number | null;
@@ -380,9 +380,9 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       runId: null,
       runUsage: undefined,
       runDurationMs: null,
-      // No assistant entity yet → no run record; anchor the live "Working for {t}"
-      // ticker to the turn-start timestamp (last user message) until the real
-      // assistant entity (with its run `startedAt`) takes over.
+      // No assistant entity yet: anchor the live "Working for {t}" ticker to the
+      // active run, not to the selected user message. Retry/regenerate can rerun
+      // from an old user row, so user timestamps are only a final fallback.
       runStartedAtMs: activeAssistantAnchorTimestamp(entries, projection),
       turnInterrupted: false,
     });
@@ -397,10 +397,14 @@ function isHiddenOnlySystemReminder(entity: AgentRenderMessageEntity): boolean {
 }
 
 function activeAssistantEntryId(entries: AgentConversationEntry[], projection: AgentRenderProjection): string {
+  const activeRun = activeAssistantRun(projection);
+  if (activeRun) return `active-assistant:${activeRun.runId}`;
   return `active-assistant-${activeAssistantAnchorTimestamp(entries, projection)}`;
 }
 
 function activeAssistantAnchorTimestamp(entries: AgentConversationEntry[], projection: AgentRenderProjection): number {
+  const activeRun = activeAssistantRun(projection);
+  if (activeRun) return activeRun.startedAt;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index]!;
     if (entry.kind === 'message' && entry.message.role === 'user') return entry.message.timestamp;
@@ -411,6 +415,14 @@ function activeAssistantAnchorTimestamp(entries: AgentConversationEntry[], proje
     .find((entity) => entity?.role === 'user');
   if (lastUser) return lastUser.createdAt;
   return 0;
+}
+
+function activeAssistantRun(projection: AgentRenderProjection) {
+  if (projection.activeRuns.length === 0) return null;
+  const activeRun = projection.activeRunId
+    ? projection.activeRuns.find((run) => run.runId === projection.activeRunId)
+    : undefined;
+  return activeRun ?? projection.activeRuns[projection.activeRuns.length - 1]!;
 }
 
 function createActiveAssistantPlaceholder(
