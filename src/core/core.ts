@@ -158,6 +158,8 @@ const AUTO_INIT_PRIORITY: AutoInitStrategy[] = [
   'ancestor_day_node',
   'ancestor_field_value',
 ];
+const RETIRED_SETTINGS_ID = 'settings';
+const RETIRED_SETTINGS_TITLE = 'Settings';
 
 export class Core {
   private loro: LoroOutlinerDocument;
@@ -2503,7 +2505,7 @@ export class Core {
     this.ensureSystemNodeDirect(SEARCHES_ID, undefined, WORKSPACE_ID, 'Saved searches', true, now);
     this.ensureSystemNodeDirect(RECENTS_ID, 'search', SEARCHES_ID, 'Recents', true, now);
     this.ensureSystemNodeDirect(TRASH_ID, undefined, WORKSPACE_ID, 'Trash', true, now);
-    this.deleteRetiredSystemNodeDirect('settings');
+    this.migrateRetiredSettingsNodeDirect();
     this.ensureSystemNodeDirect(TAG_DAY_ID, 'tagDef', SCHEMA_ID, 'day', true, now);
     this.ensureSystemNodeDirect(TAG_WEEK_ID, 'tagDef', SCHEMA_ID, 'week', true, now);
     this.ensureSystemNodeDirect(TAG_YEAR_ID, 'tagDef', SCHEMA_ID, 'year', true, now);
@@ -2624,8 +2626,19 @@ export class Core {
     if (parentId && node.parentId !== parentId) this.loro.moveNode(id, parentId, undefined);
   }
 
-  private deleteRetiredSystemNodeDirect(id: string) {
-    if (this.loro.hasNode(id)) this.removeSubtreeDirect(id);
+  private migrateRetiredSettingsNodeDirect() {
+    if (!this.loro.hasNode(RETIRED_SETTINGS_ID)) return;
+    const state = this.snapshot();
+    const node = state.nodes[RETIRED_SETTINGS_ID];
+    if (!node) return;
+    if (isDisposableRetiredSettingsNode(state, node)) {
+      this.loro.deleteNode(RETIRED_SETTINGS_ID);
+      return;
+    }
+    const migrated = clone(node);
+    migrated.locked = false;
+    this.loro.writeNode(migrated);
+    this.loro.moveNode(RETIRED_SETTINGS_ID, LIBRARY_ID, undefined);
   }
 
   // config-as-nodes Stage 4: idempotently seed the system enum option subtrees
@@ -3862,6 +3875,39 @@ function isDisposableLegacyParaNode(node: Node, title: string) {
     && node.content.inlineRefs.length === 0
     && node.tags.length === 0
     && !node.description;
+}
+
+function isDisposableRetiredSettingsNode(state: DocumentState, node: Node) {
+  return isDisposableLegacySystemNode(node, RETIRED_SETTINGS_TITLE)
+    && !hasExternalNodeTargetReferences(state, node.id);
+}
+
+function isDisposableLegacySystemNode(node: Node, title: string) {
+  return node.type === undefined
+    && node.children.length === 0
+    && node.content.text === title
+    && node.content.marks.length === 0
+    && node.content.inlineRefs.length === 0
+    && node.tags.length === 0
+    && !node.description
+    && !node.icon
+    && !node.iconKind
+    && !node.bannerAssetId
+    && !node.bannerAlt
+    && !node.templateId
+    && !node.aiSummary
+    && !node.completedAt
+    && !node.capture;
+}
+
+function hasExternalNodeTargetReferences(state: DocumentState, targetId: string) {
+  for (const other of Object.values(state.nodes)) {
+    if (other.id === targetId) continue;
+    if (other.type === 'reference' && other.targetId === targetId) return true;
+    if ((other.type === 'search' || other.type === 'queryCondition') && other.queryTargetId === targetId) return true;
+    if (other.content.inlineRefs.some((ref) => inlineRefNodeId(ref) === targetId)) return true;
+  }
+  return false;
 }
 
 // The authoritative set of seeded system nodes (workspace sections + built-in

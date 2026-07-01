@@ -130,7 +130,9 @@ label to show that the node has been deleted. Pinned ids are dropped only when
 the node id no longer exists in the projection. The root outline renders all real
 root children (Daily notes,
 Library, Schema, Saved searches, and Trash — none hidden). The standalone
-Settings window is product chrome, not a document root section. The current
+Settings window is product chrome, not a document root section. On restore,
+an empty default legacy Settings root is removed; if that retired root has user
+content or live references, it is unlocked and moved into Library. The current
 workspace root itself is a clickable row with a compact avatar. Sidebar rows
 share one content axis; primary-nav entries and the workspace-root avatar sit on
 it with a 16px icon, but workspace-tree rows are text-only — a node's icon (its
