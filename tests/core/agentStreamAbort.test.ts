@@ -127,18 +127,21 @@ describe('agent stream abort settling', () => {
     const source = createAssistantMessageEventStream();
     const abortCtrl = new AbortController();
     const wrapped = wrapStreamWithAbortSettling(source, { abortCtrl, model: CUSTOM_RESPONSES_MODEL });
+    const toolCall = fauxToolCall('node_create', { parent_id: 'node:root', outline: '- Done' });
     const message = normalizeAssistant(
       fauxAssistantMessage([
         fauxText('I will update the node.'),
-        fauxToolCall('node_create', { parent_id: 'node:root', outline: '- Done' }),
+        toolCall,
       ], { stopReason: 'error', errorMessage: 'terminated' }),
       CUSTOM_RESPONSES_MODEL,
     );
     const iterator = wrapped[Symbol.asyncIterator]();
 
+    source.push({ type: 'toolcall_end', contentIndex: 1, toolCall, partial: message });
     source.push({ type: 'error', reason: 'error', error: message });
     source.end(message);
 
+    expect((await iterator.next()).value.type).toBe('toolcall_end');
     const event = await iterator.next();
     expect(event.value.type).toBe('done');
     if (event.value.type !== 'done') throw new Error('Expected done event.');
@@ -146,6 +149,35 @@ describe('agent stream abort settling', () => {
     expect(event.value.message.stopReason).toBe('toolUse');
     expect(event.value.message.errorMessage).toBeUndefined();
     await expect(wrapped.result()).resolves.toMatchObject({ stopReason: 'toolUse' });
+  });
+
+  test('does not salvage custom Responses tool calls that never reached toolcall_end', async () => {
+    const source = createAssistantMessageEventStream();
+    const abortCtrl = new AbortController();
+    const wrapped = wrapStreamWithAbortSettling(source, { abortCtrl, model: CUSTOM_RESPONSES_MODEL });
+    const toolCall = fauxToolCall('bash', { command: 'echo hello' });
+    const message = normalizeAssistant(
+      fauxAssistantMessage([
+        fauxText('Running command.'),
+        toolCall,
+      ], { stopReason: 'error', errorMessage: 'terminated' }),
+      CUSTOM_RESPONSES_MODEL,
+    );
+    const iterator = wrapped[Symbol.asyncIterator]();
+
+    source.push({ type: 'toolcall_start', contentIndex: 1, partial: message });
+    source.push({ type: 'toolcall_delta', contentIndex: 1, delta: '{"command":"echo hello', partial: message });
+    source.push({ type: 'error', reason: 'error', error: message });
+    source.end(message);
+
+    expect((await iterator.next()).value.type).toBe('toolcall_start');
+    expect((await iterator.next()).value.type).toBe('toolcall_delta');
+    const event = await iterator.next();
+    expect(event.value.type).toBe('error');
+    if (event.value.type !== 'error') throw new Error('Expected error event.');
+    expect(event.value.error.stopReason).toBe('error');
+    expect(event.value.error.errorMessage).toBe('terminated');
+    await expect(wrapped.result()).resolves.toMatchObject({ stopReason: 'error' });
   });
 
   test('does not salvage terminated non-custom Responses errors', async () => {

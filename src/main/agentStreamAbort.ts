@@ -8,6 +8,8 @@ import {
 import type { StreamFn } from '@earendil-works/pi-agent-core';
 import { isCustomOpenAIResponsesEndpoint } from './openAIResponsesCompat';
 
+type AssistantToolCall = Extract<AssistantMessage['content'][number], { type: 'toolCall' }>;
+
 const EMPTY_USAGE = {
   input: 0,
   output: 0,
@@ -46,11 +48,12 @@ export function wrapStreamWithAbortSettling(
 ): AssistantMessageEventStream {
   const out = createAssistantMessageEventStream();
   let latestPartial: AssistantMessage | null = null;
+  const completedToolCallIds = new Set<string>();
   let settled = false;
 
   const settleWithTerminalMessage = (message: AssistantMessage, reason: 'aborted' | 'error') => {
     if (settled) return;
-    const salvage = salvageTerminatedCustomResponsesToolUse(message, model, reason);
+    const salvage = salvageTerminatedCustomResponsesToolUse(message, model, reason, completedToolCallIds);
     if (salvage) {
       settled = true;
       out.push({ type: 'done', reason: 'toolUse', message: salvage });
@@ -84,8 +87,9 @@ export function wrapStreamWithAbortSettling(
       for await (const event of source) {
         if (settled) break;
         if ('partial' in event) latestPartial = event.partial;
+        if (event.type === 'toolcall_end') completedToolCallIds.add(event.toolCall.id);
         if (event.type === 'error') {
-          const salvage = salvageTerminatedCustomResponsesToolUse(event.error, model, event.reason);
+          const salvage = salvageTerminatedCustomResponsesToolUse(event.error, model, event.reason, completedToolCallIds);
           if (salvage) {
             settled = true;
             out.push({ type: 'done', reason: 'toolUse', message: salvage });
@@ -161,17 +165,23 @@ function salvageTerminatedCustomResponsesToolUse(
   message: AssistantMessage,
   model: Model<Api>,
   reason: 'aborted' | 'error',
+  completedToolCallIds: ReadonlySet<string>,
 ): AssistantMessage | null {
   if (reason !== 'error') return null;
   if (!isCustomOpenAIResponsesEndpoint(model)) return null;
   if (!isTerminatedResponsesStreamError(message.errorMessage)) return null;
-  const hasToolCall = message.content.some((part) => part.type === 'toolCall');
-  if (!hasToolCall) return null;
+  const toolCalls = message.content.filter(isToolCall);
+  if (toolCalls.length === 0) return null;
+  if (!toolCalls.every((toolCall) => completedToolCallIds.has(toolCall.id))) return null;
   const { errorMessage: _errorMessage, ...rest } = message;
   return {
     ...rest,
     stopReason: 'toolUse',
   };
+}
+
+function isToolCall(part: AssistantMessage['content'][number]): part is AssistantToolCall {
+  return part.type === 'toolCall';
 }
 
 function isTerminatedResponsesStreamError(errorMessage: string | undefined): boolean {
