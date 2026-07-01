@@ -26,7 +26,7 @@ mostly the *same* set of seams every agent plan was independently planning to cu
 | [[agent-scheduled-routines]] | `command` NodeType + anacron scheduler + triggered runs | **done (#165)** |
 | [[agent-generative-ui]] | Inline HTML/SVG widgets in chat | M1–M2 (P3 priority) |
 | `docs/plans/archive/agent-tool-permissions-hardening.md` | Post-#60 permission correctness/hardening | done (#154) |
-| `agent-tool-result-trim` | Model-visible tool-result trimming | shipping (#128) |
+| `agent-tool-result-trim` | Model-visible tool-result trimming | done (#128) |
 
 ## Shipped foundation (build on this — A8)
 
@@ -85,9 +85,10 @@ policy/execution; config recovery/rollback; skill curation; **main-agent registr
 unification** (the multi-agent coordinator #179 and per-agent POV #212 shipped — only
 registry unification remains); the **user-as-agent** exploration ([[agent-memory-model]]
 §4 — cross-agent memory sharing itself shipped #200). The one *active* build lane is the
-skills creative-UX (NL save-as-skill + diff/preview); the data-gated automatic associative
-retrieval stays deferred. Mid-run **`needs-input` is deferred by decision** — subagents
-surface clarifications via their terminal result, not a mid-run ask.
+skill-system tail is now security/curation only (executable support-file sandbox
+ratification + opt-in curation dry-run); the data-gated automatic associative retrieval
+stays deferred. Mid-run **`needs-input` is deferred by decision** — subagents surface
+clarifications via their terminal result, not a mid-run ask.
 
 ## Execution policy — pre-release clean cut
 

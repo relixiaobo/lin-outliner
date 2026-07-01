@@ -13,10 +13,10 @@ cross-plan event taxonomy and the protocol-surface change list this plan depends
 hot-reload, no-escalation guard) — design in `docs/spec/agent-skills.md`; a convergence pass
 (source taxonomy collapsed to `AgentSourceKind`, single skill-path resolver, ratification
 gate re-layered onto invocation); skill acceptance (the ratification loop + single-step
-undo); and a workspace-trust gate for cloned-repo `project` skills. The **next build unit is
-the creative-UX:** natural-language "save / update as a skill" + diff/`SKILL.md` preview +
-confirmation. Out of scope for now: executable-script support-file ratify+sandbox and opt-in
-curation dry-run (ride with M2 self-mod). (Lifecycle status lives in `docs/TASKS.md`.)
+undo); workspace-trust gate for cloned-repo `project` skills; and the shipped Skillify
+creative UX (v2 body, preview/confirm, and natural-language save/update routing).
+Remaining tails are executable-script support-file ratify+sandbox and opt-in curation
+dry-run (ride with M2 self-mod). (Lifecycle status lives in `docs/TASKS.md`.)
 
 **Convergence pass.** A design review found the M1 skill implementation had three seams
 worth fixing pre-launch (see *Governance layering & single-source identity* below): a
@@ -26,8 +26,8 @@ than it needed to be. The fix landed as **one convergence PR (#174)** that colla
 `source` taxonomy, gave skill-path identity a single source of truth, and re-layered
 governance along the cc-2.1 split (validation→load, no-escalation→invocation,
 model-invocability→listing). The `types.ts` interface change rode **in the same PR** (PM
-call — not carved out). It was the prerequisite for the remaining creative-UX work
-(`save as skill` + preview/confirm), which now sits cleanly on top.
+call — not carved out). It was the prerequisite for the Skillify v2 creative-UX work
+(`save as skill` + preview/confirm), which later shipped on top.
 
 ## Goal
 
@@ -63,12 +63,12 @@ embedded-shell expansion; `allowed-tools` as **run-scoped preapproval, not a
 visibility allowlist** (`agent-skills.md:189`); per-invocation `model` / `effort`
 override; `context: fork`.
 
-**M1 implementation in this branch adds**: code-registered immutable `built-in`
-skills, slash-only `/skillify`, governed self-authoring through `file_write` /
-`file_edit`, skill-content validation and no-escalation guards, registry
-hot-reload after successful skill writes, and `skill.created` / `skill.patched` /
-`skill.replaced` audit events.
-Rollback UI and opt-in curation remain later work.
+**Shipped implementation includes**: code-registered immutable `built-in` skills,
+slash-only `/skillify`, governed self-authoring through `file_write` / `file_edit`,
+skill-content validation and no-escalation guards, registry hot-reload after
+successful skill writes, `skill.created` / `skill.patched` / `skill.replaced` audit
+events, Skillify v2 preview/confirmation, and natural-language routing into the
+Skillify path. Opt-in curation remains later work.
 
 ## Design
 
@@ -132,8 +132,8 @@ fix the skill that failed
 
 ### Skillify Upgrade — creative UX execution unit
 
-**Shape: ONE complete feature in one PR.** This is the remaining creative-UX unit
-of this plan, not a new skill subsystem. It upgrades the built-in `/skillify`
+**Shape: ONE complete feature in one PR.** This creative-UX unit shipped as #230
+and #271, not as a new skill subsystem. It upgrades the built-in `/skillify`
 workflow from "thin write guidance" to a Tenon-native capture/update workflow,
 while continuing to use the existing skill runtime, existing file tools, and the
 existing ratification/acceptance model.
@@ -304,19 +304,14 @@ automatic invocation.
 - No renderer visual verification is required unless the implementation adds a
   dedicated preview surface, which this plan does not require.
 
-#### Collision check (2026-06-13)
+#### Collision check
 
-Open PRs reviewed:
-
-- #229 `cc-2/agent-workdir-relocation` touches agent file/workdir tools and
-  adjacent `agent-tool-design` / permission docs. No direct overlap with
-  `/skillify`, `agentSkills.ts`, or `docs/spec/agent-skills.md`.
-- #227 `codex/file-preview-pdf` touches preview renderer/package metadata. No
-  overlap.
-
-No blocking collision. If #229 edits the same paragraph in
-`docs/spec/agent-tool-design.md`, rebase and keep the Skillify note as a narrow
-clarification rather than a broad rewrite.
+Last refreshed 2026-07-01: no open PR currently claims `/skillify`,
+`agentSkills.ts`, or `docs/spec/agent-skills.md`. The historical adjacent PRs
+reviewed when this section was drafted have merged: #229
+`cc-2/agent-workdir-relocation` and #227 `codex/file-preview-pdf`. If a future
+branch edits the same `docs/spec/agent-tool-design.md` paragraph, keep the
+Skillify note as a narrow clarification rather than a broad rewrite.
 
 **Write requirements** (from self-modification §7, carried verbatim in intent):
 
@@ -539,8 +534,8 @@ deliberately conservative (self-modification §8):
 - **M1 convergence** — collapse the `source` taxonomy, single skill-path resolver, and
   governance re-layering (validation→load, no-escalation→invocation ratification,
   model-invocability→listing). One PR; interface change rides in-PR. See *Governance
-  layering & single-source identity*. Prerequisite for the creative-UX work
-  (`save as skill` + preview/confirm).
+  layering & single-source identity*. Prerequisite for the shipped Skillify v2
+  creative-UX work (`save as skill` + preview/confirm).
 - **M2 (off-floor + extension)** — opt-in curation **dry-run reports** (agent-created
   only). Skill-declared hooks register as run-scoped or conversation-scoped
   transients and ride the hooks work in [[agent-self-modification]] (on the
@@ -550,7 +545,7 @@ deliberately conservative (self-modification §8):
 
 - **Compact card vs full diff** for explicit user-requested skill writes by default?
   (Now an instruction-layer concern — carried in `skillify` like cc-2.1, resolved in the
-  creative-UX PR, not the convergence PR.)
+  creative-UX PR (#230), not the convergence PR.)
 - ~~**Writable additional dirs**~~ — **resolved (convergence):** recognition ≠ permission.
   All real skill dirs are recognized/governed via the single resolver; writability is a
   separate permission policy (default read-only), denied at the permission layer.
@@ -578,13 +573,15 @@ deliberately conservative (self-modification §8):
 - [x] Confirm binding semantics: `AgentDefinition.skills` selects over the unified
       library; document that there is no per-agent storage.
 - [x] Slash-only built-in `/skillify` workflow.
-- [ ] **Skillify Upgrade PR** — natural-language "save/update this as a skill"
-      handling, Skillify v2 capture/update prompt, preview/confirmation contract,
-      conservative `allowed-tools` guidance, and Tenon namespace tests. See
-      *Skillify Upgrade — creative UX execution unit* above.
+- [x] **Skillify v2 body** — capture/update prompt, preview/confirmation
+      contract, conservative `allowed-tools` guidance, and Tenon namespace tests
+      shipped in #230. See *Skillify Upgrade — creative UX execution unit*
+      above.
+- [x] **Natural-language Skillify routing** — explicit "save/update/fix this as a
+      skill" requests normalize to the `/skillify` path; shipped in #271.
 - [x] Skill-content write classification for `.agents/skills/**` (permission / audit).
-- [ ] Diff / full-`SKILL.md` preview + confirmation carried by the Skillify
-      Upgrade PR; no new model-facing skill CRUD tool.
+- [x] Diff / full-`SKILL.md` preview + confirmation carried by the Skillify v2
+      body (#230); no new model-facing skill CRUD tool.
 - [x] Provenance metadata in tool details + `skill.created` / `skill.patched` /
       `skill.replaced` events.
 - [x] **PR A — skill acceptance** (close the ratification loop) — **merged #175**: explicit

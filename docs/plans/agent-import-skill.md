@@ -200,9 +200,12 @@ Staging-first (no dirty data in the main tree until accepted); bash / file_write
 - Medium tier: what exactly "downgraded fields" become — a plain child line
   `name: value`, or the value as a child node under a label?
 
-## Collision check (2026-06-04)
+## Collision check
 
-No overlap. Open PRs #92/#96 (OAuth), #97 (field-value rows) are unrelated.
+Last refreshed 2026-07-01: no open PR currently claims this import surface. The
+historical adjacent PRs that existed when this plan was drafted have all merged:
+#92/#96 (OAuth) and #97 (field-value rows). They are still adjacent background,
+not active blockers.
 Adjacent plans are complementary, not conflicting: [[agent-self-modification]]
 (skill authoring — enables save-as-adapter), `agent-ask-user-question-tool.md`
 (the dialog mechanism — soft dependency, see §2), `lazy-like-global-launcher.md`

@@ -137,11 +137,11 @@ follows whatever is chosen.
 
 ## Collision check
 
-- `gh pr list` + scan of `docs/TASKS.md` + grep of the intended files against
-  open-PR scopes: this plan's edits are confined to `src/renderer/ui/icons.ts`,
-  three resolver files (`AgentToolCallBlock.tsx`, `AgentMessageRow.tsx`,
-  `DefinitionConfigPanel.tsx`), one call site (`NodeContextMenu.tsx`), and a
-  spec paragraph in `design-system.md`.
+- Last refreshed 2026-07-01: no open PR currently claims this icon-semantics
+  surface. This plan's edits are confined to `src/renderer/ui/icons.ts`, three
+  resolver files (`AgentToolCallBlock.tsx`, `AgentMessageRow.tsx`,
+  `DefinitionConfigPanel.tsx`), one call site (`NodeContextMenu.tsx`), and a spec
+  paragraph in `design-system.md`.
 - **Roadmap boundary contract** (`docs/plans/ui-quality-roadmap.md`): no other
   Layer-1/2/3 plan touches icon glyph choices — `composition-rhythm` owns
   context-menu glass/radius (not its item glyphs), `button-primitive` owns button

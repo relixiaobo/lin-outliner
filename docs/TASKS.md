@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356**) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358) |
@@ -31,7 +31,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-06-23).** A Dream-precision + file-reader wave merged today: **#319** (Dream
+**In flight (2026-07-01).** Open PR queue is currently empty. A Dream-precision + file-reader wave
+merged 2026-06-23: **#319** (Dream
 remembers-nothing + truncation gating), **#320** (manual-Dream thin-data pre-check), **#321** (file-only
 preview readers), and **#322** (`agent-pdf-tool-path`, codex-3 — native PDF `input_file` payloads on
 OpenAI Responses models; `/code-review high` gate + doc-confirmed provider contract). #322 seeded the
@@ -56,7 +57,10 @@ completed*). The agent subsystem portfolio is otherwise mature (single-agent col
 invariant, the IM-native memory/channel spine, the 2026-06-22 Codex-transcript wave); the active build
 frontier remains the **command-surface / performance / UI-quality / files** lanes in the **Backlog** —
 start at *Top of queue*. The full shipped history is in **Recently completed**; small unclaimed
-follow-ups are collected under Backlog § *Deferred follow-ups & carried TODOs*.
+follow-ups are collected under Backlog § *Deferred follow-ups & carried TODOs*. **2026-07-01:** #361
+added the Browser Control and Computer Control implementation plans as active P1 agent-capability
+tracks; both are implementation-pending and still require their hard safety / helper-packaging
+decisions before code.
 
 The one explicitly **deferred** capability is automatic associative retrieval (memory, data-gated
 — Backlog § Agent capabilities); #302 then superseded it with pull-only recall.
@@ -85,8 +89,9 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
    `dark-mode-contrast-pass` (runs **last**, cross-cutting light+dark pass). `keyboard-a11y` shipped #273.
 5. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
    API-key/Claude-Pro control); presentation-only, light/dark gate.
-6. **`agent-skills-authoring` diff/preview** (P1 tail) — the remaining creative-UX; NL save-as-skill
-   routing already shipped (#271).
+6. **`agent-skills-authoring` security/curation tails** (P1 tail) — Skillify v2 body, preview/confirm,
+   and NL save-as-skill routing shipped (#230/#271); remaining tails are executable support-file
+   ratify+sandbox and opt-in curation dry-run.
 7. **`file-preview` tail** (P2) — Office best-effort renderers and any later static URL-reader extraction.
    Media streaming, direct URL preview, preview-first links, and sandboxed local HTML shipped in #345
    (EPUB #339/#344, PDF #227, web-native basics #210 already in).
@@ -97,7 +102,9 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
 **Needs design / escalation before build** (not in the queue yet): `third-party-skill-import` (write
 the plan first), `launcher-provider-expansion`, the directional agent tails
 (`agent-self-modification` · `agent-generative-ui` · `agent-import-skill` — escalate the capability
-boundary), and `browser-extension-integration` (record-only, **not approved to build**).
+boundary), `agent-browser-control` / `agent-computer-control` (plans merged #361; settle the hard
+prohibition, browser-adoption, and helper-packaging decisions before implementation), and
+`browser-extension-integration` (record-only, **not approved to build**).
 
 The **agent program** (`agent-program`, `meta`) is PM-ratified and its whole arc — foundation
 through the multi-agent spine, **M0 → M3** — has fully landed (M0/M0.5 foundation · M1
@@ -210,9 +217,12 @@ before any directional/security-sensitive build.
   hot-reload, no allowed-tools self-escalation, opt-in curation). Extracted from
   conversation-model (§Skills) + self-modification (§7/§8) so skills live in one place.
   **Skillify v2 body shipped (#230)** and **NL save-as-skill routing shipped
-  (#271)** — explicit natural-language "save/update/fix this as a skill" requests
-  now normalize to the direct `/skillify` prompt path (gated on slash skills, not
-  automatic listing); remaining active work is the **diff/preview creative-UX**.
+  (#271)** — `/skillify` now previews the complete `SKILL.md` or focused update
+  diff, confirms before writing, and explicit natural-language "save/update/fix
+  this as a skill" requests normalize to the direct `/skillify` prompt path
+  (gated on slash skills, not automatic listing). Remaining active work is the
+  **security/curation tail**: executable support-file ratify+sandbox and opt-in
+  curation dry-run.
   See `docs/plans/agent-skills-authoring.md`.
 - **agent-self-modification** (P1, M1–M3, **slimmed by the reorg**) — controlled
   self-maintenance: self-observation (`runtime_status` / doctor), the cc-2.1-style
@@ -445,6 +455,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **browser-computer-control-plans** (`codex/browser-computer-control-plans`, PR #361, codex,
+  merged 2026-07-01, plan-track) — adds active P1 implementation plans for Tenon-native Browser Control
+  and Computer Control agent tool families. Browser Control maps the useful `browser-pilot` surface into
+  first-party CDP-backed tools with model-visible screenshots/payload refs, network inspection/
+  interception, auth/dialog/tab/frame support, and a resource-backed `browser-control` built-in skill;
+  download management stays outside the parity track. Computer Control maps the useful
+  `computer-pilot` / `cu` surface into main-process macOS desktop tools with strict `execFile` argv
+  builders, app-targeted method audit/verification semantics, payload-backed visual results, and a
+  resource-backed `computer-control` built-in skill. Both plans remain implementation-pending and
+  directional/security-sensitive. **Gate (main):** deep document review against both reference projects
+  found stale built-in-skill packaging wording, an incorrect `cu` paste method name, and missing
+  `bp net --after` coverage; codex fixed all before merge. Verified on the merge: `bun run docs:check`
+  and `git diff --check`. Shape (b), active plan files: `docs/plans/agent-browser-control.md` and
+  `docs/plans/agent-computer-control.md`.
 
 - **linlab-built-in-skills** (`codex-3/linlab-built-in-skills`, PR #359, codex-3,
   merged 2026-07-01, fast-track) — moves the user-visible portable artifact
@@ -1447,7 +1472,8 @@ anything.
   question/explain guard) and made NL invoke failures degrade to normal chat instead of throwing.
   Re-verified by main on the merged tree (`#271` + `#270`): typecheck + skill suites (100/0) +
   `docs:check` green; all confirmed false positives now fall back to normal chat. Spec folded into
-  `docs/spec/agent-skills.md`; diff/preview creative-UX still pending on the plan.
+  `docs/spec/agent-skills.md`; executable support-file sandboxing and curation dry-run remain pending
+  on the plan.
 - **Goal-oriented built-in skills** (codex-4, PR #270) — three resource-backed `built-in` skills on
   top of the shipped `bundled-built-in-skill-resources` (#269): **`/presentation`** (decks/talks/PPTX/
   HTML decks/PDF handouts), **`/document`** (memos/briefs/reports/DOCX/Markdown/redlines), and
@@ -1864,8 +1890,8 @@ anything.
   unrelated commits (no file overlap with main since merge-base), typecheck +
   `agentSkills` test (42 pass / 0 fail) green on the merged state; manual +
   automated gate (content + test change — no billed code-review). The
-  `agent-skills-authoring` plan stays `in-progress` (NL save-as-skill +
-  diff/preview creative-UX remain).
+  `agent-skills-authoring` plan stays `in-progress` (NL save-as-skill routing,
+  executable support-file sandboxing, and curation dry-run remain).
 - **channel-async-message-bus** (cc, PR #231, plan-track) — Channels now behave
   like an async IM group: an addressed `agent_send_message` **returns on
   acceptance** (enqueue + project), not when the addressed run finishes, instead of
@@ -2783,8 +2809,9 @@ anything.
   (protocol + permission surface) surfaced 1 finding — a CRLF/BOM hash-domain mismatch that fail-opened the
   gate when an agent edited a CRLF/BOM-authored skill; fixed in `33ae703` via a canonical `skillContentHash`
   shared by the record + load sides, independently re-checked on the merged tree. typecheck + `test:core`
-  780/0 + `test:renderer` 389/0; spec updated in the same change (A6). Tail: PR A (NL save-as-skill +
-  preview/confirm/acceptance) and a workspace-trust gate for cloned-repo `project` skills are named follow-ups.
+  780/0 + `test:renderer` 389/0; spec updated in the same change (A6). Follow-ups now stand as
+  later shipped Skillify v2 / NL routing (#230/#271) plus the remaining executable support-file
+  sandbox and curation dry-run tails.
 - **launcher: root fix for dock icon + first-⌘Q** (cc, PR #171) — investigation found the reported symptoms
   were **two independent bugs**, superseding PR #170's show/hide toggle and the dock-icon fast-track. (1) The
   launcher's all-Spaces behavior transformed the app to an accessory process (`UIElementApplication`), dropping

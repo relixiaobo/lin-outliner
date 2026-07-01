@@ -229,16 +229,16 @@ NOT carried — it is replaced by the chip rail + WYSIWYG verb rows):
   call + a main→renderer focus-agent-surface channel (mirrors the node-navigate
   channel) to open/seed the panel session.
 
-## Collision self-check (2026-06-04)
+## Collision self-check
 
-Open PRs: none. The eventual build will touch `CommandPalette.tsx`, the launcher
+Last refreshed 2026-07-01: no open PR currently claims this command-surface
+work. The eventual build will touch `CommandPalette.tsx`, the launcher
 (`src/main/launcher/*`, `src/renderer/launcher/*`), the agent panel, and the
-command/verb engine — overlapping with the launcher follow-ups (cc-2) and the
-verb/retrieval engine (`search-retrieval-stack`, now shipped via #111). Because
-build is **deferred** (the design is ratified; a dev still drafts the build
-one-pager), there is no active collision now; the build one-pager must re-run this
-check and coordinate sequencing with whatever launcher/retrieval branches are then
-in flight.
+command/verb engine. The old launcher follow-ups have folded into this plan, and
+the verb/retrieval dependency shipped via #111. Because build is **deferred** (the
+design is ratified; a dev still drafts the build one-pager), there is no active
+collision now; the build one-pager must re-run this check and coordinate
+sequencing with whatever launcher/retrieval branches are then in flight.
 
 ## Checklist (design phase)
 

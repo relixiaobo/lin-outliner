@@ -150,10 +150,11 @@ default so the pass isn't blocked.
 
 ## Collision check
 
-- **`gh pr list`:** #119 (cc/incremental-projection — core↔renderer projection
-  protocol, no CSS) and **#118** (codex/settings-macOS-clarity) are both **merged**;
-  #118's tokens (added `--inset-hairline`, uses `--border-subtle`) don't affect
-  this pass's targets.
+- Last refreshed 2026-07-01: no open PR currently claims this dark-mode contrast
+  pass. The historical adjacent PRs #119 (cc/incremental-projection — core↔renderer
+  projection protocol, no CSS) and #118 (codex/settings-macOS-clarity) are both
+  merged; #118's tokens (added `--inset-hairline`, uses `--border-subtle`) don't
+  affect this pass's targets.
 - **Settings sites:** the report cites `settings-provider-sheet.css:202,408`
   (plain-success text) and other `settings-*.css` sites. This pass's fix is a
   **token nudge in `theme-dark.css`** — it does **not** edit any `settings-*.css`

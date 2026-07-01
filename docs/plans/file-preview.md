@@ -8,8 +8,9 @@ shell and one renderer registry should serve all of them.
 
 Plain click opens the preview in the current panel with Back returning to the
 previous view. Cmd/Ctrl-click opens the preview in a split panel so a user can
-read beside their outline. URLs use reader-mode preview with "open original" as
-the escape hatch.
+read beside their outline. URLs open in a hardened split preview webview with
+"open original" as the escape hatch; static reader extraction is now an optional
+follow-up.
 
 ## Goal
 
@@ -41,8 +42,10 @@ the escape hatch.
 - **Replacing inline block rendering**: `ImageRow` and `AttachmentRow` keep
   rendering files inside the outline. This plan is the destination opened from
   those rows.
-- **An in-app live browser**: remote URLs are reader-mode static previews only.
-  Real interactive pages belong to the browser-extension/CDP plan.
+- **An agent-control browser**: ordinary remote URLs open in a hardened preview
+  webview only. Browser automation, capture/control sessions, cookies, uploads,
+  network interception, and logged-in browser state belong to the browser-control
+  plan.
 - **Embeds**: YouTube/Twitter iframes and other live embed cards are separate
   (`embed-strategy.md`). Reader-mode article extraction is not an embed.
 - **High-fidelity Office rendering**: docx/xlsx/pptx are best-effort
@@ -52,12 +55,9 @@ the escape hatch.
 
 ## Current State And Collision Check
 
-Run 2026-06-12:
-
-- `gh pr list` shows #208 (`codex-3/tana-style-references`) touching reference
-  derivation/UI/core files, but not this plan. Future implementation must
-  re-check collision before wiring the click router because #208 changes nearby
-  reference surfaces.
+Last refreshed 2026-07-01: no open PR currently claims the remaining file-preview
+tail. The old nearby #208 `codex-3/tana-style-references` branch merged on
+2026-06-12; it no longer blocks this plan.
 - `workspace-tabs-to-single-pane` shipped as PR #85. The old blocker is gone.
   The spec now records an extensibility seam for `file-preview`, but per-panel
   history is still outliner-only (`pageBackStack: NodeId[]`). PR 1 must
@@ -123,8 +123,9 @@ Rationale:
 - Agent payloads are event-store files with conversation/run scope. Their
   identity is `(conversationId, runId?, payloadId)`; renderer code must not
   infer payload filesystem paths.
-- URLs are remote resources. Main fetches/extracts/sanitizes; renderer receives
-  static reader content, never a live remote page.
+- URLs are remote resources. The shipped loose URL preview source is a normalized
+  `http(s)` URL + title rendered by a sandboxed webview; main fetch/extract/
+  sanitize remains only for the optional static reader follow-up.
 
 ### 2. PreviewSource
 
@@ -151,9 +152,6 @@ type PreviewSource =
       id: string;
       url: string;
       title: string;
-      html: string;
-      byline?: string;
-      siteName?: string;
     };
 ```
 
@@ -211,7 +209,7 @@ Initial renderers:
 | PDF | pdf.js canvas | missing today | Local worker; same-origin internal URL |
 | Audio/video | native media elements | none | Requires streaming/Range |
 | Office | docx/xlsx/pptx best effort | missing/TBD | Separate PR after library verification |
-| URL article | sanitized static reader HTML | defuddle/linkedom present | Remote image policy required |
+| URL web page | sandboxed preview webview | Electron webview | Shipped in #345; static reader extraction remains optional |
 | Unknown/binary | fallback metadata card | none | Open/reveal/export only |
 
 ## Routing Coverage
@@ -223,13 +221,13 @@ node          -> existing node navigation
 local-file    -> file-preview target
 asset         -> file-preview target
 agent-payload -> file-preview target
-url           -> url-reader target
+url           -> URL preview target
 ```
 
 Surfaces to wire:
 
 - Outliner inline local-file refs.
-- Outliner link marks (URL reader target).
+- Outliner link marks (URL preview target).
 - Outliner `AttachmentRow` and `ImageRow` open actions (`asset` target).
 - Agent message inline file refs (`local-file` target when path-backed).
 - Agent user/answer attachments with payload refs (`agent-payload` target).
@@ -294,21 +292,21 @@ paths:
 - Debug-only payloads remain debug-scoped unless a normal conversation row
   explicitly references them.
 
-### URL reader
+### URL preview
 
-- Main fetches `https?://` URLs only.
-- Extract with defuddle + linkedom.
-- DOMPurify all generated HTML before rendering.
-- Remote images are not allowed directly by CSP. Choose one policy in the URL
-  PR: proxy-through-main, inline cached images, or strip/placeholders.
-- "Open original" uses `shell.openExternal` after URL validation.
+- Shipped loose URL previews normalize `https?://` targets and render them in a
+  sandboxed preview webview. "Open original" uses `shell.openExternal` after URL
+  validation.
+- Optional static reader extraction, if later desired, would add main fetch /
+  defuddle / DOMPurify / remote-image policy work as its own complete PR.
 
 ## Security Checklist
 
 - Treat every source as untrusted bytes even when Lin owns the storage.
 - Keep Node out of renderer; renderer sees only internal URLs/metadata/preload
   methods.
-- DOMPurify every file-to-HTML product: markdown, docx, pptx, and URL reader.
+- DOMPurify every file-to-HTML product: markdown, docx, pptx, and any future
+  static URL reader.
 - Render SVG as `<img>`, never inline.
 - Do not expose raw local paths in internal URLs.
 - Do not let payload refs become arbitrary file-read handles; scope them through
@@ -338,9 +336,9 @@ paths:
   are meant to be visible in conversation UI.
 - `launcher-provider-expansion`: captures need preview/open-original for
   `OriginalResourceRef`. This plan should be the shared destination.
-- `browser-extension-integration`: remote rich capture/control is separate; URL
-  reader remains static preview.
-- `embed-strategy`: live embeds stay separate from reader-mode URL preview.
+- `browser-extension-integration` / `agent-browser-control`: remote rich capture
+  and browser automation are separate from the passive URL preview webview.
+- `embed-strategy`: live embeds stay separate from URL preview.
 
 ## Open Questions
 
@@ -351,7 +349,8 @@ paths:
   As", or open a materialized copy under the agent local file root?
 - Which workspace panel hosts a preview opened from the agent dock: focused
   panel, active panel, first panel, or always a split panel?
-- URL reader remote image policy: proxy, inline cached image, or strip.
+- Static URL reader remote image policy, if that follow-up ships: proxy, inline
+  cached image, or strip.
 - docx renderer: mammoth (semantic) vs docx-preview (visual).
 - pptx renderer library remains unverified.
 - Whether URL rich refs should become `ReferenceTarget.remote-url` in PR 5, or
