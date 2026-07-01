@@ -106,6 +106,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Custom OpenAI endpoints keep the Responses API for catalog models (PR #354, codex)** —
+  custom OpenAI-compatible provider rows now preserve the catalog model's API adapter when the selected
+  model is known, so Responses models such as `gpt-5.5` keep `openai-responses` instead of being routed
+  through the Chat Completions compatibility shape. Unknown proxy-only models still default to
+  `openai-completions`, and the connection-test `/models` discovery probe now applies the same catalog
+  lookup before sending its bounded ping. Provider stream failures render inline only when the terminal
+  assistant message has `stopReason: "error"`, preserving partial output while leaving user aborts as
+  completed aborted turns. **Gate (main):** code review found one missed connection-test path; codex fixed
+  it with a regression. Verified with typecheck, full `test:core`, `docs:check`, and `git diff --check`.
 - **Active-run tail re-anchored after compact (PR #351, codex-2)** — auto compact during an
   in-flight provider run no longer leaves the run's in-memory tail pointing at the pre-compact
   assistant/tool branch. Later assistant or tool-result segments from that same run now append after

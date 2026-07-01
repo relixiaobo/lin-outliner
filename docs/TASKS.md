@@ -426,6 +426,20 @@ anything.
 
 ## Recently completed
 
+- **custom-endpoint-responses-api** (`codex/custom-endpoint-responses-api`, PR #354, codex,
+  merged 2026-07-01, fast-track) — fixes custom OpenAI-compatible endpoints so known catalog models keep
+  their native API adapter through the internal `tenon-custom:<providerId>` route. OpenAI Responses models
+  such as `gpt-5.5` now run through `openai-responses` behind a custom base URL; only unknown proxy-only
+  model ids fall back to `openai-completions`. The provider row connection test's `/models` discovery probe
+  uses the same catalog lookup before its bounded ping, so validation no longer exercises the stale Chat
+  Completions request shape for discovered Responses models. Provider stream termination now marks an
+  assistant message failed inline only for terminal `stopReason: "error"` messages while preserving partial
+  content; user aborts remain completed aborted turns. `docs/spec/agent-pi-mono-implementation.md` records
+  the as-built custom-endpoint contract. **Gate (main):** formal review found one missed probe path; codex
+  fixed it with a regression. Verified on final PR head and merge: typecheck, targeted provider/runtime
+  tests, full `test:core` 1146/0, `docs:check`, and `git diff --check`. Fast-track, **shape (a)**,
+  *no plan file*.
+
 - **agent-node-edit-behavior** (`codex-3/node-description-guidance`, PR #353, codex-3,
   merged 2026-07-01, fast-track) — makes agent-facing outline edits closer to normal
   user outline behavior. Agent node-tool guidance now steers ordinary structure into
