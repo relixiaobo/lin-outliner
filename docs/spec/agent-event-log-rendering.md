@@ -1168,7 +1168,9 @@ Rules:
   leads with its **tool-type icon by default — success carries NO badge**. The
   past-tense verb ("Fetched web …", "Read a node") already reads as success, so a
   green success check is redundant noise; a **done** step shows its plain tool icon.
-  Unknown tools use a neutral generic-tool glyph, never a warning triangle; warning
+  Canonical tool rows use localized, user-readable verb phrases ("Read file …",
+  "Searched file contents …", "Used skill …", "Asked user …"); raw tool ids are
+  reserved for genuinely unknown fallback tools. Unknown tools use a neutral generic-tool glyph, never a warning triangle; warning
   glyphs are reserved for real warning/error surfaces. Only states that need
   attention override the tool glyph: **running** uses the spinning ring; **failed**
   uses the dedicated error glyph inside a subtle danger ring (`--status-danger` /40

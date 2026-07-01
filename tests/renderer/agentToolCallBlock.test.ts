@@ -136,6 +136,68 @@ describe('agent tool call block', () => {
     expect(getToolIcon(toolCall('mystery_tool'))).toBe(GenericToolIcon);
   });
 
+  test('summarizes canonical tools with readable labels instead of raw tool ids', () => {
+    const cases: Array<{
+      args?: Record<string, unknown>;
+      done: string;
+      name: string;
+      pending: string;
+    }> = [
+      { name: 'bash', args: { command: 'git status\npwd' }, pending: 'Running command "git status"', done: 'Ran command "git status"' },
+      { name: 'task_stop', args: { task_id: 'task-1' }, pending: 'Stopping task "task-1"', done: 'Stopped task "task-1"' },
+      { name: 'file_read', args: { file_path: 'notes.md' }, pending: 'Reading file "notes.md"', done: 'Read file "notes.md"' },
+      { name: 'file_glob', args: { pattern: '**/*.ts' }, pending: 'Finding files "**/*.ts"', done: 'Found files "**/*.ts"' },
+      { name: 'file_grep', args: { pattern: 'needle' }, pending: 'Searching file contents "needle"', done: 'Searched file contents "needle"' },
+      { name: 'file_edit', args: { file_path: 'src/app.ts' }, pending: 'Editing file "src/app.ts"', done: 'Edited file "src/app.ts"' },
+      { name: 'file_write', args: { file_path: 'reports/report.md' }, pending: 'Writing file "reports/report.md"', done: 'Wrote file "reports/report.md"' },
+      { name: 'file_delete', args: { file_path: 'old.log' }, pending: 'Deleting file "old.log"', done: 'Deleted file "old.log"' },
+      { name: 'node_create', args: { parent_id: 'parent' }, pending: 'Creating node under "parent"', done: 'Created node under "parent"' },
+      { name: 'node_read', args: { node_id: 'node-1' }, pending: 'Reading node "node-1"', done: 'Read node "node-1"' },
+      { name: 'node_edit', args: { node_id: 'node-1' }, pending: 'Editing node "node-1"', done: 'Edited node "node-1"' },
+      { name: 'node_delete', args: { node_id: 'node-1' }, pending: 'Deleting node "node-1"', done: 'Deleted node "node-1"' },
+      { name: 'node_delete', args: { node_id: 'node-1', restore: true }, pending: 'Restoring node "node-1"', done: 'Restored node "node-1"' },
+      { name: 'node_search', args: { outline: 'status' }, pending: 'Searching nodes "status"', done: 'Searched nodes "status"' },
+      { name: 'operation_history', args: { action: 'list' }, pending: 'Checking operation history', done: 'Checked operation history' },
+      { name: 'operation_history', args: { action: 'undo' }, pending: 'Undoing operation', done: 'Undid operation' },
+      { name: 'operation_history', args: { action: 'redo' }, pending: 'Redoing operation', done: 'Redid operation' },
+      { name: 'web_search', args: { query: 'lucide icons' }, pending: 'Searching the web "lucide icons"', done: 'Searched the web "lucide icons"' },
+      { name: 'web_fetch', args: { url: 'https://example.com/docs' }, pending: 'Fetching web page https://example.com/docs', done: 'Fetched web page https://example.com/docs' },
+      { name: 'recall', args: { query: 'preferences' }, pending: 'Recalling memory "preferences"', done: 'Recalled memory "preferences"' },
+      { name: 'dream', pending: 'Dreaming memory', done: 'Dreamed memory' },
+      { name: 'past_chats', args: { query: 'prior decision' }, pending: 'Searching past chats "prior decision"', done: 'Searched past chats "prior decision"' },
+      { name: 'past_chats', args: { recent: true }, pending: 'Checking recent chats', done: 'Checked recent chats' },
+      { name: 'past_chats', args: { message_id: 'msg-1' }, pending: 'Reading past chat "msg-1"', done: 'Read past chat "msg-1"' },
+      { name: 'skill', args: { skill: 'review-pr' }, pending: 'Using skill "review-pr"', done: 'Used skill "review-pr"' },
+      { name: 'skillify', args: { skill: 'workflow' }, pending: 'Authoring skill "workflow"', done: 'Authored skill "workflow"' },
+      {
+        name: 'ask_user_question',
+        args: { questions: [{ id: 'scope', type: 'single_choice', question: 'Which scope should I use?' }] },
+        pending: 'Asking user "Which scope should I use?"',
+        done: 'Asked user "Which scope should I use?"',
+      },
+      { name: 'spawn', args: { objective: 'Audit tool copy' }, pending: 'Running agent run "Audit tool copy"', done: 'Ran agent run "Audit tool copy"' },
+      { name: 'run_status', pending: 'Checking agent run', done: 'Checked agent run' },
+      { name: 'run_steer', pending: 'Messaging agent run', done: 'Messaged agent run' },
+      { name: 'run_amend', pending: 'Messaging agent run', done: 'Messaged agent run' },
+      { name: 'run_stop', pending: 'Stopping agent run', done: 'Stopped agent run' },
+    ];
+
+    for (const item of cases) {
+      const call = toolCall(item.name, item.args);
+      expect(summarizeToolCall(call, 'pending', labels)).toBe(item.pending);
+      expect(summarizeToolCall(call, 'done', labels)).toBe(item.done);
+      expect(summarizeToolCall(call, 'done', labels)).not.toBe(item.name);
+      expect(summarizeToolCall(call, 'pending', labels)).not.toBe(`${item.name}...`);
+    }
+  });
+
+  test('unknown tool summaries are the only raw tool-name fallback', () => {
+    const call = toolCall('mystery_tool');
+    expect(summarizeToolCall(call, 'pending', labels)).toBe('mystery_tool...');
+    expect(summarizeToolCall(call, 'done', labels)).toBe('mystery_tool');
+    expect(summarizeToolCall(call, 'error', labels)).toBe('Failed to mystery_tool');
+  });
+
   test('maps canonical tools to semantic activity kinds and lucide icons', () => {
     const cases: Array<{
       args?: Record<string, unknown>;

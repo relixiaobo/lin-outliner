@@ -119,6 +119,29 @@ function withSubject(verb: string, subject: string | null, labels: ToolCallLabel
   return subject ? labels.withSubject({ verb, subject: quoteSubject(subject, labels) }) : verb;
 }
 
+function operationHistoryVerb(args: Record<string, unknown>, verbs: ToolCallLabels['verbs']): ToolVerbForms {
+  if (args.action === 'undo') return verbs.undoOperation;
+  if (args.action === 'redo') return verbs.redoOperation;
+  return verbs.checkHistory;
+}
+
+function pastChatsVerb(args: Record<string, unknown>, verbs: ToolCallLabels['verbs']): ToolVerbForms {
+  if (pickSubject(args, 'query')) return verbs.searchPastChats;
+  if (args.recent === true) return verbs.checkRecentChats;
+  return verbs.readPastChat;
+}
+
+function firstQuestionSubject(args: Record<string, unknown>): string | null {
+  const questions = args.questions;
+  if (!Array.isArray(questions)) return null;
+  for (const item of questions) {
+    if (!isRecord(item)) continue;
+    const subject = pickSubject(item, 'question', 'header');
+    if (subject) return subject;
+  }
+  return null;
+}
+
 export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels: ToolCallLabels): string {
   const verbs = labels.verbs;
   if (toolCall.name === 'Agent' || toolCall.name === 'spawn') {
@@ -151,7 +174,7 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
   }
   if (toolCall.name === 'node_delete') {
     const subject = pickSubject(args, 'node_id');
-    return withSubject(verbByStatus(verbs.deleteNode, status, labels), subject, labels);
+    return withSubject(verbByStatus(args.restore === true ? verbs.restoreNode : verbs.deleteNode, status, labels), subject, labels);
   }
   if (toolCall.name === 'node_search') {
     const subject = pickSubject(args, 'outline', 'search_node_id');
@@ -170,6 +193,18 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
     const firstLine = command?.split('\n').map((line) => line.trim()).find(Boolean) ?? null;
     return withSubject(verbByStatus(verbs.runBash, status, labels), firstLine, labels);
   }
+  if (toolCall.name === 'task_stop') {
+    return withSubject(verbByStatus(verbs.stopTask, status, labels), pickSubject(args, 'task_id'), labels);
+  }
+  if (toolCall.name === 'file_read') {
+    return withSubject(verbByStatus(verbs.readFile, status, labels), pickSubject(args, 'file_path', 'path'), labels);
+  }
+  if (toolCall.name === 'file_glob') {
+    return withSubject(verbByStatus(verbs.findFiles, status, labels), pickSubject(args, 'pattern', 'glob', 'path'), labels);
+  }
+  if (toolCall.name === 'file_grep') {
+    return withSubject(verbByStatus(verbs.grepFiles, status, labels), pickSubject(args, 'pattern', 'query', 'path'), labels);
+  }
   if (toolCall.name === 'file_edit') {
     const subject = pickSubject(args, 'path', 'file_path');
     return withSubject(verbByStatus(verbs.editFile, status, labels), subject, labels);
@@ -177,6 +212,24 @@ export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels
   if (toolCall.name === 'file_write') {
     const subject = pickSubject(args, 'file_path', 'path');
     return withSubject(verbByStatus(verbs.writeFile, status, labels), subject, labels);
+  }
+  if (toolCall.name === 'file_delete') {
+    return withSubject(verbByStatus(verbs.deleteFile, status, labels), pickSubject(args, 'file_path', 'path'), labels);
+  }
+  if (toolCall.name === 'operation_history') {
+    return verbByStatus(operationHistoryVerb(args, verbs), status, labels);
+  }
+  if (toolCall.name === 'past_chats') {
+    return withSubject(verbByStatus(pastChatsVerb(args, verbs), status, labels), pickSubject(args, 'query', 'message_id'), labels);
+  }
+  if (toolCall.name === 'skill') {
+    return withSubject(verbByStatus(verbs.useSkill, status, labels), pickSubject(args, 'skill'), labels);
+  }
+  if (toolCall.name === 'skillify') {
+    return withSubject(verbByStatus(verbs.authorSkill, status, labels), pickSubject(args, 'skill', 'name'), labels);
+  }
+  if (toolCall.name === 'ask_user_question') {
+    return withSubject(verbByStatus(verbs.askUserQuestion, status, labels), firstQuestionSubject(args), labels);
   }
   // Unknown tools fall back to the raw tool name (an identifier, not translatable);
   // only the trailing pending ellipsis is localized.
