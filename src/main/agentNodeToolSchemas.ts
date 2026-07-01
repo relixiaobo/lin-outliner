@@ -159,27 +159,31 @@ export const NODE_DELETE_PARAMETERS = {
 export const NODE_EDIT_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
-  // One edit mode per call — outline edit (node_id + old_string + new_string),
-  // move (move + node_id/node_ids), merge (node_id + merge_from_node_ids), or
-  // reference replacement (node_id + replace_with_reference_to). Enforced in
-  // normalizeEditParams and documented in the parameter descriptions.
+  // operation declares the edit mode. OpenAI rejects root oneOf/anyOf, so the
+  // operation-specific required fields are enforced in normalizeEditParams and
+  // documented in the parameter descriptions.
   properties: {
+    operation: {
+      type: 'string',
+      enum: ['replace_outline', 'move', 'merge', 'replace_with_reference'],
+      description: 'Edit operation to perform. Use replace_outline with node_id + old_string + new_string for content/field/search edits; move with move + node_id or node_ids; merge with node_id + merge_from_node_ids; replace_with_reference with node_id + replace_with_reference_to.',
+    },
     node_id: {
       type: 'string',
       minLength: 1,
-      description: 'Target node id. Required for outline edits, single-node moves, merge target, and reference replacement. Use node_read first when you need the current id or revision.',
+      description: 'Target node id. Required for replace_outline, single-node move, merge target, and replace_with_reference. Use node_read first when you need the current id or revision.',
     },
     node_ids: {
       type: 'array',
       minItems: 1,
       maxItems: 50,
       items: { type: 'string', minLength: 1 },
-      description: 'Target node ids for one homogeneous move operation, matching a user multi-selection. Do not combine with node_id except where the action explicitly allows it.',
+      description: 'Target node ids for operation "move", matching a user multi-selection. Do not combine with node_id.',
     },
     old_string: {
       type: 'string',
       minLength: 1,
-      description: 'Exact fragment from node_read for this node only: target line, field lines, field value lines, or saved-search config. "*" is not supported; use node_create, node_edit move, or node_delete for structure changes. Include enough surrounding lines to make the fragment unique.',
+      description: 'Exact fragment from node_read for this node only: target line, field lines, field value lines, or saved-search config. Use "*" only to replace the target node\'s whole editable outline; non-preview "*" edits require expected_revision from node_read. For the target root line only, the leading %%node:id%% marker may be omitted because node_id already names it. Include enough surrounding lines to make partial fragments unique.',
     },
     new_string: {
       type: 'string',

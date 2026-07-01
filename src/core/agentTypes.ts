@@ -160,6 +160,7 @@ export interface AgentUserViewContext {
   focusedPanelId: string | null;
   focusSurface: string | null;
   focusedNode: AgentUserViewNodeContext | null;
+  selectedNodes?: AgentUserViewNodeContext[];
   nodePanels: AgentUserViewPanelContext[];
   referencedNodes?: AgentUserViewNodeContext[];
 }

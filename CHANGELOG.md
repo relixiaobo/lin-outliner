@@ -12,6 +12,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent outline edits behave more like user outline edits (PR #353, codex-3)** — agent node tools
+  now steer ordinary structure into child bullets rather than overusing descriptions, fields, tags,
+  checkboxes, or saved searches. `node_edit` has an explicit operation discriminator, guards against
+  whole-outline replacement attempts, and returns fresh revision information for model-visible retries.
+  Agent-created and agent-edited outline markdown preserves rich-text marks and fenced `codeBlock` rows
+  through shared core parsers, and user-view context includes selected rows so the agent can act on the
+  same visible selection users rely on. **Gate (main):** deep review found two issues; codex-3 resolved
+  both before merge. Verified with targeted parser/node-tool/user-context/runtime tests, typecheck,
+  `docs:check`, and `git diff --check`.
 - **Clear model context with `/clear` (PR #352, codex-4)** — `/clear` now appends a persisted
   `context.cleared` boundary in the current Channel, renders it as a dedicated `Context cleared.`
   transcript row, and starts subsequent automatic model context from that boundary without generating

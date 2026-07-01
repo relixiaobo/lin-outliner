@@ -10,6 +10,7 @@ import { nodeIsDone, nodeShowsCheckbox } from '../../../core/configProjection';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
 import { buildOutlinerRows, flattenExpandedOutlinerRows, readViewConfig } from '../../state/outlinerRows';
+import { buildSelectableRows } from '../../state/selectableRows';
 import { buildPanelBreadcrumb } from '../panelBreadcrumb';
 import { fileNodeTitle, isFileNode } from '../preview/fileNode';
 import type { WorkspacePanelState } from '../workspaceLayoutTypes';
@@ -18,6 +19,7 @@ const MAX_BREADCRUMB_CONTEXT_NODES = 6;
 const MAX_CONTEXT_TITLE_LENGTH = 160;
 const MAX_VISIBLE_OUTLINE_NODES = 80;
 const MAX_VISIBLE_OUTLINE_DEPTH = 5;
+const MAX_SELECTED_CONTEXT_NODES = 50;
 
 // The outline root a conversation is anchored to: the active panel root, else the
 // first panel root, else today.
@@ -67,6 +69,7 @@ export function buildAgentUserViewContext(input: {
   index: DocumentIndex;
   ui: UiState;
 }): AgentUserViewContext {
+  const selectedNodes = buildSelectedNodeContexts(input.index, input.ui);
   return {
     activePanelId: input.activePanelId,
     focusedPanelId: input.ui.focusedPanelId,
@@ -77,8 +80,46 @@ export function buildAgentUserViewContext(input: {
           surface: input.ui.focusSurface,
         })
       : null,
+    ...(selectedNodes.length > 0 ? { selectedNodes } : {}),
     nodePanels: buildPanelContexts(input.activePanelId, input.panels, input.index, input.ui),
   };
+}
+
+function buildSelectedNodeContexts(index: DocumentIndex, ui: UiState): AgentUserViewNodeContext[] {
+  if (ui.focusedId || ui.selectedIds.size === 0) return [];
+  const ordered = selectedNodeOrder(index, ui)
+    .filter((nodeId) => ui.selectedIds.has(nodeId))
+    .slice(0, MAX_SELECTED_CONTEXT_NODES);
+  return ordered
+    .map((nodeId) => buildNodeContext(nodeId, index, {
+      panelId: ui.focusedPanelId,
+      surface: 'selection',
+    }))
+    .filter((node): node is AgentUserViewNodeContext => Boolean(node));
+}
+
+function selectedNodeOrder(index: DocumentIndex, ui: UiState): NodeId[] {
+  const rootId = ui.selectionRootId && index.byId.has(ui.selectionRootId)
+    ? ui.selectionRootId
+    : null;
+  const visibleOrder = rootId
+    ? buildSelectableRows(rootId, index.byId, {
+        expanded: ui.expanded,
+        expandedHiddenFields: ui.expandedHiddenFields,
+      }).map((row) => row.id)
+    : [];
+  const seen = new Set<NodeId>();
+  const ordered: NodeId[] = [];
+  for (const nodeId of visibleOrder) {
+    if (!ui.selectedIds.has(nodeId)) continue;
+    seen.add(nodeId);
+    ordered.push(nodeId);
+  }
+  for (const nodeId of index.byId.keys()) {
+    if (!ui.selectedIds.has(nodeId) || seen.has(nodeId)) continue;
+    ordered.push(nodeId);
+  }
+  return ordered;
 }
 
 function buildPanelContexts(

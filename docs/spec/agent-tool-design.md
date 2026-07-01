@@ -392,12 +392,12 @@ interface NodeVisibleSearchResult {
   page: NodeVisiblePage;
 }
 
-// `kind`/`action`/`status` dropped: the tool name implies the operation; the
-// model derives preview from its own `preview_only` arg; `changes` already
-// reports what happened.
+// `kind`/`action`/`status` dropped: the tool name implies the operation, and the
+// model derives preview from its own `preview_only` arg.
 interface NodeVisibleMutationResult {
-  changes: NodeVisibleChanges;
+  changes?: NodeVisibleChanges;
   outline?: string;
+  revisions?: Record<string, string>;
 }
 
 interface NodeVisibleCountResult {
@@ -425,8 +425,11 @@ Rules:
 
 - `outline` is the single model-visible representation for read/search results.
   It is an annotated outline: `%%node:id%%` is protocol metadata, not node text.
-- Mutating tools return `changes` and, when useful, a fresh annotated `outline`
-  for follow-up edits.
+- Mutating tools return a fresh annotated `outline` when that is useful for
+  follow-up edits. When a fresh outline is present, model-visible `changes` may
+  be omitted because the ids are already visible in the outline; the full
+  mutation lists remain in `details`.
+- Mutating tools return `changes` when there is no useful outline projection.
 - Full structured payloads such as `NodeReadItem`, `NodeSearchItem`,
   `beforeOutline`, `afterOutline`, and raw preview details remain available in
   `details`.
@@ -493,6 +496,8 @@ structures:
 - `node_edit.old_string/new_string` edits the target node's single-node editable
   outline by exact string replacement, then TypeScript parses and applies the
   result without treating omitted children, fields, or values as delete intent.
+  For the target root line only, the leading `%%node:id%%` marker may be omitted
+  because the `node_id` parameter already names that node.
 
 `%%node:id%%` is the only agent-visible identity marker. It is protocol metadata,
 not node text, and the parser strips it before applying content changes. Do not
@@ -511,7 +516,9 @@ Read/create/edit symmetry:
 - `node_edit` targets one existing node by `node_id`, applies exact
   `old_string/new_string` replacement to that node's editable outline (the root
   line, field/value lines, or saved-search config), and then lets TypeScript parse
-  the resulting single-node outline.
+  the resulting single-node outline. The root line marker is optional in
+  `old_string/new_string`; field/value markers remain meaningful and should be
+  preserved when editing existing field/value lines.
 - Child creation, movement, and deletion are explicit: use `node_create`,
   `node_edit` move, or `node_delete`. Precise child text edits target that child's
   node id directly.
@@ -547,22 +554,37 @@ Rules:
 - Indentation is exactly 2 spaces per level. Tabs and uneven indentation are an
   error in model-facing output.
 - `- title` creates or serializes a node title.
+- Markdown inline delimiters in ordinary node text create rich-text marks:
+  `**bold**`, `*italic*`, `~~strike~~`, `==highlight==`, inline `` `code` ``,
+  and `[label](https://example.com)`.
 - `- title - description` sets a node description. The first ` - ` separates
   title from description; later ` - ` text stays in the description.
+- Ordinary notes, task details, meeting notes, and explanatory body text should
+  be written as child nodes. Use descriptions only when the user explicitly asks
+  for a node description/caption, when preserving an existing description, or
+  when importing external metadata that belongs in the node description.
 - `#tag`, `#中文`, `[[#tag]]`, and `#[[multi word tag]]` apply tags. Bracket
   tag names accept raw backslashes; serializers escape `]`, backslash, and
   newline-style characters as `\]`, `\\`, `\n`, `\r`, and `\t` for names that
   cannot be written bare.
+- Tags are durable categorization, not decoration. Use them when the user asks
+  for a tag, when preserving existing tags, or when a stable category is needed
+  for filtering/search; ordinary grouping belongs in child structure.
 - Bare CSS hex colors such as `#fff`, `#ffff`, `#112233`, and `#112233ff`
   are color text, not tags. Use explicit bracket syntax such as `#[[fff]]` if a
   tag name intentionally looks like a hex color.
 - `[ ]`, `[x]`, and `[X]` at the start of a node set checkbox state when the
   marker is alone or followed by whitespace; `[x]title` stays literal text.
+- Checkbox markers are task state. Use them for actionable todos/checklists, not
+  for ordinary bullets.
 - `Field:: value` sets a single field value.
 - `Field::` followed by indented value lines sets a multi-value field.
 - `Field::` without values is a clear request; `node_edit` preserves existing
   values and returns a warning. Delete field entries or value nodes explicitly
   with `node_delete`.
+- Field syntax creates or updates structured data. Use fields when the user asks
+  for structured properties, when preserving existing fields, or when the data
+  must be filterable/sortable; ordinary notes belong in child nodes.
 - Date field values use the canonical date field language from
   `docs/spec/date-field-values.md`: `YYYY-MM-DD`, `YYYY-MM-DDTHH:mm`, or
   `start/end` with `/`, for example `2026-05-20/2026-05-24`. Tool prompts and
@@ -571,11 +593,22 @@ Rules:
   value.
 - Inline `[[node:Display^...]]` creates an inline reference inside node text or a
   field value.
+- A line whose title is a Markdown code fence, for example `- \`\`\`ts`,
+  followed by raw code lines and a closing fence line creates or serializes a
+  `codeBlock` node. Backtick and tilde fences may use three or more repeated
+  characters, so serialized code blocks can choose a fence longer than any fence
+  run in the body. The language token is normalized through the same alias table
+  used by user paste (`ts` → `typescript`, `py` → `python`, etc.). Code body
+  lines are raw text and do not need `- ` prefixes. Agent outline code fences are
+  strict: an opening fence without a closing fence is a parse error, not a
+  partial code block.
 - Date nodes are referenced by id with `[[node:Display^...]]`; date shortcut
   syntax is not part of the model-facing outline contract yet.
 - `%%search%%` turns the node into a search node. In `node_create` this creates a
   saved search node; in `node_search` it is a temporary search node that is only
   executed and rendered.
+- Saved search nodes are user-visible views. Prefer `node_search` for temporary
+  lookup; create `%%search%%` nodes only when the user asks to keep a search/view.
 - A search node must contain exactly one query root child. `AND`, `OR`, and
   `NOT` are query group nodes and may be nested. QueryOp names such as
   `STRING_MATCH`, `HAS_TAG`, `LINKS_TO`, `FIELD_IS`, `LT`, and `DATE_OVERLAPS`
@@ -584,6 +617,9 @@ Rules:
   and `target` operands must be exact node references or ids.
 - `%%view:table%%`, `%%view:list%%`, `%%view:cards%%`, and similar directives set
   view presentation for nodes that support views.
+- `node_create` materializes supported inline Markdown marks and code fences.
+  `node_read` serializes those marks and code blocks back to the same outline
+  form so later agent turns can preserve them.
 
 Runtime compatibility:
 
@@ -784,6 +820,8 @@ interface NodeSearchItem {
 Result behavior:
 
 - `outline` is a temporary search node and does not mutate document state.
+- Use this temporary path for lookup by default. Do not create a saved search node
+  unless the user explicitly asks to save the query/view.
 - The outline must parse as one `%%search%%` root with exactly one query root
   child.
 - Keyword search is represented as a `STRING_MATCH` rule, for example
@@ -927,6 +965,12 @@ interface NodeBacklink {
 }
 ```
 
+`revision` is the editable-outline revision for this root, not just the root
+node's scalar timestamp. It changes when the root line, field entry/value lines,
+or saved-search config that `node_edit` can rewrite changes. `expected_revision`
+therefore protects whole editable-outline replacement from overwriting newer
+field/value edits.
+
 Result behavior:
 
 - Omitted `node_id` reads today's journal node.
@@ -993,6 +1037,10 @@ Result behavior:
   requested position and following roots are inserted after the previous root.
 - `target_id` creates one reference node at the requested position.
 - `duplicate_id` deep-copies the source subtree at the requested position.
+- Normal user-authored detail belongs in child nodes, not in node descriptions.
+- Normal user-authored detail also belongs in child nodes rather than fields,
+  tags, saved searches, or checkboxes unless the user clearly asks for those
+  structured affordances.
 - Missing normal node tags and fields may be created by the outline application
   layer. Search-node `field::`, `tag::`, and `target::` operands must reference
   existing nodes.
@@ -1009,7 +1057,7 @@ Example:
 
 ```json
 {
-  "outline": "- Project Alpha - Q2 rollout #project\n  - Status:: Active\n  - [ ] Draft plan"
+  "outline": "- Project Alpha #project\n  - Status:: Active\n  - Q2 rollout\n  - [ ] Draft plan"
 }
 ```
 
@@ -1029,14 +1077,16 @@ type NodeEditParams =
   | NodeReferenceReplaceParams;
 
 interface NodeOutlineEditParams {
+  operation: "replace_outline";
   node_id: string;
-  old_string: string; // exact fragment from the node's editable outline; "*" is not supported
+  old_string: string; // exact fragment, or "*" for the whole editable outline
   new_string: string;
   expected_revision?: string;
   preview_only?: boolean;
 }
 
 interface NodeMoveParams {
+  operation: "move";
   node_id?: string;
   node_ids?: string[];
   move: {
@@ -1048,29 +1098,41 @@ interface NodeMoveParams {
 }
 
 interface NodeMergeParams {
+  operation: "merge";
   node_id: string; // target node
   merge_from_node_ids: string[]; // source nodes
   preview_only?: boolean;
 }
 
 interface NodeReferenceReplaceParams {
+  operation: "replace_with_reference";
   node_id: string;
   replace_with_reference_to: string;
   preview_only?: boolean;
 }
 ```
 
+`operation` is the canonical discriminator. Runtime compatibility may infer the
+operation from legacy field combinations, but model-facing tool calls should set
+`operation` explicitly so the intended edit mode is unambiguous.
+
 Outline edit semantics:
 
 - `old_string` must match exactly once in the current editable outline for
-  `node_id`; `old_string: "*"` returns an error with guidance to use
-  `node_create`, `node_edit` move, or `node_delete`.
+  `node_id`.
+- `old_string: "*"` replaces the whole single-node editable outline. Non-preview
+  `*` edits require `expected_revision` from `node_read`; preview-only `*` edits
+  may omit it because they do not mutate.
+- For the target root line only, `old_string` and `new_string` may omit the
+  leading `%%node:id%%` marker. TypeScript restores the `node_id` marker before
+  matching/applying the replacement.
 - The editable outline contains the target node's root line, field entry/value
   lines, and saved-search query lines. It does not include normal child nodes, so
   child omission cannot express deletion.
 - `new_string` is not parsed in isolation. The full single-node outline after
   replacement must be valid Lin Outline Format and contain exactly one root line.
-- Existing target/field/value lines should preserve their `%%node:id%%` marker.
+- Existing field/value lines should preserve their `%%node:id%%` marker. The
+  target root line may omit it because `node_id` already names that node.
   Unmarked field lines create/upsert fields by name; unmarked value lines append
   values. Omitted fields and values are preserved.
 - Annotated field value ids can update text in place only when the stored value
@@ -1132,7 +1194,7 @@ Return data:
 
 ```ts
 interface NodeEditData {
-  action: "outline_edit" | "move" | "merge" | "replace_with_reference";
+  action: "replace_outline" | "move" | "merge" | "replace_with_reference";
   status: "updated" | "unchanged";
   affectedNodeIds: string[];
   createdNodeIds?: string[];
@@ -1165,14 +1227,26 @@ Examples:
 
 ```json
 {
+  "operation": "replace_outline",
   "node_id": "node_task",
-  "old_string": "- %%node:node_task%% [ ] Check weather",
-  "new_string": "- %%node:node_task%% [x] Check Chengdu weather #weather"
+  "old_string": "- [ ] Check weather",
+  "new_string": "- [x] Check Chengdu weather #weather"
 }
 ```
 
 ```json
 {
+  "operation": "replace_outline",
+  "node_id": "node_task",
+  "old_string": "*",
+  "new_string": "- [x] Check Chengdu weather #weather\n  - Status:: Done",
+  "expected_revision": "node_task:1780000000000"
+}
+```
+
+```json
+{
+  "operation": "replace_outline",
   "node_id": "node_task",
   "old_string": "  - %%node:field_status%% Status::\n    - %%node:value_open%% Open",
   "new_string": "  - %%node:field_status%% Status::\n    - %%node:value_open%% In progress\n    - Blocked"
@@ -1181,6 +1255,7 @@ Examples:
 
 ```json
 {
+  "operation": "move",
   "node_ids": ["node_task_a", "node_task_b"],
   "move": { "parent_id": "node_done" }
 }
@@ -1188,6 +1263,7 @@ Examples:
 
 ```json
 {
+  "operation": "merge",
   "node_id": "node_canonical",
   "merge_from_node_ids": ["node_duplicate_1", "node_duplicate_2"]
 }
@@ -1195,6 +1271,7 @@ Examples:
 
 ```json
 {
+  "operation": "replace_with_reference",
   "node_id": "node_old",
   "replace_with_reference_to": "node_canonical"
 }
@@ -1369,6 +1446,9 @@ applyPlan(plan: MutationPlan, state: DocumentState): OperationResult
 
 `SerializedOutline` contains annotated model-facing text. `%%node:id%%` markers
 are protocol metadata and are stripped before writing node content.
+Its `revision` is computed from the serialized editable outline content plus the
+root node revision, so fields, values, and saved-search config participate in the
+stale-write guard.
 
 ```ts
 interface SerializedOutline {
@@ -1387,7 +1467,8 @@ accepts an inline value marker after `::`. `node_create` rejects these markers;
 Content edits use this sequence:
 
 ```txt
-load current node state
+validate operation === "replace_outline" and reject fields from other operations
+  -> load current node state
   -> serialize current single-node editable outline
   -> check expected_revision when provided
   -> replace old_string with new_string
@@ -1403,14 +1484,21 @@ load current node state
 
 `old_string` matching rules:
 
-- `old_string === "*"` is rejected. There is no whole-outline replacement mode.
+- `old_string === "*"` replaces the whole single-node editable outline and is
+  the only non-exact-match replacement mode. It is not a subtree replacement:
+  child creation, deletion, and movement still use `node_create`, `node_delete`,
+  or move parameters.
+- Non-preview `old_string === "*"` requires `expected_revision` from `node_read`
+  so stale context cannot overwrite a user's newer edit.
 - `old_string` must match exactly once.
 - Zero matches means the agent is using stale context and should call
   `node_read` again.
 - Multiple matches means the agent should include more surrounding context or
   edit the child directly by node id.
 - Matching is byte-exact against the single-node editable outline for `node_id`,
-  after normalizing line endings to `\n`.
+  after normalizing line endings to `\n`. If the first line is the target root
+  line and omits `%%node:id%%`, TypeScript restores the target `node_id` marker
+  before matching.
 
 Identity rules:
 
@@ -1487,6 +1575,9 @@ TypeScript validation is the security and correctness boundary.
 
 Required checks:
 
+- `node_edit.operation` is one of `replace_outline`, `move`, `merge`, or
+  `replace_with_reference`; fields from other operations are rejected before any
+  document state is read or mutated.
 - The workspace/document boundary is valid for every referenced node.
 - `parent_id`, `after_id`, `node_id`, `node_ids`, `target_id`, and
   `merge_from_node_ids` exist and are editable.
@@ -1498,7 +1589,8 @@ Required checks:
 - Field values match field type constraints.
 - Tag and field auto-creation follows the active policy.
 - Search/view directives compile to a canonical `SearchQueryExpr`.
-- `expected_revision` matches when provided.
+- `expected_revision` matches the current editable-outline revision when
+  provided.
 - Parser compatibility normalization does not silently change meaning.
 
 Validation should produce structured guidance:

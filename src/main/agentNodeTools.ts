@@ -36,9 +36,11 @@ import {
 } from './agentNodeToolGuidance';
 import {
   buildReadItem,
+  editableOutlineRevision,
   normalizeReadParams,
   pageHasMore,
   serializeAnnotatedOutline,
+  serializeEditableNodeOutline,
   serializeOutline,
 } from './agentNodeToolRead';
 import {
@@ -104,7 +106,8 @@ import type {
   OutlinerToolHost,
   ProjectionIndex,
 } from './agentNodeToolTypes';
-import { parseReferenceMarkers, referenceMarkupToRichText, richTextToReferenceMarkup, splitFileReferenceMarkers } from '../core/referenceMarkup';
+import { parseReferenceMarkers, splitFileReferenceMarkers } from '../core/referenceMarkup';
+import { markdownReferenceMarkupToRichText, richTextToMarkdownReferenceMarkup } from '../core/markdownRichText';
 import { isPathInside } from './agentAttachmentMaterialization';
 
 export type { OutlinerToolHost } from './agentNodeToolTypes';
@@ -240,13 +243,13 @@ function createNodeEditTool(host: OutlinerToolHost, options: NodeToolsOptions): 
       const params = normalizeEditParams(rawParams);
       if ('error' in params) {
         return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'invalid_args', params.error, {
-          instructions: 'Use exactly one action: outline edit, move, merge_from_node_ids, or replace_with_reference_to.',
+          instructions: 'Set operation to one of replace_outline, move, merge, or replace_with_reference and provide only the fields for that operation.',
           metrics: { durationMs: elapsed(started) },
         }));
       }
 
       switch (params.action) {
-        case 'outline_edit':
+        case 'replace_outline':
           return executeOutlineEdit(host, params, started, options);
         case 'move':
           return executeMoveEdit(host, params, started);
@@ -383,7 +386,7 @@ function createNodeDeleteTool(host: OutlinerToolHost): AgentTool<any, ToolEnvelo
 
 async function executeOutlineEdit(
   host: OutlinerToolHost,
-  params: Extract<NormalizedEditParams, { action: 'outline_edit' }>,
+  params: Extract<NormalizedEditParams, { action: 'replace_outline' }>,
   started: number,
   options: NodeToolsOptions,
 ) {
@@ -395,17 +398,23 @@ async function executeOutlineEdit(
       metrics: { durationMs: elapsed(started) },
     }));
   }
-  const currentNode = requiredNode(index, params.nodeId);
-  const currentRevision = revisionOf(currentNode);
+  requiredNode(index, params.nodeId);
+  const currentRevision = editableOutlineRevision(index, params.nodeId);
   if (params.expectedRevision && params.expectedRevision !== currentRevision) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'revision_mismatch', `Node changed since it was read: ${params.nodeId}`, {
       instructions: 'Call node_read again and retry with the latest outline and revision.',
       metrics: { durationMs: elapsed(started) },
     }));
   }
+  if (params.oldString === '*' && !params.previewOnly && !params.expectedRevision) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'expected_revision_required', 'old_string "*" replaces the whole editable outline and requires expected_revision from node_read.', {
+      instructions: 'Call node_read for the target node, then retry with expected_revision. Use exact old_string fragments for partial replacements.',
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
 
   const currentOutline = serializeEditableNodeOutline(index, params.nodeId);
-  const replacement = replaceOutline(currentOutline, params.oldString, params.newString);
+  const replacement = replaceOutline(currentOutline, params.oldString, params.newString, params.nodeId);
   if (!replacement.ok) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', replacement.code, replacement.error, {
       instructions: replacement.instructions,
@@ -414,7 +423,7 @@ async function executeOutlineEdit(
   }
 
   const dataBase = {
-    action: 'outline_edit' as const,
+    action: 'replace_outline' as const,
     affectedNodeIds: [params.nodeId],
     beforeOutline: currentOutline,
     afterOutline: replacement.afterOutline,
@@ -535,7 +544,7 @@ async function executeOutlineEdit(
     matchedNodeIds: tracker.matchedNodeIds.length ? tracker.matchedNodeIds : undefined,
     updatedFields: tracker.createdFieldEntryIds.length ? tracker.createdFieldEntryIds : undefined,
     updatedTags: updatedTags.length ? updatedTags : undefined,
-    revisions: updatedNode ? { [params.nodeId]: revisionOf(updatedNode) } : undefined,
+    revisions: updatedNode ? { [params.nodeId]: editableOutlineRevision(updatedIndex, params.nodeId) } : undefined,
   };
   return nodeToolResult(successEnvelope('node_edit', data, {
     warnings: warnings.length ? unique(warnings) : undefined,
@@ -1088,6 +1097,8 @@ function normalizeDeleteParams(rawParams: unknown): NodeDeleteParams & { error?:
 
 function normalizeEditParams(rawParams: unknown): NormalizedEditParams {
   const input = asRecord(rawParams);
+  const operation = normalizeEditOperation(input.operation);
+  if (operation === null) return { error: 'operation must be one of replace_outline, move, merge, or replace_with_reference.' };
   const nodeId = typeof input.node_id === 'string' && input.node_id.trim() ? input.node_id.trim() : undefined;
   const nodeIds = Array.isArray(input.node_ids)
     ? unique(input.node_ids.filter((value): value is string => typeof value === 'string' && value.trim().length > 0).map((value) => value.trim()))
@@ -1108,21 +1119,92 @@ function normalizeEditParams(rawParams: unknown): NormalizedEditParams {
   const moveAction = Boolean(move !== undefined && (nodeId || nodeIds));
   const mergeAction = Boolean(nodeId && mergeFromNodeIds !== undefined);
   const referenceAction = Boolean(nodeId && replaceWithReferenceTo !== undefined);
-  const provided = [outlineAction, moveAction, mergeAction, referenceAction].filter(Boolean).length;
-  if (provided !== 1) return { error: 'Exactly one node_edit action is required.' };
-  if (nodeId && nodeIds && !moveAction) return { error: 'node_ids is only valid for move actions.' };
-  if (nodeId && nodeIds && moveAction) return { error: 'Use either node_id or node_ids for move actions, not both.' };
+  const inferredOperation = inferEditOperation({ outlineAction, moveAction, mergeAction, referenceAction });
+  if (!operation && !inferredOperation) return { error: 'Exactly one node_edit operation is required. Prefer setting operation explicitly.' };
+  const selectedOperation = operation ?? inferredOperation!;
 
-  if (outlineAction) {
-    return { action: 'outline_edit', nodeId: nodeId!, oldString: oldString!, newString: newString!, expectedRevision, previewOnly };
+  const extraFields = invalidEditOperationFields(selectedOperation, {
+    nodeIds,
+    oldString,
+    newString,
+    expectedRevision,
+    move,
+    mergeFromNodeIds,
+    replaceWithReferenceTo,
+  });
+  if (extraFields.length > 0) {
+    return { error: `operation "${selectedOperation}" cannot be combined with: ${extraFields.join(', ')}.` };
   }
-  if (moveAction) {
-    return { action: 'move', nodeId, nodeIds: nodeIds ?? [nodeId!], move: move!, previewOnly };
+
+  if (selectedOperation === 'replace_outline') {
+    if (!nodeId) return { error: 'operation "replace_outline" requires node_id.' };
+    if (oldString === undefined) return { error: 'operation "replace_outline" requires old_string.' };
+    if (newString === undefined) return { error: 'operation "replace_outline" requires new_string.' };
+    return { action: 'replace_outline', operation: selectedOperation, nodeId, oldString, newString, expectedRevision, previewOnly };
   }
-  if (mergeAction) {
-    return { action: 'merge', nodeId: nodeId!, mergeFromNodeIds: mergeFromNodeIds!, previewOnly };
+
+  if (selectedOperation === 'move') {
+    if (!move) return { error: 'operation "move" requires move.' };
+    if (!nodeId && !nodeIds) return { error: 'operation "move" requires node_id or node_ids.' };
+    if (nodeId && nodeIds) return { error: 'operation "move" accepts either node_id or node_ids, not both.' };
+    return { action: 'move', operation: selectedOperation, nodeId, nodeIds: nodeIds ?? [nodeId!], move, previewOnly };
   }
-  return { action: 'replace_with_reference', nodeId: nodeId!, replaceWithReferenceTo: replaceWithReferenceTo!, previewOnly };
+
+  if (selectedOperation === 'merge') {
+    if (!nodeId) return { error: 'operation "merge" requires node_id.' };
+    if (mergeFromNodeIds === undefined) return { error: 'operation "merge" requires merge_from_node_ids.' };
+    return { action: 'merge', operation: selectedOperation, nodeId, mergeFromNodeIds, previewOnly };
+  }
+
+  if (!nodeId) return { error: 'operation "replace_with_reference" requires node_id.' };
+  if (!replaceWithReferenceTo) return { error: 'operation "replace_with_reference" requires replace_with_reference_to.' };
+  return { action: 'replace_with_reference', operation: selectedOperation, nodeId, replaceWithReferenceTo, previewOnly };
+}
+
+function normalizeEditOperation(value: unknown): 'replace_outline' | 'move' | 'merge' | 'replace_with_reference' | undefined | null {
+  if (value === undefined) return undefined;
+  return value === 'replace_outline' || value === 'move' || value === 'merge' || value === 'replace_with_reference'
+    ? value
+    : null;
+}
+
+function inferEditOperation(actions: {
+  outlineAction: boolean;
+  moveAction: boolean;
+  mergeAction: boolean;
+  referenceAction: boolean;
+}): 'replace_outline' | 'move' | 'merge' | 'replace_with_reference' | null {
+  const provided = [
+    actions.outlineAction ? 'replace_outline' : null,
+    actions.moveAction ? 'move' : null,
+    actions.mergeAction ? 'merge' : null,
+    actions.referenceAction ? 'replace_with_reference' : null,
+  ].filter((value): value is 'replace_outline' | 'move' | 'merge' | 'replace_with_reference' => Boolean(value));
+  return provided.length === 1 ? provided[0]! : null;
+}
+
+function invalidEditOperationFields(operation: 'replace_outline' | 'move' | 'merge' | 'replace_with_reference', fields: {
+  nodeIds?: string[];
+  oldString?: string;
+  newString?: string;
+  expectedRevision?: string;
+  move?: NodeEditMoveParams;
+  mergeFromNodeIds?: string[];
+  replaceWithReferenceTo?: string;
+}): string[] {
+  const extras: string[] = [];
+  if (operation !== 'replace_outline') {
+    if (fields.oldString !== undefined) extras.push('old_string');
+    if (fields.newString !== undefined) extras.push('new_string');
+    if (fields.expectedRevision !== undefined) extras.push('expected_revision');
+  }
+  if (operation !== 'move') {
+    if (fields.nodeIds !== undefined) extras.push('node_ids');
+    if (fields.move !== undefined) extras.push('move');
+  }
+  if (operation !== 'merge' && fields.mergeFromNodeIds !== undefined) extras.push('merge_from_node_ids');
+  if (operation !== 'replace_with_reference' && fields.replaceWithReferenceTo !== undefined) extras.push('replace_with_reference_to');
+  return extras;
 }
 
 function normalizeOperationHistoryParams(rawParams: unknown): Required<Pick<OperationHistoryParams, 'action' | 'steps' | 'origin' | 'limit' | 'offset'>>
@@ -1206,38 +1288,60 @@ function validateMutableNodeIds(index: ProjectionIndex, nodeIds: string[]): { co
   return null;
 }
 
-function replaceOutline(currentOutline: string, oldString: string, newString: string): {
+function replaceOutline(currentOutline: string, oldString: string, newString: string, rootNodeId: string): {
   ok: true;
   afterOutline: string;
 } | { ok: false; code: string; error: string; instructions: string } {
   const normalizedOld = normalizeLineEndings(oldString);
   const normalizedNew = normalizeLineEndings(newString);
   if (normalizedOld === '*') {
-    return {
-      ok: false,
-      code: 'subtree_edit_removed',
-      error: 'old_string "*" no longer replaces a whole annotated outline.',
-      instructions: 'Use node_create for new children, node_edit move for moves, node_delete for removals, or edit one node directly with an exact old_string/new_string fragment.',
-    };
+    return { ok: true, afterOutline: addTargetRootMarker(normalizedNew, rootNodeId) ?? normalizedNew };
   }
-  const matches = countOccurrences(currentOutline, normalizedOld);
-  if (matches === 0) {
+  const markerlessRootOld = addTargetRootMarker(normalizedOld, rootNodeId);
+  if (markerlessRootOld && markerlessRootOld !== normalizedOld) {
+    const markerlessRootNew = addTargetRootMarker(normalizedNew, rootNodeId) ?? normalizedNew;
+    const markerlessRootMatches = countOccurrences(currentOutline, markerlessRootOld);
+    if (markerlessRootMatches === 1) {
+      return { ok: true, afterOutline: currentOutline.replace(markerlessRootOld, markerlessRootNew) };
+    }
+    if (markerlessRootMatches > 1) {
+      return {
+        ok: false,
+        code: 'old_string_not_unique',
+        error: `old_string matched ${markerlessRootMatches} times in the current annotated outline after restoring the target root marker.`,
+        instructions: 'Include more surrounding context or edit the intended child node directly by node_id.',
+      };
+    }
     return {
       ok: false,
       code: 'old_string_not_found',
-      error: 'old_string did not match the current annotated outline.',
-      instructions: 'Call node_read again and copy an exact fragment from data.outline.',
+      error: 'old_string did not match the current target root line.',
+      instructions: 'Call node_read again and copy the current target root line. You may omit the leading %%node:node_id%% marker only for that target root line.',
     };
   }
-  if (matches > 1) {
+
+  const exactMatches = countOccurrences(currentOutline, normalizedOld);
+  if (exactMatches === 1) {
+    const effectiveNew = startsWithTargetRootMarker(normalizedOld, rootNodeId)
+      ? addTargetRootMarker(normalizedNew, rootNodeId) ?? normalizedNew
+      : normalizedNew;
+    return { ok: true, afterOutline: currentOutline.replace(normalizedOld, effectiveNew) };
+  }
+  if (exactMatches > 1) {
     return {
       ok: false,
       code: 'old_string_not_unique',
-      error: `old_string matched ${matches} times in the current annotated outline.`,
+      error: `old_string matched ${exactMatches} times in the current annotated outline.`,
       instructions: 'Include more surrounding context or edit the intended child node directly by node_id.',
     };
   }
-  return { ok: true, afterOutline: currentOutline.replace(normalizedOld, normalizedNew) };
+
+  return {
+    ok: false,
+    code: 'old_string_not_found',
+    error: 'old_string did not match the current annotated outline.',
+    instructions: 'Call node_read again and copy an exact fragment from data.outline. For the target root line only, you may omit the leading %%node:node_id%% marker; keep field/value markers when editing existing field/value lines.',
+  };
 }
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -1251,8 +1355,34 @@ function countOccurrences(haystack: string, needle: string): number {
   return count;
 }
 
-function serializeEditableNodeOutline(index: ProjectionIndex, nodeId: string): string {
-  return serializeAnnotatedOutline(index, nodeId, 0, 0, 500, false);
+function addTargetRootMarker(fragment: string, rootNodeId: string): string | null {
+  const lines = fragment.split('\n');
+  const firstLine = lines[0];
+  if (firstLine === undefined) return null;
+  if (startsWithTargetRootMarker(fragment, rootNodeId)) return fragment;
+  if (startsWithAnyRootMarker(fragment)) return null;
+  const match = /^(-\s+)(.*)$/.exec(firstLine);
+  if (!match) return null;
+  lines[0] = `${match[1]}%%node:${rootNodeId}%% ${match[2]}`;
+  return lines.join('\n');
+}
+
+function startsWithTargetRootMarker(fragment: string, rootNodeId: string): boolean {
+  const firstLine = fragment.split('\n')[0] ?? '';
+  return rootMarkerPattern(rootNodeId).test(firstLine);
+}
+
+function startsWithAnyRootMarker(fragment: string): boolean {
+  const firstLine = fragment.split('\n')[0] ?? '';
+  return /^-\s+%%node:[^\s%]+(?:\s+[^%]*)?%%(?:\s|$)/.test(firstLine);
+}
+
+function rootMarkerPattern(rootNodeId: string): RegExp {
+  return new RegExp(`^-\\s+%%node:${escapeRegExp(rootNodeId)}(?:\\s+[^%]*)?%%(?:\\s|$)`);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function validateSingleNodeEditShape(document: OutlineDocument): { code: string; error: string; instructions: string } | null {
@@ -1339,6 +1469,19 @@ async function syncOutlineNodeInPlace(
   const currentIndex = indexProjection(host.getProjection());
   const current = requiredNode(currentIndex, nodeId);
   if (current.type === 'reference') throw new Error('Outline edit cannot update a reference node root; use replace_with_reference_to.');
+  if (current.type === 'codeBlock' || node.codeBlock) {
+    if (current.type !== 'codeBlock' || !node.codeBlock) {
+      throw new Error('Outline edit cannot change a node to or from a code block; edit code blocks with the fenced outline returned by node_read.');
+    }
+    trackMatchedNode(tracker, nodeId);
+    if (current.content.text !== node.title) {
+      await host.handle('apply_node_text_patch', { nodeId, patch: replaceAllRichTextPatch(plainText(node.title)) });
+    }
+    if ((current.codeLanguage ?? '') !== (node.codeLanguage ?? '')) {
+      await host.handle('set_code_language', { nodeId, codeLanguage: node.codeLanguage ?? '' });
+    }
+    return [];
+  }
   trackMatchedNode(tracker, nodeId);
   if (richTextOutlineText(current.content) !== node.title) {
     await host.handle('apply_node_text_patch', { nodeId, patch: replaceAllRichTextPatch(richTextFromOutlineText(node.title)) });
@@ -1947,7 +2090,9 @@ async function createOutlineNode(
 
   const createdId = node.referenceTargetId
     ? await addReference(host, parentId, node.referenceTargetId, index)
-    : await createPlainNode(host, parentId, index, node.title);
+    : node.codeBlock
+      ? await createCodeBlockNode(host, parentId, index, node.title, node.codeLanguage)
+      : await createPlainNode(host, parentId, index, node.title);
   tracker.createdNodeIds.push(createdId);
 
   if (node.description && !node.referenceTargetId) {
@@ -1980,6 +2125,18 @@ async function createPlainNode(host: OutlinerToolHost, parentId: string, index: 
     return focusFromOutcome(await host.handle('create_node', { parentId, index, text: content.text }));
   }
   return focusFromOutcome(await host.handle('create_rich_text_node', { parentId, index, content }));
+}
+
+async function createCodeBlockNode(
+  host: OutlinerToolHost,
+  parentId: string,
+  index: number | null,
+  text: string,
+  codeLanguage?: string,
+): Promise<string> {
+  const createdId = focusFromOutcome(await host.handle('create_node', { parentId, index, text }));
+  await host.handle('set_code_block', { nodeId: createdId, codeLanguage: codeLanguage ?? null });
+  return createdId;
 }
 
 async function addReference(host: OutlinerToolHost, parentId: string, targetId: string, index: number | null): Promise<string> {
@@ -2265,9 +2422,17 @@ function focusFromOutcome(outcome: unknown): string {
 }
 
 function richTextFromOutlineText(text: string): RichText {
-  return text.includes('[[') ? referenceMarkupToRichText(text) : plainText(text);
+  return text.includes('[[') || hasMarkdownInlineSyntax(text)
+    ? markdownReferenceMarkupToRichText(text)
+    : plainText(text);
 }
 
 function richTextOutlineText(content: RichText): string {
-  return content.inlineRefs.length > 0 ? richTextToReferenceMarkup(content) : content.text;
+  return content.inlineRefs.length > 0 || content.marks.length > 0
+    ? richTextToMarkdownReferenceMarkup(content)
+    : content.text;
+}
+
+function hasMarkdownInlineSyntax(text: string): boolean {
+  return /\[[^\]\n]+\]\([^)]+\)|\*\*[^*\n]+\*\*|~~[^~\n]+~~|==[^=\n]+==|\*[^*\n]+\*|`[^`\n]+`/u.test(text);
 }

@@ -18,8 +18,7 @@ describe('agent user view context reminder', () => {
     expect(reminder).toContain('  - %%node:node-2 collapsed children=3%% Collapsed branch');
     expect(reminder).toContain('  - %%node:node-3 partial=0/12%% Long branch');
     expect(reminder).not.toContain('<node-panel-state>');
-    expect(reminder).not.toContain('<selection');
-    expect(reminder).not.toContain('selected');
+    expect(reminder).not.toContain('<selected-nodes>');
     expect(reminder).not.toContain('"nodePanels"');
 
     const outline = extractVisibleOutline(reminder ?? '');
@@ -54,6 +53,24 @@ describe('agent user view context reminder', () => {
     expect(reminder).toContain('<node-ref id="node-ref-1" title="Referenced node" />');
   });
 
+  test('renders selected nodes even without visible panels', () => {
+    const reminder = buildUserViewContextReminder({
+      activePanelId: null,
+      focusedPanelId: 'panel-1',
+      focusSurface: null,
+      focusedNode: null,
+      nodePanels: [],
+      selectedNodes: [
+        { nodeId: 'node-selected-1', title: 'First selected', panelId: 'panel-1', surface: 'selection' },
+        { nodeId: 'node-selected-2', title: 'Second selected', panelId: 'panel-1', surface: 'selection' },
+      ],
+    });
+
+    expect(reminder).toContain('<selected-nodes>');
+    expect(reminder).toContain('<node-ref id="node-selected-1" title="First selected" />');
+    expect(reminder).toContain('<node-ref id="node-selected-2" title="Second selected" />');
+  });
+
   test('tracks per-conversation snapshots and sends diffs after the first view', () => {
     const tracker = new AgentUserViewContextReminderTracker();
     const first = tracker.prepare('conversation-1', sampleContext());
@@ -74,10 +91,13 @@ describe('agent user view context reminder', () => {
     const referenced = tracker.prepare('conversation-1', {
       ...focusedOnCollapsedBranchContext(),
       referencedNodes: [{ nodeId: 'node-ref-2', title: 'Second reference' }],
+      selectedNodes: [{ nodeId: 'node-2', title: 'Collapsed branch', panelId: 'panel-1', surface: 'selection' }],
     });
     expect(referenced.reminder).toContain('<user-view-context mode="diff" basis="previous-user-view-context">');
     expect(referenced.reminder).toContain('<explicit-references>');
     expect(referenced.reminder).toContain('<node-ref id="node-ref-2" title="Second reference" />');
+    expect(referenced.reminder).toContain('<selected-nodes>');
+    expect(referenced.reminder).toContain('<node-ref id="node-2" title="Collapsed branch" />');
 
     tracker.reset('conversation-1');
     const afterReset = tracker.prepare('conversation-1', sampleContext());

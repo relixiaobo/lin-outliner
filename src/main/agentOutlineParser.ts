@@ -1,5 +1,6 @@
 import { extractTags, parseCheckboxMarker, removeTagTokens } from '../core/textSyntax';
 import { parseNodeReferenceMarkers, parseReferenceMarkers } from '../core/referenceMarkup';
+import { normalizeCodeLanguage } from '../core/codeLanguages';
 
 export interface OutlineDocument {
   roots: OutlineNode[];
@@ -14,6 +15,8 @@ export interface OutlineNode {
   fields: OutlineField[];
   children: OutlineNode[];
   referenceTargetId?: string;
+  codeBlock?: boolean;
+  codeLanguage?: string;
   search?: boolean;
   view?: string;
 }
@@ -54,11 +57,17 @@ interface ParsedLine {
   text: string;
   line: number;
   column: number;
+  codeBlock?: {
+    language?: string;
+    text: string;
+  };
 }
 
 type StackFrame =
   | { kind: 'node'; level: number; node: OutlineNode }
   | { kind: 'field'; level: number; field: OutlineField };
+
+const FENCE_START_RE = /^(`{3,}|~{3,})[ \t]*([^\n]*?)[ \t]*$/u;
 
 export function parseLinOutline(
   input: string,
@@ -69,7 +78,9 @@ export function parseLinOutline(
   const warnings: string[] = [];
   const annotations = options.annotations ?? 'forbid';
 
-  for (const [index, rawLine] of normalized.split('\n').entries()) {
+  const rawLines = normalized.split('\n');
+  for (let index = 0; index < rawLines.length; index += 1) {
+    const rawLine = rawLines[index] ?? '';
     if (rawLine.trim().length === 0) continue;
     const line = index + 1;
     const leading = rawLine.match(/^ */)?.[0].length ?? 0;
@@ -83,7 +94,42 @@ export function parseLinOutline(
     if (!rest.startsWith('- ')) {
       return { ok: false, error: { message: 'Every non-empty line must start with "- ".', line, column: leading + 1 } };
     }
-    parsedLines.push({ level: leading / 2, text: rest.slice(2).trim(), line, column: leading + 3 });
+    const text = rest.slice(2).trim();
+    const fence = stripNodeMarker(text).text.match(FENCE_START_RE);
+    if (!fence) {
+      parsedLines.push({ level: leading / 2, text, line, column: leading + 3 });
+      continue;
+    }
+
+    const marker = fence[1] ?? '```';
+    const language = normalizeCodeLanguage((fence[2] ?? '').trim().split(/\s+/u)[0] ?? '') || undefined;
+    const fenceIndent = ' '.repeat(leading);
+    const body: string[] = [];
+    index += 1;
+    while (index < rawLines.length) {
+      const codeLine = rawLines[index] ?? '';
+      if (isClosingFenceLine(codeLine, marker)) break;
+      body.push(codeLine.startsWith(fenceIndent) ? codeLine.slice(fenceIndent.length) : codeLine);
+      index += 1;
+    }
+    if (index >= rawLines.length) {
+      return {
+        ok: false,
+        error: {
+          code: 'unclosed_code_fence',
+          message: `Code fence starting on line ${line} is missing a closing ${marker} fence.`,
+          line,
+          column: leading + 3,
+        },
+      };
+    }
+    parsedLines.push({
+      level: leading / 2,
+      text,
+      line,
+      column: leading + 3,
+      codeBlock: { language, text: body.join('\n') },
+    });
   }
 
   const roots: OutlineNode[] = [];
@@ -104,7 +150,7 @@ export function parseLinOutline(
       };
     }
     const annotated = stripNodeMarker(line.text);
-    const fieldHeader = parseFieldHeader(annotated.text);
+    const fieldHeader = line.codeBlock ? null : parseFieldHeader(annotated.text);
 
     if (fieldHeader && parent?.kind === 'node') {
       const field: OutlineField = {
@@ -125,7 +171,9 @@ export function parseLinOutline(
       continue;
     }
 
-    const node = parseOutlineNode(annotated.text, annotated.nodeId);
+    const node = line.codeBlock
+      ? parseCodeBlockNode(line.codeBlock, annotated.nodeId)
+      : parseOutlineNode(annotated.text, annotated.nodeId);
     if (!parent) roots.push(node);
     else parent.node.children.push(node);
     stack.push({ kind: 'node', level: line.level, node });
@@ -136,6 +184,27 @@ export function parseLinOutline(
   }
 
   return { ok: true, document: { roots }, warnings };
+}
+
+function isClosingFenceLine(line: string, marker: string): boolean {
+  const trimmed = line.trimStart();
+  return trimmed.startsWith(marker) && /^[ \t]*$/u.test(trimmed.slice(marker.length));
+}
+
+function parseCodeBlockNode(
+  codeBlock: { language?: string; text: string },
+  nodeId?: string,
+): OutlineNode {
+  return {
+    ...(nodeId ? { nodeId } : {}),
+    title: codeBlock.text,
+    description: null,
+    tags: [],
+    fields: [],
+    children: [],
+    codeBlock: true,
+    codeLanguage: codeBlock.language,
+  };
 }
 
 function parseOutlineNode(input: string, nodeId?: string): OutlineNode {

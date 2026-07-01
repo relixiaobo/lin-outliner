@@ -11,7 +11,8 @@ import {
   type DocumentProjection,
   type NodeProjection,
 } from '../core/types';
-import { formatNodeReferenceMarker, richTextToReferenceMarkup } from '../core/referenceMarkup';
+import { formatNodeReferenceMarker } from '../core/referenceMarkup';
+import { richTextToMarkdownReferenceMarkup } from '../core/markdownRichText';
 import { formatTag } from '../core/textSyntax';
 import { projectFieldConfig, nodeIsDone, nodeShowsCheckbox } from '../core/configProjection';
 import { isInternalConfigNode } from '../core/configSchema';
@@ -178,7 +179,7 @@ export function snippetFor(node: NodeProjection, queryTerms: string[]): string {
 }
 
 export function nodeContentText(node: NodeProjection): string {
-  return richTextToReferenceMarkup(node.content);
+  return richTextToMarkdownReferenceMarkup(node.content);
 }
 
 export function isSearchCandidate(index: ProjectionIndex, nodeId: string): boolean {

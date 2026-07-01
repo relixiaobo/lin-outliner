@@ -32,6 +32,7 @@ import {
   type SetConfigValueInput,
 } from './configSchema';
 import { referencesForTarget } from './references';
+import { normalizeCodeLanguage } from './codeLanguages';
 import {
   AREAS_ID,
   DAILY_NOTES_ID,
@@ -3640,11 +3641,6 @@ function ensureValidHideFieldMode(mode: string) {
 
 function normalizeOptionalText(value: string | null | undefined): string | undefined {
   const normalized = value?.trim();
-  return normalized ? normalized : undefined;
-}
-
-function normalizeCodeLanguage(value: string | null | undefined): string | undefined {
-  const normalized = value?.trim().toLowerCase();
   return normalized ? normalized : undefined;
 }
 

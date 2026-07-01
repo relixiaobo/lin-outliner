@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351; authored ratified plan agent-process-stable-disclosure #297) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344**) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -425,6 +425,22 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-node-edit-behavior** (`codex-3/node-description-guidance`, PR #353, codex-3,
+  merged 2026-07-01, fast-track) — makes agent-facing outline edits closer to normal
+  user outline behavior. Agent node-tool guidance now steers ordinary structure into
+  child bullets instead of overusing descriptions, fields, tags, checkboxes, or saved
+  searches; `node_edit` has an explicit operation discriminator, rejects whole-outline
+  replacement attempts, and exposes fresh revision information for model-visible retries.
+  Agent-created and agent-edited outline markdown now preserves rich-text marks and fenced
+  `codeBlock` rows through shared core parsers, and user-view context includes selected
+  rows so the agent can act on the same visible selection users rely on. `docs/spec/agent-tool-design.md`
+  records the as-built contract. **Gate (main):** deep review found two issues (manual
+  merge needed with the latest visible-outline context work, and inline-reference display
+  text marks could serialize into stray markdown); codex-3 fixed both before merge.
+  Verified on the final PR head: targeted parser/node-tool/user-context suites, preview-only
+  node-edit runtime regression, typecheck, `docs:check`, and `git diff --check`. Fast-track,
+  **shape (a)**, *no plan file*.
 
 - **clear-context-boundary** (`codex-4/clear-context-boundary`, PR #352, codex-4,
   merged 2026-06-30) — adds `/clear` as a persisted model-context boundary for the
