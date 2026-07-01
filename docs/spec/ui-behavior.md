@@ -46,7 +46,7 @@ keyboard or pointer change should be checked against this matrix.
 - Page titles are editable rich text. This includes the workspace root title
   (so people can name their workspace), which stays structurally fixed — it can
   be renamed but not moved, deleted, or reparented. The functional system
-  sections (Daily notes, Library, Schema, Saved searches, Trash, Settings) and
+  sections (Daily notes, Library, Schema, Saved searches, Trash) and
   other locked pages (e.g. day pages) keep read-only titles.
 - Trash is a recoverable holding area, not a normal editable bucket. The Trash
   root's context menu offers **Empty Trash** when it has children; the action

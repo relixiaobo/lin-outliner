@@ -276,7 +276,6 @@ function projection(): DocumentProjection {
     searchesId: 'searches',
     recentsId: 'recents',
     trashId: 'trash',
-    settingsId: 'settings',
     todayId: 'today',
     nodes: [
       node('root', { children: ['today', 'alpha'] }),
@@ -288,7 +287,6 @@ function projection(): DocumentProjection {
       node('searches'),
       node('recents'),
       node('trash'),
-      node('settings'),
     ],
   };
 }

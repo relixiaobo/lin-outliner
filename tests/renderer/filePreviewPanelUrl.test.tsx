@@ -113,7 +113,6 @@ function emptyIndex(): DocumentIndex {
       searchesId: 'searches',
       recentsId: 'recents',
       trashId: 'trash',
-      settingsId: 'settings',
       todayId: 'today',
       nodes,
     },

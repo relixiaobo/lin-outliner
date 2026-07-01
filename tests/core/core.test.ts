@@ -14,7 +14,6 @@ import {
   RESOURCES_ID,
   SCHEMA_ID,
   SEARCHES_ID,
-  SETTINGS_ID,
   TAG_DAY_ID,
   TRASH_ID,
   WORKSPACE_ID,
@@ -86,11 +85,34 @@ describe('Core', () => {
       SCHEMA_ID,
       SEARCHES_ID,
       TRASH_ID,
-      SETTINGS_ID,
     ]);
     expect(state.nodes[PROJECTS_ID]).toBeUndefined();
     expect(state.nodes[AREAS_ID]).toBeUndefined();
     expect(state.nodes[RESOURCES_ID]).toBeUndefined();
+  });
+
+  test('removes the retired Settings document root on restore', () => {
+    const legacy = new LoroOutlinerDocument();
+    legacy.createNodeWithId(WORKSPACE_ID, undefined, undefined, undefined, (node) => {
+      node.content = plainText('Tenon');
+      node.locked = false;
+    });
+    legacy.createNodeWithId('settings', WORKSPACE_ID, undefined, undefined, (node) => {
+      node.content = plainText('Settings');
+      node.locked = true;
+    });
+
+    const restored = Core.fromState(legacy.serialize('__legacy__'));
+    const state = restored.state();
+
+    expect(state.nodes.settings).toBeUndefined();
+    expect(state.nodes[WORKSPACE_ID]!.children).toEqual([
+      DAILY_NOTES_ID,
+      LIBRARY_ID,
+      SCHEMA_ID,
+      SEARCHES_ID,
+      TRASH_ID,
+    ]);
   });
 
   test('reports changed node ids for incremental consumers and full rebuild on undo', () => {

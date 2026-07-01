@@ -42,7 +42,6 @@ import {
   RESOURCES_ID,
   SCHEMA_ID,
   SEARCHES_ID,
-  SETTINGS_ID,
   TAG_DAY_ID,
   TAG_WEEK_ID,
   TAG_YEAR_ID,
@@ -2504,14 +2503,14 @@ export class Core {
     this.ensureSystemNodeDirect(SEARCHES_ID, undefined, WORKSPACE_ID, 'Saved searches', true, now);
     this.ensureSystemNodeDirect(RECENTS_ID, 'search', SEARCHES_ID, 'Recents', true, now);
     this.ensureSystemNodeDirect(TRASH_ID, undefined, WORKSPACE_ID, 'Trash', true, now);
-    this.ensureSystemNodeDirect(SETTINGS_ID, undefined, WORKSPACE_ID, 'Settings', true, now);
+    this.deleteRetiredSystemNodeDirect('settings');
     this.ensureSystemNodeDirect(TAG_DAY_ID, 'tagDef', SCHEMA_ID, 'day', true, now);
     this.ensureSystemNodeDirect(TAG_WEEK_ID, 'tagDef', SCHEMA_ID, 'week', true, now);
     this.ensureSystemNodeDirect(TAG_YEAR_ID, 'tagDef', SCHEMA_ID, 'year', true, now);
     // Persist the canonical root child order into the tree. Materialization now
     // reflects the tree verbatim (no read-time re-ordering), so every system node
     // must be placed here, matching the historical projection order.
-    [DAILY_NOTES_ID, LIBRARY_ID, SCHEMA_ID, SEARCHES_ID, TRASH_ID, SETTINGS_ID].forEach((id, index) => {
+    [DAILY_NOTES_ID, LIBRARY_ID, SCHEMA_ID, SEARCHES_ID, TRASH_ID].forEach((id, index) => {
       this.loro.moveNode(id, WORKSPACE_ID, index);
     });
     this.loro.moveNode(RECENTS_ID, SEARCHES_ID, 0);
@@ -2572,7 +2571,6 @@ export class Core {
       SEARCHES_ID,
       RECENTS_ID,
       TRASH_ID,
-      SETTINGS_ID,
     ]);
     for (const childId of [...root.children]) {
       if (systemRootIds.has(childId)) continue;
@@ -2624,6 +2622,10 @@ export class Core {
     node.updatedAt = node.updatedAt || now;
     this.loro.writeNode(node);
     if (parentId && node.parentId !== parentId) this.loro.moveNode(id, parentId, undefined);
+  }
+
+  private deleteRetiredSystemNodeDirect(id: string) {
+    if (this.loro.hasNode(id)) this.removeSubtreeDirect(id);
   }
 
   // config-as-nodes Stage 4: idempotently seed the system enum option subtrees
@@ -3878,7 +3880,6 @@ function isSystemId(nodeId: string) {
     SEARCHES_ID,
     RECENTS_ID,
     TRASH_ID,
-    SETTINGS_ID,
     TAG_DAY_ID,
     TAG_WEEK_ID,
     TAG_YEAR_ID,
