@@ -5,12 +5,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { deflateRawSync } from 'node:zlib';
+import { resolveLinlabSkillsRoot } from '../../src/main/builtInSkillConfig';
 
 const execFile = promisify(execFileCallback);
 const root = path.resolve(import.meta.dir, '..', '..');
-const linlabSkillsRoot = process.env.LINLAB_SKILLS_ROOT
-  ? path.resolve(process.env.LINLAB_SKILLS_ROOT)
-  : path.resolve(root, '..', 'linlab-skills');
+const linlabSkillsRoot = resolveLinlabSkillsRoot({ repoRoot: root });
 const python = '/usr/bin/python3';
 const presentationSkillRoot = path.join(linlabSkillsRoot, 'presentation');
 const documentSkillRoot = path.join(linlabSkillsRoot, 'document');

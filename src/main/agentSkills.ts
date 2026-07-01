@@ -22,6 +22,7 @@ import {
   BUILT_IN_SKILL_SOURCE_DIR,
   ENABLED_LINLAB_BUILT_IN_SKILLS,
   LINLAB_SKILLS_ROOT_ENV,
+  resolveLinlabSkillsRoot,
 } from './builtInSkillConfig';
 import {
   errorEnvelope,
@@ -237,6 +238,7 @@ export interface BuiltInSkillResourceRootOptions {
 
 export interface ExternalBuiltInSkillRootOptions extends BuiltInSkillResourceRootOptions {
   linlabSkillsRoot?: string;
+  env?: Record<string, string | undefined>;
 }
 
 /**
@@ -1286,9 +1288,10 @@ class SkillRegistry {
       }
       for (const dir of this.builtInSkillRoots) {
         const skill = await loadSkillFromRoot(dir, 'built-in');
-        if (skill) {
-          await this.addLoadedSkill(skill);
+        if (!skill) {
+          throw new Error(`Configured built-in skill root is missing a valid ${SKILL_FILE_NAME}: ${dir}. Set ${LINLAB_SKILLS_ROOT_ENV} to the linlab-skills checkout.`);
         }
+        await this.addLoadedSkill(skill);
       }
       for (const skill of this.builtInSkills.map(createBuiltInSkillDefinition)) {
         await this.addLoadedSkill(skill);
@@ -1399,9 +1402,11 @@ export function resolveExternalBuiltInSkillRoots(options: ExternalBuiltInSkillRo
   if (isPackaged) return [];
   const moduleDir = options.moduleDir ?? fileURLToPath(new URL('.', import.meta.url));
   const localBuiltInRoot = resolveBuiltInSkillResourceRoot({ isPackaged: false, moduleDir });
-  const linlabSkillsRoot = options.linlabSkillsRoot
-    ?? process.env[LINLAB_SKILLS_ROOT_ENV]
-    ?? path.resolve(localBuiltInRoot, '../../../..', 'linlab-skills');
+  const linlabSkillsRoot = resolveLinlabSkillsRoot({
+    linlabSkillsRoot: options.linlabSkillsRoot,
+    env: options.env,
+    localBuiltInRoot,
+  });
   return ENABLED_LINLAB_BUILT_IN_SKILLS.map((name) => path.join(linlabSkillsRoot, name));
 }
 

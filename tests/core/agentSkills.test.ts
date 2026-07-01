@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { execFile as execFileCallback } from 'node:child_process';
-import { mkdtemp, mkdir, realpath, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -17,6 +17,7 @@ import {
   type AgentSkillProvenanceRecord,
   type AgentSkillProvenanceStore,
 } from '../../src/main/agentSkills';
+import { resolveLinlabSkillsRoot } from '../../src/main/builtInSkillConfig';
 
 const execFile = promisify(execFileCallback);
 
@@ -1021,6 +1022,17 @@ describe('agent skills', () => {
       .toEqual([]);
   });
 
+  test('resolves the default linlab skills checkout from tmp worktree clones', () => {
+    const checkoutParent = path.join(path.sep, 'Users', 'me', 'Coding');
+    const repoRoot = path.join(checkoutParent, 'lin-outliner', 'tmp', 'worktrees', 'skill-sync');
+    const moduleDir = path.join(repoRoot, 'out', 'main');
+
+    expect(resolveLinlabSkillsRoot({ repoRoot, env: {} }))
+      .toBe(path.join(checkoutParent, 'linlab-skills'));
+    expect(resolveExternalBuiltInSkillRoots({ isPackaged: false, moduleDir, env: {} })[0])
+      .toBe(path.join(checkoutParent, 'linlab-skills', 'data-analysis'));
+  });
+
   test('ships research as a built-in read-only isolated skill', async () => {
     const runtime = new AgentSkillRuntime({
       includeUserSkills: false,
@@ -1572,7 +1584,16 @@ describe('agent skills', () => {
 describe('built-in skill resource packaging', () => {
   test('stages enabled linlab skills into the packaged built-in resource root', async () => {
     const repoRoot = path.resolve(import.meta.dir, '..', '..');
-    await execFile('bun', ['scripts/sync-built-in-skills.ts'], { cwd: repoRoot });
+    const linlabSkillsRoot = resolveLinlabSkillsRoot({ repoRoot });
+    const ignoredLocalArtifact = path.join(linlabSkillsRoot, 'data-analysis', 'analysis_runs', 'local-output.txt');
+
+    await mkdir(path.dirname(ignoredLocalArtifact), { recursive: true });
+    await writeFile(ignoredLocalArtifact, 'local only', 'utf8');
+    try {
+      await execFile('bun', ['scripts/sync-built-in-skills.ts'], { cwd: repoRoot });
+    } finally {
+      await rm(ignoredLocalArtifact, { force: true });
+    }
     const generatedRoot = path.join(repoRoot, 'build', 'generated', 'built-in-skills');
     const dataSkill = await readFile(path.join(generatedRoot, 'data-analysis', 'SKILL.md'), 'utf8');
     const presentationSkill = await readFile(path.join(generatedRoot, 'presentation', 'SKILL.md'), 'utf8');
@@ -1581,6 +1602,7 @@ describe('built-in skill resource packaging', () => {
     expect(dataSkill).toContain('pandas + duckdb');
     await expect(readFile(path.join(generatedRoot, 'data-analysis', 'evals', 'README.md'), 'utf8')).rejects.toThrow();
     await expect(readFile(path.join(generatedRoot, 'data-analysis', 'scripts', '__pycache__'), 'utf8')).rejects.toThrow();
+    await expect(readFile(path.join(generatedRoot, 'data-analysis', 'analysis_runs', 'local-output.txt'), 'utf8')).rejects.toThrow();
     expect(presentationSkill).toContain('Presentation');
     expect(documentSkill).toContain('Document');
     expect(await readFile(path.join(generatedRoot, 'memory-dream', 'SKILL.md'), 'utf8')).toContain('Memory Dream');

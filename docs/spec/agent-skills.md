@@ -93,12 +93,18 @@ resolves that resource path instead of depending on the current working
 directory or a user's local `linlab-skills` checkout. Development runs load
 Tenon-owned built-ins from `src/main/builtInSkills` and the enabled linlab
 built-in roots directly, so source changes are visible without staging. The
-current Tenon-owned resource-backed built-in is the private `memory-dream`
-runtime skill; the user-visible portable artifact skills are sourced from
-linlab. Like cc-2.1 bundled skills, built-ins only receive a `Base directory`
-prefix when they have real extracted reference files. Inline built-ins such as
-`/skillify` and `/research` have no extracted files, so their prompts contain
-only the skill body. Post-compact bookkeeping records all built-ins as
+linlab checkout is resolved from `LINLAB_SKILLS_ROOT` when set; otherwise the
+default is the sibling `linlab-skills` checkout next to the real clone root,
+including clones opened through `tmp/worktrees/<topic>`. Missing configured
+linlab roots fail fast rather than silently dropping built-ins. `skills:sync`
+copies only tracked files from the external linlab repository and still excludes
+non-runtime folders such as `evals`, so ignored local outputs cannot enter the
+app bundle. The current Tenon-owned resource-backed built-in is the private
+`memory-dream` runtime skill; the user-visible portable artifact skills are
+sourced from linlab. Like cc-2.1 bundled skills, built-ins only receive a `Base
+directory` prefix when they have real extracted reference files. Inline built-ins
+such as `/skillify` and `/research` have no extracted files, so their prompts
+contain only the skill body. Post-compact bookkeeping records all built-ins as
 `built-in:<name>` rather than an editable file path.
 
 Default mutable skill directories are always enabled:
