@@ -154,6 +154,53 @@ describe('agent runtime stop', () => {
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });
 
+  test('restoring a live conversation does not abort its active run', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-restore-live-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-restore-live-data-'));
+    roots.push(localRoot, dataRoot);
+
+    let resolveStreamStarted: (() => void) | null = null;
+    const streamStarted = new Promise<void>((resolve) => {
+      resolveStreamStarted = resolve;
+    });
+    let receivedSignal: AbortSignal | undefined;
+    const streamFn = ((_model: Model<Api>, _context: Context, options?: SimpleStreamOptions) => {
+      receivedSignal = options?.signal;
+      resolveStreamStarted?.();
+      return createAssistantMessageEventStream();
+    }) as StreamFn;
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    const send = runtime.sendMessage(created.conversationId, 'Start and keep running.');
+    await streamStarted;
+
+    const restored = await runtime.restoreConversation(created.conversationId);
+
+    expect(receivedSignal?.aborted).toBe(false);
+    expect(restored.renderProjection.runActive).toBe(true);
+    expect(restored.renderProjection.activeRunId).not.toBe(null);
+
+    runtime.stopConversation(created.conversationId);
+    await send;
+  });
+
   test('records a provider run failure as an inline failed assistant message', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-fail-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-fail-data-'));

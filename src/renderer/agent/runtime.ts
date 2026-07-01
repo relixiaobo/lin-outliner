@@ -758,7 +758,6 @@ export class AgentRuntimeStore {
 
   selectConversation = async (targetConversationId: string) => {
     if (!targetConversationId || targetConversationId === this.conversationId) return;
-    const previousConversationId = this.conversationId;
     const requestVersion = this.beginConversationRequest();
     this.conversationId = targetConversationId;
     this.projection = EMPTY_PROJECTION;
@@ -772,7 +771,6 @@ export class AgentRuntimeStore {
       // Genuine open → clear its unread, but only if the dock is actually open (a
       // banner click can route here while collapsed). No-op if nothing unread.
       this.markCurrentConversationReadIfViewing();
-      await this.closePreviousConversation(previousConversationId, conversation.conversationId);
     } catch (caught) {
       this.reportError(caught);
       throw caught;
@@ -780,7 +778,6 @@ export class AgentRuntimeStore {
   };
 
   newConversation = async (options: AgentCreateConversationOptions) => {
-    const previousConversationId = this.conversationId;
     const requestVersion = this.beginConversationRequest();
     this.conversationId = null;
     this.projection = EMPTY_PROJECTION;
@@ -791,7 +788,6 @@ export class AgentRuntimeStore {
       const conversation = await this.client.createConversation(options);
       if (!this.isCurrentRequest(requestVersion)) return;
       this.hydrateConversation(conversation);
-      await this.closePreviousConversation(previousConversationId, conversation.conversationId);
     } catch (caught) {
       this.reportError(caught);
       throw caught;
@@ -799,7 +795,6 @@ export class AgentRuntimeStore {
   };
 
   openDefaultConversation = async () => {
-    const previousConversationId = this.conversationId;
     const requestVersion = this.beginConversationRequest();
     this.conversationId = null;
     this.projection = EMPTY_PROJECTION;
@@ -813,7 +808,6 @@ export class AgentRuntimeStore {
       this.hydrateConversation(conversation);
       // Reveal the default/latest conversation → clear unread only if actually viewed.
       this.markCurrentConversationReadIfViewing();
-      await this.closePreviousConversation(previousConversationId, conversation.conversationId);
     } catch (caught) {
       this.reportError(caught);
       throw caught;
@@ -1233,11 +1227,6 @@ export class AgentRuntimeStore {
       this.publish();
     }
   };
-
-  private async closePreviousConversation(previousConversationId: string | null, nextConversationId: string) {
-    if (!previousConversationId || previousConversationId === nextConversationId) return;
-    await this.client.closeConversation(previousConversationId);
-  }
 
   private beginConversationRequest() {
     this.requestVersion += 1;

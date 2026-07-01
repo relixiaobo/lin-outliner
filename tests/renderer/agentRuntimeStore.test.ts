@@ -833,7 +833,7 @@ describe('agent runtime store', () => {
     unsubscribeSecond();
   });
 
-  test('closes the previous runtime conversation only on explicit new conversation', async () => {
+  test('keeps previous runtime conversations live when opening a new channel', async () => {
     const restored = conversation('saved', projection([
       { nodeId: 'u1', message: userMessage('old'), branches: null },
     ]));
@@ -851,7 +851,7 @@ describe('agent runtime store', () => {
     });
 
     expect(fake.calls.createConversation).toHaveLength(1);
-    expect(fake.calls.closeConversation).toEqual(['saved']);
+    expect(fake.calls.closeConversation).toEqual([]);
     expect(store.getSnapshot().conversationId).toBe('created');
     expect(store.getSnapshot().entries.map((entry) => entry.nodeId))
       .toEqual(['u2']);
