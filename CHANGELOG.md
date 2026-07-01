@@ -106,6 +106,15 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Hidden Dream system prompt context no longer appears in transcript system lines (PR #360,
+  codex-2)** — Dream channel manual/scheduled anchors may carry model-only
+  `<system-reminder>` prompt context next to their human-readable summary; the renderer now filters
+  those hidden blocks from system actor lines while preserving the visible `Manual Dream` /
+  `Scheduled Dream` anchor text. The text extraction path is covered by renderer tests for mixed
+  hidden-context + visible-anchor rows and hidden-only suppression, and
+  `docs/spec/agent-event-log-rendering.md` records the intended Dream anchor behavior.
+  **Gate (main):** code review found no reportable findings. Verified with targeted renderer tests,
+  typecheck, `docs:check`, and `git diff --check`.
 - **Disclosure scroll anchoring stays stable through delayed measurements (PR #358, codex-4)** —
   expanding or collapsing long virtualized outliner rows now keeps the clicked chevron visually
   anchored across multiple row-measurement frames, while releasing that temporary anchor as soon as

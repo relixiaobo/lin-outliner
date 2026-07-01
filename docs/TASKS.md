@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356**) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357; authored ratified plan agent-process-stable-disclosure #297) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -425,6 +425,16 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **dream-system-line-filter** (`codex-2/dream-system-line-filter`, PR #360, codex-2,
+  merged 2026-07-01, fast-track) — filters hidden Dream `<system-reminder>` prompt context out of
+  system actor transcript lines while preserving the visible manual/scheduled Dream anchor summary
+  in `#Dream`. The system-line text extraction now lives in a focused renderer helper with coverage
+  for mixed hidden-context + visible-anchor rows and hidden-only suppression, and
+  `docs/spec/agent-event-log-rendering.md` records the Dream anchor rendering behavior.
+  **Gate (main):** code review found no reportable findings. Verified on the PR head and merge:
+  targeted renderer tests, typecheck, `docs:check`, and `git diff --check`.
+  Fast-track, **shape (a)**, *no plan file*.
 
 - **disclosure-anchor-stability** (`codex-4/disclosure-anchor-stability-pr`, PR #358, codex-4,
   merged 2026-07-01, fast-track) — extends the shared disclosure scroll-anchor helper so expanding or
