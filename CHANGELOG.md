@@ -12,6 +12,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Browser and computer control implementation plans (PR #361, codex)** — adds
+  active design plans for Tenon-native Browser Control and Computer Control
+  agent tool families. Browser Control maps the useful `browser-pilot` surface
+  into first-party CDP-backed tools, model-visible screenshot/payload handling,
+  network inspection/interception, and a resource-backed `browser-control`
+  built-in skill while keeping download management outside the parity track.
+  Computer Control maps the useful `computer-pilot` / `cu` surface into
+  main-process macOS desktop tools, strict `execFile` helper invocation,
+  app-targeted method audit / verification semantics, payload-backed visual
+  results, and a resource-backed `computer-control` built-in skill. **Gate
+  (main):** deep document review against both reference projects found stale
+  built-in-skill packaging wording, an incorrect `cu` paste method name, and
+  missing `bp net --after` coverage; codex fixed all before merge. Main recorded
+  the active plans on the board.
 - **Shared linlab skills as packaged built-ins (PR #359, codex-3)** — `/presentation`, `/document`,
   and `/data-analysis` now come from enabled `linlab-skills` directories instead of being forked inside
   Tenon's `src/main/builtInSkills`. Development runs load the shared skill roots directly from the sibling

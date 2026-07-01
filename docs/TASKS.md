@@ -238,6 +238,26 @@ before any directional/security-sensitive build.
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
   taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
+- **agent-browser-control** (P1, plan merged #361, implementation pending) —
+  Tenon-native browser-use tool family covering the useful `browser-pilot`
+  surface: CDP-backed logged-in browser sessions, Pilot tabs, observe/read,
+  actions, uploads, screenshots/PDF/cookies, auth, frames/tabs, and network
+  inspection/interception. Visual outputs are model-visible image parts plus
+  payload refs, workflow guidance lives in a resource-backed built-in
+  `browser-control` skill, and download management is explicitly out of the
+  parity track until a separate product decision. Directional/security-sensitive:
+  implementation units must settle the hard-prohibition and browser-adoption
+  decisions before code. See `docs/plans/agent-browser-control.md`.
+- **agent-computer-control** (P1, plan merged #361, implementation pending) —
+  Tenon-native macOS computer-use tool family covering the useful
+  `computer-pilot` / `cu` surface: setup diagnostics, app/menu/sdef discovery,
+  state/snapshot/OCR/screenshot observation, app-targeted click/type/key/AX
+  actions, waits, pointer/window/app control, AppleScript, and defaults. The
+  initial backend adapts `cu` through strict `execFile` argv builders, preserves
+  `--app`-targeted method audit/verification fields, and returns screenshots /
+  annotated captures as payload-backed image tool results. Directional/security-
+  sensitive: implementation still needs helper-packaging and hard-prohibition
+  decisions before code. See `docs/plans/agent-computer-control.md`.
 
 Standalone agent items (not part of the program):
 
