@@ -13,6 +13,7 @@ import {
   type SimpleStreamOptions,
 } from '@earendil-works/pi-ai';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
+import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import { isLocalBaseUrl } from '../core/localEndpoint';
 
@@ -138,18 +139,21 @@ export function ensurePiCustomProvider(config: PiCustomProviderConfig): void {
       },
     },
     models: mergeCustomProviderModels(existingModels, model),
-    api: openAICompletionsApi(),
+    api: {
+      'openai-completions': openAICompletionsApi(),
+      'openai-responses': openAIResponsesApi(),
+    },
   }));
 }
 
 export function createOpenAICompatibleModel(
   config: { providerId: string; modelId: string; baseUrl?: string; catalogModel?: Model<Api> | null },
-): Model<'openai-completions'> {
+): Model<'openai-completions' | 'openai-responses'> {
   const catalogModel = config.catalogModel;
   return {
     id: config.modelId,
     name: catalogModel?.name ?? config.modelId,
-    api: 'openai-completions',
+    api: catalogModel?.api === 'openai-responses' ? 'openai-responses' : 'openai-completions',
     provider: piCustomProviderId(config.providerId),
     baseUrl: config.baseUrl ?? '',
     reasoning: catalogModel?.reasoning ?? false,
@@ -173,7 +177,7 @@ function ensureProviderForModel(model: Model<Api>): void {
   }
 }
 
-function mergeCustomProviderModels(existingModels: readonly Model<Api>[], model: Model<'openai-completions'>): Model<Api>[] {
+function mergeCustomProviderModels(existingModels: readonly Model<Api>[], model: Model<'openai-completions' | 'openai-responses'>): Model<Api>[] {
   const next = existingModels.filter((existing) => existing.id !== model.id);
   next.push(model);
   return next;

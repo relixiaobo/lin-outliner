@@ -59,6 +59,7 @@ const {
   getProviderApiKey,
   getProviderSecretStatus,
   persistOAuthCredential,
+  testProviderConnection,
 } = await import('../../src/main/agentSettings');
 
 const secretPath = () => path.join(currentUserData, 'agent-secrets.json');
@@ -106,6 +107,19 @@ afterEach(async () => {
   piModels().deleteProvider('env-api-key-test');
   await rm(currentUserData, { recursive: true, force: true });
 });
+
+function mockModelList(ids: string[]): () => void {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    data: ids.map((id) => ({ id })),
+  }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  })) as typeof fetch;
+  return () => {
+    globalThis.fetch = originalFetch;
+  };
+}
 
 describe('provider credential resolver', () => {
   test('stored api key resolves and reports as a stored key', async () => {
@@ -244,6 +258,38 @@ describe('provider credential resolver', () => {
     }
   });
 
+  test('custom OpenAI-compatible catalog models preserve their native API adapter', () => {
+    const catalogModel = piModels().getModel('openai', 'gpt-5.5');
+    expect(catalogModel).toBeDefined();
+    expect(catalogModel?.api).toBe('openai-responses');
+
+    const model = createOpenAICompatibleModel({
+      providerId: 'openai',
+      modelId: 'gpt-5.5',
+      baseUrl: 'https://proxy.example.com/v1',
+      catalogModel,
+    });
+
+    expect(model.provider).toBe(piCustomProviderId('openai'));
+    expect(model.api).toBe('openai-responses');
+    expect(model.baseUrl).toBe('https://proxy.example.com/v1');
+    expect(model.contextWindow).toBe(catalogModel?.contextWindow);
+    expect(model.maxTokens).toBe(catalogModel?.maxTokens);
+    expect(model.reasoning).toBe(true);
+  });
+
+  test('custom OpenAI-compatible unknown models fall back to chat completions', () => {
+    const model = createOpenAICompatibleModel({
+      providerId: 'openai',
+      modelId: 'proxy-only-model',
+      baseUrl: 'https://proxy.example.com/v1',
+    });
+
+    expect(model.provider).toBe(piCustomProviderId('openai'));
+    expect(model.api).toBe('openai-completions');
+    expect(model.baseUrl).toBe('https://proxy.example.com/v1');
+  });
+
   test('custom OpenAI-compatible provider registration replaces stale base URLs for a model id', () => {
     ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'http://localhost:1234/v1', modelId: 'proxy-model' });
     ensurePiCustomProvider({ providerId: 'openai', baseUrl: 'https://proxy.example.com/v1', modelId: 'proxy-model' });
@@ -351,6 +397,65 @@ describe('provider credential resolver', () => {
     expect(result.provider).toBe('openai');
     expect(result.api).toBe('openai-completions');
     expect(result.model).toBe('gpt-5.1');
+  });
+
+  test('custom endpoint connection probes preserve the discovered catalog model API', async () => {
+    const restoreFetch = mockModelList(['gpt-5.5']);
+    const seenModels: Array<{ provider: string; api: string; id: string; baseUrl?: string }> = [];
+    try {
+      piModels().setProvider(createProvider({
+        id: piCustomProviderId('openai'),
+        name: 'OpenAI proxy',
+        auth: {
+          apiKey: {
+            name: 'OpenAI proxy API key',
+            resolve: async ({ credential }) => credential?.key
+              ? { auth: { apiKey: credential.key }, source: 'request override' }
+              : undefined,
+          },
+        },
+        models: [createOpenAICompatibleModel({
+          providerId: 'openai',
+          modelId: 'gpt-5.5',
+          baseUrl: 'https://proxy.example.com/v1',
+          catalogModel: piModels().getModel('openai', 'gpt-5.5'),
+        })],
+        api: {
+          stream: () => { throw new Error('stream should not be called'); },
+          streamSimple: (model) => {
+            seenModels.push({ provider: model.provider, api: model.api, id: model.id, baseUrl: model.baseUrl });
+            const stream = createAssistantMessageEventStream();
+            queueMicrotask(() => {
+              const message = {
+                ...fauxAssistantMessage(fauxText('Connection probe routed.')),
+                api: model.api,
+                provider: model.provider,
+                model: model.id,
+              };
+              stream.push({ type: 'start', partial: { ...message, content: [] } });
+              stream.push({ type: 'done', reason: 'stop', message });
+              stream.end(message);
+            });
+            return stream;
+          },
+        },
+      }));
+
+      await expect(testProviderConnection({
+        providerId: 'openai',
+        baseUrl: 'https://proxy.example.com/v1',
+        apiKey: 'test-key',
+      })).resolves.toMatchObject({ success: true });
+
+      expect(seenModels).toEqual([{
+        provider: piCustomProviderId('openai'),
+        api: 'openai-responses',
+        id: 'gpt-5.5',
+        baseUrl: 'https://proxy.example.com/v1',
+      }]);
+    } finally {
+      restoreFetch();
+    }
   });
 
   test('resolver never throws — returns undefined on failure', async () => {

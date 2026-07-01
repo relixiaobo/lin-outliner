@@ -2,6 +2,7 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 import {
   createAssistantMessageEventStream,
   fauxAssistantMessage,
+  fauxText,
   type Api,
   type AssistantMessage,
   type Context,
@@ -14,7 +15,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
+import { replayAgentEvents } from '../../src/core/agentEventLog';
 import type { AgentRenderProjection } from '../../src/core/agentRenderProjection';
+import { AgentEventStore } from '../../src/main/agentEventStore';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 const electronUserDataRoot = path.join(tmpdir(), 'lin-agent-runtime-stop-test-user-data');
@@ -73,6 +76,19 @@ function latestProjection(events: AgentRuntimeEvent[]): AgentRenderProjection {
   const projection = [...events].reverse().find((event) => event.type === 'projection')?.renderProjection;
   if (!projection) throw new Error('No projection emitted.');
   return projection;
+}
+
+function persistedText(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((part): part is { type: 'text'; text: string } => (
+      Boolean(part)
+      && typeof part === 'object'
+      && (part as { type?: unknown }).type === 'text'
+      && typeof (part as { text?: unknown }).text === 'string'
+    ))
+    .map((part) => part.text)
+    .join('\n');
 }
 
 describe('agent runtime stop', () => {
@@ -143,11 +159,12 @@ describe('agent runtime stop', () => {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-fail-data-'));
     roots.push(localRoot, dataRoot);
 
-    const errorText = "OpenAI API error (400): Invalid schema for function 'node_search'.";
+    const partialText = 'Partial output before the provider stream terminated.';
+    const errorText = 'terminated';
     const streamFn = ((model: Model<Api>) => {
       const stream = createAssistantMessageEventStream();
       const message: AssistantMessage = {
-        ...fauxAssistantMessage([], { stopReason: 'error', errorMessage: errorText }),
+        ...fauxAssistantMessage(fauxText(partialText), { stopReason: 'error', errorMessage: errorText }),
         api: model.api,
         provider: model.provider,
         model: model.id,
@@ -185,12 +202,38 @@ describe('agent runtime stop', () => {
     const message = projection.entities.messages[lastRow.messageId];
 
     expect(message.role).toBe('assistant');
+    expect(message.status).toBe('failed');
     expect(message.stopReason).toBe('error');
+    expect(persistedText(message.content)).toBe(partialText);
     // The error rides on the assistant message so it renders inline as a failed
     // turn (with retry), not as a separate top banner.
     expect(message.errorMessage).toBe(errorText);
     expect(projection.errorMessage).toBe(null);
     // A normal provider run failure is not a transient operational error event.
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+
+    const events = await new AgentEventStore(dataRoot).readEvents(created.conversationId);
+    const completed = events.find((event) => event.type === 'assistant_message.completed');
+    const failed = events.find((event) => event.type === 'assistant_message.failed');
+    const runFailed = events.find((event) => event.type === 'run.failed');
+    expect(completed).toMatchObject({
+      type: 'assistant_message.completed',
+      messageId: message.id,
+      stopReason: 'error',
+      content: [{ type: 'text', text: partialText }],
+    });
+    expect(failed).toMatchObject({
+      type: 'assistant_message.failed',
+      messageId: message.id,
+      errorMessage: errorText,
+    });
+    expect(runFailed).toMatchObject({
+      type: 'run.failed',
+      errorMessage: errorText,
+    });
+
+    const replayed = replayAgentEvents(events);
+    expect(replayed.messages[message.id]?.status).toBe('failed');
+    expect(persistedText(replayed.messages[message.id]?.content)).toBe(partialText);
   });
 });

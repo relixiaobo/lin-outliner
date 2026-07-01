@@ -5865,11 +5865,12 @@ export class AgentRuntime {
     const messageId = activeRun?.assistantMessageId;
     if (!messageId) return;
     // A provider/run failure surfaces as a terminal assistant message with an
-    // error stop reason (pi-agent-core synthesizes it). Carry that error onto the
-    // message record so the turn renders inline as a failed message (with retry),
-    // rather than a separate top banner. Context-overflow failures are recovered
-    // automatically by reactive compaction, so they are left unmarked.
-    const inlineFailure = message.stopReason !== 'aborted'
+    // error stop reason (pi-agent-core synthesizes it, preserving any partial
+    // content). Persist the terminal content first, then mark the same assistant
+    // message failed so replay keeps the partial output and renders the turn as
+    // failed. Context-overflow failures are recovered automatically by reactive
+    // compaction, so they are left unmarked.
+    const inlineFailure = message.stopReason === 'error'
       && message.errorMessage
       && !isContextOverflow(message, conversation.agent.state.model.contextWindow)
       ? message.errorMessage
