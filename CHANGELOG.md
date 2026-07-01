@@ -12,6 +12,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Shared linlab skills as packaged built-ins (PR #359, codex-3)** — `/presentation`, `/document`,
+  and `/data-analysis` now come from enabled `linlab-skills` directories instead of being forked inside
+  Tenon's `src/main/builtInSkills`. Development runs load the shared skill roots directly from the sibling
+  `linlab-skills` checkout or `LINLAB_SKILLS_ROOT`; packaged builds run `bun run skills:sync` to stage
+  Tenon-owned and enabled linlab skills into `build/generated/built-in-skills`, which Electron then ships
+  as app resources. The sync path copies only git-tracked external files and excludes non-runtime folders
+  such as `evals`, keeping ignored local outputs out of the bundle. Skill docs and prompts now keep
+  explicit PPTX/DOCX/data-analysis dependency-backed routes on their intended tools instead of silently
+  falling back to lower-fidelity approximations. **Gate (main):** code review found path-resolution,
+  generated-resource hygiene, and test-portability issues; codex-3 fixed them before merge. The dependent
+  `relixiaobo/linlab-skills#1` was merged first. Verified with typecheck, targeted core skill/prompt/helper
+  suites using a clean `LINLAB_SKILLS_ROOT`, and `docs:check`.
 - **Agent outline edits behave more like user outline edits (PR #353, codex-3)** — agent node tools
   now steer ordinary structure into child bullets rather than overusing descriptions, fields, tags,
   checkboxes, or saved searches. `node_edit` has an explicit operation discriminator, guards against
