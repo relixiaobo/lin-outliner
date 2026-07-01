@@ -350,6 +350,73 @@ test.describe('outliner trailing input and expansion parity', () => {
     expect(Math.abs(after!.y - before!.y)).toBeLessThan(1);
   });
 
+  test('expanding a long flat row keeps the clicked chevron visually anchored', async ({ page }) => {
+    const anchorParentId = 'expand-anchor-parent';
+    await page.evaluate(async ({ parentId, todayId }) => {
+      const win = window as Window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      for (let i = 0; i < 75; i += 1) {
+        await win.lin?.invoke('create_node', {
+          id: `expand-anchor-pre-${i}`,
+          parentId: todayId,
+          index: null,
+          text: `Expand anchor pre ${i}`,
+        });
+      }
+      await win.lin?.invoke('create_node', {
+        id: parentId,
+        parentId: todayId,
+        index: null,
+        text: 'Expand anchor parent',
+      });
+      for (let i = 0; i < 75; i += 1) {
+        await win.lin?.invoke('create_node', {
+          id: `expand-anchor-child-${i}`,
+          parentId,
+          index: null,
+          text: `Expand anchor child ${i}`,
+        });
+      }
+      for (let i = 0; i < 75; i += 1) {
+        await win.lin?.invoke('create_node', {
+          id: `expand-anchor-tail-${i}`,
+          parentId: todayId,
+          index: null,
+          text: `Expand anchor tail ${i}`,
+        });
+      }
+    }, { parentId: anchorParentId, todayId: ids.today });
+    await emitDocumentEvent(page, {
+      type: 'projection_changed',
+      origin: 'test',
+      projection: await e2eProjection(page),
+      timestamp: Date.now(),
+    });
+
+    const parentRow = row(page, anchorParentId);
+    const parentChevron = parentRow.locator('.row-chevron-button').first();
+    await page.locator('.outline-panel-surface.active-panel .main-panel').evaluate((element) => {
+      element.scrollTop = 2200;
+      element.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+    await expect(parentChevron).toBeVisible();
+    await parentRow.evaluate((element) => {
+      element.scrollIntoView({ block: 'center' });
+    });
+    await expect(parentChevron).toBeVisible();
+
+    const before = await parentChevron.boundingBox();
+    expect(before).toBeTruthy();
+    await page.mouse.click(before!.x + before!.width / 2, before!.y + before!.height / 2);
+    await expect(row(page, 'expand-anchor-child-0')).toBeVisible();
+    await expect(page.locator('.outliner-flat')).toBeVisible();
+
+    const after = await parentChevron.boundingBox();
+    expect(after).toBeTruthy();
+    expect(Math.abs(after!.y - before!.y)).toBeLessThan(1);
+  });
+
   test('typing in the panel trailing input eagerly commits a real node', async ({ page }) => {
     const editor = trailingEditor(page);
     await editor.click();

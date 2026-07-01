@@ -1,5 +1,7 @@
 import { useCallback, useRef } from 'react';
 
+const DISCLOSURE_ANCHOR_RESTORE_FRAMES = 12;
+
 export interface DisclosureScrollAnchorSnapshot {
   readonly element: HTMLElement;
   readonly resolveElement?: () => HTMLElement | null;
@@ -56,25 +58,59 @@ export function restoreDisclosureScrollAnchor(
 }
 
 export function usePendingDisclosureAnchor(onRestore?: () => void) {
-  const pendingAnchorRef = useRef<DisclosureScrollAnchorSnapshot | null>(null);
+  const activeAnchorRef = useRef<DisclosureScrollAnchorSnapshot | null>(null);
+  const restoreFramesRemainingRef = useRef(0);
+  const restoreFrameRef = useRef<number | null>(null);
 
-  const capturePendingAnchor = useCallback((snapshot: DisclosureScrollAnchorSnapshot | null) => {
-    pendingAnchorRef.current = snapshot;
+  const cancelRestoreFrame = useCallback(() => {
+    if (restoreFrameRef.current === null) return;
+    window.cancelAnimationFrame(restoreFrameRef.current);
+    restoreFrameRef.current = null;
   }, []);
 
-  const restorePendingAnchor = useCallback(() => {
-    const anchor = pendingAnchorRef.current;
-    pendingAnchorRef.current = null;
+  const clearActiveAnchor = useCallback(() => {
+    activeAnchorRef.current = null;
+    restoreFramesRemainingRef.current = 0;
+    cancelRestoreFrame();
+  }, [cancelRestoreFrame]);
+
+  const restoreActiveAnchor = useCallback(() => {
+    const anchor = activeAnchorRef.current;
     const result = restoreDisclosureScrollAnchor(anchor);
-    if (!result.restored || !anchor) return undefined;
-    onRestore?.();
-    if (!result.moved) return undefined;
-    const frame = window.requestAnimationFrame(() => {
-      const nextResult = restoreDisclosureScrollAnchor(anchor);
-      if (nextResult.restored) onRestore?.();
+    if (!result.restored) {
+      clearActiveAnchor();
+      return result;
+    }
+    if (anchor) onRestore?.();
+    return result;
+  }, [clearActiveAnchor, onRestore]);
+
+  const scheduleRestoreFrame = useCallback(() => {
+    if (!activeAnchorRef.current || restoreFrameRef.current !== null) return;
+    if (restoreFramesRemainingRef.current <= 0) {
+      clearActiveAnchor();
+      return;
+    }
+    restoreFrameRef.current = window.requestAnimationFrame(() => {
+      restoreFrameRef.current = null;
+      restoreFramesRemainingRef.current -= 1;
+      const result = restoreActiveAnchor();
+      if (result.restored && activeAnchorRef.current) scheduleRestoreFrame();
     });
-    return () => window.cancelAnimationFrame(frame);
-  }, [onRestore]);
+  }, [clearActiveAnchor, restoreActiveAnchor]);
+
+  const capturePendingAnchor = useCallback((snapshot: DisclosureScrollAnchorSnapshot | null) => {
+    cancelRestoreFrame();
+    activeAnchorRef.current = snapshot;
+    restoreFramesRemainingRef.current = snapshot ? DISCLOSURE_ANCHOR_RESTORE_FRAMES : 0;
+  }, [cancelRestoreFrame]);
+
+  const restorePendingAnchor = useCallback(() => {
+    if (!activeAnchorRef.current) return undefined;
+    const result = restoreActiveAnchor();
+    if (result.restored) scheduleRestoreFrame();
+    return cancelRestoreFrame;
+  }, [cancelRestoreFrame, restoreActiveAnchor, scheduleRestoreFrame]);
 
   return { capturePendingAnchor, restorePendingAnchor };
 }
