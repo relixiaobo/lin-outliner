@@ -680,6 +680,9 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
     const listing = await runtime.buildSkillListingReminderText(200_000);
     const expected = ['presentation', 'document', 'data-analysis'];
+    const linlabSkillsRoot = await realpath(resolveLinlabSkillsRoot({
+      repoRoot: path.resolve(import.meta.dir, '..', '..'),
+    }));
 
     for (const name of expected) {
       const skill = await runtime.getSkill(name);
@@ -693,7 +696,7 @@ describe('agent skills', () => {
         canUndoLastAgentEdit: false,
         allowedTools: [],
       });
-      expect(skill?.rootDir).toContain(path.join('linlab-skills', name));
+      expect(skill?.rootDir).toBe(path.join(linlabSkillsRoot, name));
       expect(skill?.skillFile).toBe(path.join(skill?.rootDir ?? '', 'SKILL.md'));
       expect(typeof skill?.contentHash).toBe('string');
       expect(listing).toContain(`- ${name}:`);
@@ -742,8 +745,11 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
     const skill = await runtime.getSkill('data-analysis');
     const invocation = await runtime.invokeSkill({ skill: 'data-analysis', trigger: 'agent' });
+    const linlabSkillsRoot = await realpath(resolveLinlabSkillsRoot({
+      repoRoot: path.resolve(import.meta.dir, '..', '..'),
+    }));
 
-    expect(skill?.rootDir).toContain(path.join('linlab-skills', 'data-analysis'));
+    expect(skill?.rootDir).toBe(path.join(linlabSkillsRoot, 'data-analysis'));
     expect(invocation.ok).toBe(true);
     if (!invocation.ok) return;
     expect(invocation.renderedContent).toContain('python3 -m pip install -r');
