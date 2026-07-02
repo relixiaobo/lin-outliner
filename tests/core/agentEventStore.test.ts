@@ -12,6 +12,7 @@ import {
   deriveAgentRunKind,
   LAYOUT_SENTINEL_FILE,
   STORAGE_LAYOUT_VERSION,
+  type AgentRunMetaProjection,
 } from '../../src/main/agentEventStore';
 
 const systemActor: AgentActor = { type: 'system' };
@@ -35,6 +36,48 @@ function base(conversationId: string, seq: number, type: AgentEvent['type'], act
     type,
     createdAt: 1_700_000_000_000 + seq,
     actor,
+  };
+}
+
+function testFingerprint(): AgentRunMetaProjection['fingerprint'] {
+  return {
+    appVersion: 'test',
+    promptHash: 'prompt',
+    toolSchemaHash: 'tools',
+    skillBindings: [],
+    modelConfig: 'model',
+  };
+}
+
+function testRunMeta(
+  input: Omit<Partial<AgentRunMetaProjection>, 'execution' | 'fingerprint'> & {
+    id: string;
+    execution?: Partial<AgentRunMetaProjection['execution']>;
+    fingerprint?: Partial<AgentRunMetaProjection['fingerprint']>;
+  },
+): AgentRunMetaProjection {
+  const createdAt = input.createdAt ?? 1;
+  return {
+    v: 2,
+    id: input.id,
+    agentId: input.agentId ?? 'built-in:tenon:assistant',
+    anchor: input.anchor ?? { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId: 'conversation-1' },
+    parentRunId: input.parentRunId,
+    parentToolCallId: input.parentToolCallId,
+    disposition: input.disposition ?? 'attended',
+    context: input.context ?? 'full',
+    runProfile: input.runProfile ?? 'default',
+    trigger: input.trigger ?? { type: 'manual' },
+    fingerprint: { ...testFingerprint(), ...input.fingerprint },
+    retention: input.retention ?? 'hot',
+    createdAt,
+    updatedAt: input.updatedAt ?? createdAt,
+    latestSeq: input.latestSeq ?? 0,
+    execution: {
+      status: input.execution?.status ?? 'running',
+      ...input.execution,
+    },
+    ...(input.objective ? { objective: input.objective } : {}),
   };
 }
 
@@ -603,26 +646,16 @@ describe('agent event store', () => {
     ]);
     const agentPrincipal: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
     const userPrincipal: AgentPrincipal = { type: 'user', userId: 'local-user' };
-    const writePrincipalRun = (id: string, principal: AgentPrincipal, updatedAt: number) => store.writeRunMeta({
-      v: 1,
+    const writePrincipalRun = (id: string, principal: AgentPrincipal, updatedAt: number) => store.writeRunMeta(testRunMeta({
       id,
-      agentId: 'built-in:tenon:assistant',
       anchor: { type: 'principal', principal },
       disposition: 'detached',
-      status: 'completed',
-      trigger: { type: 'manual' },
-      fingerprint: {
-        appVersion: 'test',
-        promptHash: 'prompt',
-        toolSchemaHash: 'tools',
-        skillBindings: [],
-        modelConfig: 'model',
-      },
-      retention: 'hot',
+      context: 'none',
+      runProfile: 'dream',
       createdAt: updatedAt,
       updatedAt,
-      latestSeq: 0,
-    });
+      execution: { status: 'completed', completedAt: updatedAt },
+    }));
     await writePrincipalRun('run-agent', agentPrincipal, 2);
     await writePrincipalRun('run-user', userPrincipal, 3);
     return { conversationId, agentPrincipal, userPrincipal };
@@ -947,19 +980,25 @@ describe('agent event store', () => {
       expect(runRaw).toContain('assistant_message.completed');
 
       const runMeta = JSON.parse(await readFile(store.runPaths(runId).runMetaPath, 'utf8')) as {
+        v: number;
         agentId: string;
         anchor: { type: string; agentId: string; conversationId?: string };
         trigger: { type: string; messageId?: string };
         fingerprint: { appVersion: string };
-        status: string;
+        execution: { status: string };
+        context: string;
+        runProfile: string;
         retention: string;
       };
       expect(runMeta).toMatchObject({
+        v: 2,
         agentId: 'built-in:tenon:assistant',
         anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId: conversationId },
         trigger: { type: 'message', messageId: 'message-1' },
         fingerprint: { appVersion: 'test' },
-        status: 'completed',
+        context: 'full',
+        runProfile: 'default',
+        execution: { status: 'completed' },
         retention: 'hot',
       });
       const runIndex = JSON.parse(await readFile(store.paths(conversationId).conversationRunIndexPath, 'utf8')) as {
@@ -1003,7 +1042,7 @@ describe('agent event store', () => {
     });
   });
 
-  test('rebuilds the run index from legacy flat conversation run metadata', async () => {
+  test('does not rebuild the run index from obsolete flat run metadata', async () => {
     await withStore(async (store) => {
       const conversationId = 'conversation-legacy-run-meta';
       const runId = 'run-legacy-meta';
@@ -1041,11 +1080,11 @@ describe('agent event store', () => {
       })}\n`);
       await rm(store.paths(conversationId).conversationRunIndexPath, { force: true });
 
-      expect((await store.readEvents(conversationId)).map((event) => event.seq)).toEqual([1, 2, 3]);
+      expect((await store.readEvents(conversationId)).map((event) => event.seq)).toEqual([1]);
       const rebuilt = JSON.parse(await readFile(store.paths(conversationId).conversationRunIndexPath, 'utf8')) as {
         runIds: string[];
       };
-      expect(rebuilt.runIds).toEqual([runId]);
+      expect(rebuilt.runIds).toEqual([]);
     });
   });
 
@@ -1058,26 +1097,15 @@ describe('agent event store', () => {
       ]);
       const runPaths = store.runPaths(runId);
       await mkdir(runPaths.runDir, { recursive: true });
-      await writeFile(runPaths.runMetaPath, `${JSON.stringify({
-        v: 1,
+      await writeFile(runPaths.runMetaPath, `${JSON.stringify(testRunMeta({
         id: runId,
-        agentId: 'built-in:tenon:assistant',
         anchor: { type: 'principal', principal: { type: 'agent', agentId: 'built-in:tenon:assistant' } },
-        kind: 'scheduled',
-        status: 'completed',
         trigger: { type: 'system' },
-        fingerprint: {
-          appVersion: 'test',
-          promptHash: 'prompt',
-          toolSchemaHash: 'tools',
-          skillBindings: [],
-          modelConfig: 'model',
-        },
-        retention: 'hot',
         createdAt: 1_700_000_000_002,
         updatedAt: 1_700_000_000_003,
         latestSeq: 3,
-      })}\n`);
+        execution: { status: 'completed', completedAt: 1_700_000_000_003 },
+      }))}\n`);
       await rm(store.paths(conversationId).conversationRunIndexPath, { force: true });
 
       expect((await store.readEvents(conversationId)).map((event) => event.seq)).toEqual([1]);
@@ -1217,10 +1245,11 @@ describe('agent event store', () => {
         { ...base(conversationId, 5, 'run.cancelled'), runId: 'run-cancelled', usage },
       ]);
 
-      const failedMeta = JSON.parse(await readFile(store.runPaths('run-failed').runMetaPath, 'utf8')) as { usage?: unknown };
-      const cancelledMeta = JSON.parse(await readFile(store.runPaths('run-cancelled').runMetaPath, 'utf8')) as { usage?: unknown };
-      expect(failedMeta.usage).toEqual(usage);
-      expect(cancelledMeta.usage).toEqual(usage);
+      const failedMeta = JSON.parse(await readFile(store.runPaths('run-failed').runMetaPath, 'utf8')) as { execution?: { usage?: unknown; error?: string } };
+      const cancelledMeta = JSON.parse(await readFile(store.runPaths('run-cancelled').runMetaPath, 'utf8')) as { execution?: { usage?: unknown } };
+      expect(failedMeta.execution?.usage).toEqual(usage);
+      expect(failedMeta.execution?.error).toBe('Nope');
+      expect(cancelledMeta.execution?.usage).toEqual(usage);
     });
   });
 
@@ -1307,6 +1336,80 @@ describe('agent event store', () => {
       // A malformed line in the MIDDLE is real corruption and still fails loudly.
       await writeFile(runEventsPath, `not-json\n${raw}`, 'utf8');
       await expect(store.readRunStreamEvents(runId)).rejects.toThrow(/agent run event JSON/);
+    });
+  });
+
+  test('projects delegated run stream metadata into v2 run meta', async () => {
+    await withStore(async (store) => {
+      const conversationId = 'conversation-run-meta-v2';
+      const runId = 'child-run-meta-v2';
+      const usage = { input: 11, output: 7, totalTokens: 18, cost: { total: 0.002 } };
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Run meta v2' },
+      ]);
+      await store.appendRunStreamEvents(conversationId, runId, [
+        {
+          ...base(conversationId, 1, 'run.started'),
+          eventId: `${runId}-start`,
+          runId,
+          agentId: 'built-in:tenon:assistant',
+          anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
+          parentToolCallId: 'tool-spawn-1',
+          disposition: 'detached',
+          context: 'brief',
+          runProfile: 'research',
+          objective: 'Research the run graph.',
+          criteria: ['Find the storage seam'],
+          objectiveRole: 'worker',
+          objectiveStatus: 'active',
+          purpose: 'work',
+          scope: { resources: { paths: ['src/main'] } },
+          budget: { tokens: 1000, spentTokens: 100 },
+          trigger: { type: 'parent-run', parentRunId: 'parent-run-1' },
+          fingerprint: testFingerprint(),
+          retention: 'hot',
+        },
+        {
+          ...base(conversationId, 2, 'run.failed'),
+          eventId: `${runId}-failed`,
+          runId,
+          errorMessage: 'Verifier rejected the evidence.',
+          objectiveStatus: 'blocked',
+          budget: { tokens: 1000, spentTokens: 250 },
+          blockedReason: 'Missing evidence',
+          latestVerifierGap: 'No tool evidence',
+          usage,
+        },
+      ]);
+
+      await expect(store.readRunMetaProjection(runId)).resolves.toMatchObject({
+        v: 2,
+        id: runId,
+        parentRunId: 'parent-run-1',
+        parentToolCallId: 'tool-spawn-1',
+        disposition: 'detached',
+        context: 'brief',
+        runProfile: 'research',
+        execution: {
+          status: 'failed',
+          completedAt: 1_700_000_000_002,
+          error: 'Verifier rejected the evidence.',
+          usage,
+        },
+        objective: {
+          text: 'Research the run graph.',
+          criteria: ['Find the storage seam'],
+          role: 'worker',
+          status: 'blocked',
+          scope: { resources: { paths: ['src/main'] } },
+          budget: { tokens: 1000, spentTokens: 250 },
+          blockedReason: 'Missing evidence',
+          latestVerifierGap: 'No tool evidence',
+        },
+      });
+      await expect(store.listConversationRunMetaProjections(conversationId)).resolves.toMatchObject([
+        { id: runId, parentToolCallId: 'tool-spawn-1', runProfile: 'research' },
+      ]);
     });
   });
 
@@ -1431,26 +1534,14 @@ describe('agent event store', () => {
   test('limits conversation run meta reads from the run index tail', async () => {
     await withStore(async (store) => {
       const conversationId = 'conversation-run-limit';
-      const writeRun = (id: string, createdAt: number) => store.writeRunMeta({
-        v: 1,
+      const writeRun = (id: string, createdAt: number) => store.writeRunMeta(testRunMeta({
         id,
-        agentId: 'built-in:tenon:assistant',
         anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
-        disposition: 'attended',
-        status: 'completed',
-        trigger: { type: 'manual' },
-        fingerprint: {
-          appVersion: 'test',
-          promptHash: 'prompt',
-          toolSchemaHash: 'tools',
-          skillBindings: [],
-          modelConfig: 'model',
-        },
-        retention: 'hot',
         createdAt,
         updatedAt: createdAt,
         latestSeq: createdAt,
-      });
+        execution: { status: 'completed', completedAt: createdAt },
+      }));
       await writeRun('dream-run-1', 1);
       await writeRun('dream-run-2', 2);
       await writeRun('dream-run-3', 3);
@@ -1606,26 +1697,18 @@ describe('agent event store', () => {
 
   test('persists principal-anchored reflective run meta for Dream runs', async () => {
     await withStore(async (store) => {
-      const writeDreamMeta = (id: string, principal: AgentPrincipal) => store.writeRunMeta({
-        v: 1,
+      const writeDreamMeta = (id: string, principal: AgentPrincipal) => store.writeRunMeta(testRunMeta({
         id,
-        agentId: 'built-in:tenon:assistant',
         anchor: { type: 'principal', principal },
         disposition: 'detached',
-        status: 'completed',
+        context: 'none',
+        runProfile: 'dream',
         trigger: { type: 'schedule', schedule: '2026-01-01T03:00 RRULE:FREQ=DAILY', dueAt: 1_800_000_000_000 },
-        fingerprint: {
-          appVersion: 'test',
-          promptHash: 'prompt',
-          toolSchemaHash: 'no-tools',
-          skillBindings: [],
-          modelConfig: 'model',
-        },
-        retention: 'hot',
+        fingerprint: { toolSchemaHash: 'no-tools' },
         createdAt: 100,
         updatedAt: 120,
-        latestSeq: 0,
-      });
+        execution: { status: 'completed', completedAt: 120 },
+      }));
       const agent: AgentPrincipal = { type: 'agent', agentId: 'built-in:tenon:assistant' };
       const user: AgentPrincipal = { type: 'user', userId: 'local-user' };
       await writeDreamMeta('dream-run-1', agent);
@@ -1645,12 +1728,14 @@ describe('agent event store', () => {
       await expect(store.listPrincipalRunMetaProjections(agent)).resolves.toMatchObject([{
         id: 'dream-run-1',
         disposition: 'detached',
-        status: 'completed',
+        runProfile: 'dream',
+        execution: { status: 'completed' },
       }]);
       await expect(store.listPrincipalRunMetaProjections(user)).resolves.toMatchObject([{
         id: 'dream-run-user',
         disposition: 'detached',
-        status: 'completed',
+        runProfile: 'dream',
+        execution: { status: 'completed' },
       }]);
     });
   });

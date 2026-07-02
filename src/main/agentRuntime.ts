@@ -81,8 +81,13 @@ import {
   type AgentPersistedContent,
   type AgentPrincipal,
   type AgentRunFingerprint,
+  type AgentRunContextMode,
+  type AgentRunContextPolicy,
+  type AgentRunObjectiveRole,
+  type AgentRunProfileId,
   type AgentRunTrigger,
   type AgentRunMeta,
+  type AgentRunPurpose,
   type AgentUserQuestionAnswer,
   type AgentUserQuestionAttachment,
   type AgentUserQuestionFileReference,
@@ -1385,7 +1390,7 @@ export class AgentRuntime {
     for (const meta of metas) {
       // Reflective / principal-anchored runs span conversations — not this view.
       if (deriveAgentRunKind(meta) === 'reflective' || meta.anchor.type !== 'conversation') continue;
-      summaries.push(await this.summarizeDebugRunFromStore(meta, context.parentToolCallByChild.get(meta.id) ?? null));
+      summaries.push(await this.summarizeDebugRunFromStore(meta, meta.parentToolCallId ?? context.parentToolCallByChild.get(meta.id) ?? null));
     }
     // Shape + member roster come from the conversation's authoritative members
     // (NOT distinct run executors — a DM that delegates would otherwise look like
@@ -1455,7 +1460,7 @@ export class AgentRuntime {
   }
 
   private async deriveDebugRunFromStore(meta: AgentRunMetaProjection, context: DebugConversationContext): Promise<AgentDebugRun> {
-    const parentToolCallId = context.parentToolCallByChild.get(meta.id) ?? null;
+    const parentToolCallId = meta.parentToolCallId ?? context.parentToolCallByChild.get(meta.id) ?? null;
     const cached = this.debugRunCache.get(meta.id);
     if (cached && cached.latestSeq === meta.latestSeq && cached.contextSeq === context.latestSeq && cached.parentToolCallId === parentToolCallId) {
       return cached.run;
@@ -2880,8 +2885,12 @@ export class AgentRuntime {
       runId: snapshot.id,
       agentId: snapshot.executingAgentId as AgentId,
       parentRunId: snapshot.parentRunId,
+      parentToolCallId: snapshot.parentToolCallId,
+      context: runContextPolicyFromContextMode(snapshot.contextMode),
+      runProfile: snapshot.runProfile ?? runProfileFromChildRunSnapshot(snapshot),
       objective: snapshot.objective,
       criteria: snapshot.criteria,
+      objectiveRole: runObjectiveRoleFromChildRunSnapshot(snapshot),
       objectiveStatus: snapshot.objectiveStatus,
       purpose: snapshot.purpose,
       scope: snapshot.scope,
@@ -4060,7 +4069,7 @@ export class AgentRuntime {
     const timestamp = status === 'running' ? task.startedAt : Date.now();
     const existing = await this.getEventStore().readRunMetaProjection(task.runId);
     await this.getEventStore().writeRunMeta({
-      v: 1,
+      v: 2,
       id: task.runId,
       // Dream now runs as a top-level turn inside the protected Dream channel. The
       // Dream subject still belongs to `task.principal`; the run transcript and
@@ -4072,7 +4081,8 @@ export class AgentRuntime {
         conversationId: DEFAULT_DREAM_CHANNEL_ID,
       },
       disposition: 'detached',
-      status,
+      context: 'none',
+      runProfile: 'dream',
       trigger: task.trigger === 'schedule'
         ? { type: 'schedule', schedule: task.schedule, dueAt: task.dueAt }
         : { type: 'manual' },
@@ -4080,8 +4090,12 @@ export class AgentRuntime {
       retention: 'hot',
       createdAt: task.startedAt,
       updatedAt: timestamp,
-      usage: existing?.usage,
       latestSeq: existing?.latestSeq ?? 0,
+      execution: {
+        status,
+        ...(status === 'running' ? {} : { completedAt: timestamp }),
+        ...(existing?.execution.usage ? { usage: existing.execution.usage } : {}),
+      },
     });
   }
 
@@ -8086,7 +8100,7 @@ function dreamRunFromMeta(
   if (deriveAgentRunKind(run) !== 'reflective') return null;
   const trigger = dreamRunTrigger(run);
   if (!trigger) return null;
-  const status = renderRunStatusFromRunStatus(run.status);
+  const status = renderRunStatusFromRunStatus(run.execution.status);
   return {
     id: `dream:${run.id}`,
     kind: 'dream',
@@ -8121,14 +8135,14 @@ function runListEntryFromMeta(
   if (run.anchor.type !== 'conversation') return null;
   const kind = deriveAgentRunKind(run);
   if (kind === 'turn' || kind === 'reflective') return null;
-  const status = renderRunStatusFromRunStatus(run.status);
+  const status = renderRunStatusFromRunStatus(run.execution.status);
   const conversationTitle = sanitizeConversationTitle(conversation.title)
     ?? sanitizeConversationTitle(conversation.goal)
     ?? null;
   // The objective is free-form and may be long or multi-line; the runs panel uses
   // this verbatim as the row title AND its aria-label, so collapse it to a single
   // capped line here rather than shipping a wall of text to the screen reader.
-  const title = compactRunListTitle(run.objective)
+  const title = compactRunListTitle(run.objective?.text)
     || conversationTitle
     || run.id;
   return {
@@ -8138,8 +8152,8 @@ function runListEntryFromMeta(
     agentId: run.agentId,
     kind,
     status,
-    objectiveStatus: run.objectiveStatus,
-    purpose: run.purpose,
+    objectiveStatus: run.objective?.status,
+    purpose: runPurposeFromMeta(run),
     parentRunId: run.parentRunId ?? null,
     title,
     startedAt: run.createdAt,
@@ -8164,6 +8178,26 @@ function runListStatusRank(entry: AgentRunListEntry): number {
   if (entry.status === 'failed') return 2;
   if (entry.status === 'stopped') return 3;
   return 4;
+}
+
+function runPurposeFromMeta(run: AgentRunMetaProjection): AgentRunPurpose | undefined {
+  if (!run.objective) return undefined;
+  return run.objective.role === 'verifier' ? 'verify' : 'work';
+}
+
+function runContextPolicyFromContextMode(contextMode: AgentRunContextMode | undefined): AgentRunContextPolicy {
+  if (contextMode === 'brief' || contextMode === 'none') return contextMode;
+  return 'full';
+}
+
+function runProfileFromChildRunSnapshot(snapshot: AgentChildRunSnapshot): AgentRunProfileId {
+  if (snapshot.purpose === 'verify') return 'verify';
+  return 'default';
+}
+
+function runObjectiveRoleFromChildRunSnapshot(snapshot: AgentChildRunSnapshot): AgentRunObjectiveRole {
+  if (snapshot.purpose === 'verify') return 'verifier';
+  return snapshot.parentRunId ? 'worker' : 'controller';
 }
 
 function dreamRunTrigger(run: Pick<AgentRunMeta, 'trigger'>): AgentRenderDreamRunEntity['trigger'] | null {

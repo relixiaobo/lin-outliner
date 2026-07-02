@@ -167,7 +167,7 @@ export function deriveDebugRun(events: readonly AgentEvent[], context: DerivedRu
     runId: meta.id,
     agentId: meta.agentId,
     kind: deriveAgentRunKind(meta),
-    status: runStatus(meta.status),
+    status: runStatus(meta.execution.status),
     parentRunId: meta.parentRunId ?? null,
     parentToolCallId: context.parentToolCallId ?? null,
     provider: lastRound?.provider ?? null,
@@ -175,7 +175,7 @@ export function deriveDebugRun(events: readonly AgentEvent[], context: DerivedRu
     // `meta.usage` is only written when a run terminates; while it streams, roll
     // up the rounds' own usage so the summary/totals stay live (and never lag the
     // per-round detail the user can already see).
-    usage: usageToDebugUsage(meta.usage) ?? aggregateRoundUsage(rounds),
+    usage: usageToDebugUsage(meta.execution.usage) ?? aggregateRoundUsage(rounds),
     createdAt: meta.createdAt,
     systemPrompt: snapshot?.systemPrompt ?? null,
     tools: snapshot?.tools ?? [],
@@ -243,12 +243,12 @@ export function summarizeRunStream(
     runId: meta.id,
     agentId: meta.agentId,
     kind: deriveAgentRunKind(meta),
-    status: runStatus(meta.status),
+    status: runStatus(meta.execution.status),
     parentRunId: meta.parentRunId ?? null,
     parentToolCallId,
     provider,
     modelId,
-    usage: usageToDebugUsage(meta.usage) ?? sumUsages(roundUsages),
+    usage: usageToDebugUsage(meta.execution.usage) ?? sumUsages(roundUsages),
     createdAt: meta.createdAt,
     roundCount,
   };

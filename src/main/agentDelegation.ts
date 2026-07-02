@@ -19,8 +19,11 @@ import { systemReminder } from '../core/agentAttachments';
 import type {
   AgentChildRunRecord,
   AgentRunContextMode,
+  AgentRunContextPolicy,
   AgentObjectiveStatus,
   AgentRunBudget,
+  AgentRunObjectiveRole,
+  AgentRunProfileId,
   AgentRunPurpose,
   AgentRunScope,
   DelegationDetail,
@@ -435,6 +438,7 @@ interface AgentToolParams {
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
   context: AgentRunContextMode;
+  runProfile?: AgentRunProfileId;
   detach?: boolean;
   model?: string;
   effort?: string;
@@ -642,6 +646,7 @@ export class AgentDelegationRuntime {
         prompt: input.renderedContent,
         purpose: 'work',
         context: 'none',
+        runProfile: input.readOnlyIsolated ? 'research' : 'default',
         model: input.model,
         effort: input.effort,
         run_in_background: false,
@@ -877,6 +882,7 @@ export class AgentDelegationRuntime {
       disposition: background ? 'detached' : 'attended',
       agentType: definition.name,
       contextMode,
+      runProfile: params.runProfile ?? runProfileForPurpose(params.purpose),
       definition,
       executingAgentId,
       parentAgentId,
@@ -1261,6 +1267,7 @@ export class AgentDelegationRuntime {
         prompt: verifierObjective,
         purpose: 'verify',
         context: 'none',
+        runProfile: 'verify',
         scope: verifierRunScope(this.inheritedScope),
         budget: verifierBudgetForRun(run),
         run_in_background: false,
@@ -1396,6 +1403,7 @@ export class AgentDelegationRuntime {
         scope: run.scope,
         budget: retryBudgetSlice(run.budget),
         context: 'none',
+        runProfile: run.runProfile,
         detach: detached,
         model: run.definition?.model === 'inherit' ? undefined : run.definition?.model,
         effort: run.definition?.effort,
@@ -2489,6 +2497,10 @@ function derivedRunRole(run: DelegationRunState): AgentChildRunChildStatus['role
   return 'worker';
 }
 
+function runProfileForPurpose(purpose: AgentRunPurpose): AgentRunProfileId {
+  return purpose === 'verify' ? 'verify' : 'default';
+}
+
 function snapshotRun(run: DelegationRunState): AgentChildRunSnapshot {
   return {
     id: run.id,
@@ -2504,6 +2516,7 @@ function snapshotRun(run: DelegationRunState): AgentChildRunSnapshot {
     disposition: run.disposition,
     agentType: run.agentType,
     contextMode: run.contextMode,
+    runProfile: run.runProfile,
     executingAgentId: run.executingAgentId,
     parentAgentId: run.parentAgentId,
     parentRunId: run.parentRunId,

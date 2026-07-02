@@ -10,8 +10,11 @@ import {
   type AgentId,
   type AgentPersistedContent,
   type AgentRunDisposition,
+  type AgentRunContextPolicy,
+  type AgentRunObjectiveRole,
   type AgentObjectiveStatus,
   type AgentRunBudget,
+  type AgentRunProfileId,
   type AgentRunPurpose,
   type AgentRunScope,
   type AgentRunLogEventType,
@@ -60,9 +63,13 @@ export interface AgentRunLedgerStartInput {
   agentId: AgentId;
   /** The delegating run; absent for runs spawned outside any run (system-triggered). */
   parentRunId?: string;
+  parentToolCallId?: string;
   disposition?: AgentRunDisposition;
+  context?: AgentRunContextPolicy;
+  runProfile?: AgentRunProfileId;
   objective?: string;
   criteria?: string[];
+  objectiveRole?: AgentRunObjectiveRole;
   objectiveStatus?: AgentObjectiveStatus;
   purpose?: AgentRunPurpose;
   scope?: AgentRunScope;
@@ -121,9 +128,13 @@ export class AgentRunLedgerWriter {
         runId: input.runId,
         agentId: input.agentId,
         anchor: { type: 'conversation', agentId: input.agentId, conversationId: run.conversationId },
+        parentToolCallId: input.parentToolCallId,
         disposition: input.disposition ?? 'detached',
+        context: input.context,
+        runProfile: input.runProfile,
         objective: input.objective,
         criteria: input.criteria,
+        objectiveRole: input.objectiveRole,
         objectiveStatus: input.objectiveStatus,
         purpose: input.purpose,
         scope: input.scope,

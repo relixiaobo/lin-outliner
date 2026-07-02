@@ -206,8 +206,11 @@ export type AgentRunKind = 'turn' | 'background' | 'delegation' | 'scheduled' | 
 export type AgentRunDisposition = 'attended' | 'detached';
 export type AgentRunRetention = 'hot' | 'cold-archived' | 'summarized-only' | 'deleted';
 export type AgentRunPurpose = 'work' | 'verify';
+export type AgentRunObjectiveRole = 'controller' | 'worker' | 'verifier';
+export type AgentRunProfileId = 'default' | 'research' | 'verify' | 'browser' | 'coding' | 'writing' | 'dream';
 export type AgentObjectiveStatus = 'active' | 'verifying' | 'verified' | 'blocked' | 'budget_exhausted' | 'stopped';
 export type AgentRunContextMode = 'full' | 'brief' | 'none' | 'fork';
+export type AgentRunContextPolicy = 'full' | 'brief' | 'none';
 
 export interface AgentRunBudget {
   tokens?: number;
@@ -252,25 +255,43 @@ export type AgentRunAnchor =
   | { type: 'conversation'; agentId: AgentId; conversationId: string }
   | { type: 'principal'; principal: AgentPrincipal };
 
+export interface AgentRunExecutionMeta {
+  status: AgentRunStatus;
+  completedAt?: number;
+  usage?: Usage;
+  error?: string;
+}
+
+export interface AgentRunObjectiveMeta {
+  text: string;
+  criteria: string[];
+  role: AgentRunObjectiveRole;
+  status: AgentObjectiveStatus;
+  scope?: AgentRunScope;
+  budget?: AgentRunBudget;
+  blockedReason?: string;
+  latestVerifierGap?: string;
+  latestSubmissionSeq?: number;
+}
+
 export interface AgentRunMeta {
   id: string;
   /** The executing agent (whose runtime/model ran this) — NOT the anchor subject. */
   agentId: AgentId;
   anchor: AgentRunAnchor;
   parentRunId?: string;
+  parentToolCallId?: string;
   disposition: AgentRunDisposition;
-  status: AgentRunStatus;
-  objective?: string;
-  criteria?: string[];
-  objectiveStatus?: AgentObjectiveStatus;
-  purpose?: AgentRunPurpose;
-  scope?: AgentRunScope;
-  budget?: AgentRunBudget;
+  context: AgentRunContextPolicy;
+  runProfile: AgentRunProfileId;
   trigger: AgentRunTrigger;
-  usage?: Usage;
   fingerprint: AgentRunFingerprint;
   retention: AgentRunRetention;
   createdAt: number;
+  updatedAt: number;
+  latestSeq: number;
+  execution: AgentRunExecutionMeta;
+  objective?: AgentRunObjectiveMeta;
 }
 
 export function conversationIdOfRun(run: Pick<AgentRunMeta, 'anchor'>): string | null {
@@ -916,13 +937,20 @@ export interface RunStartedEvent extends AgentEventBase {
   runId: string;
   agentId?: AgentId;
   anchor?: AgentRunAnchor;
+  parentToolCallId?: string;
   disposition?: AgentRunDisposition;
+  context?: AgentRunContextPolicy;
+  runProfile?: AgentRunProfileId;
   objective?: string;
   criteria?: string[];
+  objectiveRole?: AgentRunObjectiveRole;
   objectiveStatus?: AgentObjectiveStatus;
   purpose?: AgentRunPurpose;
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
+  blockedReason?: string;
+  latestVerifierGap?: string;
+  latestSubmissionSeq?: number;
   trigger?: AgentRunTrigger;
   fingerprint?: AgentRunFingerprint;
   retention?: AgentRunRetention;
@@ -934,6 +962,9 @@ export interface RunTerminalEvent extends AgentEventBase {
   errorMessage?: string;
   objectiveStatus?: AgentObjectiveStatus;
   budget?: AgentRunBudget;
+  blockedReason?: string;
+  latestVerifierGap?: string;
+  latestSubmissionSeq?: number;
   usage?: Usage;
 }
 
@@ -1159,6 +1190,7 @@ export interface DelegationDetail {
   agentType: string;
   /** Always 'fork': a child run is the current agent in an isolated context, never a different agent. */
   contextMode: AgentRunContextMode;
+  runProfile?: AgentRunProfileId;
   parentRunId?: string;
   executingAgentId: string;
   parentAgentId: string;

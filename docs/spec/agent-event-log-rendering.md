@@ -306,8 +306,8 @@ Clean-cut startup policy (pre-release, no migration) — the storage-generation
 sentinel:
 
 - ONE root file `layout.json` `{"v": <generation>}` is written once per on-disk
-  format generation (`STORAGE_LAYOUT_VERSION`, currently `4` = Dream-channel
-  audit history + outline-only durable memory). First store access reads this single line; a
+  format generation (`STORAGE_LAYOUT_VERSION`, currently `6` = Run meta v2 with
+  nested execution/objective state). First store access reads this single line; a
   matching `v` proceeds with no per-conversation probing.
 - A stale `v` or a MISSING sentinel is positive proof of another generation:
   the WHOLE agent data root is hard-deleted (logged with the old generation) —
@@ -1404,19 +1404,21 @@ explicitly labelled in the UI because it is not the full provider input window.)
   delegates to a sub-agent never shows the transient sub-agent as a member. The
   agents that actually executed runs are surfaced separately by the renderer
   (derived from the runs) so a delegated sub-agent is still filterable. Run usage
-  is `meta.usage` when the run terminated, else **rolled up from the rounds** so an
-  in-flight run's totals stay live instead of reading zero. Reads the store
+  is `meta.execution.usage` when the run terminated, else **rolled up from the
+  rounds** so an in-flight run's totals stay live instead of reading zero. Reads the store
   directly, so it works on closed conversations. Believer-anchored Dream runs are
   excluded (they span conversations).
 - `agentDebugRun(conversationId, runId)` → one run's full detail (rounds + per-run
   snapshot), derived from `readRunStreamEvents(runId)` spliced with the conversation
   context (above) and cached by the run's `latestSeq` + the conversation context seq
-  (so it invalidates when slimming of its tool results lands). `parentToolCallId` is
-  sourced from the parent conversation's `child_run.started` (never in the child's
-  own ledger). The conversation context itself (trigger messages / parent links /
-  slimming) is read ONCE from the conversation segment (`readConversationStreamEvents`,
-  not the full merged `readEvents`) and cached by the conversation `latestSeq`, shared
-  across every run in the view. All three debug caches are bounded LRUs. Works for
+  (so it invalidates when slimming of its tool results lands). `parentToolCallId`
+  is sourced from Run meta v2 when present; the parent conversation's
+  `child_run.started` is only the current compatibility fallback while the
+  conversation marker projection still exists. The conversation context itself
+  (trigger messages / parent links / slimming) is read ONCE from the conversation
+  segment (`readConversationStreamEvents`, not the full merged `readEvents`) and
+  cached by the conversation `latestSeq`, shared across every run in the view.
+  All three debug caches are bounded LRUs. Works for
   `turn` and `delegation` runs
   alike — the seq convention is irrelevant to a single-stream walk.
 
@@ -1671,6 +1673,8 @@ The current renderer contract is `AgentRenderProjection`, carried by
 - Split conversation/run filesystem layout with conversation segments,
   run-local `events.jsonl`, run meta, scoped payloads, and agent identity
   records.
+- Run meta v2 in `runs/<runId>/meta.json`: nested `execution` and `objective`,
+  `runProfile`, `context`, `parentToolCallId`, timestamps, and `latestSeq`.
 - Strict append ordering, per-conversation write queues, and replay reducers.
 - Parent-linked message chain with active branch projection.
 - pi-ai `Message[]` derivation from the joined conversation/run active event

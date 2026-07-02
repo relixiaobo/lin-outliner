@@ -363,6 +363,7 @@ type AgentRunRecord = {
   budget?: AgentRunBudget;
   agentType: string;
   contextMode: 'full' | 'brief' | 'none' | 'fork';
+  runProfile?: 'default' | 'research' | 'verify' | 'browser' | 'coding' | 'writing' | 'dream';
   status: 'running' | 'completed' | 'failed' | 'cancelled';
   executingAgentId: string;
   parentAgentId: string;
@@ -806,6 +807,14 @@ objective status, purpose, scope, budget, agent type, context mode, execution
 identity, parent agent identity, parent run id, memory owner identity, memory
 origin workspace, and parent tool call id.
 
+The run ledger seed also writes `run.started` into the child run's own ledger.
+That event is the source for the durable Run index v2: `meta.json` stores
+`anchor`, `parentRunId`, `parentToolCallId`, `disposition`, `context`,
+`runProfile`, `trigger`, `fingerprint`, `retention`, timestamps, `latestSeq`,
+nested `execution`, and optional nested `objective`. The conversation marker is
+still present for the current projection/UI layer, but parent linkage and
+execution policy no longer have to be recovered only from `child_run.started`.
+
 `child_run.updated` (the conversation marker) records status transitions:
 `running`, `completed`, `failed`, or `cancelled`, plus objective status, budget,
 blocked reason, final result, and error. The transcript itself never moves
@@ -839,6 +848,50 @@ This keeps the parent model context clean while still allowing status, restore,
 debug, and continuation. Spawn ordering is ledger-seed first, conversation
 marker second: a crash inside the spawn window leaves an invisible orphan ledger
 directory, never an un-resumable phantom run in the conversation.
+
+Current Run index file shape:
+
+```ts
+interface RunMetaV2 {
+  v: 2;
+  id: string;
+  agentId: AgentId;                 // executor, still Neva for normal product work
+  anchor: AgentRunAnchor;
+  parentRunId?: string;
+  parentToolCallId?: string;
+  disposition: 'attended' | 'detached';
+  context: 'full' | 'brief' | 'none';
+  runProfile: 'default' | 'research' | 'verify' | 'browser' | 'coding' | 'writing' | 'dream';
+  trigger: AgentRunTrigger;
+  fingerprint: AgentRunFingerprint;
+  retention: AgentRunRetention;
+  createdAt: number;
+  updatedAt: number;
+  latestSeq: number;
+  execution: {
+    status: 'running' | 'completed' | 'failed' | 'cancelled';
+    completedAt?: number;
+    usage?: Usage;
+    error?: string;
+  };
+  objective?: {
+    text: string;
+    criteria: string[];
+    role: 'controller' | 'worker' | 'verifier';
+    status: 'active' | 'verifying' | 'verified' | 'blocked' | 'budget_exhausted' | 'stopped';
+    scope?: AgentRunScope;
+    budget?: AgentRunBudget;
+    blockedReason?: string;
+    latestVerifierGap?: string;
+    latestSubmissionSeq?: number;
+  };
+}
+```
+
+This v2 shape is a pre-release clean cut. Old flat run meta (`status`,
+`objectiveStatus`, `purpose`, top-level `usage`) is not read; the storage-layout
+sentinel bumps to the current generation and wipes stale agent data instead of
+shipping a compatibility reader.
 
 Dream raw sources address conversation streams through `past_chats` source
 objects such as

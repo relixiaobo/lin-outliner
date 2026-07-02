@@ -30,10 +30,11 @@ are **views, rules, or metadata** of these, not separate primitives.
    conversation (the only home). Holds **all** execution detail. The presentation
    categories (turn/background/delegation/scheduled/reflective) are **derived**
    from `trigger` + lineage (`parentRunId`) + `disposition: attended | detached`
-   + anchor provenance; no run stores a `kind`. Tracked objective runs add
-   `objective`, `criteria`, `scope`, `budget`, persistent `purpose: work |
-   verify`, and `objectiveStatus` alongside the existing process status. **Task is
-   a view** (= detached/background or child runs). ✅
+   + anchor provenance; no run stores a `kind`. The durable Run index stores
+   nested `execution.status` for process state, optional `objective.{text,
+   criteria, role, status, scope, budget}` for tracked work state, and
+   `runProfile` for execution policy specialization. **Task is a view** (=
+   detached/background or child runs). ✅
 4. **Memory** — Neva's first-person knowledge, held as ordinary timeline outline
    nodes (`#d-memory`, `#d-episode`, `#d-belief`, `#d-question`, `#d-guidance`).
    Canonically framed in the standard cognitive-science vocabulary — see *The
@@ -114,10 +115,10 @@ Long objectives use the same Run primitive, not a new Task object. There is no
 user-facing goal mode, `/goal` shortcut, or composer goal button: users describe
 work in ordinary prose, and the model-side `goal-launching` workflow decides when
 to start a detached tracked child run with explicit criteria, bounded budget, and
-`objectiveStatus: active`. The child may decompose by calling `spawn`; every
-spawned worker is a Run, every verifier is a Run with persisted `purpose:
-verify`, and every verifier is runtime-pinned to `context: none` with read-only
-tools.
+`objective.status: active`. The child may decompose by calling `spawn`; every
+spawned worker is a Run, every verifier is a Run with
+`objective.role: verifier` and `runProfile: verify`, and every verifier is
+runtime-pinned to `context: none` with read-only tools.
 
 The parent-verifies-child rule is structural: a worker's terminal output is not
 self-declared completion. The parent spawns an independent verifier Run with a
