@@ -116,7 +116,7 @@ describe('summarizeToolActivity', () => {
     expect(summary).toBe('Ran a command · used a tool');
   });
 
-  test('dedupes file kinds by subject path (Set.size, not raw calls)', () => {
+  test('dedupes node reads by subject id (Set.size, not raw calls)', () => {
     // The model's wire args are snake_case (`node_id`), so the dedup keys must be
     // too — reading the same node twice is one distinct subject.
     const summary = summarizeToolActivity(
@@ -140,6 +140,15 @@ describe('summarizeToolActivity', () => {
     expect(summary).toBe('Read 2 nodes');
   });
 
+  test('summarizes restored nodes separately from deleted nodes', () => {
+    expect(
+      summarizeToolActivity([member('node_delete', 'done', { node_id: 'n1', restore: true }, 'a')], process),
+    ).toBe('Restored a node');
+    expect(
+      summarizeToolActivity([member('node_delete', 'pending', { node_id: 'n1', restore: true }, 'a')], process),
+    ).toBe('Restoring a node');
+  });
+
   test('a node_ids batch counts each distinct id (one call, N subjects)', () => {
     const summary = summarizeToolActivity(
       [member('node_read', 'done', { node_ids: ['n1', 'n2', 'n3'] }, 'a')],
@@ -156,7 +165,18 @@ describe('summarizeToolActivity', () => {
       ],
       process,
     );
-    expect(summary).toBe('Created 2 files');
+    expect(summary).toBe('Created 2 nodes');
+  });
+
+  test('summarizes local file reads separately from node reads', () => {
+    const summary = summarizeToolActivity(
+      [
+        member('file_read', 'done', { file_path: 'notes.md' }, 'a'),
+        member('node_read', 'done', { node_id: 'n1' }, 'b'),
+      ],
+      process,
+    );
+    expect(summary).toBe('Read a file · read a node');
   });
 });
 
