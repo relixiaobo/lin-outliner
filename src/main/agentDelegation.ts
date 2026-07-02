@@ -2,7 +2,6 @@ import { Agent, type AfterToolCallResult, type AgentEvent, type AgentTool } from
 import { isContextOverflow } from '@earendil-works/pi-ai';
 import type { Api, AssistantMessage, ImageContent, Model, TextContent, ToolResultMessage, UserMessage } from '@earendil-works/pi-ai';
 import { randomUUID } from 'node:crypto';
-import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
   coerceString,
@@ -42,7 +41,6 @@ import {
 import {
   agentToolResult,
   errorEnvelope,
-  isToolEnvelope,
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
@@ -66,7 +64,42 @@ import {
   runProfileForIsolatedSkill,
   runProfileForPurpose,
 } from './agentRunProfiles';
-import { agentToolNamesForActionKindScope, isReadOnlyActionKind, normalizeAgentToolActionKinds, readOnlyAgentToolNames } from '../core/agentPermissionModel';
+import { readOnlyAgentToolNames } from '../core/agentPermissionModel';
+import {
+  admitRunBudget,
+  formatRunBudgetForPrompt,
+  formatRunScopeForPrompt,
+  narrowRunScope,
+  normalizeRunBudget,
+  normalizeRunBudgetInput,
+  normalizeRunScope,
+  releaseAdmittedRunBudget,
+  remainingBudgetMs,
+  retryBudgetSlice,
+  scopedAllowedToolNames,
+  settleRunBudget,
+  verifierBudgetForRun,
+  verifierRunScope,
+} from './agentDelegationRunPolicy';
+import {
+  buildControllerReplanPrompt,
+  buildReplacementWorkerObjective,
+  buildVerifierObjective,
+  captureWorkingSetSnapshot,
+  compactFileChanges,
+  compactNodeChanges,
+  latestRunSubmissionSummary,
+  parseVerifierVerdict,
+  recordFileToolChanges,
+  recordNodeToolChanges,
+  recordToolTrace,
+  recordWorkingSetDiff,
+  sameTailCount,
+  type AgentChildRunToolTraceEntry,
+  verifierGapSignature,
+} from './agentDelegationVerificationPolicy';
+
+export { recordNodeToolChanges } from './agentDelegationVerificationPolicy';
 
 export const AGENT_DELEGATE_TOOL_NAME = 'spawn';
 export const AGENT_STATUS_TOOL_NAME = 'run_status';
@@ -92,14 +125,10 @@ const CHILD_RUN_POST_COMPACT_MAX_FILES_TO_RESTORE = 5;
 const CHILD_RUN_POST_COMPACT_MAX_CHARS_PER_FILE = 20_000;
 const CHILD_RUN_POST_COMPACT_TOTAL_RESTORED_FILE_CHARS = 200_000;
 const DEFAULT_VERIFIER_RETRY_LIMIT = 2;
-const DEFAULT_CHILD_WALL_CLOCK_MINUTES = 30;
 const DEFAULT_VERIFIER_LIVELOCK_REPEAT_LIMIT = 2;
-const MAX_RECORDED_TOOL_TRACE_ENTRIES = 40;
-const MAX_WORKING_SET_SNAPSHOT_FILES = 500;
 // `setTimeout` stores its delay in a 32-bit int; a larger delay overflows and
 // fires (near-)immediately, so any timer is armed in clamped re-arming hops.
 const MAX_SETTIMEOUT_DELAY_MS = 2_147_483_647;
-const WORKING_SET_EXCLUDED_DIRS = new Set(['.git', 'node_modules', 'release']);
 
 const AGENT_TOOL_PARAMETERS = {
   type: 'object',
@@ -412,25 +441,6 @@ interface DelegationRunState extends DelegationDetail {
 }
 
 type RunningSlotReservation = () => void;
-
-interface AgentChildRunToolTraceEntry {
-  toolName: string;
-  isError: boolean;
-  status?: string;
-  summary?: string;
-}
-
-interface WorkingSetFileSnapshot {
-  filePath: string;
-  relativePath: string;
-  size: number;
-  mtimeMs: number;
-}
-
-interface WorkingSetSnapshot {
-  files: Map<string, WorkingSetFileSnapshot>;
-  truncated: boolean;
-}
 
 /**
  * The IPC-facing view of a delegated run — the {@link DelegationDetail} verbatim
@@ -2077,64 +2087,6 @@ function buildObjectivePrompt(objective: string, criteria?: readonly string[]): 
   ].join('\n');
 }
 
-function buildVerifierObjective(run: DelegationRunState): string {
-  const nodeChanges = compactNodeChanges(run.nodeChanges) ?? {};
-  const fileChanges = compactFileChanges(run.fileChanges) ?? {};
-  return [
-    'You are an independent verifier Run. Inspect the submitted child Run result and return only compact JSON with this exact shape:',
-    '{"verdict":"pass"|"fail","gap":"short reason when fail"}',
-    '',
-    'Rules:',
-    '1. Do not accept claims without evidence in the result or inspectable state.',
-    '2. Use only read-only tools when inspection is needed.',
-    '3. Fail if any acceptance criterion is incomplete, ambiguous, or unverifiable.',
-    '4. Your final message MUST be the JSON object and nothing else — no prose, no code fences. A passing run REQUIRES "verdict":"pass"; any other final message is read as a failure.',
-    '',
-    `Run id: ${run.id}`,
-    `Objective:\n${run.objective ?? run.prompt}`,
-    '',
-    'Acceptance criteria:',
-    ...(run.criteria ?? []).map((criterion, index) => `${index + 1}. ${criterion}`),
-    '',
-    `Execution status: ${run.status}`,
-    `Objective status before verification: ${run.objectiveStatus ?? 'unknown'}`,
-    run.incomplete ? 'The worker was marked incomplete.' : '',
-    run.error ? `Worker error:\n${run.error}` : '',
-    '',
-    `Worker result:\n${latestRunSubmissionSummary(run) ?? run.result ?? 'No text result.'}`,
-    '',
-    `Node changes:\n${JSON.stringify(nodeChanges, null, 2)}`,
-    '',
-    `File changes:\n${JSON.stringify(fileChanges, null, 2)}`,
-    '',
-    `Tool trace:\n${JSON.stringify(run.toolTrace, null, 2)}`,
-  ].filter(Boolean).join('\n');
-}
-
-function buildControllerReplanPrompt(run: DelegationRunState, gap: string): string {
-  return [
-    'Your previous submission did not pass independent verification.',
-    '',
-    `Verifier gap: ${gap || 'The verifier rejected the result without a detailed gap.'}`,
-    '',
-    'Continue the same objective. Address the verifier gap directly, then submit a concise final result that maps to the acceptance criteria.',
-    '',
-    `Objective:\n${run.objective ?? run.prompt}`,
-    '',
-    'Acceptance criteria:',
-    ...(run.criteria ?? []).map((criterion, index) => `${index + 1}. ${criterion}`),
-  ].join('\n');
-}
-
-function buildReplacementWorkerObjective(objective: string, gap: string): string {
-  return [
-    objective,
-    '',
-    `Verifier gap from the previous worker attempt: ${gap || 'The verifier rejected the result without a detailed gap.'}`,
-    'Produce a fresh result that directly closes this gap.',
-  ].join('\n');
-}
-
 function collectUnresolvedToolCalls(messages: readonly AgentMessage[]): Array<{ id: string; name: string }> {
   const resolved = new Set<string>();
   for (const message of messages) {
@@ -2190,313 +2142,6 @@ export function visibleChildRunResult(data: AgentDelegateToolData): unknown {
   return visible;
 }
 
-export function recordNodeToolChanges(
-  changes: AgentChildRunNodeChanges,
-  toolName: string,
-  result: unknown,
-  isError: boolean,
-): void {
-  if (isError) return;
-  if (toolName === 'node_delete') {
-    const details = isPlainRecord(result) ? result.details : undefined;
-    if (!isToolEnvelope(details) || !details.ok || details.status === 'unchanged' || !isPlainRecord(details.data)) return;
-    appendUniqueNodeIds(changes, 'trashedNodeIds', stringArray(details.data.deletedNodeIds));
-    appendUniqueNodeIds(changes, 'updatedNodeIds', stringArray(details.data.restoredNodeIds));
-    return;
-  }
-  if (toolName !== 'node_create' && toolName !== 'node_edit') return;
-  const details = isPlainRecord(result) ? result.details : undefined;
-  if (!isToolEnvelope(details) || !details.ok || details.status === 'unchanged' || !isPlainRecord(details.data)) return;
-
-  const created = stringArray(details.data.createdNodeIds);
-  appendUniqueNodeIds(changes, 'createdNodeIds', created);
-
-  if (toolName !== 'node_edit') return;
-  if (details.data.status !== 'updated') return;
-  const trashed = stringArray(details.data.trashedNodeIds);
-  appendUniqueNodeIds(changes, 'trashedNodeIds', trashed);
-  const changedExisting = stringArray(details.data.affectedNodeIds)
-    .filter((nodeId) => !created.includes(nodeId) && !trashed.includes(nodeId));
-  appendUniqueNodeIds(changes, 'updatedNodeIds', changedExisting);
-}
-
-function recordFileToolChanges(
-  changes: AgentChildRunFileChanges,
-  toolName: string,
-  result: unknown,
-  isError: boolean,
-): void {
-  if (isError) return;
-  if (toolName !== 'file_edit' && toolName !== 'file_write' && toolName !== 'file_delete') return;
-  const details = isPlainRecord(result) ? result.details : undefined;
-  if (!isToolEnvelope(details) || !details.ok || details.status === 'unchanged' || !isPlainRecord(details.data)) return;
-
-  const filePath = coerceString(details.data.filePath);
-  if (!filePath) return;
-  if (toolName === 'file_delete') {
-    appendUniqueStrings(changes, 'deletedPaths', [filePath]);
-    appendFilePatch(changes, {
-      filePath,
-      operation: 'delete',
-      trashPath: coerceString(details.data.trashPath),
-      kind: coerceString(details.data.kind),
-    });
-    return;
-  }
-
-  const operation = toolName === 'file_write' && details.data.type === 'create' ? 'create' : 'update';
-  appendUniqueStrings(changes, operation === 'create' ? 'createdPaths' : 'updatedPaths', [filePath]);
-  appendFilePatch(changes, {
-    filePath,
-    operation,
-    structuredPatch: normalizeStructuredPatch(details.data.structuredPatch),
-  });
-}
-
-function recordToolTrace(
-  trace: AgentChildRunToolTraceEntry[],
-  toolName: string,
-  result: unknown,
-  isError: boolean,
-): void {
-  const details = isPlainRecord(result) ? result.details : undefined;
-  const entry: AgentChildRunToolTraceEntry = { toolName, isError };
-  if (isToolEnvelope(details)) {
-    entry.status = details.status;
-    entry.summary = summarizeToolEnvelopeForVerifier(details);
-  } else if (isPlainRecord(result) && Array.isArray(result.content)) {
-    entry.summary = truncate(piToolResultTextContent(result.content as Array<TextContent | ImageContent>) ?? '', 500);
-  }
-  trace.push(entry);
-  if (trace.length > MAX_RECORDED_TOOL_TRACE_ENTRIES) {
-    trace.splice(0, trace.length - MAX_RECORDED_TOOL_TRACE_ENTRIES);
-  }
-}
-
-function compactNodeChanges(changes: AgentChildRunNodeChanges): AgentChildRunNodeChanges | undefined {
-  const compacted: AgentChildRunNodeChanges = {};
-  if (changes.createdNodeIds?.length) compacted.createdNodeIds = changes.createdNodeIds;
-  if (changes.updatedNodeIds?.length) compacted.updatedNodeIds = changes.updatedNodeIds;
-  if (changes.trashedNodeIds?.length) compacted.trashedNodeIds = changes.trashedNodeIds;
-  return Object.keys(compacted).length ? compacted : undefined;
-}
-
-function compactFileChanges(changes: AgentChildRunFileChanges): AgentChildRunFileChanges | undefined {
-  const compacted: AgentChildRunFileChanges = {};
-  if (changes.createdPaths?.length) compacted.createdPaths = changes.createdPaths;
-  if (changes.updatedPaths?.length) compacted.updatedPaths = changes.updatedPaths;
-  if (changes.deletedPaths?.length) compacted.deletedPaths = changes.deletedPaths;
-  if (changes.patches?.length) compacted.patches = changes.patches;
-  return Object.keys(compacted).length ? compacted : undefined;
-}
-
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.length > 0) : [];
-}
-
-function normalizeStructuredPatch(value: unknown): unknown {
-  if (!Array.isArray(value)) return undefined;
-  return value.slice(0, 50).map((entry) => isPlainRecord(entry) ? { ...entry } : entry);
-}
-
-async function captureWorkingSetSnapshot(localRoot: string, scope: AgentRunScope | undefined): Promise<WorkingSetSnapshot> {
-  const root = path.resolve(localRoot);
-  const startPaths = scope?.resources?.paths?.length
-    ? scope.resources.paths.map((entry) => resolveScopedPath(root, entry)).filter((entry): entry is string => entry !== null)
-    : [root];
-  const snapshot: WorkingSetSnapshot = { files: new Map(), truncated: false };
-  for (const startPath of startPaths) {
-    if (snapshot.truncated) break;
-    await walkWorkingSetPath(root, startPath, snapshot);
-  }
-  return snapshot;
-}
-
-async function recordWorkingSetDiff(
-  changes: AgentChildRunFileChanges,
-  localRoot: string,
-  before: WorkingSetSnapshot,
-  scope: AgentRunScope | undefined,
-): Promise<void> {
-  const after = await captureWorkingSetSnapshot(localRoot, scope);
-  if (before.truncated || after.truncated) {
-    appendFilePatch(changes, {
-      filePath: '<working-set-snapshot>',
-      operation: 'update',
-      structuredPatch: [{
-        source: 'working-set-snapshot',
-        warning: 'Snapshot file limit reached; indirect file evidence may be incomplete.',
-        maxFiles: MAX_WORKING_SET_SNAPSHOT_FILES,
-      }],
-    });
-  }
-
-  // Files the file tools already recorded carry precise structured patches; the
-  // snapshot exists only to surface out-of-band edits (shell scripts, etc.).
-  // Skip the tool-recorded paths so the verifier isn't handed the same file twice
-  // in two divergent formats. Tool paths and snapshot keys are both absolute.
-  const toolRecorded = new Set<string>([
-    ...(changes.createdPaths ?? []),
-    ...(changes.updatedPaths ?? []),
-    ...(changes.deletedPaths ?? []),
-  ]);
-
-  for (const [filePath, afterFile] of after.files) {
-    if (toolRecorded.has(filePath)) continue;
-    const beforeFile = before.files.get(filePath);
-    if (!beforeFile) {
-      appendUniqueStrings(changes, 'createdPaths', [filePath]);
-      appendFilePatch(changes, {
-        filePath,
-        operation: 'create',
-        structuredPatch: [workingSetPatch('created', undefined, afterFile)],
-      });
-      continue;
-    }
-    if (workingSetFileChanged(beforeFile, afterFile)) {
-      appendUniqueStrings(changes, 'updatedPaths', [filePath]);
-      appendFilePatch(changes, {
-        filePath,
-        operation: 'update',
-        structuredPatch: [workingSetPatch('updated', beforeFile, afterFile)],
-      });
-    }
-  }
-
-  for (const [filePath, beforeFile] of before.files) {
-    if (after.files.has(filePath) || toolRecorded.has(filePath)) continue;
-    appendUniqueStrings(changes, 'deletedPaths', [filePath]);
-    appendFilePatch(changes, {
-      filePath,
-      operation: 'delete',
-      structuredPatch: [workingSetPatch('deleted', beforeFile, undefined)],
-    });
-  }
-}
-
-async function walkWorkingSetPath(root: string, targetPath: string, snapshot: WorkingSetSnapshot): Promise<void> {
-  if (snapshot.truncated || !isInsidePath(root, targetPath)) return;
-  let entryStat;
-  try {
-    entryStat = await stat(targetPath);
-  } catch {
-    return;
-  }
-  if (entryStat.isDirectory()) {
-    if (WORKING_SET_EXCLUDED_DIRS.has(path.basename(targetPath))) return;
-    let entries;
-    try {
-      entries = await readdir(targetPath, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (snapshot.truncated) return;
-      if (entry.isDirectory() && WORKING_SET_EXCLUDED_DIRS.has(entry.name)) continue;
-      await walkWorkingSetPath(root, path.join(targetPath, entry.name), snapshot);
-    }
-    return;
-  }
-  if (!entryStat.isFile()) return;
-  if (snapshot.files.size >= MAX_WORKING_SET_SNAPSHOT_FILES) {
-    snapshot.truncated = true;
-    return;
-  }
-  const relativePath = path.relative(root, targetPath) || path.basename(targetPath);
-  // Stat only — no content hashing. Hashing every file in the tree twice (before
-  // and after each verified run) was the dominant snapshot cost; size + mtime is
-  // a cheap, reliable change signal for the out-of-band edits this snapshot is
-  // meant to catch (tool edits already carry precise patches and are deduped out).
-  snapshot.files.set(targetPath, {
-    filePath: targetPath,
-    relativePath,
-    size: entryStat.size,
-    mtimeMs: Math.trunc(entryStat.mtimeMs),
-  });
-}
-
-function resolveScopedPath(root: string, input: string): string | null {
-  const resolved = path.resolve(path.isAbsolute(input) ? input : path.join(root, input));
-  return isInsidePath(root, resolved) ? resolved : null;
-}
-
-function isInsidePath(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
-function workingSetFileChanged(before: WorkingSetFileSnapshot, after: WorkingSetFileSnapshot): boolean {
-  return before.size !== after.size || before.mtimeMs !== after.mtimeMs;
-}
-
-function workingSetPatch(
-  change: 'created' | 'updated' | 'deleted',
-  before: WorkingSetFileSnapshot | undefined,
-  after: WorkingSetFileSnapshot | undefined,
-): Record<string, unknown> {
-  return {
-    source: 'working-set-snapshot',
-    change,
-    relativePath: after?.relativePath ?? before?.relativePath,
-    before: before ? { size: before.size } : undefined,
-    after: after ? { size: after.size } : undefined,
-  };
-}
-
-function summarizeToolEnvelopeForVerifier(details: ToolEnvelope): string | undefined {
-  if (details.error) return truncate(`${details.error.code}: ${details.error.message}`, 500);
-  if (!isPlainRecord(details.data)) return undefined;
-  const summary: Record<string, unknown> = {};
-  for (const key of ['filePath', 'trashPath', 'type', 'kind', 'status', 'nodeId', 'createdNodeIds', 'affectedNodeIds', 'deletedNodeIds', 'restoredNodeIds']) {
-    if (details.data[key] !== undefined) summary[key] = details.data[key];
-  }
-  if (Array.isArray(details.data.structuredPatch)) summary.structuredPatch = details.data.structuredPatch.slice(0, 10);
-  return Object.keys(summary).length ? truncate(JSON.stringify(summary), 1_000) : undefined;
-}
-
-function appendUniqueStrings(
-  changes: AgentChildRunFileChanges,
-  key: 'createdPaths' | 'updatedPaths' | 'deletedPaths',
-  values: readonly string[],
-): void {
-  if (values.length === 0) return;
-  const current = changes[key] ?? [];
-  const existing = new Set(current);
-  const next = [...current];
-  for (const value of values) {
-    if (existing.has(value)) continue;
-    existing.add(value);
-    next.push(value);
-  }
-  changes[key] = next;
-}
-
-function appendFilePatch(
-  changes: AgentChildRunFileChanges,
-  patch: NonNullable<AgentChildRunFileChanges['patches']>[number],
-): void {
-  changes.patches ??= [];
-  changes.patches.push(patch);
-  if (changes.patches.length > 50) changes.patches.splice(0, changes.patches.length - 50);
-}
-
-function appendUniqueNodeIds(
-  changes: AgentChildRunNodeChanges,
-  key: keyof AgentChildRunNodeChanges,
-  nodeIds: readonly string[],
-): void {
-  if (nodeIds.length === 0) return;
-  const current = changes[key] ?? [];
-  const existing = new Set(current);
-  const next = [...current];
-  for (const nodeId of nodeIds) {
-    if (existing.has(nodeId)) continue;
-    existing.add(nodeId);
-    next.push(nodeId);
-  }
-  changes[key] = next;
-}
-
 function runToToolData(run: DelegationRunState, children: readonly DelegationRunState[] = []): AgentDelegateToolData {
   const nodeChanges = compactNodeChanges(run.nodeChanges);
   const fileChanges = compactFileChanges(run.fileChanges);
@@ -2531,10 +2176,6 @@ function runToToolData(run: DelegationRunState, children: readonly DelegationRun
     ...(fileChanges ? { file_changes: fileChanges } : {}),
     ...(run.incomplete ? { incomplete: true } : {}),
   };
-}
-
-function latestRunSubmissionSummary(run: Pick<DelegationRunState, 'latestSubmission'>): string | undefined {
-  return run.latestSubmission?.summary.trim() || undefined;
 }
 
 function runToChildStatus(run: DelegationRunState): AgentChildRunChildStatus {
@@ -2689,238 +2330,6 @@ function normalizeRunPurpose(value: unknown): AgentRunPurpose {
 
 function normalizeRunContext(value: unknown): AgentRunContextMode {
   return value === 'none' || value === 'brief' || value === 'full' ? value : 'full';
-}
-
-function normalizeRunScope(value: unknown): AgentRunScope | undefined {
-  if (!isPlainRecord(value)) return undefined;
-  const capabilities = normalizeAgentToolActionKinds(coerceStringArray(value.capabilities));
-  const resources = isPlainRecord(value.resources) ? {
-    docs: coerceStringArray(value.resources.docs),
-    paths: coerceStringArray(value.resources.paths),
-  } : undefined;
-  const compactResources = resources && (resources.docs?.length || resources.paths?.length)
-    ? resources
-    : undefined;
-  return capabilities?.length || compactResources
-    ? { capabilities, resources: compactResources }
-    : undefined;
-}
-
-function normalizeRunBudgetInput(value: unknown): AgentRunBudget | undefined {
-  if (!isPlainRecord(value)) return undefined;
-  const tokens = parsePositiveInteger(value.tokens);
-  const wallClockMinutes = parsePositiveInteger(value.wallClockMinutes);
-  return tokens || wallClockMinutes ? { tokens, wallClockMinutes } : undefined;
-}
-
-function normalizeRunBudget(
-  next: AgentRunBudget | undefined,
-  existing: AgentRunBudget | undefined,
-  now: number,
-): AgentRunBudget | undefined {
-  // Merge field-by-field, not by spread: `normalizeRunBudgetInput` yields explicit
-  // `undefined` for the field a partial amend did not touch, and `{...existing,
-  // ...next}` would let that `undefined` wipe the untouched limit (e.g. amending
-  // only wallClockMinutes would erase the token cap, leaking its reservation).
-  const budget: AgentRunBudget = { ...existing };
-  if (next?.tokens !== undefined) budget.tokens = next.tokens;
-  if (next?.wallClockMinutes !== undefined) budget.wallClockMinutes = next.wallClockMinutes;
-  if (!budget.tokens && !budget.wallClockMinutes && !budget.reservedTokens && !budget.spentTokens) return undefined;
-  budget.startedAt ??= now;
-  if (budget.wallClockMinutes) {
-    budget.deadlineAt = budget.startedAt + budget.wallClockMinutes * 60_000;
-  }
-  return budget;
-}
-
-function admitRunBudget(
-  parent: AgentRunBudget | undefined,
-  requested: AgentRunBudget | undefined,
-  now: number,
-  detached: boolean,
-): AgentRunBudget | undefined {
-  const parentRemainingWallClockMinutes = parent?.deadlineAt && parent.deadlineAt > now
-    ? Math.max(1, Math.ceil((parent.deadlineAt - now) / 60_000))
-    : undefined;
-  if (
-    parentRemainingWallClockMinutes !== undefined
-    && requested?.wallClockMinutes
-    && requested.wallClockMinutes > parentRemainingWallClockMinutes
-  ) {
-    throw new Error('Run budget exceeds parent remaining wall-clock budget.');
-  }
-  const fallback = requested
-    ?? (parentRemainingWallClockMinutes ? { wallClockMinutes: parentRemainingWallClockMinutes } : undefined)
-    ?? (detached ? { wallClockMinutes: DEFAULT_CHILD_WALL_CLOCK_MINUTES } : undefined);
-  const budget = normalizeRunBudget(fallback, undefined, now);
-  if (!budget) return undefined;
-  if (parent?.deadlineAt && budget.deadlineAt && budget.deadlineAt > parent.deadlineAt) {
-    budget.deadlineAt = parent.deadlineAt;
-    if (parentRemainingWallClockMinutes !== undefined) budget.wallClockMinutes = parentRemainingWallClockMinutes;
-  }
-  if (parent?.tokens && budget.tokens) {
-    const parentHeadroom = Math.max(0, parent.tokens - (parent.reservedTokens ?? 0) - (parent.spentTokens ?? 0));
-    if (budget.tokens > parentHeadroom) throw new Error('Run budget exceeds parent remaining token budget.');
-    parent.reservedTokens = (parent.reservedTokens ?? 0) + budget.tokens;
-  }
-  return budget;
-}
-
-// Reverse admitRunBudget's parent token reservation for a run that never came to
-// exist (e.g. the harness build threw), so a setup failure cannot permanently
-// inflate the parent's reservedTokens.
-function releaseAdmittedRunBudget(parent: AgentRunBudget | undefined, budget: AgentRunBudget | undefined): void {
-  if (parent?.tokens && budget?.tokens) {
-    parent.reservedTokens = Math.max(0, (parent.reservedTokens ?? 0) - budget.tokens);
-  }
-}
-
-function settleRunBudget(run: DelegationRunState): void {
-  if (run.budgetSettled) return;
-  if (!run.parentBudgetRef || !run.budget?.tokens) return;
-  const reserved = run.parentBudgetRef.reservedTokens ?? 0;
-  run.parentBudgetRef.reservedTokens = Math.max(0, reserved - run.budget.tokens);
-  const spent = Math.min(run.budget.tokens, runUsageTokens(run));
-  run.parentBudgetRef.spentTokens = (run.parentBudgetRef.spentTokens ?? 0) + spent;
-  run.budgetSettled = true;
-}
-
-function runUsageTokens(run: DelegationRunState): number {
-  let total = 0;
-  for (const message of run.messages) {
-    if (message.role === 'assistant') total += message.usage?.totalTokens ?? 0;
-  }
-  return total;
-}
-
-// A verifier reads to confirm the work; its capabilities are the read-only
-// subset of the controller's own scope (or all read-only kinds when the
-// controller is unrestricted), so narrowing never rejects it as widening.
-function verifierRunScope(inheritedScope: AgentRunScope | undefined): AgentRunScope {
-  const parentCapabilities = normalizeAgentToolActionKinds(inheritedScope?.capabilities);
-  const capabilities = parentCapabilities?.length
-    ? parentCapabilities.filter((kind) => isReadOnlyActionKind(kind))
-    : normalizeAgentToolActionKinds(readOnlyAgentToolNames());
-  return { capabilities: capabilities ?? [] };
-}
-
-// The verifier's wall-clock request must fit the parent run's *remaining* time
-// (its deadline has been counting down since the work started), capped at the
-// default, so admission never rejects a budgeted run's verification.
-function verifierBudgetForRun(run: DelegationRunState): AgentRunBudget {
-  const deadlineAt = run.budget?.deadlineAt;
-  const remainingMinutes = deadlineAt && deadlineAt > Date.now()
-    ? Math.max(1, Math.ceil((deadlineAt - Date.now()) / 60_000))
-    : undefined;
-  const wallClockMinutes = Math.min(
-    DEFAULT_CHILD_WALL_CLOCK_MINUTES,
-    run.budget?.wallClockMinutes ?? DEFAULT_CHILD_WALL_CLOCK_MINUTES,
-    remainingMinutes ?? DEFAULT_CHILD_WALL_CLOCK_MINUTES,
-  );
-  return { wallClockMinutes };
-}
-
-function narrowRunScope(parent: AgentRunScope | undefined, requested: AgentRunScope | undefined): AgentRunScope | undefined {
-  const parentCapabilities = normalizeAgentToolActionKinds(parent?.capabilities);
-  const requestedCapabilities = normalizeAgentToolActionKinds(requested?.capabilities);
-  const capabilities = parentCapabilities?.length
-    ? (requestedCapabilities?.length ? assertScopeSubset(requestedCapabilities, parentCapabilities, 'capabilities') : parentCapabilities)
-    : requestedCapabilities;
-  const resources = narrowRunResources(parent?.resources, requested?.resources);
-  return capabilities?.length || resources
-    ? { capabilities, resources }
-    : undefined;
-}
-
-function assertScopeSubset(values: readonly string[], parentValues: readonly string[], label: string): string[] {
-  const parentSet = new Set(parentValues);
-  const denied = values.filter((value) => !parentSet.has(value));
-  if (denied.length > 0) {
-    throw new Error(`Run scope cannot widen ${label}: ${denied.join(', ')}`);
-  }
-  return [...new Set(values)];
-}
-
-function narrowRunResources(parent: AgentRunScope['resources'] | undefined, requested: AgentRunScope['resources'] | undefined): AgentRunScope['resources'] | undefined {
-  const docs = parent?.docs?.length
-    ? (requested?.docs?.length ? assertScopeSubset(requested.docs, parent.docs, 'docs') : parent.docs)
-    : requested?.docs;
-  const paths = parent?.paths?.length
-    ? (requested?.paths?.length ? assertScopeSubset(requested.paths, parent.paths, 'paths') : parent.paths)
-    : requested?.paths;
-  return docs?.length || paths?.length ? { docs, paths } : undefined;
-}
-
-function scopedAllowedToolNames(allowedTools: readonly string[] | undefined, scope: AgentRunScope | undefined): string[] | undefined {
-  const scopeTools = agentToolNamesForActionKindScope(scope?.capabilities, allowedTools);
-  if (scope?.capabilities?.length) return scopeTools ?? [];
-  return allowedTools ? [...allowedTools] : undefined;
-}
-
-function remainingBudgetMs(run: DelegationRunState): number | null {
-  const deadlineAt = run.budget?.deadlineAt;
-  if (!deadlineAt) return null;
-  return Math.max(0, deadlineAt - Date.now());
-}
-
-function retryBudgetSlice(budget: AgentRunBudget | undefined): AgentRunBudget | undefined {
-  if (!budget) return undefined;
-  const next: AgentRunBudget = {};
-  if (budget.tokens) next.tokens = budget.tokens;
-  if (budget.wallClockMinutes) next.wallClockMinutes = budget.wallClockMinutes;
-  return next.tokens || next.wallClockMinutes ? next : undefined;
-}
-
-function formatRunBudgetForPrompt(budget: AgentRunBudget | undefined): string | null {
-  if (!budget) return null;
-  const lines: string[] = [];
-  if (budget.tokens) lines.push(`- token budget: ${budget.tokens}`);
-  if (budget.wallClockMinutes) lines.push(`- wall-clock budget: ${budget.wallClockMinutes} minutes`);
-  return lines.length ? lines.join('\n') : null;
-}
-
-function formatRunScopeForPrompt(scope: AgentRunScope | undefined): string | null {
-  if (!scope) return null;
-  const lines: string[] = [];
-  if (scope.capabilities?.length) lines.push(`- capabilities: ${scope.capabilities.join(', ')}`);
-  if (scope.resources?.docs?.length) lines.push(`- docs: ${scope.resources.docs.join(', ')}`);
-  if (scope.resources?.paths?.length) lines.push(`- paths: ${scope.resources.paths.join(', ')}`);
-  return lines.length ? lines.join('\n') : null;
-}
-
-function parseVerifierVerdict(text: string): { verdict: 'pass' | 'fail'; gap: string } {
-  const trimmed = text.trim();
-  const jsonMatch = /\{[\s\S]*\}/.exec(trimmed);
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0]) as unknown;
-      if (isPlainRecord(parsed)) {
-        const verdict = coerceString(parsed.verdict)?.trim().toLowerCase();
-        const gap = coerceString(parsed.gap)?.trim() ?? '';
-        if (verdict === 'pass') return { verdict: 'pass', gap };
-        if (verdict === 'fail') return { verdict: 'fail', gap };
-      }
-    } catch {
-      // Fall through to the text heuristic.
-    }
-  }
-  if (/\bverdict\s*[:=]\s*pass\b/i.test(trimmed) || /"verdict"\s*:\s*"pass"/i.test(trimmed)) {
-    return { verdict: 'pass', gap: '' };
-  }
-  const gap = trimmed || 'Verifier did not return a parseable pass verdict.';
-  return { verdict: 'fail', gap: truncate(gap, 1_000) };
-}
-
-function verifierGapSignature(gap: string): string {
-  return gap.toLowerCase().replace(/\s+/g, ' ').replace(/[^\p{L}\p{N} ]/gu, '').trim().slice(0, 240) || 'unknown-gap';
-}
-
-function sameTailCount(values: readonly string[], value: string): number {
-  let count = 0;
-  for (let index = values.length - 1; index >= 0 && values[index] === value; index -= 1) {
-    count += 1;
-  }
-  return count;
 }
 
 function normalizeAmendParams(raw: unknown): { runId: string; changes: { objective?: string; criteria?: string[]; budget?: AgentRunBudget } } {

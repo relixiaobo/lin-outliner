@@ -699,6 +699,17 @@ Owns conversation-scoped child-run state:
 It should create and manage pi-mono `Agent` instances. It should not duplicate
 pi-mono's model loop.
 
+Runtime policy that is not orchestration lives outside the runtime class:
+
+- `src/main/agentRunProfiles.ts` owns Run profile registry and resolver policy
+  for ordinary work, `/research`, verifier, and Dream Runs.
+- `src/main/agentDelegationRunPolicy.ts` owns scope narrowing, allowed-tool
+  derivation, budget admission/reservation/settlement, verifier budget slices,
+  and prompt formatting for scope/budget directives.
+- `src/main/agentDelegationVerificationPolicy.ts` owns verifier objective
+  construction, verifier verdict parsing, retry gap signatures, bounded tool
+  traces, node/file change evidence, and working-set snapshot diffs.
+
 ### `AgentRunRecord`
 
 Owns one concrete pi-mono `Agent` instance:
