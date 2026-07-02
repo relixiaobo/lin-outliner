@@ -3,14 +3,14 @@ import { act, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-import type { AgentRunListEntry, ToolCall, Usage } from '../../src/core/agentTypes';
+import type { AgentRunDetailPayload, AgentRunListEntry, ToolCall, Usage } from '../../src/core/agentTypes';
 import type {
   AgentRenderChildRunEntity,
 } from '../../src/core/agentRenderProjection';
 import type { DocumentIndex } from '../../src/renderer/state/document';
 import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import { AgentToolActivityGroup } from '../../src/renderer/ui/agent/AgentToolActivityGroup';
-import { AgentChildRunDetailsPanel } from '../../src/renderer/ui/agent/AgentChildRunDetailsPanel';
+import { AgentRunDetailsPanel } from '../../src/renderer/ui/agent/AgentRunDetailsPanel';
 import { AgentRunsPanel } from '../../src/renderer/ui/agent/AgentRunsPanel';
 import { renderAssistantBlocks } from '../../src/renderer/ui/agent/AgentAssistantTurnContent';
 import type { AgentExpandState } from '../../src/renderer/ui/agent/agentProcessTypes';
@@ -104,7 +104,7 @@ describe('agent child run UI', () => {
     expect(rendered.container.textContent).toContain('Ran a command · managing an agent run');
   });
 
-  test('loads a child run transcript and keeps nested tool calls expandable', async () => {
+  test('loads a run transcript and keeps nested tool calls expandable', async () => {
     const payloadText = JSON.stringify({
       v: 1,
       runId: 'child-1',
@@ -149,11 +149,11 @@ describe('agent child run UI', () => {
       ],
     });
     const rendered = renderComponent(
-      <AgentChildRunDetailsPanel
+      <AgentRunDetailsPanel
         onClose={() => undefined}
         conversationId="conversation-1"
         index={TEST_INDEX}
-        childRun={childRunEntity()}
+        runId="child-1"
       />,
       {
         payloads: { 'child-1': payloadText },
@@ -196,13 +196,24 @@ describe('agent child run UI', () => {
       },
     });
     const rendered = renderComponent(
-      <AgentChildRunDetailsPanel
+      <AgentRunDetailsPanel
         onClose={() => undefined}
         conversationId="conversation-1"
         index={TEST_INDEX}
-        childRun={{ ...childRunEntity(), result: 'Old projected result.' }}
+        runId="child-1"
       />,
       {
+        details: {
+          'child-1': runDetailPayload({
+            result: {
+              runId: 'child-1',
+              seq: 7,
+              submittedAt: 200,
+              summary: 'Structured submitted result.',
+              source: 'final_assistant_message',
+            },
+          }),
+        },
         payloads: { 'child-1': payloadText },
       },
     );
@@ -211,14 +222,8 @@ describe('agent child run UI', () => {
     expect(rendered.container.textContent).not.toContain('Old projected result.');
   });
 
-  test('child run transcript details can open nested child runs', async () => {
+  test('run transcript details can open nested runs', async () => {
     let openedChildRunId: string | null = null;
-    const nestedRun = {
-      ...childRunEntity(),
-      id: 'child-2',
-      description: 'Nested child run',
-      parentToolCallId: 'tool-nested-agent',
-    };
     const payloadText = JSON.stringify({
       v: 1,
       runId: 'child-1',
@@ -244,17 +249,27 @@ describe('agent child run UI', () => {
       ],
     });
     const rendered = renderComponent(
-      <AgentChildRunDetailsPanel
+      <AgentRunDetailsPanel
         onClose={() => undefined}
-        onOpenChildRunTranscript={(childRunId) => {
+        onOpenRun={(childRunId) => {
           openedChildRunId = childRunId;
         }}
         conversationId="conversation-1"
         index={TEST_INDEX}
-        childRun={childRunEntity()}
-        childRunsByParentToolCallId={new Map([[nestedRun.parentToolCallId!, nestedRun]])}
+        runId="child-1"
       />,
       {
+        details: {
+          'child-1': runDetailPayload({
+            subRuns: [
+              runDetailChild({
+                runId: 'child-2',
+                title: 'Nested child run',
+                parentToolCallId: 'tool-nested-agent',
+              }),
+            ],
+          }),
+        },
         payloads: { 'child-1': payloadText },
       },
     );
@@ -266,20 +281,26 @@ describe('agent child run UI', () => {
     expect(openedChildRunId).toBe('child-2');
   });
 
-  test('threads child run duration and failure into shared transcript rows', async () => {
+  test('threads run duration and failure into shared transcript rows', async () => {
     const completedRun = {
       ...childRunEntity(),
       completedAt: 63_100,
       updatedAt: 63_100,
     };
     const completed = renderComponent(
-      <AgentChildRunDetailsPanel
+      <AgentRunDetailsPanel
         onClose={() => undefined}
         conversationId="conversation-1"
         index={TEST_INDEX}
-        childRun={completedRun}
+        runId="child-1"
       />,
       {
+        details: {
+          'child-1': runDetailPayload({
+            updatedAt: completedRun.updatedAt,
+            completedAt: completedRun.completedAt,
+          }),
+        },
         payloads: {
           'child-1': JSON.stringify({
             v: 1,
@@ -324,13 +345,21 @@ describe('agent child run UI', () => {
       updatedAt: 63_100,
     };
     const failed = renderComponent(
-      <AgentChildRunDetailsPanel
+      <AgentRunDetailsPanel
         onClose={() => undefined}
         conversationId="conversation-1"
         index={TEST_INDEX}
-        childRun={failedRun}
+        runId="child-1"
       />,
       {
+        details: {
+          'child-1': runDetailPayload({
+            status: failedRun.status,
+            updatedAt: failedRun.updatedAt,
+            completedAt: failedRun.completedAt,
+            result: undefined,
+          }),
+        },
         payloads: {
           'child-1': JSON.stringify({
             v: 1,
@@ -360,11 +389,11 @@ describe('agent child run UI', () => {
   test('renders orphan tool results as capped plain text', async () => {
     const longOutput = `# not markdown\n${'stdout '.repeat(260)}`;
     const rendered = renderComponent(
-      <AgentChildRunDetailsPanel
+      <AgentRunDetailsPanel
         onClose={() => undefined}
         conversationId="conversation-1"
         index={TEST_INDEX}
-        childRun={childRunEntity()}
+        runId="child-1"
       />,
       {
         payloads: {
@@ -392,20 +421,22 @@ describe('agent child run UI', () => {
     expect(rendered.container.querySelector('.agent-transcript-tool-result-row h1')).toBeNull();
   });
 
-  test('stops running childRuns from read-only details', async () => {
+  test('stops running runs from read-only details', async () => {
     const rendered = renderComponent(
-      <AgentChildRunDetailsPanel
+      <AgentRunDetailsPanel
         onClose={() => undefined}
         conversationId="conversation-1"
         index={TEST_INDEX}
-        childRun={{
-          ...childRunEntity(),
-          completedAt: undefined,
-          result: undefined,
-          status: 'running',
-        }}
+        runId="child-1"
       />,
       {
+        details: {
+          'child-1': runDetailPayload({
+            completedAt: undefined,
+            result: undefined,
+            status: 'running',
+          }),
+        },
         payloads: {
           'child-1': JSON.stringify({
             v: 1,
@@ -453,17 +484,40 @@ describe('agent child run UI', () => {
       completedAt: 260,
     };
     const rendered = renderComponent(
-      <AgentChildRunDetailsPanel
+      <AgentRunDetailsPanel
         onClose={() => undefined}
-        onOpenChildRunTranscript={(childRunId) => {
+        onOpenRun={(childRunId) => {
           openedChildRunId = childRunId;
         }}
         conversationId="conversation-1"
         index={TEST_INDEX}
-        childRun={parent}
-        childRuns={{ [parent.id]: parent, [nestedRun.id]: nestedRun }}
+        runId="child-1"
       />,
       {
+        details: {
+          'child-1': runDetailPayload({
+            result: {
+              runId: 'child-1',
+              seq: 2,
+              submittedAt: 260,
+              summary: parent.result!,
+              source: 'final_assistant_message',
+            },
+            verificationRuns: [
+              runDetailChild({
+                runId: nestedRun.id,
+                title: nestedRun.description,
+                objectiveRole: 'verifier',
+                runProfile: 'verify',
+                runProfileLabel: 'Verify',
+                parentToolCallId: nestedRun.parentToolCallId,
+                startedAt: nestedRun.startedAt,
+                updatedAt: nestedRun.updatedAt,
+                completedAt: nestedRun.completedAt,
+              }),
+            ],
+          }),
+        },
         payloads: {
           'child-1': JSON.stringify({
             v: 1,
@@ -551,31 +605,33 @@ describe('agent child run UI', () => {
       }]);
   });
 
-  test('an open panel refetches the transcript when the projected entity changes', async () => {
-    // The conversation projection carries no per-message child data, so the
-    // panel must refetch on every entity change (status flips, updatedAt
-    // bumps) — the regression was a fetch keyed on childRun.id alone, which
-    // froze an open panel for the run's whole lifetime.
-    let setChildRun: (entity: AgentRenderChildRunEntity) => void = () => undefined;
+  test('an open panel refetches the transcript when the run index entry changes', async () => {
+    // The Run detail payload carries no per-message transcript data, so the
+    // panel refetches when the Run index entry changes (status flips, updatedAt
+    // bumps) and keeps polling while the run is live.
+    let setRunUpdatedAt: (updatedAt: number) => void = () => undefined;
     function Wrapper() {
-      const [childRun, set] = useState<AgentRenderChildRunEntity>({
-        ...childRunEntity(),
-        status: 'running',
-        completedAt: undefined,
-        result: undefined,
-        updatedAt: 100,
-      });
-      setChildRun = set;
+      const [runUpdatedAt, set] = useState(100);
+      setRunUpdatedAt = set;
       return (
-        <AgentChildRunDetailsPanel
+        <AgentRunDetailsPanel
           onClose={() => undefined}
           conversationId="conversation-1"
           index={TEST_INDEX}
-          childRun={childRun}
+          runId="child-1"
+          runUpdatedAt={runUpdatedAt}
         />
       );
     }
     const rendered = renderComponent(<Wrapper />, {
+      details: {
+        'child-1': runDetailPayload({
+          status: 'running',
+          completedAt: undefined,
+          result: undefined,
+          updatedAt: 100,
+        }),
+      },
       payloads: {
         'child-1': JSON.stringify({
           messages: [{ role: 'user', timestamp: 100, content: [{ type: 'text', text: 'Inspect the current UI.' }] }],
@@ -584,14 +640,14 @@ describe('agent child run UI', () => {
     });
 
     await waitForText(rendered, 'Inspect the current UI.');
-    const fetchCount = () => rendered.commands.filter((call) => call.cmd === 'agent_child_run_transcript').length;
+    const fetchCount = () => rendered.commands.filter((call) => call.cmd === 'agent_run_transcript').length;
     const before = fetchCount();
     expect(before).toBeGreaterThanOrEqual(1);
 
-    // The run completes: the projected entity's status/updatedAt change and
-    // the panel re-fetches without being closed and reopened.
+    // The run index entry changes and the panel re-fetches without being closed
+    // and reopened.
     await act(async () => {
-      setChildRun({ ...childRunEntity(), updatedAt: 300, completedAt: 300 });
+      setRunUpdatedAt(300);
       await Promise.resolve();
     });
     await waitForText(rendered, 'Inspect the current UI.');
@@ -658,10 +714,10 @@ function AssistantTurn({ turnActive, turnInterrupted }: { turnActive: boolean; t
 
 function renderComponent(
   element: ReactNode,
-  options: { payloads?: Record<string, string> } = {},
+  options: { details?: Record<string, AgentRunDetailPayload>; payloads?: Record<string, string> } = {},
 ): RenderedComponent {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
-  const { commands, restore } = installDomGlobals(window, options.payloads ?? {});
+  const { commands, restore } = installDomGlobals(window, options.payloads ?? {}, options.details ?? {});
 
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
@@ -684,7 +740,11 @@ function renderComponent(
   return rendered;
 }
 
-function installDomGlobals(window: Window, payloads: Record<string, string>) {
+function installDomGlobals(
+  window: Window,
+  payloads: Record<string, string>,
+  details: Record<string, AgentRunDetailPayload>,
+) {
   const commands: Array<{ cmd: string; args: Record<string, unknown> }> = [];
   const previousGlobalGetComputedStyle = Object.getOwnPropertyDescriptor(globalThis, 'getComputedStyle');
   const getComputedStyle = () => ({
@@ -735,7 +795,11 @@ function installDomGlobals(window: Window, payloads: Record<string, string>) {
       if (cmd === 'agent_payload_text') {
         return (payloads[String(args.payloadId)] ?? null) as T;
       }
-      if (cmd === 'agent_child_run_transcript') {
+      if (cmd === 'agent_run_detail') {
+        const runId = String(args.runId);
+        return (details[runId] ?? (runId === 'child-1' ? runDetailPayload() : null)) as T;
+      }
+      if (cmd === 'agent_run_transcript') {
         const raw = payloads[String(args.runId)];
         if (!raw) return null as T;
         const parsed = JSON.parse(raw) as { messages: unknown[]; latestSubmission?: unknown };
@@ -869,6 +933,55 @@ function childRunEntity(): AgentRenderChildRunEntity {
     completedAt: 260,
     result: 'Found the relevant UI path.',
     parentToolCallId: 'tool-agent-1',
+  };
+}
+
+function runDetailPayload(overrides: Partial<AgentRunDetailPayload> = {}): AgentRunDetailPayload {
+  return {
+    runId: 'child-1',
+    conversationId: 'conversation-1',
+    agentId: 'built-in:tenon:explorer',
+    kind: 'delegation',
+    title: 'Inspect child run UI',
+    status: 'completed',
+    runProfile: 'default',
+    runProfileLabel: 'Default',
+    context: 'brief',
+    disposition: 'attended',
+    parentToolCallId: 'tool-agent-1',
+    startedAt: 100,
+    updatedAt: 260,
+    completedAt: 260,
+    objective: {
+      text: 'Inspect the current UI.',
+      criteria: [],
+    },
+    result: {
+      runId: 'child-1',
+      seq: 1,
+      submittedAt: 260,
+      summary: 'Found the relevant UI path.',
+      source: 'final_assistant_message',
+    },
+    subRuns: [],
+    verificationRuns: [],
+    transcriptMessageCount: 1,
+    ...overrides,
+  };
+}
+
+function runDetailChild(overrides: Partial<AgentRunDetailPayload['subRuns'][number]> = {}): AgentRunDetailPayload['subRuns'][number] {
+  return {
+    runId: 'child-2',
+    title: 'Nested run',
+    status: 'completed',
+    runProfile: 'default',
+    runProfileLabel: 'Default',
+    parentRunId: 'child-1',
+    startedAt: 180,
+    updatedAt: 260,
+    completedAt: 260,
+    ...overrides,
   };
 }
 

@@ -1033,11 +1033,12 @@ Rules:
   user-facing (`messages · duration`); internal mode/type/id fields live in Technical details. The Run-backed
   API surface is `agent_run_detail` plus `agent_run_transcript`: detail reads Run
   meta and direct sub-run metadata from the Run index, while transcript replays
-  the selected Run ledger. The current renderer still reads `entities.childRuns`
-  and the legacy transcript command until the detail panel migration removes that
-  dependency. Running detail views expose Stop, while follow-up/steering remains
-  an internal `run_steer` runtime/tool capability instead of a permanent
-  detail-page input.
+  the selected Run ledger. The renderer detail page uses that API directly and
+  does not require `entities.childRuns[selectedRunId]` from the active
+  conversation projection. Turn folding still uses `entities.childRuns` until
+  the projection migration replaces it with Run metadata. Running detail views
+  expose Stop, while follow-up/steering remains an internal `run_steer`
+  runtime/tool capability instead of a permanent detail-page input.
 - Long output rows are collapsed by default.
 - **Result-first turn process (one flat level).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last

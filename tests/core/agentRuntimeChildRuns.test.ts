@@ -1236,7 +1236,7 @@ describe('agent runtime childRuns', () => {
       summary: 'Background result.',
       source: 'final_assistant_message',
     });
-    const detail = backgroundMeta ? await runtime.childRunTranscript(conversation.conversationId, backgroundMeta.id) : null;
+    const detail = backgroundMeta ? await runtime.agentRunTranscript(conversation.conversationId, backgroundMeta.id) : null;
     expect(detail?.latestSubmission).toMatchObject({
       seq: backgroundMeta?.objective?.latestSubmissionSeq,
       summary: 'Background result.',

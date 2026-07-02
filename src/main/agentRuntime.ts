@@ -1609,10 +1609,6 @@ export class AgentRuntime {
     return transcriptPayload(messages, latestSubmission);
   }
 
-  async childRunTranscript(conversationId: string, runId: string): Promise<AgentRunTranscriptPayload | null> {
-    return this.agentRunTranscript(conversationId, runId);
-  }
-
   /** Resolve the conversation that owns a (global) run id, or null if unknown — one
    *  small run-meta read. The O(1) lookup behind chat-source `run` reveals, so the
    *  renderer never has to probe every conversation's ledger to find the owner. */

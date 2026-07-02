@@ -67,7 +67,7 @@ import {
 } from './agentConversationRows';
 import type { AgentConversationRenderRow } from './agentConversationRows';
 import { systemLineText } from './agentSystemLine';
-import { AgentChildRunDetailsPanel } from './AgentChildRunDetailsPanel';
+import { AgentRunDetailsPanel } from './AgentRunDetailsPanel';
 import { AgentRunsPanel } from './AgentRunsPanel';
 import { composerCurrentNodeId } from './userViewContext';
 import { resolveUsableActiveProvider } from './providerCatalog';
@@ -559,9 +559,11 @@ export function AgentChatPanel({
     [entries, turnPhase],
   );
   const runningRunCount = useMemo(() => runIndex.filter((run) => run.status === 'running').length, [runIndex]);
-  const selectedRun = selectedRunId && selectedRunConversationId === conversationId
-    ? childRuns[selectedRunId] ?? null
-    : null;
+  const selectedRunEntry = useMemo(() => (
+    selectedRunId
+      ? runIndex.find((run) => run.runId === selectedRunId && run.conversationId === selectedRunConversationId) ?? null
+      : null
+  ), [runIndex, selectedRunConversationId, selectedRunId]);
   const [agentDefinitions, setAgentDefinitions] = useState<AgentDefinitionView[]>([]);
   const agentDefinitionById = useMemo(() => {
     const map = new Map<string, AgentDefinitionView>();
@@ -926,15 +928,11 @@ export function AgentChatPanel({
     const blankProjection = revision === `${conversationId}-0-0-0-`;
 
     if (target.stream === 'run') {
-      if (childRuns[target.streamId]) {
-        setWorkPanelOpen(true);
-        setSelectedRunConversationId(conversationId);
-        setSelectedRunId(target.streamId);
-        if (rowIndex >= 0) revealTranscriptRow(rowIndex, conversationRows[rowIndex]!.key);
-        setPendingTranscriptReveal(null);
-        return;
-      }
-      if (!blankProjection) setPendingTranscriptReveal(null);
+      setWorkPanelOpen(true);
+      setSelectedRunConversationId(conversationId);
+      setSelectedRunId(target.streamId);
+      if (rowIndex >= 0) revealTranscriptRow(rowIndex, conversationRows[rowIndex]!.key);
+      if (!blankProjection || rowIndex >= 0) setPendingTranscriptReveal(null);
       return;
     }
 
@@ -949,7 +947,6 @@ export function AgentChatPanel({
 
     if (!blankProjection) setPendingTranscriptReveal(null);
   }, [
-    childRuns,
     conversationId,
     conversationRows,
     pendingTranscriptReveal,
@@ -1017,20 +1014,9 @@ export function AgentChatPanel({
     }
   }, [runActive]);
 
-  useEffect(() => {
-    if (
-      selectedRunId
-      && selectedRunConversationId === conversationId
-      && !childRuns[selectedRunId]
-    ) {
-      setSelectedRunId(null);
-      setSelectedRunConversationId(null);
-    }
-  }, [selectedRunId, selectedRunConversationId, conversationId, childRuns]);
-
-  // A command Run reveals its delivery conversation and asks for the Work panel —
-  // the run is a parentless child run, so it surfaces there (the open run panel
-  // persists across the conversation switch this same reveal triggers).
+  // A command Run reveals its delivery conversation and asks for the Work panel;
+  // the open run panel persists across the conversation switch this same reveal
+  // triggers.
   useEffect(() => onAgentRevealRequest((targetConversationId, options) => {
     if (options.transcriptTarget) {
       setPendingTranscriptReveal({
@@ -1282,7 +1268,7 @@ export function AgentChatPanel({
   // Unnamed conversations read "untitled" in the header too, matching the conversation list
   // and delete-confirm — one fallback everywhere so inside/outside never disagree.
   const displayTitle = readableConversationTitle(conversationTitle, t.common.untitled);
-  const detailRunInHeader = workPanelOpen ? selectedRun : null;
+  const detailRunInHeader = workPanelOpen && selectedRunId !== null;
   const runIndexInHeader = workPanelOpen && !detailRunInHeader;
   const dockMenuAnchorRef = useMemo(() => ({
     current: {
@@ -1337,8 +1323,10 @@ export function AgentChatPanel({
             <span className="agent-dock-title-leading">
               <AgentIcon aria-hidden="true" size={ICON_SIZE.menu} />
             </span>
-            <span className="agent-dock-run-label">{t.agent.childRun.heading}</span>
-            <span className={`agent-dock-run-status is-${detailRunInHeader.status}`}>{detailRunInHeader.status}</span>
+            <span className="agent-dock-run-label">{t.agent.runDetail.heading}</span>
+            {selectedRunEntry ? (
+              <span className={`agent-dock-run-status is-${selectedRunEntry.status}`}>{selectedRunEntry.status}</span>
+            ) : null}
           </ButtonControl>
         ) : runIndexInHeader ? (
           <ButtonControl
@@ -1506,8 +1494,8 @@ export function AgentChatPanel({
 
       {workPanelOpen ? (
         <div className="agent-work-page">
-          {selectedRun ? (
-            <AgentChildRunDetailsPanel
+          {selectedRunId ? (
+            <AgentRunDetailsPanel
               onBack={() => {
                 setSelectedRunId(null);
                 setSelectedRunConversationId(null);
@@ -1517,15 +1505,14 @@ export function AgentChatPanel({
                 setSelectedRunConversationId(null);
                 setWorkPanelOpen(false);
               }}
-              conversationId={conversationId}
+              conversationId={selectedRunConversationId}
               index={index}
-              childRun={selectedRun}
-              childRuns={childRuns}
-              childRunsByParentToolCallId={childRunsByParentToolCallId}
+              runId={selectedRunId}
+              runUpdatedAt={selectedRunEntry?.updatedAt}
               onNodeReferenceOpen={onOpenNodeReference}
-              onOpenChildRunTranscript={(childRunId) => {
-                setSelectedRunConversationId(conversationId);
-                setSelectedRunId(childRunId);
+              onOpenRun={(runId, runConversationId) => {
+                setSelectedRunConversationId(runConversationId ?? selectedRunConversationId ?? conversationId);
+                setSelectedRunId(runId);
               }}
               showHeader={false}
             />

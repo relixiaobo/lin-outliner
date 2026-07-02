@@ -982,9 +982,7 @@ path. A run's transcript is replayed from its own ledger lazily:
 - on drill-in (`agent_run_transcript`): the ledger is replayed directly, cached
   on its tail seq (one run-meta read decides freshness), and returns the latest
   `run.result.submitted` projection when present. The open panel polls this
-  while the run is live and refetches on entity changes. The legacy
-  `agent_child_run_transcript` command remains only for the current renderer
-  seam until the Run detail panel migration removes child-run IPC names.
+  while the run is live and refetches when the Run index entry changes.
 - on detail (`agent_run_detail`): the runtime reads Run meta, latest submitted
   result, direct sub-runs, and verifier runs from the Run index plus the selected
   Run ledger. It does not require the selected Run to exist in the currently
@@ -1217,14 +1215,14 @@ Implemented for the current first-class surfaces.
 - The agent header exposes a Tasks button. It opens a current-conversation task
   panel derived from `child_run.*` projection data, ordered with running work
   first, and shows status, type/mode, message count, and latest update time.
-- Run rows can open the existing child run details panel; running rows can stop
-  the child run through `run_stop`.
-- The child run details panel is a read-only drill-in that shows Result, direct
-  child Runs (or Verification for verifier-only children), collapsed Activity log,
-  and collapsed Technical details in one scroll flow. The runtime exposes
-  `agent_run_detail` and `agent_run_transcript` as the Run-backed detail APIs;
-  the current renderer still calls the legacy child-run transcript seam until the
-  panel migration lands. `run_steer` remains the
+- Run rows open the Run details panel; running rows can stop the selected Run
+  through `run_stop`.
+- The Run details panel is a read-only drill-in that shows Result, direct
+  sub-runs, Verification runs, collapsed Activity log, and collapsed Technical
+  details in one scroll flow. It loads `agent_run_detail` and
+  `agent_run_transcript`, so Work/Runs selection no longer depends on the
+  selected Run being present in the active conversation's `entities.childRuns`
+  projection. `run_steer` remains the
   same-conversation continuation mechanism for agents/tools, but the detail page
   does not expose a permanent follow-up composer.
 - Nested child tool calls inside transcripts remain expandable.

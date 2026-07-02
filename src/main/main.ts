@@ -2573,8 +2573,6 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return typeof args.conversationId === 'string'
         ? agentRuntime.agentRunTranscript(args.conversationId, String(args.runId))
         : null;
-    case 'agent_child_run_transcript':
-      return agentRuntime.childRunTranscript(conversationId(), String(args.runId));
     case 'agent_run_conversation_id':
       // Run ids are global, so this resolver needs no conversation context.
       return agentRuntime.runConversationId(String(args.runId));

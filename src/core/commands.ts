@@ -109,7 +109,6 @@ export const AGENT_COMMANDS = [
   'agent_payload_text',
   'agent_run_detail',
   'agent_run_transcript',
-  'agent_child_run_transcript',
   'agent_run_conversation_id',
   'agent_run_status',
   'agent_run_steer',

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type {
   AgentMessage,
+  AgentRunDetailPayload,
   AgentToolResultWithPayloads,
   ToolResultMessage,
 } from '../../../core/agentTypes';
@@ -28,18 +29,20 @@ import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { formatRunDuration } from './agentProcessTypes';
 import { useT } from '../../i18n/I18nProvider';
 
-interface AgentChildRunDetailsPanelProps {
+interface AgentRunDetailsPanelProps {
   onBack?: () => void;
   onClose: () => void;
   conversationId: string | null;
+  runId: string | null;
+  runUpdatedAt?: number;
   index: DocumentIndex;
-  childRun: AgentRenderChildRunEntity | null;
-  childRuns?: Record<string, AgentRenderChildRunEntity>;
-  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenChildRunTranscript?: (childRunId: string) => void;
+  onOpenRun?: (runId: string, conversationId: string | null) => void;
   showHeader?: boolean;
 }
+
+type AgentRunDetailChild = AgentRunDetailPayload['subRuns'][number];
+type DisplayRunStatus = AgentRunDetailPayload['status'] | NonNullable<AgentRunDetailPayload['objectiveStatus']>;
 
 /** Live-run transcript poll cadence (the fetch is meta-keyed in main, near-free when unchanged). */
 const LIVE_TRANSCRIPT_POLL_MS = 1_500;
@@ -106,17 +109,19 @@ function transcriptHasActiveAssistantTurn(
   return false;
 }
 
-function isVerifierRun(run: AgentRenderChildRunEntity): boolean {
-  return run.agentType === 'verifier' || /^verify\b/i.test(run.description);
+function displayStatusFor(detail: Pick<AgentRunDetailPayload, 'objectiveStatus' | 'status'>): DisplayRunStatus {
+  if (detail.objectiveStatus && detail.objectiveStatus !== 'active' && detail.objectiveStatus !== 'stopped') {
+    return detail.objectiveStatus;
+  }
+  return detail.status;
 }
 
-function runTitle(run: AgentRenderChildRunEntity, labels: Messages['agent']): string {
-  if (isVerifierRun(run)) return labels.run.kind.verifier;
-  return run.description || run.name || run.id;
+function runStatusClass(status: DisplayRunStatus): string {
+  return status.replace(/_/g, '-');
 }
 
 function runStatusLabel(
-  status: AgentRenderChildRunEntity['status'],
+  status: DisplayRunStatus,
   labels: Messages['agent']['run']['status'],
 ): string {
   switch (status) {
@@ -128,21 +133,74 @@ function runStatusLabel(
       return labels.failed;
     case 'stopped':
       return labels.stopped;
+    case 'verified':
+      return labels.verified;
+    case 'blocked':
+      return labels.blocked;
+    case 'budget_exhausted':
+      return labels.budgetExhausted;
+    case 'verifying':
+      return labels.verifying;
+    case 'active':
+      return labels.running;
   }
 }
 
-function compareChildRuns(left: AgentRenderChildRunEntity, right: AgentRenderChildRunEntity): number {
-  return left.startedAt - right.startedAt || left.id.localeCompare(right.id);
+function isCompletedStatus(status: DisplayRunStatus): boolean {
+  return status === 'completed' || status === 'verified';
 }
 
-function directChildRunsFor(
-  childRuns: Record<string, AgentRenderChildRunEntity> | undefined,
-  parentRunId: string | undefined,
-): AgentRenderChildRunEntity[] {
-  if (!childRuns || !parentRunId) return [];
-  return Object.values(childRuns)
-    .filter((run) => run.parentRunId === parentRunId)
-    .sort(compareChildRuns);
+function isVerifierRun(run: Pick<AgentRunDetailChild, 'objectiveRole' | 'runProfile'>): boolean {
+  return run.objectiveRole === 'verifier' || run.runProfile === 'verify';
+}
+
+function runTitle(run: AgentRunDetailChild, labels: Messages['agent']): string {
+  if (isVerifierRun(run)) return labels.run.kind.verifier;
+  return run.title || run.runId;
+}
+
+function compareRuns(left: AgentRunDetailChild, right: AgentRunDetailChild): number {
+  return left.startedAt - right.startedAt || left.runId.localeCompare(right.runId);
+}
+
+function runDetailToTranscriptRun(detail: AgentRunDetailPayload): AgentRenderChildRunEntity {
+  return {
+    id: detail.runId,
+    description: detail.title,
+    prompt: detail.objective?.text ?? detail.title,
+    agentType: detail.runProfile,
+    contextMode: detail.context,
+    executingAgentId: detail.agentId,
+    parentAgentId: detail.agentId,
+    memoryOwnerAgentId: detail.agentId,
+    parentRunId: detail.parentRunId,
+    parentToolCallId: detail.parentToolCallId,
+    status: detail.status,
+    startedAt: detail.startedAt,
+    updatedAt: detail.updatedAt,
+    completedAt: detail.completedAt,
+    result: detail.result?.summary,
+    error: detail.error,
+  };
+}
+
+function childToTranscriptRun(child: AgentRunDetailChild, parent: AgentRunDetailPayload): AgentRenderChildRunEntity {
+  return {
+    id: child.runId,
+    description: child.title,
+    prompt: child.title,
+    agentType: child.runProfile,
+    contextMode: parent.context,
+    executingAgentId: parent.agentId,
+    parentAgentId: parent.agentId,
+    memoryOwnerAgentId: parent.agentId,
+    parentRunId: child.parentRunId,
+    parentToolCallId: child.parentToolCallId,
+    status: child.status,
+    startedAt: child.startedAt,
+    updatedAt: child.updatedAt,
+    completedAt: child.completedAt,
+  };
 }
 
 function CopyResultButton({ text }: { text: string }) {
@@ -162,7 +220,7 @@ function CopyResultButton({ text }: { text: string }) {
       className="agent-message-action-button"
       disabled={!text}
       icon={CopyStateIcon}
-      label={t.agent.childRun.copyResult}
+      label={t.agent.runDetail.copyResult}
       onClick={() => void copy()}
       title={t.agent.message.copy}
       variant="message"
@@ -174,7 +232,7 @@ function ResultText({ text }: { text: string }) {
   const t = useT();
   return (
     <div className="agent-child-run-result-box">
-      <AgentMarkdown keyPrefix="child-run-result" text={text || t.agent.childRun.noResultYet} />
+      <AgentMarkdown keyPrefix="run-detail-result" text={text || t.agent.runDetail.noResultYet} />
     </div>
   );
 }
@@ -230,33 +288,36 @@ function DisclosureSection({
   );
 }
 
-function ChildRunList({
+function RunChildList({
+  conversationId,
   runs,
-  onOpenChildRunTranscript,
+  onOpenRun,
 }: {
-  runs: AgentRenderChildRunEntity[];
-  onOpenChildRunTranscript?: (childRunId: string) => void;
+  conversationId: string | null;
+  runs: AgentRunDetailChild[];
+  onOpenRun?: (runId: string, conversationId: string | null) => void;
 }) {
   const t = useT();
   return (
     <div className="agent-child-run-child-list">
       {runs.map((run) => {
-        const completed = run.status === 'completed';
+        const displayStatus = displayStatusFor(run);
+        const completed = isCompletedStatus(displayStatus);
         const title = runTitle(run, t.agent);
         const meta = [
-          runStatusLabel(run.status, t.agent.run.status),
-          run.contextMode,
+          runStatusLabel(displayStatus, t.agent.run.status),
+          run.runProfileLabel,
           formatDuration(run.startedAt, run.completedAt ?? run.updatedAt),
         ].join(' · ');
         return (
           <button
-            className={`agent-child-run-child-row is-${run.status}`}
-            disabled={!onOpenChildRunTranscript}
-            key={run.id}
-            onClick={() => onOpenChildRunTranscript?.(run.id)}
+            className={`agent-child-run-child-row is-${runStatusClass(displayStatus)}`}
+            disabled={!onOpenRun}
+            key={run.runId}
+            onClick={() => onOpenRun?.(run.runId, conversationId)}
             type="button"
           >
-            <span className={`agent-run-marker is-${run.status}`} aria-hidden="true">
+            <span className={`agent-run-marker is-${runStatusClass(displayStatus)}`} aria-hidden="true">
               <CheckboxMark checked={completed} />
             </span>
             <span className="agent-child-run-child-main">
@@ -277,11 +338,11 @@ function TranscriptTimeline({
   pendingToolCallIds,
   reload,
   conversationId,
-  childRun,
-  childRunsByParentToolCallId,
+  run,
+  subRunsByParentToolCallId,
   index,
   onNodeReferenceOpen,
-  onOpenChildRunTranscript,
+  onOpenRun,
   toolResults,
 }: {
   error: string | null;
@@ -290,11 +351,11 @@ function TranscriptTimeline({
   pendingToolCallIds: ReadonlySet<string>;
   reload: () => void;
   conversationId: string | null;
-  childRun: AgentRenderChildRunEntity;
-  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
+  run: AgentRenderChildRunEntity;
+  subRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
   index: DocumentIndex;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenChildRunTranscript?: (childRunId: string) => void;
+  onOpenRun?: (runId: string, conversationId: string | null) => void;
   toolResults: Map<string, AgentToolResultWithPayloads>;
 }) {
   const t = useT();
@@ -306,7 +367,7 @@ function TranscriptTimeline({
         iconClassName="agent-tool-call-spinner"
         loading
         role="status"
-        title={t.agent.childRun.loadingTranscript}
+        title={t.agent.runDetail.loadingTranscript}
       />
     );
   }
@@ -316,140 +377,176 @@ function TranscriptTimeline({
         className="agent-child-run-empty"
         message={error}
         onRetry={reload}
-        retryLabel={t.agent.childRun.retry}
+        retryLabel={t.agent.runDetail.retry}
       />
     );
   }
   if (messages.length === 0) {
-    return <EmptyState className="agent-child-run-empty" title={t.agent.childRun.noTranscriptMessages} />;
+    return <EmptyState className="agent-child-run-empty" title={t.agent.runDetail.noTranscriptMessages} />;
   }
 
   return (
     <AgentTranscriptMessageList
-      active={transcriptHasActiveAssistantTurn(messages, childRun.status === 'running', pendingToolCallIds)}
-      childRun={childRun}
-      childRunsByParentToolCallId={childRunsByParentToolCallId}
+      active={transcriptHasActiveAssistantTurn(messages, run.status === 'running', pendingToolCallIds)}
+      childRun={run}
+      childRunsByParentToolCallId={subRunsByParentToolCallId}
       className="agent-child-run-transcript-list"
       conversationId={conversationId}
       index={index}
       messages={messages}
       onNodeReferenceOpen={onNodeReferenceOpen}
-      onOpenChildRunTranscript={onOpenChildRunTranscript}
+      onOpenChildRunTranscript={(childRunId) => onOpenRun?.(childRunId, conversationId)}
       pendingToolCallIds={pendingToolCallIds}
       toolResults={toolResults}
     />
   );
 }
 
-export function AgentChildRunDetailsPanel({
+export function AgentRunDetailsPanel({
   onBack,
   onClose,
   conversationId,
+  runId,
+  runUpdatedAt,
   index,
-  childRun,
-  childRuns,
-  childRunsByParentToolCallId,
   onNodeReferenceOpen,
-  onOpenChildRunTranscript,
+  onOpenRun,
   showHeader = true,
-}: AgentChildRunDetailsPanelProps) {
+}: AgentRunDetailsPanelProps) {
   const t = useT();
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionPending, setActionPending] = useState<'stop' | null>(null);
+  const [detail, setDetail] = useState<AgentRunDetailPayload | null>(null);
   const [rawTranscript, setRawTranscript] = useState<unknown[] | null>(null);
-  const [latestSubmissionSummary, setLatestSubmissionSummary] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const requestRef = useRef(0);
 
-  const loadTranscript = useCallback(() => {
-    if (!conversationId || !childRun?.id) return;
+  const loadRun = useCallback(() => {
+    if (!conversationId || !runId) return;
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     setLoading(true);
-    setError(null);
-    void api.agentChildRunTranscript(conversationId, childRun.id)
-      .then((result) => {
+    setDetailError(null);
+    setTranscriptError(null);
+    void Promise.allSettled([
+      api.agentRunDetail(conversationId, runId),
+      api.agentRunTranscript(conversationId, runId),
+    ])
+      .then(([detailResult, transcriptResult]) => {
         if (requestId !== requestRef.current) return;
-        if (result === null) {
-          setRawTranscript(null);
-          setLatestSubmissionSummary(null);
-          setError(t.agent.childRun.transcriptPayloadUnavailable);
-          return;
+        if (detailResult.status === 'fulfilled' && detailResult.value !== null) {
+          setDetail(detailResult.value);
+        } else {
+          setDetail(null);
+          setDetailError(
+            detailResult.status === 'rejected'
+              ? detailResult.reason instanceof Error ? detailResult.reason.message : String(detailResult.reason)
+              : t.agent.runDetail.detailUnavailable,
+          );
         }
-        setRawTranscript(result.messages);
-        setLatestSubmissionSummary(result.latestSubmission?.summary.trim() || null);
-      })
-      .catch((caught) => {
-        if (requestId === requestRef.current) {
-          setError(caught instanceof Error ? caught.message : String(caught));
+
+        if (transcriptResult.status === 'fulfilled' && transcriptResult.value !== null) {
+          setRawTranscript(transcriptResult.value.messages);
+        } else {
+          setRawTranscript(null);
+          setTranscriptError(
+            transcriptResult.status === 'rejected'
+              ? transcriptResult.reason instanceof Error ? transcriptResult.reason.message : String(transcriptResult.reason)
+              : t.agent.runDetail.transcriptPayloadUnavailable,
+          );
         }
       })
       .finally(() => {
         if (requestId === requestRef.current) setLoading(false);
       });
-  }, [conversationId, childRun?.id, t.agent.childRun.transcriptPayloadUnavailable]);
+  }, [conversationId, runId, t.agent.runDetail.detailUnavailable, t.agent.runDetail.transcriptPayloadUnavailable]);
 
   useEffect(() => {
     setActionError(null);
     setActionPending(null);
+    setDetail(null);
     setRawTranscript(null);
-    setLatestSubmissionSummary(null);
-    setError(null);
+    setDetailError(null);
+    setTranscriptError(null);
     requestRef.current += 1;
-  }, [childRun?.id]);
+  }, [runId]);
 
-  // Fetch on open, refetch on every projected entity change (status flips,
-  // updatedAt bumps), and POLL while the run is live: the conversation
-  // projection carries no per-message child data, so polling the run ledger is
-  // the only signal that new messages landed. The main process keys the
-  // transcript on the ledger tail seq (one tiny run-meta read), so an
-  // unchanged poll is near-free.
   useEffect(() => {
-    if (!childRun) return undefined;
-    loadTranscript();
-    const interval = childRun.status === 'running'
-      ? window.setInterval(loadTranscript, LIVE_TRANSCRIPT_POLL_MS)
-      : null;
+    loadRun();
+  }, [loadRun, runUpdatedAt]);
+
+  useEffect(() => {
+    if (detail?.status !== 'running') return undefined;
+    const interval = window.setInterval(loadRun, LIVE_TRANSCRIPT_POLL_MS);
     return () => {
-      if (interval !== null) window.clearInterval(interval);
+      window.clearInterval(interval);
       requestRef.current += 1;
     };
-  }, [loadTranscript, childRun?.id, childRun?.status, childRun?.updatedAt]);
+  }, [detail?.status, loadRun]);
 
   const messages = useMemo(() => parseTranscript(rawTranscript), [rawTranscript]);
   const toolResults = useMemo(() => buildToolResultMap(messages), [messages]);
   const pendingToolCallIds = useMemo(
-    () => collectPendingToolCallIds(messages, childRun?.status === 'running'),
-    [messages, childRun?.status],
+    () => collectPendingToolCallIds(messages, detail?.status === 'running'),
+    [messages, detail?.status],
   );
-  const directChildRuns = useMemo(
-    () => directChildRunsFor(childRuns, childRun?.id),
-    [childRuns, childRun?.id],
-  );
+  const transcriptRun = useMemo(() => detail ? runDetailToTranscriptRun(detail) : null, [detail]);
+  const subRunsByParentToolCallId = useMemo(() => {
+    if (!detail) return undefined;
+    const map = new Map<string, AgentRenderChildRunEntity>();
+    for (const child of [...detail.subRuns, ...detail.verificationRuns]) {
+      if (child.parentToolCallId) map.set(child.parentToolCallId, childToTranscriptRun(child, detail));
+    }
+    return map.size > 0 ? map : undefined;
+  }, [detail]);
 
-  if (!childRun) return null;
+  if (!conversationId || !runId) return null;
+  if (loading && !detail) {
+    return (
+      <EmptyState
+        className="agent-child-run-empty"
+        icon={LoaderIcon}
+        iconClassName="agent-tool-call-spinner"
+        loading
+        role="status"
+        title={t.agent.runDetail.loading}
+      />
+    );
+  }
+  if (!detail || !transcriptRun) {
+    return (
+      <ErrorState
+        className="agent-child-run-empty"
+        message={detailError ?? t.agent.runDetail.detailUnavailable}
+        onRetry={loadRun}
+        retryLabel={t.agent.runDetail.retry}
+      />
+    );
+  }
 
-  const endedAt = childRun.completedAt ?? childRun.updatedAt;
-  const canStop = childRun.status === 'running';
-  const duration = formatDuration(childRun.startedAt, endedAt);
-  const resultText = latestSubmissionSummary ?? childRun.result ?? childRun.error ?? '';
-  const showActivityOpen = childRun.status === 'running' || !resultText;
-  const title = childRun.description || childRun.name || childRun.id;
-  const metaLine = t.agent.childRun.metaLine({
+  const endedAt = detail.completedAt ?? detail.updatedAt;
+  const displayStatus = displayStatusFor(detail);
+  const displayStatusClass = runStatusClass(displayStatus);
+  const canStop = detail.status === 'running';
+  const duration = formatDuration(detail.startedAt, endedAt);
+  const resultText = detail.result?.summary ?? detail.error ?? '';
+  const showActivityOpen = detail.status === 'running' || !resultText;
+  const metaLine = t.agent.runDetail.metaLine({
     count: messages.length,
     duration,
   });
-  const childRunSectionTitle = directChildRuns.length > 0 && directChildRuns.every(isVerifierRun)
-    ? t.agent.childRun.sectionVerification
-    : t.agent.childRun.sectionChildRuns({ count: directChildRuns.length });
+  const verificationRuns = [...detail.verificationRuns].sort(compareRuns);
+  const subRuns = [...detail.subRuns].sort(compareRuns);
 
-  async function stopChildRun() {
-    if (!conversationId || !childRun || !canStop || actionPending) return;
+  async function stopRun() {
+    if (!conversationId || !detail || !canStop || actionPending) return;
     setActionPending('stop');
     setActionError(null);
     try {
-      await api.agentChildRunStop(conversationId, childRun.id);
+      await api.agentRunStop(conversationId, detail.runId);
+      loadRun();
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -460,16 +557,16 @@ export function AgentChildRunDetailsPanel({
   const stopButton = canStop ? (
     <Button
       disabled={actionPending !== null}
-      onClick={() => void stopChildRun()}
+      onClick={() => void stopRun()}
       size="sm"
       variant="danger"
     >
-      {actionPending === 'stop' ? t.agent.childRun.stopping : t.agent.childRun.stop}
+      {actionPending === 'stop' ? t.agent.runDetail.stopping : t.agent.runDetail.stop}
     </Button>
   ) : null;
 
   return (
-    <section className="agent-child-run-details-panel" aria-label={t.agent.childRun.detailsAriaLabel}>
+    <section className="agent-child-run-details-panel" aria-label={t.agent.runDetail.detailsAriaLabel}>
       {showHeader ? (
         <header className="agent-child-run-details-header">
         {onBack ? (
@@ -485,10 +582,10 @@ export function AgentChildRunDetailsPanel({
         <div className="agent-child-run-title-block">
           <div className="agent-child-run-title-line">
             <AgentIcon size={ICON_SIZE.menu} />
-            <span>{t.agent.childRun.heading}</span>
-            <span className={`agent-child-run-status is-${childRun.status}`}>{childRun.status}</span>
+            <span>{t.agent.runDetail.heading}</span>
+            <span className={`agent-child-run-status is-${displayStatusClass}`}>{runStatusLabel(displayStatus, t.agent.run.status)}</span>
           </div>
-          <h3>{title}</h3>
+          <h3>{detail.title}</h3>
           <p>{metaLine}</p>
         </div>
         <div className="agent-child-run-header-actions">
@@ -496,9 +593,9 @@ export function AgentChildRunDetailsPanel({
           <IconButton
             className="agent-child-run-close"
             icon={CloseIcon}
-            label={t.agent.childRun.closeDetails}
+            label={t.agent.runDetail.closeDetails}
             onClick={onClose}
-            title={t.agent.childRun.close}
+            title={t.agent.runDetail.close}
             variant="panel"
           />
         </div>
@@ -514,7 +611,7 @@ export function AgentChildRunDetailsPanel({
         {!showHeader ? (
           <div className="agent-child-run-details-summary">
             <div className="agent-child-run-title-block">
-              <h3>{title}</h3>
+              <h3>{detail.title}</h3>
               <p>{metaLine}</p>
             </div>
             {stopButton ? (
@@ -526,75 +623,93 @@ export function AgentChildRunDetailsPanel({
         ) : null}
         <DetailSection
           actions={<CopyResultButton text={resultText} />}
-          title={t.agent.childRun.sectionResult}
+          title={t.agent.runDetail.sectionResult}
         >
           <ResultText text={resultText} />
         </DetailSection>
-        {directChildRuns.length > 0 ? (
-          <DetailSection title={childRunSectionTitle}>
-            <ChildRunList
-              runs={directChildRuns}
-              onOpenChildRunTranscript={onOpenChildRunTranscript}
+        {verificationRuns.length > 0 ? (
+          <DetailSection title={t.agent.runDetail.sectionVerification}>
+            <RunChildList
+              conversationId={detail.conversationId}
+              runs={verificationRuns}
+              onOpenRun={onOpenRun}
+            />
+          </DetailSection>
+        ) : null}
+        {subRuns.length > 0 ? (
+          <DetailSection title={t.agent.runDetail.sectionSubRuns({ count: subRuns.length })}>
+            <RunChildList
+              conversationId={detail.conversationId}
+              runs={subRuns}
+              onOpenRun={onOpenRun}
             />
           </DetailSection>
         ) : null}
         <DisclosureSection
-          key={`activity-${childRun.id}`}
+          key={`activity-${detail.runId}`}
           defaultOpen={showActivityOpen}
-          title={t.agent.childRun.sectionActivityLog({ count: messages.length })}
+          title={t.agent.runDetail.sectionActivityLog({ count: messages.length })}
         >
           <TranscriptTimeline
-            error={error}
+            error={transcriptError}
             loading={loading}
             messages={messages}
             pendingToolCallIds={pendingToolCallIds}
-            reload={loadTranscript}
+            reload={loadRun}
             conversationId={conversationId}
-            childRun={childRun}
-            childRunsByParentToolCallId={childRunsByParentToolCallId}
+            run={transcriptRun}
+            subRunsByParentToolCallId={subRunsByParentToolCallId}
             index={index}
             onNodeReferenceOpen={onNodeReferenceOpen}
-            onOpenChildRunTranscript={onOpenChildRunTranscript}
+            onOpenRun={onOpenRun}
             toolResults={toolResults}
           />
         </DisclosureSection>
-        <DisclosureSection key={`technical-${childRun.id}`} defaultOpen={false} title={t.agent.childRun.sectionTechnicalDetails}>
+        <DisclosureSection key={`technical-${detail.runId}`} defaultOpen={false} title={t.agent.runDetail.sectionTechnicalDetails}>
           <dl className="agent-child-run-metadata">
             <div>
-              <dt>{t.agent.childRun.metaAgentId}</dt>
-              <dd>{childRun.id}</dd>
+              <dt>{t.agent.runDetail.metaRunId}</dt>
+              <dd>{detail.runId}</dd>
             </div>
             <div>
-              <dt>{t.agent.childRun.name}</dt>
-              <dd>{childRun.name ?? t.agent.childRun.metaNone}</dd>
+              <dt>{t.agent.runDetail.metaAgentId}</dt>
+              <dd>{detail.agentId}</dd>
             </div>
             <div>
-              <dt>{t.agent.childRun.status}</dt>
-              <dd>{runStatusLabel(childRun.status, t.agent.run.status)}</dd>
+              <dt>{t.agent.runDetail.status}</dt>
+              <dd>{runStatusLabel(displayStatus, t.agent.run.status)}</dd>
             </div>
             <div>
-              <dt>{t.agent.childRun.mode}</dt>
-              <dd>{childRun.contextMode}</dd>
+              <dt>{t.agent.runDetail.metaProfile}</dt>
+              <dd>{detail.runProfileLabel}</dd>
             </div>
             <div>
-              <dt>{t.agent.childRun.metaType}</dt>
-              <dd>{childRun.agentType}</dd>
+              <dt>{t.agent.runDetail.metaObjectiveRole}</dt>
+              <dd>{detail.objectiveRole ?? t.agent.runDetail.metaNone}</dd>
             </div>
             <div>
-              <dt>{t.agent.childRun.metaParentToolCall}</dt>
-              <dd>{childRun.parentToolCallId ?? t.agent.childRun.metaNone}</dd>
+              <dt>{t.agent.runDetail.metaContext}</dt>
+              <dd>{detail.context}</dd>
             </div>
             <div>
-              <dt>{t.agent.childRun.metaParentRun}</dt>
-              <dd>{childRun.parentRunId ?? t.agent.childRun.metaNone}</dd>
+              <dt>{t.agent.runDetail.metaDisposition}</dt>
+              <dd>{detail.disposition}</dd>
             </div>
             <div>
-              <dt>{t.agent.childRun.metaStarted}</dt>
-              <dd>{new Date(childRun.startedAt).toLocaleString()}</dd>
+              <dt>{t.agent.runDetail.metaParentToolCall}</dt>
+              <dd>{detail.parentToolCallId ?? t.agent.runDetail.metaNone}</dd>
             </div>
             <div>
-              <dt>{t.agent.childRun.metaUpdated}</dt>
-              <dd>{new Date(childRun.updatedAt).toLocaleString()}</dd>
+              <dt>{t.agent.runDetail.metaParentRun}</dt>
+              <dd>{detail.parentRunId ?? t.agent.runDetail.metaNone}</dd>
+            </div>
+            <div>
+              <dt>{t.agent.runDetail.metaStarted}</dt>
+              <dd>{new Date(detail.startedAt).toLocaleString()}</dd>
+            </div>
+            <div>
+              <dt>{t.agent.runDetail.metaUpdated}</dt>
+              <dd>{new Date(detail.updatedAt).toLocaleString()}</dd>
             </div>
           </dl>
         </DisclosureSection>

@@ -531,8 +531,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       },
     ];
     const debugUsage = debugUsageFixture;
-    // Replayed transcript for the delegated run's own ledger — served whole by
-    // `agent_child_run_transcript` (the payload-pinned snapshot is gone).
+    // Replayed transcript for the delegated run's own ledger, served whole by
+    // `agent_run_transcript` (the payload-pinned snapshot is gone).
     const childRunTranscriptMessages = [
         {
           role: 'user',
@@ -2105,7 +2105,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               }
             : null) as T;
         }
-        if (cmd === 'agent_run_transcript' || cmd === 'agent_child_run_transcript') {
+        if (cmd === 'agent_run_transcript') {
           return clone(String(args.runId) === 'child-run-1'
             || (String(args.runId) === 'child-run-source-e2e' && String(args.conversationId) === generalChannelId)
             ? { messages: childRunTranscriptMessages }
