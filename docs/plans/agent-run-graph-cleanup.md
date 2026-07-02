@@ -183,8 +183,8 @@ Conversation
   communication ledger, branches, conversation membership
 
 Run
-  execution metadata, objective metadata, objective role, runProfile,
-  parentRunId, parentToolCallId
+  anchor, execution metadata, objective metadata, objective role, runProfile,
+  parentRunId, parentToolCallId, fingerprint, retention, timestamps
 
 Run ledger
   assistant deltas, thinking, tool calls, tool results, permissions, widgets
@@ -207,10 +207,21 @@ The clean Run metadata separates process state from objective state:
 ```ts
 type RunObjectiveRole = 'controller' | 'worker' | 'verifier';
 
+type AgentRunAnchor =
+  | { type: 'conversation'; agentId: AgentId; conversationId: string }
+  | { type: 'principal'; principal: AgentPrincipal };
+
 interface RunMeta {
+  v: 2;
   id: string;
-  conversationId: string;
+
+  // The executing agent. This remains Neva for normal product work.
   agentId: AgentId;
+
+  // Where the run record belongs. This is not replaceable with conversationId:
+  // conversation-anchored runs belong to a conversation timeline, while
+  // principal-anchored reflective runs maintain a principal's self-model.
+  anchor: AgentRunAnchor;
 
   parentRunId?: string;
   parentToolCallId?: string;
@@ -220,10 +231,14 @@ interface RunMeta {
   context: 'full' | 'brief' | 'none';
   runProfile: RunProfileId;
 
+  fingerprint: AgentRunFingerprint;
+  retention: AgentRunRetention;
+  createdAt: number;
+  updatedAt: number;
+  latestSeq: number;
+
   execution: {
     status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-    startedAt: number;
-    updatedAt: number;
     completedAt?: number;
     usage?: Usage;
     error?: string;
@@ -254,6 +269,18 @@ this Run acting?" and is local to the Run. `objective.role` answers "how should
 the program orchestrate this objective?" and is explicit because controller,
 worker, and verifier behavior must not be inferred from incidental facts such as
 whether a Run currently has sub-runs.
+
+`anchor` answers "where does this run belong?" It is a persisted storage
+contract, not a UI convenience. This plan does not retire principal-anchored
+reflective runs. Conversation projections derive `conversationId` through
+`conversationIdOfRun(meta)` and must continue to exclude principal-anchored runs
+from conversation timelines. Principal sidecars and reflective-run indexes keep
+using the anchor contract.
+
+`fingerprint`, `retention`, `createdAt`, `updatedAt`, and `latestSeq` are also
+part of the persisted Run index contract. The nested `execution` / `objective`
+shape changes status organization; it does not remove the storage/index fields
+used by retention, Dream history, debug, and run-source lookup.
 
 `parentToolCallId` belongs in the Run index, not only in conversation markers.
 It is needed by turn folding, debug, trace reveal, and detail navigation.
@@ -368,11 +395,11 @@ currently exist to let the conversation projection know about child runs, but
 that is a derived query over Run metadata. The clean replacement is:
 
 - `run.started` / terminal Run events update the Run index.
-- The Run index stores `conversationId`, `parentRunId`, `parentToolCallId`,
-  objective metadata, execution metadata, `runProfile`, `context`, and retention
-  metadata.
+- The Run index stores `anchor`, `parentRunId`, `parentToolCallId`, objective
+  metadata, execution metadata, `runProfile`, `context`, `fingerprint`,
+  `retention`, timestamps, and latest sequence metadata.
 - Conversation and Work/Runs projections read the Run index and join by
-  `conversationId`, `parentRunId`, and `parentToolCallId`.
+  `anchor` / derived `conversationId`, `parentRunId`, and `parentToolCallId`.
 - Run detail reads the selected Run index record and lazily replays that Run's
   ledger for transcript and result.
 
@@ -588,7 +615,8 @@ child-run record:
 ```ts
 interface AgentRenderRunEntity {
   id: string;
-  conversationId: string;
+  anchor: AgentRunAnchor;
+  conversationId?: string;
   title: string;
   parentRunId?: string;
   parentToolCallId?: string;
@@ -723,7 +751,14 @@ This project is pre-release for agent data. Prefer a clean cut over compatibilit
 layers:
 
 - Remove old readers when a format changes.
-- Wipe affected dev agent data roots when needed.
+- Any PR that changes the persisted RunMeta shape or removes the old reader must
+  bump `STORAGE_LAYOUT_VERSION` in `src/main/agentEventStore.ts`, update the
+  adjacent version comment, and add/adjust sentinel coverage proving stale
+  `layout.json {v}` wipes the agent data root. The `layout.json` generation is
+  the canonical clean-cut mechanism; a manual wipe command is only an operator
+  convenience, not the safety mechanism.
+- Wipe affected dev agent data roots through the storage-generation sentinel
+  when the persisted format changes.
 - Do not ship migrations for obsolete child-run/delegation shapes.
 - Do not migrate old `agentType` values into pseudo-identities. Map the active
   behavior directly to `runProfile` in the new clean shape, then delete
@@ -735,8 +770,12 @@ Suggested independently shippable PRs:
 
 1. **Run index completeness.** Add `parentToolCallId`, `runProfile`,
    `objective.role`, `latestSubmissionSeq`, context, blocked/error metadata,
-   and any missing UI-safe metadata to `RunMeta`; keep Work/Runs behavior
-   unchanged.
+   and any missing UI-safe metadata to `RunMeta`; preserve the current persisted
+   `anchor`, `fingerprint`, `retention`, `createdAt`, `updatedAt`, and
+   `latestSeq` contracts. If this PR makes the nested `execution` / `objective`
+   shape durable or deletes the old reader, it must also bump
+   `STORAGE_LAYOUT_VERSION`, update the version comment, and test the
+   sentinel-driven wipe.
 2. **Run profile registry.** Add a built-in RunProfile registry and resolver for
    `default`, `research`, `verify`, and `dream`; map existing verifier,
    `/research`, and Dream behavior through it without changing behavior.
@@ -871,6 +910,8 @@ dev data when needed.
 
 Decision: make the nested `execution` / `objective` shape the real persisted
 `RunMeta` in the first Run-index PR. Do not keep a flat compatibility shape.
+That same PR must bump `STORAGE_LAYOUT_VERSION`, update the storage layout
+comment, and include a sentinel wipe test.
 
 ### 6. Verifier History Indexing
 
@@ -920,4 +961,6 @@ aliases/readers and wipe affected dev data roots.
 
 Decision: no compatibility layer. Delete legacy aliases/readers, and provide a
 small dev-data wipe script or command note with the breaking PR so each clone can
-reset affected agent data deliberately.
+reset affected agent data deliberately. The script/note is secondary; the
+breaking persisted-shape PR must still rely on the storage-generation sentinel
+for automatic clean-cut deletion.
