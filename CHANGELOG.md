@@ -152,6 +152,13 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Disclosure anchor scroll-release spec synced (PR #366, codex-4)** —
+  `docs/spec/ui-behavior.md` now explicitly records that immediate user scroll
+  input releases the temporary disclosure scroll anchor, so delayed virtual-row
+  measurement corrections must not pull the viewport back after the user has
+  moved it. This documents the #358 shipped behavior. **Gate (main):** code
+  review found no reportable findings. Verified with `docs:check`, targeted
+  disclosure-anchor renderer tests, and `git diff --check`.
 - **Agent tool rows use semantic icons and readable activity summaries (PR #363, codex-2)** —
   agent tool-call rows now share one renderer presentation registry for lucide icons and activity
   buckets, so local file tools, outliner node tools, child-run controls, web, memory, skill,
