@@ -12,6 +12,13 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Expanded packaged linlab artifact skills** — packaged builds now stage
+  `/data-analysis`, `/document`, `/pdf`, `/presentation`, and `/spreadsheet`
+  from the sibling `linlab-skills` checkout into `Resources/built-in-skills`.
+  Development runs load the same enabled linlab roots directly, so spreadsheet
+  workbook workflows and PDF-native inspection/render/OCR/form/redaction routes
+  are available as immutable built-ins alongside the existing analysis,
+  document, and presentation skills.
 - **Agent run graph cleanup plan (PR #364, codex-3)** — adds an active design
   plan for moving agent execution to one event-sourced Run graph: sub-runs are
   Runs with `parentRunId`; verifier/background/task/delegation concepts become

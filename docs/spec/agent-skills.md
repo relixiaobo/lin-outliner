@@ -9,8 +9,9 @@ be shadowed by mutable local skills with the same name. Resource-backed
 built-in skill folders load before code-registered inline built-ins; a duplicate
 built-in name is a product bug and fails loudly instead of being silently
 dropped. The current user-visible built-in skills are `/skillify`, `/research`,
-`/presentation`, `/document`, and `/data-analysis`. `goal-launching` is a
-model-only built-in workflow and is not exposed as a slash skill.
+`/data-analysis`, `/document`, `/pdf`, `/presentation`, and `/spreadsheet`.
+`goal-launching` is a model-only built-in workflow and is not exposed as a slash
+skill.
 
 `/skillify` is a user- and model-invocable workflow for creating or updating
 local skills through normal file tools. Its Skillify v2 body analyzes the current
@@ -42,10 +43,11 @@ codebase search, explicit file/nodes/read tool selection, caller-scaled
 thoroughness (`quick`, `medium`, `very thorough`), parallel independent
 read/search calls, and a compact evidence-backed report.
 
-`/presentation`, `/document`, and `/data-analysis` are user-visible
-resource-backed built-ins sourced from the sibling `linlab-skills` repository
-during development and staged into the app bundle during packaging. They are
-goal-oriented skills rather than file-extension adapters:
+`/data-analysis`, `/document`, `/pdf`, `/presentation`, and `/spreadsheet` are
+user-visible resource-backed built-ins sourced from the sibling
+`linlab-skills` repository during development and staged into the app bundle
+during packaging. They are goal-oriented skills rather than file-extension
+adapters:
 
 - `/presentation` covers slide decks, talks, PPTX inspection, browser HTML
   decks, PDF handouts, speaker outlines, deck verification, and opinionated
@@ -62,12 +64,22 @@ goal-oriented skills rather than file-extension adapters:
   geometry gaps, comment references, headers/footers, and notes; the Markdown
   inspector reports heading hierarchy, long paragraphs, wide tables, local
   assets, remote images, and placeholder text.
+- `/pdf` covers fixed-layout PDF creation, inspection, extraction, rendering,
+  OCR, form, redaction, merge/split/rotate, and verification routes. Its
+  portable script reports PDF structure, pages, metadata, forms, annotations,
+  extractability, and render/extraction warnings; richer host PDF tools may be
+  used when available, but verification still requires structural and visual
+  checks.
 - `/data-analysis` covers trustworthy file/database analysis, profiling before
   trusting data, DuckDB/SQL analysis, join fan-out checks, triangulation,
   findings ledgers, house-styled charts/tables, and self-contained HTML reports.
   Its required Python dependencies are explicit in the skill's
   `requirements.txt`; the agent should install the needed tier when allowed
   instead of replacing the workflow with a lower-fidelity approximation.
+- `/spreadsheet` covers durable workbook artifacts and calculable tabular
+  models: XLSX/CSV/Google Sheets-targeted workbooks, formulas, named ranges,
+  validation, tables, pivots, charts, imports, exports, workbook QA, and
+  source-first generation routes.
 
 Each resource-backed built-in includes its own `SKILL.md`, route-specific
 references, scripts, assets, and templates. The app does not inject those
@@ -416,7 +428,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
 | `skillify` | Supported as the built-in user- and model-invocable Skillify v2 workflow (`when_to_use`-gated to explicit user save requests). It uses the Tenon `.agents/skills/<skill-name>/SKILL.md` shape, previews the complete file or focused update diff, confirms through the instruction-layer `ask_user_question` path when available, and writes with existing file write/edit tools. |
 | `research` | Supported as a built-in user- and model-invocable `execution: isolated` workflow with no `agent` override. It starts an isolated child run of the current agent, filters its declared read tools through the `AgentToolActionKind` read-only catalog, and returns a compact findings/evidence report. |
-| `presentation`, `document`, `data-analysis` | Supported as immutable resource-backed built-ins sourced from enabled `linlab-skills` folders and staged into the packaged app. They are goal-oriented workflows; PPTX, DOCX, XLSX, Markdown, HTML, PDF, CSV, and JSON are handled as input/output routes rather than skill identities. `/presentation` keeps explicit PowerPoint/PPTX requests on the PPTX route: missing PPTX libraries or office automation should be installed/enabled when allowed, and HTML/PDF/hand-authored OOXML are lower-fidelity fallbacks that require an explained blocker. `/document` includes archetype/form-factor guidance plus DOCX/Markdown semantic QA, and explicit Word/DOCX requests stay on the DOCX route before Markdown/plain-text/PDF or hand-authored WordprocessingML fallbacks. `/data-analysis` keeps dependency-backed pandas/DuckDB/script workflows explicit. |
+| `data-analysis`, `document`, `pdf`, `presentation`, `spreadsheet` | Supported as immutable resource-backed built-ins sourced from enabled `linlab-skills` folders and staged into the packaged app. They are goal-oriented workflows; PPTX, DOCX, XLSX, Markdown, HTML, PDF, CSV, and JSON are handled as input/output routes rather than skill identities. `/presentation` keeps explicit PowerPoint/PPTX requests on the PPTX route: missing PPTX libraries or office automation should be installed/enabled when allowed, and HTML/PDF/hand-authored OOXML are lower-fidelity fallbacks that require an explained blocker. `/document` includes archetype/form-factor guidance plus DOCX/Markdown semantic QA, and explicit Word/DOCX requests stay on the DOCX route before Markdown/plain-text/PDF or hand-authored WordprocessingML fallbacks. `/pdf` keeps PDF-native operations on fixed-layout structural/render/OCR/form/redaction routes while preferring editable source changes when source exists. `/spreadsheet` keeps workbook/formula/modeling work on spreadsheet-native routes and preserves formulas, validation, named ranges, tables, and source-first generation artifacts. `/data-analysis` keeps dependency-backed pandas/DuckDB/script workflows explicit. |
 | Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background conversation review that silently rewrites skills is not supported. |
 | Per-skill invocation permission suggestions | Not supported as a dedicated UI. The `skill` tool still goes through the global runtime permission policy, and the skill's own `allowed-tools` narrow downstream tool calls. |
 

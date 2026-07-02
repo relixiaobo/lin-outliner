@@ -13,11 +13,13 @@ const linlabSkillsRoot = resolveLinlabSkillsRoot({ repoRoot: root });
 const python = '/usr/bin/python3';
 const presentationSkillRoot = path.join(linlabSkillsRoot, 'presentation');
 const documentSkillRoot = path.join(linlabSkillsRoot, 'document');
+const spreadsheetSkillRoot = path.join(linlabSkillsRoot, 'spreadsheet');
 const htmlTool = path.join(presentationSkillRoot, 'scripts', 'html_tool.mjs');
 const htmlTemplate = path.join(presentationSkillRoot, 'assets', 'templates', 'html-deck', 'index.html');
 const markdownTool = path.join(documentSkillRoot, 'scripts', 'markdown_tool.mjs');
 const pptxTool = path.join(presentationSkillRoot, 'scripts', 'pptx_tool.py');
 const docxTool = path.join(documentSkillRoot, 'scripts', 'docx_tool.py');
+const tableTool = path.join(spreadsheetSkillRoot, 'scripts', 'table_tool.py');
 
 describe('built-in skill helper scripts', () => {
   test('presentation html inspector reports template warnings without failing structurally', async () => {
@@ -174,7 +176,7 @@ describe('built-in skill helper scripts', () => {
     ]));
   });
 
-  test('document markdown inspector allows ordinary external source links', async () => {
+  test('document markdown inspector records ordinary external source links', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lin-doc-skill-markdown-'));
     const input = path.join(dir, 'brief.md');
     const out = path.join(dir, 'report.json');
@@ -192,8 +194,9 @@ describe('built-in skill helper scripts', () => {
 
     expect(report).toMatchObject({
       ok: true,
-      warnings: [],
+      warnings: ['bare_url_found'],
       external_references: ['https://example.com/spec'],
+      bare_urls: ['https://example.com/spec'],
       remote_image_references: [],
     });
   });
@@ -217,8 +220,9 @@ describe('built-in skill helper scripts', () => {
     expect(report).toMatchObject({
       ok: true,
       errors: [],
-      warnings: ['remote_image_reference_found'],
+      warnings: ['remote_image_reference_found', 'bare_url_found'],
       external_references: ['https://example.com/chart.png'],
+      bare_urls: ['https://example.com/chart.png'],
       remote_image_references: ['https://example.com/chart.png'],
     });
   });
@@ -260,6 +264,35 @@ describe('built-in skill helper scripts', () => {
       'heading_level_jump_found',
       'long_paragraph_found',
       'wide_table_found',
+    ]));
+  });
+
+  test('spreadsheet table inspector reports flat-table risks', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lin-spreadsheet-skill-table-'));
+    const input = path.join(dir, 'table.csv');
+    const out = path.join(dir, 'report.json');
+    await writeFile(input, [
+      'id,id,amount',
+      '001,001,=SUM(A1:A2)',
+      '002,002,42',
+      '',
+    ].join('\n'), 'utf8');
+
+    await execFile(python, [tableTool, 'inspect', input, '--out', out]);
+    const report = JSON.parse(await readFile(out, 'utf8'));
+
+    expect(report).toMatchObject({
+      ok: true,
+      column_count: 3,
+      row_count: 2,
+      duplicate_headers: ['id'],
+      formula_like_cell_count: 1,
+      leading_zero_cell_count: 4,
+    });
+    expect(report.warnings).toEqual(expect.arrayContaining([
+      'duplicate_headers',
+      'formula_like_cells',
+      'leading_zero_cells',
     ]));
   });
 });

@@ -473,6 +473,17 @@ anything.
 
 ## Recently completed
 
+- **expanded-linlab-artifact-skills** (main fast-track, 2026-07-02, no PR yet) —
+  extends the #359 linlab built-in skill packaging lane so packaged builds stage
+  `/data-analysis`, `/document`, `/pdf`, `/presentation`, and `/spreadsheet`
+  from the sibling `linlab-skills` checkout. Development runs load the same
+  enabled roots directly. The update adds registry/packaging coverage for PDF
+  native workflows and spreadsheet workbook routes, plus a spreadsheet table
+  helper smoke test and refreshed document Markdown assertions for the latest
+  linlab skill output. Verified with `bun run skills:sync`, targeted core skill
+  tests, `bun run typecheck`, `bun run docs:check`, and `git diff --check`.
+  Fast-track, **shape (a)**, *no plan file*.
+
 - **agent-run-graph-cleanup-plan** (`codex-3/agent-run-graph-cleanup-plan`, PR #364,
   codex-3, merged 2026-07-02, plan-track) — adds an active P1 design plan for
   cleaning the agent execution model into a single event-sourced Run graph. The
