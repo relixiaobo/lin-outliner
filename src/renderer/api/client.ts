@@ -46,6 +46,7 @@ import type {
   AgentDebugRun,
   AgentMessageAttachmentInput,
   AgentChildRunActionResult,
+  AgentRunDetailPayload,
   AgentRunTranscriptPayload,
   AgentUserViewContext,
   AskUserQuestionResult,
@@ -333,6 +334,10 @@ export const api = {
     command<AgentDebugRun | null>('agent_debug_run', { conversationId, runId }),
   agentPayloadText: (conversationId: string, payloadId: string) =>
     command<string | null>('agent_payload_text', { conversationId, payloadId }),
+  agentRunDetail: (conversationId: string, runId: string) =>
+    command<AgentRunDetailPayload | null>('agent_run_detail', { conversationId, runId }),
+  agentRunTranscript: (conversationId: string, runId: string) =>
+    command<AgentRunTranscriptPayload | null>('agent_run_transcript', { conversationId, runId }),
   agentChildRunTranscript: (conversationId: string, runId: string) =>
     command<AgentRunTranscriptPayload | null>('agent_child_run_transcript', { conversationId, runId }),
   agentRunConversationId: (runId: string) =>

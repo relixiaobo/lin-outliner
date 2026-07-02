@@ -2081,7 +2081,31 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (payloadId === 'payload-full-output') return clone('Full persisted tool output from payload') as T;
           return clone(null) as T;
         }
-        if (cmd === 'agent_child_run_transcript') {
+        if (cmd === 'agent_run_detail') {
+          const runId = String(args.runId);
+          return clone(String(args.conversationId) === generalChannelId
+            && (runId === 'child-run-1' || runId === 'child-run-source-e2e')
+            ? {
+                runId,
+                conversationId: generalChannelId,
+                agentId: 'built-in:tenon:assistant',
+                kind: 'delegation',
+                title: 'Mock child run',
+                status: 'completed',
+                runProfile: 'default',
+                runProfileLabel: 'Default',
+                context: 'full',
+                disposition: 'attended',
+                startedAt: 1,
+                updatedAt: 2,
+                completedAt: 2,
+                subRuns: [],
+                verificationRuns: [],
+                transcriptMessageCount: childRunTranscriptMessages.length,
+              }
+            : null) as T;
+        }
+        if (cmd === 'agent_run_transcript' || cmd === 'agent_child_run_transcript') {
           return clone(String(args.runId) === 'child-run-1'
             || (String(args.runId) === 'child-run-source-e2e' && String(args.conversationId) === generalChannelId)
             ? { messages: childRunTranscriptMessages }

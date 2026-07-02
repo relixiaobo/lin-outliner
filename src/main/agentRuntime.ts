@@ -39,6 +39,7 @@ import {
   type AgentDebugRunSummary,
   type AgentMessage,
   type AgentChildRunNodeChanges,
+  type AgentRunDetailPayload,
   type AgentRunListEntry,
   type AgentRunTranscriptPayload,
   type AgentRuntimeEvent,
@@ -1558,19 +1559,39 @@ export class AgentRuntime {
     return this.getEventStore().readPayload(conversationId, payload);
   }
 
+  async agentRunDetail(runId: string, expectedConversationId: string): Promise<AgentRunDetailPayload | null> {
+    const meta = await this.getEventStore().readRunMetaProjection(runId);
+    if (!meta) return null;
+    const conversationId = conversationIdOfRun(meta);
+    if (conversationId !== expectedConversationId) return null;
+    const childMetas = conversationId
+      ? (await this.getEventStore().listConversationRunMetaProjections(conversationId))
+          .filter((candidate) => candidate.parentRunId === runId)
+      : [];
+    const result = await this.readLatestRunSubmission(runId);
+    const transcriptMessageCount = await this.runTranscriptMessageCount(runId);
+    return runDetailPayloadFromMeta(meta, {
+      result,
+      childMetas,
+      transcriptMessageCount,
+    });
+  }
+
   /**
-   * The drill-in transcript for a delegated run: its OWN ledger replayed alone
-   * and derived to pi messages ([[agent-run-unification]] — replaces the
+   * The drill-in transcript for a Run: its OWN ledger replayed alone and
+   * derived to pi messages ([[agent-run-unification]] — replaces the
    * transcript-snapshot payload read). Cached on the ledger tail seq (one tiny
    * run-meta read decides freshness), so the panel's live poll re-replays only
    * when the ledger actually grew.
    */
-  async childRunTranscript(conversationId: string, runId: string): Promise<AgentRunTranscriptPayload | null> {
+  async agentRunTranscript(expectedConversationId: string, runId: string): Promise<AgentRunTranscriptPayload | null> {
     const meta = await this.getEventStore().readRunMetaProjection(runId);
     // Ownership gate: run ids are global, so without this any renderer call
     // could read another conversation's run ledger. Fail closed when the meta
     // is missing (no meta ⇒ no seeded ledger to serve anyway).
-    if (!meta || conversationIdOfRun(meta) !== conversationId) return null;
+    if (!meta) return null;
+    const conversationId = conversationIdOfRun(meta);
+    if (conversationId !== expectedConversationId) return null;
     const cached = this.childRunTranscriptCache.get(runId);
     if (cached && cached.latestSeq === meta.latestSeq) {
       return transcriptPayload(cached.messages, cached.latestSubmission);
@@ -1586,6 +1607,10 @@ export class AgentRuntime {
     }
     this.childRunTranscriptCache.set(runId, { latestSeq: state.latestSeq, messages, latestSubmission });
     return transcriptPayload(messages, latestSubmission);
+  }
+
+  async childRunTranscript(conversationId: string, runId: string): Promise<AgentRunTranscriptPayload | null> {
+    return this.agentRunTranscript(conversationId, runId);
   }
 
   /** Resolve the conversation that owns a (global) run id, or null if unknown — one
@@ -3023,6 +3048,12 @@ export class AgentRuntime {
       this.getEventStore().readRunStreamEvents(runId),
     ]);
     return latestRunSubmissionFromEvents(events, meta?.objective?.latestSubmissionSeq);
+  }
+
+  private async runTranscriptMessageCount(runId: string): Promise<number> {
+    const events = await this.getEventStore().readRunStreamEvents(runId);
+    if (events.length === 0) return 0;
+    return getAgentEventActivePath(replayAgentEvents(events)).length;
   }
 
   /**
@@ -7908,6 +7939,79 @@ function transcriptPayload(
   latestSubmission: AgentRunSubmissionProjection | undefined,
 ): AgentRunTranscriptPayload {
   return latestSubmission ? { messages, latestSubmission } : { messages };
+}
+
+function runDetailPayloadFromMeta(
+  meta: AgentRunMetaProjection,
+  input: {
+    result?: AgentRunSubmissionProjection;
+    childMetas: readonly AgentRunMetaProjection[];
+    transcriptMessageCount: number;
+  },
+): AgentRunDetailPayload {
+  const status = renderRunStatusFromRunStatus(meta.execution.status);
+  const conversationId = conversationIdOfRun(meta);
+  const children = input.childMetas.map(runDetailChildFromMeta);
+  const verificationRuns = children.filter((child) => (
+    child.objectiveRole === 'verifier' || child.runProfile === 'verify'
+  ));
+  const subRuns = children.filter((child) => (
+    child.objectiveRole !== 'verifier' && child.runProfile !== 'verify'
+  ));
+  const profile = getRunProfile(meta.runProfile);
+  const title = compactRunListTitle(meta.objective?.text) || meta.id;
+  return {
+    runId: meta.id,
+    conversationId,
+    agentId: meta.agentId,
+    kind: deriveAgentRunKind(meta),
+    title,
+    status,
+    objectiveStatus: meta.objective?.status,
+    objectiveRole: meta.objective?.role,
+    runProfile: meta.runProfile,
+    runProfileLabel: profile.label,
+    context: meta.context,
+    disposition: meta.disposition,
+    parentRunId: meta.parentRunId,
+    parentToolCallId: meta.parentToolCallId,
+    startedAt: meta.createdAt,
+    updatedAt: meta.updatedAt,
+    completedAt: status === 'running' ? undefined : meta.updatedAt,
+    objective: meta.objective ? {
+      text: meta.objective.text,
+      criteria: meta.objective.criteria.slice(),
+      scope: meta.objective.scope,
+      budget: meta.objective.budget,
+      blockedReason: meta.objective.blockedReason,
+      latestVerifierGap: meta.objective.latestVerifierGap,
+    } : undefined,
+    result: input.result,
+    error: meta.execution.error,
+    subRuns,
+    verificationRuns,
+    transcriptMessageCount: input.transcriptMessageCount,
+  };
+}
+
+function runDetailChildFromMeta(meta: AgentRunMetaProjection): AgentRunDetailPayload['subRuns'][number] {
+  const status = renderRunStatusFromRunStatus(meta.execution.status);
+  const profile = getRunProfile(meta.runProfile);
+  const title = compactRunListTitle(meta.objective?.text) || meta.id;
+  return {
+    runId: meta.id,
+    title,
+    status,
+    objectiveStatus: meta.objective?.status,
+    objectiveRole: meta.objective?.role,
+    runProfile: meta.runProfile,
+    runProfileLabel: profile.label,
+    parentRunId: meta.parentRunId,
+    parentToolCallId: meta.parentToolCallId,
+    startedAt: meta.createdAt,
+    updatedAt: meta.updatedAt,
+    completedAt: status === 'running' ? undefined : meta.updatedAt,
+  };
 }
 
 function latestRunSubmissionFromEvents(

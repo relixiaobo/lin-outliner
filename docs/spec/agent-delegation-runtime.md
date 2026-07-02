@@ -979,10 +979,16 @@ path. A run's transcript is replayed from its own ledger lazily:
   the conversation marker, so this is a residual edge), the writer is registered
   empty and the resume's `run.started` becomes the ledger's first event; the run
   stays resumable instead of wedging.
-- on drill-in (`agent_child_run_transcript`): the ledger is replayed directly,
-  cached on its tail seq (one run-meta read decides freshness), and returns the
-  latest `run.result.submitted` projection when present. The open panel polls
-  this while the run is live and refetches on entity changes.
+- on drill-in (`agent_run_transcript`): the ledger is replayed directly, cached
+  on its tail seq (one run-meta read decides freshness), and returns the latest
+  `run.result.submitted` projection when present. The open panel polls this
+  while the run is live and refetches on entity changes. The legacy
+  `agent_child_run_transcript` command remains only for the current renderer
+  seam until the Run detail panel migration removes child-run IPC names.
+- on detail (`agent_run_detail`): the runtime reads Run meta, latest submitted
+  result, direct sub-runs, and verifier runs from the Run index plus the selected
+  Run ledger. It does not require the selected Run to exist in the currently
+  loaded conversation projection.
 
 If a child run was persisted as `running` but there is no live pi-mono `Agent`
 after restore, Lin marks it as failed with an interruption message — in BOTH
@@ -1215,9 +1221,10 @@ Implemented for the current first-class surfaces.
   the child run through `run_stop`.
 - The child run details panel is a read-only drill-in that shows Result, direct
   child Runs (or Verification for verifier-only children), collapsed Activity log,
-  and collapsed Technical details in one scroll flow. It loads the run-ledger
-  transcript lazily through `agent_child_run_transcript` (cached on the ledger
-  tail seq; polled while the run is live). `run_steer` remains the
+  and collapsed Technical details in one scroll flow. The runtime exposes
+  `agent_run_detail` and `agent_run_transcript` as the Run-backed detail APIs;
+  the current renderer still calls the legacy child-run transcript seam until the
+  panel migration lands. `run_steer` remains the
   same-conversation continuation mechanism for agents/tools, but the detail page
   does not expose a permanent follow-up composer.
 - Nested child tool calls inside transcripts remain expandable.

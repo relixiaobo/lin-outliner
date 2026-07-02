@@ -693,6 +693,32 @@ describe('agent runtime childRuns', () => {
       runProfile: 'verify',
       objective: { role: 'verifier' },
     });
+    const verifiedWorker = workers[1];
+    expect(verifiedWorker).toBeDefined();
+    const detail = verifiedWorker ? await runtime.agentRunDetail(verifiedWorker.id, conversation.conversationId) : null;
+    expect(detail).toMatchObject({
+      runId: verifiedWorker?.id,
+      conversationId: conversation.conversationId,
+      status: 'completed',
+      objectiveStatus: 'verified',
+      objectiveRole: 'worker',
+      runProfile: 'default',
+      result: {
+        summary: 'verified result',
+        source: 'final_assistant_message',
+      },
+    });
+    expect(detail?.title).toContain('Produce a verified child result.');
+    expect(typeof detail?.transcriptMessageCount).toBe('number');
+    const verifierDetail = detail?.verificationRuns.find((run) => run.runProfile === 'verify');
+    expect(verifierDetail).toMatchObject({
+      objectiveRole: 'verifier',
+      runProfile: 'verify',
+      runProfileLabel: 'Verify',
+    });
+    await expect(runtime.agentRunDetail(verifiedWorker!.id, 'wrong-conversation')).resolves.toBeNull();
+    const transcript = await runtime.agentRunTranscript(conversation.conversationId, verifiedWorker!.id);
+    expect(transcript?.latestSubmission?.summary).toBe('verified result');
   });
 
   test('settles a failed verified worker budget before spawning its replacement', async () => {

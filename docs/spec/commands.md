@@ -323,8 +323,11 @@ is DM-only; Channels have no steer (a send while runs work dispatches a new addr
 turn). See `agent-architecture.md` (Channel runtime).
 
 ### Agent — delegated runs
-`agent_run_status`, `agent_run_steer`, `agent_run_amend`, `agent_run_stop`,
-`agent_child_run_transcript` (the drill-in transcript, replayed from the run's own ledger).
+`agent_run_detail`, `agent_run_transcript`, `agent_run_status`,
+`agent_run_steer`, `agent_run_amend`, `agent_run_stop`.
+`agent_run_transcript` replays the run's own ledger for the drill-in transcript.
+`agent_run_detail` reads Run meta, the latest result submission, and direct
+sub-run metadata from the Run index.
 The older child-run control command names remain accepted as compatibility aliases,
 but new runtime control surfaces use the `agent_run_*` commands.
 

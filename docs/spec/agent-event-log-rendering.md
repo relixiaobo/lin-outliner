@@ -1030,11 +1030,14 @@ Rules:
   collapsed Technical details in a single scroll flow. Result is plain read-only markdown content:
   its copy affordance belongs to the Result section header, and GFM task-list
   output shows the checkbox without an extra bullet marker. Header metadata stays
-  user-facing (`messages · duration`); internal mode/type/id fields live in Technical details. The view
-  reads the selected conversation's `entities.childRuns` and lazily replays the
-  run transcript through `agent_child_run_transcript`; running detail views expose
-  Stop, while follow-up/steering remains an internal `run_steer` runtime/tool
-  capability instead of a permanent detail-page input.
+  user-facing (`messages · duration`); internal mode/type/id fields live in Technical details. The Run-backed
+  API surface is `agent_run_detail` plus `agent_run_transcript`: detail reads Run
+  meta and direct sub-run metadata from the Run index, while transcript replays
+  the selected Run ledger. The current renderer still reads `entities.childRuns`
+  and the legacy transcript command until the detail panel migration removes that
+  dependency. Running detail views expose Stop, while follow-up/steering remains
+  an internal `run_steer` runtime/tool capability instead of a permanent
+  detail-page input.
 - Long output rows are collapsed by default.
 - **Result-first turn process (one flat level).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last

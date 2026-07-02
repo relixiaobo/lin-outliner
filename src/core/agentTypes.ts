@@ -14,7 +14,11 @@ import type {
   AgentId,
   AgentPayloadRef,
   AgentRunContextMode,
+  AgentRunContextPolicy,
+  AgentRunDisposition,
   AgentRunKind,
+  AgentRunObjectiveRole,
+  AgentRunProfileId,
   AgentRunSubmissionProjection,
   AgentUserQuestionRequestView,
   AskUserQuestionResult,
@@ -125,6 +129,54 @@ export type AgentConversationMessage = UserMessage | AssistantMessage;
 export interface AgentRunTranscriptPayload {
   messages: AgentMessage[];
   latestSubmission?: AgentRunSubmissionProjection;
+}
+
+export interface AgentRunDetailChild {
+  runId: string;
+  title: string;
+  status: AgentRenderRunStatus;
+  objectiveStatus?: AgentObjectiveStatus;
+  objectiveRole?: AgentRunObjectiveRole;
+  runProfile: AgentRunProfileId;
+  runProfileLabel: string;
+  parentRunId?: string;
+  parentToolCallId?: string;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+}
+
+export interface AgentRunDetailPayload {
+  runId: string;
+  conversationId: string | null;
+  agentId: AgentId;
+  kind: AgentRunKind;
+  title: string;
+  status: AgentRenderRunStatus;
+  objectiveStatus?: AgentObjectiveStatus;
+  objectiveRole?: AgentRunObjectiveRole;
+  runProfile: AgentRunProfileId;
+  runProfileLabel: string;
+  context: AgentRunContextPolicy;
+  disposition: AgentRunDisposition;
+  parentRunId?: string;
+  parentToolCallId?: string;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  objective?: {
+    text: string;
+    criteria: string[];
+    scope?: AgentRunScope;
+    budget?: AgentRunBudget;
+    blockedReason?: string;
+    latestVerifierGap?: string;
+  };
+  result?: AgentRunSubmissionProjection;
+  error?: string;
+  subRuns: AgentRunDetailChild[];
+  verificationRuns: AgentRunDetailChild[];
+  transcriptMessageCount: number;
 }
 
 export interface AgentUserViewNodeContext {
