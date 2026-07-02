@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362**) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366) |
@@ -31,7 +31,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-02).** Open PR queue: none. #366
+**In flight (2026-07-02).** Open PR queue: none. #367
+(`codex/design-system-contract-refactor`), #366
 (`codex-4/disclosure-anchor-spec-sync`), #364 (`codex-3/agent-run-graph-cleanup-plan`),
 #363 (`codex-2/tool-lucide-icon-audit`), and #362 (`codex/remove-outliner-settings-root`)
 merged 2026-07-02 after main review; see
@@ -473,6 +474,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **design-system-contract-refactor** (`codex/design-system-contract-refactor`, PR #367,
+  codex, merged 2026-07-02, fast-track) — refactors `docs/spec/design-system.md`
+  into a kernel/index plus layered contracts under `docs/spec/design-system/`
+  (`foundations`, `components`, `patterns`, `surfaces`, `implementation`). The
+  spec map now routes UI work to the smallest owning layer, `docs:check` validates
+  local spec Markdown links and heading anchors, and the typography/design-system
+  guard scans CSS examples across the split spec tree. The change also aligns
+  verified drift around the composer model/effort profile shortcut and tokenizes
+  several design-system CSS values (`--control-on`, `--link-hover`,
+  `--status-danger-solid-hover`, `--resize-cursor-y`, shared material backdrop
+  usage). **Gate (main):** code review found no reportable issues. Verified on
+  the PR head with `bun run docs:check`, `bun run typecheck`, the typography
+  design-system guard E2E, the focused agent-composer E2E for the profile model
+  shortcut, and `git diff --check`. Fast-track, **shape (a)**, *no plan file*.
 
 - **expanded-linlab-artifact-skills** (main fast-track, 2026-07-02, no PR yet) —
   extends the #359 linlab built-in skill packaging lane so packaged builds stage

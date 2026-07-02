@@ -12,6 +12,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Layered design-system contract (PR #367, codex)** — refactored
+  `docs/spec/design-system.md` into a kernel/index with layered contracts for
+  foundations, components, patterns, surfaces, and implementation. `docs:check`
+  now validates local spec Markdown links and heading anchors, and the typography
+  guard scans CSS examples across the split design-system spec tree. The merge
+  also tokenized related CSS drift around control-on state, link hover, danger
+  solid hover, vertical resize cursors, shared material backdrop use, and the
+  agent composer profile model shortcut. **Gate (main):** code review found no
+  reportable issues; verified with docs/typecheck/design-system guard and focused
+  composer E2E coverage.
 - **Expanded packaged linlab artifact skills** — packaged builds now stage
   `/data-analysis`, `/document`, `/pdf`, `/presentation`, and `/spreadsheet`
   from the sibling `linlab-skills` checkout into `Resources/built-in-skills`.
