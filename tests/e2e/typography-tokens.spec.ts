@@ -36,33 +36,31 @@ const STYLES_DIR = 'src/renderer/styles';
 const productStyleFiles = readdirSync(STYLES_DIR)
   .filter((file) => file.endsWith('.css'))
   .map((file) => join(STYLES_DIR, file));
-const designSystemSpecFile = 'docs/spec/design-system.md';
 
-// Pre-existing detokenized declarations the monolithic guard never saw: it only
-// read styles.css + outliner.css, so literal values in the settings feature
-// sheets went unchecked. Widening the guard to the whole split set (above)
-// correctly surfaces them. They are acknowledged debt — NOT new — so we allow the
-// EXACT trimmed declarations here, keyed by text (stable across line moves), with
-// the rule that the guard still bites any new/other literal. Do not grow this set
-// to make a fresh violation pass; tokenize the offending CSS instead (design-
-// system B11). Each entry should be retired as the sheet is tokenized.
-const PRE_SPLIT_DETOKENIZED_DEBT = new Set<string>([
-  // settings-providers.css: pre-existing badge/chip paddings.
-  'padding: 3px 8px;',
-  'padding: 1px 7px;',
-  'padding: 2px 7px;',
-  // settings-providers.css pill/dot radii — the "fully rounded" idiom (B6 allows
-  // pill/circular). 50% rounds the status dot; 999px is the conventional pill.
-  'border-radius: 50%;',
-  'border-radius: 999px;',
-]);
+function markdownFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const filePath = join(dir, entry.name);
+    if (entry.isDirectory()) return markdownFiles(filePath);
+    return entry.isFile() && entry.name.endsWith('.md') ? [filePath] : [];
+  }).sort();
+}
+
+const designSystemSpecFiles = [
+  'docs/spec/design-system.md',
+  ...markdownFiles('docs/spec/design-system'),
+];
 
 function extractCssCodeBlocks(file: string) {
   const text = readFileSync(file, 'utf8');
   return [...text.matchAll(/```css\n([\s\S]*?)```/g)].map((match) => ({
+    file,
     css: match[1] ?? '',
     startLine: text.slice(0, match.index).split('\n').length + 1,
   }));
+}
+
+function extractDesignSystemCssCodeBlocks() {
+  return designSystemSpecFiles.flatMap((file) => extractCssCodeBlocks(file));
 }
 
 function collectCssDeclarationViolations(
@@ -121,7 +119,6 @@ function collectDeclarationViolations(
       const property = match[1]!.trim();
       const value = match[2]!.trim();
       if (isAllowed(value, property)) continue;
-      if (PRE_SPLIT_DETOKENIZED_DEBT.has(trimmed)) continue;
       violations.push(`${file}:${index + 1} ${trimmed}`);
     }
   }
@@ -174,30 +171,30 @@ test.describe('typography tokens', () => {
   });
 
   test('keeps design-system spec css examples tokenized outside token declarations', () => {
-    const violations = extractCssCodeBlocks(designSystemSpecFile).flatMap(({ css, startLine }) => [
+    const violations = extractDesignSystemCssCodeBlocks().flatMap(({ file, css, startLine }) => [
       ...collectCssDeclarationViolations(
-        designSystemSpecFile,
+        file,
         css,
         startLine,
         /\b(border-radius):\s*([^;]+);/,
         (value) => value.startsWith('var('),
       ),
       ...collectCssDeclarationViolations(
-        designSystemSpecFile,
+        file,
         css,
         startLine,
         /\b(transition):\s*([^;]+);/,
         (value) => !/\d+ms/.test(value),
       ),
       ...collectCssDeclarationViolations(
-        designSystemSpecFile,
+        file,
         css,
         startLine,
         /\b(box-shadow):\s*([^;]+);/,
         (value) => value.startsWith('var(') || value === 'none',
       ),
       ...collectCssDeclarationViolations(
-        designSystemSpecFile,
+        file,
         css,
         startLine,
         /(?:^|;)\s*([\w-]*color|background):\s*(#[0-9a-fA-F]{3,8})\b/,
@@ -209,8 +206,8 @@ test.describe('typography tokens', () => {
   });
 
   test('keeps foundation css token examples self-contained', () => {
-    const violations = extractCssCodeBlocks(designSystemSpecFile).flatMap(({ css, startLine }) => (
-      collectUndefinedTokenReferences(designSystemSpecFile, css, startLine)
+    const violations = extractDesignSystemCssCodeBlocks().flatMap(({ file, css, startLine }) => (
+      collectUndefinedTokenReferences(file, css, startLine)
     ));
 
     expect(violations).toEqual([]);

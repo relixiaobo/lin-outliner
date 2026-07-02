@@ -676,7 +676,7 @@
 }
 
 .view-toolbar-reset:hover {
-  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  background: var(--control-hover);
 }
 
 /* Filter: progressive field menu (level 1) drilling into a rule editor (level 2). */

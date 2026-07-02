@@ -23,7 +23,8 @@ keyboard or pointer change should be checked against this matrix.
 - Page-history back/forward navigate the active panel's outliner page history via
   `Cmd+[` / `Cmd+]` even while text is focused, or via `Alt/Option+ArrowLeft` /
   `Alt/Option+ArrowRight` outside editable text controls (there are no top-bar
-  back/forward buttons; see [`design-system.md`](./design-system.md) → Shell).
+  back/forward buttons; see
+  [`design-system/surfaces.md`](./design-system/surfaces.md#shell)).
   They do not undo or redo document operations. In editable text, Option+Arrow
   remains the platform word-navigation shortcut. Returning to a previously
   scrolled panel view restores its scroll position instead of jumping to the top.

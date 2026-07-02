@@ -3,8 +3,8 @@
 This document describes the app layout model: the workspace layout, the
 workspace canvas, outline panels, the sidebar, and the agent dock.
 
-For visual tokens, density, typography, and interaction states, see the
-single-file design-system contract:
+For visual tokens, density, typography, and interaction states, start at the
+design-system kernel and then jump to the smallest owning layer:
 [`design-system.md`](./design-system.md).
 
 There is **no tab concept.** Earlier iterations nested panels inside switchable
@@ -44,8 +44,8 @@ The window chrome is a single thin strip at the window top, at traffic-light
 height. It is the window's title-bar drag region and is part of the app shell.
 There is **no global tab strip and no top-bar back/forward**; page-history
 navigation is keyboard-driven. The full visual contract is in
-[`design-system.md`](./design-system.md) → Shell; this section covers only the
-ownership model.
+[`design-system/surfaces.md`](./design-system/surfaces.md#shell); this section
+covers only the ownership model.
 
 The strip holds three regions on one shared centreline:
 
@@ -498,7 +498,8 @@ Rules:
 - Panes are laid out from left to right.
 - Panes have minimum and maximum widths.
 - Panes resize proportionally according to their persisted `size` ratios, using
-  the panel floor defined in [`design-system.md#foundations`](./design-system.md#foundations)
+  the panel floor defined in
+  [`design-system/foundations.md`](./design-system/foundations.md#foundations)
   whenever the current window and rail state can satisfy it.
 - The workspace canvas never uses a horizontal scrollbar as a rescue path. It
   stays `overflow-x: hidden`; responsive guards keep the layout inside the

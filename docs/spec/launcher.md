@@ -2,7 +2,7 @@
 
 Current shipped behavior of the Spotlight/Raycast-style global launcher. The
 forward-looking design and the deferred features live in
-[`../plans/lazy-like-global-launcher.md`](../plans/lazy-like-global-launcher.md)
+[`../plans/archive/lazy-like-global-launcher.md`](../plans/archive/lazy-like-global-launcher.md)
 and its split plans (`launcher-ai-actions.md`,
 `launcher-capture-destinations.md`, `launcher-provider-expansion.md`,
 `browser-extension-integration.md`). This document describes only what exists.
@@ -40,7 +40,8 @@ navigation commands.
   (the body scrolls). Native 16px corner via the `window_corner` addon.
 - **Liquid-glass** surface: transparent window over `vibrancy: 'hud'`; the
   renderer keeps the surface transparent and tints it with functional fills.
-  Reduce-Transparency drops to an opaque elevated surface (see `design-system.md`).
+  Reduce-Transparency drops to an opaque elevated surface (see
+  [`design-system/foundations.md`](./design-system/foundations.md#materials--liquid-glass)).
 - **Show sequence** (`showLauncherWindow`): `showInactive()` first (so the
   previously-frontmost app keeps focus while context is read), run the
   `beforeFocus` hook, then `show()` + `focus()` and send `LAUNCHER_SHOWN_CHANNEL`.

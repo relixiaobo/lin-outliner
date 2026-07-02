@@ -79,7 +79,7 @@
 
 .button-danger.button-solid:hover:not(:disabled),
 .button-danger.button-solid:active:not(:disabled) {
-  background: color-mix(in srgb, var(--status-danger) 88%, black);
+  background: var(--status-danger-solid-hover);
 }
 
 .button:disabled {
