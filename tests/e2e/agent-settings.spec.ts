@@ -1,10 +1,10 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { commandCalls, installElectronMock } from './outlinerMock';
+import { clipboardText, commandCalls, installElectronMock } from './outlinerMock';
 
 // Settings render in their own window (the ?surface=settings route). The Providers
 // surface follows the macOS System Settings idiom: a floating category rail + a
-// constrained inset grouped list (Connected / Available). Clicking a provider opens
-// its connection config in its OWN native window — a modal child of settings
+// constrained inset grouped list (Configured / Add Providers). Clicking most
+// providers opens connection config in its OWN native window — a modal child of settings
 // (?surface=provider-config), NOT an in-renderer modal — the way System Settings
 // opens a real attached dialog. The list window has no provider search and no
 // in-content Close button (closed through native window chrome).
@@ -44,7 +44,7 @@ test.describe('agent settings window', () => {
 
     // Back returns to Providers and arms forward.
     await back.click();
-    await expect(settings.getByRole('list', { name: 'Available providers' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Providers to add' })).toBeVisible();
     await expect(back).toBeDisabled();
     await expect(forward).toBeEnabled();
 
@@ -302,10 +302,12 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('list', { name: 'Dream history' })).toBeVisible();
   });
 
-  test('groups providers by credential and reads status on each row', async ({ page }) => {
+  test('groups providers by configuration state and reads status on each row', async ({ page }) => {
     const settings = await openSettings(page);
-    await expect(settings.getByRole('list', { name: 'Connected providers' })).toBeVisible();
-    await expect(settings.getByRole('list', { name: 'Available providers' })).toBeVisible();
+    const configured = settings.getByRole('list', { name: 'Configured providers' });
+    await expect(configured).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Providers to add' })).toBeVisible();
+    await expect(configured).toContainText('CC Switch');
     // On-row status rides the row's accessible name (avatar + name + status).
     await expect(settings.getByRole('button', { name: 'OpenAI, Active' })).toBeVisible();
     await expect(settings.getByRole('button', { name: 'Anthropic, Add key' })).toBeVisible();
@@ -318,6 +320,77 @@ test.describe('agent settings window', () => {
     // Unconfigured Anthropic's only action is "Configure", which is exactly what
     // clicking the row does — so no redundant ⋯ menu.
     await expect(settings.getByRole('button', { name: 'Anthropic actions' })).toHaveCount(0);
+  });
+
+  test('toggles a configured provider without removing the connection row', async ({ page }) => {
+    const settings = await openSettings(page);
+    const openaiSwitch = settings.getByRole('switch', { name: 'Enable or disable OpenAI' });
+    await expect(openaiSwitch).toHaveAttribute('aria-checked', 'true');
+
+    await openaiSwitch.click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_upsert_provider_config')?.args;
+    }).toMatchObject({
+      provider: {
+        providerId: 'openai',
+        enabled: false,
+      },
+    });
+    await expect(openaiSwitch).toHaveAttribute('aria-checked', 'false');
+    await expect(settings.getByRole('button', { name: 'OpenAI, Disabled' })).toBeVisible();
+    await expect(settings.getByText('Provider disabled')).toBeVisible();
+
+    await openaiSwitch.click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_upsert_provider_config')?.args;
+    }).toMatchObject({
+      provider: {
+        providerId: 'openai',
+        enabled: true,
+      },
+    });
+    await expect(openaiSwitch).toHaveAttribute('aria-checked', 'true');
+    await expect(settings.getByText('Provider enabled')).toBeVisible();
+  });
+
+  test('enables detected CC Switch directly from the provider list', async ({ page }) => {
+    const settings = await openSettings(page);
+    const ccSwitch = settings.getByRole('switch', { name: 'Enable or disable CC Switch' });
+    await expect(ccSwitch).toHaveAttribute('aria-checked', 'false');
+
+    await ccSwitch.click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_upsert_provider_config')?.args;
+    }).toMatchObject({
+      provider: {
+        providerId: 'cc-switch',
+        baseUrl: 'http://127.0.0.1:15721/v1',
+        enabled: true,
+      },
+    });
+    await expect(settings.getByRole('button', { name: 'CC Switch, Ready' })).toBeVisible();
+    await expect(settings.getByRole('switch', { name: 'Enable or disable CC Switch' })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  test('refreshes enabled CC Switch models from the provider row', async ({ page }) => {
+    const settings = await openSettings(page);
+    await settings.getByRole('switch', { name: 'Enable or disable CC Switch' }).click();
+    await expect(settings.getByRole('button', { name: 'CC Switch, Ready' })).toBeVisible();
+
+    await settings.getByRole('button', { name: 'CC Switch actions' }).click();
+    await page.getByRole('menuitem', { name: 'Refresh models' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'agent_refresh_provider_models')?.args;
+    }).toMatchObject({ providerId: 'cc-switch' });
+    await expect(settings.getByText('Provider models refreshed')).toBeVisible();
   });
 
   test('opens a provider config window when its row is clicked (not an in-app modal)', async ({ page }) => {
@@ -349,7 +422,7 @@ test.describe('agent settings window', () => {
   test('has no provider search and opens the custom-provider window from the last row', async ({ page }) => {
     const settings = await openSettings(page);
     // Native System Settings (Wi-Fi) has no list search; custom providers are added
-    // from the last row of the Available list, which opens the config window in
+    // from the last row of the add-provider list, which opens the config window in
     // custom mode.
     await expect(settings.getByLabel('Search providers')).toHaveCount(0);
     await expect(settings.getByRole('button', { name: /^Anthropic,/ })).toBeVisible();
@@ -438,13 +511,36 @@ test.describe('provider config window', () => {
   test('renders the saved connection — connection only, no model/reasoning controls', async ({ page }) => {
     const config = await openProviderConfig(page, 'openai');
     await expect(config.getByRole('heading', { name: /OpenAI/ })).toBeVisible();
-    await expect(config.getByLabel('API key')).toHaveAttribute('placeholder', /Saved \(encrypted\)/);
+    await expect(config.getByLabel('API key')).toHaveAttribute('placeholder', 'sk*****************');
     await expect(config.getByLabel('Base URL')).toBeVisible();
     // Model and effort moved to the agent profile — neither control lives here now.
     await expect(config.getByRole('combobox', { name: 'Model' })).toHaveCount(0);
     await expect(config.getByRole('combobox', { name: 'Thinking level' })).toHaveCount(0);
     // A configured provider can be removed from its window.
     await expect(config.getByRole('button', { name: 'Remove provider' })).toBeVisible();
+  });
+
+  test('reveals and copies a saved API key on explicit user action', async ({ page }) => {
+    const config = await openProviderConfig(page, 'openai');
+    const keyField = config.getByLabel('API key');
+    await expect(keyField).toHaveValue('');
+    await expect(keyField).toHaveAttribute('placeholder', 'sk*****************');
+
+    await config.getByRole('button', { name: 'Show key' }).click();
+
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'lin:get-provider-api-key')?.args;
+    }).toMatchObject({ providerId: 'openai' });
+    await expect(keyField).toHaveAttribute('type', 'text');
+    await expect(keyField).toHaveValue('sk-openai-saved');
+
+    await config.getByRole('button', { name: 'Copy key' }).click();
+    await expect.poll(() => clipboardText(page)).toBe('sk-openai-saved');
+    await expect(config.getByText('Key copied')).toBeVisible();
+
+    await config.getByRole('button', { name: 'Hide key' }).click();
+    await expect(keyField).toHaveValue('');
   });
 
   test('enters a credential and saves the connection', async ({ page }) => {

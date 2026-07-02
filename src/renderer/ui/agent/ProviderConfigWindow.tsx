@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import type { AgentProviderSettingsView } from '../../api/types';
 import { api } from '../../api/client';
 import { providerConfigParamsFromSearch } from '../../../core/settingsWindow';
+import { CC_SWITCH_LOCAL_PROVIDER_ID } from '../../../core/localGatewayProviders';
 import { useT } from '../../i18n/I18nProvider';
 import {
   formatProviderName,
@@ -74,7 +75,8 @@ export function ProviderConfigWindow() {
   const existing = settings.providers.find((provider) => provider.providerId === providerId);
   const activeId = resolveUsableActiveProvider(settings)?.providerId ?? '';
   const isActive = Boolean(providerId) && providerId === activeId;
-  const hasSavedKey = providerHasCredential(existing, catalog);
+  const hasCredential = providerHasCredential(existing, catalog);
+  const hasStoredKey = Boolean(existing?.auth?.hasStoredKey ?? existing?.hasApiKey);
   const authNote = isCustom ? undefined : providerAuthInfo(providerId, t);
   const docsUrl = isCustom ? undefined : PROVIDER_DOCS_URL[providerId];
   // Auth class comes from main (`authKind`), falling back to the configured view's
@@ -82,6 +84,8 @@ export function ProviderConfigWindow() {
   const authKind = isCustom ? 'api-key' : (catalog?.authKind ?? existing?.auth?.authKind ?? 'api-key');
   const showOAuth = authKind === 'oauth' && !useApiKey;
   const oauthInfo = oauthSignInInfo(providerId, t);
+  const initialBaseUrl = existing?.baseUrl
+    ?? (providerId === CC_SWITCH_LOCAL_PROVIDER_ID ? catalog?.defaultBaseUrl ?? '' : '');
 
   async function handleValidate(draft: ProviderConfigDraft) {
     const pid = draft.providerId.trim() || providerId;
@@ -109,7 +113,7 @@ export function ProviderConfigWindow() {
     await api.agentUpsertProviderConfig({
       providerId: pid,
       baseUrl: draft.baseUrl.trim() || null,
-      enabled: true,
+      enabled: existing?.enabled ?? true,
     });
     await window.lin?.notifySettingsChanged?.();
   }
@@ -137,7 +141,7 @@ export function ProviderConfigWindow() {
           isActive={isActive}
           onClose={close}
           onOpenExternal={(url) => void api.openExternalUrl(url)}
-          onSetActive={hasSavedKey && !isActive
+          onSetActive={existing && existing.enabled && hasCredential && !isActive
             ? () => void runMutation(() => api.agentSetActiveProvider(providerId))
             : undefined}
           onSettingsChanged={(next) => { setSettings(next); void window.lin?.notifySettingsChanged?.(); }}
@@ -162,10 +166,11 @@ export function ProviderConfigWindow() {
         defaultBaseUrl={catalog?.defaultBaseUrl}
         description={isCustom ? t.providerCatalog.openAiCompatible : providerDescription(catalog, t)}
         docsUrl={docsUrl}
-        hasSavedKey={hasSavedKey}
+        hasCredential={hasCredential}
+        hasStoredKey={hasStoredKey}
         initial={{
           providerId,
-          baseUrl: existing?.baseUrl ?? '',
+          baseUrl: initialBaseUrl,
         }}
         isActive={isActive}
         mode={mode}
@@ -174,7 +179,8 @@ export function ProviderConfigWindow() {
         onRemoveProvider={!isCustom && existing
           ? () => void runMutation(() => api.agentDeleteProviderConfig(providerId))
           : undefined}
-        onSetActive={!isCustom && hasSavedKey && !isActive
+        onLoadStoredApiKey={hasStoredKey ? async () => (await api.agentGetProviderApiKey(providerId)).apiKey : undefined}
+        onSetActive={!isCustom && existing && existing.enabled && hasCredential && !isActive
           ? () => void runMutation(() => api.agentSetActiveProvider(providerId))
           : undefined}
         onSubmit={handleSubmit}

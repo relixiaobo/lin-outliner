@@ -30,6 +30,7 @@ import {
   piCustomProviderId,
   piModels,
 } from '../../src/main/piModels';
+import { CC_SWITCH_LOCAL_PROVIDER_ID } from '../../src/core/localGatewayProviders';
 
 const EMPTY_USAGE: Usage = {
   input: 0,
@@ -263,6 +264,7 @@ describe('agent runtime skill integration', () => {
 
   afterEach(async () => {
     piModels().deleteProvider(piCustomProviderId('openai'));
+    piModels().deleteProvider(piCustomProviderId(CC_SWITCH_LOCAL_PROVIDER_ID));
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
   });
 
@@ -392,6 +394,64 @@ describe('agent runtime skill integration', () => {
       modelId,
       apiId: 'openai-responses',
     });
+  });
+
+  test('resolves CC Switch colon-qualified skill model overrides as provider-qualified models', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-cc-switch-skill-model-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-runtime-cc-switch-skill-model-data-'));
+    roots.push(localRoot, dataRoot);
+
+    await createSkill(localRoot, 'cc-switch-model-skill', [
+      '---',
+      'description: Use when the user asks for a CC Switch skill model routing check.',
+      'allowed-tools: file_read',
+      `model: ${CC_SWITCH_LOCAL_PROVIDER_ID}:gpt-5.4`,
+      '---',
+      'CC_SWITCH_MODEL_SKILL_BODY',
+    ].join('\n'));
+
+    const seenModels: Model<Api>[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('skill', { skill: 'cc-switch-model-skill' }, { id: 'tool-skill-cc-switch-model' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('CC Switch model override applied.')),
+      ],
+      (model) => {
+        seenModels.push(model);
+      },
+    );
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+          baseUrl: 'https://cc-switch.example.com/v1',
+          modelId: 'gpt-5.4',
+          api: 'openai-responses',
+          enabled: true,
+          apiKey: 'cc-switch-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    await acceptRuntimeSkill(runtime, created.conversationId, 'cc-switch-model-skill');
+    await runtime.sendMessage(created.conversationId, 'Please do the CC Switch skill model routing check.');
+
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+    expect(script.pendingCount()).toBe(0);
+    expect(seenModels.map((model) => model.id)).toEqual(['gpt-5.4', 'gpt-5.4']);
+    expect(seenModels[1]?.provider).toBe(piCustomProviderId(CC_SWITCH_LOCAL_PROVIDER_ID));
+    expect(seenModels[1]?.baseUrl).toBe('https://cc-switch.example.com/v1');
   });
 
   test('passes runtime provider stream settings to agent and compact requests', async () => {

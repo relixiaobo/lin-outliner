@@ -7,7 +7,13 @@ import {
   type AgentMessageContextMenuRequest,
   type AgentRuntimeEvent,
 } from '../core/agentTypes';
-import { LIN_AGENT_OAUTH_EVENT_CHANNEL, LIN_DOCUMENT_EVENT_CHANNEL, type DocumentProjectionChangedEvent, type OAuthLoginEventEnvelope } from '../core/types';
+import {
+  LIN_AGENT_OAUTH_EVENT_CHANNEL,
+  LIN_DOCUMENT_EVENT_CHANNEL,
+  type AgentProviderStoredApiKey,
+  type DocumentProjectionChangedEvent,
+  type OAuthLoginEventEnvelope,
+} from '../core/types';
 import { windowMaterialKind } from '../core/windowMaterial';
 import {
   LIN_SETTINGS_CHANGED_CHANNEL,
@@ -282,6 +288,8 @@ const api = {
   openProviderConfig: (params: { providerId: string; mode: 'configure' | 'custom' }) =>
     ipcRenderer.invoke('lin:open-provider-config', params) as Promise<void>,
   closeProviderConfig: () => ipcRenderer.invoke('lin:close-provider-config') as Promise<void>,
+  getProviderApiKey: (providerId: string) =>
+    ipcRenderer.invoke('lin:get-provider-api-key', { providerId }) as Promise<AgentProviderStoredApiKey>,
   openAgentConfig: (params: { agentId: string }) =>
     ipcRenderer.invoke('lin:open-agent-config', params) as Promise<void>,
   closeAgentConfig: () => ipcRenderer.invoke('lin:close-agent-config') as Promise<void>,

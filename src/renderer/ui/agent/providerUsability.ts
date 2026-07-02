@@ -4,6 +4,7 @@ import type {
   AgentProviderSettingsView,
 } from '../../api/types';
 import { isLocalBaseUrl } from '../../../core/localEndpoint';
+import { isLocalGatewayProviderId } from '../../../core/localGatewayProviders';
 
 // Pure provider-usability predicates, kept free of any asset/icon import (no
 // `import.meta.glob`) so they can be used in plain unit tests and lightweight
@@ -13,12 +14,18 @@ export function providerHasCredential(
   provider: AgentProviderConfigView | undefined,
   catalog: AgentProviderOption | undefined,
 ): boolean {
+  const providerId = provider?.providerId ?? catalog?.providerId ?? '';
+  const isKeylessLocalEndpoint = Boolean(provider?.baseUrl)
+    && isLocalBaseUrl(provider?.baseUrl)
+    && !isLocalGatewayProviderId(providerId);
   // `auth.credentialed` is main's authoritative signal (stored key, oauth login,
-  // env key, or managed ambient). A local OpenAI-compatible endpoint can be
-  // keyless. Fall back to the catalog env flag for a provider that has no view row
-  // yet (not configured).
+  // env key, managed ambient, or an externally managed provider such as CC
+  // Switch). A local OpenAI-compatible endpoint can be keyless, except for
+  // first-party local fallbacks whose reachability is probed in main. Fall back
+  // to the catalog credential flag for a provider that has no view row yet.
   return Boolean(provider?.auth?.credentialed)
-    || isLocalBaseUrl(provider?.baseUrl)
+    || isKeylessLocalEndpoint
+    || Boolean(catalog?.credentialed)
     || Boolean(catalog?.hasEnvApiKey);
 }
 

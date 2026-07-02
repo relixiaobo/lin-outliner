@@ -533,8 +533,8 @@ not Apple chrome. We borrow the interaction, not the chrome.
   the content do NOT repeat that pane title with another `<h3>`. Pane-level intro
   lines are avoided unless they carry information that cannot live in a section
   header or row sublabel. The content pane carries no search field, and the
-  Providers list no leading status column — "Connected" vs "Available" already
-  carries connection state, so a per-row marker would be redundant. Rows show a
+  Providers list no leading status column — "Configured" vs "Add Providers"
+  already carries setup state, so a per-row marker would be redundant. Rows show a
   trailing `⋯` menu ONLY when they have more than
   one action; a single-action row's lone "Configure" is what clicking the row
   already does, so instead it exposes a trailing **"Configure" button** — the macOS
@@ -606,9 +606,12 @@ not Apple chrome. We borrow the interaction, not the chrome.
   - **One notice / banner.** Neutral `--fill-1` box with the status colour on TEXT
     only (`.agent-settings-alert` / `.settings-sheet-result`), never a status-tinted
     fill (B4).
-- **Provider rows.** Providers group into "Connected" (has a credential — key,
-  env, or managed) and "Available". Each row is the brand avatar as identity + the
-  name; clicking it opens the config sheet. Every provider mark — vendored brand
+- **Provider rows.** Providers group into "Configured" (has a deliberate Tenon
+  row or an externally configured provider such as CC Switch) and "Add Providers".
+  Configured rows expose a trailing enable switch; disabling a row keeps its
+  credentials/endpoints but removes it from model pickers and runtime fallback.
+  Each row is the brand avatar as identity + the name; clicking it opens the config
+  sheet unless the provider is a direct external enable row. Every provider mark — vendored brand
   logo OR monogram fallback — sits on ONE neutral tile (a quiet `--fill-2` fill +
   concentric radius, like an app icon); the tile never carries brand/system colour
   (B3/B4), but the logo keeps its own (identity, not a functional-state colour). The
@@ -637,7 +640,12 @@ not Apple chrome. We borrow the interaction, not the chrome.
   and effort are owned by the agent profile; see
   [Agent](#agent) and `agent-pi-mono-implementation.md`): a label-less credential row (a key glyph +
   the field, native password-dialog style) and the base URL inline (the lone
-  advanced setting — no disclosure). `Test connection` validates reachability with
+  advanced setting — no disclosure). Saved user-pasted keys render as masked
+  placeholder text until the user explicitly clicks show or copy; externally managed
+  keys (for example CC Switch's Codex key) are never shown or copied here. Raw-key
+  show/copy is available only inside this provider config child window; the main
+  process rejects the dedicated key-read IPC from all other windows.
+  `Test connection` validates reachability with
   an internally-chosen probe model, never a user-picked one. Custom
   (OpenAI-compatible) providers additionally enter a provider id in the same card.
   It fetches its own

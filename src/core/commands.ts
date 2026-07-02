@@ -135,6 +135,7 @@ export const AGENT_COMMANDS = [
   'agent_close_conversation',
   'agent_list_slash_commands',
   'agent_get_provider_settings',
+  'agent_refresh_provider_models',
   'agent_update_runtime_settings',
   'agent_get_tool_permission_settings',
   'agent_update_tool_permission_settings',

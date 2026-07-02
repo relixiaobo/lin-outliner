@@ -15,11 +15,19 @@ import {
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
+import {
+  CC_SWITCH_LOCAL_BASE_URL,
+  CC_SWITCH_LOCAL_DEFAULT_MODEL_ID,
+  CC_SWITCH_LOCAL_PROVIDER_ID,
+  CC_SWITCH_LOCAL_PROVIDER_NAME,
+  isLocalGatewayProviderId,
+} from '../core/localGatewayProviders';
 import { isLocalBaseUrl } from '../core/localEndpoint';
 
 const DEFAULT_CUSTOM_CONTEXT_WINDOW = 128000;
 const DEFAULT_CUSTOM_MAX_TOKENS = 8192;
 const CUSTOM_PROVIDER_ID_PREFIX = 'tenon-custom:';
+type OpenAICompatibleApiId = 'openai-completions' | 'openai-responses';
 
 export interface PiCredentialStorage {
   read(providerId: string): Promise<Credential | undefined>;
@@ -32,6 +40,11 @@ export interface PiCustomProviderConfig {
   baseUrl?: string;
   modelId?: string;
   catalogModel?: Model<Api> | null;
+  api?: OpenAICompatibleApiId;
+  name?: string;
+  reasoning?: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
 }
 
 let credentialStorage: PiCredentialStorage | null = null;
@@ -44,14 +57,18 @@ export function configurePiCredentialStorage(storage: PiCredentialStorage): void
 
 export function piModels(): MutableModels {
   if (!credentialStorage) throw new Error('pi credential storage is not configured');
-  modelsInstance ??= builtinModels({ credentials: credentialStoreAdapter });
+  if (!modelsInstance) {
+    modelsInstance = builtinModels({ credentials: credentialStoreAdapter });
+    registerLocalGatewayProviders(modelsInstance);
+  }
   return modelsInstance;
 }
 
 export function piProviders(): string[] {
   return piModels().getProviders()
     .map((provider) => provider.id)
-    .filter((providerId) => !providerId.startsWith(CUSTOM_PROVIDER_ID_PREFIX));
+    .filter((providerId) => !providerId.startsWith(CUSTOM_PROVIDER_ID_PREFIX))
+    .filter((providerId) => !isLocalGatewayProviderId(providerId));
 }
 
 export function piProviderAuthKind(providerId: string): 'api-key' | 'oauth' | 'managed' {
@@ -114,6 +131,11 @@ export function ensurePiCustomProvider(config: PiCustomProviderConfig): void {
     modelId,
     baseUrl: config.baseUrl,
     catalogModel: config.catalogModel,
+    api: config.api,
+    name: config.name,
+    reasoning: config.reasoning,
+    contextWindow: config.contextWindow,
+    maxTokens: config.maxTokens,
   });
   piModels().setProvider(createProvider({
     id: internalProviderId,
@@ -147,16 +169,29 @@ export function ensurePiCustomProvider(config: PiCustomProviderConfig): void {
 }
 
 export function createOpenAICompatibleModel(
-  config: { providerId: string; modelId: string; baseUrl?: string; catalogModel?: Model<Api> | null },
-): Model<'openai-completions' | 'openai-responses'> {
+  config: {
+    providerId: string;
+    modelId: string;
+    baseUrl?: string;
+    catalogModel?: Model<Api> | null;
+    name?: string;
+    api?: OpenAICompatibleApiId;
+    reasoning?: boolean;
+    contextWindow?: number;
+    maxTokens?: number;
+  },
+): Model<OpenAICompatibleApiId> {
   const catalogModel = config.catalogModel;
+  const api = config.api ?? (catalogModel?.api === 'openai-responses' || isLocalGatewayProviderId(config.providerId)
+    ? 'openai-responses'
+    : 'openai-completions');
   return {
     id: config.modelId,
-    name: catalogModel?.name ?? config.modelId,
-    api: catalogModel?.api === 'openai-responses' ? 'openai-responses' : 'openai-completions',
+    name: catalogModel?.name ?? config.name ?? config.modelId,
+    api,
     provider: piCustomProviderId(config.providerId),
     baseUrl: config.baseUrl ?? '',
-    reasoning: catalogModel?.reasoning ?? false,
+    reasoning: catalogModel?.reasoning ?? config.reasoning ?? false,
     thinkingLevelMap: catalogModel?.thinkingLevelMap,
     input: catalogModel?.input ?? ['text'],
     cost: catalogModel?.cost ?? {
@@ -165,22 +200,76 @@ export function createOpenAICompatibleModel(
       cacheRead: 0,
       cacheWrite: 0,
     },
-    contextWindow: catalogModel?.contextWindow ?? DEFAULT_CUSTOM_CONTEXT_WINDOW,
-    maxTokens: catalogModel?.maxTokens ?? DEFAULT_CUSTOM_MAX_TOKENS,
+    contextWindow: catalogModel?.contextWindow ?? config.contextWindow ?? DEFAULT_CUSTOM_CONTEXT_WINDOW,
+    maxTokens: catalogModel?.maxTokens ?? config.maxTokens ?? DEFAULT_CUSTOM_MAX_TOKENS,
   };
+}
+
+function registerLocalGatewayProviders(models: MutableModels): void {
+  const source = models.getModel('openai-codex', CC_SWITCH_LOCAL_DEFAULT_MODEL_ID) as Model<Api> | undefined;
+  models.setProvider(createProvider({
+    id: CC_SWITCH_LOCAL_PROVIDER_ID,
+    name: CC_SWITCH_LOCAL_PROVIDER_NAME,
+    baseUrl: CC_SWITCH_LOCAL_BASE_URL,
+    auth: {
+      apiKey: {
+        name: 'CC Switch key',
+        resolve: async ({ credential, model }) => {
+          if (credential?.key) return { auth: { apiKey: credential.key }, source: 'stored credential' };
+          if (isLocalBaseUrl(model.baseUrl)) return { auth: { apiKey: 'local-endpoint' }, source: 'local endpoint' };
+          return undefined;
+        },
+      },
+    },
+    models: [source ? {
+      ...source,
+      provider: CC_SWITCH_LOCAL_PROVIDER_ID,
+      baseUrl: CC_SWITCH_LOCAL_BASE_URL,
+      name: 'Current routed model',
+    } : {
+      id: CC_SWITCH_LOCAL_DEFAULT_MODEL_ID,
+      name: 'Current routed model',
+      api: 'openai-responses',
+      provider: CC_SWITCH_LOCAL_PROVIDER_ID,
+      baseUrl: CC_SWITCH_LOCAL_BASE_URL,
+      reasoning: true,
+      input: ['text'],
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      contextWindow: DEFAULT_CUSTOM_CONTEXT_WINDOW,
+      maxTokens: DEFAULT_CUSTOM_MAX_TOKENS,
+    }],
+    api: {
+      'openai-completions': openAICompletionsApi(),
+      'openai-responses': openAIResponsesApi(),
+    },
+  }));
 }
 
 function ensureProviderForModel(model: Model<Api>): void {
   if (piModels().getProvider(model.provider)) return;
   if (model.baseUrl) {
-    ensurePiCustomProvider({ providerId: piExternalProviderId(model.provider), baseUrl: model.baseUrl, modelId: model.id });
+    ensurePiCustomProvider({
+      providerId: piExternalProviderId(model.provider),
+      baseUrl: model.baseUrl,
+      modelId: model.id,
+      api: isOpenAICompatibleApiId(model.api) ? model.api : undefined,
+    });
   }
 }
 
-function mergeCustomProviderModels(existingModels: readonly Model<Api>[], model: Model<'openai-completions' | 'openai-responses'>): Model<Api>[] {
+function mergeCustomProviderModels(existingModels: readonly Model<Api>[], model: Model<OpenAICompatibleApiId>): Model<Api>[] {
   const next = existingModels.filter((existing) => existing.id !== model.id);
   next.push(model);
   return next;
+}
+
+function isOpenAICompatibleApiId(api: Api): api is OpenAICompatibleApiId {
+  return api === 'openai-completions' || api === 'openai-responses';
 }
 
 export function piCustomProviderId(providerId: string): string {

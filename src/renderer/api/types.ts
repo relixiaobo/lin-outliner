@@ -11,6 +11,7 @@ export type {
   AgentRuntimeSettingsInput,
   AgentSlashCommandView,
   AgentProviderSecretStatus,
+  AgentProviderStoredApiKey,
   AgentProviderSettingsView,
   AgentProviderAuthKind,
   ProviderAuthView,

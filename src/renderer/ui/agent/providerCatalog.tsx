@@ -5,6 +5,7 @@ import type {
 } from '../../api/types';
 import type { Messages } from '../../../core/i18n';
 import { providerIconSvg } from './providerIcon';
+import { CC_SWITCH_LOCAL_PROVIDER_ID, CC_SWITCH_LOCAL_PROVIDER_NAME } from '../../../core/localGatewayProviders';
 
 // Pure provider-catalog helpers shared by the settings list (AgentSettingsView)
 // and the standalone per-provider config window (ProviderConfigWindow): display
@@ -13,6 +14,7 @@ import { providerIconSvg } from './providerIcon';
 // context from a fresh settings fetch without importing the whole settings view.
 
 export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  [CC_SWITCH_LOCAL_PROVIDER_ID]: CC_SWITCH_LOCAL_PROVIDER_NAME,
   anthropic: 'Anthropic',
   openai: 'OpenAI',
   'openai-codex': 'OpenAI Codex',
@@ -76,7 +78,7 @@ export const PROVIDER_DOCS_URL: Record<string, string> = {
 // Presentation copy for providers that don't take a pasteable API key. The auth
 // CLASS now comes from main (`authKind`); the visible note + docs LABEL are i18n
 // (t.providerCatalog.auth.*), keyed by provider id; the docsURL stays here (not
-// localizable). Managed providers show the note in place of a key field; oauth
+// localizable). These providers show the note in place of a key field; oauth
 // providers use the sign-in flow (ProviderOAuthForm).
 export interface ProviderAuthInfo {
   note: string;
@@ -98,7 +100,8 @@ export function providerAuthInfo(providerId: string, t: Messages): ProviderAuthI
   // covers static `t.a.b` paths). Keep the guard if this is ever refactored.
   const copy = t.providerCatalog.auth[providerId as keyof typeof t.providerCatalog.auth];
   if (!copy) return undefined;
-  return { note: copy.note, docsUrl: PROVIDER_AUTH_DOCS_URL[providerId], docsLabel: copy.docsLabel };
+  const docsLabel = 'docsLabel' in copy ? copy.docsLabel : undefined;
+  return { note: copy.note, docsUrl: PROVIDER_AUTH_DOCS_URL[providerId], docsLabel };
 }
 
 // docsUrl per oauth provider (the localizable hint + docs label live in i18n).
@@ -163,6 +166,7 @@ export function ProviderAvatar({ providerId, large }: { providerId: string; larg
 }
 
 export function providerDescription(catalog: AgentProviderOption | undefined, t: Messages): string {
+  if (catalog?.providerId === CC_SWITCH_LOCAL_PROVIDER_ID) return t.providerCatalog.ccSwitchLocalGateway;
   if (!catalog || catalog.models.length === 0) return t.providerCatalog.openAiCompatible;
   const names = catalog.models.slice(0, 3).map((model) => model.name.replace(/\s*\(latest\)/i, ''));
   const hasMore = catalog.models.length > names.length;
