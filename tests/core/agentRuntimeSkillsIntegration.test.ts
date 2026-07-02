@@ -1407,6 +1407,79 @@ describe('agent runtime skill integration', () => {
     });
   });
 
+  test('direct slash isolated skills surface the user turn before the isolated run completes', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-slash-research-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-slash-research-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const childStarted = deferred<void>();
+    const releaseChild = deferred<void>();
+    const parentContexts: string[] = [];
+    let callCount = 0;
+    const streamFn: StreamFn = ((model: Model<Api>, context: Context) => {
+      callCount += 1;
+      const stream = createAssistantMessageEventStream();
+      if (callCount === 1) {
+        childStarted.resolve();
+        void releaseChild.promise.then(() => {
+          const message = normalizeAssistantMessage(fauxAssistantMessage(fauxText('Slash research result.')), model);
+          stream.push({ type: 'start', partial: { ...message, content: [] } });
+          stream.push({ type: 'done', reason: 'stop', message });
+          stream.end(message);
+        });
+        return stream;
+      }
+
+      parentContexts.push(JSON.stringify(context.messages));
+      queueMicrotask(() => {
+        const message = normalizeAssistantMessage(fauxAssistantMessage(fauxText('Parent consumed slash research.')), model);
+        stream.push({ type: 'start', partial: { ...message, content: [] } });
+        stream.push({ type: 'done', reason: 'stop', message });
+        stream.end(message);
+      });
+      return stream;
+    }) as StreamFn;
+
+    const { AgentRuntime: Runtime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new Runtime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        runtimeSettingsLoader: async () => ({
+          permissionMode: 'trusted',
+          automaticSkillsEnabled: true,
+          slashSkillsEnabled: true,
+          compactEnabled: true,
+          additionalSkillDirectories: [],
+        }),
+        streamFn,
+      },
+    );
+
+    const created = await runtime.restoreLatestConversation();
+    const sendPromise = runtime.sendMessage(created.conversationId, '/research map the agent run detail UI');
+    await childStarted.promise;
+    await waitFor(() => sink.events.some((event) => (
+      event.type === 'projection'
+      && projectionTexts(event.renderProjection).join('\n').includes('/research map the agent run detail UI')
+      && event.renderProjection.activeRun !== null
+    )));
+
+    releaseChild.resolve();
+    await sendPromise;
+
+    expect(parentContexts.join('\n')).toContain('Slash research result.');
+    expect(sink.events.some((event) => event.type === 'error')).toBe(false);
+  });
+
   test('asks for a read scope when research inspects an external folder', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-research-scope-root-'));
     const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-research-scope-external-'));

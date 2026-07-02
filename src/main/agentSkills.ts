@@ -312,6 +312,14 @@ interface InvokeSkillInput {
   signal?: AbortSignal;
 }
 
+export interface UserSkillPromptOptions {
+  onIsolatedSkillStart?: (input: {
+    args: string;
+    originalInput: string;
+    skill: SkillDefinition;
+  }) => Promise<void> | void;
+}
+
 export interface SkillIsolatedExecutionInput {
   skill: SkillDefinition;
   renderedContent: string;
@@ -721,13 +729,16 @@ export class AgentSkillRuntime {
     originalInput: string,
     invocation: Extract<SkillInvocationResult, { ok: true }>,
     turnReminder?: string | null,
+    options: { includeOriginalInput?: boolean } = {},
   ): UserMessage {
     const hidden = messageText(invocation.message);
     const content: TextContent[] = [{ type: 'text', text: hidden }];
     if (turnReminder) {
       content.push({ type: 'text', text: systemReminder(turnReminder) });
     }
-    content.push({ type: 'text', text: originalInput.trim() });
+    if (options.includeOriginalInput !== false) {
+      content.push({ type: 'text', text: originalInput.trim() });
+    }
     return {
       role: 'user',
       timestamp: Date.now(),
@@ -896,11 +907,21 @@ export async function createSlashSkillPrompt(
   runtime: AgentSkillRuntime,
   input: string,
   turnReminder?: string | null,
+  options: UserSkillPromptOptions = {},
 ): Promise<UserMessage | null> {
   const parsed = parseSkillSlashCommand(input);
   if (!parsed) return null;
   const skill = await runtime.getSkill(parsed.skill);
   if (!skill) return null;
+  let isolatedStarted = false;
+  if (skill.execution === 'isolated') {
+    await options.onIsolatedSkillStart?.({
+      args: parsed.args,
+      originalInput: input,
+      skill,
+    });
+    isolatedStarted = Boolean(options.onIsolatedSkillStart);
+  }
 
   const invocation = await runtime.invokeSkill({
     skill: parsed.skill,
@@ -910,15 +931,18 @@ export async function createSlashSkillPrompt(
   if (!invocation.ok) {
     throw new Error(invocation.message);
   }
-  return runtime.createSlashPromptMessage(input, invocation, turnReminder);
+  return runtime.createSlashPromptMessage(input, invocation, turnReminder, {
+    includeOriginalInput: !isolatedStarted,
+  });
 }
 
 export async function createUserSkillPrompt(
   runtime: AgentSkillRuntime,
   input: string,
   turnReminder?: string | null,
+  options: UserSkillPromptOptions = {},
 ): Promise<UserMessage | null> {
-  const slashPrompt = await createSlashSkillPrompt(runtime, input, turnReminder);
+  const slashPrompt = await createSlashSkillPrompt(runtime, input, turnReminder, options);
   if (slashPrompt || input.trim().startsWith('/')) return slashPrompt;
 
   const naturalLanguageSkill = parseNaturalLanguageSkillifyRequest(input);

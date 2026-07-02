@@ -1997,8 +1997,23 @@ export class AgentRuntime {
         outlinerContext,
         userViewReminderText,
       ]);
+      let directIsolatedSkillRunStarted = false;
       const userSkillPrompt = attachments.length === 0 && runtimeSettings.slashSkillsEnabled
-        ? await createUserSkillPrompt(conversation.skillRuntime, messageText, turnContextReminder)
+        ? await createUserSkillPrompt(conversation.skillRuntime, messageText, turnContextReminder, {
+          onIsolatedSkillStart: async () => {
+            if (directIsolatedSkillRunStarted) return;
+            const visiblePrompt: UserMessage = {
+              role: 'user',
+              timestamp: Date.now(),
+              content: [{ type: 'text', text: messageText.trim() }],
+            };
+            await this.appendUserPromptEvent(conversationId, conversation, visiblePrompt);
+            userViewContextReminder.commit();
+            startedRunId = await this.startRun(conversationId, conversation, visiblePrompt);
+            directIsolatedSkillRunStarted = true;
+            this.emitProjection(conversationId, 'slash_skill_started');
+          },
+        })
         : null;
       const skillListingReminder = userSkillPrompt
         ? null
@@ -2028,9 +2043,16 @@ export class AgentRuntime {
           agentListingReminder,
         }, now);
       }
-      await this.appendUserPromptEvent(conversationId, conversation, prompt);
-      userViewContextReminder.commit();
-      startedRunId = await this.startRun(conversationId, conversation, prompt);
+      await this.appendUserPromptEvent(
+        conversationId,
+        conversation,
+        prompt,
+        directIsolatedSkillRunStarted ? systemActor() : userActor(),
+      );
+      if (!directIsolatedSkillRunStarted) {
+        userViewContextReminder.commit();
+        startedRunId = await this.startRun(conversationId, conversation, prompt);
+      }
       await conversation.agent.prompt(prompt);
       await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
       await this.persistAndEmitIdle(conversationId, conversation);
