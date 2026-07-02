@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367**) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | `codex-3/agent-run-index-completeness` | PR #365 ready for gate (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366) |
@@ -32,7 +32,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 ## In progress
 
 **In flight (2026-07-02).** Open PR queue: #365
-(`codex-3/agent-run-index-completeness`). #367
+(`codex-3/agent-run-index-completeness`). #368
+(`codex/design-system-compression-target`), #367
 (`codex/design-system-contract-refactor`), #366
 (`codex-4/disclosure-anchor-spec-sync`), #364 (`codex-3/agent-run-graph-cleanup-plan`),
 #363 (`codex-2/tool-lucide-icon-audit`), and #362 (`codex/remove-outliner-settings-root`)
@@ -475,6 +476,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **design-system-compression-target** (`codex/design-system-compression-target`, PR #368,
+  codex, merged 2026-07-02, fast-track) — turns the layered design-system
+  contract into a measurable audit path. The PR compresses `surfaces.md` into a
+  thinner surface model, adds `decision-audit.md`, and introduces
+  `scripts/design-system-metrics.ts` for surface compression, decision
+  derivation, component coverage, exception evidence, renderer-wide raw-hex
+  discipline, and documented-component drift checks. It also tokenizes tag color
+  presets through identity tint tokens and pins the agent empty-state audit to
+  executable onboarding E2E coverage. **Gate (main):** deep review found and
+  resolved three standard-quality issues plus a follow-up component mapping
+  drift issue before merge. Verified on the final PR head with
+  `bun scripts/design-system-metrics.ts --check`, `bun run docs:check`,
+  `bun run typecheck`, focused typography-token and agent-onboarding E2E specs,
+  and `git diff --check`. Fast-track, **shape (a)**, *no plan file*.
 
 - **design-system-contract-refactor** (`codex/design-system-contract-refactor`, PR #367,
   codex, merged 2026-07-02, fast-track) — refactors `docs/spec/design-system.md`

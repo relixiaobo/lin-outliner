@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Design-system compression metrics (PR #368, codex)** — added
+  `docs/spec/design-system/decision-audit.md` and
+  `scripts/design-system-metrics.ts` so the layered design-system contract now
+  has measurable checks for surface compression, decision derivation, component
+  coverage, exception evidence, renderer-wide raw-hex discipline, and
+  documented-component drift. The PR compresses `surfaces.md` into a thinner
+  surface model, promotes reusable rules into components and patterns, tokenizes
+  tag color presets through identity tint tokens, and pins the provider-ready
+  agent blank state to executable onboarding E2E coverage. **Gate (main):**
+  deep review found audit/spec and metrics false-negative issues; codex fixed
+  all findings before merge. Verified with the metrics gate, docs check,
+  typecheck, focused typography-token and agent-onboarding E2E specs, and
+  `git diff --check`.
 - **Layered design-system contract (PR #367, codex)** — refactored
   `docs/spec/design-system.md` into a kernel/index with layered contracts for
   foundations, components, patterns, surfaces, and implementation. `docs:check`
