@@ -10,11 +10,11 @@
 > references describe the SOURCE system's wording, not ours.
 
 > **Goal-run update — same-agent run tree (2026-06-25, `agent-goal`).**
-> The current model-facing delegation tool is `spawn`, not `Agent`. There is
+> The current model-facing delegation tool is `spawn_run`, not `Agent`. There is
 > exactly one agent, **Neva**; delegation creates same-agent child Runs, never a
 > different persona. The tool schema carries no `agent_type`; `contextMode` is
 > now `full` / `brief` / `none` (`fork` remains only as a persisted legacy value).
-> `spawn` defaults to verified execution: criteria are required unless
+> `spawn_run` defaults to verified execution: criteria are required unless
 > `verify:false`, parents verify child results through read-only verifier Runs,
 > and failed verification triggers bounded retry before `blocked` /
 > `budget_exhausted`. `/research` and isolated skills are same-agent child Runs;
@@ -58,7 +58,7 @@ child run path:
 
 ```text
 main agent conversation
-  -> spawn tool
+  -> spawn_run tool
       -> child run
           -> pi-mono Agent instance
           -> sidechain transcript
@@ -67,7 +67,7 @@ main agent conversation
 
 Child runs are conversation-scoped execution units. The main agent remains the
 coordinator. Multiple child runs run in parallel when the model emits multiple
-`spawn` tool calls in the same turn.
+`spawn_run` tool calls in the same turn.
 
 Child run is therefore Lin's isolated cognition and task execution unit. It is not
 a team member, a code-editing sandbox, or a cross-conversation messaging peer.
@@ -82,10 +82,10 @@ cc-2.1 contains two layers:
 
 | cc-2.1 source | Behavior to study | Lin decision |
 | --- | --- | --- |
-| `src/tools/AgentTool/constants.ts` | Tool name is `Agent`; legacy alias is `Task`. | Historical source reference only; Lin's current model-facing tool is `spawn`. |
+| `src/tools/AgentTool/constants.ts` | Tool name is `Agent`; legacy alias is `Task`. | Historical source reference only; Lin's current model-facing tool is `spawn_run`. |
 | `src/tools/AgentTool/AgentTool.tsx` | Launches fresh/fork agents, async/background agents, teammate variants, worktree/remote variants, result mapping. | Reuse the core child-run path. Omit teammate, team, worktree, and remote branches. |
 | `src/tools/AgentTool/prompt.ts` | Teaches when to use child runs, how to brief fresh agents, how to launch multiple agents in one turn, and how fork differs from fresh. | Reuse the guidance style and parallelism rules, with Lin terminology. |
-| `src/tools/AgentTool/forkSubagent.ts` | Fork gate, implicit fork by omitting `agent_type`, cache-stable fork directive, recursive fork guard. | Reuse cache-stable context copying, but expose Lin-owned `context` modes and bounded recursive `spawn`. |
+| `src/tools/AgentTool/forkSubagent.ts` | Fork gate, implicit fork by omitting `agent_type`, cache-stable fork directive, recursive fork guard. | Reuse cache-stable context copying, but expose Lin-owned `context` modes and bounded recursive `spawn_run`. |
 | `src/tools/AgentTool/runAgent.ts` | Builds isolated child run context, system prompt, tool pool, sidechain transcript, skill preload, cleanup, and query loop. | Reuse the execution shape with pi-mono `Agent`; defer hooks and agent-specific MCP. |
 | `src/utils/forkedAgent.ts` | Creates isolated tool-use context, cloned read state, cloned content replacement state, child abort behavior, cache-safe fork helpers. | Reuse the isolation and cache-stability ideas in Lin-owned runtime context types. |
 | `src/tools/AgentTool/loadAgentsDir.ts` | Loads agent definitions from markdown and JSON, including tools, model, effort, permission mode, max turns, skills, background, hooks, MCP, memory, isolation. | Implement `.agents/agents` definitions. Support the core fields now; defer hooks, MCP, memory, and isolation. |
@@ -105,7 +105,7 @@ Key anchors:
 
 - `src/tools/AgentTool/AgentTool.tsx:81-88`: the source `Agent` input schema is
   `description`, `prompt`, `agent_type`, `model`, and `run_in_background`.
-  Lin's current `spawn` schema keeps the useful task/background shape but
+  Lin's current `spawn_run` schema keeps the useful task/background shape but
   replaces it with `objective`, `criteria`, `verify`, `context`, `scope`, and
   `budget`.
 - `src/tools/AgentTool/AgentTool.tsx:90-101`: `name`, `team_name`, `mode`,
@@ -172,7 +172,7 @@ Key anchors:
 - `src/utils/attachments.ts:1477-1556`: agent listings were moved out of the tool
   schema into `agent_listing_delta` attachments for prompt-cache stability. Lin
   should inject agent listings as turn state/reminders rather than mutating the
-  `spawn` tool schema.
+  `spawn_run` tool schema.
 
 ## External Open-Source Research
 
@@ -200,7 +200,7 @@ Borrow spawn/fork semantics, depth and cycle guard, bounded concurrency,
 project-agent trust checks, final-result-only parent content, and expandable
 execution details. Prefer pi-mono in-process `Agent` instances over shelling out
 to `pi` when Lin can preserve the same isolation contract. Under one-Neva, keep
-the in-process run-tree shape and model-facing `spawn` tool, but do not load
+the in-process run-tree shape and model-facing `spawn_run` tool, but do not load
 project agent definitions.
 
 [ECA](https://eca.dev/)
@@ -303,11 +303,11 @@ crew/team/workflow/memory concepts into the first child run implementation.
 
 ### External Research Conclusions
 
-- Keep one primary model-facing tool: `spawn`. Avoid separate Team, Delegate,
+- Keep one primary model-facing tool: `spawn_run`. Avoid separate Team, Delegate,
   or general Send Message tools in the first version. Multiple child runs are
-  launched by multiple `spawn` tool calls in the same turn, matching cc-2.1's
+  launched by multiple `spawn_run` tool calls in the same turn, matching cc-2.1's
   model guidance and avoiding a second orchestration abstraction.
-- `spawn` must support explicit context modes. External Pi and ECA
+- `spawn_run` must support explicit context modes. External Pi and ECA
   implementations validate the underlying split between clean child contexts
   and inherited-context child work; Lin exposes that as `context:'none'`,
   `context:'brief'`, and `context:'full'` instead of model-facing agent types.
@@ -432,7 +432,7 @@ Current behavior routes through the registry without changing execution:
 
 ### Recursive Child Runs
 
-Child Runs may call `spawn` when their narrowed tool catalog includes the
+Child Runs may call `spawn_run` when their narrowed tool catalog includes the
 delegation capability. Recursion is controlled by a configured depth limit and a
 per-conversation concurrency cap, not by a hard fork-cycle ban. A child that
 needs more authority than its current scope should block or be stopped and
@@ -443,7 +443,7 @@ scope in place.
 
 Every child run writes a separate transcript. The parent conversation stores only:
 
-- the `spawn` tool call;
+- the `spawn_run` tool call;
 - status/progress notifications;
 - the parent tool result for attended runs;
 - stable handles in Run metadata for status, steer, amend, and stop.
@@ -459,11 +459,11 @@ that conversation stream.
 
 ## Model-Facing Tools
 
-### `spawn`
+### `spawn_run`
 
-Launches one child Run. The Run is always a same-agent child run; there is no
-model-facing agent selection. Parent context is controlled by the `context`
-field, and verification is on by default.
+Creates one same-agent sub-run. There is no model-facing agent selection.
+Parent context is controlled by the `context` field, the optional `runProfile`
+selects an execution policy, and verification is on by default.
 
 Input:
 
@@ -483,6 +483,7 @@ Input:
     "tokens": "optional number",
     "wallClockMinutes": "optional number"
   },
+  "runProfile": "optional default|research",
   "context": "optional full|brief|none",
   "detach": "optional boolean",
   "description": "optional string",
@@ -503,6 +504,10 @@ Field behavior:
   child catalog.
 - `budget`: optional run-local budget metadata. `wallClockMinutes` is enforced
   as a hard runtime backstop.
+- `runProfile`: optional model-selectable Run profile. `default` is ordinary
+  work; `research` is read-only exploration. Runtime-only or inactive profiles
+  such as `verify`, `dream`, `browser`, `coding`, and `writing` are rejected
+  when requested by the model.
 - `context`: `full` copies the parent context, `brief` provides a compact parent
   excerpt, and `none` starts clean. Verifier Runs are always `none`.
 - `detach`: if true, return immediately and notify the parent conversation when
@@ -820,7 +825,7 @@ override and asks for a read-only isolated run of the current agent. At spawn ti
 read-only catalog derived from `AgentToolActionKind`, then reuses the same
 `tools` / `disallowedTools` filtering path as ordinary agent definitions. The
 child request therefore lacks mutating tools (`file_write`, `file_edit`, node
-mutations, `skill`, `spawn`, `run_steer`, `run_amend`, `run_stop`, shell
+mutations, `skill`, `spawn_run`, `run_steer`, `run_amend`, `run_stop`, shell
 execution), instead of relying on prompt text or permission denial after the
 model has seen them.
 The same `allowed-tools` list remains run-scoped preapproval for the expected
@@ -951,7 +956,7 @@ expansion replays the visible transcript, so provenance stays stable across
 later compactions. The Dream cursor is derived from clean completed
 `dream.finished.window.end` markers in the protected Dream channel; there is no
 principal memory episode projection to read. The parent model only receives the
-`spawn` tool result projection.
+`spawn_run` tool result projection.
 
 ## Compaction And Resume
 
@@ -1013,7 +1018,7 @@ Child runs should be trusted enough to be useful, but scoped by tool profile.
 
 Rules:
 
-- `spawn` is allowed by default when the current run has
+- `spawn_run` is allowed by default when the current run has
   `agent.delegate.spawn`.
 - Every child run tool call still goes through Lin's permission layer.
 - Agent definition `tools` and `disallowed-tools` narrow the available tool set.
@@ -1031,7 +1036,7 @@ smallest Lin-owned policy that supports useful child runs with clear boundaries.
 The main agent can see:
 
 - normal Lin tools;
-- `spawn`;
+- `spawn_run`;
 - `run_status` for explicit status/wait checks;
 - `run_steer`;
 - `run_amend`;
@@ -1041,13 +1046,13 @@ Child Runs can see:
 
 - tools allowed by the current definition/scope intersection;
 - skill tool if enabled for the definition;
-- `spawn` only when the child's narrowed scope includes the delegation
+- `spawn_run` only when the child's narrowed scope includes the delegation
   capability.
 
 Full-context child Runs can see:
 
 - the parent's context plus placeholder results for unresolved tool calls;
-- recursive `spawn` calls until the configured depth limit.
+- recursive `spawn_run` calls until the configured depth limit.
 
 Background child runs can see only tools that can run without direct UI control.
 This should be implemented as a profile over Lin tools rather than a separate
@@ -1057,7 +1062,7 @@ tool system.
 
 The delegation prompt should teach:
 
-- Use `spawn` for complex, multi-step, or independent work.
+- Use `spawn_run` for complex, multi-step, or independent work.
 - Launch multiple child runs in one turn when the tasks are independent.
 - Provide `criteria` unless the caller explicitly sets `verify:false`.
 - Choose `context` deliberately: `full` for cache-stable inherited context,
@@ -1107,14 +1112,14 @@ Implemented in `src/main/agentDelegation.ts`.
 - Supports directory agents with `AGENT.md`.
 - Does not ship a built-in generic worker profile; generic isolation is the
   same-agent child-run path.
-- Injects agent listing as turn state/reminders, not inside the `spawn` tool
+- Injects agent listing as turn state/reminders, not inside the `spawn_run` tool
   schema.
 
 ### Foreground Child Run
 
 Implemented.
 
-- `spawn` creates a sidechain pi-mono `Agent`.
+- `spawn_run` creates a sidechain pi-mono `Agent`.
 - The child receives the current agent system prompt plus a runtime directive
   containing objective, criteria, context mode, scope, and budget.
 - Child runs are forks of Neva under the single-agent model. There is no
@@ -1131,7 +1136,7 @@ Implemented.
 
 Implemented.
 
-- `spawn` with `context:'full'` forks from the current parent context.
+- `spawn_run` with `context:'full'` forks from the current parent context.
 - The fork uses the parent system prompt, parent messages, a run directive, and
   placeholder results for unresolved tool calls.
 - `context:'brief'` passes a compact hidden parent excerpt, and `context:'none'`
@@ -1142,7 +1147,7 @@ Implemented.
   catalog. `/research` uses this to keep generic investigation inside the
   current agent's DM/Channel identity while removing mutation and delegation
   tools from the child model request.
-- Recursive `spawn` attempts are allowed until the configured nesting limit.
+- Recursive `spawn_run` attempts are allowed until the configured nesting limit.
 - Child tool output stays in the sidechain transcript and does not pollute the
   parent context.
 
@@ -1150,7 +1155,7 @@ Implemented.
 
 Implemented.
 
-- `spawn` defaults to verified execution and requires `criteria` unless
+- `spawn_run` defaults to verified execution and requires `criteria` unless
   `verify:false`.
 - When a child work Run completes, its parent marks it `verifying`, spawns a
   read-only verifier Run with `purpose:'verify'` and `context:'none'`, then
@@ -1182,8 +1187,8 @@ Implemented for same-conversation background runs.
   verifier conclusions.
 - Completion, failure, and stopped states are returned to the parent model
   through hidden child run notifications.
-- The renderer derives current-conversation task entries from persisted
-  `child_run.*` projection state; this is a UI view, not a separate task store.
+- The renderer derives current-conversation Run entries from the Run index and
+  folded Run projection state; this is a UI view, not a separate task store.
 
 ### Resume
 
@@ -1216,7 +1221,7 @@ Implemented.
 
 Implemented for the current first-class surfaces.
 
-- `spawn` tool blocks fold matching sub-runs from the Run projection and expose
+- `spawn_run` tool blocks fold matching sub-runs from the Run projection and expose
   transcript access. Legacy
   `Agent` blocks remain render-compatible for persisted history.
 - The agent header exposes a Work/Runs button. It opens the global Run index
@@ -1230,9 +1235,9 @@ Implemented for the current first-class surfaces.
   `agent_run_transcript`, so Work/Runs selection no longer depends on the
   selected Run being present in the active conversation projection. Folded
   transcript sub-runs use `entities.runs` / `subRunsByParentToolCallId`;
-  `child_run.*` conversation events remain only as runtime/delegation
-  compatibility markers until the sidechain runtime is migrated fully to Run
-  ledger events. `run_steer` remains the same-conversation continuation
+  conversation `child_run.*` lifecycle events are gone. Run lifecycle and
+  transcript state live in the Run index plus the selected Run's own ledger.
+  `run_steer` remains the same-conversation continuation
   mechanism for agents/tools, but the detail page does not expose a permanent
   follow-up composer.
 - Nested child tool calls inside transcripts remain expandable.
@@ -1253,9 +1258,9 @@ Review against cc-2.1 and OpenClaw leaves these follow-ups:
 
 - Add `SubagentStart` and `SubagentStop` hook events (cc-2.1 vocabulary) only after Lin has a
   first-class hook registry. They should be lifecycle events, not special cases
-  inside the `spawn` tool.
+  inside the `spawn_run` tool.
 - Keep foreground, detached, and verifier child Runs as the only first-version
-  lifecycles. Do not copy team/swarm/coordinator concepts into `spawn`,
+  lifecycles. Do not copy team/swarm/coordinator concepts into `spawn_run`,
   `run_steer`, or `run_status`.
 - On app restart, stale running child runs should be marked interrupted or
   recoverable from persisted sidechain transcripts. They should not silently
@@ -1277,11 +1282,11 @@ Core tests:
 
 - agent definition parsing and override order;
 - invalid agent definition diagnostics;
-- `spawn` completes and returns a result;
-- full-context `spawn` sees parent context;
-- full-context `spawn` does not inject child tool output into parent context;
-- recursive `spawn` is bounded by depth;
-- detached `spawn` launches and later notifies parent;
+- `spawn_run` completes and returns a result;
+- full-context `spawn_run` sees parent context;
+- full-context `spawn_run` does not inject child tool output into parent context;
+- recursive `spawn_run` is bounded by depth;
+- detached `spawn_run` launches and later notifies parent;
 - verifier Run pass/fail, retry, and blocked/budget-exhausted paths;
 - `run_status` list, get, wait, and timeout;
 - `run_steer` resumes from sidechain transcript;
@@ -1303,8 +1308,8 @@ Reference-alignment tests:
 - `context:'full'` means inherited parent transcript;
 - `context:'brief'` means compact parent excerpt;
 - `context:'none'` means clean child context;
-- multiple `spawn` tool calls in one turn run independently;
-- agent listing changes do not mutate the `spawn` tool schema.
+- multiple `spawn_run` tool calls in one turn run independently;
+- agent listing changes do not mutate the `spawn_run` tool schema.
 
 ## Deferred Questions
 

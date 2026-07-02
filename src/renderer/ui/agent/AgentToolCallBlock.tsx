@@ -144,7 +144,7 @@ function firstQuestionSubject(args: Record<string, unknown>): string | null {
 
 export function summarizeToolCall(toolCall: ToolCall, status: ToolStatus, labels: ToolCallLabels): string {
   const verbs = labels.verbs;
-  if (toolCall.name === 'Agent' || toolCall.name === 'spawn') {
+  if (toolCall.name === 'Agent' || toolCall.name === 'spawn' || toolCall.name === 'spawn_run') {
     const subject = pickSubject(toolCall.arguments, 'description', 'objective', 'agent_type');
     return withSubject(verbByStatus(verbs.runChildAgent, status, labels), subject, labels);
   }
@@ -245,6 +245,7 @@ function isRunControlTool(toolName: string): boolean {
     || toolName === 'AgentStatus'
     || toolName === 'AgentSend'
     || toolName === 'AgentStop'
+    || toolName === 'spawn_run'
     || toolName === 'spawn'
     || toolName === 'run_status'
     || toolName === 'run_steer'

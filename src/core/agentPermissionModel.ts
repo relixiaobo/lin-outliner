@@ -183,6 +183,7 @@ export const AGENT_TOOL_ACTION_KIND_PROFILES = {
   AgentStatus: ['agent.delegate.status'],
   AgentSend: ['agent.delegate.send'],
   AgentStop: ['agent.delegate.stop'],
+  spawn_run: ['agent.delegate.spawn'],
   spawn: ['agent.delegate.spawn'],
   run_status: ['agent.delegate.status'],
   run_steer: ['agent.delegate.send'],
@@ -270,7 +271,8 @@ function normalizeAgentToolProfileName(toolNameInput: string): string {
   if (normalized === 'agentstatus' || normalized === 'agent_status') return 'AgentStatus';
   if (normalized === 'agentsend' || normalized === 'agent_send') return 'AgentSend';
   if (normalized === 'agentstop' || normalized === 'agent_stop') return 'AgentStop';
-  if (normalized === 'agent') return 'Agent';
+  if (normalized === 'agent') return 'spawn_run';
+  if (normalized === 'spawn') return 'spawn_run';
   return normalized;
 }
 

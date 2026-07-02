@@ -267,7 +267,7 @@ describe('agent runtime childRuns', () => {
       [
         // Parent forks its OWN context (no agent_type) — the fork runs AS the parent agent.
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'fork to inspect config',
             objective: 'Inspect the local config.',
             verify: false,
@@ -339,7 +339,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'fork check',
             objective: 'Inspect inherited context.',
             verify: false,
@@ -394,7 +394,7 @@ describe('agent runtime childRuns', () => {
       }
       if (text.includes('Spawn a fork') && !text.includes('tool-agent-fork-owner')) {
         return fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'fork owned by Neva',
             objective: 'Do the fork work.',
             verify: false,
@@ -443,6 +443,57 @@ describe('agent runtime childRuns', () => {
     });
   });
 
+  test('spawn_run accepts a model-selectable runProfile and persists the resolved profile', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-profile-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-profile-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'research run',
+            objective: 'Collect sources.',
+            criteria: ['Sources are summarized.'],
+            runProfile: 'research',
+            verify: false,
+          }, { id: 'tool-run-profile' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Research result.')),
+        fauxAssistantMessage(fauxText('Parent final.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a research run.', sink);
+
+    const projection = latestProjection(sink.events);
+    const childRunId = projectedRunId(projection, 'tool-run-profile')!;
+    expect(projection?.entities.runs[childRunId]).toMatchObject({
+      runProfile: 'research',
+      runProfileLabel: 'Research',
+    });
+
+    const metas = await conversationRunMetas(dataRoot, conversation.conversationId);
+    expect(workerRunsWithObjective(metas, 'Collect sources.')[0]).toMatchObject({
+      runProfile: 'research',
+    });
+  });
+
   test('slims large child run tool outputs before the child continues', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-slim-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-slim-data-'));
@@ -452,7 +503,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'large output',
             objective: 'Run a large-output tool call, then continue.',
             verify: false,
@@ -514,7 +565,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'compact sidechain',
             objective: 'Run large tool output, then continue after compaction.',
             verify: false,
@@ -593,7 +644,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'reactive compact',
             objective: 'Run until a context error, then recover.',
             verify: false,
@@ -659,7 +710,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'verified child',
             objective: 'Produce a verified child result.',
             criteria: ['The final result must include the phrase verified result.'],
@@ -761,7 +812,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'budget verifier parent',
             objective: 'Supervise one exact-budget verified child.',
             verify: false,
@@ -769,7 +820,7 @@ describe('agent runtime childRuns', () => {
           }, { id: 'tool-agent-budget-verifier-parent' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'budget verified child',
             objective: 'Produce a verified child result within the exact parent token slice.',
             criteria: ['The final result must include the phrase verified result.'],
@@ -839,7 +890,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'budgeted verified child',
             objective: 'Produce a verified child result under a wall-clock budget.',
             criteria: ['The final result must include the phrase verified result.'],
@@ -895,14 +946,14 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'controller with child',
             objective: 'Integrate a child result into a verified controller result.',
             criteria: ['The final result must include the phrase controller verified result.'],
           }, { id: 'tool-agent-controller' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'controller leaf child',
             objective: 'Produce one leaf fact.',
             verify: false,
@@ -969,7 +1020,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'indirect evidence child',
             objective: 'Create indirect shell evidence.',
             criteria: ['The file indirect-output.txt exists with indirect evidence.'],
@@ -1027,7 +1078,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             objective: 'Inspect only run status.',
             criteria: ['The child can read run status only.'],
             verify: false,
@@ -1067,7 +1118,7 @@ describe('agent runtime childRuns', () => {
     expect(script.pendingCount()).toBe(0);
     expect(childTools).toHaveLength(1);
     expect(childTools[0]).toContain('run_status');
-    expect(childTools[0]).not.toContain('spawn');
+    expect(childTools[0]).not.toContain('spawn_run');
     expect(childTools[0]).not.toContain('run_steer');
     expect(childTools[0]).not.toContain('run_amend');
     expect(childTools[0]).not.toContain('run_stop');
@@ -1083,7 +1134,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             objective: 'Try to overspend budget.',
             criteria: ['The child reports that excessive budget was rejected.'],
             verify: false,
@@ -1092,7 +1143,7 @@ describe('agent runtime childRuns', () => {
           }, { id: 'tool-agent-budget-parent' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             objective: 'Spend too much.',
             criteria: ['This should not launch.'],
             verify: false,
@@ -1142,7 +1193,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'budget parent',
             objective: 'Spawn token-budgeted sibling runs.',
             verify: false,
@@ -1150,13 +1201,13 @@ describe('agent runtime childRuns', () => {
           }, { id: 'tool-agent-budget-parent' }),
         ], { stopReason: 'toolUse' }),
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'first budget child',
             objective: 'Use most of the parent token slice.',
             verify: false,
             budget: { tokens: 80 },
           }, { id: 'tool-agent-budget-first' }),
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'second budget child',
             objective: 'Attempt to exceed the remaining parent token slice.',
             verify: false,
@@ -1206,7 +1257,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'background check',
             objective: 'Run in background.',
             verify: false,
@@ -1286,7 +1337,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'background notify',
             objective: 'Run in background.',
             verify: false,
@@ -1367,7 +1418,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'alpha run',
             objective: 'Index alpha work.',
             verify: false,
@@ -1377,7 +1428,7 @@ describe('agent runtime childRuns', () => {
         fauxAssistantMessage(fauxText('Alpha background result.')),
         fauxAssistantMessage(fauxText('Alpha parent final.')),
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'beta run',
             objective: 'Index beta work.',
             verify: false,
@@ -1438,7 +1489,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'background command',
             objective: 'Run in background.',
             verify: false,
@@ -1508,7 +1559,7 @@ describe('agent runtime childRuns', () => {
     const script = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'stoppable background',
             objective: 'Run until stopped.',
             verify: false,
@@ -1697,7 +1748,7 @@ describe('agent runtime childRuns', () => {
     const firstScript = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'background restore',
             objective: 'Run in background.',
             verify: false,
@@ -1810,7 +1861,7 @@ describe('agent runtime childRuns', () => {
     const firstScript = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'interruptible background',
             objective: 'Run until the app dies.',
             verify: false,
@@ -1908,7 +1959,7 @@ describe('agent runtime childRuns', () => {
     const firstScript = scriptedStream(
       [
         fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'background seed',
             objective: 'Run in background.',
             verify: false,
@@ -2037,7 +2088,7 @@ describe('agent runtime childRuns', () => {
       }
       if (text.includes('Spawn a child') && !text.includes('tool-agent-1')) {
         return fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'completes then fails on resume',
             objective: 'Do the first pass.',
             verify: false,
@@ -2109,7 +2160,7 @@ describe('agent runtime childRuns', () => {
       }
       if (text.includes('Spawn a child') && !text.includes('tool-agent-1')) {
         return fauxAssistantMessage([
-          fauxToolCall('spawn', {
+          fauxToolCall('spawn_run', {
             description: 'completes then is stopped on resume',
             objective: 'Do the first pass.',
             verify: false,

@@ -28,7 +28,7 @@ about whether a skill exists or how skills work remain normal conversation.
 `goal-launching` is a model-invocable guidance workflow for turning a
 natural-language handoff into a persistent verified Run. It tells the model to
 separate objective from acceptance criteria, clarify missing criteria when
-needed, launch with `spawn` using `detach:true`, `context:"brief"`, a finite
+needed, launch with `spawn_run` using `detach:true`, `context:"brief"`, a finite
 budget, and narrow scope, and then rely on verifier/objective status rather than
 the worker's own completion claim. There is no user-facing `/goal` shortcut or
 composer goal button; ordinary prose is the entry point.
@@ -419,7 +419,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | `allowed-tools` | Supported as run-scoped preapproval metadata, not as a tool visibility list. |
 | `model` and `effort` | Supported as one-turn `pi-agent-core` loop updates. |
 | `paths` | Supported for path-conditional activation and dynamic nested skill discovery for mutable skills. Built-ins load immediately even when they declare `paths`. |
-| `execution: isolated` | Supported through the same-conversation `spawn`/delegation runtime. Isolated skill bodies run in a sidechain child run of the current agent and return only the final result to the parent. Legacy `context: fork` parses as `execution: isolated` for existing skills. |
+| `execution: isolated` | Supported through the same-conversation `spawn_run`/delegation runtime. Isolated skill bodies run in a sidechain child run of the current agent and return only the final result to the parent. Legacy `context: fork` parses as `execution: isolated` for existing skills. |
 | `hooks` | Not supported. Lin currently has no skill hook registration layer, so hook frontmatter is ignored. |
 | Agent-managed skill writes | Supported through cc-2.1-style workflows that use existing `file_write`/`file_edit` calls. Writes into registry-recognized skill directories use ordinary file-tool permissions, then the file-tool gateway validates them as feedback, emits audit events, carries rollback metadata, records provenance hashes, and hot-reloads the registry. Agent-written skills are available immediately for slash invocation and, when model-invocable, automatic listing without a separate trust prompt. |
 | Agent-managed agent-definition writes | Not supported. The one-Neva invariant removed agent authoring as a self-definition surface (no `/create-agent` workflow, and the self-definition write gate governs skills only). The single agent, Neva, is configured through the agent-config window (`agentUpdateAgentDefinition`), not by authoring `AGENT.md` files. |

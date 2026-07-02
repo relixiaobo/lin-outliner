@@ -58,7 +58,7 @@ export interface AgentToolPresentation {
 const RUN_STATUS_TOOLS = new Set(['AgentStatus', 'run_status']);
 const RUN_MESSAGE_TOOLS = new Set(['AgentSend', 'run_steer', 'run_amend']);
 const RUN_STOP_TOOLS = new Set(['AgentStop', 'run_stop']);
-const RUN_SPAWN_TOOLS = new Set(['Agent', 'spawn']);
+const RUN_SPAWN_TOOLS = new Set(['Agent', 'spawn', 'spawn_run']);
 
 export function agentToolPresentation(toolCall: ToolCall): AgentToolPresentation {
   const name = toolCall.name;

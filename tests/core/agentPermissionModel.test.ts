@@ -74,7 +74,7 @@ describe('agent permission model', () => {
       'run_status',
       'AgentStatus',
     ]));
-    expect(agentToolNamesForActionKindScope(['agent.delegate.status'], ['*'])).not.toContain('spawn');
+    expect(agentToolNamesForActionKindScope(['agent.delegate.status'], ['*'])).not.toContain('spawn_run');
     expect(agentToolNamesForActionKindScope(['agent.delegate.status'], ['*'])).not.toContain('run_amend');
     expect(agentToolNamesForActionKindScope(['file.read.allowed_file_area'], ['file_read', 'file_write'])).toEqual(['file_read']);
   });

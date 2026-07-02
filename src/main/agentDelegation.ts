@@ -61,6 +61,9 @@ import {
   memoryWorkspaceIdForRoot,
 } from './agentDelegationIdentity';
 import {
+  isRunProfileId,
+  modelSelectableRunProfiles,
+  resolveRunProfile,
   runProfileForIsolatedSkill,
   runProfileForPurpose,
 } from './agentRunProfiles';
@@ -101,7 +104,7 @@ import {
 
 export { recordNodeToolChanges } from './agentDelegationVerificationPolicy';
 
-export const AGENT_DELEGATE_TOOL_NAME = 'spawn';
+export const AGENT_DELEGATE_TOOL_NAME = 'spawn_run';
 export const AGENT_STATUS_TOOL_NAME = 'run_status';
 export const AGENT_SEND_TOOL_NAME = 'run_steer';
 export const AGENT_AMEND_TOOL_NAME = 'run_amend';
@@ -174,6 +177,11 @@ const AGENT_TOOL_PARAMETERS = {
       },
       description: 'Optional budget slice. Detached root goals should provide a ceiling.',
     },
+    runProfile: {
+      type: 'string',
+      enum: modelSelectableRunProfiles().map((profile) => profile.id),
+      description: 'Optional Run profile. Use research for read-only exploration; omit for default work.',
+    },
     context: {
       type: 'string',
       enum: ['full', 'brief', 'none'],
@@ -216,9 +224,9 @@ const AGENT_STATUS_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn.' },
+    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
     agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
-    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn.' },
+    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn_run.' },
     wait: { type: 'boolean', description: 'If true, wait briefly for a running background agent to finish.' },
     timeout_ms: { type: 'integer', minimum: 1, maximum: 120000, description: 'Maximum wait time when wait is true. Default 30000.' },
   },
@@ -229,9 +237,9 @@ const AGENT_SEND_PARAMETERS = {
   additionalProperties: false,
   required: ['message'],
   properties: {
-    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn.' },
+    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
     agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
-    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn.' },
+    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn_run.' },
     message: { type: 'string', minLength: 1, description: 'Soft steering message to send to the existing background run.' },
   },
 };
@@ -240,9 +248,9 @@ const AGENT_STOP_PARAMETERS = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn.' },
+    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
     agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
-    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn.' },
+    name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn_run.' },
   },
 };
 
@@ -251,7 +259,7 @@ const AGENT_AMEND_PARAMETERS = {
   additionalProperties: false,
   required: ['changes'],
   properties: {
-    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn.' },
+    runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
     agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
     changes: {
       type: 'object',
@@ -558,7 +566,7 @@ export class AgentDelegationRuntime {
     if (!listing) return null;
     for (const agent of newAgents) this.listedAgents.set(agent.name, agentListingIdentity(agent));
     return [
-      `You are operating as the agent below. Calling ${AGENT_DELEGATE_TOOL_NAME} forks the current conversation context into an isolated worker that runs as this same agent — it does not select or switch to a different agent:`,
+      `You are operating as the agent below. Calling ${AGENT_DELEGATE_TOOL_NAME} creates a same-agent sub-run in an isolated worker — it does not select or switch to a different agent:`,
       '',
       listing,
     ].join('\n');
@@ -963,7 +971,7 @@ export class AgentDelegationRuntime {
       return {
         ...runToToolData(run),
         status: 'async_launched',
-        instructions: `The run is running in the background. Tenon will notify you automatically when it finishes. Use ${AGENT_STATUS_TOOL_NAME} with agent_id "${run.id}" only when you need an explicit progress check, ${AGENT_SEND_TOOL_NAME} to steer it, ${AGENT_AMEND_TOOL_NAME} to change objective/criteria/budget, or ${AGENT_STOP_TOOL_NAME} to stop it.`,
+        instructions: `The run is running in the background. Tenon will notify you automatically when it finishes. Use ${AGENT_STATUS_TOOL_NAME} with runId "${run.id}" only when you need an explicit progress check, ${AGENT_SEND_TOOL_NAME} to steer it, ${AGENT_AMEND_TOOL_NAME} to change objective/criteria/budget, or ${AGENT_STOP_TOOL_NAME} to stop it.`,
       };
     }
 
@@ -1856,7 +1864,7 @@ export function createAgentDelegationTools(runtime: AgentDelegationRuntime): Age
       name: AGENT_DELEGATE_TOOL_NAME,
       label: 'Spawn Run',
       description: [
-        'Spawn an isolated child Run for a focused objective with explicit acceptance criteria.',
+        'Create a same-agent sub-run for a focused objective with explicit acceptance criteria.',
         'Use context to choose full, brief, or no inherited parent context.',
         'Launch multiple runs in the same turn when independent work can run in parallel.',
         `For long work, set detach and use ${AGENT_STATUS_TOOL_NAME}, ${AGENT_SEND_TOOL_NAME}, ${AGENT_AMEND_TOOL_NAME}, or ${AGENT_STOP_TOOL_NAME} with the returned runId.`,
@@ -2057,12 +2065,12 @@ function buildRunDirective(params: AgentToolParams): string {
     `<${FORK_BOILERPLATE_TAG}>`,
     'STOP. READ THIS FIRST.',
     '',
-    'You are a Tenon child Run. You may decompose your objective by spawning child Runs when that is the most reliable way to finish.',
+    'You are a Tenon child Run. You may decompose your objective by creating sub-runs when that is the most reliable way to finish.',
     '',
     'Controller rules:',
     '1. Stay strictly within the objective and acceptance criteria.',
-    `2. When spawning child Runs, use ${AGENT_DELEGATE_TOOL_NAME} with explicit objective and criteria.`,
-    '3. Verify child results before accepting them as done; spawn replacement work for rejected child results when budget remains.',
+    `2. When creating sub-runs, use ${AGENT_DELEGATE_TOOL_NAME} with explicit objective and criteria.`,
+    '3. Verify sub-run results before accepting them as done; create replacement work for rejected results when budget remains.',
     '4. Do not ask the user questions from this child Run; block with a concise reason if owner input is genuinely required.',
     '5. Keep the final report factual and concise, naming what was verified and any residual gaps.',
     `</${FORK_BOILERPLATE_TAG}>`,
@@ -2291,13 +2299,13 @@ function replaceToolResultText(message: ToolResultMessage, text: string): void {
 }
 
 function normalizeAgentToolParams(raw: unknown): AgentToolParams {
-  if (!isPlainRecord(raw)) throw new Error('Agent input must be an object.');
+  if (!isPlainRecord(raw)) throw new Error(`${AGENT_DELEGATE_TOOL_NAME} input must be an object.`);
   const objective = coerceString(raw.objective)?.trim() || coerceString(raw.prompt)?.trim();
-  if (!objective) throw new Error('spawn input requires objective.');
+  if (!objective) throw new Error(`${AGENT_DELEGATE_TOOL_NAME} input requires objective.`);
   const verify = raw.verify !== false;
   const criteria = coerceStringArray(raw.criteria);
   if (verify && (!criteria || criteria.length === 0)) {
-    throw new Error('spawn input requires at least one criterion unless verify is false.');
+    throw new Error(`${AGENT_DELEGATE_TOOL_NAME} input requires at least one criterion unless verify is false.`);
   }
   const description = coerceString(raw.description)?.trim() || truncate(compactInlineText(objective), 120);
   const prompt = coerceString(raw.prompt)?.trim() || buildObjectivePrompt(objective, criteria);
@@ -2313,6 +2321,7 @@ function normalizeAgentToolParams(raw: unknown): AgentToolParams {
     purpose: normalizeRunPurpose(raw.purpose),
     scope: normalizeRunScope(raw.scope),
     budget: normalizeRunBudgetInput(raw.budget),
+    runProfile: normalizeRequestedRunProfile(raw.runProfile),
     context: normalizeRunContext(raw.context),
     detach: raw.detach === true,
     model: coerceString(raw.model),
@@ -2330,6 +2339,16 @@ function normalizeRunPurpose(value: unknown): AgentRunPurpose {
 
 function normalizeRunContext(value: unknown): AgentRunContextMode {
   return value === 'none' || value === 'brief' || value === 'full' ? value : 'full';
+}
+
+function normalizeRequestedRunProfile(value: unknown): AgentRunProfileId | undefined {
+  if (value === undefined) return undefined;
+  const profileId = coerceString(value)?.trim();
+  if (!profileId) return undefined;
+  if (!isRunProfileId(profileId)) throw new Error(`Unknown runProfile: ${profileId}`);
+  const profile = resolveRunProfile(profileId);
+  if (profile.modelSelectable !== true) throw new Error(`Run profile is not model-selectable: ${profile.id}`);
+  return profile.id;
 }
 
 function normalizeAmendParams(raw: unknown): { runId: string; changes: { objective?: string; criteria?: string[]; budget?: AgentRunBudget } } {
@@ -2420,7 +2439,7 @@ function parsePersistedAgentListingStateLine(line: string): { name: string; iden
 
 function parseLiveAgentListing(text: string): string[] {
   const body = unwrapSystemReminder(text);
-  if (!body.includes(`You are operating as the agent below. Calling ${AGENT_DELEGATE_TOOL_NAME} forks`)) {
+  if (!body.includes(`You are operating as the agent below. Calling ${AGENT_DELEGATE_TOOL_NAME} creates`)) {
     return [];
   }
   return body
