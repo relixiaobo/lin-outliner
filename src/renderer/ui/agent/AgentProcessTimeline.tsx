@@ -18,7 +18,7 @@ import type { AgentTurnProcessItem, AgentTurnToolCallItem } from './agentTurnPro
  * most recent one. The runtime `pendingToolCallIds` set lags a freshly-dispatched
  * batch, and when one assistant fans out parallel tool calls there is a frame where
  * none is in-flight yet — narrowing the spinner to a single call flashed the rest red.
- * A call with a settled `outcome` (or a result, or a child run) is NOT un-settled, so
+ * A call with a settled `outcome` (or a result, or a sub-run) is NOT unsettled, so
  * a completed step never spins forever even if its result message never arrives; once
  * the turn settles `turnActive` goes false and a genuinely-unanswered call resolves to
  * its real error/incomplete state.
@@ -41,7 +41,7 @@ interface AgentProcessTimelineProps {
   index: DocumentIndex;
   items: AgentTurnProcessItem[];
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenChildRunTranscript?: (childRunId: string) => void;
+  onOpenRunTranscript?: (runId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
   conversationId?: string | null;
@@ -56,7 +56,7 @@ export function AgentProcessTimeline({
   index,
   items,
   onNodeReferenceOpen,
-  onOpenChildRunTranscript,
+  onOpenRunTranscript,
   pendingToolCallIds,
   results,
   conversationId,
@@ -131,7 +131,7 @@ export function AgentProcessTimeline({
           expandState.toggle(toolId, expandState.isExpanded(toolId, false), anchorElement);
         }}
         onNodeReferenceOpen={onNodeReferenceOpen}
-        onOpenChildRunTranscript={onOpenChildRunTranscript}
+        onOpenRunTranscript={onOpenRunTranscript}
         pendingToolCallIds={pendingToolCallIds}
         result={results.get(item.toolCall.id)}
         conversationId={conversationId}
@@ -168,7 +168,7 @@ export function AgentProcessTimeline({
                 key={group.id}
                 members={group.members}
                 onNodeReferenceOpen={onNodeReferenceOpen}
-                onOpenChildRunTranscript={onOpenChildRunTranscript}
+                onOpenRunTranscript={onOpenRunTranscript}
                 pendingToolCallIds={pendingToolCallIds}
                 results={results}
                 subRunsByParentToolCallId={subRunsByParentToolCallId}

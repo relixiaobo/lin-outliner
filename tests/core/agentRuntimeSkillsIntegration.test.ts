@@ -1391,10 +1391,10 @@ describe('agent runtime skill integration', () => {
     expect(childTools).not.toContain('operation_history');
     expect(childTools).not.toContain('bash');
     expect(childTools).not.toContain('skill');
-    expect(childTools).not.toContain('Agent');
-    expect(childTools).not.toContain('AgentStatus');
-    expect(childTools).not.toContain('AgentSend');
-    expect(childTools).not.toContain('AgentStop');
+    expect(childTools).not.toContain('spawn_run');
+    expect(childTools).not.toContain('run_status');
+    expect(childTools).not.toContain('run_steer');
+    expect(childTools).not.toContain('run_stop');
     expect(parentContexts.join('\n')).toContain('Research child inspected available context.');
     const runMetas = await new AgentEventStore(dataRoot).listConversationRunMetaProjections(created.conversationId);
     const researchMeta = runMetas.find((meta) => meta.runProfile === 'research');

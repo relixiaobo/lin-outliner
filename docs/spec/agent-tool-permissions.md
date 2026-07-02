@@ -121,7 +121,7 @@ sandbox, or user blocklist rule matches:
 - network reads such as search/fetch;
 - external CLI actions such as `git push`, `gh pr create`, deploy commands, and
   message sends;
-- local control-plane actions such as child-run `spawn`, `run_status`,
+- local control-plane actions such as sub-run `spawn_run`, `run_status`,
   `run_steer`, `run_amend`, `run_stop`, skill invocation, task stop, Dream, and
   whitelisted runtime config writes.
 

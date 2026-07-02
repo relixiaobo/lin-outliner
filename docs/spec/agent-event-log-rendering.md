@@ -1010,21 +1010,21 @@ Rules:
   that same body area to the second-level run detail view. The first level lists
   non-turn, non-Dream runs across channels as a compact task-list tree using
   `parentRunId`: each row shows the shared checkbox marker on the left, the run
-  title as the primary text. Rows with direct child runs add one muted secondary
-  line containing only an inline `Child run(s) completed/total` disclosure
+  title as the primary text. Rows with direct sub-runs add one muted secondary
+  line containing only an inline `Sub-run(s) completed/total` disclosure
   control; that control alone expands/collapses children, while clicking the rest
-  of the row opens its detail view. Rows without child runs show no secondary
+  of the row opens its detail view. Rows without sub-runs show no secondary
   metadata. Running rows additionally reveal a Stop action on
-  hover/focus. Expanded child runs render as checklist-style subrows below the
+  hover/focus. Expanded sub-runs render as checklist-style subrows below the
   parent content without separator lines or strong tree chrome; verifier
-  child runs display as the concise "Verifier" row rather than exposing their
+  verifier sub-runs display as the concise "Verifier" row rather than exposing their
   internal verification prompt. There is no separate trailing disclosure column,
   and hover never paints a separate subrow rectangle that fights the tree
   alignment. The detail view is a read-only
   drill-in, not a second chat surface: it reuses the same dock-header model with
   the run-detail navigation row (`Back to runs · Agent run · status`) and the
   Work/Runs toolbar icon still acting as the close affordance. The
-  detail body shows the run title, Result, direct child Runs (or Verification when
+  detail body shows the run title, Result, direct sub-runs (or Verification when
   the only direct children are verifier runs), a collapsed Activity log, and
   collapsed Technical details in a single scroll flow. Result is plain read-only markdown content:
   its copy affordance belongs to the Result section header, and GFM task-list
@@ -1146,7 +1146,7 @@ Rules:
 - **Consecutive tool calls fold into one counted activity group** (Codex's
   render-group split, `splitTimelineIntoGroups`/`summarizeToolActivity` in
   `agentRenderGroups.ts`). Inside the visible process timeline, a maximal run of
-  ≥2 adjacent tool calls, including child-run tool calls such as `Agent`/`spawn`,
+  ≥2 adjacent tool calls, including sub-run tool calls such as `spawn_run`,
   collapses into a single `AgentToolActivityGroup` disclosure whose header is the
   counted summary, expandable to the member rows. A thinking or narration block
   and a **loaded-skill chip** (a compact glanceable affordance, not an expandable
@@ -1227,14 +1227,14 @@ Rules:
   needs per-reasoning-item timing we do not track); the sealed label **is** adopted,
   with the full thinking kept one click away in the body so nothing the user watched
   stream is lost.
-- **One assistant-turn renderer.** The conversation transcript and the child-run
+- **One assistant-turn renderer.** The conversation transcript and the Run
   task detail timeline both render assistant content through the
   same assistant turn process components. The task detail panel reads a raw
-  child-run transcript, but only adapts it into normal transcript rows; it does
+  selected Run transcript, but only adapts it into normal transcript rows; it does
   not own separate thinking/tool/result UI. A running task only marks the
   transcript's last assistant turn live when that turn is actually unfinished
   (pending tool call or null stop reason); task-level running status stays in the
-  panel header/actions. The child-run adapter also threads the run terminal
+  panel header/actions. The Run-detail adapter also threads the run terminal
   status and wall-clock into the last assistant row, skips hidden-only context
   user rows, and renders orphan tool results as capped plain text rather than
   markdown. This keeps the differences at the data-adapter boundary instead of

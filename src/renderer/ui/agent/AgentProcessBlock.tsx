@@ -34,7 +34,7 @@ interface AgentProcessBlockProps {
   expandState: AgentExpandState;
   index: DocumentIndex;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenChildRunTranscript?: (childRunId: string) => void;
+  onOpenRunTranscript?: (runId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   process: AgentTurnProcessProjection;
   results: Map<string, AgentToolResultWithPayloads>;
@@ -235,7 +235,7 @@ export function AgentProcessBlock({
   expandState,
   index,
   onNodeReferenceOpen,
-  onOpenChildRunTranscript,
+  onOpenRunTranscript,
   pendingToolCallIds,
   process,
   results,
@@ -293,7 +293,7 @@ export function AgentProcessBlock({
           index={index}
           items={items}
           onNodeReferenceOpen={onNodeReferenceOpen}
-          onOpenChildRunTranscript={onOpenChildRunTranscript}
+          onOpenRunTranscript={onOpenRunTranscript}
           pendingToolCallIds={pendingToolCallIds}
           results={results}
           conversationId={conversationId}

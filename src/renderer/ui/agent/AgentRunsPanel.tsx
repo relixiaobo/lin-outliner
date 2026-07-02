@@ -90,12 +90,12 @@ function runDisplayTitle(run: AgentRunListEntry, labels: Messages['agent']['run'
   return run.title;
 }
 
-function runChildProgressLabel(
+function subRunProgressLabel(
   completed: number,
   total: number,
   labels: Messages['agent']['run'],
 ): string {
-  return labels.childRunProgress({ completed, total });
+  return labels.subRunProgress({ completed, total });
 }
 
 export function AgentRunsPanel({
@@ -201,7 +201,7 @@ export function AgentRunsPanel({
             const completed = isCompletedRun(run);
             const completedChildCount = node.children.filter((child) => isCompletedRun(child.run)).length;
             const childProgress = hasChildren
-              ? runChildProgressLabel(completedChildCount, node.children.length, t.agent.run)
+              ? subRunProgressLabel(completedChildCount, node.children.length, t.agent.run)
               : null;
             const rowClassName = [
               'agent-run-row',

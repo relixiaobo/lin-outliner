@@ -788,7 +788,7 @@ describe('agent event log', () => {
     const events: AgentEvent[] = [
       { ...base(1, 'conversation.created'), title: 'Untitled' },
       {
-        ...base(2, 'run.started', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        ...base(2, 'run.started', { type: 'tool', toolName: 'spawn_run', toolCallId: 'tool-agent-1' }),
         runId: 'child-1',
         agentId: 'built-in:tenon:assistant',
         trigger: { type: 'parent-run', parentRunId: 'run-parent' },
@@ -798,7 +798,7 @@ describe('agent event log', () => {
         runProfile: 'research',
       },
       {
-        ...base(3, 'run.completed', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        ...base(3, 'run.completed', { type: 'tool', toolName: 'spawn_run', toolCallId: 'tool-agent-1' }),
         runId: 'child-1',
       },
     ];
@@ -819,7 +819,7 @@ describe('agent event log', () => {
     const resumed = replayAgentEvents([
       ...events,
       {
-        ...base(4, 'run.started', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        ...base(4, 'run.started', { type: 'tool', toolName: 'spawn_run', toolCallId: 'tool-agent-1' }),
         runId: 'child-1',
         agentId: 'built-in:tenon:assistant',
         trigger: { type: 'parent-run', parentRunId: 'run-parent' },
@@ -832,16 +832,16 @@ describe('agent event log', () => {
     const events: AgentEvent[] = [
       { ...base(1, 'conversation.created'), title: 'Untitled' },
       {
-        ...base(2, 'run.started', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        ...base(2, 'run.started', { type: 'tool', toolName: 'spawn_run', toolCallId: 'tool-agent-1' }),
         runId: 'child-1',
         agentId: 'built-in:tenon:assistant',
       },
       {
-        ...base(3, 'run.completed', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        ...base(3, 'run.completed', { type: 'tool', toolName: 'spawn_run', toolCallId: 'tool-agent-1' }),
         runId: 'child-1',
       },
       {
-        ...base(4, 'run.failed', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        ...base(4, 'run.failed', { type: 'tool', toolName: 'spawn_run', toolCallId: 'tool-agent-1' }),
         runId: 'child-1',
         errorMessage: 'late failure',
       },

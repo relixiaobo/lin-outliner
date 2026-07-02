@@ -1142,7 +1142,7 @@ export class AgentEventStore {
   // Both run indexes are read-modify-write on a shared file reached from TWO
   // serial queues (the per-run ledger queue and the per-conversation event
   // queue), so the merge itself must serialize on `indexQueue` — otherwise a
-  // child-run append racing a parent conversation append writes back a stale
+  // delegated Run append racing a parent conversation append writes back a stale
   // runIds list and permanently drops a finished run from the index (cold
   // replay then silently misses that run's events; the index only self-heals
   // on a missing FILE, not a missing entry).

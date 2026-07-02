@@ -9,14 +9,14 @@ import {
 } from '../core/agentMarkdown';
 import type {
   AgentMessage,
-  AgentChildRunActionResult,
-  AgentChildRunChildStatus,
-  AgentChildRunFileChanges,
-  AgentChildRunNodeChanges,
+  AgentRunActionResult,
+  AgentSubRunStatus,
+  AgentRunFileChanges,
+  AgentRunNodeChanges,
 } from '../core/agentTypes';
 import { systemReminder } from '../core/agentAttachments';
 import type {
-  AgentChildRunRecord,
+  DelegationRunRecord,
   AgentRunContextMode,
   AgentObjectiveStatus,
   AgentRunBudget,
@@ -98,7 +98,7 @@ import {
   recordToolTrace,
   recordWorkingSetDiff,
   sameTailCount,
-  type AgentChildRunToolTraceEntry,
+  type AgentRunToolTraceEntry,
   verifierGapSignature,
 } from './agentDelegationVerificationPolicy';
 
@@ -114,7 +114,7 @@ const AGENT_LISTING_CONTEXT_PERCENT = 0.01;
 const CHARS_PER_TOKEN = 4;
 const DEFAULT_AGENT_LISTING_CHAR_BUDGET = 8_000;
 const MAX_LISTING_DESCRIPTION_CHARS = 250;
-const MAX_CONCURRENT_CHILD_RUNS = 4;
+const MAX_CONCURRENT_SUB_RUNS = 4;
 const DEFAULT_MAX_DELEGATION_DEPTH = 12;
 const FORK_AGENT_TYPE = 'fork';
 const FORK_BOILERPLATE_TAG = 'lin-fork-child';
@@ -197,19 +197,10 @@ const AGENT_TOOL_PARAMETERS = {
       maxLength: 200,
       description: 'Optional short 3-5 word description for the Work/Runs panel.',
     },
-    prompt: {
-      type: 'string',
-      minLength: 1,
-      description: 'Legacy alias for objective. Prefer objective.',
-    },
     model: {
       type: 'string',
       minLength: 1,
       description: 'Optional model override. Takes precedence over the agent definition model. If omitted, uses the agent definition model or inherits the parent model.',
-    },
-    run_in_background: {
-      type: 'boolean',
-      description: 'Legacy alias for detach.',
     },
     name: {
       type: 'string',
@@ -225,7 +216,6 @@ const AGENT_STATUS_PARAMETERS = {
   additionalProperties: false,
   properties: {
     runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
-    agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
     name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn_run.' },
     wait: { type: 'boolean', description: 'If true, wait briefly for a running background agent to finish.' },
     timeout_ms: { type: 'integer', minimum: 1, maximum: 120000, description: 'Maximum wait time when wait is true. Default 30000.' },
@@ -238,7 +228,6 @@ const AGENT_SEND_PARAMETERS = {
   required: ['message'],
   properties: {
     runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
-    agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
     name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn_run.' },
     message: { type: 'string', minLength: 1, description: 'Soft steering message to send to the existing background run.' },
   },
@@ -249,7 +238,6 @@ const AGENT_STOP_PARAMETERS = {
   additionalProperties: false,
   properties: {
     runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
-    agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
     name: { type: 'string', minLength: 1, description: 'The same-session run name passed to spawn_run.' },
   },
 };
@@ -260,7 +248,6 @@ const AGENT_AMEND_PARAMETERS = {
   required: ['changes'],
   properties: {
     runId: { type: 'string', minLength: 1, description: 'The run id returned by spawn_run.' },
-    agent_id: { type: 'string', minLength: 1, description: 'Legacy alias for runId.' },
     changes: {
       type: 'object',
       additionalProperties: false,
@@ -275,7 +262,7 @@ const AGENT_AMEND_PARAMETERS = {
 
 
 
-export type AgentDelegateToolData = AgentChildRunActionResult;
+export type AgentDelegateToolData = AgentRunActionResult;
 
 export interface AgentChildAgentCreateInput {
   conversationId: string;
@@ -332,27 +319,27 @@ export interface AgentDelegationRuntimeHost {
    * ([[agent-run-unification]] Design 1) — context messages (fork prefix)
    * before `run.started`, the directive after it.
    */
-  childRunStarted(
-    snapshot: AgentChildRunSnapshot,
+  runStarted(
+    snapshot: AgentRunSnapshot,
     seed: { contextMessages: readonly AgentMessage[]; evidenceMessages: readonly AgentMessage[] },
   ): Promise<void>;
   /** A completed child message (user / assistant / toolResult) → child ledger. */
-  childRunMessage(snapshot: AgentChildRunSnapshot, message: AgentMessage): Promise<void>;
+  runMessage(snapshot: AgentRunSnapshot, message: AgentMessage): Promise<void>;
   /** A slimming replacement of an earlier tool result → `tool_result.replaced` in the child ledger. */
-  childRunToolResultReplaced(snapshot: AgentChildRunSnapshot, toolCallId: string, text: string): Promise<void>;
+  runToolResultReplaced(snapshot: AgentRunSnapshot, toolCallId: string, text: string): Promise<void>;
   /** Event-sourced run compaction (Design 4). */
-  childRunCompacted(
-    snapshot: AgentChildRunSnapshot,
+  runCompacted(
+    snapshot: AgentRunSnapshot,
     input: { postCompactMessage: AgentMessage; summary: string; trigger: 'auto' | 'reactive' },
   ): Promise<void>;
-  childRunResultSubmitted(
-    snapshot: AgentChildRunSnapshot,
+  runResultSubmitted(
+    snapshot: AgentRunSnapshot,
     input: { summary: string; source: AgentRunSubmissionSource },
   ): Promise<AgentRunSubmissionProjection | null>;
   readLatestRunSubmission?(runId: string): Promise<AgentRunSubmissionProjection | undefined>;
   /** Status transition: Run metadata + run lifecycle event in the run ledger. */
-  childRunStatusChanged(snapshot: AgentChildRunSnapshot): Promise<void>;
-  notifyChildRun(snapshot: AgentChildRunSnapshot): Promise<void>;
+  runStatusChanged(snapshot: AgentRunSnapshot): Promise<void>;
+  notifyRun(snapshot: AgentRunSnapshot): Promise<void>;
   reportError?(report: ErrorReport): void;
   /**
    * Re-register the run's ledger writer and re-derive its transcript from the
@@ -360,7 +347,7 @@ export interface AgentDelegationRuntimeHost {
    * only; transcripts load lazily here). Null when no ledger exists; the
    * writer is then registered empty so the continuation can still record.
    */
-  restoreChildRunLedger(runId: string): Promise<AgentMessage[] | null>;
+  restoreRunLedger(runId: string): Promise<AgentMessage[] | null>;
   persistToolOutputPayload(
     toolCallId: string,
     toolName: string,
@@ -435,9 +422,9 @@ interface DelegationRunState extends DelegationDetail {
   incomplete?: boolean;
   preapprovedToolRules?: string[];
   toolResultBudgetState: ToolResultBudgetState;
-  nodeChanges: AgentChildRunNodeChanges;
-  fileChanges: AgentChildRunFileChanges;
-  toolTrace: AgentChildRunToolTraceEntry[];
+  nodeChanges: AgentRunNodeChanges;
+  fileChanges: AgentRunFileChanges;
+  toolTrace: AgentRunToolTraceEntry[];
   verifierGapSignatures: string[];
   latestSubmission?: AgentRunSubmissionProjection;
   submittedResult?: string;
@@ -455,14 +442,14 @@ type RunningSlotReservation = () => void;
  * (the runtime record's persistable half), carried to the host callbacks that
  * write the conversation markers and notifications.
  */
-export type AgentChildRunSnapshot = DelegationDetail;
+export type AgentRunSnapshot = DelegationDetail;
 
 interface AgentToolParams {
   objective: string;
   criteria?: string[];
   verify: boolean;
   description: string;
-  prompt: string;
+  runPrompt: string;
   purpose: AgentRunPurpose;
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
@@ -471,7 +458,6 @@ interface AgentToolParams {
   detach?: boolean;
   model?: string;
   effort?: string;
-  run_in_background?: boolean;
   name?: string;
   allowedTools?: string[];
   preapprovedToolRules?: string[];
@@ -491,7 +477,7 @@ interface AgentToolParams {
   unattended?: boolean;
 }
 
-export interface AgentChildRunSkillInput {
+export interface AgentRunSkillInput {
   skillName: string;
   description: string;
   renderedContent: string;
@@ -604,12 +590,12 @@ export class AgentDelegationRuntime {
   }
 
   /**
-   * Register persisted child-run records on conversation restore. Records only
+   * Register persisted delegated Run records on conversation restore. Records only
    * — no transcript IO: a run's messages are replayed from its own ledger
-   * lazily, on first resume (`send` → host.restoreChildRunLedger). Drill-in
+   * lazily, on first resume (`send` → host.restoreRunLedger). Drill-in
    * reads never touch this state (they replay the ledger directly).
    */
-  restorePersistedRuns(records: readonly AgentChildRunRecord[]): void {
+  restorePersistedRuns(records: readonly DelegationRunRecord[]): void {
     for (const record of records) {
       if (this.runs.has(record.id)) continue;
       // The descriptive half carries over verbatim — the durable record IS a
@@ -661,7 +647,7 @@ export class AgentDelegationRuntime {
   }
 
   async invokeSkillChildAgent(
-    input: AgentChildRunSkillInput,
+    input: AgentRunSkillInput,
     signal?: AbortSignal,
     parentToolCallId?: string,
   ): Promise<AgentDelegateToolData> {
@@ -672,13 +658,12 @@ export class AgentDelegationRuntime {
         criteria: undefined,
         verify: false,
         description: compactInlineText(input.description) || `skill ${input.skillName}`,
-        prompt: input.renderedContent,
+        runPrompt: input.renderedContent,
         purpose: 'work',
         context: 'none',
         runProfile: runProfileForIsolatedSkill(input.readOnlyIsolated),
         model: input.model,
         effort: input.effort,
-        run_in_background: false,
         allowedTools: input.readOnlyIsolated ? readOnlyAgentToolNames(input.allowedTools) : undefined,
         preapprovedToolRules: input.allowedTools,
       }, releaseStartupSlot, signal, parentToolCallId);
@@ -722,7 +707,7 @@ export class AgentDelegationRuntime {
       // transcript actually loads. A missing ledger degrades to an empty
       // context (the writer is registered empty), keeping the run resumable.
       if (!run.agent) {
-        const restored = await this.host.restoreChildRunLedger(run.id);
+        const restored = await this.host.restoreRunLedger(run.id);
         run.messages = (restored ?? []).map(cloneAgentMessage);
         run.toolResultBudgetState = restoreToolResultBudgetStateFromAgentMessages(run.messages);
       }
@@ -747,7 +732,7 @@ export class AgentDelegationRuntime {
       // salvage on a later `stop` starts after it (the new prompt + response
       // appended by `runChildAgent` below come after this floor).
       run.salvageFromIndex = run.agent ? run.agent.state.messages.length : 0;
-      await this.host.childRunStatusChanged(snapshotRun(run));
+      await this.host.runStatusChanged(snapshotRun(run));
       releaseStartupSlot();
       run.completion = this.runChildAgent(run, [message], undefined, true);
       return { ...runToToolData(run), status: 'queued', instructions: 'Agent continuation started in the background.' };
@@ -759,7 +744,7 @@ export class AgentDelegationRuntime {
 
   async amend(rawParams: unknown): Promise<AgentDelegateToolData> {
     const params = normalizeAmendParams(rawParams);
-    const run = this.resolveRun({ agent_id: params.runId });
+    const run = this.resolveRun({ runId: params.runId });
     this.assertRunControllable(run, 'amend');
     if (params.changes.objective !== undefined) {
       run.objective = params.changes.objective;
@@ -791,7 +776,7 @@ export class AgentDelegationRuntime {
     run.blockedReason = undefined;
     run.latestVerifierGap = undefined;
     run.updatedAt = Date.now();
-    await this.host.childRunStatusChanged(snapshotRun(run));
+    await this.host.runStatusChanged(snapshotRun(run));
     return {
       ...runToToolData(run),
       instructions: 'Run objective metadata was amended. Existing verifier conclusions are invalidated; use run_steer to provide execution guidance if needed.',
@@ -826,7 +811,7 @@ export class AgentDelegationRuntime {
       // (`run.agent === agent`) fail, so its settleRunBudget never runs and the
       // parent's token reservation would otherwise leak permanently.
       settleRunBudget(run);
-      await this.host.childRunStatusChanged(snapshotRun(run));
+      await this.host.runStatusChanged(snapshotRun(run));
       if (run.detached) void this.notifyTerminalRun(run).catch(() => undefined);
     }
     return runToToolData(run);
@@ -856,7 +841,7 @@ export class AgentDelegationRuntime {
     const executingAgentId = parentAgentId;
     const memoryOwnerAgentId = parentMemoryOwnerAgentId;
     const memoryOriginWorkspace = memoryWorkspaceIdForRoot(this.localRoot);
-    const background = params.detach === true || params.run_in_background === true || definition.background === true;
+    const background = params.detach === true || definition.background === true;
     const now = Date.now();
     const parentBudget = params.parentBudget ?? this.inheritedBudget;
     const budget = admitRunBudget(parentBudget, params.budget, now, background);
@@ -904,7 +889,7 @@ export class AgentDelegationRuntime {
       id: runId,
       name,
       description: params.description,
-      prompt: params.prompt,
+      prompt: params.runPrompt,
       objective: params.objective,
       criteria: params.criteria,
       objectiveStatus: params.verify ? 'active' : undefined,
@@ -958,7 +943,7 @@ export class AgentDelegationRuntime {
     this.subscribeToChild(run);
     this.installRunContextTransform(run);
     try {
-      await this.host.childRunStarted(snapshotRun(run), { contextMessages, evidenceMessages });
+      await this.host.runStarted(snapshotRun(run), { contextMessages, evidenceMessages });
     } catch (error) {
       // runChildAgent has not been wired yet, so settle here to avoid leaking the
       // parent reservation if the start announcement throws.
@@ -1010,7 +995,7 @@ export class AgentDelegationRuntime {
   }> {
     const childConversationId = `${this.hostConversationPrefix()}-${input.runId}`;
     const runtimeSettings = await this.host.getRuntimeSettings();
-    let childRuntime: AgentDelegationRuntime;
+    let subRunRuntime: AgentDelegationRuntime;
     let childAgent: Agent | null = null;
     const skillRuntime = new AgentSkillRuntime({
       localRoot: this.localRoot,
@@ -1018,7 +1003,7 @@ export class AgentDelegationRuntime {
       provenanceStore: createAgentSkillProvenanceStore(),
       conversationId: childConversationId,
       executeIsolatedSkill: async ({ skill, renderedContent, parentToolCallId, readOnlyIsolated }) => {
-        const data = await childRuntime.invokeSkillChildAgent({
+        const data = await subRunRuntime.invokeSkillChildAgent({
           skillName: skill.name,
           description: skill.description,
           renderedContent,
@@ -1028,8 +1013,8 @@ export class AgentDelegationRuntime {
           readOnlyIsolated,
         }, undefined, parentToolCallId);
         return {
-          agentId: data.agent_id,
-          agentType: data.agent_type,
+          runId: data.runId,
+          runProfile: data.runProfile,
           status: data.status,
           result: data.result,
           error: data.error,
@@ -1038,11 +1023,10 @@ export class AgentDelegationRuntime {
     });
     skillRuntime.updateDisabledSkills(runtimeSettings.disabledSkills ?? []);
     const localWorkspace = createAgentLocalWorkspaceContext(this.localRoot, this.scratchRoot, skillRuntime);
-    // A fork runs AS its spawner, so it INHERITS the spawner's approval attribution
-    // (undefined when the spawner is the user's own top agent). The child's runtime
-    // carries it so the child's OWN forks inherit it in turn.
+    // A sub-run runs AS its spawner, so it inherits the spawner's approval
+    // attribution. The nested runtime carries it so deeper sub-runs inherit it.
     const requestedByAgentId = this.requestedByAgentId;
-    childRuntime = new AgentDelegationRuntime({
+    subRunRuntime = new AgentDelegationRuntime({
       conversationId: childConversationId,
       executingAgentId: input.executingAgentId,
       memoryOwnerAgentId: input.memoryOwnerAgentId,
@@ -1054,10 +1038,10 @@ export class AgentDelegationRuntime {
       ancestry: [...this.ancestry, input.definition.name],
       scope: input.scope,
       budget: input.budget,
-      // A grandchild's parent run is THIS child run — the run tree chains.
+      // A nested sub-run's parent run is THIS Run; the run tree chains.
       host: this.buildChildHost(() => input.runId, () => childAgent),
     });
-    childRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
+    subRunRuntime.updateDisabledAgents(runtimeSettings.disabledAgents ?? []);
     const systemPrompt = this.host.getParentSystemPrompt();
     childAgent = this.host.createChildAgent({
       conversationId: childConversationId,
@@ -1074,7 +1058,7 @@ export class AgentDelegationRuntime {
       maxTurns: input.definition.maxTurns,
       skillRuntime,
       localWorkspace,
-      delegationRuntime: childRuntime,
+      delegationRuntime: subRunRuntime,
       allowedTools: input.definition.tools,
       disallowedTools: input.definition.disallowedTools,
       preapprovedToolRules: input.preapprovedToolRules,
@@ -1124,15 +1108,15 @@ export class AgentDelegationRuntime {
           // Best-effort (a ledger write must not abort the live run), but never
           // silent: a persistently failing append means the drill-in transcript
           // and Dream evidence silently fall behind the live run.
-          void this.host.childRunMessage(snapshotRun(run), event.message as AgentMessage).catch((error) => {
-            const message = `Failed to append a child-run message to the ${run.id} ledger: ${error instanceof Error ? error.message : String(error)}`;
+          void this.host.runMessage(snapshotRun(run), event.message as AgentMessage).catch((error) => {
+            const message = `Failed to append a Run message to the ${run.id} ledger: ${error instanceof Error ? error.message : String(error)}`;
             if (this.host.reportError) {
               this.host.reportError({
                 domain: 'persistence',
                 severity: 'warn',
-                code: 'child-run-message-ledger-failed',
+                code: 'run-message-ledger-failed',
                 message,
-                context: { runId: run.id, operation: 'childRunMessage' },
+                context: { runId: run.id, operation: 'runMessage' },
                 error,
               });
             } else {
@@ -1249,7 +1233,7 @@ export class AgentDelegationRuntime {
       if (signal && !detached) signal.removeEventListener('abort', abort);
       if (run.agent === agent) {
         if (run.status !== 'running') settleRunBudget(run);
-        await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+        await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
         if (detached) void this.notifyTerminalRun(run).catch(() => undefined);
       }
     }
@@ -1262,7 +1246,7 @@ export class AgentDelegationRuntime {
     if (!summary) return;
     if (run.submittedResult === summary) return;
     try {
-      const submission = await this.host.childRunResultSubmitted(snapshotRun(run), {
+      const submission = await this.host.runResultSubmitted(snapshotRun(run), {
         summary,
         source: 'final_assistant_message',
       });
@@ -1301,7 +1285,7 @@ export class AgentDelegationRuntime {
     if (run.objectiveStatus === 'verified') return;
     run.objectiveStatus = 'verifying';
     run.updatedAt = Date.now();
-    await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+    await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
 
     run.verificationAttempts += 1;
     // The verifier runs AFTER the work completed, so the work run's wall-clock
@@ -1323,13 +1307,12 @@ export class AgentDelegationRuntime {
         criteria: ['Return a JSON verdict that independently checks every acceptance criterion.'],
         verify: false,
         description: `verify ${run.description}`,
-        prompt: verifierObjective,
+        runPrompt: verifierObjective,
         purpose: 'verify',
         context: 'none',
         runProfile: 'verify',
         scope: verifierRunScope(this.inheritedScope),
         budget: verifierBudgetForRun(run),
-        run_in_background: false,
         allowedTools: readOnlyAgentToolNames(),
         parentRunId: run.id,
         parentBudget: run.budget,
@@ -1340,11 +1323,11 @@ export class AgentDelegationRuntime {
       run.objectiveStatus = 'blocked';
       run.blockedReason = `Verifier failed to start: ${errorMessage(error)}`;
       run.updatedAt = Date.now();
-      await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+      await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
       return;
     }
 
-    run.verifierRunIds.push(verifier.agent_id);
+    run.verifierRunIds.push(verifier.runId);
     // A verifier that did not itself complete (model error, context overflow,
     // abort) produced no verdict. Treat that as inconclusive — block for triage
     // — never as a `fail` verdict, which would fabricate a phantom gap and burn
@@ -1353,7 +1336,7 @@ export class AgentDelegationRuntime {
       run.objectiveStatus = 'blocked';
       run.blockedReason = `Verification could not complete: ${verifier.error?.trim() || 'verifier returned no verdict'}.`;
       run.updatedAt = Date.now();
-      await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+      await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
       return;
     }
     const verdict = parseVerifierVerdict(verifier.result);
@@ -1402,7 +1385,7 @@ export class AgentDelegationRuntime {
     const releaseStartupSlot = this.reserveRunningSlot();
     try {
       if (!run.agent) {
-        const restored = await this.host.restoreChildRunLedger(run.id);
+        const restored = await this.host.restoreRunLedger(run.id);
         run.messages = (restored ?? []).map(cloneAgentMessage);
         run.toolResultBudgetState = restoreToolResultBudgetStateFromAgentMessages(run.messages);
       }
@@ -1419,7 +1402,7 @@ export class AgentDelegationRuntime {
       run.terminalNotificationSent = false;
       run.updatedAt = Date.now();
       run.salvageFromIndex = run.agent ? run.agent.state.messages.length : 0;
-      await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+      await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
       releaseStartupSlot();
       run.completion = this.runChildAgent(
         run,
@@ -1433,7 +1416,7 @@ export class AgentDelegationRuntime {
       run.objectiveStatus = 'blocked';
       run.blockedReason = `Verifier rejected this controller, and re-plan failed to start: ${errorMessage(error)}`;
       run.updatedAt = Date.now();
-      await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+      await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
       return;
     }
   }
@@ -1448,7 +1431,7 @@ export class AgentDelegationRuntime {
     run.blockedReason = `Verifier rejected this worker attempt: ${verifierGap || 'unspecified gap'}`;
     run.updatedAt = Date.now();
     settleRunBudget(run);
-    await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+    await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
 
     const releaseStartupSlot = this.reserveRunningSlot();
     const objective = run.objective ?? run.prompt ?? run.description ?? 'Continue the verified run objective.';
@@ -1459,7 +1442,7 @@ export class AgentDelegationRuntime {
         criteria: run.criteria,
         verify: true,
         description: run.description,
-        prompt: buildObjectivePrompt(retryObjective, run.criteria),
+        runPrompt: buildObjectivePrompt(retryObjective, run.criteria),
         purpose: 'work',
         scope: run.scope,
         budget: retryBudgetSlice(run.budget),
@@ -1468,7 +1451,6 @@ export class AgentDelegationRuntime {
         detach: detached,
         model: run.definition?.model === 'inherit' ? undefined : run.definition?.model,
         effort: run.definition?.effort,
-        run_in_background: detached,
         allowedTools: run.definition?.tools,
         preapprovedToolRules: run.preapprovedToolRules,
         parentRunId: run.parentRunId,
@@ -1477,19 +1459,19 @@ export class AgentDelegationRuntime {
         inheritedVerifierRunIds: run.verifierRunIds,
         unattended: run.unattended,
       }, releaseStartupSlot, signal, run.parentToolCallId);
-      run.blockedReason = `${run.blockedReason}; replacement run ${replacement.agent_id} started.`;
+      run.blockedReason = `${run.blockedReason}; replacement run ${replacement.runId} started.`;
       // The replacement carries the objective forward and will fire its own
       // terminal notification; suppress this superseded attempt's so the user is
       // not told a rejected run "completed" and then notified again.
       run.terminalNotificationSent = true;
       run.updatedAt = Date.now();
-      await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+      await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
       return replacement;
     } catch (error) {
       releaseStartupSlot();
       run.blockedReason = `Verifier rejected this worker attempt, and replacement failed to start: ${errorMessage(error)}`;
       run.updatedAt = Date.now();
-      await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
+      await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
       return;
     }
   }
@@ -1498,7 +1480,7 @@ export class AgentDelegationRuntime {
     if (run.status === 'running') return;
     if (run.terminalNotificationSent) return;
     run.terminalNotificationSent = true;
-    await this.host.notifyChildRun(snapshotRun(run));
+    await this.host.notifyRun(snapshotRun(run));
   }
 
   private installRunContextTransform(run: DelegationRunState): void {
@@ -1521,7 +1503,7 @@ export class AgentDelegationRuntime {
     if (!text || text.length <= DEFAULT_MAX_TOOL_RESULT_CHARS) return undefined;
 
     try {
-      const persisted = await this.host.persistToolOutputPayload(childRunToolOutputPayloadId(run, toolCallId), toolName, text);
+      const persisted = await this.host.persistToolOutputPayload(runToolOutputPayloadId(run, toolCallId), toolName, text);
       run.toolResultBudgetState.seenIds.add(toolCallId);
       run.toolResultBudgetState.replacements.set(toolCallId, persisted.label);
       return {
@@ -1555,7 +1537,7 @@ export class AgentDelegationRuntime {
       if (!message || message.role !== 'toolResult') continue;
       if (toolResultText(message) === candidate.replacement) continue;
       replaceToolResultText(message, candidate.replacement);
-      void this.host.childRunToolResultReplaced(snapshotRun(run), candidate.toolCallId, candidate.replacement).catch(() => undefined);
+      void this.host.runToolResultReplaced(snapshotRun(run), candidate.toolCallId, candidate.replacement).catch(() => undefined);
       changed = true;
     }
 
@@ -1565,7 +1547,7 @@ export class AgentDelegationRuntime {
       if (!message || message.role !== 'toolResult') continue;
       try {
         const persisted = await this.host.persistToolOutputPayload(
-          childRunToolOutputPayloadId(run, candidate.toolCallId),
+          runToolOutputPayloadId(run, candidate.toolCallId),
           candidate.toolName,
           candidate.contentText,
         );
@@ -1573,7 +1555,7 @@ export class AgentDelegationRuntime {
         run.toolResultBudgetState.seenIds.add(candidate.toolCallId);
         run.toolResultBudgetState.replacements.set(candidate.toolCallId, persisted.label);
         // The ledger records what the model sees from here on (`tool_result.replaced`).
-        void this.host.childRunToolResultReplaced(snapshotRun(run), candidate.toolCallId, persisted.label).catch(() => undefined);
+        void this.host.runToolResultReplaced(snapshotRun(run), candidate.toolCallId, persisted.label).catch(() => undefined);
         changed = true;
       } catch {
         run.toolResultBudgetState.seenIds.add(candidate.toolCallId);
@@ -1627,10 +1609,10 @@ export class AgentDelegationRuntime {
         `${this.conversationId}-${run.id}-${trigger}-compact`,
         messages,
         model,
-        // Every child run is a fork (the one-Neva invariant): omit copied parent
+        // Every sub-run follows the one-Neva invariant: omit copied parent
         // context that only predates the fork assignment; preserve the assignment,
-        // child run actions, user follow-ups, and final result.
-        'This is a fork child run transcript. Omit copied parent conversation context that only predates the fork assignment; preserve the fork assignment, child run actions, user follow-ups, and final result.',
+        // sub-run actions, user follow-ups, and final result.
+        'This is a same-agent sub-run transcript. Omit copied parent conversation context that only predates the sub-run assignment; preserve the sub-run assignment, sub-run actions, user follow-ups, and final result.',
         signal,
       );
       throwIfAborted(signal);
@@ -1663,7 +1645,7 @@ export class AgentDelegationRuntime {
       // compaction event + the post-compact message as a new root; the compacted
       // span stays in the ledger off-path. The in-memory working state above is
       // exactly its replay.
-      await this.host.childRunCompacted(snapshotRun(run), {
+      await this.host.runCompacted(snapshotRun(run), {
         postCompactMessage,
         summary,
         trigger,
@@ -1710,7 +1692,7 @@ export class AgentDelegationRuntime {
   }
 
   /**
-   * The grandchild runtime's host: every callback forwards to THIS runtime's
+   * The sub-run runtime's host: every callback forwards to THIS runtime's
    * host (one wiring, shared by the spawn and the restart-continuation paths —
    * a forwarder added in one and missed in the other would break only the
    * resume path, the one tests exercise least). Only the run identity and the
@@ -1726,26 +1708,26 @@ export class AgentDelegationRuntime {
       getParentSystemPrompt: () => getChildAgent()?.state.systemPrompt ?? this.host.getParentSystemPrompt(),
       getActiveRunId: () => getRunId(),
       getRuntimeSettings: () => this.host.getRuntimeSettings(),
-      childRunStarted: (snapshot, seed) => {
+      runStarted: (snapshot, seed) => {
         if (snapshot.purpose !== 'verify') {
           const parent = this.runs.get(getRunId());
           if (parent) parent.hasWorkChildren = true;
         }
         this.upsertObservedRun(snapshot);
-        return this.host.childRunStarted(snapshot, seed);
+        return this.host.runStarted(snapshot, seed);
       },
-      childRunMessage: (snapshot, message) => this.host.childRunMessage(snapshot, message),
-      childRunToolResultReplaced: (snapshot, toolCallId, text) => this.host.childRunToolResultReplaced(snapshot, toolCallId, text),
-      childRunCompacted: (snapshot, input) => this.host.childRunCompacted(snapshot, input),
-      childRunResultSubmitted: (snapshot, input) => this.host.childRunResultSubmitted(snapshot, input),
+      runMessage: (snapshot, message) => this.host.runMessage(snapshot, message),
+      runToolResultReplaced: (snapshot, toolCallId, text) => this.host.runToolResultReplaced(snapshot, toolCallId, text),
+      runCompacted: (snapshot, input) => this.host.runCompacted(snapshot, input),
+      runResultSubmitted: (snapshot, input) => this.host.runResultSubmitted(snapshot, input),
       readLatestRunSubmission: (runId) => this.host.readLatestRunSubmission?.(runId) ?? Promise.resolve(undefined),
-      childRunStatusChanged: (snapshot) => {
+      runStatusChanged: (snapshot) => {
         this.upsertObservedRun(snapshot);
-        return this.host.childRunStatusChanged(snapshot);
+        return this.host.runStatusChanged(snapshot);
       },
-      notifyChildRun: (snapshot) => this.host.notifyChildRun(snapshot),
+      notifyRun: (snapshot) => this.host.notifyRun(snapshot),
       reportError: (report) => this.host.reportError?.(report),
-      restoreChildRunLedger: (runId) => this.host.restoreChildRunLedger(runId),
+      restoreRunLedger: (runId) => this.host.restoreRunLedger(runId),
       persistToolOutputPayload: (toolCallId, toolName, text) => (
         this.host.persistToolOutputPayload(toolCallId, toolName, text)
       ),
@@ -1757,14 +1739,14 @@ export class AgentDelegationRuntime {
 
   private async resolveDefinitionForRun(run: DelegationRunState): Promise<AgentDefinition> {
     if (run.definition) return run.definition;
-    // Every child run is a fork of Neva (the one-Neva invariant) — there is no
+    // Every sub-run is Neva continuing in isolation (the one-Neva invariant); there is no
     // by-name agent to resolve.
     return createForkAgentDefinition();
   }
 
   private reserveRunningSlot(): RunningSlotReservation {
-    if (this.runningCount() + this.reservedRunningSlots >= MAX_CONCURRENT_CHILD_RUNS) {
-      throw new Error(`Too many child runs are already running in this session. Limit: ${MAX_CONCURRENT_CHILD_RUNS}.`);
+    if (this.runningCount() + this.reservedRunningSlots >= MAX_CONCURRENT_SUB_RUNS) {
+      throw new Error(`Too many sub-runs are already running in this session. Limit: ${MAX_CONCURRENT_SUB_RUNS}.`);
     }
     this.reservedRunningSlots += 1;
     let released = false;
@@ -1779,11 +1761,11 @@ export class AgentDelegationRuntime {
     return [...this.runs.values()].filter((run) => run.status === 'running').length;
   }
 
-  private resolveRun(selector: { agent_id?: string; name?: string }): DelegationRunState {
-    const id = selector.agent_id || (selector.name ? this.names.get(selector.name) : undefined);
-    if (!id) throw new Error('Provide agent_id or name.');
+  private resolveRun(selector: { runId?: string; name?: string }): DelegationRunState {
+    const id = selector.runId || (selector.name ? this.names.get(selector.name) : undefined);
+    if (!id) throw new Error('Provide runId or name.');
     const run = this.runs.get(id);
-    if (!run) throw new Error(`Unknown agent: ${id}`);
+    if (!run) throw new Error(`Unknown run: ${id}`);
     return run;
   }
 
@@ -1806,7 +1788,7 @@ export class AgentDelegationRuntime {
       .sort((left, right) => left.startedAt - right.startedAt);
   }
 
-  private upsertObservedRun(snapshot: AgentChildRunSnapshot): void {
+  private upsertObservedRun(snapshot: AgentRunSnapshot): void {
     const existing = this.runs.get(snapshot.id);
     if (existing) {
       Object.assign(existing, snapshot);
@@ -1848,7 +1830,7 @@ export class AgentDelegationRuntime {
 
   private assertCanDescend(nextAgentName: string): void {
     if (this.depth >= this.maxDepth) {
-      throw new Error(`Child run nesting limit reached (${this.maxDepth}). Complete the task directly.`);
+      throw new Error(`Sub-run nesting limit reached (${this.maxDepth}). Complete the task directly.`);
     }
     void nextAgentName;
   }
@@ -2055,7 +2037,7 @@ function buildBriefRunContextMessages(parentMessages: readonly AgentMessage[]): 
 }
 
 function buildRunDirective(params: AgentToolParams): string {
-  if (params.purpose === 'verify') return params.prompt;
+  if (params.purpose === 'verify') return params.runPrompt;
   const criteria = params.criteria?.length
     ? params.criteria.map((criterion, index) => `${index + 1}. ${criterion}`).join('\n')
     : 'No acceptance criteria were provided because verify is false.';
@@ -2125,19 +2107,19 @@ export function delegateToolResult(toolName: string, data: AgentDelegateToolData
   // to the envelope's instructions field so it sits beside status/error like
   // every other tool, rather than nested inside the result payload.
   const envelope = successEnvelope(toolName, data, data.instructions ? { instructions: data.instructions } : {});
-  return agentToolResult(envelope, visibleChildRunResult(data));
+  return agentToolResult(envelope, visibleRunResult(data));
 }
 
 // Model-visible projection. The full AgentDelegateToolData stays on the envelope
 // (details); the parent agent needs lifecycle state, addressability, verdict
 // blockers, one-level child summaries for controllers, and produced result/error.
 // Next-step instructions are carried by the envelope's instructions field.
-// Echoed launch arguments (prompt, description, agent_type, context_mode) and
+// Echoed launch arguments (description, context_mode) and
 // timestamps/transcript counts are dropped.
-export function visibleChildRunResult(data: AgentDelegateToolData): unknown {
+export function visibleRunResult(data: AgentDelegateToolData): unknown {
   const visible: Record<string, unknown> = {
     status: data.status,
-    agent_id: data.agent_id,
+    runId: data.runId,
   };
   if (data.name) visible.name = data.name;
   if (data.objective_status) visible.objective_status = data.objective_status;
@@ -2156,10 +2138,9 @@ function runToToolData(run: DelegationRunState, children: readonly DelegationRun
   const result = latestRunSubmissionSummary(run) ?? run.result;
   return {
     status: run.status,
-    agent_id: run.id,
+    runId: run.id,
     name: run.name,
     description: run.description,
-    prompt: run.prompt,
     objective: run.objective,
     criteria: run.criteria,
     objective_status: run.objectiveStatus,
@@ -2167,11 +2148,8 @@ function runToToolData(run: DelegationRunState, children: readonly DelegationRun
     scope: run.scope,
     budget: run.budget,
     blocked_reason: run.blockedReason,
-    agent_type: run.agentType,
+    runProfile: run.runProfile ?? runProfileForPurpose(run.purpose ?? 'work'),
     context_mode: run.contextMode,
-    executing_agent_id: run.executingAgentId,
-    parent_agent_id: run.parentAgentId,
-    memory_owner_agent_id: run.memoryOwnerAgentId,
     result,
     error: run.error,
     started_at: run.startedAt,
@@ -2186,7 +2164,7 @@ function runToToolData(run: DelegationRunState, children: readonly DelegationRun
   };
 }
 
-function runToChildStatus(run: DelegationRunState): AgentChildRunChildStatus {
+function runToChildStatus(run: DelegationRunState): AgentSubRunStatus {
   return {
     runId: run.id,
     role: derivedRunRole(run),
@@ -2198,13 +2176,13 @@ function runToChildStatus(run: DelegationRunState): AgentChildRunChildStatus {
   };
 }
 
-function derivedRunRole(run: DelegationRunState): AgentChildRunChildStatus['role'] {
+function derivedRunRole(run: DelegationRunState): AgentSubRunStatus['role'] {
   if (run.purpose === 'verify') return 'verifier';
   if (run.hasWorkChildren) return 'controller';
   return 'worker';
 }
 
-function snapshotRun(run: DelegationRunState): AgentChildRunSnapshot {
+function snapshotRun(run: DelegationRunState): AgentRunSnapshot {
   return {
     id: run.id,
     name: run.name,
@@ -2238,7 +2216,7 @@ function snapshotRun(run: DelegationRunState): AgentChildRunSnapshot {
   };
 }
 
-function childRunToolOutputPayloadId(run: DelegationRunState, toolCallId: string): string {
+function runToolOutputPayloadId(run: DelegationRunState, toolCallId: string): string {
   return `${run.id}-${toolCallId}`;
 }
 
@@ -2278,7 +2256,7 @@ export function extractPartialAssistantText(messages: readonly AgentMessage[]): 
 }
 
 function extractFinalAssistantText(messages: readonly AgentMessage[]): string {
-  return extractPartialAssistantText(messages) ?? 'Child run completed without a text result.';
+  return extractPartialAssistantText(messages) ?? 'Run completed without a text result.';
 }
 
 function isRecordableAgentMessage(message: unknown): message is AgentMessage {
@@ -2300,7 +2278,7 @@ function replaceToolResultText(message: ToolResultMessage, text: string): void {
 
 function normalizeAgentToolParams(raw: unknown): AgentToolParams {
   if (!isPlainRecord(raw)) throw new Error(`${AGENT_DELEGATE_TOOL_NAME} input must be an object.`);
-  const objective = coerceString(raw.objective)?.trim() || coerceString(raw.prompt)?.trim();
+  const objective = coerceString(raw.objective)?.trim();
   if (!objective) throw new Error(`${AGENT_DELEGATE_TOOL_NAME} input requires objective.`);
   const verify = raw.verify !== false;
   const criteria = coerceStringArray(raw.criteria);
@@ -2308,7 +2286,7 @@ function normalizeAgentToolParams(raw: unknown): AgentToolParams {
     throw new Error(`${AGENT_DELEGATE_TOOL_NAME} input requires at least one criterion unless verify is false.`);
   }
   const description = coerceString(raw.description)?.trim() || truncate(compactInlineText(objective), 120);
-  const prompt = coerceString(raw.prompt)?.trim() || buildObjectivePrompt(objective, criteria);
+  const runPrompt = coerceString(raw.runPrompt)?.trim() || buildObjectivePrompt(objective, criteria);
   const allowedTools = Array.isArray(raw.allowedTools)
     ? normalizeAgentToolNames(raw.allowedTools) ?? []
     : undefined;
@@ -2317,7 +2295,7 @@ function normalizeAgentToolParams(raw: unknown): AgentToolParams {
     criteria,
     verify,
     description,
-    prompt,
+    runPrompt,
     purpose: normalizeRunPurpose(raw.purpose),
     scope: normalizeRunScope(raw.scope),
     budget: normalizeRunBudgetInput(raw.budget),
@@ -2325,7 +2303,6 @@ function normalizeAgentToolParams(raw: unknown): AgentToolParams {
     context: normalizeRunContext(raw.context),
     detach: raw.detach === true,
     model: coerceString(raw.model),
-    run_in_background: raw.run_in_background === true,
     name: coerceString(raw.name),
     allowedTools,
     preapprovedToolRules: coerceStringArray(raw.preapprovedToolRules),
@@ -2353,7 +2330,7 @@ function normalizeRequestedRunProfile(value: unknown): AgentRunProfileId | undef
 
 function normalizeAmendParams(raw: unknown): { runId: string; changes: { objective?: string; criteria?: string[]; budget?: AgentRunBudget } } {
   if (!isPlainRecord(raw)) throw new Error('run_amend input must be an object.');
-  const runId = coerceString(raw.runId)?.trim() || coerceString(raw.agent_id)?.trim();
+  const runId = coerceString(raw.runId)?.trim();
   if (!runId) throw new Error('run_amend input requires runId.');
   if (!isPlainRecord(raw.changes)) throw new Error('run_amend input requires changes.');
   const objective = coerceString(raw.changes.objective)?.trim();
@@ -2373,22 +2350,22 @@ function coerceStringArray(value: unknown): string[] | undefined {
     .filter(Boolean);
 }
 
-function normalizeRunSelector(raw: unknown): { agent_id?: string; name?: string; wait?: boolean; timeout_ms?: number } {
+function normalizeRunSelector(raw: unknown): { runId?: string; name?: string; wait?: boolean; timeout_ms?: number } {
   if (!isPlainRecord(raw)) return {};
   return {
-    agent_id: coerceString(raw.runId) ?? coerceString(raw.agent_id),
+    runId: coerceString(raw.runId),
     name: coerceString(raw.name),
     wait: raw.wait === true,
     timeout_ms: parsePositiveInteger(raw.timeout_ms),
   };
 }
 
-function normalizeSendParams(raw: unknown): { agent_id?: string; name?: string; message: string } {
+function normalizeSendParams(raw: unknown): { runId?: string; name?: string; message: string } {
   if (!isPlainRecord(raw)) throw new Error('run_steer input must be an object.');
   const message = coerceString(raw.message)?.trim();
   if (!message) throw new Error('run_steer input requires message.');
   return {
-    agent_id: coerceString(raw.runId) ?? coerceString(raw.agent_id),
+    runId: coerceString(raw.runId),
     name: coerceString(raw.name),
     message,
   };

@@ -328,8 +328,8 @@ turn). See `agent-architecture.md` (Channel runtime).
 `agent_run_transcript` replays the run's own ledger for the drill-in transcript.
 `agent_run_detail` reads Run meta, the latest result submission, and direct
 sub-run metadata from the Run index.
-The older child-run control command names remain accepted as compatibility aliases,
-but new runtime control surfaces use the `agent_run_*` commands.
+Runtime control surfaces use only the `agent_run_*` command names; the older
+pre-release child-run command aliases are not accepted.
 
 ### Agent — debug
 `agent_debug_view` (the conversation's run list + rollups), `agent_debug_run`

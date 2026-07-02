@@ -889,8 +889,8 @@ export type AgentNotificationKind =
   | 'task_completed'
   | 'task_failed'
   // Reserved (no emitter yet): a conversation's own *foreground* agent awaiting a
-  // user decision while the user is elsewhere. Delegated child runs never ask the
-  // user mid-execution, so there is deliberately no child-run→user needs_input trigger.
+  // user decision while the user is elsewhere. Delegated Runs never ask the user
+  // mid-execution, so there is deliberately no Run→user needs_input trigger.
   | 'needs_input'
   // Reserved (no emitter yet): a cheap no-LLM progress post for a long run.
   | 'status'
@@ -904,7 +904,7 @@ export type AgentNotificationKind =
  * Provenance for a notification: the off-floor run whose terminal state (or
  * needs-input pause) produced it. Orthogonal to the delivery anchor
  * (`conversationId`) — a run anchored to conversation X still reports there.
- * One variant only: a delegated child run IS a run (run unification).
+ * One variant only: a delegated sub-run is a Run (run unification).
  */
 export type AgentRunNotificationSource = { type: 'run'; runId: string };
 
@@ -1144,10 +1144,9 @@ export interface AgentRunRecord {
 }
 
 /**
- * The canonical live/descriptive shape of a delegated run while the sidechain
- * runtime still exposes legacy child-run IPC/tool result names. It is no longer a
- * conversation-log record; durable lifecycle state lives in Run metadata and the
- * Run ledger.
+ * The live/descriptive shape used to restore delegated Run controller state from
+ * Run metadata. It is not a conversation-log record; durable lifecycle state
+ * lives in Run metadata and the Run ledger.
  */
 export interface DelegationDetail {
   id: string;
@@ -1162,7 +1161,7 @@ export interface DelegationDetail {
   budget?: AgentRunBudget;
   disposition?: AgentRunDisposition;
   agentType: string;
-  /** Always 'fork': a child run is the current agent in an isolated context, never a different agent. */
+  /** The context mode selected for this same-agent isolated Run. */
   contextMode: AgentRunContextMode;
   runProfile?: AgentRunProfileId;
   parentRunId?: string;
@@ -1182,12 +1181,12 @@ export interface DelegationDetail {
   /**
    * Run with no interactive approval channel (a tool needing approval is denied
    * instead of waiting for a human). Scheduled command runs derive this from their
-   * Run trigger/profile; legacy runtime names are cleaned up in a later unit.
+   * Run trigger/profile.
    */
   unattended?: boolean;
 }
 
-export type AgentChildRunRecord = DelegationDetail;
+export type DelegationRunRecord = DelegationDetail;
 
 export interface AgentCompactionRecord {
   id: string;

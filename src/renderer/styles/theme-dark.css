@@ -30,7 +30,7 @@
     --link: #4c9bff;
     --status-info: #5aa0e0;
     /* success-strong is used as FOREGROUND text on dark translucent fills (e.g.
-       .agent-child-run-status.is-completed); the light #3f865d reads too dark on
+       .agent-run-detail-status.is-completed); the light #3f865d reads too dark on
        dark, so lift it to a legible mid green. */
     --status-success-strong: #5fc88a;
 

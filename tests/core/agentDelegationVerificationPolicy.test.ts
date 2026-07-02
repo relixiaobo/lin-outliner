@@ -17,7 +17,7 @@ import {
   recordWorkingSetDiff,
   sameTailCount,
   verifierGapSignature,
-  type AgentChildRunToolTraceEntry,
+  type AgentRunToolTraceEntry,
 } from '../../src/main/agentDelegationVerificationPolicy';
 
 describe('agent delegation verification policy', () => {
@@ -93,7 +93,7 @@ describe('agent delegation verification policy', () => {
   });
 
   test('records bounded verifier tool traces', () => {
-    const trace: AgentChildRunToolTraceEntry[] = [];
+    const trace: AgentRunToolTraceEntry[] = [];
     recordToolTrace(trace, 'file_write', agentToolResult(successEnvelope('file_write', {
       filePath: '/tmp/a.ts',
       type: 'update',

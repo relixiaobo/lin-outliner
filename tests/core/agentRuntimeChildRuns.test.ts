@@ -258,14 +258,14 @@ describe('agent runtime childRuns', () => {
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  test('a fork sub-run (no agent_type) leaves its gated approval unattributed', async () => {
+  test('a default sub-run leaves its gated approval unattributed', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-fork-attribution-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-child-run-fork-attribution-data-'));
     roots.push(localRoot, dataRoot);
 
     const script = scriptedStream(
       [
-        // Parent forks its OWN context (no agent_type) — the fork runs AS the parent agent.
+        // Parent creates a same-agent sub-run; the sub-run runs AS the parent agent.
         fauxAssistantMessage([
           fauxToolCall('spawn_run', {
             description: 'fork to inspect config',
@@ -330,7 +330,7 @@ describe('agent runtime childRuns', () => {
     expect(attributions).toEqual([undefined]);
   });
 
-  test('omitting agent_type creates a fork with parent context and placeholder tool results', async () => {
+  test('spawn_run creates a same-agent sub-run with parent context and placeholder tool results', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-fork-data-'));
     roots.push(localRoot, dataRoot);
@@ -398,7 +398,7 @@ describe('agent runtime childRuns', () => {
             description: 'fork owned by Neva',
             objective: 'Do the fork work.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'fork-owner',
           }, { id: 'tool-agent-fork-owner' }),
         ], { stopReason: 'toolUse' });
@@ -433,13 +433,11 @@ describe('agent runtime childRuns', () => {
       title: 'Do the fork work.',
     });
 
-    const data = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
-    // A fork runs AS Neva: it inherits the parent's executing + memory-owner identity, and its
-    // recorded agent type is the fork pseudo-agent — never a second, separately-owned agent.
+    const data = await runtime.runStatus(conversation.conversationId, childRunId, { wait: true });
+    // A sub-run runs AS Neva and exposes Run identity, not a second agent persona.
     expect(data).toMatchObject({
-      memory_owner_agent_id: 'built-in:tenon:assistant',
-      executing_agent_id: 'built-in:tenon:assistant',
-      agent_type: 'fork',
+      runId: childRunId,
+      runProfile: 'default',
     });
   });
 
@@ -871,7 +869,7 @@ describe('agent runtime childRuns', () => {
     expect(workers[1]?.objective?.status).toBe('verified');
     const replacementDetail = await runtime.agentRunDetail(workers[1]!.id, conversation.conversationId);
     expect(replacementDetail?.result?.summary).toBe('verified result');
-    const failedWorkerStatus = await runtime.childRunStatus(conversation.conversationId, workers[0]!.id, { wait: true });
+    const failedWorkerStatus = await runtime.runStatus(conversation.conversationId, workers[0]!.id, { wait: true });
     expect(failedWorkerStatus.latest_verifier_gap).toBe('missing required phrase');
   });
 
@@ -1000,7 +998,7 @@ describe('agent runtime childRuns', () => {
     expect(controllers[0]?.objective?.status).toBe('verified');
     const controllerDetail = await runtime.agentRunDetail(controllers[0]!.id, conversation.conversationId);
     expect(controllerDetail?.result?.summary).toBe('controller verified result');
-    const controllerStatus = await runtime.childRunStatus(conversation.conversationId, controllers[0]!.id, { wait: true });
+    const controllerStatus = await runtime.runStatus(conversation.conversationId, controllers[0]!.id, { wait: true });
     expect(controllerStatus.children?.map((child) => child.role).sort()).toEqual(['verifier', 'verifier', 'worker']);
     expect(controllerStatus.children?.find((child) => child.description === 'controller leaf child')).toMatchObject({
       objective: 'Produce one leaf fact.',
@@ -1261,7 +1259,7 @@ describe('agent runtime childRuns', () => {
             description: 'background check',
             objective: 'Run in background.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'bg-check',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
@@ -1341,7 +1339,7 @@ describe('agent runtime childRuns', () => {
             description: 'background notify',
             objective: 'Run in background.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'bg-notify',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
@@ -1493,7 +1491,7 @@ describe('agent runtime childRuns', () => {
             description: 'background command',
             objective: 'Run in background.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'command-bg',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
@@ -1530,15 +1528,15 @@ describe('agent runtime childRuns', () => {
     const restored = await runtime.restoreConversation(conversation.conversationId);
     const childRunId = projectedRunId(restored.renderProjection, 'tool-agent-1')!;
 
-    const queued = await runtime.childRunSend(conversation.conversationId, childRunId, 'Continue with risks.');
+    const queued = await runtime.runSteer(conversation.conversationId, childRunId, 'Continue with risks.');
     expect(queued).toMatchObject({
-      agent_id: childRunId,
+      runId: childRunId,
       status: 'queued',
     });
 
-    const status = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
+    const status = await runtime.runStatus(conversation.conversationId, childRunId, { wait: true });
     expect(status).toMatchObject({
-      agent_id: childRunId,
+      runId: childRunId,
       result: 'Follow-up background result.',
       status: 'completed',
     });
@@ -1563,7 +1561,7 @@ describe('agent runtime childRuns', () => {
             description: 'stoppable background',
             objective: 'Run until stopped.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'stoppable-bg',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
@@ -1603,9 +1601,9 @@ describe('agent runtime childRuns', () => {
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a stoppable background child run.', sink);
     const childRunId = projectedRunId(latestProjection(sink.events), 'tool-agent-1')!;
 
-    const stopped = await runtime.childRunStop(conversation.conversationId, childRunId);
+    const stopped = await runtime.runStop(conversation.conversationId, childRunId);
     expect(stopped).toMatchObject({
-      agent_id: childRunId,
+      runId: childRunId,
       status: 'cancelled',
     });
     await waitFor(() => script.pendingCount() === 2);
@@ -1616,15 +1614,15 @@ describe('agent runtime childRuns', () => {
     expect(afterStop.attentionByConversationId[conversation.conversationId]?.unreadCount ?? 0).toBe(0);
     expect(Object.values(afterStop.notifications)).toHaveLength(0);
 
-    const queued = await runtime.childRunSend(conversation.conversationId, childRunId, 'Resume after stop.');
+    const queued = await runtime.runSteer(conversation.conversationId, childRunId, 'Resume after stop.');
     expect(queued).toMatchObject({
-      agent_id: childRunId,
+      runId: childRunId,
       status: 'queued',
     });
 
-    const status = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
+    const status = await runtime.runStatus(conversation.conversationId, childRunId, { wait: true });
     expect(status).toMatchObject({
-      agent_id: childRunId,
+      runId: childRunId,
       result: 'Resumed stopped result.',
       status: 'completed',
     });
@@ -1718,11 +1716,11 @@ describe('agent runtime childRuns', () => {
     });
     expect(await store.readRunStreamEvents(runId)).toEqual([]);
 
-    const queued = await runtime.childRunSend(conversation.conversationId, runId, 'Continue the lost run.');
-    expect(queued).toMatchObject({ agent_id: runId, status: 'queued' });
-    const status = await runtime.childRunStatus(conversation.conversationId, runId, { wait: true });
+    const queued = await runtime.runSteer(conversation.conversationId, runId, 'Continue the lost run.');
+    expect(queued).toMatchObject({ runId: runId, status: 'queued' });
+    const status = await runtime.runStatus(conversation.conversationId, runId, { wait: true });
     expect(status).toMatchObject({
-      agent_id: runId,
+      runId: runId,
       status: 'completed',
       result: 'Continued without the lost seed.',
     });
@@ -1752,7 +1750,7 @@ describe('agent runtime childRuns', () => {
             description: 'background restore',
             objective: 'Run in background.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'restored-bg',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
@@ -1803,7 +1801,7 @@ describe('agent runtime childRuns', () => {
       [
         fauxAssistantMessage([
           fauxToolCall('run_status', {
-            agent_id: childRunId,
+            runId: childRunId,
             wait: true,
           }, { id: 'tool-agent-status-restored' }),
         ], { stopReason: 'toolUse' }),
@@ -1865,7 +1863,7 @@ describe('agent runtime childRuns', () => {
             description: 'interruptible background',
             objective: 'Run until the app dies.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'interrupted-bg',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
@@ -1963,7 +1961,7 @@ describe('agent runtime childRuns', () => {
             description: 'background seed',
             objective: 'Run in background.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'seed-bg',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' }),
@@ -2092,7 +2090,7 @@ describe('agent runtime childRuns', () => {
             description: 'completes then fails on resume',
             objective: 'Do the first pass.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'resume-fail',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' });
@@ -2121,12 +2119,12 @@ describe('agent runtime childRuns', () => {
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a child that completes then fails.', sink);
     const childRunId = projectedRunId(latestProjection(sink.events), 'tool-agent-1')!;
 
-    const completed = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
-    expect(completed).toMatchObject({ agent_id: childRunId, status: 'completed', result: 'first result' });
+    const completed = await runtime.runStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(completed).toMatchObject({ runId: childRunId, status: 'completed', result: 'first result' });
 
-    await runtime.childRunSend(conversation.conversationId, childRunId, 'Now fail.');
-    const failed = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
-    expect(failed).toMatchObject({ agent_id: childRunId, status: 'failed' });
+    await runtime.runSteer(conversation.conversationId, childRunId, 'Now fail.');
+    const failed = await runtime.runStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(failed).toMatchObject({ runId: childRunId, status: 'failed' });
     expect((failed as { error?: string }).error).toBeDefined();
     // The fix: send() clears run.result on resume, so the failed continuation
     // cannot surface the completed first run's "first result".
@@ -2164,7 +2162,7 @@ describe('agent runtime childRuns', () => {
             description: 'completes then is stopped on resume',
             objective: 'Do the first pass.',
             verify: false,
-            run_in_background: true,
+            detach: true,
             name: 'resume-stop',
           }, { id: 'tool-agent-1' }),
         ], { stopReason: 'toolUse' });
@@ -2193,21 +2191,21 @@ describe('agent runtime childRuns', () => {
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a child that completes then is stopped.', sink);
     const childRunId = projectedRunId(latestProjection(sink.events), 'tool-agent-1')!;
 
-    const completed = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
-    expect(completed).toMatchObject({ agent_id: childRunId, status: 'completed', result: 'first result' });
+    const completed = await runtime.runStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(completed).toMatchObject({ runId: childRunId, status: 'completed', result: 'first result' });
 
     // Resume, then stop once the continuation is genuinely in-flight (its model
     // call entered) but before it appends any new assistant text.
-    await runtime.childRunSend(conversation.conversationId, childRunId, 'Stop me now before any new output.');
+    await runtime.runSteer(conversation.conversationId, childRunId, 'Stop me now before any new output.');
     await waitFor(() => resumePickEntered);
-    const stopped = await runtime.childRunStop(conversation.conversationId, childRunId);
-    expect(stopped).toMatchObject({ agent_id: childRunId, status: 'cancelled' });
+    const stopped = await runtime.runStop(conversation.conversationId, childRunId);
+    expect(stopped).toMatchObject({ runId: childRunId, status: 'cancelled' });
 
     // The seeded history (carrying the completed "first result") sits below the
     // salvage floor, so the stop salvages nothing — result must NOT regress to
     // the prior round's text. This is the stop-side mirror of the resume→fail case.
-    const after = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
-    expect(after).toMatchObject({ agent_id: childRunId, status: 'cancelled' });
+    const after = await runtime.runStatus(conversation.conversationId, childRunId, { wait: true });
+    expect(after).toMatchObject({ runId: childRunId, status: 'cancelled' });
     expect((after as { result?: string }).result).toBeUndefined();
 
     releaseResume();

@@ -30,7 +30,7 @@ import type { AgentEventStore } from './agentEventStore';
 import { persistedContentModelText } from './agentToolOutputSlimming';
 
 // The write seam for a delegated (child) run's OWN ledger ([[agent-run-unification]]
-// Design 1). A child run is an ordinary Run: its transcript is append-only run-log
+// Design 1). A sub-run is an ordinary Run: its transcript is append-only run-log
 // events in `runs/<runId>/events.jsonl`, in the run's own seq space, replayed alone
 // into its own `AgentEventReplayState`. This module translates the live child
 // agent's pi messages into those events as they complete (coarse per-message
@@ -114,7 +114,7 @@ export class AgentRunLedgerWriter {
 
   constructor(private readonly options: AgentRunLedgerWriterOptions) {}
 
-  /** Seed a brand-new child run's ledger: context, `run.started`, directive. */
+  /** Seed a brand-new Run ledger: context, `run.started`, directive. */
   async runStarted(input: AgentRunLedgerStartInput): Promise<void> {
     const run: RunLedgerRunState = {
       conversationId: input.conversationId,
@@ -425,7 +425,7 @@ export class AgentRunLedgerWriter {
 
   private requireRun(runId: string): RunLedgerRunState {
     const run = this.runs.get(runId);
-    if (!run) throw new Error(`Unknown child-run ledger: ${runId}`);
+    if (!run) throw new Error(`Unknown Run ledger: ${runId}`);
     return run;
   }
 

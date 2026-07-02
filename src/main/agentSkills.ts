@@ -110,7 +110,7 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '   - If criteria are missing or too vague, ask one concise clarification before launching unless the user already gave enough constraints to derive them safely.',
     '',
     '2. Launch through the run tree, not through an ad hoc checklist.',
-    '   - Use `spawn` with `objective`, explicit `criteria`, `detach:true`, `context:"brief"`, and a finite `budget`.',
+    '   - Use `spawn_run` with `objective`, explicit `criteria`, `detach:true`, `context:"brief"`, and a finite `budget`.',
     '   - Use the narrowest practical `scope`; never widen scope in place.',
     '   - For disposable unverified work only, pass `verify:false`; persistent user goals should stay verified.',
     '',
@@ -126,7 +126,7 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
   ].join('\n'),
 }, {
   name: 'research',
-  description: 'Research or explore a question in an isolated read-only child run.',
+  description: 'Research or explore a question in an isolated read-only Run.',
   whenToUse: 'Use when the user asks to research, explore, inspect, map, survey, or verify context before deciding or editing. Examples: "research this area", "explore how backlinks work", "verify this assumption", "find the relevant files". Do not use for direct implementation or edits.',
   argumentHint: '<question or area to research>',
   argumentNames: ['question'],
@@ -143,7 +143,7 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     'past_chats',
   ],
   body: [
-    'You are a codebase research specialist running in an isolated child run of the current Tenon agent. You excel at thoroughly navigating and exploring existing context.',
+    'You are a codebase research specialist running in an isolated same-agent Run. You excel at thoroughly navigating and exploring existing context.',
     '',
     '=== CRITICAL: READ-ONLY MODE - NO MODIFICATIONS ===',
     'This is a read-only exploration task. You are strictly prohibited from:',
@@ -322,8 +322,8 @@ export interface SkillIsolatedExecutionInput {
 }
 
 export interface SkillIsolatedExecutionResult {
-  agentId: string;
-  agentType: string;
+  runId: string;
+  runProfile: string;
   status: string;
   result?: string;
   error?: string;
@@ -365,8 +365,8 @@ export interface SkillToolData {
   allowedTools?: string[];
   model?: string;
   effort?: string;
-  agent_id?: string;
-  agent_type?: string;
+  runId?: string;
+  runProfile?: string;
   result?: string;
   error?: string;
 }
@@ -859,8 +859,8 @@ export function createSkillTool(runtime: AgentSkillRuntime): AgentTool<any, Tool
         allowedTools: invocation.skill.allowedTools.length > 0 ? invocation.skill.allowedTools : undefined,
         model: invocation.skill.model,
         effort: invocation.skill.effort,
-        agent_id: invocation.isolated?.agentId,
-        agent_type: invocation.isolated?.agentType,
+        runId: invocation.isolated?.runId,
+        runProfile: invocation.isolated?.runProfile,
         result: invocation.isolated?.result,
         error: invocation.isolated?.error,
       };
@@ -1805,9 +1805,9 @@ function createIsolatedSkillResultMessage(
     : '';
   const body = [
     metadata,
-    `Skill ${skill.name} ran in an isolated child run.`,
-    `agent_id: ${result.agentId}`,
-    `agent_type: ${result.agentType}`,
+    `Skill ${skill.name} ran in an isolated Run.`,
+    `runId: ${result.runId}`,
+    `runProfile: ${result.runProfile}`,
     '',
     '<skill-result>',
     result.result || result.error || 'Skill execution completed without a text result.',
@@ -1820,11 +1820,11 @@ function formatIsolatedSkillToolResult(
   skill: SkillDefinition,
   result: SkillIsolatedExecutionResult | undefined,
 ): string {
-  if (!result) return `Skill ${skill.name} completed in an isolated child run.`;
+  if (!result) return `Skill ${skill.name} completed in an isolated Run.`;
   return [
-    `Skill ${skill.name} completed in an isolated child run.`,
-    `agent_id: ${result.agentId}`,
-    `agent_type: ${result.agentType}`,
+    `Skill ${skill.name} completed in an isolated Run.`,
+    `runId: ${result.runId}`,
+    `runProfile: ${result.runProfile}`,
     result.error ? `error: ${result.error}` : '',
     '',
     result.result || 'Skill execution completed without a text result.',

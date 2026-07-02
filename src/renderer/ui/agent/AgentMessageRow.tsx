@@ -86,7 +86,7 @@ interface AgentMessageRowProps {
   onRegenerate?: (nodeId: string) => void | Promise<void>;
   onRetry?: (nodeId: string) => void | Promise<void>;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenChildRunTranscript?: (childRunId: string) => void;
+  onOpenRunTranscript?: (runId: string) => void;
   onOpenRunDetails?: (runId: string) => boolean | void;
   onDisclosureToggle?: () => void;
   onSwitchBranch?: (nodeId: string) => void | Promise<void>;
@@ -489,7 +489,7 @@ function AgentMessageRowComponent({
   onRegenerate,
   onRetry,
   onNodeReferenceOpen,
-  onOpenChildRunTranscript,
+  onOpenRunTranscript,
   onOpenRunDetails,
   onDisclosureToggle,
   onSwitchBranch,
@@ -741,7 +741,7 @@ function AgentMessageRowComponent({
     index,
     expandState,
     onNodeReferenceOpen,
-    onOpenChildRunTranscript,
+    onOpenRunTranscript,
     pendingToolCallIds,
     conversationId,
     streaming,
@@ -763,7 +763,7 @@ function AgentMessageRowComponent({
     }
     setDetailsOpen(true);
   };
-  // A sealed assistant turn whose only content was a child run spawn renders no
+  // A sealed assistant turn whose only content was a sub-run spawn renders no
   // blocks (the run is shown as the boundary that follows) — skip the empty bubble
   // entirely rather than leave a blank frame.
   if (assistantBlocks.length === 0 && !hasError && !turnActive && !stopped) return null;
@@ -908,7 +908,7 @@ function sameAgentMessageRowProps(prev: AgentMessageRowProps, next: AgentMessage
     && prev.onRegenerate === next.onRegenerate
     && prev.onRetry === next.onRetry
     && prev.onNodeReferenceOpen === next.onNodeReferenceOpen
-    && prev.onOpenChildRunTranscript === next.onOpenChildRunTranscript
+    && prev.onOpenRunTranscript === next.onOpenRunTranscript
     && prev.onSwitchBranch === next.onSwitchBranch
     && sameReadonlySet(prev.pendingToolCallIds, next.pendingToolCallIds)
     && prev.conversationId === next.conversationId

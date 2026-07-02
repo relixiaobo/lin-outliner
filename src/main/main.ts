@@ -2577,19 +2577,16 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       // Run ids are global, so this resolver needs no conversation context.
       return agentRuntime.runConversationId(String(args.runId));
     case 'agent_run_status':
-    case 'agent_child_run_status':
-      return agentRuntime.childRunStatus(conversationId(), String(args.runId ?? args.agentId), {
+      return agentRuntime.runStatus(conversationId(), String(args.runId), {
         wait: args.wait === true,
         timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined,
       });
     case 'agent_run_steer':
-    case 'agent_child_run_send':
-      return agentRuntime.childRunSend(conversationId(), String(args.runId ?? args.agentId), String(args.message ?? ''));
+      return agentRuntime.runSteer(conversationId(), String(args.runId), String(args.message ?? ''));
     case 'agent_run_amend':
-      return agentRuntime.childRunAmend(conversationId(), String(args.runId ?? args.agentId), args.changes);
+      return agentRuntime.runAmend(conversationId(), String(args.runId), args.changes);
     case 'agent_run_stop':
-    case 'agent_child_run_stop':
-      return agentRuntime.childRunStop(conversationId(), String(args.runId ?? args.agentId));
+      return agentRuntime.runStop(conversationId(), String(args.runId));
     case 'agent_send_message':
       return agentRuntime.sendMessage(
         conversationId(),

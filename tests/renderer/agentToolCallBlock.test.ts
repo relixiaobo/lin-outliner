@@ -229,14 +229,10 @@ describe('agent tool call block', () => {
       { name: 'skillify', kind: 'skill', icon: SkillAuthorToolIcon },
       { name: 'ask_user_question', kind: 'question', icon: QuestionToolIcon },
       { name: 'spawn_run', kind: 'run', icon: RunSpawnToolIcon },
-      { name: 'Agent', kind: 'run', icon: RunSpawnToolIcon },
       { name: 'run_status', kind: 'run', icon: RunStatusToolIcon },
-      { name: 'AgentStatus', kind: 'run', icon: RunStatusToolIcon },
       { name: 'run_steer', kind: 'run', icon: RunMessageToolIcon },
       { name: 'run_amend', kind: 'run', icon: RunMessageToolIcon },
-      { name: 'AgentSend', kind: 'run', icon: RunMessageToolIcon },
       { name: 'run_stop', kind: 'run', icon: TaskStopToolIcon },
-      { name: 'AgentStop', kind: 'run', icon: TaskStopToolIcon },
       { name: 'mystery_tool', kind: 'other', icon: GenericToolIcon },
     ];
 

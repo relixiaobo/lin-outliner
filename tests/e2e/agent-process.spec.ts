@@ -1222,7 +1222,7 @@ test.describe('agent process disclosure', () => {
     await expect.poll(() => sourceShell.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
   });
 
-  test('opens a tool-derived child run panel from a run chat-source inline reference', async ({ page }) => {
+  test('opens a tool-derived Run panel from a run chat-source inline reference', async ({ page }) => {
     await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
       conversationTitle: 'General',
       model: { id: 'gpt-5.4', provider: 'openai' },
@@ -1236,10 +1236,10 @@ test.describe('agent process disclosure', () => {
           content: [{
             type: 'toolCall',
             id: 'tool-agent-source-e2e',
-            name: 'Agent',
+            name: 'spawn_run',
             arguments: {
               description: 'Inspect jump source run',
-              prompt: 'Inspect jump source run.',
+              objective: 'Inspect jump source run.',
             },
           }],
           timestamp: 1_800_000_001_500,
@@ -1264,7 +1264,7 @@ test.describe('agent process disclosure', () => {
       errorMessage: null,
     });
 
-    await expect(page.locator('.agent-child-run-boundary')).toHaveCount(0);
+    await expect(page.locator('.agent-run-detail-panel')).toHaveCount(0);
     await page.getByTitle('Collapse agent').click();
     await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'collapsed');
 
@@ -1296,7 +1296,7 @@ test.describe('agent process disclosure', () => {
 
     await rowEditor(page, ids.alpha).locator('[data-inline-ref-kind="chat-source"]').click();
 
-    const childRunPanel = page.locator('.agent-child-run-details-panel');
+    const childRunPanel = page.locator('.agent-run-detail-panel');
     await expect(childRunPanel).toContainText('Inspect jump source run');
     await expect(page.locator('.agent-dock')).toHaveAttribute('data-rail-state', 'open');
   });

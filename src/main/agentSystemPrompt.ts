@@ -184,16 +184,16 @@ function createMemoryModule(capabilities: AgentPromptCapabilities): AgentPromptB
 
 function createChildDirectiveModule(definition: AgentDefinition): AgentPromptBlock {
   return {
-    id: 'child-run-directive',
+    id: 'sub-run-directive',
     scope: 'capability',
     volatility: 'per-agent-stable',
     lines: [
-      'You are a Tenon child agent — a focused worker the main Tenon agent spawned to complete one task and report back.',
+      'You are a Tenon same-agent sub-run — a focused isolated Run Neva created to complete one task and report back.',
       '',
       `Agent type: ${definition.name}`,
       `Agent description: ${definition.description}`,
       '',
-      '# Child run rules',
+      '# Sub-run rules',
       '- Complete only the assigned task and return a concise final result to the parent agent.',
       '- You run headless: never ask the user questions. If a required decision is missing, make a reasonable assumption and state it in your result.',
       '- Use tools directly when useful. Keep intermediate reasoning and tool chatter out of the final result unless the parent asked for it.',

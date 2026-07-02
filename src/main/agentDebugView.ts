@@ -45,7 +45,7 @@ export function deriveDebugRounds(events: readonly AgentEvent[]): AgentDebugRoun
   const rounds: AgentDebugRound[] = [];
   let pendingWindow: AgentDebugMessageRow[] = [];
   let current: AgentDebugRound | null = null;
-  // Rounds begin only after the run's OWN `run.started`. A child run's ledger
+  // Rounds begin only after the run's OWN `run.started`. A sub-run's ledger
   // opens with the fork prefix (the inherited transcript), whose assistant
   // messages emit `assistant_message.started` BEFORE `run.started` — those are
   // context, not provider rounds, so we fold them into the first round's window.

@@ -1232,10 +1232,10 @@ export function AgentChatPanel({
         onDisclosureToggle={pauseStickToBottomForDisclosure}
         onEdit={editMessage}
         onNodeReferenceOpen={onOpenNodeReference}
-        onOpenChildRunTranscript={(childRunId) => {
+        onOpenRunTranscript={(runId) => {
           setWorkPanelOpen(true);
           setSelectedRunConversationId(conversationId);
-          setSelectedRunId(childRunId);
+          setSelectedRunId(runId);
         }}
         onOpenRunDetails={(runId) => onOpenRunDetailsPanel?.(conversationId, runId)}
         onRegenerate={regenerateMessage}

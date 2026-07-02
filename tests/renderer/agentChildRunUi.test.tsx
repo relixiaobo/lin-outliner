@@ -56,8 +56,8 @@ describe('agent child run UI', () => {
     let openedChildRunId: string | null = null;
     const rendered = renderComponent(
       <AgentToolCallBlock
-        onOpenChildRunTranscript={(childRunId) => {
-          openedChildRunId = childRunId;
+        onOpenRunTranscript={(runId) => {
+          openedChildRunId = runId;
         }}
         pendingToolCallIds={new Set()}
         conversationId="conversation-1"
@@ -68,7 +68,7 @@ describe('agent child run UI', () => {
     );
 
     expect(rendered.container.textContent).toContain('Ran agent run');
-    expect(rendered.container.textContent).toContain('Inspect child run UI');
+    expect(rendered.container.textContent).toContain('Inspect Run UI');
 
     await click(rendered, firstToolCallToggle(rendered));
 
@@ -252,8 +252,8 @@ describe('agent child run UI', () => {
             {
               type: 'toolCall',
               id: 'tool-nested-agent',
-              name: 'Agent',
-              arguments: { description: 'Nested child run', prompt: 'Inspect the nested UI.' },
+              name: 'spawn_run',
+              arguments: { description: 'Nested sub-run', objective: 'Inspect the nested UI.' },
             },
           ],
         },
@@ -262,8 +262,8 @@ describe('agent child run UI', () => {
     const rendered = renderComponent(
       <AgentRunDetailsPanel
         onClose={() => undefined}
-        onOpenRun={(childRunId) => {
-          openedChildRunId = childRunId;
+        onOpenRun={(runId) => {
+          openedChildRunId = runId;
         }}
         conversationId="conversation-1"
         index={TEST_INDEX}
@@ -275,7 +275,7 @@ describe('agent child run UI', () => {
             subRuns: [
               runDetailChild({
                 runId: 'child-2',
-                title: 'Nested child run',
+                title: 'Nested sub-run',
                 parentToolCallId: 'tool-nested-agent',
               }),
             ],
@@ -497,8 +497,8 @@ describe('agent child run UI', () => {
     const rendered = renderComponent(
       <AgentRunDetailsPanel
         onClose={() => undefined}
-        onOpenRun={(childRunId) => {
-          openedChildRunId = childRunId;
+        onOpenRun={(runId) => {
+          openedChildRunId = runId;
         }}
         conversationId="conversation-1"
         index={TEST_INDEX}
@@ -543,10 +543,10 @@ describe('agent child run UI', () => {
     await waitForText(rendered, 'Verification');
     expect(rendered.container.textContent).toContain('Result');
     expect(rendered.container.textContent).toContain('Complete testing.');
-    expect(rendered.container.querySelector('.agent-child-run-section-header [aria-label="Copy run result"]')).not.toBeNull();
-    expect(rendered.container.querySelector('.agent-child-run-result-actions')).toBeNull();
-    expect(rendered.container.querySelector('.agent-child-run-result-box .contains-task-list')).not.toBeNull();
-    expect(rendered.container.querySelectorAll('.agent-child-run-result-box .task-list-item')).toHaveLength(3);
+    expect(rendered.container.querySelector('.agent-run-detail-section-header [aria-label="Copy run result"]')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-run-detail-result-actions')).toBeNull();
+    expect(rendered.container.querySelector('.agent-run-detail-result-box .contains-task-list')).not.toBeNull();
+    expect(rendered.container.querySelectorAll('.agent-run-detail-result-box .task-list-item')).toHaveLength(3);
     expect(rendered.container.textContent).toContain('Verifier');
 
     await click(rendered, textButton(rendered, 'Verifier'));
@@ -589,19 +589,19 @@ describe('agent child run UI', () => {
     );
 
     expect(rendered.container.querySelector('[role="tree"]')).not.toBeNull();
-    expect(rendered.container.textContent).toContain('Inspect child run UI');
+    expect(rendered.container.textContent).toContain('Inspect Run UI');
     expect(rendered.container.textContent).toContain('Summarize notes');
     expect(rendered.container.textContent).toContain('Verifier');
     expect(rendered.container.textContent).not.toContain(verifierPrompt);
-    expect(rendered.container.textContent).toContain('Child runs 1/2');
+    expect(rendered.container.textContent).toContain('Sub-runs 1/2');
     expect(rendered.container.textContent).not.toContain('General ·');
     expect(rendered.container.textContent).not.toContain('Verified ·');
     expect(rendered.container.querySelector('.agent-run-child-toggle')).not.toBeNull();
 
-    await click(rendered, textButton(rendered, 'Child runs 1/2'));
+    await click(rendered, textButton(rendered, 'Sub-runs 1/2'));
     expect(openedRunId).toBeNull();
 
-    await click(rendered, textTreeItem(rendered, 'Inspect child run UI'));
+    await click(rendered, textTreeItem(rendered, 'Inspect Run UI'));
     expect(openedRunId).toBe('child-1');
 
     await click(rendered, ariaButton(rendered, 'Stop run'));
@@ -819,29 +819,27 @@ function installDomGlobals(
           latestSubmission: parsed.latestSubmission,
         } as T;
       }
-      if (cmd === 'agent_run_steer' || cmd === 'agent_child_run_send') {
-        const runId = args.runId ?? args.agentId;
+      if (cmd === 'agent_run_steer') {
+        const runId = args.runId;
         return {
           status: 'queued',
-          agent_id: runId,
-          description: 'Inspect child run UI',
-          prompt: 'Inspect the current UI.',
-          agent_type: 'explorer',
-          context_mode: 'fork',
+          runId: runId,
+          description: 'Inspect Run UI',
+          runProfile: 'default',
+          context_mode: 'brief',
           started_at: 100,
           updated_at: 300,
           transcript_message_count: 1,
         } as T;
       }
-      if (cmd === 'agent_run_stop' || cmd === 'agent_child_run_stop') {
-        const runId = args.runId ?? args.agentId;
+      if (cmd === 'agent_run_stop') {
+        const runId = args.runId;
         return {
           status: 'cancelled',
-          agent_id: runId,
-          description: 'Inspect child run UI',
-          prompt: 'Inspect the current UI.',
-          agent_type: 'explorer',
-          context_mode: 'fork',
+          runId: runId,
+          description: 'Inspect Run UI',
+          runProfile: 'default',
+          context_mode: 'brief',
           started_at: 100,
           updated_at: 300,
           completed_at: 300,
@@ -920,10 +918,10 @@ function agentToolCall(): ToolCall {
   return {
     type: 'toolCall',
     id: 'tool-agent-1',
-    name: 'Agent',
+    name: 'spawn_run',
     arguments: {
-      description: 'Inspect child run UI',
-      prompt: 'Inspect the current UI.',
+      description: 'Inspect Run UI',
+      objective: 'Inspect the current UI.',
     },
   };
 }
@@ -934,7 +932,7 @@ function renderRunEntity(overrides: Partial<AgentRenderRunEntity> = {}): AgentRe
     agentId: 'built-in:tenon:explorer',
     anchor: { type: 'conversation', agentId: 'built-in:tenon:explorer', conversationId: 'conversation-1' },
     conversationId: 'conversation-1',
-    title: 'Inspect child run UI',
+    title: 'Inspect Run UI',
     parentToolCallId: 'tool-agent-1',
     runProfile: 'default',
     runProfileLabel: 'Default',
@@ -952,7 +950,7 @@ function renderRunEntity(overrides: Partial<AgentRenderRunEntity> = {}): AgentRe
 function childRunEntity(): ChildRunFixture {
   return {
     id: 'child-1',
-    description: 'Inspect child run UI',
+    description: 'Inspect Run UI',
     prompt: 'Inspect the current UI.',
     executingAgentId: 'built-in:tenon:explorer',
     status: 'completed',
@@ -970,7 +968,7 @@ function runDetailPayload(overrides: Partial<AgentRunDetailPayload> = {}): Agent
     conversationId: 'conversation-1',
     agentId: 'built-in:tenon:explorer',
     kind: 'delegation',
-    title: 'Inspect child run UI',
+    title: 'Inspect Run UI',
     status: 'completed',
     runProfile: 'default',
     runProfileLabel: 'Default',

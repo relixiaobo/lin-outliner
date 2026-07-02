@@ -599,7 +599,7 @@ describe('agent runtime store', () => {
 
   test('filters hidden system reminder user rows from the visible conversation', async () => {
     const restored = conversation('saved', projection([
-      { nodeId: 'system-notification', message: userMessage(systemReminder('Background child run completed.')), branches: null },
+      { nodeId: 'system-notification', message: userMessage(systemReminder('Background Run completed.')), branches: null },
       { nodeId: 'a1', message: assistantMessage('handled notification'), branches: null },
     ]));
     const fake = createFakeClient({ latestConversation: restored });
@@ -1100,7 +1100,7 @@ describe('agent runtime store', () => {
       agentId: 'built-in:test:neva',
       anchor: { type: 'conversation', agentId: 'built-in:test:neva', conversationId: 'saved' },
       conversationId: 'saved',
-      title: 'Inspect child run UI',
+      title: 'Inspect Run UI',
       parentRunId: 'parent-run-1',
       parentToolCallId: 'tool-agent-1',
       runProfile: 'default',
@@ -1122,10 +1122,10 @@ describe('agent runtime store', () => {
           content: [{
             type: 'toolCall',
             id: 'tool-agent-1',
-            name: 'Agent',
+            name: 'spawn_run',
             arguments: {
-              description: 'Inspect child run UI',
-              prompt: 'Inspect the current UI.',
+              description: 'Inspect Run UI',
+              objective: 'Inspect the current UI.',
             },
           }],
         },

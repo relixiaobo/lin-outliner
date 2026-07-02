@@ -28,7 +28,7 @@ interface AgentTranscriptMessageListProps {
   isChannel?: boolean;
   messages: readonly AgentMessage[];
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenChildRunTranscript?: (childRunId: string) => void;
+  onOpenRunTranscript?: (runId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
 }
@@ -154,7 +154,7 @@ export function AgentTranscriptMessageList({
   isChannel = false,
   messages,
   onNodeReferenceOpen,
-  onOpenChildRunTranscript,
+  onOpenRunTranscript,
   pendingToolCallIds,
   toolResults,
 }: AgentTranscriptMessageListProps) {
@@ -191,7 +191,7 @@ export function AgentTranscriptMessageList({
             isChannel={isChannel}
             key={entry.id}
             onNodeReferenceOpen={onNodeReferenceOpen}
-            onOpenChildRunTranscript={onOpenChildRunTranscript}
+            onOpenRunTranscript={onOpenRunTranscript}
             pendingToolCallIds={pendingToolCallIds}
             streaming={messageActive}
             subRunsByParentToolCallId={subRunsByParentToolCallId}

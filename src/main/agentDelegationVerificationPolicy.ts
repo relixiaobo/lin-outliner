@@ -4,8 +4,8 @@ import path from 'node:path';
 import { coerceString } from '../core/agentMarkdown';
 import type { AgentRunScope, AgentRunSubmissionProjection } from '../core/agentEventLog';
 import type {
-  AgentChildRunFileChanges,
-  AgentChildRunNodeChanges,
+  AgentRunFileChanges,
+  AgentRunNodeChanges,
 } from '../core/agentTypes';
 import {
   isToolEnvelope,
@@ -19,7 +19,7 @@ const MAX_RECORDED_TOOL_TRACE_ENTRIES = 40;
 const MAX_WORKING_SET_SNAPSHOT_FILES = 500;
 const WORKING_SET_EXCLUDED_DIRS = new Set(['.git', 'node_modules', 'release']);
 
-export interface AgentChildRunToolTraceEntry {
+export interface AgentRunToolTraceEntry {
   toolName: string;
   isError: boolean;
   status?: string;
@@ -48,9 +48,9 @@ export interface VerifiableRunState {
   incomplete?: boolean;
   error?: string;
   result?: string;
-  nodeChanges: AgentChildRunNodeChanges;
-  fileChanges: AgentChildRunFileChanges;
-  toolTrace: readonly AgentChildRunToolTraceEntry[];
+  nodeChanges: AgentRunNodeChanges;
+  fileChanges: AgentRunFileChanges;
+  toolTrace: readonly AgentRunToolTraceEntry[];
   latestSubmission?: AgentRunSubmissionProjection;
 }
 
@@ -117,7 +117,7 @@ export function latestRunSubmissionSummary(run: Pick<VerifiableRunState, 'latest
 }
 
 export function recordNodeToolChanges(
-  changes: AgentChildRunNodeChanges,
+  changes: AgentRunNodeChanges,
   toolName: string,
   result: unknown,
   isError: boolean,
@@ -147,7 +147,7 @@ export function recordNodeToolChanges(
 }
 
 export function recordFileToolChanges(
-  changes: AgentChildRunFileChanges,
+  changes: AgentRunFileChanges,
   toolName: string,
   result: unknown,
   isError: boolean,
@@ -180,13 +180,13 @@ export function recordFileToolChanges(
 }
 
 export function recordToolTrace(
-  trace: AgentChildRunToolTraceEntry[],
+  trace: AgentRunToolTraceEntry[],
   toolName: string,
   result: unknown,
   isError: boolean,
 ): void {
   const details = isPlainRecord(result) ? result.details : undefined;
-  const entry: AgentChildRunToolTraceEntry = { toolName, isError };
+  const entry: AgentRunToolTraceEntry = { toolName, isError };
   if (isToolEnvelope(details)) {
     entry.status = details.status;
     entry.summary = summarizeToolEnvelopeForVerifier(details);
@@ -199,16 +199,16 @@ export function recordToolTrace(
   }
 }
 
-export function compactNodeChanges(changes: AgentChildRunNodeChanges): AgentChildRunNodeChanges | undefined {
-  const compacted: AgentChildRunNodeChanges = {};
+export function compactNodeChanges(changes: AgentRunNodeChanges): AgentRunNodeChanges | undefined {
+  const compacted: AgentRunNodeChanges = {};
   if (changes.createdNodeIds?.length) compacted.createdNodeIds = changes.createdNodeIds;
   if (changes.updatedNodeIds?.length) compacted.updatedNodeIds = changes.updatedNodeIds;
   if (changes.trashedNodeIds?.length) compacted.trashedNodeIds = changes.trashedNodeIds;
   return Object.keys(compacted).length ? compacted : undefined;
 }
 
-export function compactFileChanges(changes: AgentChildRunFileChanges): AgentChildRunFileChanges | undefined {
-  const compacted: AgentChildRunFileChanges = {};
+export function compactFileChanges(changes: AgentRunFileChanges): AgentRunFileChanges | undefined {
+  const compacted: AgentRunFileChanges = {};
   if (changes.createdPaths?.length) compacted.createdPaths = changes.createdPaths;
   if (changes.updatedPaths?.length) compacted.updatedPaths = changes.updatedPaths;
   if (changes.deletedPaths?.length) compacted.deletedPaths = changes.deletedPaths;
@@ -230,7 +230,7 @@ export async function captureWorkingSetSnapshot(localRoot: string, scope: AgentR
 }
 
 export async function recordWorkingSetDiff(
-  changes: AgentChildRunFileChanges,
+  changes: AgentRunFileChanges,
   localRoot: string,
   before: WorkingSetSnapshot,
   scope: AgentRunScope | undefined,
@@ -416,7 +416,7 @@ function summarizeToolEnvelopeForVerifier(details: ToolEnvelope): string | undef
 }
 
 function appendUniqueStrings(
-  changes: AgentChildRunFileChanges,
+  changes: AgentRunFileChanges,
   key: 'createdPaths' | 'updatedPaths' | 'deletedPaths',
   values: readonly string[],
 ): void {
@@ -433,8 +433,8 @@ function appendUniqueStrings(
 }
 
 function appendFilePatch(
-  changes: AgentChildRunFileChanges,
-  patch: NonNullable<AgentChildRunFileChanges['patches']>[number],
+  changes: AgentRunFileChanges,
+  patch: NonNullable<AgentRunFileChanges['patches']>[number],
 ): void {
   changes.patches ??= [];
   changes.patches.push(patch);
@@ -442,8 +442,8 @@ function appendFilePatch(
 }
 
 function appendUniqueNodeIds(
-  changes: AgentChildRunNodeChanges,
-  key: keyof AgentChildRunNodeChanges,
+  changes: AgentRunNodeChanges,
+  key: keyof AgentRunNodeChanges,
   nodeIds: readonly string[],
 ): void {
   if (nodeIds.length === 0) return;

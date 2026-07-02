@@ -3140,7 +3140,7 @@ test.describe('agent composer controls', () => {
           message: {
             role: 'user',
             timestamp: 1_800_000_000_500,
-            content: [{ type: 'text', text: 'Use a child run to inspect the UI.' }],
+            content: [{ type: 'text', text: 'Use a sub-run to inspect the UI.' }],
           },
           branches: null,
         },
@@ -3157,10 +3157,10 @@ test.describe('agent composer controls', () => {
             content: [{
               type: 'toolCall',
               id: 'tool-agent-1',
-              name: 'Agent',
+              name: 'spawn_run',
               arguments: {
-                description: 'Inspect child run UI',
-                prompt: 'Inspect the current UI.',
+                description: 'Inspect Run UI',
+                objective: 'Inspect the current UI.',
               },
             }],
           },
@@ -3169,7 +3169,7 @@ test.describe('agent composer controls', () => {
       ],
       childRuns: [{
         id: 'child-run-1',
-        description: 'Inspect child run UI',
+        description: 'Inspect Run UI',
         prompt: 'Inspect the current UI.',
         agentType: 'explorer',
         contextMode: 'fork',
@@ -3183,8 +3183,8 @@ test.describe('agent composer controls', () => {
     // A DM main-agent child run stays anchored to its spawning ordinary Agent
     // tool-call row, NOT a free-floating conversation-level boundary. So there
     // is no boundary region, and the run remains a process row in the bubble.
-    await expect(page.getByRole('region', { name: 'Agent run · Inspect child run UI' })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Running agent run "Inspect child run UI"' }).first()).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Agent run · Inspect Run UI' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Running agent run "Inspect Run UI"' }).first()).toBeVisible();
 
     await page.getByRole('button', { name: /^Open Work/ }).click();
     const runs = page.getByRole('region', { name: 'Agent runs' });
@@ -3198,27 +3198,26 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: /^Open Work/ })).toHaveCount(0);
     await expect(runs.getByRole('button', { name: 'Close Work' })).toHaveCount(0);
     await expect(page.locator('.agent-composer-region')).toHaveCount(0);
-    await expect(runs.getByText('Inspect child run UI')).toBeVisible();
-    await runs.getByRole('treeitem', { name: /Inspect child run UI/ }).click();
+    await expect(runs.getByText('Inspect Run UI')).toBeVisible();
+    await runs.getByRole('treeitem', { name: /Inspect Run UI/ }).click();
 
-    const details = page.getByRole('region', { name: 'Agent run details' });
+    const details = page.getByRole('region', { name: 'Run details' });
     await expect(details).toBeVisible();
     await expect(details).toHaveCSS('position', 'static');
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Back to runs' })).toBeVisible();
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Close Work' })).toBeVisible();
     await expect(details.getByRole('button', { name: 'Back to runs' })).toHaveCount(0);
-    await expect(details.getByText('Inspect child run UI')).toBeVisible();
+    await expect(details.getByText('Inspect Run UI')).toBeVisible();
     await expect(details.getByText(/4 messages ·/)).toBeVisible();
 
     await expect(details).toBeVisible();
     await expect(details.getByText('Activity log (4)')).toBeVisible();
     await expect(details.getByText('Inspect the current UI.')).toBeVisible();
-    const thoughtToggles = details.getByRole('button', { name: 'Thought · Read node "today"' });
-    await expect(thoughtToggles.first()).toBeVisible();
+    await expect(details.getByText('Thought · Read node "today"')).toBeVisible();
     await expect(details.getByRole('button', { name: 'Working', exact: true })).toHaveCount(0);
 
     await details.locator('.agent-tool-call-toggle').first().click();
-    await expect(details.getByText('Daily note content from child run.')).toBeVisible();
+    await expect(details.getByText('Daily note content from the Run.')).toBeVisible();
 
     await expect(details.getByLabel('Agent run follow-up')).toHaveCount(0);
     await details.getByRole('button', { name: 'Stop' }).click();

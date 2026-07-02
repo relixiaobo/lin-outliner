@@ -38,7 +38,7 @@ import {
   type AgentDebugRun,
   type AgentDebugRunSummary,
   type AgentMessage,
-  type AgentChildRunNodeChanges,
+  type AgentRunNodeChanges,
   type AgentRunDetailPayload,
   type AgentRunListEntry,
   type AgentRunTranscriptPayload,
@@ -86,7 +86,7 @@ import {
   type AgentPrincipal,
   type AgentRunFingerprint,
   type AgentRunTrigger,
-  type AgentChildRunRecord,
+  type DelegationRunRecord,
   type AgentRunMeta,
   type AgentRunProfileId,
   type AgentRunPurpose,
@@ -205,7 +205,7 @@ import {
   createTenonAssistantAgentDefinition,
   recordNodeToolChanges,
   type AgentChildAgentCreateInput,
-  type AgentChildRunSnapshot,
+  type AgentRunSnapshot,
 } from './agentDelegation';
 import {
   agentDefinitionAgentId,
@@ -367,7 +367,7 @@ const MEMORY_DREAM_ALLOWED_TOOLS = [
   'node_edit',
   'node_delete',
 ] as const;
-const CHILD_RUN_TRANSCRIPT_CACHE_LIMIT = 16;
+const RUN_TRANSCRIPT_CACHE_LIMIT = 16;
 const DEBUG_RUN_CACHE_LIMIT = 64;
 
 /**
@@ -388,8 +388,8 @@ const COMMAND_SCHEDULER_INTERVAL_MS = 60_000;
 // persisted. A failed fire does not advance the watermark, so it stays due.
 const COMMAND_FAILURE_BACKOFF_MS = [30_000, 60_000, 300_000, 900_000, 3_600_000] as const;
 // How long each `status({wait})` poll blocks while waiting for a background-flagged
-// command child run to finish (it re-polls if the run is still going).
-const COMMAND_CHILD_RUN_WAIT_MS = 600_000;
+// command Run to finish (it re-polls if the run is still going).
+const COMMAND_RUN_WAIT_MS = 600_000;
 const SUPPORTED_INLINE_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -587,7 +587,7 @@ interface AgentConversationState {
   queuedFollowUpSkillListingReservation: SkillListingReservation | null;
   reactiveCompactRequested: boolean;
   revision: number;
-  childRunNotificationFlushInProgress: boolean;
+  runNotificationFlushInProgress: boolean;
   runtimeSettings: AgentRuntimeSettings;
   skillRuntime: AgentSkillRuntime;
   delegationRuntime: AgentDelegationRuntime;
@@ -739,8 +739,8 @@ export class AgentRuntime {
   private agentIdentity: AgentIdentityRecord;
   private readonly domainEvents: AgentDomainEventBus;
   /** The write seam for delegated runs' own ledgers ([[agent-run-unification]]). */
-  /** Drill-in transcripts keyed on the run ledger's tail seq (see childRunTranscript). */
-  private readonly childRunTranscriptCache = new Map<string, {
+  /** Drill-in transcripts keyed on the run ledger's tail seq. */
+  private readonly runTranscriptCache = new Map<string, {
     latestSeq: number;
     messages: AgentMessage[];
     latestSubmission?: AgentRunSubmissionProjection;
@@ -1589,7 +1589,7 @@ export class AgentRuntime {
     if (!meta) return null;
     const conversationId = conversationIdOfRun(meta);
     if (conversationId !== expectedConversationId) return null;
-    const cached = this.childRunTranscriptCache.get(runId);
+    const cached = this.runTranscriptCache.get(runId);
     if (cached && cached.latestSeq === meta.latestSeq) {
       return transcriptPayload(cached.messages, cached.latestSubmission);
     }
@@ -1598,11 +1598,11 @@ export class AgentRuntime {
     const state = replayAgentEvents(events);
     const messages = await this.deriveRuntimePiMessages(conversationId, state);
     const latestSubmission = latestRunSubmissionFromEvents(events, meta.objective?.latestSubmissionSeq);
-    if (this.childRunTranscriptCache.size >= CHILD_RUN_TRANSCRIPT_CACHE_LIMIT) {
-      const oldest = this.childRunTranscriptCache.keys().next().value;
-      if (oldest !== undefined) this.childRunTranscriptCache.delete(oldest);
+    if (this.runTranscriptCache.size >= RUN_TRANSCRIPT_CACHE_LIMIT) {
+      const oldest = this.runTranscriptCache.keys().next().value;
+      if (oldest !== undefined) this.runTranscriptCache.delete(oldest);
     }
-    this.childRunTranscriptCache.set(runId, { latestSeq: state.latestSeq, messages, latestSubmission });
+    this.runTranscriptCache.set(runId, { latestSeq: state.latestSeq, messages, latestSubmission });
     return transcriptPayload(messages, latestSubmission);
   }
 
@@ -1614,39 +1614,39 @@ export class AgentRuntime {
     return meta ? conversationIdOfRun(meta) : null;
   }
 
-  async childRunStatus(
+  async runStatus(
     conversationId: string,
-    agentId: string,
+    runId: string,
     options: { wait?: boolean; timeoutMs?: number } = {},
   ) {
     const conversation = await this.ensureConversationWithId(conversationId);
     return conversation.delegationRuntime.status({
-      agent_id: agentId,
+      runId,
       wait: options.wait === true,
       timeout_ms: options.timeoutMs,
     });
   }
 
-  async childRunSend(conversationId: string, agentId: string, message: string) {
+  async runSteer(conversationId: string, runId: string, message: string) {
     const conversation = await this.ensureConversationWithId(conversationId);
     return conversation.delegationRuntime.send({
-      agent_id: agentId,
+      runId,
       message,
     });
   }
 
-  async childRunAmend(conversationId: string, agentId: string, changes: unknown) {
+  async runAmend(conversationId: string, runId: string, changes: unknown) {
     const conversation = await this.ensureConversationWithId(conversationId);
     return conversation.delegationRuntime.amend({
-      agent_id: agentId,
+      runId,
       changes,
     });
   }
 
-  async childRunStop(conversationId: string, agentId: string) {
+  async runStop(conversationId: string, runId: string) {
     const conversation = await this.ensureConversationWithId(conversationId);
     return conversation.delegationRuntime.stop({
-      agent_id: agentId,
+      runId,
     });
   }
 
@@ -1724,7 +1724,7 @@ export class AgentRuntime {
 
   // Authoring (user-driven only — see [[agent-authoring]]). Each write goes
   // through main's containment-checked file surface, then every live conversation's
-  // registry cache is invalidated so the change is visible (child run picker +
+  // registry cache is invalidated so the change is visible (Run picker +
   // settings list) without an app restart. The fresh view list is returned so
   // the renderer can re-select by agentId.
   async updateAgentDefinition(
@@ -2451,8 +2451,8 @@ export class AgentRuntime {
           readOnlyIsolated,
         }, undefined, parentToolCallId);
         return {
-          agentId: data.agent_id,
-          agentType: data.agent_type,
+          runId: data.runId,
+          runProfile: data.runProfile,
           status: data.status,
           result: data.result,
           error: data.error,
@@ -2480,39 +2480,39 @@ export class AgentRuntime {
         getParentMemoryOwnerAgentId: () => this.currentRuntimeConversation(conversationRef.current)?.activeRun?.executingAgentId ?? defaultAgentId,
         getActiveRunId: () => this.currentRuntimeConversation(conversationRef.current)?.activeRun?.id ?? null,
         getRuntimeSettings: () => this.getRuntimeSettings(),
-        childRunStarted: (snapshot, seed) => {
+        runStarted: (snapshot, seed) => {
           const current = this.currentRuntimeConversation(conversationRef.current);
           if (!current) return Promise.resolve();
-          return this.childRunStarted(conversationId, current, snapshot, seed);
+          return this.runStarted(conversationId, current, snapshot, seed);
         },
-        childRunMessage: (snapshot, message) => (
+        runMessage: (snapshot, message) => (
           // No projection ping here: the conversation projection carries no
           // per-message child data, and an open drill-in panel polls the run
           // ledger while the run is live (the poll is meta-keyed, near-free).
-          this.runLedger.appendMessage(snapshot.id, message, this.childRunActor(snapshot))
+          this.runLedger.appendMessage(snapshot.id, message, this.delegatedRunActor(snapshot))
         ),
-        childRunToolResultReplaced: (snapshot, toolCallId, text) => (
-          this.runLedger.replaceToolResult(snapshot.id, toolCallId, text, this.childRunActor(snapshot))
+        runToolResultReplaced: (snapshot, toolCallId, text) => (
+          this.runLedger.replaceToolResult(snapshot.id, toolCallId, text, this.delegatedRunActor(snapshot))
         ),
-        childRunCompacted: (snapshot, input) => (
-          this.runLedger.compacted(snapshot.id, { ...input, actor: this.childRunActor(snapshot) })
+        runCompacted: (snapshot, input) => (
+          this.runLedger.compacted(snapshot.id, { ...input, actor: this.delegatedRunActor(snapshot) })
         ),
-        childRunResultSubmitted: (snapshot, input) => (
-          this.runLedger.submitResult(snapshot.id, { ...input, actor: this.childRunActor(snapshot) })
+        runResultSubmitted: (snapshot, input) => (
+          this.runLedger.submitResult(snapshot.id, { ...input, actor: this.delegatedRunActor(snapshot) })
         ),
         readLatestRunSubmission: (runId) => this.readLatestRunSubmission(runId),
-        childRunStatusChanged: (snapshot) => {
+        runStatusChanged: (snapshot) => {
           const current = this.currentRuntimeConversation(conversationRef.current);
           if (!current) return Promise.resolve();
-          return this.childRunStatusChanged(conversationId, current, snapshot);
+          return this.runStatusChanged(conversationId, current, snapshot);
         },
-        notifyChildRun: (snapshot) => {
+        notifyRun: (snapshot) => {
           const current = this.currentRuntimeConversation(conversationRef.current);
           if (!current) return Promise.resolve();
-          return this.notifyChildRun(conversationId, current, snapshot);
+          return this.notifyRun(conversationId, current, snapshot);
         },
         reportError: (report) => this.reportError(report),
-        restoreChildRunLedger: (runId) => this.restoreChildRunLedger(conversationId, runId),
+        restoreRunLedger: (runId) => this.restoreRunLedger(conversationId, runId),
         persistToolOutputPayload: (toolCallId, toolName, text) => (
           this.persistToolOutputPayload(
             conversationId,
@@ -2640,7 +2640,7 @@ export class AgentRuntime {
       queuedFollowUpSkillListingReservation: null,
       reactiveCompactRequested: false,
       revision: 0,
-      childRunNotificationFlushInProgress: false,
+      runNotificationFlushInProgress: false,
       runtimeSettings,
       skillRuntime,
       delegationRuntime,
@@ -2659,10 +2659,10 @@ export class AgentRuntime {
     await this.refreshConversationRunMetas(conversationId, conversation);
     // Restore is records-only — no ledger IO on the conversation-open path. A
     // run's transcript is replayed from its own ledger lazily, on first resume
-    // (restoreChildRunLedger) or drill-in (childRunTranscript).
+    // (restoreRunLedger) or drill-in transcript reads.
     conversation.delegationRuntime.restorePersistedRuns(conversation.runMetas
       .map(delegationRunRecordFromMeta)
-      .filter((record): record is AgentChildRunRecord => record !== null));
+      .filter((record): record is DelegationRunRecord => record !== null));
     agent.transformContext = async (_messages, signal) => this.contextManager.prepareModelContext(conversationId, conversation, signal);
 
     conversation.unsubscribe = agent.subscribe(async (event) => {
@@ -2830,9 +2830,9 @@ export class AgentRuntime {
    * run's OWN ledger — the resume path's restore. Returns null when no ledger
    * exists; the writer is then registered empty, so the resume's `run.started`
    * becomes the ledger's first event (a conversation record whose seed never
-   * landed stays resumable instead of wedging on "Unknown child-run ledger").
+   * landed stays resumable instead of wedging on an unknown Run ledger.
    */
-  private async restoreChildRunLedger(conversationId: string, runId: string): Promise<AgentMessage[] | null> {
+  private async restoreRunLedger(conversationId: string, runId: string): Promise<AgentMessage[] | null> {
     const state = await this.runLedger.restore(conversationId, runId);
     if (!state) {
       this.runLedger.register(conversationId, runId);
@@ -2848,7 +2848,7 @@ export class AgentRuntime {
     const runningRuns = conversation.runMetas
       .filter((run) => deriveAgentRunKind(run) === 'delegation' && run.execution.status === 'running')
       .map(delegationRunRecordFromMeta)
-      .filter((run): run is AgentChildRunRecord => run !== null);
+      .filter((run): run is DelegationRunRecord => run !== null);
     if (runningRuns.length === 0) return;
 
     const interruptedError = 'The delegated run was interrupted before conversation restore.';
@@ -2892,7 +2892,7 @@ export class AgentRuntime {
     }
   }
 
-  private childRunActor(snapshot: AgentChildRunSnapshot): AgentActor {
+  private delegatedRunActor(snapshot: AgentRunSnapshot): AgentActor {
     return snapshot.parentToolCallId
       ? toolActor(AGENT_DELEGATE_TOOL_NAME, snapshot.parentToolCallId)
       : systemActor();
@@ -2903,13 +2903,13 @@ export class AgentRuntime {
    * `run.started`, the directive after it. Conversation projections discover the
    * run through the Run index, not a duplicated conversation marker.
    */
-  private async childRunStarted(
+  private async runStarted(
     conversationId: string,
     conversation: AgentConversationState,
-    snapshot: AgentChildRunSnapshot,
+    snapshot: AgentRunSnapshot,
     seed: { contextMessages: readonly AgentMessage[]; evidenceMessages: readonly AgentMessage[] },
   ): Promise<void> {
-    const actor = this.childRunActor(snapshot);
+    const actor = this.delegatedRunActor(snapshot);
     // Run ledger seed is the first durable lifecycle write. If it fails (crash or
     // disk error), there is no Run index record for the projection to surface.
     await this.runLedger.runStarted({
@@ -2936,13 +2936,13 @@ export class AgentRuntime {
     this.emitProjection(conversationId, 'run.started', 'coalesce');
   }
 
-  private async childRunStatusChanged(
+  private async runStatusChanged(
     conversationId: string,
     conversation: AgentConversationState,
-    snapshot: AgentChildRunSnapshot,
+    snapshot: AgentRunSnapshot,
   ): Promise<void> {
     await this.runLedger.statusChanged(snapshot.id, snapshot.status, {
-      actor: this.childRunActor(snapshot),
+      actor: this.delegatedRunActor(snapshot),
       errorMessage: snapshot.error,
       agentId: snapshot.executingAgentId as AgentId,
       parentRunId: snapshot.parentRunId,
@@ -2955,10 +2955,10 @@ export class AgentRuntime {
     this.emitProjection(conversationId, snapshot.status === 'running' ? 'run.started' : `run.${snapshot.status}`, 'coalesce');
   }
 
-  private async notifyChildRun(
+  private async notifyRun(
     conversationId: string,
     conversation: AgentConversationState,
-    snapshot: AgentChildRunSnapshot,
+    snapshot: AgentRunSnapshot,
   ): Promise<void> {
     if (snapshot.status === 'running') return;
     // A user-initiated stop (cancelled) is the user's own action — it raises no
@@ -2987,14 +2987,14 @@ export class AgentRuntime {
       // across re-completions — see agentDelegation `send`).
       await this.emitRunNotification(conversationId, conversation, {
         notificationId: `notification-${snapshot.id}-${snapshot.completedAt ?? 0}`,
-        kind: childRunNotificationKind(snapshot.status),
-        title: childRunNotificationTitle(snapshot),
+        kind: runNotificationKind(snapshot.status),
+        title: runNotificationTitle(snapshot),
         body: snapshot.status === 'failed' ? snapshot.error : latestSubmission?.summary ?? snapshot.result,
         source: { type: 'run', runId: snapshot.id },
-        actor: this.childRunActor(snapshot),
+        actor: this.delegatedRunActor(snapshot),
       });
     }
-    conversation.pendingChildRunNotifications.push(formatChildRunNotification(snapshot));
+    conversation.pendingChildRunNotifications.push(formatRunNotification(snapshot));
     void this.flushChildRunNotifications(conversationId, conversation).catch((error) => {
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     });
@@ -3053,13 +3053,13 @@ export class AgentRuntime {
   }
 
   private async flushChildRunNotifications(conversationId: string, conversation: AgentConversationState): Promise<void> {
-    if (conversation.childRunNotificationFlushInProgress) return;
+    if (conversation.runNotificationFlushInProgress) return;
     if (conversation.pendingChildRunNotifications.length === 0) return;
-    // A notification-delivery run is the agent's own turn (its child runs);
+    // A notification-delivery run is the agent's own turn (its sub-runs);
     // never interleave it into an active run.
     if (this.hasActiveRuns(conversation)) return;
 
-    conversation.childRunNotificationFlushInProgress = true;
+    conversation.runNotificationFlushInProgress = true;
     let startedRunId: string | null = null;
     try {
       while (conversation.pendingChildRunNotifications.length > 0) {
@@ -3081,7 +3081,7 @@ export class AgentRuntime {
       await this.recoverFromRunError(conversationId, startedRunId);
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     } finally {
-      conversation.childRunNotificationFlushInProgress = false;
+      conversation.runNotificationFlushInProgress = false;
     }
   }
 
@@ -3425,7 +3425,7 @@ export class AgentRuntime {
     return `lin-agent-command-${hashJson({ agentId: this.agentIdentity.agentId, nodeId }).slice(0, 16)}`;
   }
 
-  // A scheduled fire: no human turn, runs as a child run on the delivery conversation.
+  // A scheduled fire: no human turn, runs as a delegated Run on the delivery conversation.
   private async startTriggeredRun(command: DueCommand): Promise<void> {
     const brief = command.brief.trim();
     // Defensive: `selectDueCommands` already drops empty-brief commands, so this
@@ -3504,11 +3504,11 @@ export class AgentRuntime {
 
   // Shared no-human-turn execution for command runs (scheduled + Run-now). The
   // brief — the command title plus its non-field child outline (see
-  // `commandBriefText`) — is run as a DELEGATED child run anchored to the command's own
+  // `commandBriefText`) — is run as a delegated Run anchored to the command's own
   // delivery conversation, so every fire shows up as a Run in Work. Under the
   // one-Neva invariant a fire always forks the otherwise-empty delivery
   // conversation, so the run executes under Neva's identity and capabilities.
-  // Resolves only when the child run reaches a terminal state; throws on failure/stop
+  // Resolves only when the Run reaches a terminal state; throws on failure/stop
   // so the caller leaves the watermark unadvanced and arms the failure backoff.
   private async runCommandChildAgent(
     conversationId: string,
@@ -3519,21 +3519,22 @@ export class AgentRuntime {
     await this.refreshRuntimeSettings(conversation);
     let data = await conversation.delegationRuntime.invokeAgent({
       description: commandConversationTitle(brief),
-      prompt: buildTriggeredCommandPrompt(brief, lastSuccessAt),
-      run_in_background: false,
+      objective: brief,
+      runPrompt: buildTriggeredCommandPrompt(brief, lastSuccessAt),
+      verify: false,
       // Unattended: a scheduled run has no human watching, so a tool needing
       // approval is denied + surfaced (never hangs the run); globally
       // always-allowed tools still run. Run-now keeps the interactive channel.
       unattended: true,
     });
-    // `run_in_background: false` awaits completion, but an agent definition flagged
+    // Attended command Runs await completion, but an agent definition flagged
     // `background: true` launches detached regardless — poll to completion so the
     // watermark only ever advances on a finished run.
     while (data.status === 'async_launched' || data.status === 'queued' || data.status === 'running') {
       data = await conversation.delegationRuntime.status({
-        agent_id: data.agent_id,
+        runId: data.runId,
         wait: true,
-        timeout_ms: COMMAND_CHILD_RUN_WAIT_MS,
+        timeout_ms: COMMAND_RUN_WAIT_MS,
       });
     }
     if (data.status === 'failed' || data.error) throw new Error(data.error || 'The command run failed.');
@@ -3966,11 +3967,11 @@ export class AgentRuntime {
     allowedTools: readonly string[],
     model: Model<Api>,
     providerConfig: AgentProviderRuntimeConfig,
-  ): Promise<{ nodeChanges: AgentChildRunNodeChanges; incomplete: boolean; anchorMessageId: string }> {
+  ): Promise<{ nodeChanges: AgentRunNodeChanges; incomplete: boolean; anchorMessageId: string }> {
     let anchorMessageId: string | null = null;
     let startedRunId: string | null = null;
     try {
-      const nodeChanges: AgentChildRunNodeChanges = {};
+      const nodeChanges: AgentRunNodeChanges = {};
       await this.ensureDreamChannelEventState();
       const conversation = await this.ensureConversationWithId(DEFAULT_DREAM_CHANNEL_ID);
       await this.refreshRuntimeSettings(conversation);
@@ -4064,7 +4065,7 @@ export class AgentRuntime {
       type: 'dream.finished',
       actor: systemActor(),
       messageId: anchorMessageId,
-      agentId: result.agentId,
+      agentId: result.runId,
       runId: result.runId,
       trigger: result.trigger,
       window: result.window,
@@ -8002,15 +8003,15 @@ function latestRunSubmissionFromEvents(
   };
 }
 
-function childRunNotificationKind(
+function runNotificationKind(
   // 'cancelled' is gated out before this (a user-initiated stop raises no
-  // notification — see notifyChildRun), so only failed/completed reach here.
+  // notification — see notifyRun), so only failed/completed reach here.
   status: 'failed' | 'completed',
 ): AgentNotificationKind {
   return status === 'failed' ? 'task_failed' : 'task_completed';
 }
 
-function childRunNotificationTitle(snapshot: AgentChildRunSnapshot): string {
+function runNotificationTitle(snapshot: AgentRunSnapshot): string {
   if (snapshot.status === 'failed') return `Agent run "${snapshot.description}" failed.`;
   if (snapshot.status === 'cancelled') return `Agent run "${snapshot.description}" was stopped.`;
   // A run can reach a terminal notification with status==='completed' but an
@@ -8022,14 +8023,14 @@ function childRunNotificationTitle(snapshot: AgentChildRunSnapshot): string {
   return `Agent run "${snapshot.description}" completed.`;
 }
 
-function formatChildRunNotification(snapshot: AgentChildRunSnapshot): string {
-  const summary = childRunNotificationTitle(snapshot);
+function formatRunNotification(snapshot: AgentRunSnapshot): string {
+  const summary = runNotificationTitle(snapshot);
   return [
     '<agent-run-notification>',
-    `<agent_id>${escapeXml(snapshot.id)}</agent_id>`,
+    `<runId>${escapeXml(snapshot.id)}</runId>`,
     snapshot.name ? `<name>${escapeXml(snapshot.name)}</name>` : null,
     `<description>${escapeXml(snapshot.description)}</description>`,
-    `<agent_type>${escapeXml(snapshot.agentType)}</agent_type>`,
+    `<runProfile>${escapeXml(snapshot.runProfile ?? 'default')}</runProfile>`,
     `<context_mode>${escapeXml(snapshot.contextMode)}</context_mode>`,
     `<status>${escapeXml(snapshot.status)}</status>`,
     `<summary>${escapeXml(summary)}</summary>`,
@@ -8347,7 +8348,7 @@ function runPurposeFromMeta(run: AgentRunMetaProjection): AgentRunPurpose | unde
   return run.objective.role === 'verifier' ? 'verify' : 'work';
 }
 
-function delegationRunRecordFromMeta(run: AgentRunMetaProjection): AgentChildRunRecord | null {
+function delegationRunRecordFromMeta(run: AgentRunMetaProjection): DelegationRunRecord | null {
   if (run.anchor.type !== 'conversation') return null;
   if (deriveAgentRunKind(run) !== 'delegation') return null;
   const objective = run.objective?.text || compactRunListTitle(run.id) || run.id;
@@ -8446,7 +8447,7 @@ function emptyDreamChanges(): AgentDreamCompletedChanges {
   return { added: 0, updated: 0, forgotten: 0, skipped: 0 };
 }
 
-function dreamChangesFromChildNodeChanges(nodeChanges: AgentChildRunNodeChanges): AgentDreamCompletedChanges {
+function dreamChangesFromChildNodeChanges(nodeChanges: AgentRunNodeChanges): AgentDreamCompletedChanges {
   return {
     added: uniqueStrings(nodeChanges.createdNodeIds).length,
     updated: uniqueStrings(nodeChanges.updatedNodeIds).length,

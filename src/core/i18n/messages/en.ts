@@ -842,7 +842,7 @@ commandPalette: {
   },
 
   // The agent chat surface: transcript, composer, message rows, process/tool-call
-  // blocks, child run details, thinking blocks, and markdown rendering.
+  // blocks, Run details, thinking blocks, and markdown rendering.
   agent: {
     // The chat panel header + conversation history menu.
     chat: {
@@ -963,7 +963,7 @@ commandPalette: {
       showDetails: 'Show details',
       hideDetails: 'Hide details',
       alwaysAllowRule: 'Always allow rule',
-      // Attribution shown when a consulted agent (a child run) raises the approval.
+      // Attribution shown when a separate consulted agent raises the approval.
       approvalRequestedBy: ({ agent }: { agent: string }) => `Requested by @${agent}`,
       approveOnce: 'Allow once',
       alwaysAllow: 'Always allow',
@@ -1207,51 +1207,10 @@ commandPalette: {
         askUserQuestion: { base: 'ask user', pending: 'Asking user', done: 'Asked user' },
       },
     },
-    // The agent-run (delegated child run) details panel and tool-call details.
-    childRun: {
+    runTool: {
       heading: 'Agent run',
-      status: 'Status',
-      mode: 'Mode',
-      duration: 'Duration',
-      name: 'Name',
-      prompt: 'Prompt',
-      result: 'Result',
-      error: 'Error',
-      copyPrompt: 'Copy run prompt',
-      copyResult: 'Copy run result',
-      copyError: 'Copy run error',
       copyId: 'Copy run id',
       viewTranscript: 'View transcript',
-      noResultYet: 'No result yet.',
-      roleSystem: 'system',
-      roleUser: 'user',
-      roleAssistant: 'assistant',
-      roleToolResult: 'tool result',
-      thoughtNumbered: ({ index }: { index: number }) => `Thought ${index}`,
-      loadingTranscript: 'Loading transcript...',
-      retry: 'Retry',
-      noTranscriptMessages: 'No transcript messages captured yet.',
-      transcriptPayloadUnavailable: 'Transcript is unavailable for this run.',
-      detailsAriaLabel: 'Agent run details',
-      closeDetails: 'Close agent run details',
-      close: 'Close',
-      metaLine: ({ count, duration }: { count: number; duration: string }) =>
-        `${count === 1 ? '1 message' : `${count} messages`} · ${duration}`,
-      sectionResult: 'Result',
-      sectionChildRuns: ({ count }: { count: number }) =>
-        count === 1 ? 'Child run' : `Child runs (${count})`,
-      sectionVerification: 'Verification',
-      sectionActivityLog: ({ count }: { count: number }) => `Activity log (${count})`,
-      sectionTechnicalDetails: 'Technical details',
-      stop: 'Stop',
-      stopping: 'Stopping...',
-      metaAgentId: 'Agent ID',
-      metaType: 'Type',
-      metaParentToolCall: 'Parent tool call',
-      metaParentRun: 'Parent run',
-      metaStarted: 'Started',
-      metaUpdated: 'Updated',
-      metaNone: 'none',
     },
     runDetail: {
       heading: 'Run details',
@@ -1314,8 +1273,8 @@ commandPalette: {
       openRun: 'Open run',
       stopRun: 'Stop run',
       stopping: 'Stopping...',
-      childRunProgress: ({ completed, total }: { completed: number; total: number }) =>
-        total === 1 ? `Child run ${completed}/${total}` : `Child runs ${completed}/${total}`,
+      subRunProgress: ({ completed, total }: { completed: number; total: number }) =>
+        total === 1 ? `Sub-run ${completed}/${total}` : `Sub-runs ${completed}/${total}`,
       messages: ({ count }: { count: number }) => count === 1 ? '1 message' : `${count} messages`,
       memoryChanges: ({ count }: { count: number }) => count === 1 ? '1 memory change' : `${count} memory changes`,
       status: {

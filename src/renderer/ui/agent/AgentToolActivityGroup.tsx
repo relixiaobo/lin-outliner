@@ -19,7 +19,7 @@ interface AgentToolActivityGroupProps {
   index: DocumentIndex;
   members: AgentTurnToolCallItem[];
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
-  onOpenChildRunTranscript?: (childRunId: string) => void;
+  onOpenRunTranscript?: (runId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
   subRunsByParentToolCallId?: ReadonlyMap<string, AgentRenderRunEntity>;
@@ -37,7 +37,7 @@ export function AgentToolActivityGroup({
   index,
   members,
   onNodeReferenceOpen,
-  onOpenChildRunTranscript,
+  onOpenRunTranscript,
   pendingToolCallIds,
   results,
   subRunsByParentToolCallId,
@@ -92,7 +92,7 @@ export function AgentToolActivityGroup({
                 expandState.toggle(toolId, expandState.isExpanded(toolId, false), anchorElement);
               }}
               onNodeReferenceOpen={onNodeReferenceOpen}
-              onOpenChildRunTranscript={onOpenChildRunTranscript}
+              onOpenRunTranscript={onOpenRunTranscript}
               pendingToolCallIds={pendingToolCallIds}
               result={results.get(member.toolCall.id)}
               conversationId={conversationId}

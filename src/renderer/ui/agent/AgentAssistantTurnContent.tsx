@@ -17,7 +17,7 @@ export function renderAssistantBlocks(
   documentIndex: DocumentIndex,
   expandState: AgentExpandState,
   onNodeReferenceOpen: AgentNodeReferenceOpenHandler | undefined,
-  onOpenChildRunTranscript: ((childRunId: string) => void) | undefined,
+  onOpenRunTranscript: ((runId: string) => void) | undefined,
   pendingToolCallIds: ReadonlySet<string>,
   conversationId: string | null | undefined,
   streaming: boolean,
@@ -55,7 +55,7 @@ export function renderAssistantBlocks(
         index={documentIndex}
         key={turn.process.id}
         onNodeReferenceOpen={onNodeReferenceOpen}
-        onOpenChildRunTranscript={onOpenChildRunTranscript}
+        onOpenRunTranscript={onOpenRunTranscript}
         pendingToolCallIds={pendingToolCallIds}
         process={turn.process}
         results={toolResults}

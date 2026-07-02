@@ -233,13 +233,13 @@ export type AgentToolResultWithPayloads = ToolResultMessage & {
   payloadRefs?: AgentToolResultPayloadPart[];
 };
 
-export interface AgentChildRunNodeChanges {
+export interface AgentRunNodeChanges {
   createdNodeIds?: string[];
   updatedNodeIds?: string[];
   trashedNodeIds?: string[];
 }
 
-export interface AgentChildRunFilePatch {
+export interface AgentRunFilePatch {
   filePath: string;
   operation: 'create' | 'update' | 'delete';
   structuredPatch?: unknown;
@@ -247,29 +247,28 @@ export interface AgentChildRunFilePatch {
   kind?: string;
 }
 
-export interface AgentChildRunFileChanges {
+export interface AgentRunFileChanges {
   createdPaths?: string[];
   updatedPaths?: string[];
   deletedPaths?: string[];
-  patches?: AgentChildRunFilePatch[];
+  patches?: AgentRunFilePatch[];
 }
 
-export interface AgentChildRunChildStatus {
+export interface AgentSubRunStatus {
   runId: string;
   role: 'controller' | 'worker' | 'verifier';
   objectiveStatus?: AgentObjectiveStatus;
-  executionStatus: AgentChildRunActionResult['status'];
+  executionStatus: AgentRunActionResult['status'];
   name?: string;
   description?: string;
   objective?: string;
 }
 
-export interface AgentChildRunActionResult {
+export interface AgentRunActionResult {
   status: 'completed' | 'async_launched' | 'queued' | 'running' | 'failed' | 'cancelled';
-  agent_id: string;
+  runId: string;
   name?: string;
   description: string;
-  prompt: string;
   objective?: string;
   criteria?: string[];
   objective_status?: AgentObjectiveStatus;
@@ -277,21 +276,18 @@ export interface AgentChildRunActionResult {
   scope?: AgentRunScope;
   budget?: AgentRunBudget;
   blocked_reason?: string;
-  agent_type: string;
+  runProfile: AgentRunProfileId;
   context_mode: AgentRunContextMode;
-  executing_agent_id?: string;
-  parent_agent_id?: string;
-  memory_owner_agent_id?: string;
   result?: string;
   error?: string;
   started_at: number;
   updated_at: number;
   completed_at?: number;
   transcript_message_count: number;
-  children?: AgentChildRunChildStatus[];
+  children?: AgentSubRunStatus[];
   latest_verifier_gap?: string;
-  node_changes?: AgentChildRunNodeChanges;
-  file_changes?: AgentChildRunFileChanges;
+  node_changes?: AgentRunNodeChanges;
+  file_changes?: AgentRunFileChanges;
   /**
    * The run reached a terminal `completed` status WITHOUT the model deciding it
    * was done: a maxTurns abort or an unresolved context overflow cut it off mid
@@ -536,12 +532,9 @@ export interface AgentApprovalRequestView {
   alwaysAllowAction?: 'grant' | 'soft_allow' | 'remove_block';
   autoBlockMs?: number;
   /**
-   * Agent id, set when this approval/notice was raised by a CONSULTED agent — a
-   * fresh child run that is a different agent than the parent. The card attributes
-   * the request to that consultee via its canonical mention token. Unset for the
-   * conversation's own agent and for forks (which run AS the parent agent):
-   * contact is ungated, but the consultee's risky actions still gate under its OWN
-   * capability permissions and must surface as the consultee's.
+   * Agent id, set only when an approval/notice is attributed to a separate
+   * consulted agent. Same-agent Runs leave this unset; their risky actions still
+   * gate through ordinary capability permissions.
    */
   requestedByAgentId?: string;
   skillTrust?: {

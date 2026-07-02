@@ -237,7 +237,7 @@ function CopyResultButton({ text }: { text: string }) {
 function ResultText({ text }: { text: string }) {
   const t = useT();
   return (
-    <div className="agent-child-run-result-box">
+    <div className="agent-run-detail-result-box">
       <AgentMarkdown keyPrefix="run-detail-result" text={text || t.agent.runDetail.noResultYet} />
     </div>
   );
@@ -253,10 +253,10 @@ function DetailSection({
   title: string;
 }) {
   return (
-    <section className="agent-child-run-section">
-      <div className="agent-child-run-section-header">
+    <section className="agent-run-detail-section">
+      <div className="agent-run-detail-section-header">
         <h4>{title}</h4>
-        {actions ? <div className="agent-child-run-section-actions">{actions}</div> : null}
+        {actions ? <div className="agent-run-detail-section-actions">{actions}</div> : null}
       </div>
       {children}
     </section>
@@ -280,14 +280,14 @@ function DisclosureSection({
   const [open, setOpen] = useState(defaultOpen);
   return (
     <details
-      className="agent-child-run-disclosure-section"
+      className="agent-run-detail-disclosure-section"
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary>
         <span>{title}</span>
       </summary>
-      <div className="agent-child-run-disclosure-body">
+      <div className="agent-run-detail-disclosure-body">
         {children}
       </div>
     </details>
@@ -305,7 +305,7 @@ function RunChildList({
 }) {
   const t = useT();
   return (
-    <div className="agent-child-run-child-list">
+    <div className="agent-sub-run-list">
       {runs.map((run) => {
         const displayStatus = displayStatusFor(run);
         const completed = isCompletedStatus(displayStatus);
@@ -317,7 +317,7 @@ function RunChildList({
         ].join(' · ');
         return (
           <button
-            className={`agent-child-run-child-row is-${runStatusClass(displayStatus)}`}
+            className={`agent-sub-run-row is-${runStatusClass(displayStatus)}`}
             disabled={!onOpenRun}
             key={run.runId}
             onClick={() => onOpenRun?.(run.runId, conversationId)}
@@ -326,9 +326,9 @@ function RunChildList({
             <span className={`agent-run-marker is-${runStatusClass(displayStatus)}`} aria-hidden="true">
               <CheckboxMark checked={completed} />
             </span>
-            <span className="agent-child-run-child-main">
-              <span className="agent-child-run-child-title">{title}</span>
-              <span className="agent-child-run-child-meta">{meta}</span>
+            <span className="agent-sub-run-main">
+              <span className="agent-sub-run-title">{title}</span>
+              <span className="agent-sub-run-meta">{meta}</span>
             </span>
           </button>
         );
@@ -368,7 +368,7 @@ function TranscriptTimeline({
   if (loading && messages.length === 0) {
     return (
       <EmptyState
-        className="agent-child-run-empty"
+        className="agent-run-detail-empty"
         icon={LoaderIcon}
         iconClassName="agent-tool-call-spinner"
         loading
@@ -380,7 +380,7 @@ function TranscriptTimeline({
   if (error) {
     return (
       <ErrorState
-        className="agent-child-run-empty"
+        className="agent-run-detail-empty"
         message={error}
         onRetry={reload}
         retryLabel={t.agent.runDetail.retry}
@@ -388,18 +388,18 @@ function TranscriptTimeline({
     );
   }
   if (messages.length === 0) {
-    return <EmptyState className="agent-child-run-empty" title={t.agent.runDetail.noTranscriptMessages} />;
+    return <EmptyState className="agent-run-detail-empty" title={t.agent.runDetail.noTranscriptMessages} />;
   }
 
   return (
     <AgentTranscriptMessageList
       active={transcriptHasActiveAssistantTurn(messages, run.status === 'running', pendingToolCallIds)}
-      className="agent-child-run-transcript-list"
+      className="agent-run-detail-transcript-list"
       conversationId={conversationId}
       index={index}
       messages={messages}
       onNodeReferenceOpen={onNodeReferenceOpen}
-      onOpenChildRunTranscript={(childRunId) => onOpenRun?.(childRunId, conversationId)}
+      onOpenRunTranscript={(runId) => onOpenRun?.(runId, conversationId)}
       pendingToolCallIds={pendingToolCallIds}
       run={run}
       subRunsByParentToolCallId={subRunsByParentToolCallId}
@@ -512,7 +512,7 @@ export function AgentRunDetailsPanel({
   if (loading && !detail) {
     return (
       <EmptyState
-        className="agent-child-run-empty"
+        className="agent-run-detail-empty"
         icon={LoaderIcon}
         iconClassName="agent-tool-call-spinner"
         loading
@@ -524,7 +524,7 @@ export function AgentRunDetailsPanel({
   if (!detail || !transcriptRun) {
     return (
       <ErrorState
-        className="agent-child-run-empty"
+        className="agent-run-detail-empty"
         message={detailError ?? t.agent.runDetail.detailUnavailable}
         onRetry={loadRun}
         retryLabel={t.agent.runDetail.retry}
@@ -572,12 +572,12 @@ export function AgentRunDetailsPanel({
   ) : null;
 
   return (
-    <section className="agent-child-run-details-panel" aria-label={t.agent.runDetail.detailsAriaLabel}>
+    <section className="agent-run-detail-panel" aria-label={t.agent.runDetail.detailsAriaLabel}>
       {showHeader ? (
-        <header className="agent-child-run-details-header">
+        <header className="agent-run-detail-header">
         {onBack ? (
           <IconButton
-            className="agent-child-run-back"
+            className="agent-run-detail-back"
             icon={BackIcon}
             label={t.agent.run.backToRuns}
             onClick={onBack}
@@ -585,19 +585,19 @@ export function AgentRunDetailsPanel({
             variant="panel"
           />
         ) : null}
-        <div className="agent-child-run-title-block">
-          <div className="agent-child-run-title-line">
+        <div className="agent-run-detail-title-block">
+          <div className="agent-run-detail-title-line">
             <AgentIcon size={ICON_SIZE.menu} />
             <span>{t.agent.runDetail.heading}</span>
-            <span className={`agent-child-run-status is-${displayStatusClass}`}>{runStatusLabel(displayStatus, t.agent.run.status)}</span>
+            <span className={`agent-run-detail-status is-${displayStatusClass}`}>{runStatusLabel(displayStatus, t.agent.run.status)}</span>
           </div>
           <h3>{detail.title}</h3>
           <p>{metaLine}</p>
         </div>
-        <div className="agent-child-run-header-actions">
+        <div className="agent-run-detail-header-actions">
           {stopButton}
           <IconButton
-            className="agent-child-run-close"
+            className="agent-run-detail-close"
             icon={CloseIcon}
             label={t.agent.runDetail.closeDetails}
             onClick={onClose}
@@ -608,20 +608,20 @@ export function AgentRunDetailsPanel({
         </header>
       ) : null}
       {actionError ? (
-        <div className="agent-child-run-action-error" role="alert">
+        <div className="agent-run-detail-action-error" role="alert">
           <WarningIcon size={ICON_SIZE.menu} />
           <span>{actionError}</span>
         </div>
       ) : null}
-      <div className="agent-child-run-details-body">
+      <div className="agent-run-detail-body">
         {!showHeader ? (
-          <div className="agent-child-run-details-summary">
-            <div className="agent-child-run-title-block">
+          <div className="agent-run-detail-summary">
+            <div className="agent-run-detail-title-block">
               <h3>{detail.title}</h3>
               <p>{metaLine}</p>
             </div>
             {stopButton ? (
-              <div className="agent-child-run-header-actions">
+              <div className="agent-run-detail-header-actions">
                 {stopButton}
               </div>
             ) : null}
@@ -672,7 +672,7 @@ export function AgentRunDetailsPanel({
           />
         </DisclosureSection>
         <DisclosureSection key={`technical-${detail.runId}`} defaultOpen={false} title={t.agent.runDetail.sectionTechnicalDetails}>
-          <dl className="agent-child-run-metadata">
+          <dl className="agent-run-detail-metadata">
             <div>
               <dt>{t.agent.runDetail.metaRunId}</dt>
               <dd>{detail.runId}</dd>

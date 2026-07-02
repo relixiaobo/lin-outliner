@@ -570,7 +570,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           toolCallId: 'child-run-tool-read-1',
           toolName: 'node_read',
           timestamp: now - 300,
-          content: [{ type: 'text', text: 'Daily note content from child run.' }],
+          content: [{ type: 'text', text: 'Daily note content from the Run.' }],
           isError: false,
         },
         {
@@ -594,7 +594,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             },
           },
           stopReason: 'stop',
-          content: [{ type: 'text', text: 'The child run finished inspecting the UI.' }],
+          content: [{ type: 'text', text: 'The Run finished inspecting the UI.' }],
         },
       ];
     // Run Details fixture: the reply Details button opens this concrete run via
@@ -2083,20 +2083,23 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_run_detail') {
           const runId = String(args.runId);
+          const requestedConversationId = args.conversationId === undefined ? '' : String(args.conversationId);
           const runEntry = agentRuns.find((entry): entry is Record<string, any> => (
             typeof entry === 'object'
             && entry !== null
             && String((entry as any).runId) === runId
-            && String((entry as any).conversationId) === generalChannelId
+            && (!requestedConversationId || String((entry as any).conversationId) === requestedConversationId)
           ));
-          return clone(String(args.conversationId) === generalChannelId
+          const fixtureConversationId = runId === 'child-run-1' ? ASSISTANT_DM_ID : generalChannelId;
+          const conversationId = String(runEntry?.conversationId ?? fixtureConversationId);
+          return clone((!requestedConversationId || requestedConversationId === conversationId)
             && (runEntry || runId === 'child-run-1' || runId === 'child-run-source-e2e')
             ? {
                 runId,
-                conversationId: generalChannelId,
+                conversationId,
                 agentId: String(runEntry?.agentId ?? 'built-in:tenon:assistant'),
                 kind: 'delegation',
-                title: String(runEntry?.title ?? 'Mock child run'),
+                title: String(runEntry?.title ?? 'Mock Run'),
                 status: runEntry?.status ?? 'completed',
                 runProfile: 'default',
                 runProfileLabel: 'Default',
@@ -2112,53 +2115,71 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             : null) as T;
         }
         if (cmd === 'agent_run_transcript') {
-          return clone(String(args.runId) === 'child-run-1'
-            || (String(args.runId) === 'child-run-source-e2e' && String(args.conversationId) === generalChannelId)
+          const runId = String(args.runId);
+          const requestedConversationId = args.conversationId === undefined ? '' : String(args.conversationId);
+          const runEntry = agentRuns.find((entry): entry is Record<string, any> => (
+            typeof entry === 'object'
+            && entry !== null
+            && String((entry as any).runId) === runId
+            && (!requestedConversationId || String((entry as any).conversationId) === requestedConversationId)
+          ));
+          const fixtureConversationId = runId === 'child-run-1' ? ASSISTANT_DM_ID : generalChannelId;
+          const conversationId = String(runEntry?.conversationId ?? fixtureConversationId);
+          return clone((runId === 'child-run-1' || runId === 'child-run-source-e2e')
+            && (!requestedConversationId || requestedConversationId === conversationId)
             ? { messages: childRunTranscriptMessages }
             : null) as T;
         }
         if (cmd === 'agent_run_conversation_id') {
           const runId = String(args.runId);
-          return clone(runId === 'child-run-1' || runId === 'child-run-source-e2e' ? generalChannelId : null) as T;
+          const runEntry = agentRuns.find((entry): entry is Record<string, any> => (
+            typeof entry === 'object'
+            && entry !== null
+            && String((entry as any).runId) === runId
+          ));
+          return clone(runEntry
+            ? String(runEntry.conversationId)
+            : runId === 'child-run-1'
+              ? ASSISTANT_DM_ID
+              : runId === 'child-run-source-e2e'
+                ? generalChannelId
+                : null) as T;
         }
-        if (cmd === 'agent_run_status' || cmd === 'agent_child_run_status') {
-          const runId = String(args.runId ?? args.agentId);
+        if (cmd === 'agent_run_status') {
+          const runId = String(args.runId);
           return clone({
             status: 'running',
-            agent_id: runId,
-            description: 'Inspect child run UI',
-            prompt: 'Inspect the current UI.',
-            agent_type: 'explorer',
-            context_mode: 'fork',
+            runId,
+            description: 'Inspect Run UI',
+            runProfile: 'default',
+            context_mode: 'brief',
             started_at: now - 500,
             updated_at: now,
             transcript_message_count: 4,
           }) as T;
         }
-        if (cmd === 'agent_run_steer' || cmd === 'agent_child_run_send') {
-          const runId = String(args.runId ?? args.agentId);
+        if (cmd === 'agent_run_steer') {
+          const runId = String(args.runId);
           return clone({
             status: 'queued',
-            agent_id: runId,
-            description: 'Inspect child run UI',
-            prompt: 'Inspect the current UI.',
-            agent_type: 'explorer',
-            context_mode: 'fork',
+            runId,
+            description: 'Inspect Run UI',
+            runProfile: 'default',
+            context_mode: 'brief',
             started_at: now - 500,
             updated_at: now,
             transcript_message_count: 4,
             instructions: 'Message queued for the running background agent.',
           }) as T;
         }
-        if (cmd === 'agent_run_stop' || cmd === 'agent_child_run_stop') {
-          const runId = String(args.runId ?? args.agentId);
+        if (cmd === 'agent_run_stop') {
+          const runId = String(args.runId);
           return clone({
             status: 'cancelled',
-            agent_id: runId,
-            description: 'Inspect child run UI',
-            prompt: 'Inspect the current UI.',
-            agent_type: 'explorer',
-            context_mode: 'fork',
+            runId,
+            description: 'Inspect Run UI',
+            runProfile: 'default',
+            context_mode: 'brief',
             started_at: now - 500,
             updated_at: now,
             completed_at: now,

@@ -49,7 +49,7 @@ describe('agent permission model', () => {
       'web_search',
       'web_fetch',
       'past_chats',
-      'AgentStatus',
+      'run_status',
     ]));
     expect(tools).not.toContain('file_write');
     expect(tools).not.toContain('file_edit');
@@ -57,13 +57,13 @@ describe('agent permission model', () => {
     expect(tools).not.toContain('operation_history');
     expect(tools).not.toContain('bash');
     expect(tools).not.toContain('skill');
-    expect(tools).not.toContain('Agent');
+    expect(tools).not.toContain('spawn_run');
     expect(tools).not.toContain('recall');
     expect(tools).not.toContain('dream');
 
-    expect(readOnlyAgentToolNames(['file_read', 'file_write', 'AgentStatus'])).toEqual([
+    expect(readOnlyAgentToolNames(['file_read', 'file_write', 'run_status'])).toEqual([
       'file_read',
-      'AgentStatus',
+      'run_status',
     ]);
     expect(agentToolActionKindProfile('operation_history', { action: 'list' })).toEqual(['outline.read']);
     expect(agentToolActionKindProfile('operation_history', { action: 'undo' })).toEqual(['outline.edit']);
@@ -72,7 +72,6 @@ describe('agent permission model', () => {
   test('maps action-kind scope to the visible tool catalog', () => {
     expect(agentToolNamesForActionKindScope(['agent.delegate.status'], ['*'])).toEqual(expect.arrayContaining([
       'run_status',
-      'AgentStatus',
     ]));
     expect(agentToolNamesForActionKindScope(['agent.delegate.status'], ['*'])).not.toContain('spawn_run');
     expect(agentToolNamesForActionKindScope(['agent.delegate.status'], ['*'])).not.toContain('run_amend');
