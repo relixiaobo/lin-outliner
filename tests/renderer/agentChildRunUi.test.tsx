@@ -173,6 +173,44 @@ describe('agent child run UI', () => {
     expect(rendered.container.textContent).toContain('Daily note content.');
   });
 
+  test('uses structured run submission as the detail result', async () => {
+    const payloadText = JSON.stringify({
+      messages: [
+        {
+          role: 'assistant',
+          timestamp: 180,
+          api: 'openai-completions',
+          provider: 'openai',
+          model: 'gpt-5.4',
+          usage: emptyUsage(),
+          stopReason: 'stop',
+          content: [{ type: 'text', text: 'Activity transcript text.' }],
+        },
+      ],
+      latestSubmission: {
+        runId: 'child-1',
+        seq: 7,
+        submittedAt: 200,
+        summary: 'Structured submitted result.',
+        source: 'final_assistant_message',
+      },
+    });
+    const rendered = renderComponent(
+      <AgentChildRunDetailsPanel
+        onClose={() => undefined}
+        conversationId="conversation-1"
+        index={TEST_INDEX}
+        childRun={{ ...childRunEntity(), result: 'Old projected result.' }}
+      />,
+      {
+        payloads: { 'child-1': payloadText },
+      },
+    );
+
+    await waitForText(rendered, 'Structured submitted result.');
+    expect(rendered.container.textContent).not.toContain('Old projected result.');
+  });
+
   test('child run transcript details can open nested child runs', async () => {
     let openedChildRunId: string | null = null;
     const nestedRun = {
@@ -700,7 +738,11 @@ function installDomGlobals(window: Window, payloads: Record<string, string>) {
       if (cmd === 'agent_child_run_transcript') {
         const raw = payloads[String(args.runId)];
         if (!raw) return null as T;
-        return { messages: (JSON.parse(raw) as { messages: unknown[] }).messages } as T;
+        const parsed = JSON.parse(raw) as { messages: unknown[]; latestSubmission?: unknown };
+        return {
+          messages: parsed.messages,
+          latestSubmission: parsed.latestSubmission,
+        } as T;
       }
       if (cmd === 'agent_run_steer' || cmd === 'agent_child_run_send') {
         const runId = args.runId ?? args.agentId;

@@ -16,6 +16,8 @@ import {
   type AgentRunBudget,
   type AgentRunProfileId,
   type AgentRunPurpose,
+  type AgentRunSubmissionProjection,
+  type AgentRunSubmissionSource,
   type AgentRunScope,
   type AgentRunLogEventType,
   type AgentRunStatus,
@@ -179,6 +181,38 @@ export class AgentRunLedgerWriter {
       });
       await this.options.store().appendRunStreamEvents(run.conversationId, runId, [event]);
     });
+  }
+
+  async submitResult(
+    runId: string,
+    input: {
+      actor: AgentActor;
+      summary: string;
+      source: AgentRunSubmissionSource;
+    },
+  ): Promise<AgentRunSubmissionProjection | null> {
+    const summary = input.summary.trim();
+    if (!summary) return null;
+    const run = this.requireRun(runId);
+    let projection: AgentRunSubmissionProjection | null = null;
+    await this.enqueue(runId, run, async () => {
+      const event = this.buildEvent(run, runId, {
+        type: 'run.result.submitted',
+        actor: input.actor,
+        runId,
+        summary,
+        source: input.source,
+      });
+      projection = {
+        runId,
+        seq: event.seq,
+        submittedAt: event.createdAt,
+        summary,
+        source: input.source,
+      };
+      await this.options.store().appendRunStreamEvents(run.conversationId, runId, [event]);
+    });
+    return projection;
   }
 
   /**

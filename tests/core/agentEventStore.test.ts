@@ -1370,7 +1370,14 @@ describe('agent event store', () => {
           retention: 'hot',
         },
         {
-          ...base(conversationId, 2, 'run.failed'),
+          ...base(conversationId, 2, 'run.result.submitted'),
+          eventId: `${runId}-submitted`,
+          runId,
+          summary: 'The storage seam is in the run ledger.',
+          source: 'final_assistant_message',
+        },
+        {
+          ...base(conversationId, 3, 'run.failed'),
           eventId: `${runId}-failed`,
           runId,
           errorMessage: 'Verifier rejected the evidence.',
@@ -1392,7 +1399,7 @@ describe('agent event store', () => {
         runProfile: 'research',
         execution: {
           status: 'failed',
-          completedAt: 1_700_000_000_002,
+          completedAt: 1_700_000_000_003,
           error: 'Verifier rejected the evidence.',
           usage,
         },
@@ -1405,6 +1412,7 @@ describe('agent event store', () => {
           budget: { tokens: 1000, spentTokens: 250 },
           blockedReason: 'Missing evidence',
           latestVerifierGap: 'No tool evidence',
+          latestSubmissionSeq: 2,
         },
       });
       await expect(store.listConversationRunMetaProjections(conversationId)).resolves.toMatchObject([

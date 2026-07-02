@@ -46,6 +46,7 @@ import type {
   AgentDebugRun,
   AgentMessageAttachmentInput,
   AgentChildRunActionResult,
+  AgentRunTranscriptPayload,
   AgentUserViewContext,
   AskUserQuestionResult,
 } from '../../core/agentTypes';
@@ -333,7 +334,7 @@ export const api = {
   agentPayloadText: (conversationId: string, payloadId: string) =>
     command<string | null>('agent_payload_text', { conversationId, payloadId }),
   agentChildRunTranscript: (conversationId: string, runId: string) =>
-    command<{ messages: unknown[] } | null>('agent_child_run_transcript', { conversationId, runId }),
+    command<AgentRunTranscriptPayload | null>('agent_child_run_transcript', { conversationId, runId }),
   agentRunConversationId: (runId: string) =>
     command<string | null>('agent_run_conversation_id', { runId }),
   agentRunStatus: (conversationId: string, runId: string, options: { wait?: boolean; timeoutMs?: number } = {}) =>

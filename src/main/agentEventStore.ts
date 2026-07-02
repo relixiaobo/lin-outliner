@@ -1221,7 +1221,9 @@ export class AgentEventStore {
     const latestVerifierGap = terminal?.latestVerifierGap
       ?? existing?.objective?.latestVerifierGap
       ?? (started?.type === 'run.started' ? started.latestVerifierGap : undefined);
-    const latestSubmissionSeq = terminal?.latestSubmissionSeq
+    const submitted = [...events].reverse().find(isRunResultSubmittedEvent);
+    const latestSubmissionSeq = submitted?.seq
+      ?? terminal?.latestSubmissionSeq
       ?? existing?.objective?.latestSubmissionSeq
       ?? (started?.type === 'run.started' ? started.latestSubmissionSeq : undefined);
     const objective = objectiveText || criteria?.length || objectiveStatus || scope || budget || blockedReason || latestVerifierGap || typeof latestSubmissionSeq === 'number'
@@ -2051,6 +2053,10 @@ function isStreamingDeltaEvent(event: AgentEvent): boolean {
 
 function isRunTerminalEvent(event: AgentEvent): event is Extract<AgentEvent, { type: 'run.completed' | 'run.failed' | 'run.cancelled' }> {
   return event.type === 'run.completed' || event.type === 'run.failed' || event.type === 'run.cancelled';
+}
+
+function isRunResultSubmittedEvent(event: AgentEvent): event is Extract<AgentEvent, { type: 'run.result.submitted' }> {
+  return event.type === 'run.result.submitted';
 }
 
 function runStatusFromTerminalEvent(event: Extract<AgentEvent, { type: 'run.completed' | 'run.failed' | 'run.cancelled' }>): AgentRunStatus {

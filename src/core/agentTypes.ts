@@ -15,6 +15,7 @@ import type {
   AgentPayloadRef,
   AgentRunContextMode,
   AgentRunKind,
+  AgentRunSubmissionProjection,
   AgentUserQuestionRequestView,
   AskUserQuestionResult,
 } from './agentEventLog';
@@ -120,6 +121,11 @@ export type AgentMessageAttachmentInput = AgentImageAttachmentInput | AgentTextA
 
 export type AgentMessage = Message;
 export type AgentConversationMessage = UserMessage | AssistantMessage;
+
+export interface AgentRunTranscriptPayload {
+  messages: AgentMessage[];
+  latestSubmission?: AgentRunSubmissionProjection;
+}
 
 export interface AgentUserViewNodeContext {
   nodeId: NodeId;

@@ -40,6 +40,7 @@ import {
   type AgentMessage,
   type AgentChildRunNodeChanges,
   type AgentRunListEntry,
+  type AgentRunTranscriptPayload,
   type AgentRuntimeEvent,
   type AgentApprovalRequestView,
   type AgentApprovalResolutionScope,
@@ -61,6 +62,7 @@ import {
   getAgentEventRuntimeTranscriptPath,
   mergeUniquePrincipals,
   principalKey,
+  replayAgentEvents,
   samePrincipal,
   type AgentActor,
   type AgentId,
@@ -77,6 +79,7 @@ import {
   type AgentIdentityRecord,
   type AgentNotificationKind,
   type AgentRunNotificationSource,
+  type AgentRunSubmissionProjection,
   type AgentPayloadRef,
   type AgentPersistedContent,
   type AgentPrincipal,
@@ -735,7 +738,11 @@ export class AgentRuntime {
   private readonly domainEvents: AgentDomainEventBus;
   /** The write seam for delegated runs' own ledgers ([[agent-run-unification]]). */
   /** Drill-in transcripts keyed on the run ledger's tail seq (see childRunTranscript). */
-  private readonly childRunTranscriptCache = new Map<string, { latestSeq: number; messages: AgentMessage[] }>();
+  private readonly childRunTranscriptCache = new Map<string, {
+    latestSeq: number;
+    messages: AgentMessage[];
+    latestSubmission?: AgentRunSubmissionProjection;
+  }>();
 
   private readonly runLedger = new AgentRunLedgerWriter({
     store: () => this.getEventStore(),
@@ -1558,23 +1565,27 @@ export class AgentRuntime {
    * run-meta read decides freshness), so the panel's live poll re-replays only
    * when the ledger actually grew.
    */
-  async childRunTranscript(conversationId: string, runId: string): Promise<{ messages: AgentMessage[] } | null> {
+  async childRunTranscript(conversationId: string, runId: string): Promise<AgentRunTranscriptPayload | null> {
     const meta = await this.getEventStore().readRunMetaProjection(runId);
     // Ownership gate: run ids are global, so without this any renderer call
     // could read another conversation's run ledger. Fail closed when the meta
     // is missing (no meta ⇒ no seeded ledger to serve anyway).
     if (!meta || conversationIdOfRun(meta) !== conversationId) return null;
     const cached = this.childRunTranscriptCache.get(runId);
-    if (meta && cached && cached.latestSeq === meta.latestSeq) return { messages: cached.messages };
-    const state = await this.getEventStore().replayRunStream(runId);
-    if (state.latestSeq === 0) return null;
+    if (cached && cached.latestSeq === meta.latestSeq) {
+      return transcriptPayload(cached.messages, cached.latestSubmission);
+    }
+    const events = await this.getEventStore().readRunStreamEvents(runId);
+    if (events.length === 0) return null;
+    const state = replayAgentEvents(events);
     const messages = await this.deriveRuntimePiMessages(conversationId, state);
+    const latestSubmission = latestRunSubmissionFromEvents(events, meta.objective?.latestSubmissionSeq);
     if (this.childRunTranscriptCache.size >= CHILD_RUN_TRANSCRIPT_CACHE_LIMIT) {
       const oldest = this.childRunTranscriptCache.keys().next().value;
       if (oldest !== undefined) this.childRunTranscriptCache.delete(oldest);
     }
-    this.childRunTranscriptCache.set(runId, { latestSeq: state.latestSeq, messages });
-    return { messages };
+    this.childRunTranscriptCache.set(runId, { latestSeq: state.latestSeq, messages, latestSubmission });
+    return transcriptPayload(messages, latestSubmission);
   }
 
   /** Resolve the conversation that owns a (global) run id, or null if unknown — one
@@ -2468,6 +2479,9 @@ export class AgentRuntime {
         childRunCompacted: (snapshot, input) => (
           this.runLedger.compacted(snapshot.id, { ...input, actor: this.childRunActor(snapshot) })
         ),
+        childRunResultSubmitted: (snapshot, input) => (
+          this.runLedger.submitResult(snapshot.id, { ...input, actor: this.childRunActor(snapshot) })
+        ),
         childRunStatusChanged: (snapshot) => {
           const current = this.currentRuntimeConversation(conversationRef.current);
           if (!current) return Promise.resolve();
@@ -2969,6 +2983,18 @@ export class AgentRuntime {
     // only). The live model-injection still fires so a foreground agent learns
     // its child stopped.
     if (snapshot.status !== 'cancelled') {
+      const latestSubmission = snapshot.status === 'completed'
+        ? await this.readLatestRunSubmission(snapshot.id).catch((error) => {
+            this.reportWarn(
+              'persistence',
+              `Could not read latest submission for run notification ${snapshot.id}: ${error instanceof Error ? error.message : String(error)}`,
+              error,
+              { conversationId, runId: snapshot.id, operation: 'readLatestRunSubmission' },
+              'run-submission-notification-read-failed',
+            );
+            return undefined;
+          })
+        : undefined;
       // Durable per-conversation delivery: emit the attention/OS signal as a
       // notification.created event anchored to the origin conversation. This is the
       // restart-safe record (the in-memory model-injection below is the live-conversation
@@ -2980,7 +3006,7 @@ export class AgentRuntime {
         notificationId: `notification-${snapshot.id}-${snapshot.completedAt ?? 0}`,
         kind: childRunNotificationKind(snapshot.status),
         title: childRunNotificationTitle(snapshot),
-        body: snapshot.status === 'failed' ? snapshot.error : snapshot.result,
+        body: snapshot.status === 'failed' ? snapshot.error : latestSubmission?.summary ?? snapshot.result,
         source: { type: 'run', runId: snapshot.id },
         actor: this.childRunActor(snapshot),
       });
@@ -2989,6 +3015,14 @@ export class AgentRuntime {
     void this.flushChildRunNotifications(conversationId, conversation).catch((error) => {
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     });
+  }
+
+  private async readLatestRunSubmission(runId: string): Promise<AgentRunSubmissionProjection | undefined> {
+    const [meta, events] = await Promise.all([
+      this.getEventStore().readRunMetaProjection(runId),
+      this.getEventStore().readRunStreamEvents(runId),
+    ]);
+    return latestRunSubmissionFromEvents(events, meta?.objective?.latestSubmissionSeq);
   }
 
   /**
@@ -7867,6 +7901,33 @@ function truncateNotificationBody(body: string): string {
   const trimmed = body.trim();
   if (trimmed.length <= NOTIFICATION_BODY_MAX_LENGTH) return trimmed;
   return `${trimmed.slice(0, NOTIFICATION_BODY_MAX_LENGTH - 1).trimEnd()}…`;
+}
+
+function transcriptPayload(
+  messages: AgentMessage[],
+  latestSubmission: AgentRunSubmissionProjection | undefined,
+): AgentRunTranscriptPayload {
+  return latestSubmission ? { messages, latestSubmission } : { messages };
+}
+
+function latestRunSubmissionFromEvents(
+  events: readonly AgentEvent[],
+  latestSubmissionSeq?: number,
+): AgentRunSubmissionProjection | undefined {
+  const event = typeof latestSubmissionSeq === 'number'
+    ? events.find((candidate) => candidate.type === 'run.result.submitted' && candidate.seq === latestSubmissionSeq)
+    : [...events].reverse().find((candidate) => candidate.type === 'run.result.submitted');
+  if (!event || event.type !== 'run.result.submitted') return undefined;
+  const summary = event.summary.trim();
+  if (!summary) return undefined;
+  return {
+    runId: event.runId,
+    seq: event.seq,
+    submittedAt: event.createdAt,
+    summary,
+    ...(event.contentRef ? { contentRef: event.contentRef } : {}),
+    source: event.source,
+  };
 }
 
 function childRunNotificationKind(

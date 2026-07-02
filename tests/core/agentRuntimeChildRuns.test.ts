@@ -1193,6 +1193,28 @@ describe('agent runtime childRuns', () => {
     expect(script.pendingCount()).toBe(0);
     expect(contexts.join('\n')).toContain('Background result.');
     expect(contexts.join('\n')).toContain('\\"status\\": \\"completed\\"');
+
+    const store = new AgentEventStore(dataRoot);
+    const [backgroundMeta] = (await store.listConversationRunMetaProjections(conversation.conversationId))
+      .filter((meta) => meta.objective?.text === 'Run in background.');
+    expect(typeof backgroundMeta?.objective?.latestSubmissionSeq).toBe('number');
+    const ledgerEvents = backgroundMeta ? await store.readRunStreamEvents(backgroundMeta.id) : [];
+    const submissionIndex = ledgerEvents.findIndex((event) => event.type === 'run.result.submitted');
+    const terminalIndex = ledgerEvents.findIndex((event) => event.type === 'run.completed');
+    expect(submissionIndex).toBeGreaterThanOrEqual(0);
+    expect(terminalIndex).toBeGreaterThan(submissionIndex);
+    const submission = ledgerEvents[submissionIndex];
+    expect(submission).toMatchObject({
+      type: 'run.result.submitted',
+      seq: backgroundMeta?.objective?.latestSubmissionSeq,
+      summary: 'Background result.',
+      source: 'final_assistant_message',
+    });
+    const detail = backgroundMeta ? await runtime.childRunTranscript(conversation.conversationId, backgroundMeta.id) : null;
+    expect(detail?.latestSubmission).toMatchObject({
+      seq: backgroundMeta?.objective?.latestSubmissionSeq,
+      summary: 'Background result.',
+    });
   });
 
   test('automatically returns completed background childRuns to the parent context', async () => {

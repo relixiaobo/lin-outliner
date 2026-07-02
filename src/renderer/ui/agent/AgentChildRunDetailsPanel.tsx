@@ -357,6 +357,7 @@ export function AgentChildRunDetailsPanel({
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionPending, setActionPending] = useState<'stop' | null>(null);
   const [rawTranscript, setRawTranscript] = useState<unknown[] | null>(null);
+  const [latestSubmissionSummary, setLatestSubmissionSummary] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
@@ -372,10 +373,12 @@ export function AgentChildRunDetailsPanel({
         if (requestId !== requestRef.current) return;
         if (result === null) {
           setRawTranscript(null);
+          setLatestSubmissionSummary(null);
           setError(t.agent.childRun.transcriptPayloadUnavailable);
           return;
         }
         setRawTranscript(result.messages);
+        setLatestSubmissionSummary(result.latestSubmission?.summary.trim() || null);
       })
       .catch((caught) => {
         if (requestId === requestRef.current) {
@@ -391,6 +394,7 @@ export function AgentChildRunDetailsPanel({
     setActionError(null);
     setActionPending(null);
     setRawTranscript(null);
+    setLatestSubmissionSummary(null);
     setError(null);
     requestRef.current += 1;
   }, [childRun?.id]);
@@ -429,7 +433,7 @@ export function AgentChildRunDetailsPanel({
   const endedAt = childRun.completedAt ?? childRun.updatedAt;
   const canStop = childRun.status === 'running';
   const duration = formatDuration(childRun.startedAt, endedAt);
-  const resultText = childRun.result ?? childRun.error ?? '';
+  const resultText = latestSubmissionSummary ?? childRun.result ?? childRun.error ?? '';
   const showActivityOpen = childRun.status === 'running' || !resultText;
   const title = childRun.description || childRun.name || childRun.id;
   const metaLine = t.agent.childRun.metaLine({

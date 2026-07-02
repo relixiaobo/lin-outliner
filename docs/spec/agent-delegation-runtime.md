@@ -847,10 +847,20 @@ nested `execution`, and optional nested `objective`. The conversation marker is
 still present for the current projection/UI layer, but parent linkage and
 execution policy no longer have to be recovered only from `child_run.started`.
 
+`run.result.submitted` is the durable source for a completed work Run's submitted
+answer. It is written to the run ledger before the terminal lifecycle event when
+the run has model-visible final text. The Run index stores the pointer as
+`objective.latestSubmissionSeq`; verifier evidence, durable notification bodies,
+and the current drill-in result section read the same submission projection.
+Runs without meaningful final text may complete without a submission event.
+
 `child_run.updated` (the conversation marker) records status transitions:
 `running`, `completed`, `failed`, or `cancelled`, plus objective status, budget,
-blocked reason, final result, and error. The transcript itself never moves
-through conversation events — it lives in the run's own ledger.
+blocked reason, final result, and error. The `result` field is a temporary
+projection compatibility copy while the renderer still consumes child-run
+entities; the canonical submitted answer is `run.result.submitted` in the run
+ledger. The transcript itself never moves through conversation events — it lives
+in the run's own ledger.
 
 Replay must not let a late `running` transcript update downgrade an already
 terminal run. This mirrors the concurrency shape in cc-2.1, where transcript
@@ -970,8 +980,9 @@ path. A run's transcript is replayed from its own ledger lazily:
   empty and the resume's `run.started` becomes the ledger's first event; the run
   stays resumable instead of wedging.
 - on drill-in (`agent_child_run_transcript`): the ledger is replayed directly,
-  cached on its tail seq (one run-meta read decides freshness). The open panel
-  polls this while the run is live and refetches on entity changes.
+  cached on its tail seq (one run-meta read decides freshness), and returns the
+  latest `run.result.submitted` projection when present. The open panel polls
+  this while the run is live and refetches on entity changes.
 
 If a child run was persisted as `running` but there is no live pi-mono `Agent`
 after restore, Lin marks it as failed with an interruption message — in BOTH

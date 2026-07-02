@@ -274,6 +274,17 @@ export interface AgentRunObjectiveMeta {
   latestSubmissionSeq?: number;
 }
 
+export type AgentRunSubmissionSource = 'final_assistant_message' | 'structured_output' | 'tool_result';
+
+export interface AgentRunSubmissionProjection {
+  runId: string;
+  seq: number;
+  submittedAt: number;
+  summary: string;
+  contentRef?: AgentPayloadRef;
+  source: AgentRunSubmissionSource;
+}
+
 export interface AgentRunMeta {
   id: string;
   /** The executing agent (whose runtime/model ran this) — NOT the anchor subject. */
@@ -311,6 +322,7 @@ export function agentIdOfRunAnchor(anchor: AgentRunAnchor): AgentId | undefined 
 
 export type AgentRunLogEventType =
   | 'run.started'
+  | 'run.result.submitted'
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
@@ -418,6 +430,12 @@ export interface AskUserQuestionResult {
 
 export type AgentRunLogEvent =
   | (AgentRunEventBase & { type: 'run.started' })
+  | (AgentRunEventBase & {
+      type: 'run.result.submitted';
+      summary: string;
+      contentRef?: AgentPayloadRef;
+      source: AgentRunSubmissionSource;
+    })
   | (AgentRunEventBase & { type: 'run.completed'; usage?: Usage })
   | (AgentRunEventBase & { type: 'run.failed'; error: { code: string; message: string }; usage?: Usage })
   | (AgentRunEventBase & { type: 'run.cancelled'; reason?: string; usage?: Usage })
@@ -596,6 +614,7 @@ export type AgentEventType =
   | 'skill.rolled_back'
   | 'skill.curation.updated'
   | 'run.started'
+  | 'run.result.submitted'
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
@@ -968,6 +987,14 @@ export interface RunTerminalEvent extends AgentEventBase {
   usage?: Usage;
 }
 
+export interface RunResultSubmittedEvent extends AgentEventBase {
+  type: 'run.result.submitted';
+  runId: string;
+  summary: string;
+  contentRef?: AgentPayloadRef;
+  source: AgentRunSubmissionSource;
+}
+
 /**
  * Conversation-log lifecycle marker for a delegated (child) run — the slim
  * projection feed for the boundary row + Work/Runs panel. The child's transcript
@@ -1099,6 +1126,7 @@ export type AgentEvent =
   | NotificationReadEvent
   | SkillAuditEvent
   | RunStartedEvent
+  | RunResultSubmittedEvent
   | RunTerminalEvent
   | ChildRunStartedEvent
   | ChildRunUpdatedEvent
@@ -1697,6 +1725,8 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       state.runs[event.runId] = run;
       return;
     }
+    case 'run.result.submitted':
+      return;
     case 'child_run.started':
       state.childRuns ??= {};
       state.childRuns[event.childRunId] = {

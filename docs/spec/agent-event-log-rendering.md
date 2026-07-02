@@ -421,6 +421,7 @@ type AgentEventType =
   | 'skill.rolled_back'
   | 'skill.curation.updated'
   | 'run.started'
+  | 'run.result.submitted'
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'

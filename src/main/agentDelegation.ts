@@ -23,6 +23,8 @@ import type {
   AgentRunBudget,
   AgentRunProfileId,
   AgentRunPurpose,
+  AgentRunSubmissionProjection,
+  AgentRunSubmissionSource,
   AgentRunScope,
   DelegationDetail,
   AgentPayloadRef,
@@ -306,6 +308,10 @@ export interface AgentDelegationRuntimeHost {
     snapshot: AgentChildRunSnapshot,
     input: { postCompactMessage: AgentMessage; summary: string; trigger: 'auto' | 'reactive' },
   ): Promise<void>;
+  childRunResultSubmitted(
+    snapshot: AgentChildRunSnapshot,
+    input: { summary: string; source: AgentRunSubmissionSource },
+  ): Promise<AgentRunSubmissionProjection | null>;
   /** Status transition: `child_run.updated` (conversation) + run lifecycle event (child ledger). */
   childRunStatusChanged(snapshot: AgentChildRunSnapshot): Promise<void>;
   notifyChildRun(snapshot: AgentChildRunSnapshot): Promise<void>;
@@ -395,6 +401,8 @@ interface DelegationRunState extends DelegationDetail {
   fileChanges: AgentChildRunFileChanges;
   toolTrace: AgentChildRunToolTraceEntry[];
   verifierGapSignatures: string[];
+  latestSubmission?: AgentRunSubmissionProjection;
+  submittedResult?: string;
   autoCompactConsecutiveFailures: number;
   autoCompactInProgress: boolean;
   skillRuntime?: AgentSkillRuntime;
@@ -709,6 +717,8 @@ export class AgentDelegationRuntime {
       // Clear the prior terminal's salvaged/completed result so a resumed run
       // that stops or fails again cannot surface the previous run's stale output.
       run.result = undefined;
+      run.latestSubmission = undefined;
+      run.submittedResult = undefined;
       run.completedAt = undefined;
       run.detached = true;
       run.terminalNotificationSent = false;
@@ -1184,6 +1194,7 @@ export class AgentDelegationRuntime {
         } else {
           run.status = 'completed';
           run.result = extractFinalAssistantText(agent.state.messages as AgentMessage[]);
+          await this.submitCompletedRunResult(run);
           // A run can reach 'completed' without the model deciding it was done.
           // The maxTurns abort already flags run.incomplete inline (:814). The
           // other truncation is an unresolved context overflow: the final turn is
@@ -1221,6 +1232,32 @@ export class AgentDelegationRuntime {
         await this.host.childRunStatusChanged(snapshotRun(run)).catch(() => undefined);
         if (detached) void this.notifyTerminalRun(run).catch(() => undefined);
       }
+    }
+  }
+
+  private async submitCompletedRunResult(run: DelegationRunState): Promise<void> {
+    if (run.status !== 'completed') return;
+    if (run.purpose === 'verify') return;
+    const summary = run.result?.trim();
+    if (!summary) return;
+    if (run.submittedResult === summary) return;
+    try {
+      const submission = await this.host.childRunResultSubmitted(snapshotRun(run), {
+        summary,
+        source: 'final_assistant_message',
+      });
+      if (!submission) return;
+      run.latestSubmission = submission;
+      run.submittedResult = summary;
+    } catch (error) {
+      this.host.reportError?.({
+        domain: 'persistence',
+        severity: 'warn',
+        code: 'run-result-submission-ledger-failed',
+        message: `Failed to append run result submission for ${run.id}: ${errorMessage(error)}`,
+        context: { conversationId: this.conversationId, runId: run.id, operation: 'run.result.submitted' },
+        error,
+      });
     }
   }
 
@@ -1355,6 +1392,8 @@ export class AgentDelegationRuntime {
       run.error = undefined;
       run.blockedReason = undefined;
       run.result = undefined;
+      run.latestSubmission = undefined;
+      run.submittedResult = undefined;
       run.completedAt = undefined;
       run.incomplete = undefined;
       run.terminalNotificationSent = false;
@@ -1678,6 +1717,7 @@ export class AgentDelegationRuntime {
       childRunMessage: (snapshot, message) => this.host.childRunMessage(snapshot, message),
       childRunToolResultReplaced: (snapshot, toolCallId, text) => this.host.childRunToolResultReplaced(snapshot, toolCallId, text),
       childRunCompacted: (snapshot, input) => this.host.childRunCompacted(snapshot, input),
+      childRunResultSubmitted: (snapshot, input) => this.host.childRunResultSubmitted(snapshot, input),
       childRunStatusChanged: (snapshot) => {
         this.upsertObservedRun(snapshot);
         return this.host.childRunStatusChanged(snapshot);
@@ -2050,7 +2090,7 @@ function buildVerifierObjective(run: DelegationRunState): string {
     run.incomplete ? 'The worker was marked incomplete.' : '',
     run.error ? `Worker error:\n${run.error}` : '',
     '',
-    `Worker result:\n${run.result ?? 'No text result.'}`,
+    `Worker result:\n${latestRunSubmissionSummary(run) ?? run.result ?? 'No text result.'}`,
     '',
     `Node changes:\n${JSON.stringify(nodeChanges, null, 2)}`,
     '',
@@ -2449,6 +2489,7 @@ function appendUniqueNodeIds(
 function runToToolData(run: DelegationRunState, children: readonly DelegationRunState[] = []): AgentDelegateToolData {
   const nodeChanges = compactNodeChanges(run.nodeChanges);
   const fileChanges = compactFileChanges(run.fileChanges);
+  const result = latestRunSubmissionSummary(run) ?? run.result;
   return {
     status: run.status,
     agent_id: run.id,
@@ -2467,7 +2508,7 @@ function runToToolData(run: DelegationRunState, children: readonly DelegationRun
     executing_agent_id: run.executingAgentId,
     parent_agent_id: run.parentAgentId,
     memory_owner_agent_id: run.memoryOwnerAgentId,
-    result: run.result,
+    result,
     error: run.error,
     started_at: run.startedAt,
     updated_at: run.updatedAt,
@@ -2479,6 +2520,10 @@ function runToToolData(run: DelegationRunState, children: readonly DelegationRun
     ...(fileChanges ? { file_changes: fileChanges } : {}),
     ...(run.incomplete ? { incomplete: true } : {}),
   };
+}
+
+function latestRunSubmissionSummary(run: Pick<DelegationRunState, 'latestSubmission'>): string | undefined {
+  return run.latestSubmission?.summary.trim() || undefined;
 }
 
 function runToChildStatus(run: DelegationRunState): AgentChildRunChildStatus {
