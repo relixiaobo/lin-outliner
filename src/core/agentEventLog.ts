@@ -9,6 +9,7 @@ import type {
   Usage,
   UserMessage,
 } from './agentTypes';
+import { assertValidRunExecutionStatusTransition } from './agentRunStateMachine';
 
 export const AGENT_EVENT_VERSION = 1;
 
@@ -1634,29 +1635,34 @@ function applyAgentEvent(state: AgentEventReplayState, event: AgentEvent) {
       requireMessage(state, event.leafMessageId);
       state.selectedLeafMessageId = event.leafMessageId;
       return;
-    case 'run.started':
+    case 'run.started': {
+      const existing = state.runs[event.runId];
+      assertValidRunExecutionStatusTransition(existing?.status, 'running', event.runId);
       state.runs[event.runId] = {
         id: event.runId,
-        agentId: event.agentId ?? (event.anchor ? agentIdOfRunAnchor(event.anchor) : undefined),
+        agentId: event.agentId ?? existing?.agentId ?? (event.anchor ? agentIdOfRunAnchor(event.anchor) : undefined),
         status: 'running',
         startedAt: event.createdAt,
         updatedAt: event.createdAt,
       };
       return;
+    }
     case 'run.completed':
     case 'run.failed':
     case 'run.cancelled': {
+      const nextStatus = event.type === 'run.completed'
+        ? 'completed'
+        : event.type === 'run.failed'
+          ? 'failed'
+          : 'cancelled';
+      assertValidRunExecutionStatusTransition(state.runs[event.runId]?.status, nextStatus, event.runId);
       const run = state.runs[event.runId] ?? {
         id: event.runId,
         status: 'running' as const,
         startedAt: event.createdAt,
         updatedAt: event.createdAt,
       };
-      run.status = event.type === 'run.completed'
-        ? 'completed'
-        : event.type === 'run.failed'
-          ? 'failed'
-          : 'cancelled';
+      run.status = nextStatus;
       run.updatedAt = event.createdAt;
       run.errorMessage = event.errorMessage;
       run.usage = event.usage ?? run.usage;

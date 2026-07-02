@@ -35,6 +35,10 @@ import type {
 import { agentIdOfRunAnchor, appendAgentEventToReplayState, conversationIdOfRun, getAgentEventActivePath, mergeUniquePrincipals, principalKey, replayAgentEvents, samePrincipal } from '../core/agentEventLog';
 import { DEFAULT_DREAM_CHANNEL_ID } from '../core/agentChannel';
 import {
+  assertValidRunExecutionStatusTransition,
+  assertValidRunObjectiveStatusTransition,
+} from '../core/agentRunStateMachine';
+import {
   analyzeTextSearchQuery,
   normalizeSearchText,
   textSearchTextMatchesQuery,
@@ -1190,7 +1194,6 @@ export class AgentEventStore {
     const existing = await this.readRunMeta(runId);
     const latest = events.at(-1);
     if (!latest) return null;
-    const terminal = [...events].reverse().find(isRunTerminalEvent);
     const started = events.find((event) => event.type === 'run.started');
     const agentId = asAgentId(existing?.agentId ?? (started?.type === 'run.started' ? started.agentId ?? (started.anchor ? agentIdOfRunAnchor(started.anchor) : undefined) : undefined) ?? agentIdFromEvents(events) ?? 'built-in:tenon:assistant')!;
     const anchor = existing?.anchor ?? (started?.type === 'run.started' ? normalizeRunAnchor(started.anchor, agentId) : null) ?? conversationRunAnchor(agentId, conversationId);
@@ -1199,35 +1202,52 @@ export class AgentEventStore {
     const parentToolCallId = existing?.parentToolCallId ?? (started?.type === 'run.started' && typeof started.parentToolCallId === 'string' ? started.parentToolCallId : undefined);
     const context = existing?.context ?? (started?.type === 'run.started' ? normalizeRunContextPolicy(started.context) : undefined) ?? 'full';
     const runProfile = existing?.runProfile ?? (started?.type === 'run.started' ? normalizeRunProfileId(started.runProfile) : undefined) ?? runProfileFromStartedRun(started, anchor);
-    const executionStatus = terminal ? runStatusFromTerminalEvent(terminal) : existing?.execution.status ?? 'running';
-    const completedAt = terminal ? terminal.createdAt : existing?.execution.completedAt;
-    const usage = terminal?.usage ?? existing?.execution.usage;
-    const executionError = terminal?.type === 'run.failed'
-      ? terminal.errorMessage
-      : terminal?.type === 'run.cancelled'
-        ? terminal.errorMessage
-        : existing?.execution.error;
+    let executionStatus = existing?.execution.status;
+    let completedAt = existing?.execution.completedAt;
+    let usage = existing?.execution.usage;
+    let executionError = existing?.execution.error;
+    let objectiveStatus = existing?.objective?.status;
+    let budget = existing?.objective?.budget;
+    let blockedReason = existing?.objective?.blockedReason;
+    let latestVerifierGap = existing?.objective?.latestVerifierGap;
+    let latestSubmissionSeq = existing?.objective?.latestSubmissionSeq;
+    for (const event of events) {
+      if (event.type === 'run.started') {
+        assertValidRunExecutionStatusTransition(executionStatus, 'running', runId);
+        executionStatus = 'running';
+        completedAt = undefined;
+        executionError = undefined;
+        usage = undefined;
+      } else if (isRunTerminalEvent(event)) {
+        const nextStatus = runStatusFromTerminalEvent(event);
+        assertValidRunExecutionStatusTransition(executionStatus, nextStatus, runId);
+        executionStatus = nextStatus;
+        completedAt = event.createdAt;
+        usage = event.usage ?? usage;
+        executionError = event.type === 'run.failed' || event.type === 'run.cancelled'
+          ? event.errorMessage
+          : undefined;
+      } else if (isRunResultSubmittedEvent(event)) {
+        latestSubmissionSeq = event.seq;
+      }
+      if ((event.type === 'run.started' || isRunTerminalEvent(event)) && event.objectiveStatus) {
+        assertValidRunObjectiveStatusTransition(objectiveStatus, event.objectiveStatus, runId);
+        objectiveStatus = event.objectiveStatus;
+      }
+      if (event.type === 'run.started' || isRunTerminalEvent(event)) {
+        budget = event.budget ?? budget;
+        blockedReason = event.blockedReason ?? blockedReason;
+        latestVerifierGap = event.latestVerifierGap ?? latestVerifierGap;
+        latestSubmissionSeq = typeof event.latestSubmissionSeq === 'number' ? event.latestSubmissionSeq : latestSubmissionSeq;
+      }
+    }
+    executionStatus ??= 'running';
     const objectiveText = existing?.objective?.text ?? (started?.type === 'run.started' ? started.objective : undefined);
     const criteria = existing?.objective?.criteria ?? (started?.type === 'run.started' ? started.criteria : undefined);
-    const objectiveStatus = terminal?.objectiveStatus
-      ?? existing?.objective?.status
-      ?? (started?.type === 'run.started' ? started.objectiveStatus : undefined);
     const objectiveRole = existing?.objective?.role
       ?? (started?.type === 'run.started' ? started.objectiveRole : undefined)
       ?? objectiveRoleForRun(started, parentRunId);
     const scope = existing?.objective?.scope ?? (started?.type === 'run.started' ? started.scope : undefined);
-    const budget = terminal?.budget ?? existing?.objective?.budget ?? (started?.type === 'run.started' ? started.budget : undefined);
-    const blockedReason = terminal?.blockedReason
-      ?? existing?.objective?.blockedReason
-      ?? (started?.type === 'run.started' ? started.blockedReason : undefined);
-    const latestVerifierGap = terminal?.latestVerifierGap
-      ?? existing?.objective?.latestVerifierGap
-      ?? (started?.type === 'run.started' ? started.latestVerifierGap : undefined);
-    const submitted = [...events].reverse().find(isRunResultSubmittedEvent);
-    const latestSubmissionSeq = submitted?.seq
-      ?? terminal?.latestSubmissionSeq
-      ?? existing?.objective?.latestSubmissionSeq
-      ?? (started?.type === 'run.started' ? started.latestSubmissionSeq : undefined);
     const objective = objectiveText || criteria?.length || objectiveStatus || scope || budget || blockedReason || latestVerifierGap || typeof latestSubmissionSeq === 'number'
       ? {
           text: objectiveText ?? '',

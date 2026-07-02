@@ -1421,6 +1421,77 @@ describe('agent event store', () => {
     });
   });
 
+  test('folds resumed run lifecycle metadata through running before the next terminal', async () => {
+    await withStore(async (store) => {
+      const conversationId = 'conversation-run-resume-meta';
+      const runId = 'child-run-resume-meta';
+      await store.appendEvents(conversationId, [
+        { ...base(conversationId, 1, 'conversation.created'), title: 'Run resume meta' },
+      ]);
+      await store.appendRunStreamEvents(conversationId, runId, [
+        {
+          ...base(conversationId, 1, 'run.started'),
+          eventId: `${runId}-start`,
+          runId,
+          agentId: 'built-in:tenon:assistant',
+          anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
+          objective: 'Resume safely.',
+          objectiveRole: 'worker',
+          objectiveStatus: 'active',
+          trigger: { type: 'system' },
+        },
+        {
+          ...base(conversationId, 2, 'run.completed'),
+          eventId: `${runId}-completed`,
+          runId,
+          objectiveStatus: 'verified',
+        },
+      ]);
+
+      await expect(store.readRunMetaProjection(runId)).resolves.toMatchObject({
+        execution: { status: 'completed', completedAt: 1_700_000_000_002 },
+        objective: { status: 'verified' },
+      });
+
+      await store.appendRunStreamEvents(conversationId, runId, [
+        {
+          ...base(conversationId, 3, 'run.started'),
+          eventId: `${runId}-resume`,
+          runId,
+          agentId: 'built-in:tenon:assistant',
+          anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
+          objectiveStatus: 'active',
+          trigger: { type: 'system' },
+        },
+      ]);
+
+      const runningMeta = await store.readRunMetaProjection(runId);
+      expect(runningMeta?.execution.status).toBe('running');
+      expect(runningMeta?.execution.completedAt).toBeUndefined();
+      expect(runningMeta?.execution.error).toBeUndefined();
+      expect(runningMeta?.objective?.status).toBe('active');
+
+      await store.appendRunStreamEvents(conversationId, runId, [
+        {
+          ...base(conversationId, 4, 'run.failed'),
+          eventId: `${runId}-failed`,
+          runId,
+          errorMessage: 'resume failed',
+          objectiveStatus: 'blocked',
+        },
+      ]);
+
+      await expect(store.readRunMetaProjection(runId)).resolves.toMatchObject({
+        execution: {
+          status: 'failed',
+          completedAt: 1_700_000_000_004,
+          error: 'resume failed',
+        },
+        objective: { status: 'blocked' },
+      });
+    });
+  });
+
   test('concurrent conversation and delegated-run appends never drop a run from the run index', async () => {
     await withStore(async (store, root) => {
       const conversationId = 'conversation-1';

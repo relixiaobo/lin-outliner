@@ -22,6 +22,10 @@ import {
   type AgentRunLogEventType,
   type AgentRunStatus,
 } from '../core/agentEventLog';
+import {
+  assertValidRunExecutionStatusTransition,
+  assertValidRunObjectiveStatusTransition,
+} from '../core/agentRunStateMachine';
 import type { AgentEventStore } from './agentEventStore';
 import { persistedContentModelText } from './agentToolOutputSlimming';
 
@@ -56,6 +60,8 @@ interface RunLedgerRunState {
   /** Active-path message ids since the last compaction — the next compaction's source range. */
   pathMessageIds: string[];
   toolCallMessageIds: Map<string, string>;
+  executionStatus?: AgentRunStatus;
+  objectiveStatus?: AgentObjectiveStatus;
   queue: Promise<void>;
 }
 
@@ -116,8 +122,14 @@ export class AgentRunLedgerWriter {
       tailMessageId: null,
       pathMessageIds: [],
       toolCallMessageIds: new Map(),
+      executionStatus: 'running',
+      objectiveStatus: input.objectiveStatus,
       queue: Promise.resolve(),
     };
+    assertValidRunExecutionStatusTransition(undefined, 'running', input.runId);
+    if (input.objectiveStatus) {
+      assertValidRunObjectiveStatusTransition(undefined, input.objectiveStatus, input.runId);
+    }
     this.runs.set(input.runId, run);
     await this.enqueue(input.runId, run, async () => {
       const events: AgentEvent[] = [];
@@ -277,6 +289,10 @@ export class AgentRunLedgerWriter {
   ): Promise<void> {
     const run = this.requireRun(runId);
     await this.enqueue(runId, run, async () => {
+      assertValidRunExecutionStatusTransition(run.executionStatus, status, runId);
+      if (options.objectiveStatus) {
+        assertValidRunObjectiveStatusTransition(run.objectiveStatus, options.objectiveStatus, runId);
+      }
       const event = status === 'running'
         ? this.buildEvent(run, runId, {
             type: 'run.started',
@@ -304,6 +320,8 @@ export class AgentRunLedgerWriter {
             latestSubmissionSeq: options.latestSubmissionSeq,
           });
       await this.options.store().appendRunStreamEvents(run.conversationId, runId, [event]);
+      run.executionStatus = status;
+      if (options.objectiveStatus) run.objectiveStatus = options.objectiveStatus;
     });
     // No eviction on terminal: a same-session resume reuses the live agent (and
     // this registration) directly. The map only ever holds runs spawned or
@@ -332,6 +350,7 @@ export class AgentRunLedgerWriter {
     }
     const run = this.requireRun(runId);
     await this.enqueue(runId, run, async () => {
+      assertValidRunExecutionStatusTransition(run.executionStatus, 'failed', runId);
       const event = this.buildEvent(run, runId, {
         type: 'run.failed',
         actor: options.actor,
@@ -339,6 +358,7 @@ export class AgentRunLedgerWriter {
         errorMessage: options.errorMessage,
       });
       await this.options.store().appendRunStreamEvents(run.conversationId, runId, [event]);
+      run.executionStatus = 'failed';
     });
     this.runs.delete(runId);
   }
@@ -361,6 +381,7 @@ export class AgentRunLedgerWriter {
           .filter((message) => message.role === 'toolResult' && message.toolCallId)
           .map((message) => [message.toolCallId!, message.id]),
       ),
+      executionStatus: state.runs[runId]?.status,
       queue: Promise.resolve(),
     };
     this.runs.set(runId, run);
@@ -382,6 +403,7 @@ export class AgentRunLedgerWriter {
       tailMessageId: null,
       pathMessageIds: [],
       toolCallMessageIds: new Map(),
+      executionStatus: undefined,
       queue: Promise.resolve(),
     });
   }

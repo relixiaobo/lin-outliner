@@ -849,6 +849,14 @@ them with objective status, budget, blocked reason, verifier gap, error, and
 latest submission pointer. The transcript itself never moves through
 conversation events — it lives in the run's own ledger.
 
+Run execution and objective status transitions are centralized in
+`src/core/agentRunStateMachine.ts` and used by run-ledger writes, run-stream
+replay, and Run meta folding. Execution can move `running → completed|failed|
+cancelled`, and a terminal Run can reopen only through a later `run.started`
+(`terminal → running → terminal`). Direct terminal-to-terminal changes are
+invalid. Objective status can reopen through `active` for steer/amend/retry, but
+cannot silently regress from `verified` to `blocked` without a reopening step.
+
 Replay must not let a late `running` transcript update downgrade an already
 terminal run. This mirrors the concurrency shape in cc-2.1, where transcript
 messages and terminal task state can be written through different paths.

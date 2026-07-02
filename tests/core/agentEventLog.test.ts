@@ -828,6 +828,28 @@ describe('agent event log', () => {
     expect(resumed.runs['child-1']).toMatchObject({ status: 'running' });
   });
 
+  test('rejects direct terminal-to-terminal run lifecycle transitions', () => {
+    const events: AgentEvent[] = [
+      { ...base(1, 'conversation.created'), title: 'Untitled' },
+      {
+        ...base(2, 'run.started', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        runId: 'child-1',
+        agentId: 'built-in:tenon:assistant',
+      },
+      {
+        ...base(3, 'run.completed', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        runId: 'child-1',
+      },
+      {
+        ...base(4, 'run.failed', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        runId: 'child-1',
+        errorMessage: 'late failure',
+      },
+    ];
+
+    expect(() => replayAgentEvents(events)).toThrow('Invalid run execution status transition for child-1: completed -> failed');
+  });
+
   test('applies tool result replacement events to replayed pi messages', () => {
     const payload: AgentPayloadRef = {
       kind: 'payload_ref',
