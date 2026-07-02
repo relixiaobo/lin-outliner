@@ -21,6 +21,7 @@ import type {
   AgentRenderDreamEntity,
   AgentRenderProjection,
   AgentRenderChildRunEntity,
+  AgentRenderRunEntity,
 } from '../../src/core/agentRenderProjection';
 import type { AgentPayloadRef, AgentPersistedContent } from '../../src/core/agentEventLog';
 import { systemReminder } from '../../src/core/agentAttachments';
@@ -78,6 +79,8 @@ function projection(
     activeRunId?: string | null;
     activeDream?: AgentRenderActiveDream | null;
     dreams?: Record<string, AgentRenderDreamEntity>;
+    runs?: Record<string, AgentRenderRunEntity>;
+    runIds?: string[];
     childRuns?: Record<string, AgentRenderChildRunEntity>;
     childRunIds?: string[];
   } = {},
@@ -102,6 +105,7 @@ function projection(
     errorMessage: null,
     rows,
     transcriptRows: rows,
+    runIds: options.runIds ?? Object.keys(options.runs ?? {}),
     childRunIds: options.childRunIds ?? Object.keys(options.childRuns ?? {}),
     entities: {
       messages: Object.fromEntries(entries.map((entry) => [entry.nodeId, {
@@ -119,6 +123,7 @@ function projection(
         stopReason: entry.message.role === 'assistant' ? entry.message.stopReason : undefined,
         usage: entry.message.role === 'assistant' ? entry.message.usage : undefined,
       }])),
+      runs: options.runs ?? {},
       childRuns: options.childRuns ?? {},
       compactions: {},
       contextClears: {},
@@ -1115,21 +1120,25 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('indexes childRuns by parent tool call id for renderer lookup', async () => {
-    const childRun = {
-      id: 'child-1',
-      description: 'Inspect child run UI',
-      prompt: 'Inspect the current UI.',
-      agentType: 'explorer',
-      contextMode: 'fork',
+  test('indexes sub-runs by parent tool call id for renderer lookup', async () => {
+    const subRun = {
+      id: 'run-1',
+      agentId: 'built-in:test:neva',
+      anchor: { type: 'conversation', agentId: 'built-in:test:neva', conversationId: 'saved' },
+      conversationId: 'saved',
+      title: 'Inspect child run UI',
+      parentRunId: 'parent-run-1',
+      parentToolCallId: 'tool-agent-1',
+      runProfile: 'default',
+      runProfileLabel: 'Default',
       status: 'completed',
+      objectiveStatus: 'verified',
+      objectiveRole: 'worker',
+      context: 'full',
       startedAt: 100,
       updatedAt: 250,
       completedAt: 250,
-      result: 'Found the relevant UI path.',
-      transcriptMessageCount: 4,
-      parentToolCallId: 'tool-agent-1',
-    } satisfies AgentRenderChildRunEntity;
+    } satisfies AgentRenderRunEntity;
     const restored = conversation('saved', projection([
       { nodeId: 'u1', message: userMessage('inspect'), branches: null },
       {
@@ -1149,8 +1158,8 @@ describe('agent runtime store', () => {
         branches: null,
       },
     ], {
-      childRuns: { [childRun.id]: childRun },
-      childRunIds: [childRun.id],
+      runs: { [subRun.id]: subRun },
+      runIds: [subRun.id],
     }));
     const fake = createFakeClient({ latestConversation: restored });
     const store = createAgentRuntimeStore(fake.client);
@@ -1159,9 +1168,10 @@ describe('agent runtime store', () => {
     await flushMicrotasks();
 
     const snapshot = store.getSnapshot();
-    expect(snapshot.childRunIds).toEqual(['child-1']);
-    expect(snapshot.childRuns['child-1']).toEqual(childRun);
-    expect(snapshot.childRunsByParentToolCallId.get('tool-agent-1')).toEqual(childRun);
+    expect(snapshot.runIds).toEqual(['run-1']);
+    expect(snapshot.subRuns['run-1']).toEqual(subRun);
+    expect(snapshot.subRunsByParentToolCallId.get('tool-agent-1')).toEqual(subRun);
+    expect(snapshot.childRunIds).toEqual([]);
     unsubscribe();
   });
 

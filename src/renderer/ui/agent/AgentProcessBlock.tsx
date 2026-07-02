@@ -1,6 +1,6 @@
 import type { AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
 import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
-import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -9,7 +9,7 @@ import {
 } from '../icons';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentProcessTimeline, isToolCallRowActive } from './AgentProcessTimeline';
-import { childRunToolStatus, getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
+import { runToolStatus, getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
 import { sentenceFragment, summarizeToolActivity } from './agentRenderGroups';
 import type { AgentExpandState } from './agentProcessTypes';
 import { firstLine, formatRunDuration, previewText } from './agentProcessTypes';
@@ -19,12 +19,12 @@ import type { Messages } from '../../../core/i18n';
 
 export type { AgentExpandState } from './agentProcessTypes';
 
-function childRunMapFromToolItems(items: AgentTurnProcessItem[]): ReadonlyMap<string, AgentRenderChildRunEntity> | undefined {
-  let map: Map<string, AgentRenderChildRunEntity> | undefined;
+function subRunMapFromToolItems(items: AgentTurnProcessItem[]): ReadonlyMap<string, AgentRenderRunEntity> | undefined {
+  let map: Map<string, AgentRenderRunEntity> | undefined;
   for (const item of items) {
-    if (item.type === 'toolCall' && item.childRun) {
-      map ??= new Map<string, AgentRenderChildRunEntity>();
-      map.set(item.toolCall.id, item.childRun);
+    if (item.type === 'toolCall' && item.subRun) {
+      map ??= new Map<string, AgentRenderRunEntity>();
+      map.set(item.toolCall.id, item.subRun);
     }
   }
   return map;
@@ -39,12 +39,12 @@ interface AgentProcessBlockProps {
   process: AgentTurnProcessProjection;
   results: Map<string, AgentToolResultWithPayloads>;
   conversationId?: string | null;
-  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
+  subRunsByParentToolCallId?: Map<string, AgentRenderRunEntity>;
   turnActive: boolean;
 }
 
 interface ProcessSummaryFacts {
-  childRunsByToolCallId?: ReadonlyMap<string, AgentRenderChildRunEntity>;
+  subRunsByToolCallId?: ReadonlyMap<string, AgentRenderRunEntity>;
   toolCallOutcomes: ReadonlyMap<string, AgentToolCallOutcome>;
   firstThinkingText: string | null;
   thinkingCount: number;
@@ -67,7 +67,7 @@ function processSummaryFacts(items: AgentTurnProcessItem[]): ProcessSummaryFacts
     .filter((item): item is AgentTurnToolCallItem => item.type === 'toolCall')
     .map((item) => item.toolCall);
   return {
-    childRunsByToolCallId: childRunMapFromToolItems(items),
+    subRunsByToolCallId: subRunMapFromToolItems(items),
     toolCallOutcomes: toolCallOutcomeMap(items),
     firstThinkingText: firstLine(thinkingBlocks[0]?.text ?? ''),
     thinkingCount: thinkingBlocks.length,
@@ -80,7 +80,7 @@ export function summarizeProcess({
   thinkingCount,
   pendingToolCallIds,
   results,
-  childRunsByToolCallId,
+  subRunsByToolCallId,
   toolCallOutcomes,
   toolCalls,
   turnActive,
@@ -96,7 +96,7 @@ export function summarizeProcess({
   thinkingCount: number;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
-  childRunsByToolCallId?: ReadonlyMap<string, AgentRenderChildRunEntity>;
+  subRunsByToolCallId?: ReadonlyMap<string, AgentRenderRunEntity>;
   toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>;
   toolCalls: ToolCall[];
   /** Live wall-clock since the run started, for the "Working for {t}" ticker; null when unknown. */
@@ -111,8 +111,8 @@ export function summarizeProcess({
 }): string {
   const toolCount = toolCalls.length;
   const toolStatus = (toolCall: ToolCall) => {
-    const childRun = childRunsByToolCallId?.get(toolCall.id);
-    if (childRun) return childRunToolStatus(childRun);
+    const subRun = subRunsByToolCallId?.get(toolCall.id);
+    if (subRun) return runToolStatus(subRun);
     // Same rule as the per-row spinner (isToolCallRowActive): while the turn is
     // live every un-settled call is active, not just the most recent — else a
     // parallel batch's other calls would count as 'error' in the summary during
@@ -240,7 +240,7 @@ export function AgentProcessBlock({
   process,
   results,
   conversationId,
-  childRunsByParentToolCallId,
+  subRunsByParentToolCallId,
   turnActive,
 }: AgentProcessBlockProps) {
   const t = useT();
@@ -297,7 +297,7 @@ export function AgentProcessBlock({
           pendingToolCallIds={pendingToolCallIds}
           results={results}
           conversationId={conversationId}
-          childRunsByParentToolCallId={childRunsByParentToolCallId}
+          subRunsByParentToolCallId={subRunsByParentToolCallId}
           turnActive={turnActive}
         />
       ) : null}

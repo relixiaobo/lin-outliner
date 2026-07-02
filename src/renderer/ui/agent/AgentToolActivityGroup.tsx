@@ -1,11 +1,12 @@
 import type { AgentToolResultWithPayloads } from '../../../core/agentTypes';
+import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import { ChevronRightIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { useT } from '../../i18n/I18nProvider';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { isToolCallRowActive } from './AgentProcessTimeline';
-import { AgentToolCallBlock, childRunToolStatus, getToolCallStatus } from './AgentToolCallBlock';
+import { AgentToolCallBlock, runToolStatus, getToolCallStatus } from './AgentToolCallBlock';
 import type { AgentExpandState } from './agentProcessTypes';
 import { summarizeToolActivity } from './agentRenderGroups';
 import type { AgentTurnToolCallItem } from './agentTurnProjection';
@@ -21,6 +22,7 @@ interface AgentToolActivityGroupProps {
   onOpenChildRunTranscript?: (childRunId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
+  subRunsByParentToolCallId?: ReadonlyMap<string, AgentRenderRunEntity>;
 }
 
 // A run of consecutive tool calls, folded into one counted-summary disclosure
@@ -38,21 +40,27 @@ export function AgentToolActivityGroup({
   onOpenChildRunTranscript,
   pendingToolCallIds,
   results,
+  subRunsByParentToolCallId,
 }: AgentToolActivityGroupProps) {
   const t = useT();
   const expanded = expandState.isExpanded(id, false);
-  const memberStatuses = members.map((member) => ({
-    status: member.childRun
-      ? childRunToolStatus(member.childRun)
-      : getToolCallStatus(
-          member.toolCall.id,
-          results.get(member.toolCall.id),
-          pendingToolCallIds,
-          isToolCallRowActive(member, pendingToolCallIds, results, member.childRun, turnActive),
-          member.outcome,
-        ),
-    toolCall: member.toolCall,
-  }));
+  const subRunForMember = (member: AgentTurnToolCallItem) =>
+    member.subRun ?? subRunsByParentToolCallId?.get(member.toolCall.id);
+  const memberStatuses = members.map((member) => {
+    const subRun = subRunForMember(member);
+    return {
+      status: subRun
+        ? runToolStatus(subRun)
+        : getToolCallStatus(
+            member.toolCall.id,
+            results.get(member.toolCall.id),
+            pendingToolCallIds,
+            isToolCallRowActive(member, pendingToolCallIds, results, subRun, turnActive),
+            member.outcome,
+          ),
+      toolCall: member.toolCall,
+    };
+  });
   const summary = summarizeToolActivity(memberStatuses, t.agent.process);
 
   return (
@@ -88,10 +96,10 @@ export function AgentToolActivityGroup({
               pendingToolCallIds={pendingToolCallIds}
               result={results.get(member.toolCall.id)}
               conversationId={conversationId}
-              childRun={member.childRun}
+              subRun={subRunForMember(member)}
               toolCall={member.toolCall}
               outcome={member.outcome}
-              turnActive={isToolCallRowActive(member, pendingToolCallIds, results, member.childRun, turnActive)}
+              turnActive={isToolCallRowActive(member, pendingToolCallIds, results, subRunForMember(member), turnActive)}
             />
           ))}
         </div>

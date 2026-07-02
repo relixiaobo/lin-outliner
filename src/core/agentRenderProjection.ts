@@ -13,6 +13,12 @@ import {
   type AgentPrincipal,
   type AgentDreamCompletedChanges,
   type AgentChildRunRecord,
+  type AgentObjectiveStatus,
+  type AgentRunAnchor,
+  type AgentRunContextPolicy,
+  type AgentRunMeta,
+  type AgentRunObjectiveRole,
+  type AgentRunProfileId,
   type AgentRunStatus,
 } from './agentEventLog';
 import {
@@ -157,6 +163,25 @@ export interface AgentRenderChildRunEntity {
   parentToolCallId?: string;
 }
 
+export interface AgentRenderRunEntity {
+  id: string;
+  agentId: AgentRunMeta['agentId'];
+  anchor: AgentRunAnchor;
+  conversationId?: string;
+  title: string;
+  parentRunId?: string;
+  parentToolCallId?: string;
+  runProfile: AgentRunProfileId;
+  runProfileLabel: string;
+  status: AgentRenderRunStatus;
+  objectiveStatus?: AgentObjectiveStatus;
+  objectiveRole?: AgentRunObjectiveRole;
+  context: AgentRunContextPolicy;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+}
+
 export type AgentRenderActivityState = 'received' | 'thinking' | 'using_tools';
 export type AgentRenderLiveContent = Extract<AgentPersistedContent, { type: 'text' | 'thinking' | 'toolCall' }>;
 
@@ -260,6 +285,7 @@ export interface AgentDreamReadiness {
 
 export interface AgentRenderEntities {
   messages: Record<string, AgentRenderMessageEntity>;
+  runs: Record<string, AgentRenderRunEntity>;
   childRuns: Record<string, AgentRenderChildRunEntity>;
   compactions: Record<string, AgentRenderCompactionEntity>;
   contextClears: Record<string, AgentRenderContextClearEntity>;
@@ -287,6 +313,7 @@ export interface AgentRenderProjection {
   errorMessage: string | null;
   rows: AgentRenderRow[];
   transcriptRows: AgentRenderRow[];
+  runIds: string[];
   childRunIds: string[];
   entities: AgentRenderEntities;
   /** The streaming tail (the token stream rendered in the transcript). */
@@ -302,6 +329,7 @@ export interface AgentRenderProjectionPatch {
   pendingToolCallIds?: string[];
   entities?: Partial<{
     messages: Record<string, AgentRenderMessageEntity>;
+    runs: Record<string, AgentRenderRunEntity>;
     childRuns: Record<string, AgentRenderChildRunEntity>;
     compactions: Record<string, AgentRenderCompactionEntity>;
     contextClears: Record<string, AgentRenderContextClearEntity>;
@@ -321,6 +349,9 @@ export function applyAgentRenderProjectionPatch(
         messages: patch.entities.messages
           ? { ...projection.entities.messages, ...patch.entities.messages }
           : projection.entities.messages,
+        runs: patch.entities.runs
+          ? { ...projection.entities.runs, ...patch.entities.runs }
+          : projection.entities.runs,
         childRuns: patch.entities.childRuns
           ? { ...projection.entities.childRuns, ...patch.entities.childRuns }
           : projection.entities.childRuns,
@@ -352,6 +383,7 @@ function patchOnlyReplacesExistingEntities(
   patch: AgentRenderProjectionPatch,
 ): boolean {
   return Object.keys(patch.entities?.messages ?? {}).every((id) => projection.entities.messages[id])
+    && Object.keys(patch.entities?.runs ?? {}).every((id) => projection.entities.runs[id])
     && Object.keys(patch.entities?.childRuns ?? {}).every((id) => projection.entities.childRuns[id])
     && Object.keys(patch.entities?.compactions ?? {}).every((id) => projection.entities.compactions[id])
     && Object.keys(patch.entities?.contextClears ?? {}).every((id) => projection.entities.contextClears[id])
@@ -373,6 +405,12 @@ export interface BuildAgentRenderProjectionOptions {
   memberDisplayNames?: Record<string, string>;
   /** The Channel coordinator (default = the main agent); flags its member view. */
   coordinatorAgentId?: string;
+  /** Conversation-anchored Run metadata used by the renderer's Run/sub-run UI projection. */
+  runs?: readonly AgentRunMeta[];
+  /** Pre-resolved profile labels (kept out of core so the registry stays in main). */
+  runProfileLabels?: Partial<Record<AgentRunProfileId, string>>;
+  /** Optional compact titles keyed by run id. */
+  runTitles?: Record<string, string>;
 }
 
 export function buildAgentRenderProjection(
@@ -384,7 +422,7 @@ export function buildAgentRenderProjection(
   }
 
   const activePath = getAgentEventActivePath(state);
-  const entities: AgentRenderEntities = { messages: {}, childRuns: {}, compactions: {}, contextClears: {}, dreams: {} };
+  const entities: AgentRenderEntities = { messages: {}, runs: {}, childRuns: {}, compactions: {}, contextClears: {}, dreams: {} };
   // The runs that are LIVE right now (in-memory active runs the runtime passes in),
   // NOT every run whose persisted status is `running`. A run left `running` by a
   // crash/quit is absent here, so its interrupted turn is never mistaken for an
@@ -434,6 +472,13 @@ export function buildAgentRenderProjection(
       entities.childRuns[run.id] = toRenderChildRunEntity(run);
       return run.id;
     });
+  const runIds = [...options.runs ?? []]
+    .filter((run) => run.anchor.type === 'conversation' && run.anchor.conversationId === state.conversation!.id)
+    .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
+    .map((run) => {
+      entities.runs[run.id] = toRenderRunEntity(run, options);
+      return run.id;
+    });
   const pendingToolCallIds = options.pendingToolCallIds ?? [];
   const activeRunId = options.activeRunId ?? options.activeRuns?.[0]?.runId ?? null;
 
@@ -453,6 +498,7 @@ export function buildAgentRenderProjection(
     errorMessage: options.errorMessage ?? null,
     rows,
     transcriptRows,
+    runIds,
     childRunIds,
     entities,
     streaming,
@@ -720,6 +766,40 @@ function toRenderMessageEntity(
     runDurationMs:
       run && !isRunRunning(run) ? Math.max(0, run.updatedAt - run.startedAt) : undefined,
     runStartedAtMs: run && isRunRunning(run) ? run.startedAt : undefined,
+  };
+}
+
+function fallbackRunTitle(run: AgentRunMeta): string {
+  const objective = run.objective?.text.trim();
+  return objective || run.id;
+}
+
+function fallbackRunProfileLabel(profile: AgentRunProfileId): string {
+  return profile
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ') || profile;
+}
+
+function toRenderRunEntity(run: AgentRunMeta, options: BuildAgentRenderProjectionOptions): AgentRenderRunEntity {
+  return {
+    id: run.id,
+    agentId: run.agentId,
+    anchor: run.anchor,
+    conversationId: run.anchor.type === 'conversation' ? run.anchor.conversationId : undefined,
+    title: options.runTitles?.[run.id] ?? fallbackRunTitle(run),
+    parentRunId: run.parentRunId,
+    parentToolCallId: run.parentToolCallId,
+    runProfile: run.runProfile,
+    runProfileLabel: options.runProfileLabels?.[run.runProfile] ?? fallbackRunProfileLabel(run.runProfile),
+    status: renderRunStatusFromRunStatus(run.execution.status),
+    objectiveStatus: run.objective?.status,
+    objectiveRole: run.objective?.role,
+    context: run.context,
+    startedAt: run.createdAt,
+    updatedAt: run.updatedAt,
+    completedAt: run.execution.completedAt,
   };
 }
 

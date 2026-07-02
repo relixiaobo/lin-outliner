@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AgentToolResultPayloadPart, AgentToolResultWithPayloads, ToolCall } from '../../../core/agentTypes';
 import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
-import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import { basenameForPath } from '../../../core/referenceMarkup';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
@@ -40,7 +40,7 @@ interface AgentToolCallBlockProps {
   pendingToolCallIds: ReadonlySet<string>;
   result?: AgentToolResultWithPayloads;
   conversationId?: string | null;
-  childRun?: AgentRenderChildRunEntity;
+  subRun?: AgentRenderRunEntity;
   toolCall: ToolCall;
   outcome?: AgentToolCallOutcome;
   turnActive?: boolean;
@@ -252,9 +252,9 @@ function isRunControlTool(toolName: string): boolean {
     || toolName === 'run_stop';
 }
 
-export function childRunToolStatus(childRun: AgentRenderChildRunEntity): ToolStatus {
-  if (childRun.status === 'running') return 'pending';
-  if (childRun.status === 'failed' || childRun.status === 'stopped') return 'error';
+export function runToolStatus(run: AgentRenderRunEntity): ToolStatus {
+  if (run.status === 'running') return 'pending';
+  if (run.status === 'failed' || run.status === 'stopped') return 'error';
   return 'done';
 }
 
@@ -723,14 +723,14 @@ export function AgentToolCallBlock({
   pendingToolCallIds,
   result,
   conversationId,
-  childRun,
+  subRun,
   toolCall,
   outcome,
   turnActive,
 }: AgentToolCallBlockProps) {
   const t = useT();
   const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
-  const status = childRun ? childRunToolStatus(childRun) : getToolCallStatus(toolCall.id, result, pendingToolCallIds, turnActive, outcome);
+  const status = subRun ? runToolStatus(subRun) : getToolCallStatus(toolCall.id, result, pendingToolCallIds, turnActive, outcome);
   // Per-step glyph by exception (Codex machine A): a running spinner, a red ✕ on a
   // confirmed failure, otherwise the plain tool-type icon. A successful `done` step
   // gets NO green check — the past-tense verb ("Fetched web …") already reads as
@@ -756,10 +756,10 @@ export function AgentToolCallBlock({
     () => (fileOutput ? [] : resultParts(result, isExpanded)),
     [fileOutput, result, isExpanded],
   );
-  const canOpenChildRunTranscript = Boolean(childRun && onOpenChildRunTranscript);
+  const canOpenChildRunTranscript = Boolean(subRun && onOpenChildRunTranscript);
   const hasDetails = fileOutput
-    ? fileOutput.diff.length > 0 || Boolean(childRun)
-    : inputText !== '{}' || outputText.length > 0 || Boolean(childRun);
+    ? fileOutput.diff.length > 0 || Boolean(subRun)
+    : inputText !== '{}' || outputText.length > 0 || Boolean(subRun);
   const hasOutputDetails = outputText.length > 0;
   const loadedSkillDetails = getLoadedSkillDetails(toolCall, result);
 
@@ -788,7 +788,7 @@ export function AgentToolCallBlock({
       statusIconClassName={status === 'pending' ? 'agent-tool-call-spinner' : undefined}
       summary={summarizeToolCall(toolCall, status, t.agent.toolCall)}
     >
-      {childRun ? (
+      {subRun ? (
         <section className="agent-tool-call-section">
           <div className="agent-tool-call-section-header">
             <div className="agent-tool-call-section-title">{t.agent.childRun.heading}</div>
@@ -796,14 +796,14 @@ export function AgentToolCallBlock({
           <div className="agent-child-run-inline-actions">
             <Button
               disabled={!canOpenChildRunTranscript}
-              onClick={() => onOpenChildRunTranscript?.(childRun.id)}
+              onClick={() => onOpenChildRunTranscript?.(subRun.id)}
               size="sm"
               variant="ghost"
             >
               <FileTextIcon size={ICON_SIZE.menu} />
               <span>{t.agent.childRun.viewTranscript}</span>
             </Button>
-            <ToolCopyButton ariaLabel={t.agent.childRun.copyId} text={childRun.id} />
+            <ToolCopyButton ariaLabel={t.agent.childRun.copyId} text={subRun.id} />
           </div>
         </section>
       ) : null}

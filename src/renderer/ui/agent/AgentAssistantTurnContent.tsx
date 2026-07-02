@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { AssistantMessage, AgentToolResultWithPayloads } from '../../../core/agentTypes';
 import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
-import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import {
   AgentProcessBlock,
@@ -21,7 +21,7 @@ export function renderAssistantBlocks(
   pendingToolCallIds: ReadonlySet<string>,
   conversationId: string | null | undefined,
   streaming: boolean,
-  childRunsByParentToolCallId: Map<string, AgentRenderChildRunEntity> | undefined,
+  subRunsByParentToolCallId: Map<string, AgentRenderRunEntity> | undefined,
   toolResults: Map<string, AgentToolResultWithPayloads>,
   turnActive: boolean,
   turnInterrupted: boolean,
@@ -32,12 +32,12 @@ export function renderAssistantBlocks(
 ) {
   const rendered: ReactNode[] = [];
   const turn = projectAssistantTurn({
-    childRunsByParentToolCallId,
     contentKey,
     isChannel,
     message,
     runStartedAtMs,
     streaming,
+    subRunsByParentToolCallId,
     toolCallOutcomes,
     turnActive,
     turnInterrupted,
@@ -50,7 +50,6 @@ export function renderAssistantBlocks(
     // groups are disclosures; the top-level "Working/Worked for" row is not.
     rendered.push(
       <AgentProcessBlock
-        childRunsByParentToolCallId={childRunsByParentToolCallId}
         conversationId={conversationId}
         expandState={expandState}
         index={documentIndex}
@@ -60,6 +59,7 @@ export function renderAssistantBlocks(
         pendingToolCallIds={pendingToolCallIds}
         process={turn.process}
         results={toolResults}
+        subRunsByParentToolCallId={subRunsByParentToolCallId}
         turnActive={turnActive}
       />,
     );

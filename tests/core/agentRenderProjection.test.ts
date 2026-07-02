@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { replayAgentEvents, type AgentActor, type AgentEvent } from '../../src/core/agentEventLog';
+import { replayAgentEvents, type AgentActor, type AgentEvent, type AgentRunMeta } from '../../src/core/agentEventLog';
 import { buildAgentRenderProjection } from '../../src/core/agentRenderProjection';
 import { systemReminder } from '../../src/core/agentAttachments';
 import { DEFAULT_DREAM_CHANNEL_ID } from '../../src/core/agentChannel';
@@ -69,6 +69,70 @@ describe('agent render projection', () => {
       messageId: 'assistant-1',
       rowId: 'assistant:assistant-1',
       text: 'Partial answer',
+    });
+  });
+
+  test('projects render runs from Run metadata input', () => {
+    const state = replayAgentEvents([
+      { ...base(1, 'conversation.created'), title: 'Run metadata projection' },
+    ]);
+    const run: AgentRunMeta = {
+      id: 'run-sub-1',
+      agentId: 'built-in:tenon:assistant',
+      anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
+      parentRunId: 'run-parent-1',
+      parentToolCallId: 'tool-agent-1',
+      disposition: 'detached',
+      context: 'brief',
+      runProfile: 'research',
+      trigger: { type: 'parent-run', parentRunId: 'run-parent-1' },
+      fingerprint: {
+        appVersion: 'test',
+        promptHash: 'prompt',
+        toolSchemaHash: 'tools',
+        skillBindings: [],
+        modelConfig: 'model',
+      },
+      retention: 'hot',
+      createdAt: 100,
+      updatedAt: 250,
+      latestSeq: 7,
+      execution: {
+        status: 'completed',
+        completedAt: 250,
+      },
+      objective: {
+        text: 'Inspect the projection seam.',
+        criteria: [],
+        role: 'worker',
+        status: 'verified',
+      },
+    };
+
+    const projection = buildAgentRenderProjection(state, {
+      revision: 1,
+      runs: [run],
+      runProfileLabels: { research: 'Research' },
+      runTitles: { 'run-sub-1': 'Inspect projection' },
+    });
+
+    expect(projection.childRunIds).toEqual([]);
+    expect(projection.runIds).toEqual(['run-sub-1']);
+    expect(projection.entities.runs['run-sub-1']).toMatchObject({
+      id: 'run-sub-1',
+      conversationId,
+      title: 'Inspect projection',
+      parentRunId: 'run-parent-1',
+      parentToolCallId: 'tool-agent-1',
+      runProfile: 'research',
+      runProfileLabel: 'Research',
+      status: 'completed',
+      objectiveStatus: 'verified',
+      objectiveRole: 'worker',
+      context: 'brief',
+      startedAt: 100,
+      updatedAt: 250,
+      completedAt: 250,
     });
   });
 

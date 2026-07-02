@@ -34,6 +34,7 @@ import type {
   AgentRenderProjection,
   AgentRenderProjectionPatch,
   AgentRenderChildRunEntity,
+  AgentRenderRunEntity,
 } from '../../core/agentRenderProjection';
 import { applyAgentRenderProjectionPatch } from '../../core/agentRenderProjection';
 import type { AgentActor, AgentPersistedContent, AgentToolCallOutcome } from '../../core/agentEventLog';
@@ -147,8 +148,9 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   errorMessage: null,
   rows: [],
   transcriptRows: [],
+  runIds: [],
   childRunIds: [],
-  entities: { messages: {}, childRuns: {}, compactions: {}, contextClears: {}, dreams: {} },
+  entities: { messages: {}, runs: {}, childRuns: {}, compactions: {}, contextClears: {}, dreams: {} },
   streaming: null,
 };
 
@@ -618,9 +620,11 @@ export interface LinAgentRuntimeView {
   members: AgentRenderMemberView[];
   /** Folded per-conversation unread count for conversation-list badges. */
   unreadByConversationId: ReadonlyMap<string, number>;
+  runIds: string[];
+  subRuns: Record<string, AgentRenderRunEntity>;
+  subRunsByParentToolCallId: Map<string, AgentRenderRunEntity>;
   childRunIds: string[];
   childRuns: Record<string, AgentRenderChildRunEntity>;
-  childRunsByParentToolCallId: Map<string, AgentRenderChildRunEntity>;
   pendingApproval: AgentApprovalRequestView | null;
   pendingUserQuestion: AgentUserQuestionPendingView | null;
   toolResults: Map<string, AgentToolResultWithPayloads>;
@@ -744,9 +748,9 @@ export class AgentRuntimeStore {
     ids: readonly string[];
     set: Set<string>;
   } | null = null;
-  private childRunParentCache: {
-    childRuns: Record<string, AgentRenderChildRunEntity>;
-    map: Map<string, AgentRenderChildRunEntity>;
+  private subRunParentCache: {
+    subRuns: Record<string, AgentRenderRunEntity>;
+    map: Map<string, AgentRenderRunEntity>;
   } | null = null;
   private readonly conversationPreferenceStore: AgentConversationPreferenceStore | null;
 
@@ -1313,23 +1317,24 @@ export class AgentRuntimeStore {
     return set;
   }
 
-  private childRunsByParentToolCallIdForProjection(
-    childRuns: Record<string, AgentRenderChildRunEntity>,
-  ): Map<string, AgentRenderChildRunEntity> {
-    if (this.childRunParentCache?.childRuns === childRuns) return this.childRunParentCache.map;
-    const map = new Map<string, AgentRenderChildRunEntity>();
-    for (const childRun of Object.values(childRuns)) {
-      if (childRun.parentToolCallId) map.set(childRun.parentToolCallId, childRun);
+  private subRunsByParentToolCallIdForProjection(
+    subRuns: Record<string, AgentRenderRunEntity>,
+  ): Map<string, AgentRenderRunEntity> {
+    if (this.subRunParentCache?.subRuns === subRuns) return this.subRunParentCache.map;
+    const map = new Map<string, AgentRenderRunEntity>();
+    for (const subRun of Object.values(subRuns)) {
+      if (subRun.parentToolCallId) map.set(subRun.parentToolCallId, subRun);
     }
-    this.childRunParentCache = { childRuns, map };
+    this.subRunParentCache = { subRuns, map };
     return map;
   }
 
   private buildView(): LinAgentRuntimeView {
     const toolResults = this.toolResultsForProjection();
     const { entries, turnPhase } = buildEntries(this.projection, toolResults);
+    const subRuns = this.projection.entities.runs ?? {};
+    const subRunsByParentToolCallId = this.subRunsByParentToolCallIdForProjection(subRuns);
     const childRuns = this.projection.entities.childRuns ?? {};
-    const childRunsByParentToolCallId = this.childRunsByParentToolCallIdForProjection(childRuns);
     return {
       entries,
       error: this.error,
@@ -1349,9 +1354,11 @@ export class AgentRuntimeStore {
       // recompute on every projection tick.
       members: this.projection.members ?? EMPTY_MEMBERS,
       unreadByConversationId: new Map(this.unreadByConversationId),
+      runIds: this.projection.runIds ?? [],
+      subRuns,
+      subRunsByParentToolCallId,
       childRunIds: this.projection.childRunIds,
       childRuns,
-      childRunsByParentToolCallId,
       pendingApproval: this.currentPendingApproval(),
       pendingUserQuestion: this.currentPendingUserQuestion(),
       toolResults,

@@ -6,7 +6,7 @@ import type {
   ToolResultMessage,
 } from '../../../core/agentTypes';
 import type { Messages } from '../../../core/i18n';
-import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import {
@@ -163,40 +163,46 @@ function compareRuns(left: AgentRunDetailChild, right: AgentRunDetailChild): num
   return left.startedAt - right.startedAt || left.runId.localeCompare(right.runId);
 }
 
-function runDetailToTranscriptRun(detail: AgentRunDetailPayload): AgentRenderChildRunEntity {
+function runDetailToTranscriptRun(detail: AgentRunDetailPayload): AgentRenderRunEntity {
   return {
     id: detail.runId,
-    description: detail.title,
-    prompt: detail.objective?.text ?? detail.title,
-    agentType: detail.runProfile,
-    contextMode: detail.context,
-    executingAgentId: detail.agentId,
-    parentAgentId: detail.agentId,
-    memoryOwnerAgentId: detail.agentId,
+    agentId: detail.agentId,
+    anchor: detail.conversationId
+      ? { type: 'conversation', agentId: detail.agentId, conversationId: detail.conversationId }
+      : { type: 'principal', principal: { type: 'agent', agentId: detail.agentId } },
+    conversationId: detail.conversationId ?? undefined,
+    title: detail.title,
     parentRunId: detail.parentRunId,
     parentToolCallId: detail.parentToolCallId,
+    runProfile: detail.runProfile,
+    runProfileLabel: detail.runProfileLabel,
     status: detail.status,
+    objectiveStatus: detail.objectiveStatus,
+    objectiveRole: detail.objectiveRole,
+    context: detail.context,
     startedAt: detail.startedAt,
     updatedAt: detail.updatedAt,
     completedAt: detail.completedAt,
-    result: detail.result?.summary,
-    error: detail.error,
   };
 }
 
-function childToTranscriptRun(child: AgentRunDetailChild, parent: AgentRunDetailPayload): AgentRenderChildRunEntity {
+function childToTranscriptRun(child: AgentRunDetailChild, parent: AgentRunDetailPayload): AgentRenderRunEntity {
   return {
     id: child.runId,
-    description: child.title,
-    prompt: child.title,
-    agentType: child.runProfile,
-    contextMode: parent.context,
-    executingAgentId: parent.agentId,
-    parentAgentId: parent.agentId,
-    memoryOwnerAgentId: parent.agentId,
+    agentId: parent.agentId,
+    anchor: parent.conversationId
+      ? { type: 'conversation', agentId: parent.agentId, conversationId: parent.conversationId }
+      : { type: 'principal', principal: { type: 'agent', agentId: parent.agentId } },
+    conversationId: parent.conversationId ?? undefined,
+    title: child.title,
     parentRunId: child.parentRunId,
     parentToolCallId: child.parentToolCallId,
+    runProfile: child.runProfile,
+    runProfileLabel: child.runProfileLabel,
     status: child.status,
+    objectiveStatus: child.objectiveStatus,
+    objectiveRole: child.objectiveRole,
+    context: parent.context,
     startedAt: child.startedAt,
     updatedAt: child.updatedAt,
     completedAt: child.completedAt,
@@ -351,8 +357,8 @@ function TranscriptTimeline({
   pendingToolCallIds: ReadonlySet<string>;
   reload: () => void;
   conversationId: string | null;
-  run: AgentRenderChildRunEntity;
-  subRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
+  run: AgentRenderRunEntity;
+  subRunsByParentToolCallId?: Map<string, AgentRenderRunEntity>;
   index: DocumentIndex;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onOpenRun?: (runId: string, conversationId: string | null) => void;
@@ -388,8 +394,6 @@ function TranscriptTimeline({
   return (
     <AgentTranscriptMessageList
       active={transcriptHasActiveAssistantTurn(messages, run.status === 'running', pendingToolCallIds)}
-      childRun={run}
-      childRunsByParentToolCallId={subRunsByParentToolCallId}
       className="agent-child-run-transcript-list"
       conversationId={conversationId}
       index={index}
@@ -397,6 +401,8 @@ function TranscriptTimeline({
       onNodeReferenceOpen={onNodeReferenceOpen}
       onOpenChildRunTranscript={(childRunId) => onOpenRun?.(childRunId, conversationId)}
       pendingToolCallIds={pendingToolCallIds}
+      run={run}
+      subRunsByParentToolCallId={subRunsByParentToolCallId}
       toolResults={toolResults}
     />
   );
@@ -495,7 +501,7 @@ export function AgentRunDetailsPanel({
   const transcriptRun = useMemo(() => detail ? runDetailToTranscriptRun(detail) : null, [detail]);
   const subRunsByParentToolCallId = useMemo(() => {
     if (!detail) return undefined;
-    const map = new Map<string, AgentRenderChildRunEntity>();
+    const map = new Map<string, AgentRenderRunEntity>();
     for (const child of [...detail.subRuns, ...detail.verificationRuns]) {
       if (child.parentToolCallId) map.set(child.parentToolCallId, childToTranscriptRun(child, detail));
     }

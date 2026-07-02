@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { AgentRenderChildRunEntity } from '../../src/core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../src/core/agentRenderProjection';
 import type { AgentToolResultWithPayloads, ToolCall } from '../../src/core/agentTypes';
 import { isToolCallRowActive } from '../../src/renderer/ui/agent/AgentProcessTimeline';
 import type { AgentTurnToolCallItem } from '../../src/renderer/ui/agent/agentTurnProjection';
@@ -30,10 +30,10 @@ describe('isToolCallRowActive', () => {
     expect(isToolCallRowActive(toolItem('call-a', { outcome: 'failed' }), new Set(), noResults, undefined, true)).toBe(false);
   });
 
-  test('a result or a child run settles the row', () => {
+  test('a result or a sub-run settles the row', () => {
     const withResult = new Map<string, AgentToolResultWithPayloads>([['call-a', {} as AgentToolResultWithPayloads]]);
     expect(isToolCallRowActive(toolItem('call-a'), new Set(), withResult, undefined, true)).toBe(false);
-    expect(isToolCallRowActive(toolItem('call-a'), new Set(), noResults, {} as AgentRenderChildRunEntity, true)).toBe(false);
+    expect(isToolCallRowActive(toolItem('call-a'), new Set(), noResults, {} as AgentRenderRunEntity, true)).toBe(false);
   });
 
   test('once the turn settles, an unanswered call is no longer active', () => {

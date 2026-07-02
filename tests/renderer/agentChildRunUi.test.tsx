@@ -6,6 +6,7 @@ import { parseHTML } from 'linkedom';
 import type { AgentRunDetailPayload, AgentRunListEntry, ToolCall, Usage } from '../../src/core/agentTypes';
 import type {
   AgentRenderChildRunEntity,
+  AgentRenderRunEntity,
 } from '../../src/core/agentRenderProjection';
 import type { DocumentIndex } from '../../src/renderer/state/document';
 import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlock';
@@ -49,7 +50,7 @@ describe('agent child run UI', () => {
         }}
         pendingToolCallIds={new Set()}
         conversationId="conversation-1"
-        childRun={childRunEntity()}
+        subRun={renderRunEntity()}
         toolCall={agentToolCall()}
         turnActive={false}
       />,
@@ -69,10 +70,9 @@ describe('agent child run UI', () => {
   });
 
   test('uses child run status when summarizing ordinary tool activity groups', () => {
-    const runningChildRun = {
-      ...childRunEntity(),
+    const runningSubRun = {
+      ...renderRunEntity(),
       completedAt: undefined,
-      result: undefined,
       status: 'running' as const,
     };
     const rendered = renderComponent(
@@ -92,7 +92,7 @@ describe('agent child run UI', () => {
             id: 'tool:tool-agent-1',
             type: 'toolCall',
             toolCall: agentToolCall(),
-            childRun: runningChildRun,
+            subRun: runningSubRun,
           },
         ]}
         pendingToolCallIds={new Set()}
@@ -914,6 +914,27 @@ function agentToolCall(): ToolCall {
       description: 'Inspect child run UI',
       prompt: 'Inspect the current UI.',
     },
+  };
+}
+
+function renderRunEntity(overrides: Partial<AgentRenderRunEntity> = {}): AgentRenderRunEntity {
+  return {
+    id: 'child-1',
+    agentId: 'built-in:tenon:explorer',
+    anchor: { type: 'conversation', agentId: 'built-in:tenon:explorer', conversationId: 'conversation-1' },
+    conversationId: 'conversation-1',
+    title: 'Inspect child run UI',
+    parentToolCallId: 'tool-agent-1',
+    runProfile: 'default',
+    runProfileLabel: 'Default',
+    status: 'completed',
+    objectiveStatus: 'verified',
+    objectiveRole: 'worker',
+    context: 'brief',
+    startedAt: 100,
+    updatedAt: 260,
+    completedAt: 260,
+    ...overrides,
   };
 }
 

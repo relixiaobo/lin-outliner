@@ -397,8 +397,17 @@ describe('agent runtime childRuns', () => {
 
     const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a fork for this.', sink);
-    const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
+    const projection = latestProjection(sink.events);
+    const childRunId = projection?.childRunIds[0]!;
     expect(childRunId).toBeDefined();
+    expect(projection?.runIds).toContain(childRunId);
+    expect(projection?.entities.runs[childRunId]).toMatchObject({
+      id: childRunId,
+      parentToolCallId: 'tool-agent-fork-owner',
+      runProfile: 'default',
+      runProfileLabel: 'Default',
+      title: 'Do the fork work.',
+    });
 
     const data = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
     // A fork runs AS Neva: it inherits the parent's executing + memory-owner identity, and its

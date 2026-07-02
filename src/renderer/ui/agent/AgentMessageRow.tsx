@@ -7,7 +7,7 @@ import type {
   TextContent,
   UserMessage,
 } from '../../../core/agentTypes';
-import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import { splitFileReferenceMarkers } from '../../../core/referenceMarkup';
 import {
   isHiddenAgentContextBlock,
@@ -65,7 +65,7 @@ import { AgentUsageHoverCard, formatUsageCostValue } from './AgentUsageBreakdown
 
 const USER_MESSAGE_COLLAPSED_LINES = 5;
 const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
-const EMPTY_CHILD_RUN_MAP: ReadonlyMap<string, AgentRenderChildRunEntity> = new Map();
+const EMPTY_SUB_RUN_MAP: ReadonlyMap<string, AgentRenderRunEntity> = new Map();
 const EMPTY_OVERRIDES: Readonly<Record<string, boolean>> = Object.freeze({});
 const NOOP_UNSUBSCRIBE = () => {};
 
@@ -93,7 +93,7 @@ interface AgentMessageRowProps {
   pendingToolCallIds: ReadonlySet<string>;
   conversationId?: string | null;
   streaming?: boolean;
-  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
+  subRunsByParentToolCallId?: Map<string, AgentRenderRunEntity>;
   toolResults: Map<string, AgentToolResultWithPayloads>;
   /** True in a Channel: turns deliver atomically and fold result-first rather than surfacing resultless process inline. */
   isChannel?: boolean;
@@ -496,7 +496,7 @@ function AgentMessageRowComponent({
   pendingToolCallIds,
   conversationId,
   streaming: streamingOverride,
-  childRunsByParentToolCallId,
+  subRunsByParentToolCallId,
   toolResults,
   isChannel = false,
   turnPhase = 'idle',
@@ -745,7 +745,7 @@ function AgentMessageRowComponent({
     pendingToolCallIds,
     conversationId,
     streaming,
-    childRunsByParentToolCallId,
+    subRunsByParentToolCallId,
     toolResults,
     turnActive,
     entry.turnInterrupted,
@@ -913,7 +913,7 @@ function sameAgentMessageRowProps(prev: AgentMessageRowProps, next: AgentMessage
     && sameReadonlySet(prev.pendingToolCallIds, next.pendingToolCallIds)
     && prev.conversationId === next.conversationId
     && prev.streaming === next.streaming
-    && sameReadonlyMap(prev.childRunsByParentToolCallId ?? EMPTY_CHILD_RUN_MAP, next.childRunsByParentToolCallId ?? EMPTY_CHILD_RUN_MAP)
+    && sameReadonlyMap(prev.subRunsByParentToolCallId ?? EMPTY_SUB_RUN_MAP, next.subRunsByParentToolCallId ?? EMPTY_SUB_RUN_MAP)
     && sameReadonlyMap(prev.toolResults, next.toolResults)
     && prev.isChannel === next.isChannel
     && prev.turnPhase === next.turnPhase

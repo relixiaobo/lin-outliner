@@ -981,21 +981,23 @@ Rules:
   `agent_list_dream_history` IPC. Dream runs do not appear in the Work/Runs view;
   `AgentRenderDreamTaskEntity.principal` remains the Dream subject for audit
   labeling.
-- `child_run.*` events back `entities.childRuns` — the conversation's permanent
-  record of a run, whose final result is an expandable summary with a "View full
-  run" link into the full transcript. **Where** that record renders depends on
-  whether the run was spawned inside a turn:
+- Run metadata backs `entities.runs` and `runIds` — the compact Run projection
+  used by turn folding and other Run-aware renderer surfaces. It is derived from
+  the Run index, not from conversation `child_run.*` events. `child_run.*` events
+  still back legacy `entities.childRuns` for the remaining conversation synthetic
+  child-run rows until that row kind is removed.
+- **Where** a spawned Run renders depends on whether it has a parent tool call:
   - **Turn fold (`parentToolCallId` set).** A
-    child run is the agent's own implicit behavior — it quietly delegated a slice
+    sub-run is the agent's own implicit behavior — it quietly delegated a slice
     of the current turn — so it gets **no conversation-level boundary row**.
     Instead it folds into the spawning turn's process: the `agent` tool-call block
-    is **kept** (not suppressed) and renders the child-run summary inline
-    (`childRunsByParentToolCallId` → "Agent run · {description}", expandable to the
-    result with the same "View full run" link). Because it lives inside the turn's
-    own message, it is turn-anchored and branch-pruned with that message — editing
-    the user message that started the turn removes it, with no orphan left at the
-    transcript end.
-  - **Boundary row (a parentless run).** A parentless run (a scheduled command
+    is **kept** (not suppressed) and gets the matching Run from
+    `subRunsByParentToolCallId`, derived from `entities.runs`. The expanded tool
+    row exposes transcript/detail access for that Run. Because it lives inside the
+    turn's own message, it is turn-anchored and branch-pruned with that message —
+    editing the user message that started the turn removes it, with no orphan
+    left at the transcript end.
+  - **Boundary row (a parentless legacy child-run record).** A parentless run (a scheduled command
     fire) becomes a dedicated **child-run boundary row** in `transcriptRows`
     (kind `'child-run'`, keyed by run id), ordered by start time among the
     messages.
@@ -1035,9 +1037,10 @@ Rules:
   meta and direct sub-run metadata from the Run index, while transcript replays
   the selected Run ledger. The renderer detail page uses that API directly and
   does not require `entities.childRuns[selectedRunId]` from the active
-  conversation projection. Turn folding still uses `entities.childRuns` until
-  the projection migration replaces it with Run metadata. Running detail views
-  expose Stop, while follow-up/steering remains an internal `run_steer`
+  conversation projection. Turn folding uses `entities.runs` through
+  `subRunsByParentToolCallId`, so the active conversation's legacy child-run
+  projection is no longer the dependency for folded sub-runs. Running detail
+  views expose Stop, while follow-up/steering remains an internal `run_steer`
   runtime/tool capability instead of a permanent detail-page input.
 - Long output rows are collapsed by default.
 - **Result-first turn process (one flat level).** Every assistant turn renders

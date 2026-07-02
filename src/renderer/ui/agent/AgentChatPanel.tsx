@@ -475,7 +475,7 @@ export function AgentChatPanel({
     members,
     steer: steerRuntime,
     childRuns,
-    childRunsByParentToolCallId,
+    subRunsByParentToolCallId,
     switchBranch,
     stop,
     toolResults,
@@ -1249,7 +1249,7 @@ export function AgentChatPanel({
         conversationId={conversationId}
         highlighted={highlighted}
         streaming={row.streaming}
-        childRunsByParentToolCallId={childRunsByParentToolCallId}
+        subRunsByParentToolCallId={subRunsByParentToolCallId}
         toolResults={toolResults}
         isChannel={false}
         turnPhase={row.turnPhase}

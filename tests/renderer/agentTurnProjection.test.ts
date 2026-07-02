@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AssistantMessage, ToolCall } from '../../src/core/agentTypes';
-import type { AgentRenderChildRunEntity } from '../../src/core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../src/core/agentRenderProjection';
 import { projectAssistantTurn } from '../../src/renderer/ui/agent/agentTurnProjection';
 
 function assistant(content: AssistantMessage['content'], extra: Partial<AssistantMessage> = {}): AssistantMessage {
@@ -21,18 +21,18 @@ function toolCall(id = 'tool-a'): ToolCall {
   };
 }
 
-function childRun(id = 'child-run'): AgentRenderChildRunEntity {
+function run(id = 'run-1'): AgentRenderRunEntity {
   return {
-    agentType: 'default',
-    contextMode: 'fork',
-    description: 'Child run',
-    executingAgentId: 'agent-a',
+    agentId: 'built-in:test:neva',
+    anchor: { type: 'conversation', agentId: 'built-in:test:neva', conversationId: 'conversation-a' },
+    context: 'full',
+    conversationId: 'conversation-a',
     id,
-    memoryOwnerAgentId: 'agent-a',
-    parentAgentId: 'agent-a',
-    prompt: 'Check this',
+    runProfile: 'default',
+    runProfileLabel: 'Default',
     startedAt: 0,
     status: 'running',
+    title: 'Sub-run',
     updatedAt: 0,
   };
 }
@@ -215,14 +215,14 @@ describe('projectAssistantTurn', () => {
       toolCall('child-tool'),
       { type: 'text', text: 'Follow-up answer' },
     ]), {
-      childRunsByParentToolCallId: new Map([['child-tool', childRun()]]),
+      subRunsByParentToolCallId: new Map([['child-tool', run()]]),
       isChannel: true,
     });
 
     expect(turn.process?.items.map((item) => item.type)).toEqual(['toolCall']);
     expect(turn.process?.items[0]).toMatchObject({
-      childRun: childRun(),
       id: 'tool:child-tool',
+      subRun: run(),
       type: 'toolCall',
     });
     expect(turn.finalMessages.map((item) => item.text)).toEqual(['Follow-up answer']);

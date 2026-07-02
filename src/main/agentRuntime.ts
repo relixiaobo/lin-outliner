@@ -87,6 +87,7 @@ import {
   type AgentRunFingerprint,
   type AgentRunTrigger,
   type AgentRunMeta,
+  type AgentRunProfileId,
   type AgentRunPurpose,
   type AgentUserQuestionAnswer,
   type AgentUserQuestionAttachment,
@@ -576,6 +577,7 @@ interface AgentConversationState {
   autoCompactConsecutiveFailures: number;
   autoCompactInProgress: boolean;
   eventState: AgentEventReplayState;
+  runMetas: AgentRunMetaProjection[];
   activeCompaction: AgentRenderActiveCompaction | null;
   activeDream: AgentRenderActiveDream | null;
   pendingChildRunNotifications: string[];
@@ -2619,6 +2621,7 @@ export class AgentRuntime {
           activePath,
         );
     agentRef.current = agent;
+    const runMetas = await this.getEventStore().listConversationRunMetaProjections(conversationId);
 
     const conversation: AgentConversationState = {
       agent,
@@ -2630,6 +2633,7 @@ export class AgentRuntime {
       autoCompactConsecutiveFailures: 0,
       autoCompactInProgress: false,
       eventState,
+      runMetas,
       activeCompaction: null,
       activeDream: null,
       pendingChildRunNotifications: [],
@@ -2655,6 +2659,7 @@ export class AgentRuntime {
     conversationRef.current = conversation;
     await this.refreshMemberDisplayNames(conversation);
     await this.markInterruptedChildRunsOnRestore(conversationId, conversation);
+    await this.refreshConversationRunMetas(conversationId, conversation);
     // Restore is records-only — no ledger IO on the conversation-open path. A
     // run's transcript is replayed from its own ledger lazily, on first resume
     // (restoreChildRunLedger) or drill-in (childRunTranscript).
@@ -2961,6 +2966,7 @@ export class AgentRuntime {
       contextMode: snapshot.contextMode,
       unattended: snapshot.unattended,
     }]);
+    await this.refreshConversationRunMetas(conversationId, conversation);
     this.emitProjection(conversationId, 'child_run.started', 'coalesce');
   }
 
@@ -2990,6 +2996,7 @@ export class AgentRuntime {
       objectiveStatus: snapshot.objectiveStatus,
       budget: snapshot.budget,
     });
+    await this.refreshConversationRunMetas(conversationId, conversation);
     this.emitProjection(conversationId, 'child_run.updated', 'coalesce');
   }
 
@@ -4383,6 +4390,9 @@ export class AgentRuntime {
       errorMessage: null,
       memberDisplayNames: conversation.memberDisplayNames,
       coordinatorAgentId: this.agentIdentity.agentId,
+      runs: conversation.runMetas,
+      runProfileLabels: runProfileLabelsForRender(conversation.runMetas),
+      runTitles: runTitlesForRender(conversation.runMetas),
     });
     return {
       ...projection,
@@ -5150,7 +5160,14 @@ export class AgentRuntime {
     const operation = conversation.pendingEventAppend.then(writeEvents, writeEvents);
     conversation.pendingEventAppend = operation.then(() => undefined, () => undefined);
     await operation;
+    if (eventsAffectRunProjection(events)) {
+      await this.refreshConversationRunMetas(conversationId, conversation);
+    }
     return events;
+  }
+
+  private async refreshConversationRunMetas(conversationId: string, conversation: AgentConversationState): Promise<void> {
+    conversation.runMetas = await this.getEventStore().listConversationRunMetaProjections(conversationId);
   }
 
   private async requestToolApproval(
@@ -8290,6 +8307,32 @@ function compactRunListTitle(objective: string | undefined): string | null {
   return compact.length > RUN_LIST_TITLE_MAX_CHARS
     ? `${compact.slice(0, RUN_LIST_TITLE_MAX_CHARS - 1)}…`
     : compact;
+}
+
+function runProfileLabelsForRender(runs: readonly AgentRunMetaProjection[]): Partial<Record<AgentRunProfileId, string>> {
+  const labels: Partial<Record<AgentRunProfileId, string>> = {};
+  for (const run of runs) {
+    labels[run.runProfile] = getRunProfile(run.runProfile).label;
+  }
+  return labels;
+}
+
+function runTitlesForRender(runs: readonly AgentRunMetaProjection[]): Record<string, string> {
+  const titles: Record<string, string> = {};
+  for (const run of runs) {
+    titles[run.id] = compactRunListTitle(run.objective?.text) ?? run.id;
+  }
+  return titles;
+}
+
+function eventsAffectRunProjection(events: readonly AgentEvent[]): boolean {
+  return events.some((event) =>
+    event.type === 'run.started'
+    || event.type === 'run.result.submitted'
+    || event.type === 'run.completed'
+    || event.type === 'run.failed'
+    || event.type === 'run.cancelled'
+  );
 }
 
 function runListEntryFromMeta(

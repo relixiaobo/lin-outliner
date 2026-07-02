@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { AgentToolResultWithPayloads } from '../../../core/agentTypes';
-import type { AgentRenderChildRunEntity } from '../../../core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentMarkdown } from './AgentMarkdown';
@@ -27,11 +27,11 @@ export function isToolCallRowActive(
   item: AgentTurnToolCallItem,
   pendingToolCallIds: ReadonlySet<string>,
   results: ReadonlyMap<string, AgentToolResultWithPayloads>,
-  childRun: AgentRenderChildRunEntity | undefined,
+  subRun: AgentRenderRunEntity | undefined,
   turnActive: boolean,
 ): boolean {
   if (pendingToolCallIds.has(item.toolCall.id)) return true;
-  return turnActive && !item.outcome && !results.has(item.toolCall.id) && !childRun;
+  return turnActive && !item.outcome && !results.has(item.toolCall.id) && !subRun;
 }
 
 interface AgentProcessTimelineProps {
@@ -45,7 +45,7 @@ interface AgentProcessTimelineProps {
   pendingToolCallIds: ReadonlySet<string>;
   results: Map<string, AgentToolResultWithPayloads>;
   conversationId?: string | null;
-  childRunsByParentToolCallId?: Map<string, AgentRenderChildRunEntity>;
+  subRunsByParentToolCallId?: Map<string, AgentRenderRunEntity>;
   turnActive: boolean;
 }
 
@@ -60,7 +60,7 @@ export function AgentProcessTimeline({
   pendingToolCallIds,
   results,
   conversationId,
-  childRunsByParentToolCallId,
+  subRunsByParentToolCallId,
   turnActive,
 }: AgentProcessTimelineProps) {
   // A sealed reasoning item that streamed to empty text carries nothing to show
@@ -120,7 +120,7 @@ export function AgentProcessTimeline({
         </div>
       );
     }
-    const childRun = item.childRun ?? childRunsByParentToolCallId?.get(item.toolCall.id);
+    const subRun = item.subRun ?? subRunsByParentToolCallId?.get(item.toolCall.id);
     return (
       <AgentToolCallBlock
         expanded={expandState.isExpanded(`tool:${item.toolCall.id}`, false)}
@@ -135,10 +135,10 @@ export function AgentProcessTimeline({
         pendingToolCallIds={pendingToolCallIds}
         result={results.get(item.toolCall.id)}
         conversationId={conversationId}
-        childRun={childRun}
+        subRun={subRun}
         toolCall={item.toolCall}
         outcome={item.outcome}
-        turnActive={isToolCallRowActive(item, pendingToolCallIds, results, childRun, turnActive)}
+        turnActive={isToolCallRowActive(item, pendingToolCallIds, results, subRun, turnActive)}
       />
     );
   };
@@ -171,6 +171,7 @@ export function AgentProcessTimeline({
                 onOpenChildRunTranscript={onOpenChildRunTranscript}
                 pendingToolCallIds={pendingToolCallIds}
                 results={results}
+                subRunsByParentToolCallId={subRunsByParentToolCallId}
               />
             );
           }
