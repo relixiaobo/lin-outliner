@@ -116,7 +116,6 @@ describe('agent render projection', () => {
       runTitles: { 'run-sub-1': 'Inspect projection' },
     });
 
-    expect(projection.childRunIds).toEqual([]);
     expect(projection.runIds).toEqual(['run-sub-1']);
     expect(projection.entities.runs['run-sub-1']).toMatchObject({
       id: 'run-sub-1',
@@ -703,7 +702,7 @@ describe('agent render projection', () => {
     }]);
   });
 
-  test('surfaces a parentless child run (a command fire) as a transcript boundary row', () => {
+  test('ignores parentless child-run markers in the render projection', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Command delivery' },
       {
@@ -731,41 +730,51 @@ describe('agent render projection', () => {
 
     const projection = buildAgentRenderProjection(state, { revision: 1 });
 
-    // The run is placed by start time after the user message and carries its result.
-    expect(projection.transcriptRows.map((row) => row.id)).toEqual(['user:user-1', 'child-run:sub-1']);
-    const childRunRow = projection.transcriptRows.find((row) => row.kind === 'child-run');
-    expect(childRunRow).toMatchObject({ kind: 'child-run', childRunId: 'sub-1' });
-    expect(projection.entities.childRuns['sub-1']?.result).toBe('Partly cloudy, 22–29°C.');
+    expect(projection.transcriptRows.map((row) => row.id)).toEqual(['user:user-1']);
+    expect(projection.runIds).toEqual([]);
   });
 
-  test('projects a cancelled child run as the presentation status `stopped`', () => {
+  test('projects a cancelled run as the presentation status `stopped`', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Command delivery' },
-      {
-        ...base(2, 'child_run.started', agentActor),
-        childRunId: 'sub-1',
-        executingAgentId: 'built-in:tenon:researcher',
-        parentAgentId: 'built-in:tenon:assistant',
-        memoryOwnerAgentId: 'built-in:tenon:researcher',
-        description: 'check Chengdu weather',
-        prompt: 'Check the weather in Chengdu today.',
-        agentType: 'researcher',
-        contextMode: 'fork',
-      },
-      {
-        ...base(3, 'child_run.updated', agentActor),
-        childRunId: 'sub-1',
-        status: 'cancelled',
-        completedAt: 1_700_000_000_900,
-      },
     ]);
+    const run: AgentRunMeta = {
+      id: 'sub-1',
+      agentId: 'built-in:tenon:researcher',
+      anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
+      disposition: 'detached',
+      context: 'brief',
+      runProfile: 'default',
+      trigger: { type: 'manual' },
+      fingerprint: {
+        appVersion: 'test',
+        promptHash: 'prompt',
+        toolSchemaHash: 'tools',
+        skillBindings: [],
+        modelConfig: 'model',
+      },
+      retention: 'hot',
+      createdAt: 100,
+      updatedAt: 900,
+      latestSeq: 3,
+      execution: {
+        status: 'cancelled',
+        completedAt: 900,
+      },
+      objective: {
+        text: 'Check the weather in Chengdu today.',
+        criteria: [],
+        role: 'worker',
+        status: 'cancelled',
+      },
+    };
 
-    const projection = buildAgentRenderProjection(state, { revision: 1 });
+    const projection = buildAgentRenderProjection(state, { revision: 1, runs: [run] });
 
     // The data vocabulary is `cancelled`; the render projection is the one seam
     // that maps it to the user-facing word `stopped`, so renderer components
     // never see `cancelled`.
-    expect(projection.entities.childRuns['sub-1']?.status).toBe('stopped');
+    expect(projection.entities.runs['sub-1']?.status).toBe('stopped');
   });
 
   test('folds a DM main-agent child run into its spawning turn — no boundary row', () => {
@@ -807,20 +816,52 @@ describe('agent render projection', () => {
       },
     ]);
 
-    const projection = buildAgentRenderProjection(state, { revision: 1 });
+    const run: AgentRunMeta = {
+      id: 'sub-1',
+      agentId: 'built-in:tenon:researcher',
+      anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId },
+      parentRunId: 'run-1',
+      parentToolCallId: 'tc-1',
+      disposition: 'detached',
+      context: 'brief',
+      runProfile: 'default',
+      trigger: { type: 'parent-run', parentRunId: 'run-1' },
+      fingerprint: {
+        appVersion: 'test',
+        promptHash: 'prompt',
+        toolSchemaHash: 'tools',
+        skillBindings: [],
+        modelConfig: 'model',
+      },
+      retention: 'hot',
+      createdAt: 100,
+      updatedAt: 900,
+      latestSeq: 6,
+      execution: {
+        status: 'completed',
+        completedAt: 900,
+      },
+      objective: {
+        text: 'Do the subtask.',
+        criteria: [],
+        role: 'worker',
+        status: 'verified',
+      },
+    };
+
+    const projection = buildAgentRenderProjection(state, { revision: 1, runs: [run] });
 
     // A DM child run spawned by a tool call folds into its spawning turn's process
-    // (the tool-call row renders the child-run summary + result inline), so it gets
-    // NO conversation-level boundary row — that would orphan to the transcript end
-    // on an edit. The child-run entity stays available (keyed by its parent tool
-    // call) for the renderer to fold into the process.
+    // (the tool-call row renders the sub-run summary inline from Run metadata), so
+    // it gets NO conversation-level boundary row that could orphan to the
+    // transcript end on an edit.
     expect(projection.transcriptRows.map((row) => row.id))
       .toEqual(['user:user-1', 'assistant:assistant-1']);
-    expect(projection.transcriptRows.some((row) => row.kind === 'child-run')).toBe(false);
-    expect(projection.entities.childRuns['sub-1']).toMatchObject({
+    expect(projection.runIds).toEqual(['sub-1']);
+    expect(projection.entities.runs['sub-1']).toMatchObject({
       id: 'sub-1',
       parentToolCallId: 'tc-1',
-      result: 'done',
+      title: 'Do the subtask.',
     });
   });
 

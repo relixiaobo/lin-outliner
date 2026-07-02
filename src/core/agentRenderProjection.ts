@@ -12,7 +12,6 @@ import {
   type AgentPersistedContent,
   type AgentPrincipal,
   type AgentDreamCompletedChanges,
-  type AgentChildRunRecord,
   type AgentObjectiveStatus,
   type AgentRunAnchor,
   type AgentRunContextPolicy,
@@ -26,7 +25,7 @@ import {
   agentMentionToken,
 } from './agentChannel';
 
-export type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction' | 'context-clear' | 'dream' | 'child-run';
+export type AgentRenderRowKind = 'message' | 'tool_result' | 'compaction' | 'context-clear' | 'dream';
 
 export type AgentRenderRow =
   | {
@@ -54,17 +53,6 @@ export type AgentRenderRow =
       kind: 'dream';
       messageId: string;
       dreamId: string;
-      archived?: boolean;
-    }
-  | {
-      // A child run surfaced inline in the transcript as a boundary (its final
-      // result IS the conversation's record of the run). A main-agent-spawned run
-      // sits right after the assistant turn that launched it; a parentless run (a
-      // scheduled/Run-now command fire) is placed by start time.
-      id: string;
-      kind: 'child-run';
-      childRunId: string;
-      messageId?: string;
       archived?: boolean;
     };
 
@@ -141,26 +129,6 @@ export interface AgentRenderActiveRun {
   runId: string;
   agentId: string;
   startedAt: number;
-}
-
-export interface AgentRenderChildRunEntity {
-  id: string;
-  name?: string;
-  description: string;
-  prompt: string;
-  agentType: string;
-  contextMode: AgentChildRunRecord['contextMode'];
-  parentRunId?: string;
-  executingAgentId: string;
-  parentAgentId: string;
-  memoryOwnerAgentId: string;
-  status: AgentRenderRunStatus;
-  startedAt: number;
-  updatedAt: number;
-  completedAt?: number;
-  result?: string;
-  error?: string;
-  parentToolCallId?: string;
 }
 
 export interface AgentRenderRunEntity {
@@ -286,7 +254,6 @@ export interface AgentDreamReadiness {
 export interface AgentRenderEntities {
   messages: Record<string, AgentRenderMessageEntity>;
   runs: Record<string, AgentRenderRunEntity>;
-  childRuns: Record<string, AgentRenderChildRunEntity>;
   compactions: Record<string, AgentRenderCompactionEntity>;
   contextClears: Record<string, AgentRenderContextClearEntity>;
   dreams: Record<string, AgentRenderDreamEntity>;
@@ -314,7 +281,6 @@ export interface AgentRenderProjection {
   rows: AgentRenderRow[];
   transcriptRows: AgentRenderRow[];
   runIds: string[];
-  childRunIds: string[];
   entities: AgentRenderEntities;
   /** The streaming tail (the token stream rendered in the transcript). */
   streaming: AgentStreamingRenderState | null;
@@ -330,7 +296,6 @@ export interface AgentRenderProjectionPatch {
   entities?: Partial<{
     messages: Record<string, AgentRenderMessageEntity>;
     runs: Record<string, AgentRenderRunEntity>;
-    childRuns: Record<string, AgentRenderChildRunEntity>;
     compactions: Record<string, AgentRenderCompactionEntity>;
     contextClears: Record<string, AgentRenderContextClearEntity>;
     dreams: Record<string, AgentRenderDreamEntity>;
@@ -352,9 +317,6 @@ export function applyAgentRenderProjectionPatch(
         runs: patch.entities.runs
           ? { ...projection.entities.runs, ...patch.entities.runs }
           : projection.entities.runs,
-        childRuns: patch.entities.childRuns
-          ? { ...projection.entities.childRuns, ...patch.entities.childRuns }
-          : projection.entities.childRuns,
         compactions: patch.entities.compactions
           ? { ...projection.entities.compactions, ...patch.entities.compactions }
           : projection.entities.compactions,
@@ -384,7 +346,6 @@ function patchOnlyReplacesExistingEntities(
 ): boolean {
   return Object.keys(patch.entities?.messages ?? {}).every((id) => projection.entities.messages[id])
     && Object.keys(patch.entities?.runs ?? {}).every((id) => projection.entities.runs[id])
-    && Object.keys(patch.entities?.childRuns ?? {}).every((id) => projection.entities.childRuns[id])
     && Object.keys(patch.entities?.compactions ?? {}).every((id) => projection.entities.compactions[id])
     && Object.keys(patch.entities?.contextClears ?? {}).every((id) => projection.entities.contextClears[id])
     && Object.keys(patch.entities?.dreams ?? {}).every((id) => projection.entities.dreams[id]);
@@ -422,7 +383,7 @@ export function buildAgentRenderProjection(
   }
 
   const activePath = getAgentEventActivePath(state);
-  const entities: AgentRenderEntities = { messages: {}, runs: {}, childRuns: {}, compactions: {}, contextClears: {}, dreams: {} };
+  const entities: AgentRenderEntities = { messages: {}, runs: {}, compactions: {}, contextClears: {}, dreams: {} };
   // The runs that are LIVE right now (in-memory active runs the runtime passes in),
   // NOT every run whose persisted status is `running`. A run left `running` by a
   // crash/quit is absent here, so its interrupted turn is never mistaken for an
@@ -466,12 +427,6 @@ export function buildAgentRenderProjection(
     }
   }
 
-  const childRunIds = Object.values(state.childRuns ?? {})
-    .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id))
-    .map((run) => {
-      entities.childRuns[run.id] = toRenderChildRunEntity(run);
-      return run.id;
-    });
   const runIds = [...options.runs ?? []]
     .filter((run) => run.anchor.type === 'conversation' && run.anchor.conversationId === state.conversation!.id)
     .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id))
@@ -499,7 +454,6 @@ export function buildAgentRenderProjection(
     rows,
     transcriptRows,
     runIds,
-    childRunIds,
     entities,
     streaming,
   };
@@ -547,70 +501,7 @@ function buildTranscriptRows(
     }
     appendMessageRow(rows, entities, state, entry.message, entry.archived);
   }
-  return insertChildRunRows(rows, entities, state);
-}
-
-function messageHasToolCall(entity: AgentRenderMessageEntity | undefined, toolCallId: string): boolean {
-  return entity?.content.some((block) => block.type === 'toolCall' && block.id === toolCallId) ?? false;
-}
-
-// Where a child run boundary row belongs. A parented run anchors to the spawning
-// turn: right after the tool_result row for its call (once it completed) or, if
-// that hasn't arrived yet, right after the assistant message that issued the call.
-// A parentless run (a command fire) is ordered by start time among the messages.
-// `-1` means append at the end.
-function childRunInsertIndex(
-  rows: AgentRenderRow[],
-  entities: AgentRenderEntities,
-  run: AgentChildRunRecord,
-): number {
-  if (run.parentToolCallId) {
-    const resultIndex = rows.findIndex(
-      (row) => row.kind === 'tool_result'
-        && entities.messages[row.messageId]?.toolCallId === run.parentToolCallId,
-    );
-    if (resultIndex >= 0) return resultIndex + 1;
-    const callIndex = rows.findIndex(
-      (row) => row.kind === 'message'
-        && messageHasToolCall(entities.messages[row.messageId], run.parentToolCallId!),
-    );
-    return callIndex >= 0 ? callIndex + 1 : -1;
-  }
-  let index = -1;
-  for (let position = 0; position < rows.length; position += 1) {
-    const messageId = rows[position]!.messageId;
-    const message = messageId ? entities.messages[messageId] : undefined;
-    if (message && message.createdAt <= run.startedAt) index = position;
-  }
-  return index < 0 ? -1 : index + 1;
-}
-
-// Splice each child run into the transcript as a boundary row, earliest first
-// (the index is recomputed against the growing list each iteration).
-function insertChildRunRows(
-  rows: AgentRenderRow[],
-  entities: AgentRenderEntities,
-  state: AgentEventReplayState,
-): AgentRenderRow[] {
-  const runs = Object.values(state.childRuns ?? {})
-    .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id));
-  if (runs.length === 0) return rows;
-  const result = [...rows];
-  for (const run of runs) {
-    // A child run spawned by a tool call folds into its spawning turn's process:
-    // the tool-call row renders the child-run summary + result inline
-    // (AgentMessageRow keeps the block; AgentProcessTimeline attaches the child
-    // run), so it gets NO conversation-level boundary row. The boundary would both
-    // DOUBLE it and orphan it on an edit — the boundary is conversation-anchored,
-    // while the turn's tool call is branch-pruned with its message. The boundary
-    // stays for a parentless command fire (no tool call to fold into).
-    if (run.parentToolCallId) continue;
-    const row: AgentRenderRow = { id: `child-run:${run.id}`, kind: 'child-run', childRunId: run.id };
-    const insertAt = childRunInsertIndex(result, entities, run);
-    if (insertAt < 0) result.push(row);
-    else result.splice(insertAt, 0, row);
-  }
-  return result;
+  return rows;
 }
 
 function appendActiveRow(
@@ -800,32 +691,6 @@ function toRenderRunEntity(run: AgentRunMeta, options: BuildAgentRenderProjectio
     startedAt: run.createdAt,
     updatedAt: run.updatedAt,
     completedAt: run.execution.completedAt,
-  };
-}
-
-// Built explicitly (not `{ ...run }`) so the render entity exposes ONLY its
-// declared fields: the durable record's `memoryOriginWorkspace`/`unattended` are
-// runtime/persistence metadata the renderer never reads and must not leak across
-// IPC. `status` is projected to the renderer's presentation vocabulary here.
-function toRenderChildRunEntity(run: AgentChildRunRecord): AgentRenderChildRunEntity {
-  return {
-    id: run.id,
-    name: run.name,
-    description: run.description,
-    prompt: run.prompt,
-    agentType: run.agentType,
-    contextMode: run.contextMode,
-    parentRunId: run.parentRunId,
-    executingAgentId: run.executingAgentId,
-    parentAgentId: run.parentAgentId,
-    memoryOwnerAgentId: run.memoryOwnerAgentId,
-    status: renderRunStatusFromRunStatus(run.status),
-    startedAt: run.startedAt,
-    updatedAt: run.updatedAt,
-    completedAt: run.completedAt,
-    result: run.result,
-    error: run.error,
-    parentToolCallId: run.parentToolCallId,
   };
 }
 

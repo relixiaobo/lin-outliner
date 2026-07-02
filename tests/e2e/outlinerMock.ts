@@ -1727,8 +1727,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         rows,
         transcriptRows: rows,
         runIds: [],
-        childRunIds: [],
-        entities: { messages, runs: {}, childRuns: {}, compactions: {}, contextClears: {}, dreams: {} },
+        entities: { messages, runs: {}, compactions: {}, contextClears: {}, dreams: {} },
         streaming: null,
         dmStreaming: null,
       };
@@ -2084,22 +2083,28 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_run_detail') {
           const runId = String(args.runId);
+          const runEntry = agentRuns.find((entry): entry is Record<string, any> => (
+            typeof entry === 'object'
+            && entry !== null
+            && String((entry as any).runId) === runId
+            && String((entry as any).conversationId) === generalChannelId
+          ));
           return clone(String(args.conversationId) === generalChannelId
-            && (runId === 'child-run-1' || runId === 'child-run-source-e2e')
+            && (runEntry || runId === 'child-run-1' || runId === 'child-run-source-e2e')
             ? {
                 runId,
                 conversationId: generalChannelId,
-                agentId: 'built-in:tenon:assistant',
+                agentId: String(runEntry?.agentId ?? 'built-in:tenon:assistant'),
                 kind: 'delegation',
-                title: 'Mock child run',
-                status: 'completed',
+                title: String(runEntry?.title ?? 'Mock child run'),
+                status: runEntry?.status ?? 'completed',
                 runProfile: 'default',
                 runProfileLabel: 'Default',
                 context: 'full',
                 disposition: 'attended',
-                startedAt: 1,
-                updatedAt: 2,
-                completedAt: 2,
+                startedAt: Number(runEntry?.startedAt ?? 1),
+                updatedAt: Number(runEntry?.updatedAt ?? 2),
+                completedAt: runEntry?.completedAt ?? (runEntry?.status === 'running' ? undefined : 2),
                 subRuns: [],
                 verificationRuns: [],
                 transcriptMessageCount: childRunTranscriptMessages.length,
@@ -3241,8 +3246,33 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
   const childRuns = Array.isArray(rawChildRuns)
     ? Object.fromEntries(rawChildRuns.map((childRun: any) => [childRun.id, childRun]))
     : rawChildRuns;
-  const childRunIds = state.childRunIds
-    ?? (Array.isArray(rawChildRuns) ? rawChildRuns.map((childRun: any) => childRun.id) : Object.keys(childRuns));
+  const contextPolicyForRun = (run: any) => {
+    const context = run.context ?? run.contextMode;
+    return context === 'brief' || context === 'none' || context === 'full' ? context : 'full';
+  };
+  const runEntities = Object.fromEntries(Object.values(childRuns).map((childRun: any) => {
+    const agentId = childRun.executingAgentId ?? 'built-in:tenon:assistant';
+    return [childRun.id, {
+      id: childRun.id,
+      agentId,
+      anchor: { type: 'conversation', agentId, conversationId },
+      conversationId,
+      title: (childRun.objective ?? childRun.description ?? '').trim() || childRun.id,
+      parentRunId: childRun.parentRunId,
+      parentToolCallId: childRun.parentToolCallId,
+      runProfile: childRun.runProfile ?? 'default',
+      runProfileLabel: childRun.runProfileLabel ?? 'Default',
+      status: childRun.status,
+      objectiveStatus: childRun.objectiveStatus,
+      objectiveRole: childRun.objectiveRole,
+      context: contextPolicyForRun(childRun),
+      startedAt: childRun.startedAt,
+      updatedAt: childRun.updatedAt,
+      completedAt: childRun.completedAt,
+    }];
+  }));
+  const runIds = state.runIds
+    ?? (Array.isArray(rawChildRuns) ? rawChildRuns.map((childRun: any) => childRun.id) : Object.keys(runEntities));
   const runListEntries = Object.values(childRuns).map((childRun: any) => ({
     runId: childRun.id,
     conversationId,
@@ -3386,31 +3416,6 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
     };
   }
 
-  // Mirror the core projection's insertChildRunRows: the full transcript carries
-  // an inline boundary row per child run (the active `rows` stays clean). A
-  // parented run anchors after its tool_result row, else after the assistant
-  // message that issued the call; a parentless run is ordered by start time.
-  const messageHasToolCall = (entity: any, toolCallId: string) =>
-    !!entity?.content?.some((block: any) => block.type === 'toolCall' && block.id === toolCallId);
-  const childRunInsertIndex = (currentRows: typeof rows, run: any) => {
-    if (run.parentToolCallId) {
-      const resultIndex = currentRows.findIndex(
-        (row) => row.kind === 'tool_result' && entities[row.messageId ?? '']?.toolCallId === run.parentToolCallId,
-      );
-      if (resultIndex >= 0) return resultIndex + 1;
-      const callIndex = currentRows.findIndex(
-        (row) => row.kind === 'message' && messageHasToolCall(entities[row.messageId ?? ''], run.parentToolCallId),
-      );
-      return callIndex >= 0 ? callIndex + 1 : -1;
-    }
-    let index = -1;
-    for (let position = 0; position < currentRows.length; position += 1) {
-      const messageId = currentRows[position]!.messageId;
-      const message = messageId ? entities[messageId] : undefined;
-      if (message && message.createdAt <= run.startedAt) index = position;
-    }
-    return index < 0 ? -1 : index + 1;
-  };
   const projectionMembers = state.members ?? [
     { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
     {
@@ -3432,31 +3437,11 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
   );
   if (activeRunId) activeRunIds.add(activeRunId);
 
-  const childRunRows = [...rows];
-  const orderedRuns = Object.values(childRuns).sort(
-    (left: any, right: any) => left.startedAt - right.startedAt || String(left.id).localeCompare(String(right.id)),
-  );
-  for (const run of orderedRuns as any[]) {
-    // Mirror insertChildRunRows: a DM child run spawned by a tool
-    // call folds into its spawning turn's process (the tool-call row renders it
-    // inline), so it gets NO conversation-level boundary row. The boundary stays for
-    // a Channel turn and a parentless command fire.
-    if (!projectionChannel && run.parentToolCallId) continue;
-    if (projectionChannel && run.parentRunId && activeRunIds.has(run.parentRunId)) continue;
-    const row = { id: `child-run:${run.id}`, kind: 'child-run', childRunId: run.id };
-    const insertAt = childRunInsertIndex(childRunRows, run);
-    if (insertAt < 0) childRunRows.push(row);
-    else childRunRows.splice(insertAt, 0, row);
-  }
   const projectionChannelActivity = state.channelActivityEntries ?? state.activityEntries ?? [];
-  const transcriptRows = state.transcriptRows ?? childRunRows;
+  const transcriptRows = (state.transcriptRows ?? rows).filter((row: any) => row.kind !== 'child-run');
   const projectedTranscriptRows = projectionChannel && activeRunIds.size > 0
     ? transcriptRows.filter((row) => {
         if (row.kind === 'message') return !activeRunIds.has(entities[row.messageId ?? '']?.runId);
-        if (row.kind === 'child-run') {
-          const run = childRuns[row.childRunId ?? ''];
-          return !(run?.parentRunId && activeRunIds.has(run.parentRunId));
-        }
         return true;
       })
     : transcriptRows;
@@ -3489,9 +3474,8 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
       errorMessage: state.errorMessage ?? null,
       rows,
       transcriptRows: projectedTranscriptRows,
-      runIds: [],
-      childRunIds,
-      entities: { messages: entities, runs: {}, childRuns, compactions, contextClears: {}, dreams: {} },
+      runIds,
+      entities: { messages: entities, runs: runEntities, compactions, contextClears: {}, dreams: {} },
       streaming: projectionChannel ? null : streaming,
       dmStreaming: projectionChannel ? null : streaming,
     },

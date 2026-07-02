@@ -20,7 +20,6 @@ import type {
   AgentRenderActiveDream,
   AgentRenderDreamEntity,
   AgentRenderProjection,
-  AgentRenderChildRunEntity,
   AgentRenderRunEntity,
 } from '../../src/core/agentRenderProjection';
 import type { AgentPayloadRef, AgentPersistedContent } from '../../src/core/agentEventLog';
@@ -81,8 +80,6 @@ function projection(
     dreams?: Record<string, AgentRenderDreamEntity>;
     runs?: Record<string, AgentRenderRunEntity>;
     runIds?: string[];
-    childRuns?: Record<string, AgentRenderChildRunEntity>;
-    childRunIds?: string[];
   } = {},
 ): AgentRenderProjection {
   const rows = entries.map((entry) => ({
@@ -106,7 +103,6 @@ function projection(
     rows,
     transcriptRows: rows,
     runIds: options.runIds ?? Object.keys(options.runs ?? {}),
-    childRunIds: options.childRunIds ?? Object.keys(options.childRuns ?? {}),
     entities: {
       messages: Object.fromEntries(entries.map((entry) => [entry.nodeId, {
         id: entry.nodeId,
@@ -124,7 +120,6 @@ function projection(
         usage: entry.message.role === 'assistant' ? entry.message.usage : undefined,
       }])),
       runs: options.runs ?? {},
-      childRuns: options.childRuns ?? {},
       compactions: {},
       contextClears: {},
       dreams: options.dreams ?? {},
@@ -166,27 +161,6 @@ function persistedContent(message: UserMessage | AssistantMessage): AgentPersist
         };
       });
   return content;
-}
-
-function childRunEntity(
-  patch: Partial<AgentRenderChildRunEntity> & Pick<AgentRenderChildRunEntity, 'id'>,
-): AgentRenderChildRunEntity {
-  return {
-    description: 'Inspect child run UI',
-    prompt: 'Inspect the current UI.',
-    agentType: 'explorer',
-    contextMode: 'fork',
-    executingAgentId: 'built-in:tenon:explorer',
-    parentAgentId: 'built-in:tenon:assistant',
-    memoryOwnerAgentId: 'built-in:tenon:assistant',
-    status: 'completed',
-    startedAt: 100,
-    updatedAt: 260,
-    completedAt: 260,
-    result: 'Found the relevant UI path.',
-    parentToolCallId: 'tool-agent-1',
-    ...patch,
-  };
 }
 
 function conversation(conversationId: string, renderProjection: AgentRenderProjection): AgentConversation {
@@ -1171,7 +1145,6 @@ describe('agent runtime store', () => {
     expect(snapshot.runIds).toEqual(['run-1']);
     expect(snapshot.subRuns['run-1']).toEqual(subRun);
     expect(snapshot.subRunsByParentToolCallId.get('tool-agent-1')).toEqual(subRun);
-    expect(snapshot.childRunIds).toEqual([]);
     unsubscribe();
   });
 

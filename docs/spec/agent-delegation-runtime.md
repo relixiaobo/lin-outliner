@@ -1213,21 +1213,22 @@ Implemented for the current first-class surfaces.
 - `spawn` tool blocks fold matching sub-runs from the Run projection and expose
   transcript access. Legacy
   `Agent` blocks remain render-compatible for persisted history.
-- The agent header exposes a Tasks button. It opens a current-conversation task
-  panel derived from `child_run.*` projection data, ordered with running work
-  first, and shows status, type/mode, message count, and latest update time.
+- The agent header exposes a Work/Runs button. It opens the global Run index
+  backed by `agent_list_runs`, ordered with running work first, and shows status,
+  title, timing, and child-run progress from Run metadata.
 - Run rows open the Run details panel; running rows can stop the selected Run
   through `run_stop`.
 - The Run details panel is a read-only drill-in that shows Result, direct
   sub-runs, Verification runs, collapsed Activity log, and collapsed Technical
   details in one scroll flow. It loads `agent_run_detail` and
   `agent_run_transcript`, so Work/Runs selection no longer depends on the
-  selected Run being present in the active conversation's `entities.childRuns`
-  projection. Folded transcript sub-runs use `entities.runs` /
-  `subRunsByParentToolCallId`; legacy `entities.childRuns` remains only for the
-  remaining conversation child-run row compatibility path. `run_steer` remains the
-  same-conversation continuation mechanism for agents/tools, but the detail page
-  does not expose a permanent follow-up composer.
+  selected Run being present in the active conversation projection. Folded
+  transcript sub-runs use `entities.runs` / `subRunsByParentToolCallId`;
+  `child_run.*` conversation events remain only as runtime/delegation
+  compatibility markers until the sidechain runtime is migrated fully to Run
+  ledger events. `run_steer` remains the same-conversation continuation
+  mechanism for agents/tools, but the detail page does not expose a permanent
+  follow-up composer.
 - Nested child tool calls inside transcripts remain expandable.
 - Running background child runs can be stopped from the details panel.
 - Task and child run side-panel controls clear the top window chrome drag zone so

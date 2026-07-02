@@ -147,10 +147,10 @@ The anacron scheduler (main process) sweeps command nodes on a 60s tick, on app
 launch, and on `powerMonitor.resume`, firing each due node once (catch-up
 coalesces a multi-day gap). Due nodes fire **concurrently** — one slow/hung run
 never blocks the others or subsequent sweeps. A fire runs the brief as a
-**delegated child run** on the command's own delivery conversation, so every run is recorded
-inline in that conversation as a **child-run boundary row** (its final result
-lands in the channel as an expandable summary with a "View full run" link; see
-`agent-event-log-rendering.md`) and also surfaces in the Work/Runs view.
+**delegated child run** anchored to the command's own delivery conversation. The
+run is recorded in the Run index, surfaces in Work/Runs and durable
+notifications, and its full detail/transcript is available through the Run detail
+view; it is not inserted into the chat transcript as an inline child-run row.
 Under the one-Neva invariant there is exactly one agent, so a scheduled command
 always forks the current agent (Neva), running under its identity and
 capabilities — a command never selects an executing agent. The run prompt is the
@@ -212,8 +212,8 @@ title like the inline Done checkbox) sits at the start of the command title;
 `useCommandRun` drives the attended run: ensure the delivery conversation
 (`agent_ensure_command_conversation`), reveal the agent panel on it (without
 auto-opening Work — that was abrupt), then run it
-(`agent_run_command_now`), so the run streams in live as an inline child-run
-boundary. While the run is in flight the **command bullet glyph becomes a
+(`agent_run_command_now`), so the run streams through the Run index and can be
+opened from Work/Runs. While the run is in flight the **command bullet glyph becomes a
 spinner** (`RowMarker` `processing` → `.is-processing`) — that is the *only*
 running indicator; the Run button never reflects running/failed state (a
 `runningRef` in the hook just guards against a double-trigger). The two config

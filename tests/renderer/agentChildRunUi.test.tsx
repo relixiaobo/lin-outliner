@@ -4,10 +4,7 @@ import type { ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { AgentRunDetailPayload, AgentRunListEntry, ToolCall, Usage } from '../../src/core/agentTypes';
-import type {
-  AgentRenderChildRunEntity,
-  AgentRenderRunEntity,
-} from '../../src/core/agentRenderProjection';
+import type { AgentRenderRunEntity } from '../../src/core/agentRenderProjection';
 import type { DocumentIndex } from '../../src/renderer/state/document';
 import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import { AgentToolActivityGroup } from '../../src/renderer/ui/agent/AgentToolActivityGroup';
@@ -35,6 +32,20 @@ const TEST_INDEX = {
   projection: { nodes: [], libraryId: 'library', trashId: 'trash' },
   byId: new Map(),
 } as unknown as DocumentIndex;
+
+interface ChildRunFixture {
+  id: string;
+  description: string;
+  prompt: string;
+  executingAgentId: string;
+  status: AgentRunListEntry['status'];
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  result?: string;
+  parentRunId?: string;
+  parentToolCallId?: string;
+}
 
 afterEach(() => {
   while (mounted.length) mounted.pop()?.cleanup();
@@ -938,16 +949,12 @@ function renderRunEntity(overrides: Partial<AgentRenderRunEntity> = {}): AgentRe
   };
 }
 
-function childRunEntity(): AgentRenderChildRunEntity {
+function childRunEntity(): ChildRunFixture {
   return {
     id: 'child-1',
     description: 'Inspect child run UI',
     prompt: 'Inspect the current UI.',
-    agentType: 'explorer',
-    contextMode: 'fork',
     executingAgentId: 'built-in:tenon:explorer',
-    parentAgentId: 'built-in:tenon:assistant',
-    memoryOwnerAgentId: 'built-in:tenon:assistant',
     status: 'completed',
     startedAt: 100,
     updatedAt: 260,
@@ -1006,7 +1013,7 @@ function runDetailChild(overrides: Partial<AgentRunDetailPayload['subRuns'][numb
   };
 }
 
-function runEntry(childRun: AgentRenderChildRunEntity): AgentRunListEntry {
+function runEntry(childRun: ChildRunFixture): AgentRunListEntry {
   return {
     runId: childRun.id,
     conversationId: 'conversation-1',

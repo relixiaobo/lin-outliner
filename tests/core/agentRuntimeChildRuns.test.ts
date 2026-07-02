@@ -20,6 +20,7 @@ import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
 import { AgentEventStore } from '../../src/main/agentEventStore';
 import { getAgentEventActivePath, type AgentEvent } from '../../src/core/agentEventLog';
+import type { AgentRenderProjection } from '../../src/core/agentRenderProjection';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
 const EMPTY_USAGE: Usage = {
@@ -91,6 +92,17 @@ function createWindowSink() {
 
 function latestProjection(events: AgentRuntimeEvent[]) {
   return [...events].reverse().find((event) => event.type === 'projection')?.renderProjection ?? null;
+}
+
+function projectedRunId(projection: AgentRenderProjection | null | undefined, parentToolCallId?: string) {
+  if (!projection) return undefined;
+  if (!parentToolCallId) return projection.runIds[0];
+  return projection.runIds.find((id) => projection.entities.runs[id]?.parentToolCallId === parentToolCallId);
+}
+
+function projectedRun(projection: AgentRenderProjection | null | undefined, parentToolCallId?: string) {
+  const runId = projectedRunId(projection, parentToolCallId);
+  return runId ? projection?.entities.runs[runId] : undefined;
 }
 
 async function flushProjectionCoalescing() {
@@ -398,7 +410,7 @@ describe('agent runtime childRuns', () => {
     const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a fork for this.', sink);
     const projection = latestProjection(sink.events);
-    const childRunId = projection?.childRunIds[0]!;
+    const childRunId = projectedRunId(projection, 'tool-agent-fork-owner')!;
     expect(childRunId).toBeDefined();
     expect(projection?.runIds).toContain(childRunId);
     expect(projection?.entities.runs[childRunId]).toMatchObject({
@@ -1452,7 +1464,7 @@ describe('agent runtime childRuns', () => {
     const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a commandable background child run.', sink);
     const restored = await runtime.restoreConversation(conversation.conversationId);
-    const childRunId = restored.renderProjection.childRunIds[0]!;
+    const childRunId = projectedRunId(restored.renderProjection, 'tool-agent-1')!;
 
     const queued = await runtime.childRunSend(conversation.conversationId, childRunId, 'Continue with risks.');
     expect(queued).toMatchObject({
@@ -1525,7 +1537,7 @@ describe('agent runtime childRuns', () => {
 
     const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a stoppable background child run.', sink);
-    const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
+    const childRunId = projectedRunId(latestProjection(sink.events), 'tool-agent-1')!;
 
     const stopped = await runtime.childRunStop(conversation.conversationId, childRunId);
     expect(stopped).toMatchObject({
@@ -1753,12 +1765,11 @@ describe('agent runtime childRuns', () => {
     );
 
     const restored = await secondRuntime.restoreConversation(conversation.conversationId);
-    expect(restored.renderProjection.childRunIds).toHaveLength(1);
-    const childRun = restored.renderProjection.entities.childRuns[restored.renderProjection.childRunIds[0]!];
+    const childRun = projectedRun(restored.renderProjection, 'tool-agent-1');
+    expect(childRun).toBeDefined();
     expect(childRun).toMatchObject({
-      name: 'restored-bg',
+      title: 'Run in background.',
       status: 'completed',
-      result: 'Restored background result.',
     });
 
 
@@ -1820,7 +1831,7 @@ describe('agent runtime childRuns', () => {
 
     const conversation = await firstRuntime.restoreLatestConversation();
     await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start an interruptible background child run.', firstSink);
-    const childRunId = latestProjection(firstSink.events)?.childRunIds[0]!;
+    const childRunId = projectedRunId(latestProjection(firstSink.events), 'tool-agent-1')!;
     expect(childRunId).toBeTruthy();
     // The run is still alive (blocked) — persisted as running, no terminal yet.
     const beforeRestart = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
@@ -1847,7 +1858,7 @@ describe('agent runtime childRuns', () => {
     );
 
     const restored = await secondRuntime.restoreConversation(conversation.conversationId);
-    const restoredChildRun = restored.renderProjection.entities.childRuns[childRunId];
+    const restoredChildRun = restored.renderProjection.entities.runs[childRunId];
     expect(restoredChildRun?.status).toBe('failed');
 
     // The terminal is mirrored into the run's OWN ledger too: the unified run
@@ -2041,7 +2052,7 @@ describe('agent runtime childRuns', () => {
 
     const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a child that completes then fails.', sink);
-    const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
+    const childRunId = projectedRunId(latestProjection(sink.events), 'tool-agent-1')!;
 
     const completed = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
     expect(completed).toMatchObject({ agent_id: childRunId, status: 'completed', result: 'first result' });
@@ -2113,7 +2124,7 @@ describe('agent runtime childRuns', () => {
 
     const conversation = await runtime.restoreLatestConversation();
     await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Spawn a child that completes then is stopped.', sink);
-    const childRunId = latestProjection(sink.events)?.childRunIds[0]!;
+    const childRunId = projectedRunId(latestProjection(sink.events), 'tool-agent-1')!;
 
     const completed = await runtime.childRunStatus(conversation.conversationId, childRunId, { wait: true });
     expect(completed).toMatchObject({ agent_id: childRunId, status: 'completed', result: 'first result' });

@@ -983,9 +983,11 @@ Rules:
   labeling.
 - Run metadata backs `entities.runs` and `runIds` — the compact Run projection
   used by turn folding and other Run-aware renderer surfaces. It is derived from
-  the Run index, not from conversation `child_run.*` events. `child_run.*` events
-  still back legacy `entities.childRuns` for the remaining conversation synthetic
-  child-run rows until that row kind is removed.
+  the Run index, not from conversation `child_run.*` events. Conversation
+  `child_run.*` events remain a runtime/delegation compatibility marker while the
+  sidechain runtime still consumes them, but the render projection no longer
+  exposes `entities.childRuns`, `childRunIds`, or a `kind: 'child-run'`
+  transcript row.
 - **Where** a spawned Run renders depends on whether it has a parent tool call:
   - **Turn fold (`parentToolCallId` set).** A
     sub-run is the agent's own implicit behavior — it quietly delegated a slice
@@ -997,13 +999,10 @@ Rules:
     turn's own message, it is turn-anchored and branch-pruned with that message —
     editing the user message that started the turn removes it, with no orphan
     left at the transcript end.
-  - **Boundary row (a parentless legacy child-run record).** A parentless run (a scheduled command
-    fire) becomes a dedicated **child-run boundary row** in `transcriptRows`
-    (kind `'child-run'`, keyed by run id), ordered by start time among the
-    messages.
-  - A running boundary row shows a live status line and is not yet expandable;
-    once it seals it expands to the result (or error) and the full-run link.
-    Boundary rows live only in `transcriptRows`, never in the active `rows` path.
+  - **Parentless Run (`parentToolCallId` absent).** A detached, scheduled, or
+    manual command Run is not inserted into the conversation transcript. It
+    surfaces through Work/Runs and durable notifications; its detail view links to
+    the full Run transcript.
 - The Work/Runs view is a global run index backed by `agent_list_runs`, not a
   projection-only task list on the active conversation. Opening Work replaces the
   dock's channel header with a first-level `Back to chat · Runs` header and
@@ -1036,12 +1035,11 @@ Rules:
   API surface is `agent_run_detail` plus `agent_run_transcript`: detail reads Run
   meta and direct sub-run metadata from the Run index, while transcript replays
   the selected Run ledger. The renderer detail page uses that API directly and
-  does not require `entities.childRuns[selectedRunId]` from the active
-  conversation projection. Turn folding uses `entities.runs` through
-  `subRunsByParentToolCallId`, so the active conversation's legacy child-run
-  projection is no longer the dependency for folded sub-runs. Running detail
-  views expose Stop, while follow-up/steering remains an internal `run_steer`
-  runtime/tool capability instead of a permanent detail-page input.
+  does not require the selected Run to exist in the active conversation
+  projection. Turn folding uses `entities.runs` through
+  `subRunsByParentToolCallId`. Running detail views expose Stop, while
+  follow-up/steering remains an internal `run_steer` runtime/tool capability
+  instead of a permanent detail-page input.
 - Long output rows are collapsed by default.
 - **Result-first turn process (one flat level).** Every assistant turn renders
   result-first: the **final answer is the trailing text** after the turn's last

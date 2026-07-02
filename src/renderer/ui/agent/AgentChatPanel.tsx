@@ -310,7 +310,7 @@ function seqInChatSourceRange(seq: number | undefined, target: AgentChatSourceRe
 }
 
 function conversationRowMatchesChatSource(row: AgentConversationRenderRow, target: AgentChatSourceRevealTarget): boolean {
-  if (target.stream === 'run') return row.entry.kind === 'child-run' && row.entry.childRun.id === target.streamId;
+  if (target.stream === 'run') return false;
   return row.entry.kind === 'message' && row.sourceSeqs.some((seq) => seqInChatSourceRange(seq, target));
 }
 
@@ -474,7 +474,6 @@ export function AgentChatPanel({
     conversationTitle,
     members,
     steer: steerRuntime,
-    childRuns,
     subRunsByParentToolCallId,
     switchBranch,
     stop,
@@ -1185,9 +1184,6 @@ export function AgentChatPanel({
     }
     if (row.entry.kind === 'dream') {
       return <AgentDreamBoundary entry={row.entry} />;
-    }
-    if (row.entry.kind === 'child-run') {
-      return null;
     }
 
     const systemText = systemLineText(row.entry);

@@ -33,7 +33,6 @@ import type {
   AgentRenderMessageEntity,
   AgentRenderProjection,
   AgentRenderProjectionPatch,
-  AgentRenderChildRunEntity,
   AgentRenderRunEntity,
 } from '../../core/agentRenderProjection';
 import { applyAgentRenderProjectionPatch } from '../../core/agentRenderProjection';
@@ -114,21 +113,11 @@ export interface AgentActiveDreamEntry {
 
 export type AgentDreamEntry = AgentCompletedDreamEntry | AgentActiveDreamEntry;
 
-// Child-run entries stay in the type for replay/projection compatibility, but
-// the live transcript no longer renders them as standalone boundary rows. Runs
-// surface through their ordinary spawn/run_* tool calls plus the Work/Runs view.
-export interface AgentChildRunEntry {
-  id: string;
-  kind: 'child-run';
-  childRun: AgentRenderChildRunEntity;
-}
-
 export type AgentConversationEntry =
   | AgentMessageEntry
   | AgentCompactionEntry
   | AgentContextClearEntry
-  | AgentDreamEntry
-  | AgentChildRunEntry;
+  | AgentDreamEntry;
 
 export type AgentTurnPhase = 'idle' | 'streaming_text' | 'waiting_for_tool' | 'resuming_after_tool';
 
@@ -149,8 +138,7 @@ const EMPTY_PROJECTION: AgentRenderProjection = {
   rows: [],
   transcriptRows: [],
   runIds: [],
-  childRunIds: [],
-  entities: { messages: {}, runs: {}, childRuns: {}, compactions: {}, contextClears: {}, dreams: {} },
+  entities: { messages: {}, runs: {}, compactions: {}, contextClears: {}, dreams: {} },
   streaming: null,
 };
 
@@ -290,13 +278,6 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
           dream,
         });
       }
-      continue;
-    }
-
-    if (row.kind === 'child-run') {
-      // Keep child-run data available to Work and tool-call rows, but do
-      // not add a second transcript boundary. The spawn/run_* tool row is the
-      // interaction surface in the main conversation.
       continue;
     }
 
@@ -623,8 +604,6 @@ export interface LinAgentRuntimeView {
   runIds: string[];
   subRuns: Record<string, AgentRenderRunEntity>;
   subRunsByParentToolCallId: Map<string, AgentRenderRunEntity>;
-  childRunIds: string[];
-  childRuns: Record<string, AgentRenderChildRunEntity>;
   pendingApproval: AgentApprovalRequestView | null;
   pendingUserQuestion: AgentUserQuestionPendingView | null;
   toolResults: Map<string, AgentToolResultWithPayloads>;
@@ -1334,7 +1313,6 @@ export class AgentRuntimeStore {
     const { entries, turnPhase } = buildEntries(this.projection, toolResults);
     const subRuns = this.projection.entities.runs ?? {};
     const subRunsByParentToolCallId = this.subRunsByParentToolCallIdForProjection(subRuns);
-    const childRuns = this.projection.entities.childRuns ?? {};
     return {
       entries,
       error: this.error,
@@ -1357,8 +1335,6 @@ export class AgentRuntimeStore {
       runIds: this.projection.runIds ?? [],
       subRuns,
       subRunsByParentToolCallId,
-      childRunIds: this.projection.childRunIds,
-      childRuns,
       pendingApproval: this.currentPendingApproval(),
       pendingUserQuestion: this.currentPendingUserQuestion(),
       toolResults,
