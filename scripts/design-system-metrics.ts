@@ -13,6 +13,7 @@ import * as ts from 'typescript';
 const ROOT = join(import.meta.dir, '..');
 const DESIGN_SYSTEM_DIR = join(ROOT, 'docs', 'spec', 'design-system');
 const DESIGN_SYSTEM_KERNEL = join(ROOT, 'docs', 'spec', 'design-system.md');
+const COMPONENTS_DOC = join(DESIGN_SYSTEM_DIR, 'components.md');
 const DECISION_AUDIT = join(DESIGN_SYSTEM_DIR, 'decision-audit.md');
 const RENDERER_DIR = join(ROOT, 'src', 'renderer');
 const UI_DIR = join(ROOT, 'src', 'renderer', 'ui');
@@ -23,27 +24,29 @@ const COMPONENT_COVERAGE_TARGET = 0.8;
 const DECISION_DERIVATION_TARGET = 0.8;
 const RAW_HEX_PATTERN = /#(?:[0-9a-fA-F]{3,8})\b/g;
 
-const primitives = [
-  'Button',
-  'ButtonControl',
-  'IconButton',
-  'CheckboxControl',
-  'CheckboxMark',
-  'SwitchControl',
-  'SwitchMark',
-  'SegmentedControl',
-  'Input',
-  'Textarea',
-  'Field',
-  'SelectControl',
-  'FeedbackState',
-  'MenuSurface',
-  'MenuItem',
-  'Dialog',
-  'AnchoredActionMenu',
-  'PopoverList',
-  'ResizeHandle',
-];
+const componentContracts = [
+  { docNames: ['CheckboxMark'], jsxTags: ['CheckboxMark'] },
+  { docNames: ['CheckboxControl'], jsxTags: ['CheckboxControl'] },
+  { docNames: ['SwitchControl', 'SwitchMark'], jsxTags: ['SwitchControl', 'SwitchMark'] },
+  { docNames: ['IconButton'], jsxTags: ['IconButton'] },
+  { docNames: ['MenuSurface'], jsxTags: ['MenuSurface'] },
+  { docNames: ['MenuItem'], jsxTags: ['MenuItem'] },
+  { docNames: ['useAnchoredOverlay', 'AnchoredActionMenu'], jsxTags: ['AnchoredActionMenu'] },
+  {
+    docNames: ['PopoverListbox', 'PopoverListItem', 'PopoverEmpty'],
+    jsxTags: ['PopoverListbox', 'PopoverListItem', 'PopoverEmpty'],
+  },
+  { docNames: ['Dialog', 'ConfirmDialog'], jsxTags: ['Dialog', 'ConfirmDialog'] },
+  { docNames: ['Button'], jsxTags: ['Button'] },
+  { docNames: ['ButtonControl'], jsxTags: ['ButtonControl'] },
+  { docNames: ['Input', 'Textarea', 'Field'], jsxTags: ['Input', 'Textarea', 'Field'] },
+  { docNames: ['SelectControl'], jsxTags: ['SelectControl'] },
+  { docNames: ['FeedbackState', 'EmptyState', 'ErrorState'], jsxTags: ['EmptyState', 'ErrorState'] },
+  { docNames: ['TextInputControl', 'NumberInputControl'], jsxTags: ['TextInputControl', 'NumberInputControl'] },
+  { docNames: ['PanelSurface', 'WorkspacePanelSurface'], jsxTags: ['WorkspacePanelSurface'] },
+  { docNames: ['ResizeHandle'], jsxTags: ['ResizeHandle'] },
+  { docNames: ['AppliedTag'], jsxTags: ['AppliedTag'] },
+] as const;
 
 // Specialized native controls that are implementation details, not new visual
 // languages. Keep this list small and name the reason for each exception.
@@ -110,6 +113,21 @@ function designSystemLineMetrics() {
   };
 }
 
+function documentedComponentNames(): Set<string> {
+  const source = readFileSync(COMPONENTS_DOC, 'utf8');
+  const start = source.indexOf('| Component | Sources | Contract |');
+  const end = source.indexOf('## Contract Shape', start);
+  const section = start >= 0 && end > start ? source.slice(start, end) : '';
+  const names = new Set<string>();
+  for (const match of section.matchAll(/^\| (.+?) \| (.+?) \| (.+?) \|$/gm)) {
+    if (match[1] === 'Component' || match[1]?.startsWith('---')) continue;
+    for (const name of match[1].matchAll(/`([^`]+)`/g)) {
+      names.add(name[1]);
+    }
+  }
+  return names;
+}
+
 function exceptionEvidenceMetrics() {
   const kernel = readFileSync(DESIGN_SYSTEM_KERNEL, 'utf8');
   const start = kernel.indexOf('## Exception Registry');
@@ -140,6 +158,11 @@ function decisionAuditMetrics() {
 
 function componentCoverageMetrics() {
   const files = sourceFiles(UI_DIR);
+  const componentTags = new Set(componentContracts.flatMap((contract) => contract.jsxTags));
+  const documentedNames = documentedComponentNames();
+  const mappedDocNames = new Set(componentContracts.flatMap((contract) => contract.docNames));
+  const unmappedDocumentedContracts = [...documentedNames].filter((name) => !mappedDocNames.has(name)).sort();
+  const mappedContractsMissingFromDocs = [...mappedDocNames].filter((name) => !documentedNames.has(name)).sort();
   let primitiveUses = 0;
   let nativeUses = 0;
   let exceptedNativeUses = 0;
@@ -161,7 +184,8 @@ function componentCoverageMetrics() {
     function visit(node: ts.Node) {
       if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
         const tagName = node.tagName.getText(sourceFile);
-        if (primitives.some((primitive) => tagName === primitive || tagName.startsWith(`${primitive}.`))) {
+        const baseTagName = tagName.split('.')[0];
+        if (componentTags.has(tagName) || componentTags.has(baseTagName)) {
           primitiveUses += 1;
         }
         if (!rel.startsWith('src/renderer/ui/primitives/') && nativeTags.has(tagName)) {
@@ -187,7 +211,11 @@ function componentCoverageMetrics() {
     directNativeUses: nativeUses,
     exceptedNativeUses,
     componentCoverage: accountableControls === 0 ? 1 : Number((primitiveUses / accountableControls).toFixed(3)),
+    componentContractRows: componentContracts.length,
+    componentTagNames: [...componentTags].sort(),
     directNativeFiles: Object.fromEntries([...directNativeFiles.entries()].sort()),
+    mappedContractsMissingFromDocs,
+    unmappedDocumentedContracts,
   };
 }
 
@@ -322,6 +350,12 @@ function main() {
     }
     if (metrics.components.componentCoverage < COMPONENT_COVERAGE_TARGET) {
       failures.push(`component coverage ${metrics.components.componentCoverage} < ${COMPONENT_COVERAGE_TARGET}`);
+    }
+    if (metrics.components.unmappedDocumentedContracts.length > 0) {
+      failures.push(`documented component contracts missing from metrics: ${metrics.components.unmappedDocumentedContracts.join(', ')}`);
+    }
+    if (metrics.components.mappedContractsMissingFromDocs.length > 0) {
+      failures.push(`component metric contracts missing from docs: ${metrics.components.mappedContractsMissingFromDocs.join(', ')}`);
     }
     if (metrics.exceptions.exceptionEvidenceCoverage < 1) {
       failures.push(`exception evidence ${metrics.exceptions.exceptionEvidenceCoverage} < 1`);
