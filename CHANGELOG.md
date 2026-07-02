@@ -132,6 +132,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Retired the obsolete outliner Settings root (PR #362, codex)** — the
+  document-level `Settings` system root is no longer seeded, projected, searched,
+  protected, or shown in the workspace tree; the standalone product Settings
+  window is now the only Settings surface. Empty default legacy `settings` roots
+  are removed on restore, while any retired root with user content or live
+  references is unlocked and moved into Library to avoid data loss. Specs and
+  projection fixtures were updated with the new root shape. **Gate (main):**
+  code review found one data-preservation bug; codex fixed it before merge.
+  Verified with typecheck, focused core/renderer suites, `docs:check`, and a
+  legacy Settings-child restore reproduction.
 - **Hidden Dream system prompt context no longer appears in transcript system lines (PR #360,
   codex-2)** — Dream channel manual/scheduled anchors may carry model-only
   `<system-reminder>` prompt context next to their human-readable summary; the renderer now filters

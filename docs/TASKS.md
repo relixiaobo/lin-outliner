@@ -21,7 +21,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361**) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358) |
@@ -31,7 +31,9 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-01).** Open PR queue is currently empty. A Dream-precision + file-reader wave
+**In flight (2026-07-02).** Open PR queue: **#363** (`codex-2/tool-lucide-icon-audit`, ready) and
+**#364** (`codex-3/agent-run-graph-cleanup-plan`, draft). #362 (`codex/remove-outliner-settings-root`)
+merged 2026-07-02 after main review; see *Recently completed*. A Dream-precision + file-reader wave
 merged 2026-06-23: **#319** (Dream
 remembers-nothing + truncation gating), **#320** (manual-Dream thin-data pre-check), **#321** (file-only
 preview readers), and **#322** (`agent-pdf-tool-path`, codex-3 — native PDF `input_file` payloads on
@@ -455,6 +457,22 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **remove-outliner-settings-root** (`codex/remove-outliner-settings-root`, PR #362,
+  codex, merged 2026-07-02, fast-track) — removes the obsolete document-level
+  `Settings` system root from the core protocol and projection. New/restored
+  documents now seed Daily notes, Library, Schema, Saved searches, and Trash as
+  the workspace's fixed root children; the standalone product Settings window is
+  the only Settings surface. Restore cleanup deletes only an empty default
+  legacy `settings` root. If that retired root has user content or live
+  references, core unlocks it and moves it into Library so user notes and
+  backlinks survive. Specs, sidebar expectations, E2E mock data, and projection
+  fixtures were updated to match. **Gate (main):** code review found one
+  data-loss bug in the first cleanup path; codex fixed it with preservation
+  logic and core regressions before merge. Verified on the final PR head:
+  `bun run typecheck`, `bun test tests/core/core.test.ts`, focused renderer/core
+  projection suites, `bun run docs:check`, and a manual legacy Settings-child
+  restore reproduction. Fast-track, **shape (a)**, *no plan file*.
 
 - **browser-computer-control-plans** (`codex/browser-computer-control-plans`, PR #361, codex,
   merged 2026-07-01, plan-track) — adds active P1 implementation plans for Tenon-native Browser Control
