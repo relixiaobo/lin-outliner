@@ -35,9 +35,8 @@ interface DerivedRunContext {
   meta: AgentRunMetaProjection;
   snapshot?: AgentDebugRunSnapshot | null;
   /**
-   * The parent tool call this run answers, read from the PARENT stream's
-   * `child_run.started`. It is never in the child's own ledger, so the caller
-   * (which holds both streams) supplies it; null for top-level runs.
+   * The parent tool call this run answers, read from Run metadata. It is never
+   * in the child's own ledger; null marks top-level runs.
    */
   parentToolCallId?: string | null;
 }

@@ -66,6 +66,10 @@ const SEARCH_INDEX_FILE = 'search-index.json';
 // the current layout (log + re-probe next launch — never wipe on error).
 // Future format breaks bump the integer instead of authoring a new detector.
 export const LAYOUT_SENTINEL_FILE = 'layout.json';
+// v7 = agent-run-graph-cleanup: conversation logs no longer store
+// child_run.started/updated lifecycle markers. The Run index and each run's
+// ledger are the durable execution record; conversation logs keep only chat,
+// permissions, notifications, and other conversation-local events.
 // v6 = agent-run-graph-cleanup: run meta v2 stores nested execution/objective
 // state plus parentToolCallId, runProfile, and context. Old flat run metas are
 // pre-release data and are wiped by the sentinel.
@@ -78,11 +82,9 @@ export const LAYOUT_SENTINEL_FILE = 'layout.json';
 // v3 = memory realignment PR-2: memory sources were a discriminated union and
 // principal-owned episode gist nodes were still persisted outside the outline.
 // v2 = run unification: a delegated run is its own ledger (`runs/<runId>/
-// events.jsonl`, own seq space) excluded from conversation replay; the
-// conversation stream keeps only the slim child_run.started/updated markers.
-// The pre-unification entity-grade events and transcript-snapshot payloads
-// are gone.
-export const STORAGE_LAYOUT_VERSION = 6;
+// events.jsonl`, own seq space) excluded from conversation replay. The
+// pre-unification entity-grade events and transcript-snapshot payloads are gone.
+export const STORAGE_LAYOUT_VERSION = 7;
 const CHECKPOINT_VERSION = 5;
 const SEARCH_INDEX_VERSION = 2;
 const DEFAULT_CHECKPOINT_EVENT_INTERVAL = 100;
@@ -413,8 +415,8 @@ export class AgentEventStore {
    * Read ONLY the conversation segment (not the joined run streams). The
    * run-grounded debug view ([[agent-debug-run-grounded]]) reads it once to recover
    * the conversation-stream events a run's own ledger lacks — the triggering user
-   * message, `child_run.started` parent links, and conversation-budget
-   * `tool_result.replaced` slimming — far cheaper than the full merged `readEvents`.
+   * message and conversation-budget `tool_result.replaced` slimming — far cheaper
+   * than the full merged `readEvents`.
    */
   async readConversationStreamEvents(conversationId: string): Promise<AgentEvent[]> {
     await this.ensureStorageLayout();
@@ -2535,7 +2537,7 @@ function normalizeCheckpoint(value: unknown, conversationId: string): AgentEvent
   if (state.latestEventId !== latestEventId) return null;
   if (!isRecord(state.conversation) || state.conversation.id !== conversationId) return null;
   if (!isRecord(state.messages) || !isRecord(state.payloads) || !isRecord(state.runs)) return null;
-  if (!isRecord(state.childRuns) || !isRecord(state.compactionsByMessageId)) return null;
+  if (!isRecord(state.compactionsByMessageId)) return null;
   if (!isRecord(state.contextClearsByMessageId)) return null;
   if (!isRecord(state.dreamsByMessageId) || !isRecord(state.userQuestions)) return null;
   if (!Array.isArray(state.rootMessageIds)) return null;

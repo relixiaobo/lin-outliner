@@ -306,8 +306,9 @@ Clean-cut startup policy (pre-release, no migration) — the storage-generation
 sentinel:
 
 - ONE root file `layout.json` `{"v": <generation>}` is written once per on-disk
-  format generation (`STORAGE_LAYOUT_VERSION`, currently `6` = Run meta v2 with
-  nested execution/objective state). First store access reads this single line; a
+  format generation (`STORAGE_LAYOUT_VERSION`, currently `7` = conversation logs
+  no longer store child-run lifecycle markers; Run index + Run ledgers are the
+  execution record). First store access reads this single line; a
   matching `v` proceeds with no per-conversation probing.
 - A stale `v` or a MISSING sentinel is positive proof of another generation:
   the WHOLE agent data root is hard-deleted (logged with the old generation) —
@@ -425,8 +426,6 @@ type AgentEventType =
   | 'run.completed'
   | 'run.failed'
   | 'run.cancelled'
-  | 'child_run.started'
-  | 'child_run.updated'
   | 'compaction.completed'
   | 'context.cleared'
   | 'dream.finished'
@@ -450,10 +449,10 @@ A `notification.created` is **anchored to exactly one conversation**
 carries a `kind` (`task_completed` / `task_failed`; `needs_input` and `status` are
 reserved with no emitter yet) plus an optional `source`
 (`{ type: 'run'; runId }`) naming the off-floor run that produced it. A
-detached child-run terminal emits one with an id keyed on the completion instant
+detached run terminal emits one with an id keyed on the completion instant
 (`notification-<runId>-<completedAt>`) so a *resumed* run that finishes again is
 delivered, not deduped; a **user-initiated stop** raises none (the user's own
-action); a child run left **running when the app dies** is marked failed and raises
+action); a run left **running when the app dies** is marked failed and raises
 its notification on the next restore. `needs_input` (reserved) would reuse the
 run-log `user_question.*` lifecycle for the actual pause/answer/resume; the
 notification only routes the attention signal to the origin conversation.
@@ -983,10 +982,9 @@ Rules:
   labeling.
 - Run metadata backs `entities.runs` and `runIds` — the compact Run projection
   used by turn folding and other Run-aware renderer surfaces. It is derived from
-  the Run index, not from conversation `child_run.*` events. Conversation
-  `child_run.*` events remain a runtime/delegation compatibility marker while the
-  sidechain runtime still consumes them, but the render projection no longer
-  exposes `entities.childRuns`, `childRunIds`, or a `kind: 'child-run'`
+  the Run index, not from conversation lifecycle events. Conversation logs no
+  longer store child-run lifecycle markers, and the render projection does not
+  expose `entities.childRuns`, `childRunIds`, or a `kind: 'child-run'`
   transcript row.
 - **Where** a spawned Run renders depends on whether it has a parent tool call:
   - **Turn fold (`parentToolCallId` set).** A
@@ -1418,9 +1416,7 @@ explicitly labelled in the UI because it is not the full provider input window.)
   snapshot), derived from `readRunStreamEvents(runId)` spliced with the conversation
   context (above) and cached by the run's `latestSeq` + the conversation context seq
   (so it invalidates when slimming of its tool results lands). `parentToolCallId`
-  is sourced from Run meta v2 when present; the parent conversation's
-  `child_run.started` is only the current compatibility fallback while the
-  conversation marker projection still exists. The conversation context itself
+  is sourced from Run meta v2. The conversation context itself
   (trigger messages / parent links / slimming) is read ONCE from the conversation
   segment (`readConversationStreamEvents`, not the full merged `readEvents`) and
   cached by the conversation `latestSeq`, shared across every run in the view.

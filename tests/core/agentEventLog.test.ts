@@ -784,32 +784,22 @@ describe('agent event log', () => {
     expect(toolResult.content).toEqual([{ type: 'text', text: replacement }]);
   });
 
-  test('tracks child-run lifecycle markers without adding them to the active conversation', () => {
+  test('tracks run lifecycle events without adding them to the active conversation', () => {
     const events: AgentEvent[] = [
       { ...base(1, 'conversation.created'), title: 'Untitled' },
       {
-        ...base(2, 'child_run.started', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
-        childRunId: 'child-1',
-        parentRunId: 'run-parent',
+        ...base(2, 'run.started', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        runId: 'child-1',
+        agentId: 'built-in:tenon:assistant',
+        trigger: { type: 'parent-run', parentRunId: 'run-parent' },
         parentToolCallId: 'tool-agent-1',
-        executingAgentId: 'built-in:tenon:researcher',
-        parentAgentId: 'built-in:tenon:assistant',
-        memoryOwnerAgentId: 'built-in:tenon:researcher',
-        name: 'research',
-        description: 'research docs',
-        prompt: 'Research this.',
-        agentType: 'researcher',
-        contextMode: 'fresh',
-        // Persisted on the start marker so a cross-restart resume rebuilds the
-        // agent with the same approval policy (C2 — durable, not in-memory only).
-        unattended: true,
+        objective: 'Research docs.',
+        context: 'brief',
+        runProfile: 'research',
       },
       {
-        ...base(3, 'child_run.updated', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
-        childRunId: 'child-1',
-        status: 'completed',
-        completedAt: 1_700_000_000_100,
-        result: 'Done.',
+        ...base(3, 'run.completed', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        runId: 'child-1',
       },
     ];
 
@@ -817,35 +807,25 @@ describe('agent event log', () => {
 
     expect(getAgentEventActivePath(state)).toEqual([]);
     expect(deriveAgentPiMessages(state)).toEqual([]);
-    expect(state.childRuns['child-1']).toMatchObject({
+    expect(state.runs['child-1']).toMatchObject({
       id: 'child-1',
-      name: 'research',
-      agentType: 'researcher',
-      parentRunId: 'run-parent',
-      executingAgentId: 'built-in:tenon:researcher',
-      memoryOwnerAgentId: 'built-in:tenon:researcher',
       status: 'completed',
-      result: 'Done.',
-      parentToolCallId: 'tool-agent-1',
-      // The start marker's unattended flag projects onto the durable record, so a
-      // restored run honors it (a `child_run.updated` later never overwrites it).
-      unattended: true,
+      startedAt: 1_700_000_000_002,
+      updatedAt: 1_700_000_000_003,
     });
 
-    // Markers apply in seq order: a LATER 'running' update is the resume of a
-    // detached run, so it re-opens the terminal record (clearing the stale
-    // result/completedAt) and a second completion lands on top.
+    // Run lifecycle applies in seq order: a later run.started is a resume and
+    // re-opens the terminal record.
     const resumed = replayAgentEvents([
       ...events,
       {
-        ...base(4, 'child_run.updated', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
-        childRunId: 'child-1',
-        status: 'running',
+        ...base(4, 'run.started', { type: 'tool', toolName: 'Agent', toolCallId: 'tool-agent-1' }),
+        runId: 'child-1',
+        agentId: 'built-in:tenon:assistant',
+        trigger: { type: 'parent-run', parentRunId: 'run-parent' },
       },
     ]);
-    expect(resumed.childRuns['child-1']).toMatchObject({ status: 'running' });
-    expect(resumed.childRuns['child-1']?.result).toBeUndefined();
-    expect(resumed.childRuns['child-1']?.completedAt).toBeUndefined();
+    expect(resumed.runs['child-1']).toMatchObject({ status: 'running' });
   });
 
   test('applies tool result replacement events to replayed pi messages', () => {

@@ -270,6 +270,9 @@ export class AgentRunLedgerWriter {
       parentRunId?: string;
       objectiveStatus?: AgentObjectiveStatus;
       budget?: AgentRunBudget;
+      blockedReason?: string;
+      latestVerifierGap?: string;
+      latestSubmissionSeq?: number;
     },
   ): Promise<void> {
     const run = this.requireRun(runId);
@@ -282,6 +285,11 @@ export class AgentRunLedgerWriter {
             agentId: options.agentId,
             anchor: { type: 'conversation', agentId: options.agentId, conversationId: run.conversationId },
             disposition: 'detached',
+            objectiveStatus: options.objectiveStatus,
+            budget: options.budget,
+            blockedReason: options.blockedReason,
+            latestVerifierGap: options.latestVerifierGap,
+            latestSubmissionSeq: options.latestSubmissionSeq,
             trigger: options.parentRunId ? { type: 'parent-run', parentRunId: options.parentRunId } : { type: 'system' },
           })
         : this.buildEvent(run, runId, {
@@ -291,6 +299,9 @@ export class AgentRunLedgerWriter {
             errorMessage: options.errorMessage,
             objectiveStatus: options.objectiveStatus,
             budget: options.budget,
+            blockedReason: options.blockedReason,
+            latestVerifierGap: options.latestVerifierGap,
+            latestSubmissionSeq: options.latestSubmissionSeq,
           });
       await this.options.store().appendRunStreamEvents(run.conversationId, runId, [event]);
     });

@@ -702,7 +702,7 @@ describe('agent render projection', () => {
     }]);
   });
 
-  test('ignores parentless child-run markers in the render projection', () => {
+  test('does not synthesize parentless runs without Run metadata input', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Command delivery' },
       {
@@ -710,21 +710,6 @@ describe('agent render projection', () => {
         messageId: 'user-1',
         parentMessageId: null,
         content: [{ type: 'text', text: 'go' }],
-      },
-      {
-        ...base(3, 'child_run.started', agentActor),
-        childRunId: 'sub-1',
-        description: 'check Chengdu weather',
-        prompt: 'Check the weather in Chengdu today.',
-        agentType: 'researcher',
-        contextMode: 'fork',
-      },
-      {
-        ...base(4, 'child_run.updated', agentActor),
-        childRunId: 'sub-1',
-        status: 'completed',
-        completedAt: 1_700_000_000_900,
-        result: 'Partly cloudy, 22–29°C.',
       },
     ]);
 
@@ -777,7 +762,7 @@ describe('agent render projection', () => {
     expect(projection.entities.runs['sub-1']?.status).toBe('stopped');
   });
 
-  test('folds a DM main-agent child run into its spawning turn — no boundary row', () => {
+  test('folds a DM main-agent sub-run into its spawning turn — no boundary row', () => {
     const state = replayAgentEvents([
       { ...base(1, 'conversation.created'), title: 'Spawning turn' },
       {
@@ -797,22 +782,6 @@ describe('agent render projection', () => {
         messageId: 'assistant-1',
         stopReason: 'tool_use',
         content: [{ type: 'toolCall', id: 'tc-1', name: 'Task', arguments: {} }],
-      },
-      {
-        ...base(5, 'child_run.started', agentActor),
-        childRunId: 'sub-1',
-        parentToolCallId: 'tc-1',
-        description: 'do the subtask',
-        prompt: 'Do the subtask.',
-        agentType: 'researcher',
-        contextMode: 'fork',
-      },
-      {
-        ...base(6, 'child_run.updated', agentActor),
-        childRunId: 'sub-1',
-        status: 'completed',
-        completedAt: 1_700_000_000_900,
-        result: 'done',
       },
     ]);
 

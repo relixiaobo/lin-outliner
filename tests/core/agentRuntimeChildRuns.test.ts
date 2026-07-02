@@ -18,8 +18,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { LIN_AGENT_EVENT_CHANNEL, type AgentRuntimeEvent } from '../../src/core/agentTypes';
-import { AgentEventStore } from '../../src/main/agentEventStore';
-import { getAgentEventActivePath, type AgentEvent } from '../../src/core/agentEventLog';
+import { AgentEventStore, type AgentRunMetaProjection } from '../../src/main/agentEventStore';
+import { getAgentEventActivePath } from '../../src/core/agentEventLog';
 import type { AgentRenderProjection } from '../../src/core/agentRenderProjection';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
 
@@ -103,6 +103,18 @@ function projectedRunId(projection: AgentRenderProjection | null | undefined, pa
 function projectedRun(projection: AgentRenderProjection | null | undefined, parentToolCallId?: string) {
   const runId = projectedRunId(projection, parentToolCallId);
   return runId ? projection?.entities.runs[runId] : undefined;
+}
+
+async function conversationRunMetas(dataRoot: string, conversationId: string) {
+  return new AgentEventStore(dataRoot).listConversationRunMetaProjections(conversationId);
+}
+
+function workerRunsWithObjective(metas: readonly AgentRunMetaProjection[], objective: string) {
+  return metas.filter((run) => run.objective?.role === 'worker' && run.objective.text.startsWith(objective));
+}
+
+function verifierRun(metas: readonly AgentRunMetaProjection[]) {
+  return metas.find((run) => run.objective?.role === 'verifier');
 }
 
 async function flushProjectionCoalescing() {
@@ -699,15 +711,13 @@ describe('agent runtime childRuns', () => {
     expect(verifierContexts.join('\n')).toContain('File changes');
     expect(verifierContexts.join('\n')).toContain('verified-child.txt');
     expect(verifierContexts.join('\n')).toContain('Tool trace');
-    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
-    const childRuns = Object.values(replay.childRuns);
-    const workers = childRuns.filter((run) => run.description === 'verified child');
-    const verifier = childRuns.find((run) => run.purpose === 'verify');
+    const runMetas = await conversationRunMetas(dataRoot, conversation.conversationId);
+    const workers = workerRunsWithObjective(runMetas, 'Produce a verified child result.');
+    const verifier = verifierRun(runMetas);
     expect(workers).toHaveLength(2);
-    expect(workers[0]?.objectiveStatus).toBe('blocked');
-    expect(workers[1]?.objectiveStatus).toBe('verified');
-    expect(workers[1]?.result).toBe('verified result');
-    expect(verifier?.contextMode).toBe('none');
+    expect(workers[0]?.objective?.status).toBe('blocked');
+    expect(workers[1]?.objective?.status).toBe('verified');
+    expect(verifier?.context).toBe('none');
     const verifierMeta = verifier ? await new AgentEventStore(dataRoot).readRunMetaProjection(verifier.id) : null;
     expect(verifierMeta).toMatchObject({
       context: 'none',
@@ -801,12 +811,15 @@ describe('agent runtime childRuns', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(replacementContexts.join('\n')).toContain('missing required phrase');
-    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
-    const workers = Object.values(replay.childRuns).filter((run) => run.description === 'budget verified child');
+    const workers = workerRunsWithObjective(
+      await conversationRunMetas(dataRoot, conversation.conversationId),
+      'Produce a verified child result within the exact parent token slice.',
+    );
     expect(workers).toHaveLength(2);
-    expect(workers[0]?.objectiveStatus).toBe('blocked');
-    expect(workers[1]?.objectiveStatus).toBe('verified');
-    expect(workers[1]?.result).toBe('verified result');
+    expect(workers[0]?.objective?.status).toBe('blocked');
+    expect(workers[1]?.objective?.status).toBe('verified');
+    const replacementDetail = await runtime.agentRunDetail(workers[1]!.id, conversation.conversationId);
+    expect(replacementDetail?.result?.summary).toBe('verified result');
     const failedWorkerStatus = await runtime.childRunStatus(conversation.conversationId, workers[0]!.id, { wait: true });
     expect(failedWorkerStatus.latest_verifier_gap).toBe('missing required phrase');
   });
@@ -865,13 +878,12 @@ describe('agent runtime childRuns', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(verifierContexts).toHaveLength(1);
-    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
-    const childRuns = Object.values(replay.childRuns);
-    const worker = childRuns.find((run) => run.description === 'budgeted verified child');
-    const verifier = childRuns.find((run) => run.purpose === 'verify');
-    expect(worker?.objectiveStatus).toBe('verified');
+    const runMetas = await conversationRunMetas(dataRoot, conversation.conversationId);
+    const worker = workerRunsWithObjective(runMetas, 'Produce a verified child result under a wall-clock budget.')[0];
+    const verifier = verifierRun(runMetas);
+    expect(worker?.objective?.status).toBe('verified');
     expect(verifier).toBeDefined();
-    expect(verifier?.purpose).toBe('verify');
+    expect(verifier?.objective?.role).toBe('verifier');
   });
 
   test('a controller with child runs replans in place instead of being replaced', async () => {
@@ -931,11 +943,12 @@ describe('agent runtime childRuns', () => {
 
     expect(script.pendingCount()).toBe(0);
     expect(replanContexts.join('\n')).toContain('missing controller verified result');
-    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
-    const controllers = Object.values(replay.childRuns).filter((run) => run.description === 'controller with child');
+    const controllers = (await conversationRunMetas(dataRoot, conversation.conversationId))
+      .filter((run) => run.objective?.text === 'Integrate a child result into a verified controller result.');
     expect(controllers).toHaveLength(1);
-    expect(controllers[0]?.objectiveStatus).toBe('verified');
-    expect(controllers[0]?.result).toBe('controller verified result');
+    expect(controllers[0]?.objective?.status).toBe('verified');
+    const controllerDetail = await runtime.agentRunDetail(controllers[0]!.id, conversation.conversationId);
+    expect(controllerDetail?.result?.summary).toBe('controller verified result');
     const controllerStatus = await runtime.childRunStatus(conversation.conversationId, controllers[0]!.id, { wait: true });
     expect(controllerStatus.children?.map((child) => child.role).sort()).toEqual(['verifier', 'verifier', 'worker']);
     expect(controllerStatus.children?.find((child) => child.description === 'controller leaf child')).toMatchObject({
@@ -1614,43 +1627,44 @@ describe('agent runtime childRuns', () => {
     const conversation = await runtime.restoreLatestConversation();
     runtime.closeConversation(conversation.conversationId);
 
-    // The crash window: the conversation records the run, but runs/<id>/ was
-    // never seeded (no events.jsonl). Pre-fix this run was permanently wedged —
-    // every send failed with "Unknown child-run ledger".
+    // The crash window: the Run index records the run, but runs/<id>/ was never
+    // seeded (no events.jsonl). Pre-fix this run was permanently wedged: every
+    // send failed with "Unknown child-run ledger".
     const store = new AgentEventStore(dataRoot);
-    const replay = await store.replay(conversation.conversationId);
-    await store.appendEvents(conversation.conversationId, [
-      {
-        v: 1,
-        eventId: `test-child-start-${runId}`,
-        seq: replay.latestSeq + 1,
-        conversationId: conversation.conversationId,
-        createdAt: Date.now(),
-        actor: { type: 'tool', toolName: 'Agent', toolCallId: 'tool-lost-seed' },
-        type: 'child_run.started',
-        childRunId: runId,
-        parentToolCallId: 'tool-lost-seed',
-        executingAgentId: 'built-in:tenon:assistant',
-        memoryOwnerAgentId: 'built-in:tenon:assistant',
-        description: 'lost seed run',
-        prompt: 'Verify the deployment pipeline.',
-        agentType: 'fork',
-        contextMode: 'fork',
+    const now = Date.now();
+    await store.writeRunMeta({
+      v: 2,
+      id: runId,
+      agentId: 'built-in:tenon:assistant',
+      anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId: conversation.conversationId },
+      parentToolCallId: 'tool-lost-seed',
+      disposition: 'detached',
+      context: 'full',
+      runProfile: 'default',
+      trigger: { type: 'system' },
+      fingerprint: {
+        appVersion: 'test',
+        promptHash: 'test',
+        toolSchemaHash: 'test',
+        skillBindings: [],
+        modelConfig: 'test',
       },
-      {
-        v: 1,
-        eventId: `test-child-failed-${runId}`,
-        seq: replay.latestSeq + 2,
-        conversationId: conversation.conversationId,
-        createdAt: Date.now() + 1,
-        actor: { type: 'system' },
-        type: 'child_run.updated',
-        childRunId: runId,
+      retention: 'hot',
+      createdAt: now,
+      updatedAt: now + 1,
+      latestSeq: 0,
+      execution: {
         status: 'failed',
-        completedAt: Date.now() + 1,
+        completedAt: now + 1,
         error: 'interrupted',
       },
-    ] as AgentEvent[]);
+      objective: {
+        text: 'Verify the deployment pipeline.',
+        criteria: [],
+        role: 'worker',
+        status: 'blocked',
+      },
+    });
     expect(await store.readRunStreamEvents(runId)).toEqual([]);
 
     const queued = await runtime.childRunSend(conversation.conversationId, runId, 'Continue the lost run.');
@@ -1675,7 +1689,7 @@ describe('agent runtime childRuns', () => {
     expect(ledgerEvents.at(-1)?.type).toBe('run.completed');
   });
 
-  test('persists child run sidechain metadata and restores status by name', async () => {
+  test('persists child run sidechain metadata and restores status by run id', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-restore-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-restore-data-'));
     roots.push(localRoot, dataRoot);
@@ -1725,9 +1739,10 @@ describe('agent runtime childRuns', () => {
     await sendMessageApprovingAgent(firstRuntime, conversation.conversationId, 'Start a restorable background child run.', firstSink);
     firstRuntime.closeConversation(conversation.conversationId);
     // The transcript is the child run's own ledger — no snapshot payloads exist.
-    const childRunId = Object.keys(
-      (await new AgentEventStore(dataRoot).replay(conversation.conversationId)).childRuns ?? {},
-    )[0]!;
+    const childRunId = (await conversationRunMetas(dataRoot, conversation.conversationId))
+      .find((run) => run.parentToolCallId === 'tool-agent-1')?.id;
+    expect(childRunId).toBeDefined();
+    if (!childRunId) throw new Error('Expected background run metadata.');
     const ledgerEvents = await new AgentEventStore(dataRoot).readRunStreamEvents(childRunId);
     expect(ledgerEvents.length).toBeGreaterThan(0);
     expect(ledgerEvents.some((event) => event.type === 'run.started')).toBe(true);
@@ -1737,7 +1752,7 @@ describe('agent runtime childRuns', () => {
       [
         fauxAssistantMessage([
           fauxToolCall('run_status', {
-            name: 'restored-bg',
+            agent_id: childRunId,
             wait: true,
           }, { id: 'tool-agent-status-restored' }),
         ], { stopReason: 'toolUse' }),
@@ -1834,8 +1849,9 @@ describe('agent runtime childRuns', () => {
     const childRunId = projectedRunId(latestProjection(firstSink.events), 'tool-agent-1')!;
     expect(childRunId).toBeTruthy();
     // The run is still alive (blocked) — persisted as running, no terminal yet.
+    const beforeRestartMeta = await new AgentEventStore(dataRoot).readRunMetaProjection(childRunId);
+    expect(beforeRestartMeta?.execution.status).toBe('running');
     const beforeRestart = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
-    expect(beforeRestart.childRuns[childRunId]?.status).toBe('running');
     expect(beforeRestart.attentionByConversationId[conversation.conversationId]?.unreadCount ?? 0).toBe(0);
 
     // Second runtime over the same data = a restart. Restoring marks the orphaned

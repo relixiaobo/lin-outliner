@@ -291,9 +291,9 @@ export interface AgentDelegationRuntimeHost {
   getActiveRunId(): string | null;
   getRuntimeSettings(): Promise<AgentRuntimeSettings>;
   /**
-   * A child run started: append the slim `child_run.started` conversation marker
-   * and seed the child's OWN run ledger ([[agent-run-unification]] Design 1) —
-   * context messages (fork prefix) before `run.started`, the directive after it.
+   * A sub-run started: update Run metadata and seed the run's OWN ledger
+   * ([[agent-run-unification]] Design 1) — context messages (fork prefix)
+   * before `run.started`, the directive after it.
    */
   childRunStarted(
     snapshot: AgentChildRunSnapshot,
@@ -303,7 +303,7 @@ export interface AgentDelegationRuntimeHost {
   childRunMessage(snapshot: AgentChildRunSnapshot, message: AgentMessage): Promise<void>;
   /** A slimming replacement of an earlier tool result → `tool_result.replaced` in the child ledger. */
   childRunToolResultReplaced(snapshot: AgentChildRunSnapshot, toolCallId: string, text: string): Promise<void>;
-  /** Event-sourced child compaction (Design 4). */
+  /** Event-sourced run compaction (Design 4). */
   childRunCompacted(
     snapshot: AgentChildRunSnapshot,
     input: { postCompactMessage: AgentMessage; summary: string; trigger: 'auto' | 'reactive' },
@@ -312,7 +312,8 @@ export interface AgentDelegationRuntimeHost {
     snapshot: AgentChildRunSnapshot,
     input: { summary: string; source: AgentRunSubmissionSource },
   ): Promise<AgentRunSubmissionProjection | null>;
-  /** Status transition: `child_run.updated` (conversation) + run lifecycle event (child ledger). */
+  readLatestRunSubmission?(runId: string): Promise<AgentRunSubmissionProjection | undefined>;
+  /** Status transition: Run metadata + run lifecycle event in the run ledger. */
   childRunStatusChanged(snapshot: AgentChildRunSnapshot): Promise<void>;
   notifyChildRun(snapshot: AgentChildRunSnapshot): Promise<void>;
   reportError?(report: ErrorReport): void;
@@ -675,6 +676,7 @@ export class AgentDelegationRuntime {
     if (params.wait && run.status === 'running') {
       await waitWithTimeout(run.completion ?? Promise.resolve(), params.timeout_ms ?? 30000);
     }
+    await this.hydrateLatestSubmission(run);
     return runToToolData(run, this.directChildrenOf(run));
   }
 
@@ -1718,6 +1720,7 @@ export class AgentDelegationRuntime {
       childRunToolResultReplaced: (snapshot, toolCallId, text) => this.host.childRunToolResultReplaced(snapshot, toolCallId, text),
       childRunCompacted: (snapshot, input) => this.host.childRunCompacted(snapshot, input),
       childRunResultSubmitted: (snapshot, input) => this.host.childRunResultSubmitted(snapshot, input),
+      readLatestRunSubmission: (runId) => this.host.readLatestRunSubmission?.(runId) ?? Promise.resolve(undefined),
       childRunStatusChanged: (snapshot) => {
         this.upsertObservedRun(snapshot);
         return this.host.childRunStatusChanged(snapshot);
@@ -1769,6 +1772,14 @@ export class AgentDelegationRuntime {
   private assertRunControllable(run: DelegationRunState, action: 'steer' | 'amend' | 'stop'): void {
     if (!run.observedOnly) return;
     throw new Error(`Cannot ${action} run ${run.id} from this controller; steer, amend, or stop it through its direct parent controller.`);
+  }
+
+  private async hydrateLatestSubmission(run: DelegationRunState): Promise<void> {
+    if (run.latestSubmission || run.status !== 'completed') return;
+    const submission = await this.host.readLatestRunSubmission?.(run.id);
+    if (!submission) return;
+    run.latestSubmission = submission;
+    run.submittedResult = submission.summary;
   }
 
   private directChildrenOf(run: DelegationRunState): DelegationRunState[] {

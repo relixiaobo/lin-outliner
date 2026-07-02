@@ -444,10 +444,9 @@ scope in place.
 Every child run writes a separate transcript. The parent conversation stores only:
 
 - the `spawn` tool call;
-- launch metadata;
 - status/progress notifications;
-- final result summary;
-- stable handle for status, steer, amend, and stop.
+- the parent tool result for attended runs;
+- stable handles in Run metadata for status, steer, amend, and stop.
 
 This is required so child runs reduce parent-context pressure rather than moving
 tool noise into the main conversation.
@@ -825,27 +824,17 @@ content. Legacy `context: fork` skill frontmatter is parsed as
 
 The child-run runtime persists through Lin's event store. This follows cc-2.1's
 sidechain transcript design in `src/tools/AgentTool/runAgent.ts:732-805`, but
-uses Lin-owned parent-conversation events and payload refs rather than a separate
-task output file.
-
-Implemented parent-conversation events:
-
-- `child_run.started`
-- `child_run.updated`
-
-`child_run.started` (the conversation marker) records stable run metadata: id,
-optional same-conversation name, description, prompt, objective, criteria,
-objective status, purpose, scope, budget, agent type, context mode, execution
-identity, parent agent identity, parent run id, memory owner identity, memory
-origin workspace, and parent tool call id.
+uses Lin-owned Run metadata, Run ledgers, conversation notifications, and payload
+refs rather than a separate task output file.
 
 The run ledger seed also writes `run.started` into the child run's own ledger.
 That event is the source for the durable Run index v2: `meta.json` stores
 `anchor`, `parentRunId`, `parentToolCallId`, `disposition`, `context`,
 `runProfile`, `trigger`, `fingerprint`, `retention`, timestamps, `latestSeq`,
-nested `execution`, and optional nested `objective`. The conversation marker is
-still present for the current projection/UI layer, but parent linkage and
-execution policy no longer have to be recovered only from `child_run.started`.
+nested `execution`, and optional nested `objective`. Conversation logs no longer
+store `child_run.started`/`child_run.updated`; parent linkage, execution policy,
+objective state, and lifecycle are recovered from the Run index and the selected
+Run's ledger.
 
 `run.result.submitted` is the durable source for a completed work Run's submitted
 answer. It is written to the run ledger before the terminal lifecycle event when
@@ -854,13 +843,11 @@ the run has model-visible final text. The Run index stores the pointer as
 and the current drill-in result section read the same submission projection.
 Runs without meaningful final text may complete without a submission event.
 
-`child_run.updated` (the conversation marker) records status transitions:
-`running`, `completed`, `failed`, or `cancelled`, plus objective status, budget,
-blocked reason, final result, and error. The `result` field is a temporary
-projection compatibility copy while the renderer still consumes child-run
-entities; the canonical submitted answer is `run.result.submitted` in the run
-ledger. The transcript itself never moves through conversation events — it lives
-in the run's own ledger.
+Run lifecycle events (`run.started`, `run.completed`, `run.failed`,
+`run.cancelled`) record status transitions in the run ledger. The Run index folds
+them with objective status, budget, blocked reason, verifier gap, error, and
+latest submission pointer. The transcript itself never moves through
+conversation events — it lives in the run's own ledger.
 
 Replay must not let a late `running` transcript update downgrade an already
 terminal run. This mirrors the concurrency shape in cc-2.1, where transcript
@@ -885,11 +872,12 @@ agent/
 The parent conversation plus its run logs remain the product source of truth for
 user-visible conversation state. The sidechain transcript IS the run's own
 ledger (`runs/<run-id>/events.jsonl`, its own seq space, replayed alone); the
-conversation stream keeps only the slim `child_run.started/updated` markers.
-This keeps the parent model context clean while still allowing status, restore,
-debug, and continuation. Spawn ordering is ledger-seed first, conversation
-marker second: a crash inside the spawn window leaves an invisible orphan ledger
-directory, never an un-resumable phantom run in the conversation.
+conversation stream keeps the parent tool call/result and conversation-local
+notifications, not run lifecycle markers. This keeps the parent model context
+clean while still allowing status, restore, debug, and continuation from Run
+metadata and ledgers. Spawn ordering is ledger-seed first, Run meta/index update
+with it; a crash before the seed can still leave a Run index record without a
+ledger, and restore registers an empty writer so the run remains resumable.
 
 Current Run index file shape:
 
@@ -989,10 +977,9 @@ path. A run's transcript is replayed from its own ledger lazily:
   loaded conversation projection.
 
 If a child run was persisted as `running` but there is no live pi-mono `Agent`
-after restore, Lin marks it as failed with an interruption message — in BOTH
-representations: the conversation gets `child_run.updated{failed}` and the run's
-own ledger gets a mirrored `run.failed` (without it the run stream would
-self-describe as running forever). It can still be continued through `run_steer`.
+after restore, Lin marks it as failed with an interruption message in the Run
+ledger and Run index (without it the run stream would self-describe as running
+forever). It can still be continued through `run_steer`.
 
 A delegated-run ledger uses the tolerant sidecar torn-tail policy, not the
 conversation log's strict one: a half-written FINAL line (crash artifact of an
