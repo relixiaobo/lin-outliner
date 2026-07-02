@@ -159,6 +159,67 @@ describe('projectAssistantTurn', () => {
     });
   });
 
+  test('surfaces direct slash sub-runs as process activity for a final answer', () => {
+    const researchRun = {
+      ...run('run-research'),
+      parentRunId: 'run-parent',
+      runProfile: 'research',
+      runProfileLabel: 'Research',
+      status: 'completed',
+      title: 'map the agent run detail UI',
+    } satisfies AgentRenderRunEntity;
+    const turn = project(assistant([{ type: 'text', text: 'Done.' }]), {
+      directSubRuns: [researchRun],
+      workedForMs: 22_000,
+    });
+
+    expect(turn.finalMessages.map((item) => item.text)).toEqual(['Done.']);
+    expect(turn.process?.showWorkDivider).toBe(true);
+    expect(turn.process?.items).toHaveLength(1);
+    expect(turn.process?.items[0]).toMatchObject({
+      subRun: researchRun,
+      toolCall: {
+        arguments: {
+          args: 'map the agent run detail UI',
+          skill: 'research',
+        },
+        id: 'direct-run:run-research',
+        name: 'skill',
+      },
+      type: 'toolCall',
+    });
+  });
+
+  test('surfaces direct slash sub-runs while the parent run is waiting for them', () => {
+    const researchRun = {
+      ...run('run-research'),
+      parentRunId: 'run-parent',
+      runProfile: 'research',
+      runProfileLabel: 'Research',
+      title: 'map the agent run detail UI',
+    } satisfies AgentRenderRunEntity;
+    const turn = project(assistant([]), {
+      directSubRuns: [researchRun],
+      runStartedAtMs: 10,
+      streaming: true,
+      turnActive: true,
+    });
+
+    expect(turn.finalMessages).toEqual([]);
+    expect(turn.process).toMatchObject({
+      answerStarted: false,
+      showWorkDivider: true,
+    });
+    expect(turn.process?.items[0]).toMatchObject({
+      subRun: researchRun,
+      toolCall: {
+        id: 'direct-run:run-research',
+        name: 'skill',
+      },
+      type: 'toolCall',
+    });
+  });
+
   test('surfaces a sealed resultless non-channel process without marking it interrupted', () => {
     const turn = project(assistant([toolCall('tool-a')]), {
       workedForMs: 5_000,

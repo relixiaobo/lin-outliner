@@ -1470,12 +1470,33 @@ describe('agent runtime skill integration', () => {
     await waitFor(() => sink.events.some((event) => (
       event.type === 'projection'
       && projectionTexts(event.renderProjection).join('\n').includes('/research map the agent run detail UI')
-      && event.renderProjection.activeRun !== null
+      && event.renderProjection.activeRunId !== null
     )));
+    let directSlashSubRun: { parentRunId?: string; parentToolCallId?: string; runProfile?: string } | undefined;
+    await waitFor(() => {
+      for (const event of sink.events) {
+        if (event.type !== 'projection') continue;
+        const activeRunId = event.renderProjection.activeRunId;
+        const match = Object.values(event.renderProjection.entities.runs).find((run) => (
+          run.parentRunId === activeRunId
+          && !run.parentToolCallId
+          && run.runProfile === 'research'
+        ));
+        if (match) {
+          directSlashSubRun = match;
+          return true;
+        }
+      }
+      return false;
+    });
 
     releaseChild.resolve();
     await sendPromise;
 
+    expect(directSlashSubRun).toMatchObject({
+      parentToolCallId: undefined,
+      runProfile: 'research',
+    });
     expect(parentContexts.join('\n')).toContain('Slash research result.');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });

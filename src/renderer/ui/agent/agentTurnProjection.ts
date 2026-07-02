@@ -1,4 +1,4 @@
-import type { AssistantMessage } from '../../../core/agentTypes';
+import type { AssistantMessage, ToolCall } from '../../../core/agentTypes';
 import type { AgentToolCallOutcome } from '../../../core/agentEventLog';
 import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import { looksLikeRawAgentErrorPayload } from './agentErrorParse';
@@ -53,6 +53,7 @@ export interface AgentTurnProjection {
 
 export interface ProjectAssistantTurnInput {
   contentKey: string;
+  directSubRuns?: readonly AgentRenderRunEntity[];
   isChannel: boolean;
   message: AssistantMessage;
   runStartedAtMs: number | null;
@@ -139,8 +140,32 @@ function processItemFromIndexedBlock({
   return exhaustive;
 }
 
+function syntheticSkillNameForRun(run: AgentRenderRunEntity): string {
+  if (run.runProfile === 'research') return 'research';
+  return run.runProfile;
+}
+
+function directSubRunProcessItem(run: AgentRenderRunEntity): AgentTurnProcessItem {
+  const toolCall: ToolCall = {
+    arguments: {
+      args: run.title,
+      skill: syntheticSkillNameForRun(run),
+    },
+    id: `direct-run:${run.id}`,
+    name: 'skill',
+    type: 'toolCall',
+  };
+  return {
+    id: `direct-run:${run.id}`,
+    subRun: run,
+    toolCall,
+    type: 'toolCall',
+  };
+}
+
 export function projectAssistantTurn({
   contentKey,
+  directSubRuns = [],
   isChannel,
   message,
   runStartedAtMs,
@@ -191,8 +216,9 @@ export function projectAssistantTurn({
     || stopped
     || (workedForMs !== null && finalIsProse && !turnInterruptedAndSettled);
   const showSummaryRow = lastProcessIndex >= 0 && !showWorkDivider && !turnFailedWithoutProse;
+  const directSubRunItems = directSubRuns.map(directSubRunProcessItem);
 
-  if (lastProcessIndex < 0 && !showWorkDivider) {
+  if (lastProcessIndex < 0 && !showWorkDivider && directSubRunItems.length === 0) {
     return { finalMessages, process: null };
   }
 
@@ -206,7 +232,8 @@ export function projectAssistantTurn({
       streaming,
       subRunsByParentToolCallId,
       toolCallOutcomes,
-    }));
+    }))
+    .concat(directSubRunItems);
 
   return {
     finalMessages,

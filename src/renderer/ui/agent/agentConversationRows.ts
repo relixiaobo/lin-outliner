@@ -70,9 +70,13 @@ function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {
   const runDurationMs = durationByRun.size > 0
     ? [...durationByRun.values()].reduce((sum, ms) => sum + ms, 0)
     : lastEntry.runDurationMs;
+  const directSubRunsById = new Map(
+    entries.flatMap((entry) => entry.directSubRuns ?? []).map((run) => [run.id, run] as const),
+  );
   return {
     ...lastEntry,
     runDurationMs,
+    directSubRuns: directSubRunsById.size > 0 ? [...directSubRunsById.values()] : lastEntry.directSubRuns,
     message: {
       ...lastEntry.message,
       content: entries.flatMap((entry) => entry.message.content),

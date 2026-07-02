@@ -1148,6 +1148,63 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
+  test('attaches direct sub-runs to the producing assistant entry', async () => {
+    const parentRun = {
+      id: 'run-parent',
+      agentId: 'built-in:test:neva',
+      anchor: { type: 'conversation', agentId: 'built-in:test:neva', conversationId: 'saved' },
+      conversationId: 'saved',
+      title: 'Parent turn',
+      runProfile: 'default',
+      runProfileLabel: 'Default',
+      status: 'completed',
+      context: 'full',
+      startedAt: 100,
+      updatedAt: 250,
+      completedAt: 250,
+    } satisfies AgentRenderRunEntity;
+    const researchRun = {
+      id: 'run-research',
+      agentId: 'built-in:test:neva',
+      anchor: { type: 'conversation', agentId: 'built-in:test:neva', conversationId: 'saved' },
+      conversationId: 'saved',
+      title: 'map the agent run detail UI',
+      parentRunId: parentRun.id,
+      runProfile: 'research',
+      runProfileLabel: 'Research',
+      status: 'completed',
+      objectiveStatus: 'completed',
+      objectiveRole: 'worker',
+      context: 'none',
+      startedAt: 120,
+      updatedAt: 220,
+      completedAt: 220,
+    } satisfies AgentRenderRunEntity;
+    const renderProjection = projection([
+      { nodeId: 'u1', message: userMessage('/research map the agent run detail UI'), branches: null },
+      { nodeId: 'a1', message: assistantMessage('Done.', 2), branches: null },
+    ], {
+      runs: {
+        [parentRun.id]: parentRun,
+        [researchRun.id]: researchRun,
+      },
+      runIds: [parentRun.id, researchRun.id],
+    });
+    renderProjection.entities.messages.a1!.runId = parentRun.id;
+    const restored = conversation('saved', renderProjection);
+    const fake = createFakeClient({ latestConversation: restored });
+    const store = createAgentRuntimeStore(fake.client);
+    const unsubscribe = store.subscribe(() => {});
+
+    await flushMicrotasks();
+
+    const assistantEntry = store.getSnapshot().entries.find((entry): entry is AgentMessageEntry => (
+      entry.kind === 'message' && entry.message.role === 'assistant'
+    ));
+    expect(assistantEntry?.directSubRuns).toEqual([researchRun]);
+    unsubscribe();
+  });
+
   test('passes user view context through user turns and queued follow-ups', async () => {
     const restored = conversation('saved', projection([]));
     const userViewContext: AgentUserViewContext = {

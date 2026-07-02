@@ -752,6 +752,7 @@ function AgentMessageRowComponent({
     isChannel,
     entry.runDurationMs,
     entry.runStartedAtMs,
+    entry.directSubRuns,
     entry.toolCallOutcomes,
   );
   const showToolbar = nodeId !== null && !turnActive && isLastInTurn;
@@ -877,6 +878,12 @@ function sameReadonlyMap<K, V>(left: ReadonlyMap<K, V>, right: ReadonlyMap<K, V>
   return true;
 }
 
+function sameReadonlyArray<T>(left: readonly T[], right: readonly T[]): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
 function sameMessageEntry(left: AgentMessageEntry, right: AgentMessageEntry): boolean {
   return left === right || (
     left.id === right.id
@@ -886,6 +893,7 @@ function sameMessageEntry(left: AgentMessageEntry, right: AgentMessageEntry): bo
     && left.streaming === right.streaming
     && left.actor === right.actor
     && left.runId === right.runId
+    && sameReadonlyArray(left.directSubRuns ?? [], right.directSubRuns ?? [])
     && left.runUsage === right.runUsage
     && left.runDurationMs === right.runDurationMs
     && left.runStartedAtMs === right.runStartedAtMs

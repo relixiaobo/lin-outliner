@@ -28,6 +28,7 @@ export function renderAssistantBlocks(
   isChannel: boolean,
   workedForMs: number | null,
   runStartedAtMs: number | null,
+  directSubRuns?: readonly AgentRenderRunEntity[],
   toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>,
 ) {
   const rendered: ReactNode[] = [];
@@ -35,6 +36,7 @@ export function renderAssistantBlocks(
     contentKey,
     isChannel,
     message,
+    directSubRuns,
     runStartedAtMs,
     streaming,
     subRunsByParentToolCallId,

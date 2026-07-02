@@ -49,6 +49,8 @@ export interface AgentMessageEntry {
   actor: AgentActor | null;
   /** Run that produced this message, when known. */
   runId: string | null;
+  /** Direct child Runs attached to this producing Run without a parent tool-call row. */
+  directSubRuns?: readonly AgentRenderRunEntity[];
   /** Aggregated usage for the producing run; falls back to message usage when unavailable. */
   runUsage?: Usage;
   /** First event seq that represents this message as source evidence. */
@@ -244,6 +246,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
 } {
   const entries: AgentConversationEntry[] = [];
   const rows = projection.transcriptRows;
+  const directSubRunsByParentRunId = directSubRunsByParentRunIdForProjection(projection);
   for (const row of rows) {
     if (row.kind === 'compaction') {
       const compaction = projection.entities.compactions[row.compactionId];
@@ -286,6 +289,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
     if (entity.role === 'user' && isHiddenOnlySystemReminder(entity)) continue;
     const streaming = projection.streaming?.messageId === entity.id;
     const message = conversationMessageFromEntity(entity);
+    const runId = entity.runId ?? null;
     entries.push({
       id: streaming && entity.role === 'assistant' ? activeAssistantEntryId(entries, projection) : row.id,
       kind: 'message',
@@ -294,7 +298,8 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       branches: row.archived ? null : entity.branches,
       streaming,
       actor: entity.actor,
-      runId: entity.runId ?? null,
+      runId,
+      directSubRuns: runId ? directSubRunsByParentRunId.get(runId) : undefined,
       runUsage: entity.runUsage,
       sourceSeq: entity.sourceSeq,
       sourceSeqs: entity.sourceSeqs?.slice(),
@@ -352,6 +357,7 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
     );
 
   if (shouldAppendAssistantPlaceholder) {
+    const activeRun = activeAssistantRun(projection);
     entries.push({
       id: activeAssistantEntryId(entries, projection),
       kind: 'message',
@@ -360,7 +366,8 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
       branches: null,
       streaming: true,
       actor: null,
-      runId: null,
+      runId: activeRun?.runId ?? null,
+      directSubRuns: activeRun ? directSubRunsByParentRunId.get(activeRun.runId) : undefined,
       runUsage: undefined,
       runDurationMs: null,
       // No assistant entity yet: anchor the live "Working for {t}" ticker to the
@@ -372,6 +379,26 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
   }
 
   return { entries, turnPhase };
+}
+
+function directSubRunsByParentRunIdForProjection(
+  projection: AgentRenderProjection,
+): Map<string, AgentRenderRunEntity[]> {
+  const map = new Map<string, AgentRenderRunEntity[]>();
+  for (const run of Object.values(projection.entities.runs ?? {})) {
+    if (!run.parentRunId || run.parentToolCallId) continue;
+    if (run.objectiveRole === 'verifier' || run.runProfile === 'verify') continue;
+    const existing = map.get(run.parentRunId);
+    if (existing) {
+      existing.push(run);
+    } else {
+      map.set(run.parentRunId, [run]);
+    }
+  }
+  for (const runs of map.values()) {
+    runs.sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id));
+  }
+  return map;
 }
 
 function isHiddenOnlySystemReminder(entity: AgentRenderMessageEntity): boolean {
