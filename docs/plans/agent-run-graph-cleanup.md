@@ -386,7 +386,8 @@ Run graph rules:
 
 The storage endpoint is:
 
-- conversation ledger: communication and branch events only
+- conversation ledger: communication, branch, and conversation-scoped
+  attention/bookkeeping events
 - run ledger: all execution events for one Run
 - run index: one metadata record per Run
 
@@ -402,6 +403,13 @@ that is a derived query over Run metadata. The clean replacement is:
   `anchor` / derived `conversationId`, `parentRunId`, and `parentToolCallId`.
 - Run detail reads the selected Run index record and lazily replays that Run's
   ledger for transcript and result.
+
+The conversation ledger must keep durable conversation-scoped bookkeeping that
+is not Run lifecycle metadata. In particular, `notification.created` and
+`notification.read` remain conversation events because they seed restart-safe
+unread badges and preserve `notification.read.throughSeq` semantics. Removing
+transcript boundary rows must not remove the durable attention path for detached
+or background Runs.
 
 The run ledger remains the authoritative source for execution detail. The Run
 index carries only metadata needed for listing, restoration, status, tree
@@ -798,7 +806,9 @@ Suggested independently shippable PRs:
    Work/Runs + notifications.
 8. **Delete conversation child-run events.** Remove `child_run.started` /
    `child_run.updated`; write all lifecycle metadata to the Run index and all
-   execution detail to the Run ledger.
+   execution detail to the Run ledger. Keep `notification.created` /
+   `notification.read` in the conversation ledger as durable attention
+   bookkeeping.
 9. **State machine hardening.** Encode valid `execution.status` and
    `objective.status` transitions in one module with tests.
 10. **Runtime module split.** Extract runProfile resolution, scope/budget policy,
