@@ -217,7 +217,7 @@ describe('agent tool call block', () => {
       { name: 'node_read', kind: 'nodeRead', icon: NodeReadToolIcon },
       { name: 'node_edit', kind: 'nodeEdit', icon: NodeEditToolIcon },
       { name: 'node_delete', kind: 'nodeDelete', icon: NodeDeleteToolIcon },
-      { name: 'node_delete', args: { restore: true }, kind: 'nodeDelete', icon: RestoreIcon },
+      { name: 'node_delete', args: { restore: true }, kind: 'nodeRestore', icon: RestoreIcon },
       { name: 'node_search', kind: 'nodeSearch', icon: NodeSearchToolIcon },
       { name: 'operation_history', kind: 'history', icon: OperationHistoryToolIcon },
       { name: 'web_search', kind: 'web', icon: WebSearchToolIcon },

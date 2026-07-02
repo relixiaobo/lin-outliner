@@ -1096,6 +1096,8 @@ commandPalette: {
         nodeEditRun: ({ count }: { count: number }) => `Editing ${count === 1 ? 'a node' : `${count} nodes`}`,
         nodeDelete: ({ count }: { count: number }) => `Deleted ${count === 1 ? 'a node' : `${count} nodes`}`,
         nodeDeleteRun: ({ count }: { count: number }) => `Deleting ${count === 1 ? 'a node' : `${count} nodes`}`,
+        nodeRestore: ({ count }: { count: number }) => `Restored ${count === 1 ? 'a node' : `${count} nodes`}`,
+        nodeRestoreRun: ({ count }: { count: number }) => `Restoring ${count === 1 ? 'a node' : `${count} nodes`}`,
         nodeRead: ({ count }: { count: number }) => `Read ${count === 1 ? 'a node' : `${count} nodes`}`,
         nodeReadRun: ({ count }: { count: number }) => `Reading ${count === 1 ? 'a node' : `${count} nodes`}`,
         nodeSearch: () => 'Searched nodes',

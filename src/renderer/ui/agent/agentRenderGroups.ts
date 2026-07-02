@@ -60,6 +60,7 @@ const KIND_ORDER: ToolActivityKind[] = [
   'nodeCreate',
   'nodeEdit',
   'nodeDelete',
+  'nodeRestore',
   'nodeRead',
   'nodeSearch',
   'run',
@@ -83,6 +84,7 @@ const DEDUP_SUBJECT_KEYS: Partial<Record<ToolActivityKind, readonly string[]>> =
   fileRead: ['file_path', 'path'],
   nodeEdit: ['node_id', 'node_ids'],
   nodeDelete: ['node_id', 'node_ids'],
+  nodeRestore: ['node_id', 'node_ids'],
   nodeRead: ['node_id', 'node_ids'],
 };
 
@@ -185,6 +187,8 @@ function toolActivityPhrase(
       return running ? labels.nodeEditRun({ count }) : labels.nodeEdit({ count });
     case 'nodeDelete':
       return running ? labels.nodeDeleteRun({ count }) : labels.nodeDelete({ count });
+    case 'nodeRestore':
+      return running ? labels.nodeRestoreRun({ count }) : labels.nodeRestore({ count });
     case 'nodeRead':
       return running ? labels.nodeReadRun({ count }) : labels.nodeRead({ count });
     case 'nodeSearch':

@@ -1007,6 +1007,8 @@ commandPalette: {
         nodeEditRun: ({ count }) => `正在编辑 ${count} 个节点`,
         nodeDelete: ({ count }) => `删除了 ${count} 个节点`,
         nodeDeleteRun: ({ count }) => `正在删除 ${count} 个节点`,
+        nodeRestore: ({ count }) => `恢复了 ${count} 个节点`,
+        nodeRestoreRun: ({ count }) => `正在恢复 ${count} 个节点`,
         nodeRead: ({ count }) => `读取了 ${count} 个节点`,
         nodeReadRun: ({ count }) => `正在读取 ${count} 个节点`,
         nodeSearch: () => '已搜索节点',

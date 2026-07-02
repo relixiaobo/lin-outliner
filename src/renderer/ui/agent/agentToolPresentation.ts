@@ -39,6 +39,7 @@ export type ToolActivityKind =
   | 'nodeCreate'
   | 'nodeEdit'
   | 'nodeDelete'
+  | 'nodeRestore'
   | 'nodeRead'
   | 'nodeSearch'
   | 'run'
@@ -91,7 +92,7 @@ export function agentToolPresentation(toolCall: ToolCall): AgentToolPresentation
       return { activityKind: 'nodeEdit', icon: NodeEditToolIcon };
     case 'node_delete':
       return {
-        activityKind: 'nodeDelete',
+        activityKind: toolCall.arguments.restore === true ? 'nodeRestore' : 'nodeDelete',
         icon: toolCall.arguments.restore === true ? RestoreIcon : NodeDeleteToolIcon,
       };
     case 'node_search':

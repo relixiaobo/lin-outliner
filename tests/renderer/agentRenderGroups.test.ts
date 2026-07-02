@@ -140,6 +140,15 @@ describe('summarizeToolActivity', () => {
     expect(summary).toBe('Read 2 nodes');
   });
 
+  test('summarizes restored nodes separately from deleted nodes', () => {
+    expect(
+      summarizeToolActivity([member('node_delete', 'done', { node_id: 'n1', restore: true }, 'a')], process),
+    ).toBe('Restored a node');
+    expect(
+      summarizeToolActivity([member('node_delete', 'pending', { node_id: 'n1', restore: true }, 'a')], process),
+    ).toBe('Restoring a node');
+  });
+
   test('a node_ids batch counts each distinct id (one call, N subjects)', () => {
     const summary = summarizeToolActivity(
       [member('node_read', 'done', { node_ids: ['n1', 'n2', 'n3'] }, 'a')],

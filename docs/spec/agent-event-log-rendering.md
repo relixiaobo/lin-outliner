@@ -1142,12 +1142,12 @@ Rules:
 - **Consecutive tool calls fold into one counted activity group** (Codex's
   render-group split, `splitTimelineIntoGroups`/`summarizeToolActivity` in
   `agentRenderGroups.ts`). Inside the visible process timeline, a maximal run of
-  ≥2 adjacent **non-child-run** tool calls collapses into a single
-  `AgentToolActivityGroup` disclosure whose header is the counted summary,
-  expandable to the member rows. A thinking or narration block — a child-run
-  tool call (rich inline content), and a **loaded-skill chip** (a compact
-  glanceable affordance, not an expandable row) — **breaks the run** (reasoning is
-  a hard boundary); a lone tool call renders standalone, never wrapped. The summary
+  ≥2 adjacent tool calls, including child-run tool calls such as `Agent`/`spawn`,
+  collapses into a single `AgentToolActivityGroup` disclosure whose header is the
+  counted summary, expandable to the member rows. A thinking or narration block
+  and a **loaded-skill chip** (a compact glanceable affordance, not an expandable
+  row) **break the run** (reasoning is a hard boundary); a lone tool call renders
+  standalone, never wrapped. The summary
   buckets members by the centralized tool presentation registry
   (`agentToolPresentation.ts`). The registry is the single renderer source for
   both per-tool glyphs and counted activity kinds, so a tool row and its folded
@@ -1155,10 +1155,12 @@ Rules:
   `file_glob`, `file_write`, `file_edit`, `file_delete`) and outliner node tools
   (`node_read`, `node_search`, `node_create`, `node_edit`, `node_delete`) are
   deliberately separate kinds: a node operation never reads as a local file
-  operation. Read/edit/delete subject dedupe is keyed on the model's **raw
-  snake_case wire args** (`node_id`, `node_ids`, `file_path`, `path`), expanding a
-  `node_ids` batch to one subject per id so a 5-node read counts as 5. Create and
-  search kinds are not deduped — a new file/node has no pre-execution id, and a
+  operation, and `node_delete` with `restore: true` is a restore activity rather
+  than a delete activity. Read/edit/delete/restore subject dedupe is keyed on the
+  model's **raw snake_case wire args** (`node_id`, `node_ids`, `file_path`,
+  `path`), expanding a `node_ids` batch to one subject per id so a 5-node read
+  counts as 5. Create and search kinds are not deduped — a new file/node has no
+  pre-execution id, and a
   search call is a compound query rather than one stable subject. The summary uses
   the **per-kind** running/done tense so a
   finished command beside a still-running search reads "Ran a command · searching"
