@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363; authored ratified plan agent-process-stable-disclosure #297) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359**) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,8 +31,8 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-02).** Open PR queue: **#364**
-(`codex-3/agent-run-graph-cleanup-plan`, draft). #363 (`codex-2/tool-lucide-icon-audit`) and
+**In flight (2026-07-02).** Open PR queue: none. #364
+(`codex-3/agent-run-graph-cleanup-plan`), #363 (`codex-2/tool-lucide-icon-audit`), and
 #362 (`codex/remove-outliner-settings-root`) merged 2026-07-02 after main review; see
 *Recently completed*. A Dream-precision + file-reader wave
 merged 2026-06-23: **#319** (Dream
@@ -107,7 +107,10 @@ the plan first), `launcher-provider-expansion`, the directional agent tails
 (`agent-self-modification` · `agent-generative-ui` · `agent-import-skill` — escalate the capability
 boundary), `agent-browser-control` / `agent-computer-control` (plans merged #361; settle the hard
 prohibition, browser-adoption, and helper-packaging decisions before implementation), and
-`browser-extension-integration` (record-only, **not approved to build**).
+`browser-extension-integration` (record-only, **not approved to build**), and
+`agent-run-graph-cleanup` (plan merged #364; implementation PRs must keep each
+step complete and preserve the storage clean-cut / notification bookkeeping
+constraints).
 
 The **agent program** (`agent-program`, `meta`) is PM-ratified and its whole arc — foundation
 through the multi-agent spine, **M0 → M3** — has fully landed (M0/M0.5 foundation · M1
@@ -271,6 +274,17 @@ before any directional/security-sensitive build.
   annotated captures as payload-backed image tool results. Directional/security-
   sensitive: implementation still needs helper-packaging and hard-prohibition
   decisions before code. See `docs/plans/agent-computer-control.md`.
+- **agent-run-graph-cleanup** (P1, plan merged #364, implementation pending) —
+  clean terminal architecture for agent execution: a single event-sourced Run
+  graph where a sub-run is only a Run with `parentRunId`, task/delegation/
+  verifier/background concepts are views or policies, and specialization is
+  `runProfile` rather than a second agent identity. Implementation PRs should
+  converge the storage, runtime, IPC, renderer projection, Work/Runs detail, and
+  tool vocabulary onto Run-centered seams while preserving current durable
+  contracts (`anchor`, `fingerprint`, `retention`, timestamps, latest seq,
+  notification attention bookkeeping) and using `STORAGE_LAYOUT_VERSION` +
+  sentinel wipe for incompatible pre-release shape changes. See
+  `docs/plans/agent-run-graph-cleanup.md`.
 
 Standalone agent items (not part of the program):
 
@@ -458,6 +472,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-run-graph-cleanup-plan** (`codex-3/agent-run-graph-cleanup-plan`, PR #364,
+  codex-3, merged 2026-07-02, plan-track) — adds an active P1 design plan for
+  cleaning the agent execution model into a single event-sourced Run graph. The
+  plan collapses child-run, task, delegation detail, verifier, and background-task
+  concepts into Run metadata, Run ledgers, Run profiles, policy modules, and UI
+  projections; it also defines the RunMeta clean-cut, storage sentinels, durable
+  notification bookkeeping boundary, verifier evidence packs, Run detail API, and
+  Run-centered model/IPC vocabulary. **Gate (main):** deep document review found
+  missing storage-layout bump requirements for the nested RunMeta shape, dropped
+  persisted Run-index contracts, and an over-broad conversation-ledger cleanup
+  that would have removed restart-safe `notification.created` / `notification.read`
+  attention bookkeeping; codex-3 fixed all before merge. Verified on the final PR
+  head: `bun run docs:check`, `bun run typecheck`, and `git diff --check`. Shape
+  (b), active plan file: `docs/plans/agent-run-graph-cleanup.md`.
 
 - **tool-lucide-icon-audit** (`codex-2/tool-lucide-icon-audit`, PR #363,
   codex-2, merged 2026-07-02, fast-track) — centralizes renderer tool-call

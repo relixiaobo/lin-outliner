@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Agent run graph cleanup plan (PR #364, codex-3)** — adds an active design
+  plan for moving agent execution to one event-sourced Run graph: sub-runs are
+  Runs with `parentRunId`; verifier/background/task/delegation concepts become
+  policies, metadata, or projections; specialization moves to `runProfile`
+  rather than extra agent identities. The plan defines the RunMeta clean-cut,
+  Run-profile registry, storage sentinel requirements, durable notification
+  bookkeeping boundary, verifier evidence packs, Run detail API, renderer
+  projection migration, and Run-centered tool/IPC vocabulary. **Gate (main):**
+  deep document review found missing storage-layout bump requirements, dropped
+  persisted Run-index contracts, and an over-broad conversation-ledger cleanup
+  that would have removed restart-safe notification attention bookkeeping;
+  codex-3 fixed all before merge. Verified with `docs:check`, `typecheck`, and
+  `git diff --check`.
 - **Browser and computer control implementation plans (PR #361, codex)** — adds
   active design plans for Tenon-native Browser Control and Computer Control
   agent tool families. Browser Control maps the useful `browser-pilot` surface
