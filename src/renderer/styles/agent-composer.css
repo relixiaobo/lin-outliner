@@ -956,6 +956,8 @@
 
 /* "Default" pill next to the reasoning level inherit resolves to. */
 .agent-composer-model-badge {
+  --agent-composer-model-badge-line: calc(var(--line-meta) + var(--space-1));
+
   flex: 0 0 auto;
   margin-left: var(--space-2);
   padding: 0 var(--space-2);
@@ -963,7 +965,7 @@
   background: var(--fill-1);
   color: var(--text-faint);
   font-size: var(--font-meta);
-  line-height: calc(var(--line-meta) + var(--space-1));
+  line-height: var(--agent-composer-model-badge-line);
 }
 
 /* Faint help line introducing the reasoning levels. */

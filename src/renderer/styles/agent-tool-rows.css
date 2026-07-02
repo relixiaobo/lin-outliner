@@ -335,7 +335,7 @@
   bottom: auto;
   height: 14px;
   transform: translateY(-50%);
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
   border: 1px solid color-mix(in srgb, var(--status-danger) 40%, transparent);
   background: color-mix(in srgb, var(--status-danger) 15%, transparent);
   color: var(--status-danger);

@@ -508,7 +508,7 @@
 
 .backlinks-link-action:hover,
 .backlinks-link-action:focus-visible {
-  color: var(--accent-strong);
+  color: var(--link-hover);
 }
 
 .backlinks-link-action:focus-visible {

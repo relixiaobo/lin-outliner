@@ -1,4 +1,6 @@
 .inline-ref {
+  --inline-file-ref-hover-shadow: 0 0 0 var(--space-1) var(--fill-1);
+
   display: inline;
   border-radius: var(--radius-xs);
   background: transparent;
@@ -21,7 +23,7 @@
 .inline-ref[data-inline-ref-kind="local-file"]:hover,
 .inline-ref[data-inline-ref-kind="local-file"]:focus-visible {
   background: var(--fill-1);
-  box-shadow: 0 0 0 var(--space-1) var(--fill-1);
+  box-shadow: var(--inline-file-ref-hover-shadow);
   color: var(--text-strong);
 }
 
@@ -146,8 +148,8 @@
   border-radius: var(--radius-overlay-sm);
   background: var(--material-popover);
   box-shadow: var(--overlay-shadow-level-1), var(--outline-subtle);
-  backdrop-filter: blur(var(--material-blur)) saturate(var(--material-saturate));
-  -webkit-backdrop-filter: blur(var(--material-blur)) saturate(var(--material-saturate));
+  backdrop-filter: var(--material-backdrop);
+  -webkit-backdrop-filter: var(--material-backdrop);
   color: var(--text-strong);
   pointer-events: none;
   user-select: none;
