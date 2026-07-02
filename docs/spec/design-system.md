@@ -110,6 +110,7 @@ A Tenon UI is clean, clear, simple, and elegant only when all of these are true:
 | Patterns | Cross-component interaction states, content states, accessibility, native-feel boundary. | Surface-specific geometry. | [patterns.md](./design-system/patterns.md) |
 | Surfaces | Shell, workspace, outliner, references, fields, menus, agent, settings. | Foundation token definitions. | [surfaces.md](./design-system/surfaces.md) |
 | Implementation | Change discipline, token maintenance, checks, and visual verification expectations. | Product planning status. | [implementation.md](./design-system/implementation.md) |
+| Decision Audit | The sampled proof that UI decisions derive from the core system. | New rules or product behavior. | [decision-audit.md](./design-system/decision-audit.md) |
 
 ## Decision Path
 
@@ -177,16 +178,17 @@ carry the detailed form.
 
 ## Exception Registry
 
-| Exception | Scope | Authority |
-| --- | --- | --- |
-| External document pixels may force a light canvas. | HTML/EPUB/PDF document content inside file previews only; preview chrome stays tokenized. | [surfaces.md → Outliner](./design-system/surfaces.md#outliner) |
-| Scoped dark-media rules are allowed for generated colour streams. | Shiki or equivalent third-party/generated colour variables, with local comments and no renderer theme bridge. | [foundations.md → Color & Appearance](./design-system/foundations.md#color--appearance) |
-| Global launcher uses vibrant system glass. | The separate system launcher window only; in-app command palettes remain opaque elevated surfaces. | [foundations.md → Materials & Liquid Glass](./design-system/foundations.md#materials--liquid-glass) |
-| Preview HUD controls own contrast tokens. | Bottom-center file preview action controls over arbitrary document/image pixels. | [foundations.md → Foundations](./design-system/foundations.md#foundations) |
-| Composer model/effort chip is a profile shortcut. | Agent composer footer only; it edits the standing agent profile, not provider state or per-conversation identity. | [surfaces.md → Agent](./design-system/surfaces.md#agent) |
-| Icon masks and provider logos are identity assets. | Inline-file masks and provider marks; they are not a second product icon library. | [foundations.md → Icons](./design-system/foundations.md#icons) |
-| `cursor: help` is allowed for diagnostics. | Inline diagnostic hints or native-title tooltips only. | [patterns.md → Interaction States](./design-system/patterns.md#interaction-states) |
-| Native window rounding depends on compiled addon output. | macOS 24px app window corner; each clone must run `bun run build:native` before visual verification. | [foundations.md → Token Rules](./design-system/foundations.md#token-rules) |
+| Exception | Scope | Authority | Evidence |
+| --- | --- | --- | --- |
+| External document pixels may force a light canvas. | HTML/EPUB/PDF document content inside file previews only; preview chrome stays tokenized. | [surfaces.md → Outliner](./design-system/surfaces.md#outliner) | `tests/e2e/typography-tokens.spec.ts` token guards + focused file-preview visual checks when the preview surface changes. |
+| Scoped dark-media rules are allowed for generated colour streams. | Shiki or equivalent third-party/generated colour variables, with local comments and no renderer theme bridge. | [foundations.md → Color & Appearance](./design-system/foundations.md#color--appearance) | `tests/e2e/typography-tokens.spec.ts` raw-hex/token guards and local comments on every scoped rule. |
+| Global launcher uses vibrant system glass. | The separate system launcher window only; in-app command palettes remain opaque elevated surfaces. | [foundations.md → Materials & Liquid Glass](./design-system/foundations.md#materials--liquid-glass) | `docs/spec/launcher.md` + launcher visual verification for transparency/reduced-transparency changes. |
+| Preview HUD controls own contrast tokens. | Bottom-center file preview action controls over arbitrary document/image pixels. | [foundations.md → Foundations](./design-system/foundations.md#foundations) | `--preview-action-*` token presence in `tokens.css` + focused file-preview visual checks over white document pixels. |
+| Composer model/effort chip is a profile shortcut. | Agent composer footer only; it edits the standing agent profile, not provider state or per-conversation identity. | [surfaces.md → Agent](./design-system/surfaces.md#agent) | `tests/e2e/agent-composer.spec.ts` → "the composer footer shows the profile model shortcut". |
+| Icon masks and provider logos are identity assets. | Inline-file masks and provider marks; they are not a second product icon library. | [foundations.md → Icons](./design-system/foundations.md#icons) | `tests/e2e/typography-tokens.spec.ts` token guards + icon-semantics review when icon assets change. |
+| `cursor: help` is allowed for diagnostics. | Inline diagnostic hints or native-title tooltips only. | [patterns.md → Interaction States](./design-system/patterns.md#interaction-states) | `tests/e2e/cursor-affordances.spec.ts` for cursor policy. |
+| Native window rounding depends on compiled addon output. | macOS 24px app window corner; each clone must run `bun run build:native` before visual verification. | [foundations.md → Token Rules](./design-system/foundations.md#token-rules) | `tests/e2e/window-material.spec.ts` plus packaged/native-corner visual verification when window geometry changes. |
+| Model-upload JPEG alpha matting may force a white canvas. | Agent composer image resizing only; it composites transparent pixels against white before JPEG encoding for model upload and never paints app chrome. | [surfaces.md → Agent](./design-system/surfaces.md#agent) | `scripts/design-system-metrics.ts` named raw-hex exception + `AgentComposer.tsx` image upload path. |
 
 ## Foundations
 
@@ -234,4 +236,4 @@ Canonical rules live in [implementation.md → Versioning & Maintenance](./desig
 Canonical rules live in [implementation.md → Validation](./design-system/implementation.md#validation).
 At minimum, design-system changes run `bun run docs:check`, `bun run typecheck`,
 focused Playwright coverage for touched surfaces, the relevant design-system guard
-specs, and `git diff --check`.
+specs, `bun scripts/design-system-metrics.ts --check`, and `git diff --check`.

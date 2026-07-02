@@ -24,16 +24,16 @@ function accentTagColor(accent: string): TagColor {
 }
 
 const TAG_COLORS: TagColor[] = [
-  '#e11d48', // red
-  '#ea580c', // orange
-  '#ca8a04', // amber
-  '#059669', // green
-  '#2563eb', // blue
-  '#9333ea', // purple
-  '#db2777', // pink
+  'var(--identity-tint-0)', // red
+  'var(--identity-tint-1)', // orange
+  'var(--identity-tint-2)', // amber
+  'var(--identity-tint-3)', // green
+  'var(--identity-tint-5)', // blue
+  'var(--identity-tint-6)', // purple
+  'var(--identity-tint-7)', // pink
 ].map(accentTagColor);
 
-// The neutral tag can't tint an accent: a baked slate (#475569) vanishes on a dark
+// The neutral tag can't tint an accent: baked slate vanishes on a dark
 // surface. It uses theme tokens directly, matching the default .tag-badge neutral.
 const TAG_COLOR_GRAY: TagColor = {
   text: 'var(--text-secondary)',

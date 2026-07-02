@@ -88,6 +88,59 @@ Desktop controls should feel dense, quiet, and predictable. Use icons where a
 common symbol exists; use text buttons only for clear commands. Avoid decorative
 nested cards.
 
+### Header Chrome
+
+Window chrome, rail toggles, pane close buttons, and compact surface headers share
+one idiom: stable position, fixed hit target, icon or short title, and colour
+deepening instead of boxed hover. Header controls never move with dynamic content
+counts; state changes in place. A title trigger may reveal a chevron only on
+hover, focus, or open state, but it does not gain decorative background chrome.
+
+### Preference Window
+
+Preference/configuration windows borrow macOS System Settings' interaction idiom
+without copying Apple chrome. The surface is a standalone native child or
+settings window, not an in-renderer overlay, when the task is modal to settings.
+The left side is category navigation; the right side is a flat content base with
+constrained grouped cards. Category titles live in the toolbar, not repeated as a
+second in-content heading.
+
+Rows are text-led, controls trail, and each pane uses the same inset-list
+primitive. There is no permanent detail side pane; row launch points open child
+windows or dedicated editors. Single-action rows reveal one quiet secondary
+button; multi-action rows reveal one `...` menu. Pane intros are avoided unless
+they carry information that cannot live in a section header or row sublabel.
+
+### Inline Reference Flow
+
+Node, file, directory, and image mentions share one inline-reference language
+across outliner rows, the agent composer, and agent messages. The text remains
+selectable/editable where the owning editor requires it. Hover/focus may add a
+neutral fill/halo but must not change line height, split the icon from the name,
+or introduce a chip surface. File preview popovers are delayed on pointer hover
+and immediate on keyboard focus.
+
+### File Preview Flow
+
+Previewable files start summarized and expand into a scroll reader without
+changing the action model. Non-previewable files use the same frame as a compact
+metadata card. File actions stay in the same bottom HUD position for previewable
+and non-previewable formats, so Open/Expand/system actions do not move across
+file kinds. The preview frame may resize locally, but it must not resize sibling
+rows or use a canvas-level horizontal scroll as a rescue path.
+
+### Agent Conversation Flow
+
+Agent chrome is subordinate to the outliner workspace. Conversation identity is
+shown through compact title/avatar rows, not provider/model strings. Work in
+flight appears as an in-flow activity row above the composer, never as a floating
+corner pill or transcript message. Activity menus show live state, use shared
+overlay primitives, and keep per-run actions as dense unboxed row controls.
+
+Composer controls stay subordinate to the send/stop slot. A model/effort chip is
+a profile shortcut only; diagnostic model/provider details live in message
+Details, run/debug surfaces, ledger metadata, and profile editors.
+
 ## Content & States
 
 - **Voice & tone:** concise, calm, factual. No marketing exclamation. Action
@@ -95,11 +148,12 @@ nested cards.
   say what happened and what to do — no blame, no stack traces in product UI.
 - **Empty states:** a single quiet hint at the point of action (the outliner idle
   hint `Type here or '/' for commands`), not an illustrated empty-state card. The
-  empty agent panel follows the same rule: when a provider is usable it shows one
-  muted greeting line; when provider settings have **loaded** and none is usable it
-  shows a quiet onboarding line + a neutral CTA that opens Settings › Providers, and
-  the composer send is disabled (neutral, with a tooltip) — gated on the loaded
-  state so a key-holding user never sees the onboarding flash during the async load.
+  empty agent panel follows the same rule: when a provider is usable it stays
+  visually blank until the user types or work appears; when provider settings have
+  **loaded** and none is usable it shows a quiet onboarding line + a neutral CTA
+  that opens Settings › Providers, and the composer send is disabled (neutral,
+  with a tooltip) — gated on the loaded state so a key-holding user never sees the
+  onboarding flash during the async load.
   Whole-panel empty results (search with no matches, an empty Trash/Recents view)
   use `FeedbackState` so the hint is centered in a reserved slot, muted, and
   icon-supported without becoming an illustrated card. Editable empty outline
