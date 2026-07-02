@@ -3,7 +3,9 @@ import {
   getSupportedThinkingLevels,
 } from '@earendil-works/pi-ai';
 import type { Api, Credential, Model, OAuthCredentials, SimpleStreamOptions } from '@earendil-works/pi-ai';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { isAbsolute, join } from 'node:path';
 import type {
   AgentDelegationPermissionMode,
   AgentModelOption,
@@ -15,10 +17,16 @@ import type {
   AgentProviderOption,
   AgentReasoningLevel,
   AgentProviderSecretStatus,
+  AgentProviderStoredApiKey,
   AgentProviderSettingsView,
   ProviderAuthView,
 } from '../core/types';
 import { isLocalBaseUrl } from '../core/localEndpoint';
+import {
+  CC_SWITCH_LOCAL_BASE_URL,
+  CC_SWITCH_LOCAL_DEFAULT_MODEL_ID,
+  CC_SWITCH_LOCAL_PROVIDER_ID,
+} from '../core/localGatewayProviders';
 import { parseDateSchedule } from '../core/dateSchedule';
 import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile, writeJsonFile } from './jsonFileStore';
 import { compareModels } from './modelRanking';
@@ -106,6 +114,11 @@ function getProviderAuthKind(providerId: string): AgentProviderAuthKind {
 
 const AGENT_REASONING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 const AGENT_CACHE_RETENTIONS = ['none', 'short', 'long'] as const;
+const LOCAL_GATEWAY_DETECT_TIMEOUT_MS = 350;
+const LOCAL_GATEWAY_REFRESH_TIMEOUT_MS = 8000;
+const CODEX_CONFIG_FILE = 'config.toml';
+const CODEX_AUTH_FILE = 'auth.json';
+const CC_SWITCH_CODEX_MODEL_CATALOG_FILE = 'cc-switch-model-catalog.json';
 export const DEFAULT_DREAM_SCHEDULE = '2026-01-01T03:00 RRULE:FREQ=DAILY';
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   automaticSkillsEnabled: true,
@@ -121,8 +134,33 @@ const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   disabledAgents: [],
 };
 
+type OpenAICompatibleApiId = 'openai-completions' | 'openai-responses';
+
+interface CcSwitchModelDescriptor {
+  id: string;
+  name?: string;
+  api?: OpenAICompatibleApiId;
+  reasoning?: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+}
+
+interface CcSwitchCodexMirror {
+  codexDir: string;
+  providerName?: string;
+  baseUrl?: string;
+  api: OpenAICompatibleApiId;
+  currentModelId?: string;
+  modelCatalogPath?: string;
+  apiKey?: string;
+}
+
+let ccSwitchModelDescriptorsCache: { baseUrl: string; models: CcSwitchModelDescriptor[] } | null = null;
+
 export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
   apiKey?: string;
+  api?: OpenAICompatibleApiId;
+  modelId?: string;
 }
 
 interface AgentProviderConnectionAuth {
@@ -144,6 +182,16 @@ export async function getProviderSettings(): Promise<AgentProviderSettingsView> 
   return toSettingsView(await readProviderFile(), await readSecretFileSafe());
 }
 
+export async function refreshProviderModels(providerIdInput: string): Promise<AgentProviderSettingsView> {
+  const providerId = normalizeProviderId(providerIdInput);
+  if (providerId === CC_SWITCH_LOCAL_PROVIDER_ID) {
+    const file = await readProviderFile();
+    const configured = file.providers.find((provider) => provider.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+    await refreshCcSwitchModelDescriptors(configured?.baseUrl ?? CC_SWITCH_LOCAL_BASE_URL);
+  }
+  return getProviderSettings();
+}
+
 export async function getAgentRuntimeSettings(): Promise<AgentRuntimeSettings> {
   return normalizeAgentRuntimeSettings((await readProviderFile()).agent);
 }
@@ -155,6 +203,9 @@ export async function getActiveProviderRuntimeConfig(): Promise<AgentProviderRun
     ?? await findUsableProvider(file.providers, secrets)
     ?? null;
   if (!active) return null;
+  if (active.providerId === CC_SWITCH_LOCAL_PROVIDER_ID) {
+    return resolveCcSwitchRuntimeConfig(active);
+  }
   // Connection only. Do not bake auth here. pi `Models.applyAuth()` resolves
   // stored/env/oauth/provider-specific auth at request time; `apiKey` is only an
   // explicit override used by tests or the connection form's unsaved key.
@@ -288,6 +339,7 @@ export async function upsertProviderConfig(input: AgentProviderConfigInput) {
   const index = file.providers.findIndex((provider) => provider.providerId === config.providerId);
   if (index >= 0) file.providers[index] = config;
   else file.providers.push(config);
+  if (file.activeProviderId === config.providerId && !config.enabled) file.activeProviderId = undefined;
   file.providers.sort((left, right) => left.providerId.localeCompare(right.providerId));
   // No auto-activation side effect (provider-config-cleanup A2): an upsert never
   // makes a provider active by itself — the credential may not be stored yet. Read
@@ -344,7 +396,7 @@ export async function deleteProviderConfig(providerIdInput: string) {
   const previousLength = file.providers.length;
   file.providers = file.providers.filter((provider) => provider.providerId !== providerId);
   if (file.providers.length === previousLength) throw new Error(`provider not found: ${providerId}`);
-  if (file.activeProviderId === providerId) file.activeProviderId = file.providers[0]?.providerId;
+  if (file.activeProviderId === providerId) file.activeProviderId = file.providers.find((provider) => provider.enabled)?.providerId;
   await writeProviderFile(file);
   await mutateSecretFile((secrets) => {
     delete secrets.credentials[providerId];
@@ -355,9 +407,11 @@ export async function deleteProviderConfig(providerIdInput: string) {
 export async function setActiveProvider(providerIdInput: string) {
   const providerId = normalizeProviderId(providerIdInput);
   const file = await readProviderFile();
-  if (!file.providers.some((provider) => provider.providerId === providerId)) {
+  const provider = file.providers.find((candidate) => candidate.providerId === providerId);
+  if (!provider) {
     throw new Error(`provider not found: ${providerId}`);
   }
+  if (!provider.enabled) throw new Error(`provider is disabled: ${providerId}`);
   file.activeProviderId = providerId;
   await writeProviderFile(file);
   return getProviderSettings();
@@ -365,6 +419,12 @@ export async function setActiveProvider(providerIdInput: string) {
 
 export async function setProviderApiKey(providerIdInput: string, apiKeyInput: string): Promise<AgentProviderSecretStatus> {
   const providerId = normalizeProviderId(providerIdInput);
+  if (providerId === CC_SWITCH_LOCAL_PROVIDER_ID) {
+    await mutateSecretFile((secrets) => {
+      delete secrets.credentials[providerId];
+    });
+    return { providerId, hasApiKey: false };
+  }
   const apiKey = apiKeyInput.trim();
   await mutateSecretFile((secrets) => {
     if (apiKey) {
@@ -387,8 +447,25 @@ export async function deleteProviderApiKey(providerIdInput: string): Promise<Age
 
 export async function getProviderSecretStatus(providerIdInput: string): Promise<AgentProviderSecretStatus> {
   const providerId = normalizeProviderId(providerIdInput);
+  if (providerId === CC_SWITCH_LOCAL_PROVIDER_ID) return { providerId, hasApiKey: false };
   const secrets = await readSecretFileSafe();
   return { providerId, hasApiKey: secrets.credentials[providerId]?.type === 'api_key' };
+}
+
+/**
+ * Return only the API key the user explicitly pasted into Tenon. This deliberately
+ * does not resolve env keys, OAuth access tokens, managed credentials, or local
+ * endpoint sentinels; it powers the user-clicked "show/copy saved key" UI.
+ */
+export async function getStoredProviderApiKey(providerIdInput: string): Promise<AgentProviderStoredApiKey> {
+  const providerId = normalizeProviderId(providerIdInput);
+  if (providerId === CC_SWITCH_LOCAL_PROVIDER_ID) return { providerId, apiKey: undefined };
+  const secrets = await readSecretFileSafe();
+  const credential = secrets.credentials[providerId];
+  return {
+    providerId,
+    apiKey: credential?.type === 'api_key' ? credential.key : undefined,
+  };
 }
 
 /**
@@ -400,6 +477,9 @@ export async function getProviderSecretStatus(providerIdInput: string): Promise<
 export async function getProviderApiKey(providerIdInput: string): Promise<string | undefined> {
   try {
     const providerId = normalizeProviderId(providerIdInput);
+    if (providerId === CC_SWITCH_LOCAL_PROVIDER_ID) {
+      return (await readCcSwitchCodexMirror())?.apiKey;
+    }
     const file = await readProviderFile();
     const providerConfig = file.providers.find((provider) => provider.providerId === providerId);
     if (providerConfig?.baseUrl) ensurePiCustomProvider(providerConfig);
@@ -431,24 +511,33 @@ export async function deleteProviderCredential(providerIdInput: string): Promise
 }
 
 async function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): Promise<AgentProviderSettingsView> {
-  const availableProviders = await getAvailableProviders();
+  const availableProviders = await getAvailableProviders(file.providers);
+  const availableProviderById = new Map(availableProviders.map((provider) => [provider.providerId, provider]));
   return {
     activeProviderId: file.activeProviderId,
     agent: normalizeAgentRuntimeSettings(file.agent),
     providers: await Promise.all(file.providers.map(async (provider): Promise<AgentProviderConfigView> => {
-      if (provider.baseUrl) ensurePiCustomProvider(provider);
+      const catalogProvider = availableProviderById.get(provider.providerId);
       const cred = secrets.credentials[provider.providerId];
-      const hasEnvApiKey = await piProviderHasAmbientAuth(provider.providerId);
+      const isCcSwitchProvider = provider.providerId === CC_SWITCH_LOCAL_PROVIDER_ID;
+      const viewBaseUrl = isCcSwitchProvider ? catalogProvider?.defaultBaseUrl ?? provider.baseUrl : provider.baseUrl;
+      if (viewBaseUrl) ensurePiCustomProvider({ ...provider, baseUrl: viewBaseUrl });
+      const hasEnvApiKey = isCcSwitchProvider ? false : await piProviderHasAmbientAuth(provider.providerId);
       const authKind = getProviderAuthKind(provider.providerId);
       const oauthCred = cred?.type === 'oauth' ? cred : undefined;
-      const hasStoredKey = cred?.type === 'api_key';
-      const isKeylessLocalEndpoint = !cred && isLocalBaseUrl(provider.baseUrl);
+      const hasStoredKey = !isCcSwitchProvider && cred?.type === 'api_key';
+      const isKeylessLocalEndpoint = !cred
+        && isLocalBaseUrl(viewBaseUrl)
+        && !isCcSwitchProvider;
       const auth: ProviderAuthView = {
         authKind,
         // Authoritative "can use models": any stored credential, env key, or
-        // managed sentinel. Keyless local endpoints are allowed. Renderer reads
-        // this instead of re-deriving.
-        credentialed: Boolean(cred) || hasEnvApiKey || isKeylessLocalEndpoint,
+        // managed sentinel. Keyless local endpoints are allowed; CC Switch is the
+        // exception because its local proxy must be reachable. Renderer reads this
+        // instead of re-deriving.
+        credentialed: isCcSwitchProvider
+          ? Boolean(catalogProvider?.credentialed)
+          : Boolean(cred) || hasEnvApiKey || isKeylessLocalEndpoint,
         hasStoredKey,
         oauth: authKind === 'oauth'
           ? { connected: Boolean(oauthCred), expiresAt: oauthCred?.expires }
@@ -456,7 +545,7 @@ async function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): Pr
       };
       return {
         providerId: provider.providerId,
-        baseUrl: provider.baseUrl,
+        baseUrl: viewBaseUrl,
         enabled: provider.enabled,
         hasApiKey: hasStoredKey,
         hasEnvApiKey,
@@ -523,24 +612,486 @@ function normalizeInteger(value: unknown, fallback: number | null, min: number):
   return normalized >= min ? normalized : fallback;
 }
 
-async function getAvailableProviders(): Promise<AgentProviderOption[]> {
-  return Promise.all(piProviders().map(async (providerId) => ({
+async function getAvailableProviders(configuredProviders: readonly AgentProviderConfig[]): Promise<AgentProviderOption[]> {
+  const builtinProviders = await Promise.all(piProviders().map(async (providerId) => ({
     providerId,
     authKind: getProviderAuthKind(providerId),
     hasEnvApiKey: await piProviderHasAmbientAuth(providerId),
     envKeyNames: [],
     defaultBaseUrl: piModelsForProvider(providerId)[0]?.baseUrl,
-    models: piModelsForProvider(providerId)
-      .map((model): AgentModelOption => ({
-        id: model.id,
-        name: model.name,
-        reasoning: model.reasoning,
-        supportedThinkingLevels: getSupportedReasoningLevelsForModel(model),
-        contextWindow: model.contextWindow,
-        maxTokens: model.maxTokens,
-      }))
-      .sort((left, right) => compareModels(providerId, left, right)),
+    models: providerModelOptions(providerId, piModelsForProvider(providerId)),
   })));
+  const ccSwitchProvider = await getCcSwitchProviderOption(configuredProviders);
+  return ccSwitchProvider ? [...builtinProviders, ccSwitchProvider] : builtinProviders;
+}
+
+async function getCcSwitchProviderOption(
+  configuredProviders: readonly AgentProviderConfig[],
+): Promise<AgentProviderOption | null> {
+  const configured = configuredProviders.find((provider) => provider.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+  const mirror = await readCcSwitchCodexMirror();
+  const baseUrl = mirror?.baseUrl ?? configured?.baseUrl ?? CC_SWITCH_LOCAL_BASE_URL;
+  const mirrorUsable = isUsableCcSwitchCodexMirror(mirror);
+  const gatewayHealthy = mirrorUsable ? false : await detectCcSwitchLocalGateway(configured?.baseUrl ?? CC_SWITCH_LOCAL_BASE_URL);
+  const installationDetected = detectCcSwitchLocalInstallation();
+  const detected = Boolean((mirror && (configured || installationDetected)) || gatewayHealthy || installationDetected);
+  if (!configured && !detected) return null;
+  return {
+    providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+    authKind: 'api-key',
+    credentialed: mirrorUsable || gatewayHealthy,
+    detected,
+    hasEnvApiKey: false,
+    envKeyNames: [],
+    defaultBaseUrl: baseUrl,
+    models: await getCcSwitchModelOptions({ mirror, gatewayHealthy, baseUrl }),
+  };
+}
+
+async function getCcSwitchModelOptions(input: {
+  mirror: CcSwitchCodexMirror | null;
+  gatewayHealthy: boolean;
+  baseUrl: string;
+}): Promise<AgentModelOption[]> {
+  if (input.mirror?.baseUrl) {
+    const discovered = await listCcSwitchCodexMirrorModelDescriptors(input.mirror, LOCAL_GATEWAY_DETECT_TIMEOUT_MS);
+    if (discovered.length > 0) {
+      cacheCcSwitchModelDescriptors(input.mirror.baseUrl, discovered);
+      return ccSwitchModelOptions(discovered, input.mirror.baseUrl, input.mirror.api);
+    }
+  }
+  const baseUrl = input.baseUrl;
+  const gatewayHealthy = input.gatewayHealthy;
+  if (gatewayHealthy) {
+    try {
+      const auth = await resolveProviderConnectionAuth(CC_SWITCH_LOCAL_PROVIDER_ID, baseUrl);
+      const discovered = await listOpenAiCompatibleModels(baseUrl, auth?.listHeaders, LOCAL_GATEWAY_DETECT_TIMEOUT_MS);
+      if (discovered.length > 0) {
+        const descriptors = discovered.map((id): CcSwitchModelDescriptor => ({ id }));
+        cacheCcSwitchModelDescriptors(baseUrl, descriptors);
+        return ccSwitchModelOptions(descriptors, baseUrl, 'openai-responses');
+      }
+    } catch {
+      // Settings must stay fast and usable even when the app is installed but the
+      // local proxy fallback is still warming up. Fall back to the routed-model alias.
+    }
+  }
+  if (ccSwitchModelDescriptorsCache?.baseUrl === baseUrl && ccSwitchModelDescriptorsCache.models.length > 0) {
+    return ccSwitchModelOptions(ccSwitchModelDescriptorsCache.models, baseUrl, 'openai-responses');
+  }
+  return providerModelOptions(CC_SWITCH_LOCAL_PROVIDER_ID, rankedModels(CC_SWITCH_LOCAL_PROVIDER_ID));
+}
+
+async function refreshCcSwitchModelDescriptors(baseUrl: string): Promise<CcSwitchModelDescriptor[]> {
+  const mirror = await readCcSwitchCodexMirror();
+  if (mirror?.baseUrl) {
+    const models = await refreshCcSwitchCodexMirrorModelDescriptors(mirror);
+    cacheCcSwitchModelDescriptors(mirror.baseUrl, models);
+    return models;
+  }
+  const models = await refreshCcSwitchLocalGatewayModelDescriptors(baseUrl);
+  cacheCcSwitchModelDescriptors(baseUrl, models);
+  return models;
+}
+
+function cacheCcSwitchModelDescriptors(baseUrl: string, models: CcSwitchModelDescriptor[]): void {
+  ccSwitchModelDescriptorsCache = { baseUrl, models };
+}
+
+async function refreshCcSwitchCodexMirrorModelDescriptors(mirror: CcSwitchCodexMirror): Promise<CcSwitchModelDescriptor[]> {
+  const catalogModels = await readCcSwitchCodexCatalogModelDescriptors(mirror);
+  if (catalogModels.length > 0) return catalogModels;
+  if (!mirror.apiKey) {
+    throw new Error('CC Switch Codex credentials were not found. Open CC Switch, apply a Codex provider, then refresh models.');
+  }
+  const endpointModels = await listCcSwitchCodexMirrorEndpointModelDescriptors(mirror, LOCAL_GATEWAY_REFRESH_TIMEOUT_MS);
+  if (endpointModels.length > 0) return endpointModels;
+  if (mirror.currentModelId) return [{ id: mirror.currentModelId }];
+  throw new Error('CC Switch Codex config did not expose any models.');
+}
+
+async function refreshCcSwitchLocalGatewayModelDescriptors(baseUrl: string): Promise<CcSwitchModelDescriptor[]> {
+  const gatewayHealthy = await detectCcSwitchLocalGateway(baseUrl);
+  if (!gatewayHealthy) {
+    throw new Error('No usable CC Switch Codex config was found, and the CC Switch Local Proxy is not reachable.');
+  }
+  const auth = await resolveProviderConnectionAuth(CC_SWITCH_LOCAL_PROVIDER_ID, baseUrl);
+  let models: string[];
+  try {
+    models = await listOpenAiCompatibleModels(baseUrl, auth?.listHeaders, LOCAL_GATEWAY_REFRESH_TIMEOUT_MS);
+  } catch {
+    throw new Error(`CC Switch did not expose a model list at ${baseUrl.replace(/\/+$/, '')}/models. Check the Local Proxy base URL.`);
+  }
+  if (models.length === 0) throw new Error('CC Switch returned no models.');
+  return models.map((id): CcSwitchModelDescriptor => ({ id }));
+}
+
+function ccSwitchModelOptions(
+  models: readonly CcSwitchModelDescriptor[],
+  baseUrl: string,
+  api: OpenAICompatibleApiId,
+): AgentModelOption[] {
+  return providerModelOptions(
+    CC_SWITCH_LOCAL_PROVIDER_ID,
+    models.map((descriptor) => {
+      const modelApi = descriptor.api ?? api;
+      return createOpenAICompatibleModel({
+        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+        modelId: descriptor.id,
+        name: descriptor.name ?? formatDiscoveredModelName(descriptor.id),
+        baseUrl,
+        api: modelApi,
+        catalogModel: ccSwitchCatalogModel(descriptor.id),
+        reasoning: descriptor.reasoning ?? modelApi === 'openai-responses',
+        contextWindow: descriptor.contextWindow,
+        maxTokens: descriptor.maxTokens,
+      });
+    }),
+  );
+}
+
+function ccSwitchCatalogModel(modelId: string): Model<Api> | null {
+  return piFindModel(CC_SWITCH_LOCAL_PROVIDER_ID, modelId)
+    ?? piFindModel('openai-codex', modelId)
+    ?? piFindModel('openai', modelId);
+}
+
+function isUsableCcSwitchCodexMirror(
+  mirror: CcSwitchCodexMirror | null,
+): mirror is CcSwitchCodexMirror & { baseUrl: string; apiKey: string } {
+  return Boolean(mirror?.baseUrl && mirror.apiKey);
+}
+
+async function resolveCcSwitchRuntimeConfig(config: AgentProviderConfig): Promise<AgentProviderRuntimeConfig | null> {
+  const mirror = await readCcSwitchCodexMirror();
+  if (isUsableCcSwitchCodexMirror(mirror)) {
+    return {
+      ...config,
+      baseUrl: mirror.baseUrl,
+      api: mirror.api,
+      modelId: mirror.currentModelId,
+    };
+  }
+  const baseUrl = config.baseUrl ?? CC_SWITCH_LOCAL_BASE_URL;
+  if (await detectCcSwitchLocalGateway(baseUrl)) {
+    return {
+      ...config,
+      baseUrl,
+      api: 'openai-responses',
+      modelId: CC_SWITCH_LOCAL_DEFAULT_MODEL_ID,
+    };
+  }
+  return null;
+}
+
+async function readCcSwitchCodexMirror(): Promise<CcSwitchCodexMirror | null> {
+  const codexDir = getCodexConfigDir();
+  if (!codexDir) return null;
+  const configText = await readTextFileOrNull(join(codexDir, CODEX_CONFIG_FILE));
+  if (!configText?.trim()) return null;
+
+  const providerId = parseTomlTopLevelString(configText, 'model_provider');
+  const providerTable = providerId ? parseTomlStringTable(configText, `model_providers.${providerId}`) : {};
+  const baseUrl = normalizeOptionalString(providerTable.base_url ?? parseTomlTopLevelString(configText, 'base_url'));
+  const wireApi = normalizeOptionalString(providerTable.wire_api ?? parseTomlTopLevelString(configText, 'wire_api'));
+  const currentModelId = normalizeOptionalString(parseTomlTopLevelString(configText, 'model'));
+  const modelCatalogPath = resolveCcSwitchCodexModelCatalogPath(
+    codexDir,
+    normalizeOptionalString(parseTomlTopLevelString(configText, 'model_catalog_json')),
+  );
+  const apiKey = await readCodexOpenAiApiKey(join(codexDir, CODEX_AUTH_FILE));
+
+  if (!providerId && !baseUrl && !currentModelId && !modelCatalogPath && !apiKey) return null;
+  return {
+    codexDir,
+    providerName: normalizeOptionalString(providerTable.name),
+    baseUrl,
+    api: codexWireApiToPiApi(wireApi),
+    currentModelId,
+    modelCatalogPath,
+    apiKey,
+  };
+}
+
+async function listCcSwitchCodexMirrorModelDescriptors(
+  mirror: CcSwitchCodexMirror,
+  timeoutMs: number,
+): Promise<CcSwitchModelDescriptor[]> {
+  const catalogModels = await readCcSwitchCodexCatalogModelDescriptors(mirror);
+  if (catalogModels.length > 0) return catalogModels;
+  const endpointModels = await listCcSwitchCodexMirrorEndpointModelDescriptors(mirror, timeoutMs);
+  if (endpointModels.length > 0) return endpointModels;
+  return mirror.currentModelId ? [{ id: mirror.currentModelId, api: mirror.api }] : [];
+}
+
+async function readCcSwitchCodexCatalogModelDescriptors(mirror: CcSwitchCodexMirror): Promise<CcSwitchModelDescriptor[]> {
+  if (!mirror.modelCatalogPath) return [];
+  const text = await readTextFileOrNull(mirror.modelCatalogPath);
+  if (!text) return [];
+  try {
+    return parseCcSwitchCodexCatalogModelDescriptors(JSON.parse(text), mirror.api);
+  } catch {
+    return [];
+  }
+}
+
+async function listCcSwitchCodexMirrorEndpointModelDescriptors(
+  mirror: CcSwitchCodexMirror,
+  timeoutMs: number,
+): Promise<CcSwitchModelDescriptor[]> {
+  if (!mirror.baseUrl || !mirror.apiKey) return [];
+  const headers = { Authorization: `Bearer ${mirror.apiKey}` };
+  for (const candidateBaseUrl of openAiModelListBaseUrlCandidates(mirror.baseUrl)) {
+    try {
+      const ids = await listOpenAiCompatibleModels(candidateBaseUrl, headers, timeoutMs);
+      if (ids.length > 0) return ids.map((id): CcSwitchModelDescriptor => ({ id, api: mirror.api }));
+    } catch {
+      // Try the next compatible model-list URL shape.
+    }
+  }
+  return [];
+}
+
+function openAiModelListBaseUrlCandidates(baseUrl: string): string[] {
+  const trimmed = baseUrl.replace(/\/+$/, '');
+  if (!trimmed) return [];
+  if (trimmed.endsWith('/v1')) return [trimmed];
+  return [trimmed, `${trimmed}/v1`];
+}
+
+function parseCcSwitchCodexCatalogModelDescriptors(body: unknown, api: OpenAICompatibleApiId): CcSwitchModelDescriptor[] {
+  const record = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+  const entries = Array.isArray(record.models)
+    ? record.models
+    : (Array.isArray(record.data) ? record.data : []);
+  const seen = new Set<string>();
+  const descriptors: CcSwitchModelDescriptor[] = [];
+  for (const entry of entries) {
+    const id = modelIdFromListEntry(entry);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const entryRecord = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+    descriptors.push({
+      id,
+      api,
+      name: stringField(entryRecord, ['display_name', 'displayName', 'name']),
+      contextWindow: positiveIntegerField(entryRecord, ['context_window', 'max_context_window', 'contextWindow']),
+      maxTokens: positiveIntegerField(entryRecord, ['max_tokens', 'maxTokens']),
+    });
+  }
+  return descriptors;
+}
+
+async function readCodexOpenAiApiKey(authPath: string): Promise<string | undefined> {
+  const text = await readTextFileOrNull(authPath);
+  if (!text) return undefined;
+  try {
+    const body = JSON.parse(text) as Record<string, unknown>;
+    return normalizeOptionalString(body.OPENAI_API_KEY);
+  } catch {
+    return undefined;
+  }
+}
+
+async function readTextFileOrNull(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+function getCodexConfigDir(): string | undefined {
+  const home = getElectronHomePath();
+  return home ? join(home, '.codex') : undefined;
+}
+
+function resolveCcSwitchCodexModelCatalogPath(codexDir: string, catalogPath: string | undefined): string | undefined {
+  if (!catalogPath) return undefined;
+  const fileName = catalogPath.split(/[\\/]/).pop();
+  if (fileName !== CC_SWITCH_CODEX_MODEL_CATALOG_FILE) return undefined;
+  return isAbsolute(catalogPath) ? catalogPath : join(codexDir, catalogPath);
+}
+
+function codexWireApiToPiApi(wireApi: string | undefined): OpenAICompatibleApiId {
+  return wireApi === 'chat' || wireApi === 'chat_completions' || wireApi === 'openai-chat'
+    ? 'openai-completions'
+    : 'openai-responses';
+}
+
+function parseTomlTopLevelString(text: string, key: string): string | undefined {
+  let section = '';
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = stripTomlComment(line).trim();
+    if (!trimmed) continue;
+    const sectionMatch = trimmed.match(/^\[([^\]]+)\]\s*$/);
+    if (sectionMatch) {
+      section = sectionMatch[1]?.trim() ?? '';
+      continue;
+    }
+    if (section) continue;
+    const value = parseTomlStringAssignment(trimmed, key);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+function parseTomlStringTable(text: string, tableName: string): Record<string, string> {
+  let section = '';
+  const values: Record<string, string> = {};
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = stripTomlComment(line).trim();
+    if (!trimmed) continue;
+    const sectionMatch = trimmed.match(/^\[([^\]]+)\]\s*$/);
+    if (sectionMatch) {
+      section = sectionMatch[1]?.trim() ?? '';
+      continue;
+    }
+    if (section !== tableName) continue;
+    const assignment = trimmed.match(/^([A-Za-z0-9_-]+)\s*=\s*(.+)$/);
+    if (!assignment) continue;
+    const key = assignment[1];
+    const value = parseTomlStringValue(assignment[2] ?? '');
+    if (key && value !== undefined) values[key] = value;
+  }
+  return values;
+}
+
+function parseTomlStringAssignment(line: string, key: string): string | undefined {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = line.match(new RegExp(`^${escaped}\\s*=\\s*(.+)$`));
+  return match ? parseTomlStringValue(match[1] ?? '') : undefined;
+}
+
+function parseTomlStringValue(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith('"')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      return typeof parsed === 'string' ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  if (trimmed.startsWith("'")) {
+    const end = trimmed.indexOf("'", 1);
+    return end >= 1 ? trimmed.slice(1, end) : undefined;
+  }
+  const bare = trimmed.split(/\s+/)[0]?.trim();
+  return bare || undefined;
+}
+
+function stripTomlComment(line: string): string {
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\' && quote === '"') {
+      escaped = true;
+      continue;
+    }
+    if ((char === '"' || char === "'") && (!quote || quote === char)) {
+      quote = quote ? null : char;
+      continue;
+    }
+    if (char === '#' && !quote) return line.slice(0, index);
+  }
+  return line;
+}
+
+function stringField(record: Record<string, unknown>, keys: readonly string[]): string | undefined {
+  for (const key of keys) {
+    const value = normalizeOptionalString(record[key]);
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function positiveIntegerField(record: Record<string, unknown>, keys: readonly string[]): number | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    const parsed = typeof value === 'number'
+      ? value
+      : (typeof value === 'string' ? Number.parseInt(value, 10) : NaN);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function formatDiscoveredModelName(modelId: string): string {
+  return modelId
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => {
+      const normalized = part.toLowerCase();
+      if (normalized === 'gpt') return 'GPT';
+      if (normalized === 'llama') return 'Llama';
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(' ') || modelId;
+}
+
+function providerModelOptions(providerId: string, models: readonly Model<Api>[]): AgentModelOption[] {
+  return models
+    .map((model): AgentModelOption => ({
+      id: model.id,
+      name: model.name,
+      reasoning: model.reasoning,
+      supportedThinkingLevels: getSupportedReasoningLevelsForModel(model),
+      contextWindow: model.contextWindow,
+      maxTokens: model.maxTokens,
+    }))
+    .sort((left, right) => compareModels(providerId, left, right));
+}
+
+async function detectCcSwitchLocalGateway(baseUrl = CC_SWITCH_LOCAL_BASE_URL): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), LOCAL_GATEWAY_DETECT_TIMEOUT_MS);
+  try {
+    const response = await fetch(ccSwitchHealthUrlForBaseUrl(baseUrl), {
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function ccSwitchHealthUrlForBaseUrl(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, '');
+  return trimmed.endsWith('/v1') ? `${trimmed.slice(0, -3)}/health` : `${trimmed}/health`;
+}
+
+function detectCcSwitchLocalInstallation(): boolean {
+  const home = getElectronHomePath();
+  const paths = [
+    home ? join(home, '.cc-switch') : undefined,
+    home ? join(home, 'Applications', 'CC Switch.app') : undefined,
+    // Only the real Electron app should inspect the machine-global application
+    // directory. Unit tests run in Bun with mocked Electron and must not depend on
+    // whichever apps happen to be installed on the developer's Mac.
+    process.platform === 'darwin' && process.versions.electron ? '/Applications/CC Switch.app' : undefined,
+  ];
+  return paths.some((candidate) => Boolean(candidate && existsSync(candidate)));
+}
+
+function getElectronHomePath(): string | undefined {
+  try {
+    return electron.app.getPath('home');
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeConfig(input: AgentProviderConfigInput): AgentProviderConfig {
@@ -551,6 +1102,11 @@ function normalizeConfig(input: AgentProviderConfigInput): AgentProviderConfig {
 
 async function providerCanRun(provider: AgentProviderConfig, secrets: SecretFile): Promise<boolean> {
   if (!provider.enabled) return false;
+  if (provider.providerId === CC_SWITCH_LOCAL_PROVIDER_ID) {
+    const mirror = await readCcSwitchCodexMirror();
+    if (isUsableCcSwitchCodexMirror(mirror)) return true;
+    return detectCcSwitchLocalGateway(provider.baseUrl ?? CC_SWITCH_LOCAL_BASE_URL);
+  }
   if (secrets.credentials[provider.providerId]) return true;
   if (provider.baseUrl) ensurePiCustomProvider(provider);
   if (isLocalBaseUrl(provider.baseUrl)) return true;
@@ -715,6 +1271,11 @@ async function mutateSecretFile(mutator: (file: SecretFile) => void): Promise<Se
 }
 
 async function readPiCredential(providerId: string): Promise<Credential | undefined> {
+  if (providerId === CC_SWITCH_LOCAL_PROVIDER_ID) {
+    const mirror = await readCcSwitchCodexMirror();
+    if (mirror?.apiKey) return { type: 'api_key', key: mirror.apiKey };
+    return undefined;
+  }
   return toPiCredential((await readSecretFileSafe()).credentials[providerId]);
 }
 
@@ -884,6 +1445,14 @@ export async function testProviderConnection(input: {
 }
 
 async function resolveProviderConnectionAuth(providerId: string, baseUrl?: string): Promise<AgentProviderConnectionAuth | null> {
+  if (providerId === CC_SWITCH_LOCAL_PROVIDER_ID) {
+    const mirror = await readCcSwitchCodexMirror();
+    if (mirror?.apiKey) {
+      return {
+        listHeaders: { Authorization: `Bearer ${mirror.apiKey}` },
+      };
+    }
+  }
   if (baseUrl) ensurePiCustomProvider({ providerId, baseUrl });
   const model = baseUrl
     ? createOpenAICompatibleModel({ providerId, modelId: '__tenon_openai_compatible_probe__', baseUrl })
@@ -892,7 +1461,7 @@ async function resolveProviderConnectionAuth(providerId: string, baseUrl?: strin
   try {
     const resolved = await piModels().getAuth(model);
     if (!resolved) return null;
-    const headers = providerHeadersForModelList(resolved.auth);
+    const headers = providerHeadersForModelList(resolved.auth, resolved.source);
     return {
       listHeaders: headers,
     };
@@ -901,9 +1470,9 @@ async function resolveProviderConnectionAuth(providerId: string, baseUrl?: strin
   }
 }
 
-function providerHeadersForModelList(auth: { apiKey?: string; headers?: Record<string, string | null> }): Record<string, string> | undefined {
+function providerHeadersForModelList(auth: { apiKey?: string; headers?: Record<string, string | null> }, source?: string): Record<string, string> | undefined {
   const headers: Record<string, string> = {};
-  if (auth.apiKey) headers.Authorization = `Bearer ${auth.apiKey}`;
+  if (auth.apiKey && source !== 'local endpoint') headers.Authorization = `Bearer ${auth.apiKey}`;
   for (const [name, value] of Object.entries(auth.headers ?? {})) {
     if (value === null) delete headers[name];
     else headers[name] = value;
@@ -919,22 +1488,39 @@ function providerHeadersForModelList(auth: { apiKey?: string; headers?: Record<s
  * maps to a precise auth/endpoint message (401/404/timeout) — strictly better than
  * a generic "no usable model".
  */
-async function listOpenAiCompatibleModels(baseUrl: string, headers?: Record<string, string>): Promise<string[]> {
+async function listOpenAiCompatibleModels(baseUrl: string, headers?: Record<string, string>, timeoutMs = 8000): Promise<string[]> {
   const url = `${baseUrl.replace(/\/+$/, '')}/models`;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       headers,
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`${response.status}`);
-    const body = await response.json() as { data?: Array<{ id?: unknown }> };
-    const data = Array.isArray(body?.data) ? body.data : [];
-    return data
-      .map((entry) => (typeof entry?.id === 'string' ? entry.id : null))
-      .filter((id): id is string => Boolean(id));
+    const body = await response.json() as { data?: unknown; models?: unknown };
+    return parseOpenAiCompatibleModelIds(body);
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function parseOpenAiCompatibleModelIds(body: { data?: unknown; models?: unknown }): string[] {
+  const entries = Array.isArray(body?.data)
+    ? body.data
+    : (Array.isArray(body?.models) ? body.models : []);
+  return entries
+    .map(modelIdFromListEntry)
+    .filter((id): id is string => Boolean(id));
+}
+
+function modelIdFromListEntry(entry: unknown): string | null {
+  if (typeof entry === 'string') return entry.trim() || null;
+  if (!entry || typeof entry !== 'object') return null;
+  const record = entry as Record<string, unknown>;
+  for (const key of ['id', 'model', 'slug']) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
 }

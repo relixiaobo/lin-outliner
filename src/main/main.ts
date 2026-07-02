@@ -67,8 +67,10 @@ import {
   deleteProviderApiKey,
   deleteProviderConfig,
   getProviderSecretStatus,
+  getStoredProviderApiKey,
   getProviderSettings,
   reconcileProviderConfig,
+  refreshProviderModels,
   setActiveProvider,
   setProviderApiKey,
   updateAgentRuntimeSettings,
@@ -1213,6 +1215,11 @@ function liveWindow(window: BrowserWindow | null | undefined): BrowserWindow | u
   return isLiveWindow(window) ? window : undefined;
 }
 
+function isProviderConfigSender(event: IpcMainInvokeEvent): boolean {
+  const target = liveWindow(providerConfigWindow);
+  return Boolean(target && event.sender === target.webContents);
+}
+
 function centeredChildWindowPosition(parent: BrowserWindow | null | undefined, width: number, height: number) {
   const bounds = isLiveWindow(parent) ? parent.getBounds() : undefined;
   return bounds
@@ -1604,6 +1611,12 @@ function registerIpc() {
     openProviderConfigWindow(providerId, mode);
   });
   ipcMain.handle('lin:close-provider-config', () => liveWindow(providerConfigWindow)?.close());
+  ipcMain.handle('lin:get-provider-api-key', (event, args?: { providerId?: unknown }) => {
+    if (!isProviderConfigSender(event)) {
+      throw new Error('Provider API keys are only available to the provider config window.');
+    }
+    return getStoredProviderApiKey(String(args?.providerId ?? ''));
+  });
   ipcMain.handle('lin:open-agent-config', (_event, args?: { agentId?: unknown }) => {
     const agentId = typeof args?.agentId === 'string' ? args.agentId : '';
     openAgentConfigWindow(agentId);
@@ -1621,7 +1634,7 @@ function registerIpc() {
   });
   // A provider/agent setting changed (from the settings window OR its config child).
   // Tell BOTH the main window (stale provider state) and the settings window (its
-  // list reflects the new connection) to re-fetch.
+  // list reflects the new configured provider row) to re-fetch.
   ipcMain.handle('lin:settings-changed', () => {
     liveWindow(mainWindow)?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
     liveWindow(settingsWindow)?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
@@ -2650,6 +2663,8 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
       return agentRuntime.listSlashCommands(conversationId());
     case 'agent_get_provider_settings':
       return getProviderSettings();
+    case 'agent_refresh_provider_models':
+      return refreshProviderModels(String(args.providerId));
     case 'agent_update_runtime_settings':
       return updateAgentRuntimeSettings(args.settings as AgentRuntimeSettingsInput);
     case 'agent_get_tool_permission_settings':

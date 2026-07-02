@@ -254,17 +254,24 @@ segmented controls trail. Inline chips show quiet metadata only and do not
 duplicate a trailing control's value. Empty/loading states use `FeedbackState`;
 notices use neutral fill with status colour on text only.
 
-**Provider rows.** Providers group into Connected and Available. Each row shows a
-neutral avatar tile plus provider name; clicking opens config. Vendored logos may
-keep identity colour, but the tile never carries functional colour. Row separators
-stay inset; the trailing More button is icon-only and unboxed at rest.
+**Provider rows.** Providers group into Configured and Add Providers. Configured
+means a deliberate Tenon row or an externally configured provider such as CC
+Switch. Configured rows expose a trailing enable switch; disabling a row keeps
+credentials/endpoints but removes it from model pickers and runtime fallback. Each
+row shows a neutral avatar tile plus provider name; clicking opens config unless
+the row is a direct external enable row. Vendored logos may keep identity colour,
+but the tile never carries functional colour. Row separators stay inset; the
+trailing More button is icon-only and unboxed at rest.
 
 **Provider config.** Per-provider config is a native modal child window
 (`?surface=provider-config`) and owns connection only. It has no traffic lights,
 no in-renderer backdrop, and closes through Cancel / Save / Escape. One inset card
 holds credential mode, key/base URL/provider id as needed, and async
 non-blocking validation. Model and effort belong to the agent profile, not the
-provider connection.
+provider connection. Saved user-pasted keys stay masked until explicit show/copy;
+externally managed keys such as CC Switch's Codex key are never shown or copied.
+Raw-key show/copy is available only inside the provider config child window, and
+main rejects the dedicated key-read IPC from all other windows.
 
 Every framed content block in the config window uses `--radius-md`; row-level
 field focus uses `:focus-within` on the row because inset cards clip outer rings.

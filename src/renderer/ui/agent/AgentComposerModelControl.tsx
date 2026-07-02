@@ -9,7 +9,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from '../icons';
 import { parseModelSelection } from './AgentModelEffortSelector';
-import { isProviderUsable } from './providerUsability';
+import { isProviderUsable, resolveUsableActiveProvider } from './providerUsability';
 
 interface AgentComposerModelControlProps {
   settings: AgentProviderSettingsView | null;
@@ -379,7 +379,7 @@ function deriveModelMenu(settings: AgentProviderSettingsView | null, model: stri
   if (!settings) {
     return { effectiveProviderId: '', effectiveModelId: '', effectiveModelOption: undefined, groups: [], modelCount: 0 };
   }
-  const activeProviderId = settings.activeProviderId ?? '';
+  const activeProviderId = resolveUsableActiveProvider(settings)?.providerId ?? '';
   const knownProviderIds = new Set<string>([
     ...settings.availableProviders.map((provider) => provider.providerId),
     ...settings.providers.map((provider) => provider.providerId),
@@ -388,15 +388,20 @@ function deriveModelMenu(settings: AgentProviderSettingsView | null, model: stri
   const modelsFor = (providerId: string): AgentModelOption[] => (
     settings.availableProviders.find((provider) => provider.providerId === providerId)?.models ?? []
   );
-
-  const primaryProviderId = selection.providerId || activeProviderId;
-  const effectiveModelId = selection.modelId || modelsFor(primaryProviderId)[0]?.id || '';
-  const effectiveModelOption = modelsFor(primaryProviderId).find((option) => option.id === effectiveModelId);
-
   const usableProviderIds = settings.providers
     .filter((provider) => isProviderUsable(settings, provider))
     .map((provider) => provider.providerId);
-  const orderedProviderIds = dedupe([primaryProviderId, activeProviderId, ...usableProviderIds].filter(Boolean));
+
+  const selectionProviderUsable = Boolean(selection.providerId && usableProviderIds.includes(selection.providerId));
+  const primaryProviderId = selectionProviderUsable
+    ? selection.providerId
+    : activeProviderId || usableProviderIds[0] || '';
+  const effectiveModelId = selectionProviderUsable && selection.modelId
+    ? selection.modelId
+    : modelsFor(primaryProviderId)[0]?.id || '';
+  const effectiveModelOption = modelsFor(primaryProviderId).find((option) => option.id === effectiveModelId);
+
+  const orderedProviderIds = dedupe([primaryProviderId, ...usableProviderIds].filter(Boolean));
   const groups: ModelGroup[] = orderedProviderIds
     .map((providerId) => ({ providerId, models: modelsFor(providerId) }))
     .filter((group) => group.models.length > 0);

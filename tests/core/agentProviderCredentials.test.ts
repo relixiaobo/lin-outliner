@@ -7,7 +7,7 @@ import {
   type Credential,
   type OAuthCredential,
 } from '@earendil-works/pi-ai';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -18,6 +18,10 @@ import {
   piProviders,
   piStreamSimple,
 } from '../../src/main/piModels';
+import {
+  CC_SWITCH_LOCAL_BASE_URL,
+  CC_SWITCH_LOCAL_PROVIDER_ID,
+} from '../../src/core/localGatewayProviders';
 
 type StoredOAuth = { refresh: string; access: string; expires: number };
 
@@ -57,10 +61,15 @@ const {
   setProviderApiKey,
   deleteProviderApiKey,
   getProviderApiKey,
+  getProviderSettings,
   getProviderSecretStatus,
+  getActiveProviderRuntimeConfig,
+  getStoredProviderApiKey,
   providerStreamOptionsFromRuntimeSettings,
   persistOAuthCredential,
+  refreshProviderModels,
   testProviderConnection,
+  upsertProviderConfig,
 } = await import('../../src/main/agentSettings');
 
 const secretPath = () => path.join(currentUserData, 'agent-secrets.json');
@@ -105,16 +114,15 @@ beforeEach(async () => {
 
 afterEach(async () => {
   piModels().deleteProvider(piCustomProviderId('openai'));
+  piModels().deleteProvider(piCustomProviderId(CC_SWITCH_LOCAL_PROVIDER_ID));
   piModels().deleteProvider('env-api-key-test');
   await rm(currentUserData, { recursive: true, force: true });
 });
 
-function mockModelList(ids: string[]): () => void {
+function mockFetchJson(body: unknown, options: { status?: number } = {}): () => void {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async () => new Response(JSON.stringify({
-    data: ids.map((id) => ({ id })),
-  }), {
-    status: 200,
+  globalThis.fetch = (async () => new Response(JSON.stringify(body), {
+    status: options.status ?? 200,
     headers: { 'content-type': 'application/json' },
   })) as typeof fetch;
   return () => {
@@ -122,11 +130,249 @@ function mockModelList(ids: string[]): () => void {
   };
 }
 
+async function writeCcSwitchInstallMarker() {
+  await mkdir(path.join(currentUserData, '.cc-switch'), { recursive: true });
+}
+
+async function writeCodexMirrorConfig(options: {
+  baseUrl?: string;
+  model?: string;
+  wireApi?: string;
+  apiKey?: string;
+  modelCatalog?: unknown;
+}) {
+  const codexDir = path.join(currentUserData, '.codex');
+  await mkdir(codexDir, { recursive: true });
+  const catalogLine = options.modelCatalog ? 'model_catalog_json = "cc-switch-model-catalog.json"\n' : '';
+  await writeFile(path.join(codexDir, 'config.toml'), `model_provider = "custom"
+model = "${options.model ?? 'gpt-5.5'}"
+${catalogLine}
+[model_providers.custom]
+name = "OpenAI"
+base_url = "${options.baseUrl ?? 'https://mirror.example.com/v1'}"
+wire_api = "${options.wireApi ?? 'responses'}"
+requires_openai_auth = true
+`);
+  if (options.apiKey !== undefined) {
+    await writeFile(path.join(codexDir, 'auth.json'), JSON.stringify({ OPENAI_API_KEY: options.apiKey }));
+  }
+  if (options.modelCatalog) {
+    await writeFile(path.join(codexDir, 'cc-switch-model-catalog.json'), JSON.stringify(options.modelCatalog));
+  }
+}
+
 describe('provider credential resolver', () => {
+  test('mirrors the CC Switch Codex config without requiring Local Proxy', async () => {
+    await writeCcSwitchInstallMarker();
+    await writeCodexMirrorConfig({ apiKey: 'codex-mirror-key' });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/health')) return new Response('{}', { status: 503 });
+      if (url === 'https://mirror.example.com/v1/models') {
+        expect(new Headers(init?.headers).get('authorization')).toBe('Bearer codex-mirror-key');
+        return new Response(JSON.stringify({ data: [{ id: 'gpt-5.5' }, { id: 'claude-fable-5' }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response('{}', { status: 404 });
+    }) as typeof fetch;
+    try {
+      const view = await getProviderSettings();
+      const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+      expect(provider).toMatchObject({
+        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+        credentialed: true,
+        detected: true,
+        defaultBaseUrl: 'https://mirror.example.com/v1',
+      });
+      expect(provider?.models.map((model) => model.id)).toContain('gpt-5.5');
+
+      await upsertProviderConfig({ providerId: CC_SWITCH_LOCAL_PROVIDER_ID, enabled: true });
+      expect(await getActiveProviderRuntimeConfig()).toMatchObject({
+        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+        baseUrl: 'https://mirror.example.com/v1',
+        modelId: 'gpt-5.5',
+        api: 'openai-responses',
+      });
+      expect(await getProviderApiKey(CC_SWITCH_LOCAL_PROVIDER_ID)).toBe('codex-mirror-key');
+      expect(await getStoredProviderApiKey(CC_SWITCH_LOCAL_PROVIDER_ID)).toEqual({
+        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+        apiKey: undefined,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('refreshes CC Switch Codex mirror models from the generated model catalog', async () => {
+    await writeCcSwitchInstallMarker();
+    await writeCodexMirrorConfig({
+      apiKey: 'codex-mirror-key',
+      modelCatalog: {
+        models: [
+          { slug: 'deepseek-v4-flash', display_name: 'DeepSeek Flash', context_window: 1000000 },
+          { slug: 'claude-fable-5', display_name: 'Claude Fable 5', context_window: 200000 },
+        ],
+      },
+    });
+    const restoreFetch = mockFetchJson({ status: 'stopped' }, { status: 503 });
+    try {
+      const view = await refreshProviderModels(CC_SWITCH_LOCAL_PROVIDER_ID);
+      const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+      expect(provider?.models.map((model) => model.id)).toEqual(['claude-fable-5', 'deepseek-v4-flash']);
+      expect(provider?.models.find((model) => model.id === 'deepseek-v4-flash')?.contextWindow).toBe(1000000);
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  test('keeps a CC Switch Codex mirror without an API key visible but unusable', async () => {
+    await writeCcSwitchInstallMarker();
+    await writeCodexMirrorConfig({ apiKey: undefined });
+    const restoreFetch = mockFetchJson({ status: 'stopped' }, { status: 503 });
+    try {
+      const view = await upsertProviderConfig({
+        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+        enabled: true,
+      });
+      const provider = view.providers.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+      expect(provider?.auth.credentialed).toBe(false);
+      expect(await getActiveProviderRuntimeConfig()).toBeNull();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  test('detects the CC Switch local gateway as an available provider', async () => {
+    const restoreFetch = mockFetchJson({ status: 'healthy' });
+    try {
+      const view = await getProviderSettings();
+      const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+      expect(provider).toMatchObject({
+        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+        credentialed: true,
+        detected: true,
+        defaultBaseUrl: CC_SWITCH_LOCAL_BASE_URL,
+      });
+      expect(provider?.models.map((model) => model.name)).toContain('Current routed model');
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  test('shows installed CC Switch even when the local gateway is stopped', async () => {
+    await mkdir(path.join(currentUserData, '.cc-switch'));
+    const restoreFetch = mockFetchJson({ status: 'stopped' }, { status: 503 });
+    try {
+      const view = await getProviderSettings();
+      const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+      expect(provider).toMatchObject({
+        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+        credentialed: false,
+        detected: true,
+        defaultBaseUrl: CC_SWITCH_LOCAL_BASE_URL,
+      });
+      expect(provider?.models.map((model) => model.name)).toContain('Current routed model');
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  test('does not treat a configured but stopped CC Switch gateway as usable', async () => {
+    const restoreFetch = mockFetchJson({ status: 'stopped' }, { status: 503 });
+    try {
+      const view = await upsertProviderConfig({
+        providerId: CC_SWITCH_LOCAL_PROVIDER_ID,
+        baseUrl: CC_SWITCH_LOCAL_BASE_URL,
+        enabled: true,
+      });
+      const provider = view.providers.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+      expect(provider?.auth.credentialed).toBe(false);
+      expect(await getActiveProviderRuntimeConfig()).toBeNull();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  test('lists CC Switch gateway models when the local /models endpoint responds', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/health')) {
+        return new Response(JSON.stringify({ status: 'healthy' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url.endsWith('/models')) {
+        return new Response(JSON.stringify({
+          data: [
+            { id: 'claude-fable-5' },
+            { id: 'gpt-5.4' },
+          ],
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response('{}', { status: 404 });
+    }) as typeof fetch;
+    try {
+      const view = await getProviderSettings();
+      const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+      expect(provider?.models.map((model) => model.id)).toEqual(['gpt-5.4', 'claude-fable-5']);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('refreshes CC Switch models without sending the local-endpoint sentinel as Authorization', async () => {
+    const originalFetch = globalThis.fetch;
+    const modelRequestAuthorizations: Array<string | null> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/health')) {
+        return new Response(JSON.stringify({ status: 'healthy' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url.endsWith('/models')) {
+        const headers = new Headers(init?.headers);
+        modelRequestAuthorizations.push(headers.get('authorization'));
+        return new Response(JSON.stringify({ data: [{ id: 'claude-fable-5' }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response('{}', { status: 404 });
+    }) as typeof fetch;
+    try {
+      const view = await refreshProviderModels(CC_SWITCH_LOCAL_PROVIDER_ID);
+      const provider = view.availableProviders.find((candidate) => candidate.providerId === CC_SWITCH_LOCAL_PROVIDER_ID);
+      expect(provider?.models.map((model) => model.name)).toContain('Claude Fable 5');
+      expect(modelRequestAuthorizations.every((value) => value === null)).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('reports a stopped CC Switch local proxy during model refresh', async () => {
+    const restoreFetch = mockFetchJson({ status: 'stopped' }, { status: 503 });
+    try {
+      await expect(refreshProviderModels(CC_SWITCH_LOCAL_PROVIDER_ID)).rejects.toThrow('Local Proxy is not reachable');
+    } finally {
+      restoreFetch();
+    }
+  });
+
   test('stored api key resolves and reports as a stored key', async () => {
     await setProviderApiKey('openai', '  sk-test  ');
     expect(await getProviderApiKey('openai')).toBe('sk-test');
     expect(await getProviderSecretStatus('openai')).toEqual({ providerId: 'openai', hasApiKey: true });
+    expect(await getStoredProviderApiKey('openai')).toEqual({ providerId: 'openai', apiKey: 'sk-test' });
   });
 
   test('clearing the key field removes a stored key but never an oauth login', async () => {
@@ -142,6 +388,7 @@ describe('provider credential resolver', () => {
     oauthToApiKeyImpl = async () => 'oauth-key';
     expect(await getProviderApiKey('anthropic')).toBe('oauth-key');
     expect(await getProviderSecretStatus('anthropic')).toEqual({ providerId: 'anthropic', hasApiKey: false });
+    expect(await getStoredProviderApiKey('anthropic')).toEqual({ providerId: 'anthropic', apiKey: undefined });
   });
 
   test('oauth credential auto-refreshes and persists the rotated tokens', async () => {
@@ -183,6 +430,7 @@ describe('provider credential resolver', () => {
       process.env.OPENAI_API_KEY = 'env-key';
       process.env.AWS_PROFILE = 'test-profile';
       expect(await getProviderApiKey('openai')).toBe('env-key');
+      expect(await getStoredProviderApiKey('openai')).toEqual({ providerId: 'openai', apiKey: undefined });
       expect(await getProviderApiKey('amazon-bedrock')).toBeUndefined();
       expect(await getProviderApiKey('definitely-not-a-provider')).toBeUndefined();
     } finally {
@@ -429,8 +677,8 @@ describe('provider credential resolver', () => {
     expect(result.model).toBe('gpt-5.1');
   });
 
-  test('custom endpoint connection probes preserve the discovered catalog model API', async () => {
-    const restoreFetch = mockModelList(['gpt-5.5']);
+  test('custom endpoint connection probes accept Codex model catalogs and preserve the discovered catalog model API', async () => {
+    const restoreFetch = mockFetchJson({ models: [{ slug: 'gpt-5.5' }] });
     const seenModels: Array<{ provider: string; api: string; id: string; baseUrl?: string }> = [];
     const seenOptions: Array<{ cacheRetention?: string }> = [];
     const seenPayloads: unknown[] = [];

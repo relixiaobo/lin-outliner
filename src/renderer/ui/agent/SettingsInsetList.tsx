@@ -11,7 +11,7 @@ import { cx } from '../primitives/cx';
 // Permissions / Skills can adopt it later for free consistency.
 
 interface InsetGroupProps {
-  /** Sentence-case section header above the card (e.g. "Connected"). */
+  /** Sentence-case section header above the card (e.g. "Configured"). */
   label?: string;
   /** Optional explanatory footnote under the card. */
   footnote?: ReactNode;

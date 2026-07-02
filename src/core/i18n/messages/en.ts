@@ -112,28 +112,36 @@ export const en = {
   // The settings window: rail chrome, categories, and the General pane.
   settings: {
     providers: {
-      connectedGroup: 'Connected',
-      connectedAriaLabel: 'Connected providers',
-      availableGroup: 'Available',
-      availableAriaLabel: 'Available providers',
+      connectedGroup: 'Configured',
+      connectedAriaLabel: 'Configured providers',
+      availableGroup: 'Add Providers',
+      availableAriaLabel: 'Providers to add',
       addCustom: 'Add custom provider',
       // Row + ⋯ menu actions
       setActive: 'Set as Active',
+      refreshModels: 'Refresh models',
       configureAction: 'Configure…',
       removeProvider: 'Remove provider',
       configure: 'Configure',
       configureNamed: ({ name }: { name: string }) => `Configure ${name}`,
+      enabledToggleNamed: ({ name }: { name: string }) => `Enable or disable ${name}`,
       rowAriaLabel: ({ name, status }: { name: string; status: string }) => `${name}, ${status}`,
       rowActionsAriaLabel: ({ name }: { name: string }) => `${name} actions`,
       rowMenuAriaLabel: 'Provider actions',
+      detectedSublabel: 'Detected on this Mac',
       // Notices after a row mutation
       setActiveNotice: 'Provider set as active',
+      enabledNotice: 'Provider enabled',
+      disabledNotice: 'Provider disabled',
+      modelsRefreshedNotice: 'Provider models refreshed',
       removedNotice: 'Provider removed',
       // Trailing status word for the provider row aria-label
       status: {
         ready: 'Ready',
         addKey: 'Add key',
+        detected: 'Detected',
         disabled: 'Disabled',
+        unavailable: 'Unavailable',
         needsKey: 'Needs key',
         active: 'Active',
       },
@@ -1322,10 +1330,13 @@ commandPalette: {
     providerIdLabel: 'Provider ID',
     providerIdPlaceholder: 'my-provider',
     apiKeyLabel: 'API key',
-    apiKeySavedPlaceholder: 'Saved (encrypted) — paste to replace',
+    apiKeySavedPlaceholder: 'sk*****************',
     apiKeyPlaceholder: 'Paste API key',
     showKey: 'Show key',
     hideKey: 'Hide key',
+    copyKey: 'Copy key',
+    keyCopied: 'Key copied',
+    savedKeyUnavailable: 'No saved API key is available.',
     baseUrlLabel: 'Base URL',
     getApiKey: 'Get API key',
     validating: 'Validating…',
@@ -1366,9 +1377,13 @@ commandPalette: {
   providerCatalog: {
     customProvider: 'Custom provider',
     openAiCompatible: 'Connect any OpenAI-compatible endpoint.',
+    ccSwitchLocalGateway: 'Uses the provider currently applied by CC Switch for Codex.',
     includesModels: ({ models, more }: { models: string; more: boolean }) =>
       `Includes ${models}${more ? ', and more' : ''}.`,
     auth: {
+      'cc-switch': {
+        note: 'Reads the Codex provider currently applied by CC Switch on this Mac. Tenon does not store or reveal CC Switch-managed keys.',
+      },
       'amazon-bedrock': {
         note: 'Bedrock uses your AWS credentials (a named profile, IAM role, or AWS_* environment variables) — there is no API key to paste here.',
         docsLabel: 'AWS credential setup',

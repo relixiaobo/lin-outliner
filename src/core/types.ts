@@ -958,6 +958,10 @@ export interface AgentProviderOption {
   providerId: string;
   /** Auth class for an as-yet-unconfigured provider, so the config window can pick the right UI. */
   authKind: AgentProviderAuthKind;
+  /** True for a detected external provider that is usable before a Tenon row exists. */
+  credentialed?: boolean;
+  /** True when the provider was found locally, either by endpoint probe or install/config presence. */
+  detected?: boolean;
   hasEnvApiKey: boolean;
   envKeyNames: string[];
   defaultBaseUrl?: string;
@@ -974,6 +978,12 @@ export interface AgentProviderSettingsView {
 export interface AgentProviderSecretStatus {
   providerId: string;
   hasApiKey: boolean;
+}
+
+/** Returned only by the provider config child window's sender-checked key IPC. */
+export interface AgentProviderStoredApiKey {
+  providerId: string;
+  apiKey?: string;
 }
 
 export const EMPTY_RICH_TEXT: RichText = {

@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **CC Switch Codex mirror provider (PR #369, codex-2)** — added CC
+  Switch Local Gateway as an externally configured provider that mirrors Codex
+  credentials and generated model catalog support from `~/.codex/config.toml` /
+  `~/.codex/auth.json`, with Local Proxy fallback. Provider settings now use
+  Configured / Add Providers grouping, explicit enable/disable state for
+  configured and external rows, disabled-provider filtering from model pickers
+  and runtime fallback, masked saved keys, and no show/copy path for externally
+  managed secrets. The merge also preserves custom OpenAI-compatible model
+  metadata so CC Switch/catalog-backed endpoints route through Responses or Chat
+  Completions correctly. **Gate (main):** code review found two P2 issues around
+  raw-key IPC exposure and runtime provider validation; codex-2 fixed both before
+  merge. Verified with typecheck, targeted provider/runtime/renderer suites,
+  provider settings E2E, `docs:check`, and `git diff --check`.
 - **Design-system compression metrics (PR #368, codex)** — added
   `docs/spec/design-system/decision-audit.md` and
   `scripts/design-system-metrics.ts` so the layered design-system contract now

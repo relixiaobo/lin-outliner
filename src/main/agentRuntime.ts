@@ -170,6 +170,7 @@ import {
   piStreamSimple,
 } from './piModels';
 import { parseProviderQualifiedModel } from '../core/agentModelId';
+import { isLocalGatewayProviderId } from '../core/localGatewayProviders';
 import {
   appendAgentToolPermissionGrant,
   appendAgentToolPermissionSoftBlockAllow,
@@ -7736,7 +7737,7 @@ function resolveModelOverride(
 function resolveProviderCatalogModel(config: AgentProviderRuntimeConfig): Model<Api> | null {
   const first = rankedModels(config.providerId)[0];
   if (config.baseUrl) {
-    const modelId = first?.id ?? '__tenon_openai_compatible_probe__';
+    const modelId = config.modelId ?? first?.id ?? '__tenon_openai_compatible_probe__';
     return createCustomEndpointModel(config, modelId, first);
   }
   if (!first) return null;
@@ -7824,6 +7825,7 @@ function resolveAgentModelEffort(
 
 let knownProviderIdsCache: Set<string> | null = null;
 function isKnownProviderId(providerId: string): boolean {
+  if (isLocalGatewayProviderId(providerId)) return true;
   if (!knownProviderIdsCache) knownProviderIdsCache = new Set(piProviders());
   return knownProviderIdsCache.has(providerId);
 }

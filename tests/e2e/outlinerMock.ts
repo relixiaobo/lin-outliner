@@ -80,6 +80,7 @@ type E2EWindow = Window & {
   };
   lin?: {
     invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+    getProviderApiKey: (providerId: string) => Promise<{ providerId: string; apiKey?: string }>;
     onAgentEvent: (listener: (event: unknown) => void) => () => void;
     onDocumentEvent: (listener: (event: unknown) => void) => () => void;
     onAgentOAuthEvent?: (listener: (envelope: unknown) => void) => () => void;
@@ -338,6 +339,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const oauthListeners: Array<(envelope: unknown) => void> = [];
     let messageContextMenuAction: 'copy' | 'retry' | 'regenerate' | 'details' | null = null;
     let agentRuns: unknown[] = [];
+    const providerApiKeys = new Map<string, string>([['openai', 'sk-openai-saved']]);
     // An in-flight sign-in's resolve/reject, keyed by providerId. The spec drives
     // the event stream (emitOAuthEvent) and completes it (resolveOAuthLogin), so
     // the flow is fully deterministic — no real provider, timers, or network.
@@ -402,6 +404,24 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             reasoning: true,
             supportedThinkingLevels: ['off', 'low', 'medium', 'high'],
             contextWindow: 200_000,
+            maxTokens: 8192,
+          },
+        ],
+      }, {
+        providerId: 'cc-switch',
+        authKind: 'api-key',
+        credentialed: false,
+        detected: true,
+        hasEnvApiKey: false,
+        envKeyNames: [],
+        defaultBaseUrl: 'http://127.0.0.1:15721/v1',
+        models: [
+          {
+            id: 'gpt-5.4',
+            name: 'Current routed model',
+            reasoning: true,
+            supportedThinkingLevels: ['off', 'low', 'medium', 'high'],
+            contextWindow: 256_000,
             maxTokens: 8192,
           },
         ],
@@ -1793,6 +1813,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           sizeBytes: input.bytes.byteLength,
         };
       },
+      getProviderApiKey: async (providerId) => {
+        const args = { providerId };
+        calls.push({ cmd: 'lin:get-provider-api-key', args: clone(args) });
+        return clone({ providerId, apiKey: providerApiKeys.get(providerId) });
+      },
       invoke: async <T,>(cmd: string, args: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd, args: clone(args) });
         if (cmd === 'agent_restore_latest_conversation') {
@@ -1832,6 +1857,31 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           }) as T;
         }
         if (cmd === 'agent_get_provider_settings') return clone(agentSettings) as T;
+        if (cmd === 'agent_refresh_provider_models') {
+          const providerId = String(args.providerId ?? '');
+          const provider = agentSettings.availableProviders.find((item) => item.providerId === providerId);
+          if (providerId === 'cc-switch' && provider) {
+            provider.models = [
+              {
+                id: 'claude-fable-5',
+                name: 'Claude Fable 5',
+                reasoning: true,
+                supportedThinkingLevels: ['off', 'low', 'medium', 'high'],
+                contextWindow: 200_000,
+                maxTokens: 8192,
+              },
+              {
+                id: 'gpt-5.4',
+                name: 'GPT 5.4',
+                reasoning: true,
+                supportedThinkingLevels: ['off', 'low', 'medium', 'high'],
+                contextWindow: 256_000,
+                maxTokens: 8192,
+              },
+            ];
+          }
+          return clone(agentSettings) as T;
+        }
         if (cmd === 'agent_list_conversations') return clone(agentConversations) as T;
         if (cmd === 'agent_list_runs') return clone(agentRuns) as T;
         if (cmd === 'agent_rename_conversation') {
@@ -1873,18 +1923,24 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             baseUrl?: string | null;
             enabled?: boolean;
           };
+          const baseUrl = provider.baseUrl ?? '';
+          const hasStoredKey = providerApiKeys.has(provider.providerId);
+          const isKeylessLocal = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::|\/|$)/.test(baseUrl);
+          const auth = { authKind: 'api-key', credentialed: hasStoredKey || isKeylessLocal, hasStoredKey };
           const existing = agentSettings.providers.find((item) => item.providerId === provider.providerId);
           if (existing) {
-            existing.baseUrl = provider.baseUrl ?? '';
+            existing.baseUrl = baseUrl;
             existing.enabled = provider.enabled ?? true;
+            existing.hasApiKey = hasStoredKey;
+            existing.auth = auth;
           } else {
             agentSettings.providers.push({
               providerId: provider.providerId,
-              baseUrl: provider.baseUrl ?? '',
+              baseUrl,
               enabled: provider.enabled ?? true,
-              hasApiKey: true,
+              hasApiKey: hasStoredKey,
               hasEnvApiKey: false,
-              auth: { authKind: 'api-key', credentialed: true, hasStoredKey: true },
+              auth,
             });
           }
           return clone(agentSettings) as T;
@@ -2004,6 +2060,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_set_provider_api_key') {
           const providerId = String(args.providerId);
+          const apiKey = String(args.apiKey ?? '').trim();
+          if (apiKey) providerApiKeys.set(providerId, apiKey);
+          else providerApiKeys.delete(providerId);
           const existing = agentSettings.providers.find((item) => item.providerId === providerId);
           const keyAuth = { authKind: 'api-key', credentialed: true, hasStoredKey: true };
           if (existing) {
@@ -2023,6 +2082,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_delete_provider_api_key') {
           const providerId = String(args.providerId);
+          providerApiKeys.delete(providerId);
           const existing = agentSettings.providers.find((item) => item.providerId === providerId);
           if (existing) { existing.hasApiKey = false; existing.auth = { authKind: 'api-key', credentialed: false, hasStoredKey: false }; }
           return clone({ providerId, hasApiKey: false }) as T;

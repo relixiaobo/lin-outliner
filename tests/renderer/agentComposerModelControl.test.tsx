@@ -259,6 +259,58 @@ describe('AgentComposerModelControl', () => {
     expect(saved).toBe('anthropic/claude-sonnet');
   });
 
+  test('disabled providers stay out of the composer model menu even when credentialed', async () => {
+    const view = multiProviderSettings();
+    view.providers = view.providers.map((provider) => (
+      provider.providerId === 'anthropic' ? { ...provider, enabled: false } : provider
+    ));
+    const rendered = renderComponent(
+      <AgentComposerModelControl
+        settings={view} model="anthropic/claude-sonnet" effort="" disabled={false}
+        onModelChange={NOOP} onEffortChange={NOOP}
+      />,
+    );
+    // A stale saved model from a disabled provider resolves back to the runnable
+    // provider's default, and the disabled provider is not offered in the submenu.
+    expect(rendered.container.querySelector('.agent-composer-model-name')?.textContent).toBe('GPT-5.4');
+    await click(rendered, chip(rendered));
+    await click(rendered, triggerRow(rendered, 'GPT-5.4'));
+    expect(modelItem(rendered, 'GPT-5.3')).toBeTruthy();
+    expect(() => modelItem(rendered, 'Claude Sonnet')).toThrow();
+  });
+
+  test('enabled CC Switch models appear in the composer model menu', async () => {
+    const view = multiProviderSettings();
+    view.providers.push({
+      providerId: 'cc-switch',
+      baseUrl: 'http://127.0.0.1:15721/v1',
+      enabled: true,
+      hasApiKey: false,
+      auth: { authKind: 'api-key', credentialed: true, hasStoredKey: false },
+    });
+    view.availableProviders.push({
+      providerId: 'cc-switch',
+      authKind: 'api-key',
+      credentialed: true,
+      detected: true,
+      hasEnvApiKey: false,
+      envKeyNames: [],
+      defaultBaseUrl: 'http://127.0.0.1:15721/v1',
+      models: [
+        { id: 'gpt-5.4', name: 'Current routed model', reasoning: true, supportedThinkingLevels: ['off', 'low', 'medium', 'high'], contextWindow: 0, maxTokens: 0 },
+      ],
+    });
+    const rendered = renderComponent(
+      <AgentComposerModelControl
+        settings={view} model="" effort="" disabled={false}
+        onModelChange={NOOP} onEffortChange={NOOP}
+      />,
+    );
+    await click(rendered, chip(rendered));
+    await click(rendered, triggerRow(rendered, 'GPT-5.4'));
+    expect(modelItem(rendered, 'Current routed model')).toBeTruthy();
+  });
+
   test('a provider with many models shows the recent ones and a Show all expander', async () => {
     const rendered = renderComponent(
       <AgentComposerModelControl
