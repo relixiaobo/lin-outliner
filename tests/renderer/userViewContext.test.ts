@@ -33,7 +33,6 @@ function projection(nodes: NodeProjection[]): DocumentProjection {
     searchesId: 'searches',
     recentsId: 'recents',
     trashId: 'trash',
-    settingsId: 'settings',
     todayId: 'today',
     nodes,
   };

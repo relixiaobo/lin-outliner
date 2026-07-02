@@ -14,7 +14,6 @@ import {
   RESOURCES_ID,
   SCHEMA_ID,
   SEARCHES_ID,
-  SETTINGS_ID,
   TAG_DAY_ID,
   TRASH_ID,
   WORKSPACE_ID,
@@ -86,11 +85,91 @@ describe('Core', () => {
       SCHEMA_ID,
       SEARCHES_ID,
       TRASH_ID,
-      SETTINGS_ID,
     ]);
     expect(state.nodes[PROJECTS_ID]).toBeUndefined();
     expect(state.nodes[AREAS_ID]).toBeUndefined();
     expect(state.nodes[RESOURCES_ID]).toBeUndefined();
+  });
+
+  test('removes an empty default retired Settings document root on restore', () => {
+    const legacy = new LoroOutlinerDocument();
+    legacy.createNodeWithId(WORKSPACE_ID, undefined, undefined, undefined, (node) => {
+      node.content = plainText('Tenon');
+      node.locked = false;
+    });
+    legacy.createNodeWithId('settings', WORKSPACE_ID, undefined, undefined, (node) => {
+      node.content = plainText('Settings');
+      node.locked = true;
+    });
+
+    const restored = Core.fromState(legacy.serialize('__legacy__'));
+    const state = restored.state();
+
+    expect(state.nodes.settings).toBeUndefined();
+    expect(state.nodes[WORKSPACE_ID]!.children).toEqual([
+      DAILY_NOTES_ID,
+      LIBRARY_ID,
+      SCHEMA_ID,
+      SEARCHES_ID,
+      TRASH_ID,
+    ]);
+  });
+
+  test('preserves a retired Settings document root with user content on restore', () => {
+    const legacy = new LoroOutlinerDocument();
+    legacy.createNodeWithId(WORKSPACE_ID, undefined, undefined, undefined, (node) => {
+      node.content = plainText('Tenon');
+      node.locked = false;
+    });
+    legacy.createNodeWithId('settings', WORKSPACE_ID, undefined, undefined, (node) => {
+      node.content = plainText('Settings');
+      node.description = 'Legacy settings notes';
+      node.locked = true;
+    });
+    legacy.createNodeWithId('settings-child', 'settings', undefined, undefined, (node) => {
+      node.content = plainText('User setting note');
+    });
+
+    const restored = Core.fromState(legacy.serialize('__legacy__'));
+    const state = restored.state();
+
+    expect(state.nodes.settings).toMatchObject({
+      parentId: LIBRARY_ID,
+      locked: false,
+      content: { text: 'Settings' },
+      children: ['settings-child'],
+    });
+    expect(state.nodes['settings-child']?.parentId).toBe('settings');
+    expect(state.nodes[WORKSPACE_ID]!.children).not.toContain('settings');
+    expect(state.nodes[LIBRARY_ID]!.children).toContain('settings');
+  });
+
+  test('preserves a referenced retired Settings document root on restore', () => {
+    const legacy = new LoroOutlinerDocument();
+    legacy.createNodeWithId(WORKSPACE_ID, undefined, undefined, undefined, (node) => {
+      node.content = plainText('Tenon');
+      node.locked = false;
+    });
+    legacy.createNodeWithId('settings', WORKSPACE_ID, undefined, undefined, (node) => {
+      node.content = plainText('Settings');
+      node.locked = true;
+    });
+    legacy.createNodeWithId('settings-ref', WORKSPACE_ID, undefined, 'reference', (node) => {
+      node.content = plainText('Settings link');
+      node.targetId = 'settings';
+    });
+
+    const restored = Core.fromState(legacy.serialize('__legacy__'));
+    const state = restored.state();
+
+    expect(state.nodes.settings).toMatchObject({
+      parentId: LIBRARY_ID,
+      locked: false,
+    });
+    expect(state.nodes['settings-ref']).toMatchObject({
+      parentId: LIBRARY_ID,
+      targetId: 'settings',
+    });
   });
 
   test('reports changed node ids for incremental consumers and full rebuild on undo', () => {

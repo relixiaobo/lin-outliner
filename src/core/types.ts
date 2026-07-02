@@ -15,7 +15,6 @@ export const SCHEMA_ID = 'schema';
 export const SEARCHES_ID = 'searches';
 export const RECENTS_ID = 'recents';
 export const TRASH_ID = 'trash';
-export const SETTINGS_ID = 'settings';
 export const TAG_DAY_ID = 'tag:day';
 export const TAG_WEEK_ID = 'tag:week';
 export const TAG_YEAR_ID = 'tag:year';
@@ -602,7 +601,6 @@ export interface DocumentProjection {
   searchesId: NodeId;
   recentsId: NodeId;
   trashId: NodeId;
-  settingsId: NodeId;
   todayId: NodeId;
   nodes: NodeProjection[];
 }

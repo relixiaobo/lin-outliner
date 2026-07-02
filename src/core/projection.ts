@@ -4,7 +4,6 @@ import {
   RECENTS_ID,
   SCHEMA_ID,
   SEARCHES_ID,
-  SETTINGS_ID,
   TRASH_ID,
   type DocumentProjection,
   type DocumentState,
@@ -41,7 +40,6 @@ export function assembleProjection(
     searchesId: SEARCHES_ID,
     recentsId: RECENTS_ID,
     trashId: TRASH_ID,
-    settingsId: SETTINGS_ID,
     todayId,
     nodes: order.map((id) => requiredProjection(byId, id)),
   };

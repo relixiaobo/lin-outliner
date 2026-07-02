@@ -13,7 +13,6 @@ export const ids = {
   searches: 'searches',
   recents: 'recents',
   trash: 'trash',
-  settings: 'settings',
   today: 'today',
   dayTag: 'tag-day',
   projectTag: 'tag-project',
@@ -1047,7 +1046,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         searchesId: ids.searches,
         recentsId: ids.recents,
         trashId: ids.trash,
-        settingsId: ids.settings,
         todayId: ids.today,
         nodes: [...emitted, ...sink.values()],
       };
@@ -1461,9 +1459,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      queryOp: 'EDITED_LAST_DAYS',
 	      children: ['recents-query-value'],
 	    });
-	    makeNode('recents-query-value', '30', { parentId: 'recents-query' });
+    makeNode('recents-query-value', '30', { parentId: 'recents-query' });
     makeNode(ids.trash, 'Trash', { parentId: ids.root, locked: true });
-    makeNode(ids.settings, 'Settings', { parentId: ids.root, locked: true });
     makeNode(ids.dayTag, 'day', { type: 'tagDef', parentId: ids.schema, color: 'gray' });
     makeNode(ids.projectTag, 'project', { type: 'tagDef', parentId: ids.schema, color: '#5e8e65' });
     makeNode(ids.statusField, 'Status', {
@@ -1542,7 +1539,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       });
     }
     appendChild(ids.workspace, ids.root);
-    for (const childId of [ids.daily, ids.library, ids.schema, ids.searches, ids.trash, ids.settings]) appendChild(ids.root, childId);
+    for (const childId of [ids.daily, ids.library, ids.schema, ids.searches, ids.trash]) appendChild(ids.root, childId);
 	    appendChild(ids.searches, ids.recents);
 	    appendChild(ids.recents, 'recents-query');
 	    appendChild(ids.recents, 'recents-view');

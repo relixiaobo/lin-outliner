@@ -122,8 +122,6 @@ export function Sidebar(props: SidebarProps) {
     schema: props.projection.schemaId,
   } satisfies Record<typeof primaryNavItems[number]['key'], NodeId | null>;
   const rootNode = props.index.byId.get(props.projection.rootId);
-  // T3: show all root sections in the workspace tree (Schema/Settings no longer
-  // hidden) — the center root outline already shows all of them.
   const rootChildren = rootNode?.children
     .map((childId) => props.index.byId.get(childId))
     .filter((child): child is NodeProjection => (

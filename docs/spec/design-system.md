@@ -900,7 +900,8 @@ beside them. Default width `216px`; range `180px` to `280px`. Sidebar rows use o
 quiet navigation grammar: `28px` row height, `6px` radius, `16px` icon slots.
 Primary entries use `--control-hover` on hover; the workspace tree darkens text
 rather than holding a persistent selected fill. The sidebar is the navigator
-(Today / Search / Supertags / Library / Recents + the workspace tree + Settings).
+(Today / Search / Supertags / Library / Recents + the workspace tree, with the
+product Settings entry pinned at the bottom).
 
 **Top strip (the drag region).** One horizontal strip at the window top, at
 traffic-light height, holds **every column's header in a single row**:

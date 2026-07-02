@@ -27,7 +27,6 @@ function envelope(nodes: NodeProjection[], todayId: NodeId = 'root'): DocumentPr
     searchesId: 'searches',
     recentsId: 'recents',
     trashId: 'trash',
-    settingsId: 'settings',
     todayId,
     nodes,
   };

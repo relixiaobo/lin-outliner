@@ -1232,7 +1232,6 @@ describe('row interaction resolvers', () => {
         searchesId: 'searches',
         recentsId: 'recents',
         trashId: 'trash',
-        settingsId: 'settings',
         todayId: 'today',
         nodes,
       },
@@ -1270,7 +1269,6 @@ describe('row interaction resolvers', () => {
         searchesId: 'searches',
         recentsId: 'recents',
         trashId: 'trash',
-        settingsId: 'settings',
         todayId: 'today',
         nodes,
       },
@@ -1326,7 +1324,6 @@ describe('row interaction resolvers', () => {
         searchesId: 'searches',
         recentsId: 'recents',
         trashId: 'trash',
-        settingsId: 'settings',
         todayId: 'today',
         nodes,
       },
@@ -1833,7 +1830,6 @@ describe('row interaction resolvers', () => {
         searchesId: 'searches',
         recentsId: 'recents',
         trashId: 'trash',
-        settingsId: 'settings',
         todayId: 'today',
         nodes,
       },
@@ -1869,7 +1865,6 @@ describe('row interaction resolvers', () => {
       searchesId: 'searches',
       recentsId: 'recents',
       trashId: 'trash',
-      settingsId: 'settings',
       todayId: 'today',
       nodes: [],
     };
@@ -1901,7 +1896,6 @@ describe('row interaction resolvers', () => {
       searchesId: 'searches',
       recentsId: 'recents',
       trashId: 'trash',
-      settingsId: 'settings',
       todayId: 'today',
       nodes,
     };
@@ -1948,7 +1942,6 @@ describe('row interaction resolvers', () => {
       searchesId: 'searches',
       recentsId: 'recents',
       trashId: 'trash',
-      settingsId: 'settings',
       todayId: 'today',
       nodes,
     };
@@ -1992,7 +1985,6 @@ describe('row interaction resolvers', () => {
       searchesId: 'searches',
       recentsId: 'recents',
       trashId: 'trash',
-      settingsId: 'settings',
       todayId: 'today',
       nodes,
     };
@@ -2042,7 +2034,6 @@ describe('row interaction resolvers', () => {
       searchesId: 'searches',
       recentsId: 'recents',
       trashId: 'trash',
-      settingsId: 'settings',
       todayId: 'today',
       nodes,
     };

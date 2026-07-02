@@ -28,7 +28,6 @@ function projection(nodes: NodeProjection[]): DocumentProjection {
     searchesId: 'searches',
     recentsId: 'recents',
     trashId: TRASH_ID,
-    settingsId: 'settings',
     todayId: 'today',
     nodes: [node({ id: TRASH_ID, children: nodes.filter((n) => isTrashed(n)).map((n) => n.id) }), ...nodes],
   };

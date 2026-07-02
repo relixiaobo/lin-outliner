@@ -496,9 +496,8 @@ test.describe('workspace layout resizing', () => {
     await expect(workspaceTree).toContainText('Library');
     await expect(workspaceTree).toContainText('Saved searches');
     await expect(workspaceTree).toContainText('Trash');
-    // T3: all root sections show in the tree now — including Schema and Settings.
     await expect(workspaceTree).toContainText('Schema');
-    await expect(workspaceTree).toContainText('Settings');
+    await expect(workspaceTree).not.toContainText('Settings');
     const sidebarMetrics = await workspaceTree.evaluate((tree) => {
       const primaryIcon = document.querySelector('.sidebar-primary-nav .sidebar-nav-icon');
       const pinnedTitle = document.querySelector('.sidebar-section-title');
