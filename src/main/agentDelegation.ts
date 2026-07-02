@@ -19,10 +19,8 @@ import { systemReminder } from '../core/agentAttachments';
 import type {
   AgentChildRunRecord,
   AgentRunContextMode,
-  AgentRunContextPolicy,
   AgentObjectiveStatus,
   AgentRunBudget,
-  AgentRunObjectiveRole,
   AgentRunProfileId,
   AgentRunPurpose,
   AgentRunScope,
@@ -62,6 +60,10 @@ import {
   agentDefinitionAgentId,
   memoryWorkspaceIdForRoot,
 } from './agentDelegationIdentity';
+import {
+  runProfileForIsolatedSkill,
+  runProfileForPurpose,
+} from './agentRunProfiles';
 import { agentToolNamesForActionKindScope, isReadOnlyActionKind, normalizeAgentToolActionKinds, readOnlyAgentToolNames } from '../core/agentPermissionModel';
 
 export const AGENT_DELEGATE_TOOL_NAME = 'spawn';
@@ -646,7 +648,7 @@ export class AgentDelegationRuntime {
         prompt: input.renderedContent,
         purpose: 'work',
         context: 'none',
-        runProfile: input.readOnlyIsolated ? 'research' : 'default',
+        runProfile: runProfileForIsolatedSkill(input.readOnlyIsolated),
         model: input.model,
         effort: input.effort,
         run_in_background: false,
@@ -2495,10 +2497,6 @@ function derivedRunRole(run: DelegationRunState): AgentChildRunChildStatus['role
   if (run.purpose === 'verify') return 'verifier';
   if (run.hasWorkChildren) return 'controller';
   return 'worker';
-}
-
-function runProfileForPurpose(purpose: AgentRunPurpose): AgentRunProfileId {
-  return purpose === 'verify' ? 'verify' : 'default';
 }
 
 function snapshotRun(run: DelegationRunState): AgentChildRunSnapshot {

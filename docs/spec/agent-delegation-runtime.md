@@ -398,6 +398,38 @@ the first `run.started`. Dream must not rediscover the boundary by scanning
 transcript text or counting positions, because compaction and slimming can
 rewrite both.
 
+### Run Profiles
+
+Run profiles are execution-policy presets for a single Run. They do not create
+new agents, principals, speakers, memories, or conversation members; Neva remains
+the executor for normal product work. The current registry lives in
+`src/main/agentRunProfiles.ts` and contains:
+
+| Profile | Status | Selection |
+|---|---|---|
+| `default` | active | ordinary work Runs; model-selectable |
+| `research` | active | read-only isolated skill Runs such as `/research`; model-selectable |
+| `verify` | active | verifier Runs created by runtime policy only |
+| `dream` | active | protected Dream-channel Runs created by runtime policy only |
+| `browser` | inactive slot | reserved until browser-control policy exists |
+| `coding` | inactive slot | reserved until it differs from `default` |
+| `writing` | inactive slot | reserved until it differs from `default` |
+
+Only `default` and `research` are model-selectable today. `verify` and `dream`
+are internal policy-created profiles. Inactive profiles are registered so the
+terminal vocabulary is stable, but the resolver rejects them until they have a
+real tool/prompt/permission policy.
+
+Current behavior routes through the registry without changing execution:
+
+- ordinary child work defaults to `runProfile: default`;
+- built-in read-only isolated `/research` uses `runProfile: research` and the
+  existing read-only tool catalog;
+- verifier Runs use `runProfile: verify`, `context: none`, read-only tools, and
+  unattended approval behavior;
+- Dream writes `runProfile: dream`, `context: none`, detached disposition, and
+  remains hidden from Work/Runs.
+
 ### Recursive Child Runs
 
 Child Runs may call `spawn` when their narrowed tool catalog includes the

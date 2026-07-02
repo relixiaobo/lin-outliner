@@ -488,6 +488,7 @@ describe('agent runtime past chats integration', () => {
     expect(conversationIds).not.toContain('lin-agent-memory-dream');
     const dreamRunMeta = dreamFinished?.runId ? await store.readRunMetaProjection(dreamFinished.runId) : null;
     expect(dreamRunMeta?.execution.status).toBe('completed');
+    expect(dreamRunMeta).toMatchObject({ context: 'none', runProfile: 'dream' });
     expect(dreamRunMeta?.latestSeq ?? 0).toBeGreaterThan(0);
     const { AgentPastChatsService } = await import('../../src/main/agentPastChats');
     const dreamSearch = await new AgentPastChatsService(store).search({
@@ -875,6 +876,7 @@ describe('agent runtime past chats integration', () => {
       ? await store.readRunMetaProjection(dreamFinished.runId)
       : null;
     expect(dreamRunMeta?.execution.status).toBe('failed');
+    expect(dreamRunMeta).toMatchObject({ context: 'none', runProfile: 'dream' });
     expect(dreamRunMeta?.latestSeq ?? 0).toBeGreaterThan(0);
   });
 

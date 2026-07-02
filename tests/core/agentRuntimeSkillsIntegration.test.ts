@@ -1396,6 +1396,15 @@ describe('agent runtime skill integration', () => {
     expect(childTools).not.toContain('AgentSend');
     expect(childTools).not.toContain('AgentStop');
     expect(parentContexts.join('\n')).toContain('Research child inspected available context.');
+    const runMetas = await new AgentEventStore(dataRoot).listConversationRunMetaProjections(created.conversationId);
+    const researchMeta = runMetas.find((meta) => meta.runProfile === 'research');
+    expect(researchMeta).toMatchObject({
+      context: 'none',
+      runProfile: 'research',
+      objective: {
+        role: 'worker',
+      },
+    });
   });
 
   test('asks for a read scope when research inspects an external folder', async () => {

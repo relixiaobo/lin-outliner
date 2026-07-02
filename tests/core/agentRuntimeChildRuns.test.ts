@@ -687,6 +687,12 @@ describe('agent runtime childRuns', () => {
     expect(workers[1]?.objectiveStatus).toBe('verified');
     expect(workers[1]?.result).toBe('verified result');
     expect(verifier?.contextMode).toBe('none');
+    const verifierMeta = verifier ? await new AgentEventStore(dataRoot).readRunMetaProjection(verifier.id) : null;
+    expect(verifierMeta).toMatchObject({
+      context: 'none',
+      runProfile: 'verify',
+      objective: { role: 'verifier' },
+    });
   });
 
   test('settles a failed verified worker budget before spawning its replacement', async () => {

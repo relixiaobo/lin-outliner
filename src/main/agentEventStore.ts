@@ -43,6 +43,11 @@ import { nodeReferenceMarkersToText } from '../core/referenceMarkup';
 import type { ErrorReport, ErrorReportContext } from '../core/errorObservability';
 import { AppendOnlySeqLog, serializeJsonl, type AppendOnlySeqLogTail } from './appendOnlySeqLog';
 import { atomicWriteFile } from './jsonFileStore';
+import {
+  isRunProfileId,
+  objectiveRoleForRun,
+  runProfileFromStartedRun,
+} from './agentRunProfiles';
 
 const CONVERSATION_SEGMENT_FILE = '000001.jsonl';
 const CONVERSATION_RUN_INDEX_FILE = 'runs.json';
@@ -1191,7 +1196,7 @@ export class AgentEventStore {
     const parentRunId = existing?.parentRunId ?? (trigger?.type === 'parent-run' ? trigger.parentRunId : undefined);
     const parentToolCallId = existing?.parentToolCallId ?? (started?.type === 'run.started' && typeof started.parentToolCallId === 'string' ? started.parentToolCallId : undefined);
     const context = existing?.context ?? (started?.type === 'run.started' ? normalizeRunContextPolicy(started.context) : undefined) ?? 'full';
-    const runProfile = existing?.runProfile ?? (started?.type === 'run.started' ? normalizeRunProfileId(started.runProfile) : undefined) ?? runProfileFromRunStart(started, anchor);
+    const runProfile = existing?.runProfile ?? (started?.type === 'run.started' ? normalizeRunProfileId(started.runProfile) : undefined) ?? runProfileFromStartedRun(started, anchor);
     const executionStatus = terminal ? runStatusFromTerminalEvent(terminal) : existing?.execution.status ?? 'running';
     const completedAt = terminal ? terminal.createdAt : existing?.execution.completedAt;
     const usage = terminal?.usage ?? existing?.execution.usage;
@@ -1207,7 +1212,7 @@ export class AgentEventStore {
       ?? (started?.type === 'run.started' ? started.objectiveStatus : undefined);
     const objectiveRole = existing?.objective?.role
       ?? (started?.type === 'run.started' ? started.objectiveRole : undefined)
-      ?? objectiveRoleFromRunStart(started, parentRunId);
+      ?? objectiveRoleForRun(started, parentRunId);
     const scope = existing?.objective?.scope ?? (started?.type === 'run.started' ? started.scope : undefined);
     const budget = terminal?.budget ?? existing?.objective?.budget ?? (started?.type === 'run.started' ? started.budget : undefined);
     const blockedReason = terminal?.blockedReason
@@ -2302,36 +2307,11 @@ function normalizeRunContextPolicy(value: unknown): AgentRunContextPolicy | unde
 }
 
 function normalizeRunProfileId(value: unknown): AgentRunProfileId | undefined {
-  return value === 'default'
-    || value === 'research'
-    || value === 'verify'
-    || value === 'browser'
-    || value === 'coding'
-    || value === 'writing'
-    || value === 'dream'
-    ? value
-    : undefined;
+  return isRunProfileId(value) ? value : undefined;
 }
 
 function normalizeRunObjectiveRole(value: unknown): AgentRunObjectiveRole | undefined {
   return value === 'controller' || value === 'worker' || value === 'verifier' ? value : undefined;
-}
-
-function runProfileFromRunStart(
-  event: Extract<AgentEvent, { type: 'run.started' }> | undefined,
-  anchor: AgentRunAnchor,
-): AgentRunProfileId {
-  if (event?.purpose === 'verify') return 'verify';
-  if (anchor.type === 'conversation' && anchor.conversationId === DEFAULT_DREAM_CHANNEL_ID) return 'dream';
-  return 'default';
-}
-
-function objectiveRoleFromRunStart(
-  event: Extract<AgentEvent, { type: 'run.started' }> | undefined,
-  parentRunId: string | undefined,
-): AgentRunObjectiveRole {
-  if (event?.purpose === 'verify') return 'verifier';
-  return parentRunId ? 'worker' : 'controller';
 }
 
 function isAgentRunStatus(value: unknown): value is AgentRunStatus {

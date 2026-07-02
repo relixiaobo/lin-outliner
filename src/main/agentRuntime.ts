@@ -81,10 +81,6 @@ import {
   type AgentPersistedContent,
   type AgentPrincipal,
   type AgentRunFingerprint,
-  type AgentRunContextMode,
-  type AgentRunContextPolicy,
-  type AgentRunObjectiveRole,
-  type AgentRunProfileId,
   type AgentRunTrigger,
   type AgentRunMeta,
   type AgentRunPurpose,
@@ -153,6 +149,12 @@ import {
 import { dreamFailureBackoffMs } from './dreamBackoff';
 import { AgentDomainEventBus, type AgentDomainEvent } from './agentDomainEvents';
 import { AgentPastChatsService } from './agentPastChats';
+import {
+  getRunProfile,
+  objectiveRoleForRun,
+  runContextPolicyFromContextMode,
+  runProfileFromStartedRun,
+} from './agentRunProfiles';
 import { commandBriefText, liveCommandNodeIds, selectDueCommands, type DueCommand } from './commandScheduler';
 import {
   getActiveProviderRuntimeConfig,
@@ -2887,10 +2889,10 @@ export class AgentRuntime {
       parentRunId: snapshot.parentRunId,
       parentToolCallId: snapshot.parentToolCallId,
       context: runContextPolicyFromContextMode(snapshot.contextMode),
-      runProfile: snapshot.runProfile ?? runProfileFromChildRunSnapshot(snapshot),
+      runProfile: snapshot.runProfile ?? runProfileFromStartedRun(snapshot, { type: 'conversation', agentId: snapshot.executingAgentId as AgentId, conversationId }),
       objective: snapshot.objective,
       criteria: snapshot.criteria,
-      objectiveRole: runObjectiveRoleFromChildRunSnapshot(snapshot),
+      objectiveRole: objectiveRoleForRun(snapshot, snapshot.parentRunId),
       objectiveStatus: snapshot.objectiveStatus,
       purpose: snapshot.purpose,
       scope: snapshot.scope,
@@ -4068,6 +4070,7 @@ export class AgentRuntime {
   ): Promise<void> {
     const timestamp = status === 'running' ? task.startedAt : Date.now();
     const existing = await this.getEventStore().readRunMetaProjection(task.runId);
+    const dreamProfile = getRunProfile('dream');
     await this.getEventStore().writeRunMeta({
       v: 2,
       id: task.runId,
@@ -4081,8 +4084,8 @@ export class AgentRuntime {
         conversationId: DEFAULT_DREAM_CHANNEL_ID,
       },
       disposition: 'detached',
-      context: 'none',
-      runProfile: 'dream',
+      context: dreamProfile.defaultContext,
+      runProfile: dreamProfile.id,
       trigger: task.trigger === 'schedule'
         ? { type: 'schedule', schedule: task.schedule, dueAt: task.dueAt }
         : { type: 'manual' },
@@ -8183,21 +8186,6 @@ function runListStatusRank(entry: AgentRunListEntry): number {
 function runPurposeFromMeta(run: AgentRunMetaProjection): AgentRunPurpose | undefined {
   if (!run.objective) return undefined;
   return run.objective.role === 'verifier' ? 'verify' : 'work';
-}
-
-function runContextPolicyFromContextMode(contextMode: AgentRunContextMode | undefined): AgentRunContextPolicy {
-  if (contextMode === 'brief' || contextMode === 'none') return contextMode;
-  return 'full';
-}
-
-function runProfileFromChildRunSnapshot(snapshot: AgentChildRunSnapshot): AgentRunProfileId {
-  if (snapshot.purpose === 'verify') return 'verify';
-  return 'default';
-}
-
-function runObjectiveRoleFromChildRunSnapshot(snapshot: AgentChildRunSnapshot): AgentRunObjectiveRole {
-  if (snapshot.purpose === 'verify') return 'verifier';
-  return snapshot.parentRunId ? 'worker' : 'controller';
 }
 
 function dreamRunTrigger(run: Pick<AgentRunMeta, 'trigger'>): AgentRenderDreamRunEntity['trigger'] | null {
