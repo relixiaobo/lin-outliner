@@ -1215,21 +1215,39 @@ Implemented for the current first-class surfaces.
   transcript access. Legacy
   `Agent` blocks remain render-compatible for persisted history.
 - The agent header exposes a Work/Runs button. It opens the global Run index
-  backed by `agent_list_runs`, ordered with running work first, and shows status,
-  title, timing, and sub-run progress from Run metadata.
-- Run rows open the Run details panel; running rows can stop the selected Run
+  backed by `agent_list_runs`, ordered with running work first. The first-level
+  list shows only top-level runs; each row shows status, title, timing, and
+  direct child progress from Run metadata. Sub-runs are not expanded inline from
+  the index.
+- Run rows open a Todoist-style Run details drawer above the list; the drawer
+  covers the Work/Runs content area but leaves the Work header visible, and the
+  list remains the parent layer behind it. Running rows can stop the selected Run
   through `run_stop`.
-- The Run details panel is a read-only drill-in that shows Result, direct
-  sub-runs, Verification runs, collapsed Activity log, and collapsed Technical
-  details in one scroll flow. It loads `agent_run_detail` and
+- The Run details drawer is a read-only drill-in with the same row grammar for
+  every run and sub-run. Its header shows a single-line parent breadcrumb above
+  the selected run title, using the same segment/divider/button grammar as
+  outliner pane breadcrumbs. The breadcrumb is `Runs / ... / parent`; the current
+  run is represented by the title below it, not duplicated in the breadcrumb. The
+  header also shows the selected run's status badge. The body starts with one
+  `Working for ...` / `Worked for ...` process disclosure above the unheaded,
+  detail-sized result content, direct sub-runs in one `Sub-runs` section, and
+  collapsed Technical details in one scroll flow. The process disclosure defaults
+  collapsed and uses the same work-divider visual grammar as the conversation
+  stream. Verifier runs are ordinary child rows in that section. Completed and
+  verified child rows use the shared Done/checkbox mark; the selected run's
+  completion state is represented by the drawer header status badge. Child rows
+  advance to the drawer's next detail level instead of expanding in place; nested
+  descendants appear as direct-child progress on the row until the user drills in.
+  It loads `agent_run_detail` and
   `agent_run_transcript`, so Work/Runs selection no longer depends on the
-  selected Run being present in the active conversation projection. Folded
-  transcript sub-runs use `entities.runs` / `subRunsByParentToolCallId`;
-  conversation `child_run.*` lifecycle events are gone. Run lifecycle and
-  transcript state live in the Run index plus the selected Run's own ledger.
-  `run_steer` remains the same-conversation continuation
-  mechanism for agents/tools, but the detail page does not expose a permanent
-  follow-up composer.
+  selected Run being present in the active conversation projection.
+  `agent_run_detail` supplies ancestor breadcrumb metadata plus direct child
+  progress. Folded transcript sub-runs use `entities.runs` /
+  `subRunsByParentToolCallId`; conversation `child_run.*` lifecycle events are
+  gone. Run lifecycle and transcript state live in the Run index plus the
+  selected Run's own ledger. `run_steer` remains the same-conversation
+  continuation mechanism for agents/tools, but the detail page does not expose a
+  permanent follow-up composer.
 - Nested sub-run tool calls inside transcripts remain expandable.
 - Running background sub-runs can be stopped from the details panel.
 - Task and Run side-panel controls clear the top window chrome drag zone so

@@ -2108,6 +2108,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
                 startedAt: Number(runEntry?.startedAt ?? 1),
                 updatedAt: Number(runEntry?.updatedAt ?? 2),
                 completedAt: runEntry?.completedAt ?? (runEntry?.status === 'running' ? undefined : 2),
+                ancestors: [],
                 subRuns: [],
                 verificationRuns: [],
                 transcriptMessageCount: childRunTranscriptMessages.length,

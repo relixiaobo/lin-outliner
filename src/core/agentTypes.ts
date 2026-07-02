@@ -144,6 +144,20 @@ export interface AgentRunDetailChild {
   startedAt: number;
   updatedAt: number;
   completedAt?: number;
+  childRunCount: number;
+  completedChildRunCount: number;
+  blockedReason?: string;
+  error?: string;
+}
+
+export interface AgentRunDetailAncestor {
+  runId: string;
+  title: string;
+  status: AgentRenderRunStatus;
+  objectiveStatus?: AgentObjectiveStatus;
+  runProfile: AgentRunProfileId;
+  runProfileLabel: string;
+  parentRunId?: string;
 }
 
 export interface AgentRunDetailPayload {
@@ -174,6 +188,7 @@ export interface AgentRunDetailPayload {
   };
   result?: AgentRunSubmissionProjection;
   error?: string;
+  ancestors: AgentRunDetailAncestor[];
   subRuns: AgentRunDetailChild[];
   verificationRuns: AgentRunDetailChild[];
   transcriptMessageCount: number;

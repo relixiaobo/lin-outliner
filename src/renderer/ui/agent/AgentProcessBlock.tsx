@@ -4,9 +4,11 @@ import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  ChevronRightIcon,
   ICON_SIZE,
   LoaderIcon,
 } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
 import { AgentProcessTimeline, isToolCallRowActive } from './AgentProcessTimeline';
 import { runToolStatus, getToolCallStatus, summarizeToolCall } from './AgentToolCallBlock';
@@ -161,12 +163,12 @@ export function summarizeProcess({
   }
 
   // Result-first resting state: a sealed turn with a final answer gets a
-  // non-interactive "Worked for {duration}" divider. A resultless turn we're
-  // deliberately surfacing (a sealed DM turn, per #240) is excluded: "Worked for
-  // ..." would read as a clean unit of work and hide that there is no answer, so
-  // it falls through to the descriptive summary instead. The descriptive
-  // summaries below are also the fallback when the run's wall-clock is unknown
-  // (e.g. legacy records with no run timing).
+  // "Worked for {duration}" process divider. A resultless turn we're deliberately
+  // surfacing (a sealed DM turn) is excluded: "Worked for ..." would
+  // read as a clean unit of work and hide that there is no answer, so it falls
+  // through to the descriptive summary instead. The descriptive summaries below
+  // are also the fallback when the run's wall-clock is unknown (e.g. legacy
+  // records with no run timing).
   if (!turnActive && workedForMs !== null && !surfaceResultlessProcess) {
     return process.workedFor({ duration: formatRunDuration(workedForMs) });
   }
@@ -251,36 +253,61 @@ export function AgentProcessBlock({
   const facts = useMemo(() => processSummaryFacts(items), [items]);
   const liveSegment = turnActive && !sealed;
   const liveElapsedMs = useElapsedTick(liveStartedAtMs, liveSegment);
-  const showTimeline = items.length > 0;
+  const collapsibleWorkedDivider = showWorkDivider
+    && !turnActive
+    && !stopped
+    && !turnFailedWithoutProse
+    && !surfaceResultlessProcess
+    && workedForMs !== null
+    && items.length > 0;
+  const workedDividerExpanded = expandState.isExpanded(`${id}:worked`, false);
+  const showTimeline = items.length > 0 && (!collapsibleWorkedDivider || workedDividerExpanded);
   const showStatusRow = showWorkDivider || showSummaryRow || turnFailedWithoutProse || !showTimeline;
   const showDividerRule = showWorkDivider && !turnFailedWithoutProse;
+  const summary = summarizeProcess({
+    ...facts,
+    pendingToolCallIds,
+    results,
+    turnActive,
+    liveElapsedMs,
+    stopped,
+    turnFailedWithoutProse,
+    surfaceResultlessProcess,
+    workedForMs,
+    process: t.agent.process,
+    toolCallLabels: t.agent.toolCall,
+  });
 
   return (
     <div className={`agent-process-block ${turnFailedWithoutProse ? 'is-error' : ''}`}>
       {showStatusRow ? (
-        <div
-          className={showWorkDivider ? 'agent-work-divider' : 'agent-process-summary-row'}
-          data-agent-process-id={id}
-        >
-          <span className="agent-process-title">
-            {summarizeProcess({
-              ...facts,
-              pendingToolCallIds,
-              results,
-              turnActive,
-              liveElapsedMs,
-              stopped,
-              turnFailedWithoutProse,
-              surfaceResultlessProcess,
-              workedForMs,
-              process: t.agent.process,
-              toolCallLabels: t.agent.toolCall,
-            })}
-          </span>
-          {liveSegment ? (
-            <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
-          ) : null}
-        </div>
+        collapsibleWorkedDivider ? (
+          <ButtonControl
+            aria-expanded={workedDividerExpanded}
+            className="agent-work-divider agent-process-toggle"
+            data-agent-process-id={id}
+            onClick={(event) => {
+              expandState.toggle(`${id}:worked`, workedDividerExpanded, event.currentTarget);
+            }}
+          >
+            <span className="agent-process-title">{summary}</span>
+            <ChevronRightIcon
+              aria-hidden
+              className={`agent-process-chevron${workedDividerExpanded ? ' is-expanded' : ''}`}
+              size={14}
+            />
+          </ButtonControl>
+        ) : (
+          <div
+            className={showWorkDivider ? 'agent-work-divider' : 'agent-process-summary-row'}
+            data-agent-process-id={id}
+          >
+            <span className="agent-process-title">{summary}</span>
+            {liveSegment ? (
+              <LoaderIcon className="agent-process-spinner" size={ICON_SIZE.rowGlyph} />
+            ) : null}
+          </div>
+        )
       ) : null}
       {showDividerRule ? (
         <div aria-hidden className="agent-process-rule" />

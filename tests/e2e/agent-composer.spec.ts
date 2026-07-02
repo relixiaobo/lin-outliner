@@ -3194,27 +3194,67 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Back to chat' })).toBeVisible();
     await expect(page.locator('.agent-dock-header .agent-dock-title-leading')).toHaveCount(0);
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Refresh runs' })).toHaveCount(0);
-    await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Close Work' })).toHaveCount(0);
+    await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Close Work' })).toBeVisible();
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: /^Open Work/ })).toHaveCount(0);
     await expect(runs.getByRole('button', { name: 'Close Work' })).toHaveCount(0);
     await expect(page.locator('.agent-composer-region')).toHaveCount(0);
     await expect(runs.getByText('Inspect Run UI')).toBeVisible();
-    await runs.getByRole('treeitem', { name: /Inspect Run UI/ }).click();
+    await expect(runs.locator('[role="treeitem"]')).toHaveCount(0);
+    await runs.getByRole('button', { name: /Inspect Run UI/ }).click();
 
+    const detailDialog = page.locator('.agent-run-detail-drawer');
+    await expect(detailDialog).toBeVisible();
+    await expect(detailDialog).toHaveAttribute('role', 'dialog');
+    await expect(detailDialog).toHaveAttribute('aria-label', 'Run details');
+    await expect(detailDialog).toHaveCSS('position', 'relative');
+    await expect(page.locator('.agent-run-detail-drawer-backdrop')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    const [headerBox, detailDialogBox] = await Promise.all([
+      page.locator('.agent-dock-header').boundingBox(),
+      detailDialog.boundingBox(),
+    ]);
+    expect(headerBox).toBeTruthy();
+    expect(detailDialogBox).toBeTruthy();
+    expect(detailDialogBox!.y).toBeGreaterThanOrEqual(headerBox!.y + headerBox!.height - 1);
+    const resizeHandle = detailDialog.locator('.agent-run-detail-resize-handle');
+    await expect(resizeHandle).toBeVisible();
+    const resizeHandleBox = await resizeHandle.boundingBox();
+    expect(resizeHandleBox).toBeTruthy();
+    await page.mouse.move(resizeHandleBox!.x + resizeHandleBox!.width / 2, resizeHandleBox!.y + resizeHandleBox!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(resizeHandleBox!.x + resizeHandleBox!.width / 2, resizeHandleBox!.y + resizeHandleBox!.height / 2 + 120);
+    await page.mouse.up();
+    const resizedDialogBox = await detailDialog.boundingBox();
+    expect(resizedDialogBox).toBeTruthy();
+    expect(resizedDialogBox!.height).toBeLessThan(detailDialogBox!.height - 40);
     const details = page.getByRole('region', { name: 'Run details' });
     await expect(details).toBeVisible();
-    await expect(details).toHaveCSS('position', 'static');
-    await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Back to runs' })).toBeVisible();
+    await expect(runs).toBeVisible();
+    await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Back to runs' })).toHaveCount(0);
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Close Work' })).toBeVisible();
-    await expect(details.getByRole('button', { name: 'Back to runs' })).toHaveCount(0);
-    await expect(details.getByText('Inspect Run UI')).toBeVisible();
-    await expect(details.getByText(/4 messages ·/)).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Back to runs' })).toBeDisabled();
+    await expect(details.locator('.agent-run-detail-title-block h3')).toHaveText('Inspect Run UI');
+    await expect(details.locator('.agent-run-detail-current-row')).toHaveCount(0);
+    await expect(details.getByText(/4 messages ·/)).toHaveCount(0);
+    await expect(details.getByRole('button', { name: 'Neva' })).toBeVisible();
+    await expect(details.locator('.agent-run-breadcrumb-root-icon')).toBeVisible();
+    await expect(details.locator('.agent-run-breadcrumb')).toHaveCSS('flex-wrap', 'nowrap');
+    const [breadcrumbBox, titleBox] = await Promise.all([
+      details.locator('.agent-run-detail-title-block .agent-run-breadcrumb').boundingBox(),
+      details.locator('.agent-run-detail-title-block h3').boundingBox(),
+    ]);
+    expect(breadcrumbBox).toBeTruthy();
+    expect(titleBox).toBeTruthy();
+    expect(breadcrumbBox!.y).toBeLessThan(titleBox!.y);
 
     await expect(details).toBeVisible();
-    await expect(details.getByText('Activity log (4)')).toBeVisible();
+    await expect(details.getByText('Activity log (4)')).toHaveCount(0);
+    const processSummary = details.locator('.agent-run-detail-disclosure-section.is-process summary');
+    await expect(processSummary).toHaveText('Working');
+    await expect(details.getByText('Inspect the current UI.')).toBeHidden();
+
+    await processSummary.click();
     await expect(details.getByText('Inspect the current UI.')).toBeVisible();
     await expect(details.getByText('Thought · Read node "today"')).toBeVisible();
-    await expect(details.getByRole('button', { name: 'Working', exact: true })).toHaveCount(0);
 
     await details.locator('.agent-tool-call-toggle').first().click();
     await expect(details.getByText('Daily note content from the Run.')).toBeVisible();
@@ -3236,8 +3276,9 @@ test.describe('agent composer controls', () => {
       },
     ]);
 
-    await page.getByRole('button', { name: 'Back to runs' }).click();
+    await details.getByRole('button', { name: 'Neva' }).click();
     await expect(details).toHaveCount(0);
+    await expect(detailDialog).toHaveCount(0);
     await expect(runs).toBeVisible();
     await page.locator('.agent-dock-header').getByRole('button', { name: 'Back to chat' }).click();
     await expect(runs).toHaveCount(0);

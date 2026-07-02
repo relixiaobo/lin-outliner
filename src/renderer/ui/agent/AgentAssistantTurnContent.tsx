@@ -47,9 +47,9 @@ export function renderAssistantBlocks(
   });
 
   if (turn.process) {
-    // Codex-style turn process: a non-interactive work divider plus the visible
-    // reasoning/interim narration/tool timeline. Only the inner reasoning/tool
-    // groups are disclosures; the top-level "Working/Worked for" row is not.
+    // Codex-style turn process: live "Working" rows stay non-interactive, while
+    // settled "Worked for ..." rows can fold the process details. Inner
+    // reasoning/tool groups keep their own independent disclosures.
     rendered.push(
       <AgentProcessBlock
         conversationId={conversationId}

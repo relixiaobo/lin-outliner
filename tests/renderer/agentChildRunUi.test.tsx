@@ -172,6 +172,8 @@ describe('agent child run UI', () => {
     );
 
     await waitForText(rendered, 'Inspect the current UI.');
+    expect(processDisclosure(rendered).hasAttribute('open')).toBe(false);
+    expect(rendered.container.querySelector('.agent-run-detail-title-marker .checkbox-mark.checked')).not.toBeNull();
     expect(rendered.container.textContent).toContain('The UI path is ready.');
     expect(rendered.container.textContent).not.toContain('Daily note content.');
     // The thinking's first line shows as the dim gist beside the "Thought" label
@@ -231,6 +233,43 @@ describe('agent child run UI', () => {
 
     await waitForText(rendered, 'Structured submitted result.');
     expect(rendered.container.textContent).not.toContain('Old projected result.');
+  });
+
+  test('collapses long run results behind a local show-more control', async () => {
+    const longResult = Array.from({ length: 80 }, (_, index) => `Result sentence ${index + 1}.`).join(' ');
+    const rendered = renderComponent(
+      <AgentRunDetailsPanel
+        onClose={() => undefined}
+        conversationId="conversation-1"
+        index={TEST_INDEX}
+        runId="child-1"
+      />,
+      {
+        details: {
+          'child-1': runDetailPayload({
+            result: {
+              runId: 'child-1',
+              seq: 7,
+              submittedAt: 200,
+              summary: longResult,
+              source: 'final_assistant_message',
+            },
+          }),
+        },
+        payloads: {
+          'child-1': JSON.stringify({
+            messages: [],
+          }),
+        },
+      },
+    );
+
+    await waitForText(rendered, 'Show more');
+    expect(rendered.container.querySelector('.agent-run-detail-result-content.is-collapsed')).not.toBeNull();
+
+    await click(rendered, textButton(rendered, 'Show more'));
+    expect(rendered.container.textContent).toContain('Show less');
+    expect(rendered.container.querySelector('.agent-run-detail-result-content.is-collapsed')).toBeNull();
   });
 
   test('run transcript details can open nested runs', async () => {
@@ -540,20 +579,20 @@ describe('agent child run UI', () => {
       },
     );
 
-    await waitForText(rendered, 'Verification');
-    expect(rendered.container.textContent).toContain('Result');
+    await waitForText(rendered, 'Sub-runs 1/1');
+    expect(rendered.container.textContent).not.toContain('Result');
     expect(rendered.container.textContent).toContain('Complete testing.');
-    expect(rendered.container.querySelector('.agent-run-detail-section-header [aria-label="Copy run result"]')).not.toBeNull();
-    expect(rendered.container.querySelector('.agent-run-detail-result-actions')).toBeNull();
+    expect(rendered.container.textContent).toContain('Details');
+    expect(rendered.container.querySelector('.agent-run-detail-result-actions [aria-label="Copy run result"]')).not.toBeNull();
     expect(rendered.container.querySelector('.agent-run-detail-result-box .contains-task-list')).not.toBeNull();
     expect(rendered.container.querySelectorAll('.agent-run-detail-result-box .task-list-item')).toHaveLength(3);
     expect(rendered.container.textContent).toContain('Verifier');
 
-    await click(rendered, textButton(rendered, 'Verifier'));
+    await click(rendered, textRoleButton(rendered, 'Verifier'));
     expect(openedChildRunId).toBe('child-2');
   });
 
-  test('lists run trees and stops a running run', async () => {
+  test('lists root runs with sub-run progress and opens details for drill-in', async () => {
     let openedRunId: string | null = null;
     const running = childRunEntity();
     running.status = 'running';
@@ -588,20 +627,17 @@ describe('agent child run UI', () => {
       />,
     );
 
-    expect(rendered.container.querySelector('[role="tree"]')).not.toBeNull();
+    expect(rendered.container.querySelector('[role="tree"]')).toBeNull();
     expect(rendered.container.textContent).toContain('Inspect Run UI');
-    expect(rendered.container.textContent).toContain('Summarize notes');
-    expect(rendered.container.textContent).toContain('Verifier');
+    expect(rendered.container.textContent).not.toContain('Summarize notes');
+    expect(rendered.container.textContent).not.toContain('Verifier');
     expect(rendered.container.textContent).not.toContain(verifierPrompt);
-    expect(rendered.container.textContent).toContain('Sub-runs 1/2');
+    expect(rendered.container.textContent).toContain('1/2');
     expect(rendered.container.textContent).not.toContain('General ·');
     expect(rendered.container.textContent).not.toContain('Verified ·');
-    expect(rendered.container.querySelector('.agent-run-child-toggle')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-run-child-toggle')).toBeNull();
 
-    await click(rendered, rendered.container.querySelector('.agent-run-child-toggle'));
-    expect(openedRunId).toBeNull();
-
-    await click(rendered, textTreeItem(rendered, 'Inspect Run UI'));
+    await click(rendered, textRoleButton(rendered, 'Inspect Run UI'));
     expect(openedRunId).toBe('child-1');
 
     await click(rendered, ariaButton(rendered, 'Stop run'));
@@ -636,7 +672,8 @@ describe('agent child run UI', () => {
     );
 
     expect(rendered.container.querySelector('.agent-run-marker.is-completed')).not.toBeNull();
-    expect(rendered.container.textContent).toContain('Completed');
+    expect(rendered.container.querySelector('.agent-run-marker .checkbox-mark.checked')).not.toBeNull();
+    expect(rendered.container.textContent).toContain('Worked for');
   });
 
   test('an open panel refetches the transcript when the run index entry changes', async () => {
@@ -908,10 +945,16 @@ function textButton(rendered: RenderedComponent, text: string): HTMLButtonElemen
   return found;
 }
 
-function textTreeItem(rendered: RenderedComponent, text: string): HTMLElement {
-  const found = Array.from(rendered.document.querySelectorAll<HTMLElement>('[role="treeitem"]'))
+function textRoleButton(rendered: RenderedComponent, text: string): HTMLElement {
+  const found = Array.from(rendered.document.querySelectorAll<HTMLElement>('[role="button"]'))
     .find((candidate) => candidate.textContent?.includes(text));
-  if (!found) throw new Error(`Missing tree item: ${text}`);
+  if (!found) throw new Error(`Missing role button: ${text}`);
+  return found;
+}
+
+function processDisclosure(rendered: RenderedComponent): HTMLDetailsElement {
+  const found = rendered.document.querySelector<HTMLDetailsElement>('.agent-run-detail-disclosure-section.is-process');
+  if (!found) throw new Error('Missing process disclosure');
   return found;
 }
 
@@ -1012,6 +1055,7 @@ function runDetailPayload(overrides: Partial<AgentRunDetailPayload> = {}): Agent
       summary: 'Found the relevant UI path.',
       source: 'final_assistant_message',
     },
+    ancestors: [],
     subRuns: [],
     verificationRuns: [],
     transcriptMessageCount: 1,
@@ -1030,6 +1074,8 @@ function runDetailChild(overrides: Partial<AgentRunDetailPayload['subRuns'][numb
     startedAt: 180,
     updatedAt: 260,
     completedAt: 260,
+    childRunCount: 0,
+    completedChildRunCount: 0,
     ...overrides,
   };
 }

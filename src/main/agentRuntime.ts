@@ -1564,13 +1564,14 @@ export class AgentRuntime {
     if (!meta) return null;
     const conversationId = conversationIdOfRun(meta);
     if (conversationId !== expectedConversationId) return null;
-    const childMetas = conversationId
-      ? (await this.getEventStore().listConversationRunMetaProjections(conversationId))
-          .filter((candidate) => candidate.parentRunId === runId)
-      : [];
+    const conversationRunMetas = conversationId
+      ? await this.getEventStore().listConversationRunMetaProjections(conversationId)
+      : [meta];
+    const childMetas = conversationRunMetas.filter((candidate) => candidate.parentRunId === runId);
     const result = await this.readLatestRunSubmission(runId);
     const transcriptMessageCount = await this.runTranscriptMessageCount(runId);
     return runDetailPayloadFromMeta(meta, {
+      allMetas: conversationRunMetas,
       result,
       childMetas,
       transcriptMessageCount,
@@ -1598,14 +1599,23 @@ export class AgentRuntime {
     }
     const events = await this.getEventStore().readRunStreamEvents(runId);
     if (events.length === 0) return null;
-    const state = replayAgentEvents(events);
-    const messages = await this.deriveRuntimePiMessages(conversationId, state);
     const latestSubmission = latestRunSubmissionFromEvents(events, meta.objective?.latestSubmissionSeq);
+    let state: AgentEventReplayState | null = null;
+    let messages: AgentMessage[] = [];
+    try {
+      state = replayAgentEvents(events);
+      messages = await this.deriveRuntimePiMessages(conversationId, state);
+    } catch {
+      // Some conversation-turn ledgers intentionally reference the visible
+      // conversation user row instead of duplicating it into the run ledger.
+      // Detail drill-in should still show the result/sub-runs; the expandable
+      // process transcript can degrade to empty for those non-standalone ledgers.
+    }
     if (this.runTranscriptCache.size >= RUN_TRANSCRIPT_CACHE_LIMIT) {
       const oldest = this.runTranscriptCache.keys().next().value;
       if (oldest !== undefined) this.runTranscriptCache.delete(oldest);
     }
-    this.runTranscriptCache.set(runId, { latestSeq: state.latestSeq, messages, latestSubmission });
+    this.runTranscriptCache.set(runId, { latestSeq: state?.latestSeq ?? meta.latestSeq, messages, latestSubmission });
     return transcriptPayload(messages, latestSubmission);
   }
 
@@ -3036,7 +3046,11 @@ export class AgentRuntime {
   private async runTranscriptMessageCount(runId: string): Promise<number> {
     const events = await this.getEventStore().readRunStreamEvents(runId);
     if (events.length === 0) return 0;
-    return getAgentEventActivePath(replayAgentEvents(events)).length;
+    try {
+      return getAgentEventActivePath(replayAgentEvents(events)).length;
+    } catch {
+      return 0;
+    }
   }
 
   /**
@@ -7939,6 +7953,7 @@ function transcriptPayload(
 function runDetailPayloadFromMeta(
   meta: AgentRunMetaProjection,
   input: {
+    allMetas: readonly AgentRunMetaProjection[];
     result?: AgentRunSubmissionProjection;
     childMetas: readonly AgentRunMetaProjection[];
     transcriptMessageCount: number;
@@ -7946,7 +7961,7 @@ function runDetailPayloadFromMeta(
 ): AgentRunDetailPayload {
   const status = renderRunStatusFromRunStatus(meta.execution.status);
   const conversationId = conversationIdOfRun(meta);
-  const children = input.childMetas.map(runDetailChildFromMeta);
+  const children = input.childMetas.map((child) => runDetailChildFromMeta(child, input.allMetas));
   const verificationRuns = children.filter((child) => (
     child.objectiveRole === 'verifier' || child.runProfile === 'verify'
   ));
@@ -7954,7 +7969,7 @@ function runDetailPayloadFromMeta(
     child.objectiveRole !== 'verifier' && child.runProfile !== 'verify'
   ));
   const profile = getRunProfile(meta.runProfile);
-  const title = compactRunListTitle(meta.objective?.text) || meta.id;
+  const title = runListTitleFromMeta(meta) || meta.id;
   return {
     runId: meta.id,
     conversationId,
@@ -7983,16 +7998,21 @@ function runDetailPayloadFromMeta(
     } : undefined,
     result: input.result,
     error: meta.execution.error,
+    ancestors: runDetailAncestorsFromMeta(meta, input.allMetas),
     subRuns,
     verificationRuns,
     transcriptMessageCount: input.transcriptMessageCount,
   };
 }
 
-function runDetailChildFromMeta(meta: AgentRunMetaProjection): AgentRunDetailPayload['subRuns'][number] {
+function runDetailChildFromMeta(
+  meta: AgentRunMetaProjection,
+  allMetas: readonly AgentRunMetaProjection[],
+): AgentRunDetailPayload['subRuns'][number] {
   const status = renderRunStatusFromRunStatus(meta.execution.status);
   const profile = getRunProfile(meta.runProfile);
-  const title = compactRunListTitle(meta.objective?.text) || meta.id;
+  const childProgress = runChildProgress(meta.id, allMetas);
+  const title = runListTitleFromMeta(meta) || meta.id;
   return {
     runId: meta.id,
     title,
@@ -8006,7 +8026,59 @@ function runDetailChildFromMeta(meta: AgentRunMetaProjection): AgentRunDetailPay
     startedAt: meta.createdAt,
     updatedAt: meta.updatedAt,
     completedAt: status === 'running' ? undefined : meta.updatedAt,
+    childRunCount: childProgress.total,
+    completedChildRunCount: childProgress.completed,
+    blockedReason: meta.objective?.blockedReason,
+    error: meta.execution.error,
   };
+}
+
+function runDetailAncestorsFromMeta(
+  meta: AgentRunMetaProjection,
+  allMetas: readonly AgentRunMetaProjection[],
+): AgentRunDetailPayload['ancestors'] {
+  const byId = new Map(allMetas.map((candidate) => [candidate.id, candidate]));
+  const ancestors: AgentRunDetailPayload['ancestors'] = [];
+  const visited = new Set<string>([meta.id]);
+  let currentId = meta.parentRunId;
+  while (currentId) {
+    if (visited.has(currentId)) break;
+    visited.add(currentId);
+    const current = byId.get(currentId);
+    if (!current) break;
+    const profile = getRunProfile(current.runProfile);
+    ancestors.push({
+      runId: current.id,
+      title: runListTitleFromMeta(current) || current.id,
+      status: renderRunStatusFromRunStatus(current.execution.status),
+      objectiveStatus: current.objective?.status,
+      runProfile: current.runProfile,
+      runProfileLabel: profile.label,
+      parentRunId: current.parentRunId,
+    });
+    currentId = current.parentRunId;
+  }
+  ancestors.reverse();
+  return ancestors;
+}
+
+function runChildProgress(
+  runId: string,
+  allMetas: readonly AgentRunMetaProjection[],
+): { completed: number; total: number } {
+  let completed = 0;
+  let total = 0;
+  for (const candidate of allMetas) {
+    if (candidate.parentRunId !== runId) continue;
+    total += 1;
+    if (isCompletedRunMeta(candidate)) completed += 1;
+  }
+  return { completed, total };
+}
+
+function isCompletedRunMeta(meta: AgentRunMetaProjection): boolean {
+  if (meta.objective?.status === 'verified') return true;
+  return renderRunStatusFromRunStatus(meta.execution.status) === 'completed';
 }
 
 function latestRunSubmissionFromEvents(

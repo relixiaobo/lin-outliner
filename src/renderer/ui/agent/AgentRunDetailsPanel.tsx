@@ -10,26 +10,36 @@ import type { AgentRenderRunEntity } from '../../../core/agentRenderProjection';
 import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import {
-  AgentIcon,
   BackIcon,
   CheckIcon,
+  ChevronRightIcon,
   CloseIcon,
   CopyIcon,
+  HashIcon,
   ICON_SIZE,
   LoaderIcon,
   WarningIcon,
 } from '../icons';
 import { IconButton } from '../primitives/IconButton';
 import { Button } from '../primitives/Button';
-import { CheckboxMark } from '../primitives/CheckboxMark';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { AgentMarkdown } from './AgentMarkdown';
 import { AgentTranscriptMessageList } from './AgentTranscriptMessageList';
 import type { AgentNodeReferenceOpenHandler } from './AgentInlineReferenceText';
-import { formatRunDuration } from './agentProcessTypes';
 import { useT } from '../../i18n/I18nProvider';
+import {
+  AgentRunStatusMarker,
+  AgentRunRow,
+  displayRunStatus,
+  runWorkLabel,
+  isCompletedRunStatus,
+  type AgentRunDisplayStatus,
+  type AgentRunRowData,
+} from './AgentRunRow';
 
 interface AgentRunDetailsPanelProps {
+  breadcrumbRootLabel?: string;
   onBack?: () => void;
   onClose: () => void;
   conversationId: string | null;
@@ -38,18 +48,18 @@ interface AgentRunDetailsPanelProps {
   index: DocumentIndex;
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onOpenRun?: (runId: string, conversationId: string | null) => void;
+  onOpenRuns?: () => void;
   showHeader?: boolean;
 }
 
 type AgentRunDetailChild = AgentRunDetailPayload['subRuns'][number];
-type DisplayRunStatus = AgentRunDetailPayload['status'] | NonNullable<AgentRunDetailPayload['objectiveStatus']>;
+type DisplayRunStatus = AgentRunDisplayStatus;
 
 /** Live-run transcript poll cadence (the fetch is meta-keyed in main, near-free when unchanged). */
 const LIVE_TRANSCRIPT_POLL_MS = 1_500;
-
-function formatDuration(startedAt: number, endedAt: number): string {
-  return formatRunDuration(endedAt - startedAt);
-}
+const RESULT_PREVIEW_CHAR_LIMIT = 900;
+const DRAWER_MIN_HEIGHT_PX = 360;
+const DRAWER_KEYBOARD_STEP_PX = 48;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
@@ -110,14 +120,7 @@ function transcriptHasActiveAssistantTurn(
 }
 
 function displayStatusFor(detail: Pick<AgentRunDetailPayload, 'objectiveStatus' | 'status'>): DisplayRunStatus {
-  if (detail.objectiveStatus && detail.objectiveStatus !== 'active' && detail.objectiveStatus !== 'stopped') {
-    return detail.objectiveStatus;
-  }
-  return detail.status;
-}
-
-function runStatusClass(status: DisplayRunStatus): string {
-  return status.replace(/_/g, '-');
+  return displayRunStatus(detail);
 }
 
 function runStatusLabel(
@@ -146,8 +149,8 @@ function runStatusLabel(
   }
 }
 
-function isCompletedStatus(status: DisplayRunStatus): boolean {
-  return status === 'completed' || status === 'verified';
+function clampDrawerHeight(height: number, maxHeight: number): number {
+  return Math.min(Math.max(height, DRAWER_MIN_HEIGHT_PX), Math.max(DRAWER_MIN_HEIGHT_PX, maxHeight));
 }
 
 function isVerifierRun(run: Pick<AgentRunDetailChild, 'objectiveRole' | 'runProfile'>): boolean {
@@ -236,30 +239,24 @@ function CopyResultButton({ text }: { text: string }) {
 
 function ResultText({ text }: { text: string }) {
   const t = useT();
+  const [expanded, setExpanded] = useState(false);
+  const displayText = text || t.agent.runDetail.noResultYet;
+  const collapsible = text.length > RESULT_PREVIEW_CHAR_LIMIT;
   return (
     <div className="agent-run-detail-result-box">
-      <AgentMarkdown keyPrefix="run-detail-result" text={text || t.agent.runDetail.noResultYet} />
-    </div>
-  );
-}
-
-function DetailSection({
-  actions,
-  children,
-  title,
-}: {
-  actions?: ReactNode;
-  children: ReactNode;
-  title: string;
-}) {
-  return (
-    <section className="agent-run-detail-section">
-      <div className="agent-run-detail-section-header">
-        <h4>{title}</h4>
-        {actions ? <div className="agent-run-detail-section-actions">{actions}</div> : null}
+      <div className={`agent-run-detail-result-content ${collapsible && !expanded ? 'is-collapsed' : ''}`}>
+        <AgentMarkdown keyPrefix="run-detail-result" text={displayText} />
       </div>
-      {children}
-    </section>
+      {collapsible ? (
+        <ButtonControl
+          aria-expanded={expanded}
+          className="agent-run-detail-result-toggle"
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded ? t.agent.message.showLess : t.agent.message.showMore}
+        </ButtonControl>
+      ) : null}
+    </div>
   );
 }
 
@@ -267,10 +264,12 @@ function DisclosureSection({
   children,
   defaultOpen,
   title,
+  variant = 'section',
 }: {
   children: ReactNode;
   defaultOpen: boolean;
-  title: string;
+  title: ReactNode;
+  variant?: 'section' | 'process';
 }) {
   // Own the open state and seed it once from `defaultOpen`. A bare controlled
   // `open={defaultOpen}` (no onToggle) is re-asserted on every poll re-render, so
@@ -278,20 +277,51 @@ function DisclosureSection({
   // the derived default flips on completion. Per-run remounting (a key at the call
   // site) re-seeds it for a freshly opened run.
   const [open, setOpen] = useState(defaultOpen);
+  const process = variant === 'process';
   return (
     <details
-      className="agent-run-detail-disclosure-section"
+      className={`agent-run-detail-disclosure-section ${process ? 'is-process agent-process-block' : ''}`}
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary>
-        <span>{title}</span>
+      <summary className={process ? 'agent-work-divider' : undefined}>
+        <span className={process ? 'agent-process-title' : undefined}>{title}</span>
+        <ChevronRightIcon
+          aria-hidden
+          className={`agent-run-detail-disclosure-chevron${open ? ' is-expanded' : ''}`}
+          size={14}
+        />
       </summary>
+      {process ? <div aria-hidden className="agent-process-rule" /> : null}
       <div className="agent-run-detail-disclosure-body">
         {children}
       </div>
     </details>
   );
+}
+
+function childRowData(run: AgentRunDetailChild, labels: Messages['agent']): AgentRunRowData {
+  return {
+    runId: run.runId,
+    title: runTitle(run, labels),
+    status: run.status,
+    objectiveStatus: run.objectiveStatus,
+    startedAt: run.startedAt,
+    updatedAt: run.updatedAt,
+    completedAt: run.completedAt,
+    childRunCount: run.childRunCount,
+    completedChildRunCount: run.completedChildRunCount,
+    blockedReason: run.blockedReason,
+    error: run.error,
+  };
+}
+
+function completedRunCount(runs: readonly AgentRunDetailChild[]): number {
+  let count = 0;
+  for (const run of runs) {
+    if (isCompletedRunStatus(displayStatusFor(run))) count += 1;
+  }
+  return count;
 }
 
 function RunChildList({
@@ -306,33 +336,127 @@ function RunChildList({
   const t = useT();
   return (
     <div className="agent-sub-run-list">
-      {runs.map((run) => {
-        const displayStatus = displayStatusFor(run);
-        const completed = isCompletedStatus(displayStatus);
-        const title = runTitle(run, t.agent);
-        const meta = [
-          runStatusLabel(displayStatus, t.agent.run.status),
-          run.runProfileLabel,
-          formatDuration(run.startedAt, run.completedAt ?? run.updatedAt),
-        ].join(' · ');
-        return (
+      {runs.map((run) => (
+        <AgentRunRow
+          className="agent-sub-run-row"
+          key={run.runId}
+          onOpen={onOpenRun ? () => onOpenRun(run.runId, conversationId) : undefined}
+          run={childRowData(run, t.agent)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function RunBreadcrumb({
+  rootLabel,
+  detail,
+  onOpenRuns,
+  onOpenRun,
+}: {
+  rootLabel: string;
+  detail: AgentRunDetailPayload;
+  onOpenRuns?: () => void;
+  onOpenRun?: (runId: string, conversationId: string | null) => void;
+}) {
+  const t = useT();
+  const items = detail.ancestors ?? [];
+  const rootContent = (
+    <>
+      <HashIcon aria-hidden className="agent-run-breadcrumb-root-icon" size={ICON_SIZE.menu} />
+      <span className="agent-run-breadcrumb-root-label">{rootLabel}</span>
+    </>
+  );
+  return (
+    <nav className="agent-run-breadcrumb panel-breadcrumb" aria-label={t.agent.runDetail.detailsAriaLabel}>
+      <span className="panel-breadcrumb-segment agent-run-breadcrumb-root">
+        {onOpenRuns ? (
           <button
-            className={`agent-sub-run-row is-${runStatusClass(displayStatus)}`}
-            disabled={!onOpenRun}
-            key={run.runId}
-            onClick={() => onOpenRun?.(run.runId, conversationId)}
+            className="panel-breadcrumb-button"
+            onClick={onOpenRuns}
             type="button"
           >
-            <span className={`agent-run-marker is-${runStatusClass(displayStatus)}`} aria-hidden="true">
-              <CheckboxMark checked={completed} />
-            </span>
-            <span className="agent-sub-run-main">
-              <span className="agent-sub-run-title">{title}</span>
-              <span className="agent-sub-run-meta">{meta}</span>
-            </span>
+            {rootContent}
           </button>
+        ) : (
+          <span className="panel-breadcrumb-current-label">{rootContent}</span>
+        )}
+      </span>
+      {items.map((item, index) => {
+        const current = index === items.length - 1;
+        return (
+          <span className={`panel-breadcrumb-segment ${current ? 'panel-breadcrumb-current' : ''}`} key={item.runId}>
+            <span className="panel-breadcrumb-divider">/</span>
+            {onOpenRun ? (
+              <button
+                className="panel-breadcrumb-button"
+                onClick={() => onOpenRun(item.runId, detail.conversationId)}
+                type="button"
+              >
+                {item.title}
+              </button>
+            ) : (
+              <span className="panel-breadcrumb-current-label">{item.title}</span>
+            )}
+          </span>
         );
       })}
+    </nav>
+  );
+}
+
+function DrawerResizeHandle({
+  onResize,
+}: {
+  onResize: (height: number) => void;
+}) {
+  const t = useT();
+
+  const updateFromKeyboard = useCallback((direction: 1 | -1) => {
+    const drawer = document.querySelector<HTMLElement>('.agent-run-detail-drawer');
+    const backdrop = drawer?.parentElement;
+    if (!drawer || !backdrop) return;
+    const maxHeight = backdrop.getBoundingClientRect().height;
+    onResize(clampDrawerHeight(drawer.getBoundingClientRect().height + (direction * DRAWER_KEYBOARD_STEP_PX), maxHeight));
+  }, [onResize]);
+
+  return (
+    <div
+      aria-label={t.agent.runDetail.resizeDrawer}
+      aria-orientation="horizontal"
+      className="agent-run-detail-resize-handle"
+      onKeyDown={(event) => {
+        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+        event.preventDefault();
+        updateFromKeyboard(event.key === 'ArrowUp' ? 1 : -1);
+      }}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        const drawer = event.currentTarget.closest<HTMLElement>('.agent-run-detail-drawer');
+        const backdrop = drawer?.parentElement;
+        if (!drawer || !backdrop) return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        const startY = event.clientY;
+        const startHeight = drawer.getBoundingClientRect().height;
+        const maxHeight = backdrop.getBoundingClientRect().height;
+
+        const move = (moveEvent: PointerEvent) => {
+          onResize(clampDrawerHeight(startHeight + startY - moveEvent.clientY, maxHeight));
+        };
+        const stop = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', stop);
+          window.removeEventListener('pointercancel', stop);
+        };
+
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', stop, { once: true });
+        window.addEventListener('pointercancel', stop, { once: true });
+      }}
+      role="separator"
+      tabIndex={0}
+    >
+      <span aria-hidden="true" />
     </div>
   );
 }
@@ -409,6 +533,7 @@ function TranscriptTimeline({
 }
 
 export function AgentRunDetailsPanel({
+  breadcrumbRootLabel,
   onBack,
   onClose,
   conversationId,
@@ -417,6 +542,7 @@ export function AgentRunDetailsPanel({
   index,
   onNodeReferenceOpen,
   onOpenRun,
+  onOpenRuns,
   showHeader = true,
 }: AgentRunDetailsPanelProps) {
   const t = useT();
@@ -507,6 +633,11 @@ export function AgentRunDetailsPanel({
     }
     return map.size > 0 ? map : undefined;
   }, [detail]);
+  const resizeDrawer = useCallback((height: number) => {
+    document
+      .querySelector<HTMLElement>('.agent-run-detail-drawer')
+      ?.style.setProperty('--agent-run-detail-drawer-height', `${height}px`);
+  }, []);
 
   if (!conversationId || !runId) return null;
   if (loading && !detail) {
@@ -532,19 +663,21 @@ export function AgentRunDetailsPanel({
     );
   }
 
-  const endedAt = detail.completedAt ?? detail.updatedAt;
   const displayStatus = displayStatusFor(detail);
-  const displayStatusClass = runStatusClass(displayStatus);
   const canStop = detail.status === 'running';
-  const duration = formatDuration(detail.startedAt, endedAt);
-  const resultText = detail.result?.summary ?? detail.error ?? '';
-  const showActivityOpen = detail.status === 'running' || !resultText;
-  const metaLine = t.agent.runDetail.metaLine({
-    count: messages.length,
-    duration,
-  });
-  const verificationRuns = [...detail.verificationRuns].sort(compareRuns);
-  const subRuns = [...detail.subRuns].sort(compareRuns);
+  const allChildRuns = [...detail.subRuns, ...detail.verificationRuns].sort(compareRuns);
+  const completedChildRuns = completedRunCount(allChildRuns);
+  const resultText = detail.result?.summary
+    ?? detail.objective?.blockedReason
+    ?? detail.objective?.latestVerifierGap
+    ?? detail.error
+    ?? '';
+  const activityTitle = runWorkLabel({
+    completedAt: detail.completedAt,
+    startedAt: detail.startedAt,
+    status: detail.status,
+    updatedAt: detail.updatedAt,
+  }, t.agent.process);
 
   async function stopRun() {
     if (!conversationId || !detail || !canStop || actionPending) return;
@@ -573,38 +706,41 @@ export function AgentRunDetailsPanel({
 
   return (
     <section className="agent-run-detail-panel" aria-label={t.agent.runDetail.detailsAriaLabel}>
+      <DrawerResizeHandle onResize={resizeDrawer} />
       {showHeader ? (
         <header className="agent-run-detail-header">
-        {onBack ? (
           <IconButton
             className="agent-run-detail-back"
+            disabled={!onBack}
             icon={BackIcon}
             label={t.agent.run.backToRuns}
             onClick={onBack}
             title={t.agent.run.backToRuns}
             variant="panel"
           />
-        ) : null}
-        <div className="agent-run-detail-title-block">
-          <div className="agent-run-detail-title-line">
-            <AgentIcon size={ICON_SIZE.menu} />
-            <span>{t.agent.runDetail.heading}</span>
-            <span className={`agent-run-detail-status is-${displayStatusClass}`}>{runStatusLabel(displayStatus, t.agent.run.status)}</span>
+          <div className="agent-run-detail-title-block">
+            <RunBreadcrumb
+              rootLabel={breadcrumbRootLabel ?? t.agent.run.heading}
+              detail={detail}
+              onOpenRuns={onOpenRuns ?? onBack}
+              onOpenRun={onOpenRun}
+            />
+            <div className="agent-run-detail-title-line">
+              <AgentRunStatusMarker className="agent-run-detail-title-marker" status={displayStatus} />
+              <h3>{detail.title}</h3>
+            </div>
           </div>
-          <h3>{detail.title}</h3>
-          <p>{metaLine}</p>
-        </div>
-        <div className="agent-run-detail-header-actions">
-          {stopButton}
-          <IconButton
-            className="agent-run-detail-close"
-            icon={CloseIcon}
-            label={t.agent.runDetail.closeDetails}
-            onClick={onClose}
-            title={t.agent.runDetail.close}
-            variant="panel"
-          />
-        </div>
+          <div className="agent-run-detail-header-actions">
+            {stopButton}
+            <IconButton
+              className="agent-run-detail-close"
+              icon={CloseIcon}
+              label={t.agent.runDetail.closeDetails}
+              onClick={onClose}
+              title={t.agent.runDetail.close}
+              variant="panel"
+            />
+          </div>
         </header>
       ) : null}
       {actionError ? (
@@ -614,47 +750,11 @@ export function AgentRunDetailsPanel({
         </div>
       ) : null}
       <div className="agent-run-detail-body">
-        {!showHeader ? (
-          <div className="agent-run-detail-summary">
-            <div className="agent-run-detail-title-block">
-              <h3>{detail.title}</h3>
-              <p>{metaLine}</p>
-            </div>
-            {stopButton ? (
-              <div className="agent-run-detail-header-actions">
-                {stopButton}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        <DetailSection
-          actions={<CopyResultButton text={resultText} />}
-          title={t.agent.runDetail.sectionResult}
-        >
-          <ResultText text={resultText} />
-        </DetailSection>
-        {verificationRuns.length > 0 ? (
-          <DetailSection title={t.agent.runDetail.sectionVerification}>
-            <RunChildList
-              conversationId={detail.conversationId}
-              runs={verificationRuns}
-              onOpenRun={onOpenRun}
-            />
-          </DetailSection>
-        ) : null}
-        {subRuns.length > 0 ? (
-          <DetailSection title={t.agent.runDetail.sectionSubRuns({ count: subRuns.length })}>
-            <RunChildList
-              conversationId={detail.conversationId}
-              runs={subRuns}
-              onOpenRun={onOpenRun}
-            />
-          </DetailSection>
-        ) : null}
         <DisclosureSection
           key={`activity-${detail.runId}`}
-          defaultOpen={showActivityOpen}
-          title={t.agent.runDetail.sectionActivityLog({ count: messages.length })}
+          defaultOpen={false}
+          title={activityTitle}
+          variant="process"
         >
           <TranscriptTimeline
             error={transcriptError}
@@ -671,6 +771,25 @@ export function AgentRunDetailsPanel({
             toolResults={toolResults}
           />
         </DisclosureSection>
+        <div className="agent-run-detail-result">
+          <div className="agent-run-detail-result-actions">
+            <CopyResultButton text={resultText} />
+          </div>
+          <ResultText key={detail.runId} text={resultText} />
+        </div>
+        {allChildRuns.length > 0 ? (
+          <DisclosureSection
+            key={`subruns-${detail.runId}`}
+            defaultOpen
+            title={t.agent.runDetail.sectionSubRuns({ completed: completedChildRuns, total: allChildRuns.length })}
+          >
+            <RunChildList
+              conversationId={detail.conversationId}
+              runs={allChildRuns}
+              onOpenRun={onOpenRun}
+            />
+          </DisclosureSection>
+        ) : null}
         <DisclosureSection key={`technical-${detail.runId}`} defaultOpen={false} title={t.agent.runDetail.sectionTechnicalDetails}>
           <dl className="agent-run-detail-metadata">
             <div>

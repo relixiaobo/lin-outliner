@@ -326,8 +326,8 @@ turn). See `agent-architecture.md` (Channel runtime).
 `agent_run_detail`, `agent_run_transcript`, `agent_run_status`,
 `agent_run_steer`, `agent_run_amend`, `agent_run_stop`.
 `agent_run_transcript` replays the run's own ledger for the drill-in transcript.
-`agent_run_detail` reads Run meta, the latest result submission, and direct
-sub-run metadata from the Run index.
+`agent_run_detail` reads Run meta, ancestor breadcrumb metadata, the latest result
+submission, and direct sub-run metadata from the Run index.
 Runtime control surfaces use only the `agent_run_*` command names; the older
 pre-release child-run command aliases are not accepted.
 

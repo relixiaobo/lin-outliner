@@ -998,6 +998,15 @@ describe('agent runtime childRuns', () => {
     expect(controllers[0]?.objective?.status).toBe('verified');
     const controllerDetail = await runtime.agentRunDetail(controllers[0]!.id, conversation.conversationId);
     expect(controllerDetail?.result?.summary).toBe('controller verified result');
+    expect(controllerDetail?.ancestors.at(-1)).toMatchObject({
+      runId: controllers[0]?.parentRunId,
+      title: 'Spawn a verified controller run.',
+    });
+    const parentDetail = await runtime.agentRunDetail(controllers[0]!.parentRunId!, conversation.conversationId);
+    expect(parentDetail?.subRuns.find((run) => run.runId === controllers[0]!.id)).toMatchObject({
+      childRunCount: 3,
+      completedChildRunCount: 3,
+    });
     const controllerStatus = await runtime.runStatus(conversation.conversationId, controllers[0]!.id, { wait: true });
     expect(controllerStatus.children?.map((child) => child.role).sort()).toEqual(['verifier', 'verifier', 'worker']);
     expect(controllerStatus.children?.find((child) => child.description === 'controller leaf child')).toMatchObject({
