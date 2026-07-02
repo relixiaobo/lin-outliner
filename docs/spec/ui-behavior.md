@@ -43,6 +43,8 @@ keyboard or pointer change should be checked against this matrix.
   `localStorage('lin:recursive-outliner') === '1'`.
 - Expanding or collapsing a row keeps the clicked disclosure control visually
   anchored in the panel viewport, even while virtualized row measurements settle.
+  Immediate user scroll input releases that temporary anchor; delayed measurement
+  correction must not pull the viewport back after the user has moved it.
 - Page titles are editable rich text. This includes the workspace root title
   (so people can name their workspace), which stays structurally fixed — it can
   be renamed but not moved, deleted, or reparented. The functional system
