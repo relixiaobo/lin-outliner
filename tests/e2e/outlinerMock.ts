@@ -3300,6 +3300,8 @@ export async function emitAgentProjection(page: Page, conversationId: string, st
     conversationTitle: state.conversationTitle ?? 'General',
     agentId: childRun.executingAgentId ?? 'built-in:tenon:assistant',
     kind: 'delegation',
+    runProfile: childRun.runProfile ?? 'default',
+    runProfileLabel: childRun.runProfileLabel ?? 'Default',
     status: childRun.status,
     objectiveStatus: childRun.objectiveStatus,
     purpose: childRun.purpose,

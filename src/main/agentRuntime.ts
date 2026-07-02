@@ -113,7 +113,7 @@ import {
 } from '../core/referenceMarkup';
 import { normalizeConversationTitle, sanitizeConversationTitle } from '../core/agentConversationTitle';
 import { TOOL_CATALOG } from '../core/agentToolCatalog';
-import { serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
+import { isSystemReminderBlock, serializeAgentTextAttachment, systemReminder } from '../core/agentAttachments';
 import { MAX_INLINE_IMAGE_BASE64_CHARS } from '../core/agentAttachmentLimits';
 import { materializeAgentLocalPath, materializePathBackedAttachment } from './agentAttachmentMaterialization';
 import { sniffMimeType } from './assetService';
@@ -1254,8 +1254,11 @@ export class AgentRuntime {
       // a 250ms debounce during streaming) only to recover those same fields was
       // O(conversations × stream-size) of redundant disk I/O.
       const metas = await store.listConversationRunMetaProjections(conversation.id, { limit: perConversationLimit });
+      const visibleParentRunIds = visibleWorkParentRunIds(metas);
       for (const meta of metas) {
-        const entry = runListEntryFromMeta(meta, conversation);
+        const entry = runListEntryFromMeta(meta, conversation, {
+          includeTurn: visibleParentRunIds.has(meta.id),
+        });
         if (entry) runs.push(entry);
       }
     }
@@ -5655,6 +5658,7 @@ export class AgentRuntime {
         runId,
         agentId,
         anchor: { type: 'conversation', agentId, conversationId },
+        objective: runObjectiveFromPrompt(prompt),
         disposition: identity.disposition ?? 'attended',
         trigger: triggerOverride ?? this.runTrigger(scoped),
         fingerprint: identity.fingerprint ?? this.runFingerprint(scoped, agentId, agent),
@@ -8316,19 +8320,19 @@ function eventsAffectRunProjection(events: readonly AgentEvent[]): boolean {
 function runListEntryFromMeta(
   run: AgentRunMetaProjection,
   conversation: AgentConversationIndexEntry,
+  options: { includeTurn?: boolean } = {},
 ): AgentRunListEntry | null {
   if (run.anchor.type !== 'conversation') return null;
   const kind = deriveAgentRunKind(run);
-  if (kind === 'turn' || kind === 'reflective') return null;
+  if ((kind === 'turn' && !options.includeTurn) || kind === 'reflective') return null;
   const status = renderRunStatusFromRunStatus(run.execution.status);
   const conversationTitle = sanitizeConversationTitle(conversation.title)
     ?? sanitizeConversationTitle(conversation.goal)
     ?? null;
-  // The objective is free-form and may be long or multi-line; the runs panel uses
-  // this verbatim as the row title AND its aria-label, so collapse it to a single
-  // capped line here rather than shipping a wall of text to the screen reader.
-  const title = compactRunListTitle(run.objective?.text)
+  const profile = getRunProfile(run.runProfile);
+  const title = runListTitleFromMeta(run)
     || conversationTitle
+    || profile.label
     || run.id;
   return {
     runId: run.id,
@@ -8336,6 +8340,8 @@ function runListEntryFromMeta(
     conversationTitle,
     agentId: run.agentId,
     kind,
+    runProfile: run.runProfile,
+    runProfileLabel: profile.label,
     status,
     objectiveStatus: run.objective?.status,
     purpose: runPurposeFromMeta(run),
@@ -8345,6 +8351,46 @@ function runListEntryFromMeta(
     updatedAt: run.updatedAt,
     completedAt: status === 'running' ? undefined : run.updatedAt,
   };
+}
+
+function visibleWorkParentRunIds(runs: readonly AgentRunMetaProjection[]): Set<string> {
+  const parentIds = new Set<string>();
+  for (const run of runs) {
+    if (!run.parentRunId) continue;
+    if (deriveAgentRunKind(run) === 'reflective') continue;
+    if (run.runProfile === 'verify' || run.objective?.role === 'verifier') continue;
+    parentIds.add(run.parentRunId);
+  }
+  return parentIds;
+}
+
+function runObjectiveFromPrompt(prompt: UserMessage | null): string | undefined {
+  if (!prompt) return undefined;
+  const parts = typeof prompt.content === 'string'
+    ? [prompt.content]
+    : prompt.content
+        .filter((part): part is TextContent => part.type === 'text')
+        .map((part) => part.text);
+  const text = parts
+    .map((part) => part.trim())
+    .filter((part) => part && !isSystemReminderBlock(part))
+    .join('\n')
+    .trim();
+  return compactRunListTitle(text) ?? undefined;
+}
+
+function runListTitleFromMeta(run: AgentRunMetaProjection): string | null {
+  if (run.runProfile === 'research') {
+    return researchQuestionFromObjective(run.objective?.text)
+      ?? getRunProfile(run.runProfile).label;
+  }
+  return compactRunListTitle(run.objective?.text);
+}
+
+function researchQuestionFromObjective(objective: string | undefined): string | null {
+  if (!objective) return null;
+  const match = /(?:^|\n)ARGUMENTS:\s*([\s\S]+)$/i.exec(objective);
+  return compactRunListTitle(match?.[1]);
 }
 
 function compareRunListEntries(left: AgentRunListEntry, right: AgentRunListEntry): number {

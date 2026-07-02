@@ -6,12 +6,15 @@ import { useI18n } from '../../i18n/I18nProvider';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
+  CheckIcon,
+  ClockIcon,
   ICON_SIZE,
   LoaderIcon,
   StopIcon,
+  ToolErrorIcon,
   WarningIcon,
+  type AppIcon,
 } from '../icons';
-import { CheckboxMark } from '../primitives/CheckboxMark';
 import { EmptyState, ErrorState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
 
@@ -77,7 +80,10 @@ function flattenTree(nodes: readonly AgentRunTreeNode[], expanded: ReadonlySet<s
 }
 
 function runStatusClass(run: AgentRunListEntry): string {
-  return run.objectiveStatus ?? run.status;
+  if (run.objectiveStatus === 'blocked' || run.objectiveStatus === 'budget_exhausted' || run.objectiveStatus === 'verified') {
+    return run.objectiveStatus;
+  }
+  return run.status;
 }
 
 function isCompletedRun(run: AgentRunListEntry): boolean {
@@ -85,9 +91,35 @@ function isCompletedRun(run: AgentRunListEntry): boolean {
   return status === 'completed' || status === 'verified';
 }
 
+function runStatusIcon(run: AgentRunListEntry): AppIcon {
+  const status = runStatusClass(run);
+  if (status === 'running') return LoaderIcon;
+  if (status === 'failed' || status === 'blocked' || status === 'budget_exhausted') return ToolErrorIcon;
+  if (status === 'stopped') return StopIcon;
+  if (status === 'completed' || status === 'verified') return CheckIcon;
+  return ClockIcon;
+}
+
 function runDisplayTitle(run: AgentRunListEntry, labels: Messages['agent']['run']): string {
   if (run.purpose === 'verify') return labels.kind.verifier;
   return run.title;
+}
+
+function runKindLabel(run: AgentRunListEntry, labels: Messages['agent']['run']): string {
+  if (run.purpose === 'verify') return labels.kind.verifier;
+  if (run.runProfile !== 'default') return run.runProfileLabel;
+  return labels.kind[run.kind];
+}
+
+function runStatusLabel(run: AgentRunListEntry, labels: Messages['agent']['run']): string {
+  const status = runStatusClass(run);
+  if (status === 'budget_exhausted') return labels.status.budgetExhausted;
+  if (status === 'blocked') return labels.status.blocked;
+  if (status === 'verified') return labels.status.verified;
+  if (status === 'running') return labels.status.running;
+  if (status === 'failed') return labels.status.failed;
+  if (status === 'stopped') return labels.status.stopped;
+  return labels.status.completed;
 }
 
 function subRunProgressLabel(
@@ -198,11 +230,17 @@ export function AgentRunsPanel({
             const hasChildren = node.children.length > 0;
             const title = runDisplayTitle(run, t.agent.run);
             const statusClass = runStatusClass(run);
-            const completed = isCompletedRun(run);
+            const StatusIcon = runStatusIcon(run);
             const completedChildCount = node.children.filter((child) => isCompletedRun(child.run)).length;
             const childProgress = hasChildren
               ? subRunProgressLabel(completedChildCount, node.children.length, t.agent.run)
               : null;
+            const metaItems = [
+              run.conversationTitle ?? t.agent.run.unknownConversation,
+              runKindLabel(run, t.agent.run),
+              runStatusLabel(run, t.agent.run),
+              childProgress,
+            ].filter(Boolean);
             const rowClassName = [
               'agent-run-row',
               `is-${run.status}`,
@@ -229,14 +267,21 @@ export function AgentRunsPanel({
                 tabIndex={0}
               >
                 <span className={`agent-run-marker is-${statusClass}`} aria-hidden="true">
-                  <CheckboxMark checked={completed} />
+                  <StatusIcon
+                    className={statusClass === 'running' ? 'agent-run-status-spinner' : undefined}
+                    size={ICON_SIZE.menu}
+                    strokeWidth={2.4}
+                  />
                 </span>
                 <span className="agent-run-main">
                   <span className="agent-run-title-row">
                     <span className="agent-run-title">{title}</span>
                   </span>
-                  {hasChildren && childProgress ? (
-                    <span className="agent-run-meta-row">
+                  <span className="agent-run-meta-row">
+                    {metaItems.map((item, index) => (
+                      <span className="agent-run-meta-chip" key={`${item}:${index}`}>{item}</span>
+                    ))}
+                    {hasChildren && childProgress ? (
                       <button
                         aria-label={expanded ? t.agent.run.collapseRun : t.agent.run.expandRun}
                         className="agent-run-child-toggle"
@@ -247,11 +292,10 @@ export function AgentRunsPanel({
                         title={expanded ? t.agent.run.collapseRun : t.agent.run.expandRun}
                         type="button"
                       >
-                        <span>{childProgress}</span>
                         {expanded ? <ChevronDownIcon size={ICON_SIZE.menu} /> : <ChevronRightIcon size={ICON_SIZE.menu} />}
                       </button>
-                    </span>
-                  ) : null}
+                    ) : null}
+                  </span>
                 </span>
                 {canStop ? (
                   <div className="agent-run-row-actions">

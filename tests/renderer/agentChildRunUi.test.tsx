@@ -598,7 +598,7 @@ describe('agent child run UI', () => {
     expect(rendered.container.textContent).not.toContain('Verified ·');
     expect(rendered.container.querySelector('.agent-run-child-toggle')).not.toBeNull();
 
-    await click(rendered, textButton(rendered, 'Sub-runs 1/2'));
+    await click(rendered, rendered.container.querySelector('.agent-run-child-toggle'));
     expect(openedRunId).toBeNull();
 
     await click(rendered, textTreeItem(rendered, 'Inspect Run UI'));
@@ -614,6 +614,29 @@ describe('agent child run UI', () => {
         conversationId: 'conversation-1',
       },
       }]);
+  });
+
+  test('shows a completed run as complete even when its objective is still active', () => {
+    const completed = {
+      ...runEntry({
+        ...childRunEntity(),
+        status: 'completed',
+        completedAt: 260,
+      }),
+      objectiveStatus: 'active' as const,
+    };
+    const rendered = renderComponent(
+      <AgentRunsPanel
+        error={null}
+        loading={false}
+        onOpenRun={() => undefined}
+        onRefresh={() => undefined}
+        runs={[completed]}
+      />,
+    );
+
+    expect(rendered.container.querySelector('.agent-run-marker.is-completed')).not.toBeNull();
+    expect(rendered.container.textContent).toContain('Completed');
   });
 
   test('an open panel refetches the transcript when the run index entry changes', async () => {
@@ -1018,6 +1041,8 @@ function runEntry(childRun: ChildRunFixture): AgentRunListEntry {
     conversationTitle: 'General',
     agentId: childRun.executingAgentId,
     kind: 'delegation',
+    runProfile: 'default',
+    runProfileLabel: 'Default',
     status: childRun.status,
     purpose: undefined,
     parentRunId: childRun.parentRunId ?? null,

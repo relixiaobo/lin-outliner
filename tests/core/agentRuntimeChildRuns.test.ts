@@ -1408,7 +1408,7 @@ describe('agent runtime childRuns', () => {
     expect(afterOpen[afterOpen.length - 1]?.unreadCount).toBe(0);
   });
 
-  test('lists Work runs across channels without surfacing ordinary turns', async () => {
+  test('lists Work runs across channels with parent turn groups', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-list-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-list-data-'));
     roots.push(localRoot, dataRoot);
@@ -1463,18 +1463,29 @@ describe('agent runtime childRuns', () => {
 
     expect(script.pendingCount()).toBe(0);
     const runs = await runtime.listRuns();
-    expect(runs).toHaveLength(2);
-    expect(runs.some((run) => run.kind === 'turn')).toBe(false);
-    expect(runs.every((run) => run.kind === 'delegation')).toBe(true);
+    expect(runs).toHaveLength(4);
     expect(runs.every((run) => run.status === 'completed')).toBe(true);
-    expect(runs.every((run) => Boolean(run.parentRunId))).toBe(true);
+    const turnRuns = runs.filter((run) => run.kind === 'turn');
+    const delegationRuns = runs.filter((run) => run.kind === 'delegation');
+    expect(turnRuns).toHaveLength(2);
+    expect(delegationRuns).toHaveLength(2);
+    expect(turnRuns.every((run) => run.parentRunId === null)).toBe(true);
+    expect(delegationRuns.every((run) => Boolean(run.parentRunId))).toBe(true);
+    expect(delegationRuns.every((run) => run.runProfile === 'default')).toBe(true);
+    expect(delegationRuns.every((run) => run.runProfileLabel === 'Default')).toBe(true);
 
-    const byTitle = new Map(runs.map((run) => [run.title, run]));
+    const byTitle = new Map(delegationRuns.map((run) => [run.title, run]));
     expect([...byTitle.keys()].sort()).toEqual(['Index alpha work.', 'Index beta work.']);
     expect(byTitle.get('Index alpha work.')?.conversationId).toBe(alpha.conversationId);
     expect(byTitle.get('Index alpha work.')?.conversationTitle).toBe('Alpha Work');
     expect(byTitle.get('Index beta work.')?.conversationId).toBe(beta.conversationId);
     expect(byTitle.get('Index beta work.')?.conversationTitle).toBe('Beta Work');
+    const alphaParent = turnRuns.find((run) => run.runId === byTitle.get('Index alpha work.')?.parentRunId);
+    const betaParent = turnRuns.find((run) => run.runId === byTitle.get('Index beta work.')?.parentRunId);
+    expect(alphaParent?.title).toBe('Start the alpha indexed run.');
+    expect(alphaParent?.conversationTitle).toBe('Alpha Work');
+    expect(betaParent?.title).toBe('Start the beta indexed run.');
+    expect(betaParent?.conversationTitle).toBe('Beta Work');
     await expect(runtime.listRuns({ limit: 1 })).resolves.toHaveLength(1);
   });
 

@@ -88,23 +88,23 @@
 .agent-run-row {
   display: grid;
   min-width: 0;
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr);
   align-items: start;
   gap: var(--space-2);
   border-radius: var(--radius-sm);
-  padding: 0 var(--space-2);
+  padding: var(--space-1) var(--space-2);
 }
 
 .agent-run-row.has-actions {
-  grid-template-columns: 20px minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
 }
 
 .agent-run-row.has-children.has-actions {
-  grid-template-columns: 20px minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
 }
 
 .agent-run-row.is-subrun {
-  margin-left: calc(20px + var(--space-2) + var(--subrun-depth, 0) * var(--space-5));
+  margin-left: calc(18px + var(--space-2) + var(--subrun-depth, 0) * var(--space-5));
   padding-right: var(--space-2);
   padding-left: 0;
 }
@@ -121,7 +121,7 @@
   gap: var(--space-1);
   border-radius: var(--radius-sm);
   color: inherit;
-  padding: var(--space-2) var(--space-2) var(--space-3) 0;
+  padding: var(--space-1) var(--space-2) var(--space-2) 0;
   text-align: left;
 }
 
@@ -135,11 +135,6 @@
   color: var(--text-soft);
 }
 
-.agent-run-row:hover > .agent-run-marker .checkbox-mark:not(.checked),
-.agent-run-row:focus-within > .agent-run-marker .checkbox-mark:not(.checked) {
-  border-color: var(--text-soft);
-}
-
 .agent-run-row:focus-visible {
   outline: 0;
   box-shadow: var(--focus-ring-shadow);
@@ -148,18 +143,34 @@
 .agent-run-marker {
   position: relative;
   display: inline-flex;
-  width: 20px;
-  height: 32px;
+  width: 18px;
+  height: 30px;
   align-items: center;
   justify-content: center;
+  color: var(--text-faint);
 }
 
-.agent-run-marker.is-blocked .checkbox-mark,
-.agent-run-marker.is-budget_exhausted .checkbox-mark,
-.agent-run-marker.is-failed .checkbox-mark,
-.agent-run-marker.is-stopped .checkbox-mark {
-  border-color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
+.agent-run-marker.is-running {
+  color: var(--text-soft);
+}
+
+.agent-run-marker.is-completed,
+.agent-run-marker.is-verified {
+  color: var(--semantic-success-strong);
+}
+
+.agent-run-marker.is-blocked,
+.agent-run-marker.is-budget_exhausted,
+.agent-run-marker.is-failed {
+  color: var(--danger);
+}
+
+.agent-run-marker.is-stopped {
+  color: var(--text-soft);
+}
+
+.agent-run-status-spinner {
+  animation: agent-tool-spin 900ms linear infinite;
 }
 
 .agent-run-title-row,
@@ -177,6 +188,27 @@
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
   white-space: normal;
+}
+
+.agent-run-meta-row {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.agent-run-meta-chip {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.agent-run-meta-chip + .agent-run-meta-chip::before {
+  content: "\00b7";
+  color: var(--text-faint);
+  padding-right: var(--space-2);
 }
 
 .agent-run-child-toggle {

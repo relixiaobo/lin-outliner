@@ -304,6 +304,8 @@ export interface AgentRunListEntry {
   conversationTitle: string | null;
   agentId: AgentId;
   kind: AgentRunKind;
+  runProfile: AgentRunProfileId;
+  runProfileLabel: string;
   status: AgentRenderRunStatus;
   objectiveStatus?: AgentObjectiveStatus;
   purpose?: AgentRunPurpose;
