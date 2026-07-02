@@ -188,6 +188,7 @@ carry the detailed form.
 | Icon masks and provider logos are identity assets. | Inline-file masks and provider marks; they are not a second product icon library. | [foundations.md → Icons](./design-system/foundations.md#icons) | `tests/e2e/typography-tokens.spec.ts` token guards + icon-semantics review when icon assets change. |
 | `cursor: help` is allowed for diagnostics. | Inline diagnostic hints or native-title tooltips only. | [patterns.md → Interaction States](./design-system/patterns.md#interaction-states) | `tests/e2e/cursor-affordances.spec.ts` for cursor policy. |
 | Native window rounding depends on compiled addon output. | macOS 24px app window corner; each clone must run `bun run build:native` before visual verification. | [foundations.md → Token Rules](./design-system/foundations.md#token-rules) | `tests/e2e/window-material.spec.ts` plus packaged/native-corner visual verification when window geometry changes. |
+| Model-upload JPEG alpha matting may force a white canvas. | Agent composer image resizing only; it composites transparent pixels against white before JPEG encoding for model upload and never paints app chrome. | [surfaces.md → Agent](./design-system/surfaces.md#agent) | `scripts/design-system-metrics.ts` named raw-hex exception + `AgentComposer.tsx` image upload path. |
 
 ## Foundations
 

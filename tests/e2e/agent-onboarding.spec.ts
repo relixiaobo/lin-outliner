@@ -1,17 +1,16 @@
 import { expect, test } from '@playwright/test';
+import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
 import { commandCalls, openMockedApp } from './outlinerMock';
 
-async function waitForAgentConversation(page: import('@playwright/test').Page) {
-  await expect.poll(async () => {
-    const calls = await commandCalls(page);
-    return calls.some((call) => call.cmd === 'agent_restore_latest_conversation');
-  }).toBe(true);
+async function waitForAgentReady(page: import('@playwright/test').Page) {
+  await expect(page.locator('.agent-empty-state')).toBeVisible();
+  await expect(page.getByLabel('Agent message')).toBeVisible();
 }
 
 test.describe('agent panel empty state', () => {
   test('with a provider: stays blank and sends normally', async ({ page }) => {
     await openMockedApp(page);
-    await waitForAgentConversation(page);
+    await waitForAgentReady(page);
 
     await expect(page.locator('.agent-empty-state')).toBeVisible();
     await expect(page.locator('.agent-empty-greeting')).toHaveCount(0);
@@ -29,13 +28,13 @@ test.describe('agent panel empty state', () => {
       return calls.find((call) => call.cmd === 'agent_send_message')?.args;
     }).toMatchObject({
       message: 'Summarize current outline.',
-      conversationId: 'mock-agent-conversation',
+      conversationId: DEFAULT_GENERAL_CHANNEL_ID,
     });
   });
 
   test('without a provider: shows onboarding, CTA opens Settings, and send is blocked', async ({ page }) => {
     await openMockedApp(page, { noProvider: true });
-    await waitForAgentConversation(page);
+    await waitForAgentReady(page);
 
     // Onboarding replaces the greeting; no suggestion chips remain.
     await expect(page.getByText('Connect an AI provider to start.')).toBeVisible();

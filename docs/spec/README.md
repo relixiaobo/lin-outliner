@@ -105,6 +105,7 @@ When changing specs, run the smallest relevant checks:
   for design-system token changes or design-system spec-example changes.
 - `bun scripts/design-system-metrics.ts --json` for design-system compression,
   decision derivation, component coverage, exception evidence, and raw-hex/token
-  discipline. Use `--check` before publishing design-system compression work.
+  discipline across renderer CSS/TS/TSX. Use `--check` before publishing
+  design-system compression work.
 - Focused Playwright or core tests for the behavior being documented.
 - `git diff --check`

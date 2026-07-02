@@ -29,7 +29,9 @@ decision routing, exceptions, and validation.
   40% below the post-split baseline (`surfaces.md` <= 403 lines from a 672-line
   baseline); the sampled [decision audit](./decision-audit.md) proves at least
   80% derived decisions; component coverage is at least 80%; Exception Registry
-  evidence coverage is 100%; raw hex outside token declarations stays 0.
+  evidence coverage is 100%; raw hex outside token declarations stays 0 after
+  named exceptions. The raw-hex scan covers renderer CSS, TS, and TSX, so source
+  literals cannot hide outside stylesheet files.
 - **Derivation audit.** For a new or changed UI, the PR must be able to answer
   four questions: which surface owns it, which component primitive or pattern it
   uses, which state-model row it maps to, and which foundation tokens carry its
@@ -59,6 +61,9 @@ decision routing, exceptions, and validation.
   outside primitive implementations must either migrate to a primitive or appear
   in `scripts/design-system-metrics.ts` with a named reason. The reason must be a
   real semantic/native requirement, not a styling shortcut.
+- **Raw-hex exceptions.** Renderer raw hex belongs in token declarations. Any
+  unavoidable source literal must be named in `scripts/design-system-metrics.ts`
+  and in the kernel Exception Registry, with a narrow scope and evidence.
 
 ## Validation
 
@@ -68,8 +73,8 @@ Expected checks for design-system changes:
 - `bun run docs:check`
 - `bun scripts/design-system-metrics.ts --json` for the current compression,
   decision-derivation, component-coverage, exception-evidence, and
-  token-discipline baseline. Use `--check` before publishing a design-system
-  compression or contract PR.
+  renderer-wide token-discipline baseline. Use `--check` before publishing a
+  design-system compression or contract PR.
 - Focused Playwright tests for touched surfaces.
 - `tests/e2e/typography-tokens.spec.ts` for token discipline.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when

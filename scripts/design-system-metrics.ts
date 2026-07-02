@@ -8,18 +8,20 @@
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import * as ts from 'typescript';
 
 const ROOT = join(import.meta.dir, '..');
 const DESIGN_SYSTEM_DIR = join(ROOT, 'docs', 'spec', 'design-system');
 const DESIGN_SYSTEM_KERNEL = join(ROOT, 'docs', 'spec', 'design-system.md');
 const DECISION_AUDIT = join(DESIGN_SYSTEM_DIR, 'decision-audit.md');
-const STYLES_DIR = join(ROOT, 'src', 'renderer', 'styles');
+const RENDERER_DIR = join(ROOT, 'src', 'renderer');
 const UI_DIR = join(ROOT, 'src', 'renderer', 'ui');
 
 const SURFACE_BASELINE_LINES = 672;
 const SURFACE_TARGET_LINES = Math.floor(SURFACE_BASELINE_LINES * 0.6);
 const COMPONENT_COVERAGE_TARGET = 0.8;
 const DECISION_DERIVATION_TARGET = 0.8;
+const RAW_HEX_PATTERN = /#(?:[0-9a-fA-F]{3,8})\b/g;
 
 const primitives = [
   'Button',
@@ -57,6 +59,13 @@ const nativeControlExceptions: Record<string, string> = {
   'src/renderer/ui/outliner/NodeValuePicker.tsx': 'Input is an anchored filtering control with caller-owned query semantics.',
 };
 
+const rawHexExceptions: Record<string, { name: string; reason: string }> = {
+  'src/renderer/ui/agent/AgentComposer.tsx:#ffffff': {
+    name: 'Model-upload JPEG alpha matting may force a white canvas.',
+    reason: 'Transparent image pixels are composited against white before JPEG encoding for model upload.',
+  },
+};
+
 function lineCount(file: string): number {
   return readFileSync(file, 'utf8').split('\n').length;
 }
@@ -77,8 +86,12 @@ function sourceFiles(dir: string): string[] {
   }).sort();
 }
 
-function countMatches(text: string, pattern: RegExp): number {
-  return [...text.matchAll(pattern)].length;
+function filesByPattern(dir: string, pattern: RegExp): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return filesByPattern(path, pattern);
+    return entry.isFile() && pattern.test(entry.name) ? [path] : [];
+  }).sort();
 }
 
 function designSystemLineMetrics() {
@@ -131,19 +144,34 @@ function componentCoverageMetrics() {
   let nativeUses = 0;
   let exceptedNativeUses = 0;
   const directNativeFiles = new Map<string, number>();
+  const nativeTags = new Set(['button', 'input', 'textarea', 'select']);
 
   for (const file of files) {
     const rel = relative(ROOT, file);
     const text = readFileSync(file, 'utf8');
-    for (const primitive of primitives) {
-      primitiveUses += countMatches(text, new RegExp(`<${primitive}(\\s|>|\\.)`, 'g'));
-    }
-    if (rel.startsWith('src/renderer/ui/primitives/')) continue;
-
-    const directNativeCount = ['button', 'input', 'textarea', 'select'].reduce(
-      (sum, tag) => sum + countMatches(text, new RegExp(`<${tag}(\\s|>)`, 'g')),
-      0,
+    const sourceFile = ts.createSourceFile(
+      file,
+      text,
+      ts.ScriptTarget.Latest,
+      true,
+      file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
     );
+    let directNativeCount = 0;
+
+    function visit(node: ts.Node) {
+      if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+        const tagName = node.tagName.getText(sourceFile);
+        if (primitives.some((primitive) => tagName === primitive || tagName.startsWith(`${primitive}.`))) {
+          primitiveUses += 1;
+        }
+        if (!rel.startsWith('src/renderer/ui/primitives/') && nativeTags.has(tagName)) {
+          directNativeCount += 1;
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(sourceFile);
     if (directNativeCount === 0) continue;
     if (nativeControlExceptions[rel]) {
       exceptedNativeUses += directNativeCount;
@@ -164,25 +192,87 @@ function componentCoverageMetrics() {
 }
 
 function rawHexMetrics() {
-  const cssFiles = readdirSync(STYLES_DIR)
-    .filter((file) => file.endsWith('.css'))
-    .map((file) => join(STYLES_DIR, file));
+  const files = filesByPattern(RENDERER_DIR, /\.(css|ts|tsx)$/);
   const violations: string[] = [];
-  for (const file of cssFiles) {
-    const text = readFileSync(file, 'utf8').replace(
+  const exceptionUses: string[] = [];
+  const kernel = readFileSync(DESIGN_SYSTEM_KERNEL, 'utf8');
+  const undocumentedExceptions = Object.values(rawHexExceptions)
+    .filter((exception) => !kernel.includes(`| ${exception.name} |`))
+    .map((exception) => exception.name);
+
+  function recordMatch(file: string, lineNumber: number, lineText: string, value: string) {
+    const rel = relative(ROOT, file);
+    const exception = rawHexExceptions[`${rel}:${value.toLowerCase()}`];
+    const finding = `${rel}:${lineNumber} ${value} ${lineText.trim()}`;
+    if (exception) {
+      exceptionUses.push(`${finding} (${exception.name})`);
+    } else {
+      violations.push(finding);
+    }
+  }
+
+  function scanCss(file: string, text: string) {
+    const uncommented = text.replace(
       /\/\*[\s\S]*?\*\//g,
       (block) => block.replace(/[^\n]/g, ' '),
     );
-    text.split('\n').forEach((line, index) => {
+    const originalLines = text.split('\n');
+    uncommented.split('\n').forEach((line, index) => {
       const trimmed = line.trim();
       if (trimmed.startsWith('--')) return;
-      if (!/#(?:[0-9a-fA-F]{3,8})\b/.test(line)) return;
-      violations.push(`${relative(ROOT, file)}:${index + 1} ${trimmed}`);
+      for (const match of line.matchAll(RAW_HEX_PATTERN)) {
+        recordMatch(file, index + 1, originalLines[index] ?? line, match[0]);
+      }
     });
   }
+
+  function scanTs(file: string, text: string) {
+    const sourceFile = ts.createSourceFile(
+      file,
+      text,
+      ts.ScriptTarget.Latest,
+      true,
+      file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+    const lines = text.split('\n');
+
+    function scanText(node: ts.Node, value: string) {
+      for (const match of value.matchAll(RAW_HEX_PATTERN)) {
+        const position = node.getStart(sourceFile);
+        const { line } = sourceFile.getLineAndCharacterOfPosition(position);
+        recordMatch(file, line + 1, lines[line] ?? value, match[0]);
+      }
+    }
+
+    function visit(node: ts.Node) {
+      if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+        scanText(node, node.text);
+      } else if (ts.isTemplateExpression(node)) {
+        scanText(node.head, node.head.text);
+        for (const span of node.templateSpans) {
+          scanText(span.literal, span.literal.text);
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(sourceFile);
+  }
+
+  for (const file of files) {
+    const text = readFileSync(file, 'utf8');
+    if (file.endsWith('.css')) {
+      scanCss(file, text);
+    } else {
+      scanTs(file, text);
+    }
+  }
+
   return {
     rawHexOutsideTokenDeclarations: violations.length,
     rawHexViolations: violations,
+    rawHexExceptionUses: exceptionUses,
+    undocumentedRawHexExceptions: undocumentedExceptions,
   };
 }
 
@@ -217,6 +307,7 @@ function main() {
     console.log(`  component coverage: ${(metrics.components.componentCoverage * 100).toFixed(1)}%`);
     console.log(`  exception evidence: ${(metrics.exceptions.exceptionEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  raw hex outside tokens: ${metrics.tokens.rawHexOutsideTokenDeclarations}`);
+    console.log(`  named raw hex exceptions: ${metrics.tokens.rawHexExceptionUses.length}`);
   }
 
   if (process.argv.includes('--check')) {
@@ -237,6 +328,9 @@ function main() {
     }
     if (metrics.tokens.rawHexOutsideTokenDeclarations !== 0) {
       failures.push(`raw hex outside tokens ${metrics.tokens.rawHexOutsideTokenDeclarations} !== 0`);
+    }
+    if (metrics.tokens.undocumentedRawHexExceptions.length > 0) {
+      failures.push(`undocumented raw hex exceptions: ${metrics.tokens.undocumentedRawHexExceptions.join(', ')}`);
     }
     if (failures.length > 0) {
       console.error(`design-system metrics FAILED:\n  - ${failures.join('\n  - ')}`);

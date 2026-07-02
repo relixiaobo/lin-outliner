@@ -148,11 +148,12 @@ Details, run/debug surfaces, ledger metadata, and profile editors.
   say what happened and what to do — no blame, no stack traces in product UI.
 - **Empty states:** a single quiet hint at the point of action (the outliner idle
   hint `Type here or '/' for commands`), not an illustrated empty-state card. The
-  empty agent panel follows the same rule: when a provider is usable it shows one
-  muted greeting line; when provider settings have **loaded** and none is usable it
-  shows a quiet onboarding line + a neutral CTA that opens Settings › Providers, and
-  the composer send is disabled (neutral, with a tooltip) — gated on the loaded
-  state so a key-holding user never sees the onboarding flash during the async load.
+  empty agent panel follows the same rule: when a provider is usable it stays
+  visually blank until the user types or work appears; when provider settings have
+  **loaded** and none is usable it shows a quiet onboarding line + a neutral CTA
+  that opens Settings › Providers, and the composer send is disabled (neutral,
+  with a tooltip) — gated on the loaded state so a key-holding user never sees the
+  onboarding flash during the async load.
   Whole-panel empty results (search with no matches, an empty Trash/Recents view)
   use `FeedbackState` so the hint is centered in a reserved slot, muted, and
   icon-supported without becoming an illustrated card. Editable empty outline
