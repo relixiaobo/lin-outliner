@@ -22,7 +22,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362**) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360; authored ratified plan agent-process-stable-disclosure #297) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358) |
 | Anti | `lin-outliner-anti/` | — | idle |
@@ -31,9 +31,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-02).** Open PR queue: **#363** (`codex-2/tool-lucide-icon-audit`, ready) and
-**#364** (`codex-3/agent-run-graph-cleanup-plan`, draft). #362 (`codex/remove-outliner-settings-root`)
-merged 2026-07-02 after main review; see *Recently completed*. A Dream-precision + file-reader wave
+**In flight (2026-07-02).** Open PR queue: **#364**
+(`codex-3/agent-run-graph-cleanup-plan`, draft). #363 (`codex-2/tool-lucide-icon-audit`) and
+#362 (`codex/remove-outliner-settings-root`) merged 2026-07-02 after main review; see
+*Recently completed*. A Dream-precision + file-reader wave
 merged 2026-06-23: **#319** (Dream
 remembers-nothing + truncation gating), **#320** (manual-Dream thin-data pre-check), **#321** (file-only
 preview readers), and **#322** (`agent-pdf-tool-path`, codex-3 — native PDF `input_file` payloads on
@@ -457,6 +458,24 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **tool-lucide-icon-audit** (`codex-2/tool-lucide-icon-audit`, PR #363,
+  codex-2, merged 2026-07-02, fast-track) — centralizes renderer tool-call
+  presentation in `agentToolPresentation.ts`, giving canonical tools semantic
+  lucide glyphs and matching folded activity buckets. Local file tools,
+  outliner node tools, child-run controls, web, memory, skill, user-question,
+  history, restore, and unknown-tool rows now render with neutral purpose-specific
+  icons; unknown tools use a generic tool glyph instead of a warning triangle.
+  Tool-call summaries now use localized readable labels for canonical tools, and
+  activity summaries distinguish file/node read-search-create-edit-delete plus
+  node restore buckets while keeping pending/error as explicit status overrides.
+  `docs/spec/agent-event-log-rendering.md` records the registry contract and the
+  current child-run folding behavior. **Gate (main):** code review found a
+  restore-summary mismatch and a stale child-run folding spec statement; codex-2
+  fixed both before merge. Verified on the final PR head: `bun run typecheck`,
+  targeted renderer tests, `bun test tests/core/i18nCoverage.test.ts`,
+  `bun run docs:check`, and `git diff --check`. Fast-track, **shape (a)**,
+  *no plan file*.
 
 - **remove-outliner-settings-root** (`codex/remove-outliner-settings-root`, PR #362,
   codex, merged 2026-07-02, fast-track) — removes the obsolete document-level

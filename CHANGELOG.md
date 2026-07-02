@@ -132,6 +132,17 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Agent tool rows use semantic icons and readable activity summaries (PR #363, codex-2)** —
+  agent tool-call rows now share one renderer presentation registry for lucide icons and activity
+  buckets, so local file tools, outliner node tools, child-run controls, web, memory, skill,
+  question, history, restore, and unknown tools render with neutral purpose-specific glyphs instead
+  of overloaded warning or file icons. Tool-row summaries now use localized readable copy for
+  canonical tools, and folded activity groups distinguish file/node read-search-create-edit-delete
+  and node restore buckets while keeping pending/error as the only status overrides. The event-log
+  rendering spec records the registry contract and child-run folding behavior. **Gate (main):**
+  code review found restore activity and spec-sync issues; codex-2 fixed both before merge.
+  Verified with typecheck, targeted renderer suites, i18n coverage, `docs:check`, and
+  `git diff --check`.
 - **Retired the obsolete outliner Settings root (PR #362, codex)** — the
   document-level `Settings` system root is no longer seeded, projected, searched,
   protected, or shown in the workspace tree; the standalone product Settings
