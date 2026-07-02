@@ -21,6 +21,20 @@ decision routing, exceptions, and validation.
 
 ## Versioning & Maintenance
 
+- **Compression target.** The design system should stay a small set of reusable
+  rules, not a growing surface encyclopedia. Use
+  `bun scripts/design-system-metrics.ts --json` to inspect the current state and
+  `bun scripts/design-system-metrics.ts --check` once the compression target is
+  satisfied. The ratified target is: surface-specific contract lines are at least
+  40% below the post-split baseline (`surfaces.md` <= 403 lines from a 672-line
+  baseline); the sampled [decision audit](./decision-audit.md) proves at least
+  80% derived decisions; component coverage is at least 80%; Exception Registry
+  evidence coverage is 100%; raw hex outside token declarations stays 0.
+- **Derivation audit.** For a new or changed UI, the PR must be able to answer
+  four questions: which surface owns it, which component primitive or pattern it
+  uses, which state-model row it maps to, and which foundation tokens carry its
+  visual values. If the answer needs a page-local special case, either promote a
+  reusable rule or add a named exception with evidence.
 - **Tokens are the dev variables.** Two tiers: **foundation tokens** (the ones in
   Foundations — color, type, spacing, radius, elevation, motion) are the CSS
   custom properties in `src/renderer/styles/tokens.css` and are documented in
@@ -40,6 +54,11 @@ decision routing, exceptions, and validation.
 - **Change discipline:** the smallest owning design-system layer is updated
   before or with any UI change that alters a system contract (Implementation Rule
   2). The main agent records notable system changes in `CHANGELOG.md` on merge.
+- **Native-control exceptions.** Product surfaces prefer shared primitives over
+  raw native controls. Direct `button`, `input`, `textarea`, and `select` usages
+  outside primitive implementations must either migrate to a primitive or appear
+  in `scripts/design-system-metrics.ts` with a named reason. The reason must be a
+  real semantic/native requirement, not a styling shortcut.
 
 ## Validation
 
@@ -47,6 +66,10 @@ Expected checks for design-system changes:
 
 - `bun run typecheck`
 - `bun run docs:check`
+- `bun scripts/design-system-metrics.ts --json` for the current compression,
+  decision-derivation, component-coverage, exception-evidence, and
+  token-discipline baseline. Use `--check` before publishing a design-system
+  compression or contract PR.
 - Focused Playwright tests for touched surfaces.
 - `tests/e2e/typography-tokens.spec.ts` for token discipline.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
