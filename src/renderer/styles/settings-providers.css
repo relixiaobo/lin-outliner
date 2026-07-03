@@ -146,7 +146,13 @@
   opacity: 1;
 }
 
-/* Holds the Connected / Available InsetGroups (SettingsInsetList). The rows are
+.settings-provider-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Holds the Configured / Add Providers InsetGroups (SettingsInsetList). The rows are
    the .inset-* primitive — no bespoke row styling here; inter-group spacing comes
    from the primitive (.inset-group + .inset-group). The content pane scrolls. */
 .settings-provider-groups {
@@ -242,7 +248,7 @@
   width: 26px;
   height: 26px;
   border: 0;
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--text-tertiary);
 }

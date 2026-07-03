@@ -98,6 +98,11 @@ The boundary is asymmetric:
 - Relative file-tool paths still resolve against workdir; handed folders are
   reached through explicit absolute paths.
 
+`data_import` uses this same read boundary for its `pack_file` input. The pack is
+local data read, but the tool's consequence is a bulk outliner mutation, so its
+action-kind profile is `outline.edit`. Approval/blocking decisions therefore
+follow outline edit policy after the pack path has passed the local read jail.
+
 The self-definition roots only extend where typed file tools may execute; they
 do not bypass the content gateway. Skill writes are validated as skill content,
 agent-definition writes are limited to restricted `AGENT.md` creates/edits, and
@@ -115,6 +120,8 @@ These run silently unless a hard redline, built-in soft block, restricted
 sandbox, or user blocklist rule matches:
 
 - local file read/write/edit/delete inside the allowed file area;
+- `data_import` staging writes from a validated Import Pack, audited as
+  `outline.edit`;
 - local code execution such as Python, Node, shell scripts, build tools, tests,
   converters, and project scripts;
 - dependency installs;
@@ -260,6 +267,11 @@ It narrows a run's available tool surface before blocklist decisions run:
 - Non-base tools require a matching run-scoped `allowed-tools` preapproval rule.
 - Even when preapproved, the call still goes through descriptor projection, hard
   redlines, user blocks, and built-in soft blocks.
+
+`data_import` is not part of the read-only base set because it mutates the
+outliner. A restricted data-cleanup skill must declare `data_import` in
+`allowed-tools` before it can stage cleaned data, and the call still records
+`outline.edit`.
 
 Skill content-hash ratification is separate from permission rules.
 

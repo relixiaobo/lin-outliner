@@ -98,9 +98,12 @@ Agent input
   -> renderer transcript
 ```
 
-The renderer may hold transient UI state, but it must not hold provider API keys
-or directly execute model/tool logic. This keeps a future Tenon-owned agent core
-possible: it only needs to implement the AgentRuntime event/command contract.
+The renderer may hold transient UI state, but the main app surface must not hold
+provider API keys or directly execute model/tool logic. The only raw-key renderer
+exception is the provider config child window's user-clicked show/copy path for a
+stored user-pasted key; main rejects that IPC from any other sender. This keeps a
+future Tenon-owned agent core possible: it only needs to implement the
+AgentRuntime event/command contract.
 
 ## Package Usage
 
@@ -272,11 +275,14 @@ agent-secrets.json
      supports it; never written to the document, renderer state, or agent logs
 ```
 
-Renderer-facing commands may return provider configuration plus an `auth`
+Renderer-facing agent commands may return provider configuration plus an `auth`
 descriptor (`authKind`, `credentialed`, `hasStoredKey`, oauth `connected` /
 `expiresAt`), but must never return the API key, OAuth access/refresh token, AWS
-credential, or ADC material itself. Runtime provider resolution happens through
-Electron AgentRuntime or the TypeScript tool/provider gateway — see
+credential, or ADC material itself. The provider config child window has one
+dedicated non-command IPC, `lin:get-provider-api-key`, guarded by
+`event.sender === providerConfigWindow.webContents`, for the explicit show/copy
+UI described below. Runtime provider resolution happens through Electron
+AgentRuntime or the TypeScript tool/provider gateway — see
 [Provider Authentication](#provider-authentication).
 
 ### Connection-only providers; the agent profile owns model + effort
@@ -323,8 +329,13 @@ The Settings → Agent profile selector (`AgentModelEffortSelector`) is
 **capability-driven**: pick a provider, then a model; the
 effort options are derived from that model's `supportedThinkingLevels`. The
 composer chip presents the same catalog as the Codex-style menu above instead, but
-writes the identical values. Saved
-values are the canonical model id (provider-qualified `providerId/modelId`) and the
+writes the identical values. A provider is a model-selection capability only when
+its connection is both enabled and credentialed/reachable; disabled providers stay
+out of every model picker even if they still have a stored API key. A stale saved
+model from a disabled provider is reconciled back to inherit in the Settings
+selector, and the composer chip resolves back to the first usable provider's
+default instead of offering that disabled provider's catalog. Saved values are the
+canonical model id (provider-qualified `providerId/modelId`) and the
 adapter's canonical effort, never a display label. The provider→model string is
 parsed by one shared `core/agentModelId` helper (renderer + runtime), so a model id
 that itself contains `:` (Bedrock `amazon.nova-lite-v1:0`, Vertex inference
@@ -410,6 +421,50 @@ instead of modeling every provider as "paste an API key":
 flows to the renderer on the provider view models so the UI never hardcodes the
 classification.
 
+### CC Switch Codex mirror
+
+Tenon treats CC Switch as an external configuration owner and mirrors the Codex
+configuration that CC Switch has already applied. When CC Switch is detected
+locally, main adds a detected `cc-switch` provider. The primary path reads
+`~/.codex/config.toml` and `~/.codex/auth.json` at settings/runtime time, extracts
+the active Codex `model_provider`, `base_url`, `wire_api`, top-level `model`, and
+the `OPENAI_API_KEY`, and registers a transient OpenAI-compatible connection for
+Tenon. The key remains CC Switch/Codex-managed: Tenon does not copy it into
+`agent-secrets.json`, and the provider config UI does not expose show/copy for
+that external key.
+
+The normal user flow is: configure/switch a Codex provider in CC Switch, open
+Tenon Settings → Providers, enable **CC Switch**, and refresh models if needed.
+Local Routing / Local Proxy is not required for the common direct Codex provider
+case. Tenon re-reads the live Codex files before runtime calls, so switching the
+Codex provider in CC Switch updates Tenon's endpoint/model without re-saving the
+Tenon row.
+
+Model listing is mirror-first. If `model_catalog_json` points at CC Switch's
+generated `cc-switch-model-catalog.json`, Tenon reads that catalog and exposes
+its `slug`/`display_name`/`context_window` entries. Otherwise it tries the
+OpenAI-compatible model list endpoint with the mirrored API key, accepting both
+`{ data: [{ id }] }` and `{ models: [{ model | slug | id }] }` response shapes.
+If neither source lists models, Tenon falls back to the Codex top-level `model`.
+The explicit **Refresh models** action repeats the same mirror-first discovery
+with a longer timeout and caches results per endpoint only, so models from one
+CC Switch endpoint never bleed into another.
+
+Local Routing remains an advanced fallback. If no usable Codex mirror exists,
+Tenon can still use a healthy `http://127.0.0.1:15721/v1` CC Switch Local Proxy
+and query its `/v1/models` endpoint. A configured-but-stopped proxy is not a
+runtime candidate and does not appear in model pickers, while ordinary custom
+localhost OpenAI-compatible endpoints remain keyless. Keyless local model-list
+requests do not send the internal `local-endpoint` API-key sentinel as an
+Authorization header. Runtime custom models for CC Switch use the mirrored Codex
+`wire_api` when available, defaulting to OpenAI Responses.
+
+This integration intentionally supports the Codex configuration shape first.
+Other CC Switch-managed apps (Claude, Gemini, OpenCode/OpenClaw, Hermes, OMO,
+and related app-specific formats) are not a single shared provider schema; they
+need separate adapters or the Local Proxy fallback before they can be exposed as
+first-class Tenon providers.
+
 ### Single credential resolver
 
 `getProviderApiKey(providerId)` is the one resolution path, used at stream time
@@ -454,7 +509,13 @@ event log.
 
 ### Provider detail UI states
 
-- **api-key** — the key field + base URL. Unchanged.
+- **api-key** — the key field + base URL. A stored user-pasted key renders as an
+  empty field with a saved-key placeholder until the user explicitly clicks show
+  or copy; that action uses the provider-config-window-only
+  `lin:get-provider-api-key` IPC to fetch only the stored `api_key` secret for
+  this provider.
+  It never resolves env keys, OAuth access tokens, managed credentials, or local
+  endpoint sentinels into the renderer.
 - **oauth, disconnected** — a "Sign in with <Provider>" button; Anthropic also
   offers "use an API key instead" (it accepts both).
 - **oauth, in progress** — device-code (code + verification URL + TTL countdown)
@@ -466,7 +527,8 @@ event log.
 
 Usability (`canChooseModels`, active-provider resolution) treats oauth-connected
 and managed providers as credentialed via a single `auth.credentialed` signal,
-not "has a pasted key".
+not "has a pasted key". Credentialed and enabled are separate states: a provider
+can keep its stored credential but be disabled so it is not eligible to run.
 
 ### Provider rows are deliberate; state cannot contradict
 
@@ -475,14 +537,24 @@ is never a side effect of saving unrelated settings. Two rules keep `configured`
 (has a row) and `credentialed` (has a usable key / oauth / env key) from diverging
 into the "needs a key, yet offers *Remove provider*" contradiction:
 
-- **Row creation lives in one place.** Only the per-provider config window
-  (`upsertProviderConfig`, after the credential is stored) and the OAuth login
-  (`ensureProviderConfig`, after the credential is persisted) create or edit a
-  provider row. The main Settings pane's Save persists only runtime settings
-  (permissions / skills / agents); it never upserts a provider. An upsert has no
-  auto-activation side effect — a provider becomes active only on a deliberate
-  user action, or via the active-provider fallback at read time (the first
-  credentialed row), which the startup reconcile below later persists.
+- **Row creation lives in explicit provider actions.** The per-provider config
+  window (`upsertProviderConfig`, after the credential is stored), OAuth login
+  (`ensureProviderConfig`, after the credential is persisted), and detected
+  externally configured provider enable switches such as CC Switch can create or
+  edit a provider row. The main
+  Settings pane's Save persists only runtime settings (permissions / skills /
+  agents); it never upserts a provider. An upsert has no auto-activation side
+  effect — a provider becomes active only on a deliberate user action, or via the
+  active-provider fallback at read time (the first credentialed and enabled row),
+  which the startup reconcile below later persists. Saving credentials or base
+  URL for an existing row preserves that row's `enabled` flag; it does not
+  silently re-enable a disabled provider. A new row defaults to enabled.
+
+- **Enabled is explicit.** Every configured provider row has an enable switch.
+  Disabling a row keeps credentials and endpoint configuration intact, clears the
+  active pointer if that row was active, hides "Set as Active", and removes the
+  row from runtime/provider fallback candidates. Re-enabling makes the row
+  eligible again but does not auto-activate it.
 
 - **Reconcile once at startup, never on the read path.** `reconcileProviderConfig`
   runs as a fire-and-forget step in `app.whenReady` (not inside

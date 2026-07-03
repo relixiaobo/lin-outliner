@@ -205,6 +205,36 @@ describe('AgentModelEffortSelector', () => {
     expect(savedModel).toBe('');
   });
 
+  test('disabled providers are not model-selection options even when credentialed', () => {
+    const view = settings();
+    view.providers.push({
+      providerId: 'anthropic',
+      enabled: false,
+      hasApiKey: true,
+      auth: { authKind: 'api-key', credentialed: true, hasStoredKey: true },
+    });
+    view.availableProviders.push({
+      providerId: 'anthropic',
+      authKind: 'api-key',
+      hasEnvApiKey: false,
+      envKeyNames: [],
+      models: [
+        { id: 'claude-sonnet', name: 'Claude Sonnet', reasoning: true, supportedThinkingLevels: ['off', 'low', 'medium', 'high'], contextWindow: 0, maxTokens: 0 },
+      ],
+    });
+    let savedModel = 'unchanged';
+    const rendered = renderComponent(
+      <AgentModelEffortSelector
+        settings={view} model="anthropic/claude-sonnet" effort="" disabled={false}
+        {...LABELS} onModelChange={(v) => { savedModel = v; }} onEffortChange={NOOP}
+      />,
+    );
+
+    expect(optionValues(select(rendered, 'Provider'))).not.toContain('anthropic');
+    expect(rendered.document.querySelector('select[aria-label="Model"]')).toBeNull();
+    expect(savedModel).toBe('');
+  });
+
   test('a saved effort the model no longer supports is reconciled to inherit on mount', () => {
     let savedEffort = 'unchanged';
     renderComponent(

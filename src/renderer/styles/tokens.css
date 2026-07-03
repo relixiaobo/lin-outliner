@@ -122,6 +122,7 @@
      --status-danger). This is the FIXED native linkColor, not the variable
      system accent — it is a constant, theme-adapted via the dark override. */
   --link: #0a66d6;
+  --link-hover: color-mix(in srgb, var(--link) 78%, var(--text-primary));
   /* The agent streaming caret / "still generating" mark carries the brand rose
      on purpose — it is the one lively, branded beat in the agent panel. */
   --caret: var(--accent);
@@ -134,8 +135,11 @@
   --status-success-strong: #3f865d;
   --status-warning: #d99a1c;
   --status-danger: #e5484d;
+  --status-danger-solid-hover: color-mix(in srgb, var(--status-danger) 88%, #000000);
   --status-danger-muted: #9a3f34;
   --status-info: #3b82c4;
+  /* control state — checked/on controls, separate from semantic status */
+  --control-on: #3f9e6a;
 
   /* identity tints — a per-agent avatar hue, assigned deterministically by
      identity (agentAvatarColor.ts). Identity is its OWN decorative category: not a
@@ -203,8 +207,8 @@
   --shadow-thumb-strong: 0 1px 2px rgba(0, 0, 0, 0.18);
 
   /* ── Legacy product-token aliases → semantic layer. Migrate opportunistically.
-        The rose --primary family was deleted once every consumer moved to the
-        neutral fill / focus-ring / outline tokens (rollout Phase 3). ── */
+        There is no --primary family: action surfaces use neutral fill /
+        focus-ring / outline tokens instead of the rose accent. ── */
   --deck-bg: var(--bg-window);
   --app-bg: var(--bg-window);
   --panel-bg: var(--bg-content);
@@ -224,7 +228,6 @@
      keep it a visible neutral that inverts with the theme */
   --border-strong: rgb(var(--ink) / 0.30);
   --accent-brand: var(--accent);
-  --accent-danger: var(--accent-strong);
   --semantic-success: var(--status-success);
   --semantic-success-strong: var(--status-success-strong);
   --semantic-danger-muted: var(--status-danger-muted);
@@ -411,8 +414,9 @@
   --settings-content-max-width: 920px;
   --panel-content-max: var(--reading-max);
   --resize-cursor: ew-resize;
+  --resize-cursor-y: ns-resize;
   --resize-hit-width: 10px;
-  /* tab tokens are subtle and die with the global tab strip in Phase 4 */
+  /* tab tokens are retained for local tab-like controls; the shell has no global tab strip. */
   --tab-bg: rgb(var(--ink) / 0.03);
   --tab-active-bg: rgb(var(--ink) / 0.05);
   --tab-hover-bg: rgb(var(--ink) / 0.07);
@@ -432,7 +436,7 @@
   --text: var(--text-primary);
   /* the one link colour — native link blue (design-system.md: exactly one) */
   --inline-ref-default: var(--link);
-  --inline-ref-hover: color-mix(in srgb, var(--link) 78%, var(--text));
+  --inline-ref-hover: var(--link-hover);
   /* danger affordances use the genuine status red, not brand rose */
   --danger: var(--status-danger);
   --row-hover: var(--fill-2);

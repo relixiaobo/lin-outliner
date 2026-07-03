@@ -9,7 +9,8 @@ be shadowed by mutable local skills with the same name. Resource-backed
 built-in skill folders load before code-registered inline built-ins; a duplicate
 built-in name is a product bug and fails loudly instead of being silently
 dropped. The current user-visible built-in skills are `/skillify`, `/research`,
-`/data-analysis`, `/document`, `/pdf`, `/presentation`, and `/spreadsheet`.
+`/data-cleanup`, `/data-analysis`, `/document`, `/pdf`, `/presentation`, and
+`/spreadsheet`.
 `goal-launching` is a model-only built-in workflow and is not exposed as a slash
 skill.
 
@@ -42,6 +43,18 @@ cc-2.1 Explore's research loop: strict no-modification framing, broad-to-narrow
 codebase search, explicit file/nodes/read tool selection, caller-scaled
 thoroughness (`quick`, `medium`, `very thorough`), parallel independent
 read/search calls, and a compact evidence-backed report.
+
+`/data-cleanup` is a user- and model-invocable resource-backed workflow for
+cleaning external note/data exports into Tenon's import shape before any
+document write. It is source-agnostic at the skill level: the model profiles the
+source, explains fidelity tradeoffs, asks for destination/approval when needed,
+and runs deterministic scripts for known formats. Supported write routes emit
+Import Pack v1, validate schema and coverage, generate a compact preview, call
+`data_import` with `dry_run: true`, and only call `data_import` again with the
+returned preview id after user approval. Tana JSON is the first deterministic
+write route. Roam EDN backups are currently profile-only: the skill can inspect
+counts and samples, but must not write Roam data until a deterministic Roam
+adapter emits a valid Import Pack.
 
 `/data-analysis`, `/document`, `/pdf`, `/presentation`, and `/spreadsheet` are
 user-visible resource-backed built-ins sourced from the sibling
@@ -111,13 +124,13 @@ including clones opened through `tmp/worktrees/<topic>`. Missing configured
 linlab roots fail fast rather than silently dropping built-ins. `skills:sync`
 copies only tracked files from the external linlab repository and still excludes
 non-runtime folders such as `evals`, so ignored local outputs cannot enter the
-app bundle. The current Tenon-owned resource-backed built-in is the private
-`memory-dream` runtime skill; the user-visible portable artifact skills are
-sourced from linlab. Like cc-2.1 bundled skills, built-ins only receive a `Base
-directory` prefix when they have real extracted reference files. Inline built-ins
-such as `/skillify` and `/research` have no extracted files, so their prompts
-contain only the skill body. Post-compact bookkeeping records all built-ins as
-`built-in:<name>` rather than an editable file path.
+app bundle. The current Tenon-owned resource-backed built-ins are
+`/data-cleanup` and the private `memory-dream` runtime skill; the portable
+artifact skills are sourced from linlab. Like cc-2.1 bundled skills, built-ins
+only receive a `Base directory` prefix when they have real extracted reference
+files. Inline built-ins such as `/skillify` and `/research` have no extracted
+files, so their prompts contain only the skill body. Post-compact bookkeeping
+records all built-ins as `built-in:<name>` rather than an editable file path.
 
 Default mutable skill directories are always enabled:
 
@@ -427,6 +440,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
 | `skillify` | Supported as the built-in user- and model-invocable Skillify v2 workflow (`when_to_use`-gated to explicit user save requests). It uses the Tenon `.agents/skills/<skill-name>/SKILL.md` shape, previews the complete file or focused update diff, confirms through the instruction-layer `ask_user_question` path when available, and writes with existing file write/edit tools. |
 | `research` | Supported as a built-in user- and model-invocable `execution: isolated` workflow with no `agent` override. It starts an isolated sub-run of the current agent, filters its declared read tools through the `AgentToolActionKind` read-only catalog, and returns a compact findings/evidence report. |
+| `data-cleanup` | Supported as a Tenon-owned resource-backed built-in. It profiles local exports, runs deterministic adapters for known sources, emits Import Pack v1, validates coverage, produces a preview report, and uses `data_import` as the only bulk document write path. Tana JSON is supported as the first write route; Roam EDN is profile-only until a deterministic adapter is added. |
 | `data-analysis`, `document`, `pdf`, `presentation`, `spreadsheet` | Supported as immutable resource-backed built-ins sourced from enabled `linlab-skills` folders and staged into the packaged app. They are goal-oriented workflows; PPTX, DOCX, XLSX, Markdown, HTML, PDF, CSV, and JSON are handled as input/output routes rather than skill identities. `/presentation` keeps explicit PowerPoint/PPTX requests on the PPTX route: missing PPTX libraries or office automation should be installed/enabled when allowed, and HTML/PDF/hand-authored OOXML are lower-fidelity fallbacks that require an explained blocker. `/document` includes archetype/form-factor guidance plus DOCX/Markdown semantic QA, and explicit Word/DOCX requests stay on the DOCX route before Markdown/plain-text/PDF or hand-authored WordprocessingML fallbacks. `/pdf` keeps PDF-native operations on fixed-layout structural/render/OCR/form/redaction routes while preferring editable source changes when source exists. `/spreadsheet` keeps workbook/formula/modeling work on spreadsheet-native routes and preserves formulas, validation, named ranges, tables, and source-first generation artifacts. `/data-analysis` keeps dependency-backed pandas/DuckDB/script workflows explicit. |
 | Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background conversation review that silently rewrites skills is not supported. |
 | Per-skill invocation permission suggestions | Not supported as a dedicated UI. The `skill` tool still goes through the global runtime permission policy, and the skill's own `allowed-tools` narrow downstream tool calls. |

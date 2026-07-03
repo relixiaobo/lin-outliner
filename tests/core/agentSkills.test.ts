@@ -1031,6 +1031,7 @@ describe('agent skills', () => {
     const allSkills = results[2].status === 'fulfilled' ? results[2].value : [];
     expect(allSkills.map((skill) => skill.name).sort()).toEqual([
       'data-analysis',
+      'data-cleanup',
       'document',
       'goal-launching',
       'memory-dream',

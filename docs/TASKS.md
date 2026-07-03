@@ -21,17 +21,23 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293) |
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
-| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362**) |
-| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363; authored ratified plan agent-process-stable-disclosure #297) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364**) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366) |
+| Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368**) |
+| Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369; authored ratified plan agent-process-stable-disclosure #297) |
+| Codex 3 | `lin-outliner-codex-3/` | `codex-3/agent-run-index-completeness` | PR #365 ready for gate (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364**) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-02).** Open PR queue: none. #366
+**In flight (2026-07-03).** Open PR queue: #365
+(`codex-3/agent-run-index-completeness`). Recently merged: #370
+(`codex-4/data-cleanup-import`) merged 2026-07-03 after main review; see
+*Recently completed*. #369
+(`codex-2/cc-switch-local-gateway`), #368
+(`codex/design-system-compression-target`), #367
+(`codex/design-system-contract-refactor`), #366
 (`codex-4/disclosure-anchor-spec-sync`), #364 (`codex-3/agent-run-graph-cleanup-plan`),
 #363 (`codex-2/tool-lucide-icon-audit`), and #362 (`codex/remove-outliner-settings-root`)
 merged 2026-07-02 after main review; see
@@ -105,7 +111,7 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
 
 **Needs design / escalation before build** (not in the queue yet): `third-party-skill-import` (write
 the plan first), `launcher-provider-expansion`, the directional agent tails
-(`agent-self-modification` · `agent-generative-ui` · `agent-import-skill` — escalate the capability
+(`agent-self-modification` · `agent-generative-ui` — escalate the capability
 boundary), `agent-browser-control` / `agent-computer-control` (plans merged #361; settle the hard
 prohibition, browser-adoption, and helper-packaging decisions before implementation), and
 `browser-extension-integration` (record-only, **not approved to build**), and
@@ -242,15 +248,6 @@ before any directional/security-sensitive build.
   **Skills moved to `agent-skills-authoring`; memory is `agent-conversation-model`'s.**
   Directional/security-sensitive — escalate the capability boundary to the PM before
   building. See `docs/plans/agent-self-modification.md`.
-- **agent-import-skill** (P1, M1–M2 consumer, plan ratified, PR #98) — agent data-import capability:
-  bundled deterministic adapters (Tana reference, validated against the real
-  10,627-node export) for known formats + agent-authored parsers for unknown ones;
-  staging-first, undoable apply via a new `import_apply` tool. **Content tier =
-  zero-protocol; Medium/Full need a per-node id back-channel** — default to option C
-  (position-recovery, no protocol change), escalate if promoting to option B
-  (protocol surface → interface-first + ratify). Soft-depends on `ask_user_question`
-  (degrades to conversational turns until it exists). See
-  `docs/plans/agent-import-skill.md`.
 - **agent-generative-ui** (P3, M1/M2, directional CSP/A3 gate) — Claude-style custom
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
@@ -473,6 +470,74 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **data-cleanup-import** (`codex-4/data-cleanup-import`, PR #370, codex-4,
+  merged 2026-07-03, plan-track) — ships the agent data-cleanup/import workflow
+  as a resource-backed `/data-cleanup` built-in skill, a deterministic Tana
+  adapter route, Import Pack v1 validation/preview scripts, and a generic
+  `data_import` outliner tool. The import path requires a dry-run preview,
+  matching `confirmed_preview_id`, validated coverage with
+  `coverage.unaccounted === 0`, bounded pack size, staging-root writes through
+  `create_nodes_from_tree`, and post-import verification for sections, nodes,
+  descriptions, tags, fields, and checked state. Roam EDN is profile-only in
+  this release; future routes converge on the same Import Pack contract before
+  document mutation. **Gate (main):** code review found a permission-registration
+  blocker where `data_import` was cataloged but still projected as
+  `unknown_tool_action`; codex-4 fixed it with an explicit permission descriptor,
+  write access classification, and trusted/restricted/preapproved regression
+  coverage before merge. Verified on the final PR head with targeted permission
+  tests and the author's typecheck, docs check, data-import, built-in-script,
+  permission-model, real Tana-export, and `git diff --check` evidence. Shape
+  (a), plan archived `done`: `docs/plans/archive/agent-import-skill.md`.
+
+- **cc-switch-local-gateway** (`codex-2/cc-switch-local-gateway`, PR #369, codex-2,
+  merged 2026-07-02, fast-track) — adds CC Switch Local Gateway as an externally
+  configured provider that mirrors Codex credentials and generated model catalog
+  support from `~/.codex/config.toml` / `~/.codex/auth.json`, with Local Proxy
+  fallback. Provider settings now group rows as Configured / Add Providers, expose
+  explicit enable/disable for configured and external rows, keep disabled providers
+  out of model pickers and runtime fallback while preserving their credentials and
+  endpoints, and never show or copy externally managed secrets. Custom
+  OpenAI-compatible model metadata is preserved so catalog-backed CC Switch
+  endpoints can route through Responses or Chat Completions correctly.
+  `docs/spec/agent-pi-mono-implementation.md` and the design-system surfaces
+  record the as-built provider contract. **Gate (main):** code review found two
+  P2 issues (raw API-key IPC exposed through the generic agent command surface,
+  and `cc-switch` missing from runtime known-provider validation); codex-2 fixed
+  both before merge. Verified on the final PR head and merge: typecheck, targeted
+  provider/runtime/renderer suites, provider settings E2E, `docs:check`, and
+  `git diff --check`.
+  Fast-track, **shape (a)**, *no plan file*.
+
+- **design-system-compression-target** (`codex/design-system-compression-target`, PR #368,
+  codex, merged 2026-07-02, fast-track) — turns the layered design-system
+  contract into a measurable audit path. The PR compresses `surfaces.md` into a
+  thinner surface model, adds `decision-audit.md`, and introduces
+  `scripts/design-system-metrics.ts` for surface compression, decision
+  derivation, component coverage, exception evidence, renderer-wide raw-hex
+  discipline, and documented-component drift checks. It also tokenizes tag color
+  presets through identity tint tokens and pins the agent empty-state audit to
+  executable onboarding E2E coverage. **Gate (main):** deep review found and
+  resolved three standard-quality issues plus a follow-up component mapping
+  drift issue before merge. Verified on the final PR head with
+  `bun scripts/design-system-metrics.ts --check`, `bun run docs:check`,
+  `bun run typecheck`, focused typography-token and agent-onboarding E2E specs,
+  and `git diff --check`. Fast-track, **shape (a)**, *no plan file*.
+
+- **design-system-contract-refactor** (`codex/design-system-contract-refactor`, PR #367,
+  codex, merged 2026-07-02, fast-track) — refactors `docs/spec/design-system.md`
+  into a kernel/index plus layered contracts under `docs/spec/design-system/`
+  (`foundations`, `components`, `patterns`, `surfaces`, `implementation`). The
+  spec map now routes UI work to the smallest owning layer, `docs:check` validates
+  local spec Markdown links and heading anchors, and the typography/design-system
+  guard scans CSS examples across the split spec tree. The change also aligns
+  verified drift around the composer model/effort profile shortcut and tokenizes
+  several design-system CSS values (`--control-on`, `--link-hover`,
+  `--status-danger-solid-hover`, `--resize-cursor-y`, shared material backdrop
+  usage). **Gate (main):** code review found no reportable issues. Verified on
+  the PR head with `bun run docs:check`, `bun run typecheck`, the typography
+  design-system guard E2E, the focused agent-composer E2E for the profile model
+  shortcut, and `git diff --check`. Fast-track, **shape (a)**, *no plan file*.
 
 - **expanded-linlab-artifact-skills** (main fast-track, 2026-07-02, no PR yet) —
   extends the #359 linlab built-in skill packaging lane so packaged builds stage

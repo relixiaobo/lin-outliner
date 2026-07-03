@@ -29,6 +29,7 @@ import {
 import type { ThemeMode } from '../../../core/theme';
 import { SUPPORTED_LOCALES, type Locale } from '../../../core/locale';
 import type { SettingsCategoryTarget, SettingsOpenTarget } from '../../../core/settingsWindow';
+import { CC_SWITCH_LOCAL_PROVIDER_ID } from '../../../core/localGatewayProviders';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
 import { Button } from '../primitives/Button';
@@ -80,24 +81,26 @@ interface ProviderChoice {
   active: boolean;
   enabled: boolean;
   hasCredential: boolean;
+  detected?: boolean;
+  quickEnable?: boolean;
+  defaultBaseUrl?: string;
+  canRefreshModels?: boolean;
 }
 
 interface ProviderRowHandlers {
   onConfigure: (id: string) => void;
   onActivate: (id: string) => void;
+  onRefreshModels: (id: string) => void;
+  onToggleEnabled: (id: string, enabled: boolean) => void;
   onRemove: (id: string) => void;
   onMenuOpenChange: (id: string, open: boolean) => void;
 }
 
-// A single provider row in the inset grouped list — the macOS System Settings
-// Wi-Fi idiom: the brand avatar is the identity, clicking the row opens the config
-// sheet. There is no leading status column — "Connected" vs "Available" already
-// carries that, so a per-row marker would be redundant. A trailing `⋯` appears
-// ONLY when the row has more than one action; a single-action row (just
-// "Configure", which is what clicking the row does) instead exposes a "Configure"
-// button on the trailing edge — the macOS Wi-Fi "Connect" / "Details…" idiom —
-// revealed on hover / focus. Memoized + fed stable handlers, so editing one
-// provider's sheet never re-renders the list.
+// A single provider row in the inset grouped list. Configured rows expose an
+// enable switch plus details/removal actions. Unconfigured catalog rows usually
+// open the config sheet, except detected external providers such as CC Switch:
+// those are already configured by their own app, so the row is a direct enable
+// switch that materializes Tenon's connection.
 const SettingsProviderRow = memo(function SettingsProviderRow({
   provider,
   menuOpen,
@@ -109,38 +112,73 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
 }) {
   const t = useT();
   const name = formatProviderName(provider.providerId);
+  const quickEnable = !provider.configured && provider.quickEnable;
   const actions: RowMenuAction[] = [];
-  if (provider.hasCredential && !provider.active) {
+  if (provider.configured && provider.enabled && provider.hasCredential && !provider.active) {
     actions.push({ label: t.settings.providers.setActive, onSelect: () => handlers.onActivate(provider.providerId) });
   }
-  actions.push({ label: t.settings.providers.configureAction, onSelect: () => handlers.onConfigure(provider.providerId) });
+  if (provider.canRefreshModels) {
+    actions.push({ label: t.settings.providers.refreshModels, onSelect: () => handlers.onRefreshModels(provider.providerId) });
+  }
+  if (!quickEnable) {
+    actions.push({ label: t.settings.providers.configureAction, onSelect: () => handlers.onConfigure(provider.providerId) });
+  }
   if (provider.configured) {
     actions.push({ label: t.settings.providers.removeProvider, danger: true, onSelect: () => handlers.onRemove(provider.providerId) });
   }
+  const trailing = provider.configured ? (
+    <div className="settings-provider-row-actions">
+      <SwitchControl
+        checked={provider.enabled}
+        label={t.settings.providers.enabledToggleNamed({ name })}
+        onCheckedChange={(enabled) => handlers.onToggleEnabled(provider.providerId, enabled)}
+      >
+        <SwitchMark checked={provider.enabled} />
+      </SwitchControl>
+      <SettingsRowMenu
+        actions={actions}
+        ariaLabel={t.settings.providers.rowActionsAriaLabel({ name })}
+        onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)}
+        open={menuOpen}
+      />
+    </div>
+  ) : quickEnable ? (
+    <SwitchControl
+      checked={false}
+      label={t.settings.providers.enabledToggleNamed({ name })}
+      onCheckedChange={(enabled) => handlers.onToggleEnabled(provider.providerId, enabled)}
+    >
+      <SwitchMark checked={false} />
+    </SwitchControl>
+  ) : actions.length > 1 ? (
+    <SettingsRowMenu
+      actions={actions}
+      ariaLabel={t.settings.providers.rowActionsAriaLabel({ name })}
+      onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)}
+      open={menuOpen}
+    />
+  ) : (
+    <Button
+      aria-label={t.settings.providers.configureNamed({ name })}
+      className="settings-provider-configure"
+      onClick={() => handlers.onConfigure(provider.providerId)}
+      size="sm"
+      variant="secondary"
+    >
+      {t.settings.providers.configure}
+    </Button>
+  );
   return (
     <InsetRow
       ariaLabel={t.settings.providers.rowAriaLabel({ name, status: providerStatusLabel(provider, t) })}
+      dimmed={(provider.configured || quickEnable) && !provider.enabled}
       label={name}
       leading={<ProviderAvatar providerId={provider.providerId} />}
-      onSelect={() => handlers.onConfigure(provider.providerId)}
-      trailing={actions.length > 1 ? (
-        <SettingsRowMenu
-          actions={actions}
-          ariaLabel={t.settings.providers.rowActionsAriaLabel({ name })}
-          onOpenChange={(open) => handlers.onMenuOpenChange(provider.providerId, open)}
-          open={menuOpen}
-        />
-      ) : (
-        <Button
-          aria-label={t.settings.providers.configureNamed({ name })}
-          className="settings-provider-configure"
-          onClick={() => handlers.onConfigure(provider.providerId)}
-          size="sm"
-          variant="secondary"
-        >
-          {t.settings.providers.configure}
-        </Button>
-      )}
+      onSelect={quickEnable
+        ? () => handlers.onToggleEnabled(provider.providerId, true)
+        : () => handlers.onConfigure(provider.providerId)}
+      sublabel={!provider.configured && provider.detected ? t.settings.providers.detectedSublabel : undefined}
+      trailing={trailing}
     />
   );
 });
@@ -171,7 +209,7 @@ const SETTINGS_CATEGORY_ICONS = {
   agents: AgentIcon,
 } satisfies Record<SettingsCategory, AppIcon>;
 
-const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', 'google', 'openrouter'];
+const PREFERRED_PROVIDER_ORDER = ['anthropic', 'openai', CC_SWITCH_LOCAL_PROVIDER_ID, 'google', 'openrouter'];
 
 function routeFromOpenTarget(target: SettingsOpenTarget | undefined): SettingsRoute {
   if (target?.agentId?.trim()) return { type: 'category', category: 'agents' };
@@ -441,7 +479,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
 
   // The per-provider config window commits in its own process surface and asks the
   // main process to broadcast a settings-changed; refetch so the list reflects the
-  // new connection (active provider, "Connected" grouping) without a manual reopen.
+  // new configured provider row without a manual reopen.
   useEffect(() => {
     const off = window.lin?.onSettingsChanged?.(() => {
       const requestId = beginRequest('settings');
@@ -521,14 +559,15 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     () => settings ? buildProviderChoices(settings, draft.providerId, providerCatalog) : [],
     [draft.providerId, providerCatalog, settings],
   );
-  // Grouped inset list: "Connected" = has a credential (key or env/managed),
-  // "Available" = the rest. macOS System Settings groups this way.
-  const connectedChoices = useMemo(
-    () => providerChoices.filter((choice) => choice.hasCredential),
+  // Grouped inset list: "Configured" = a provider row Tenon owns or an external
+  // provider already configured by its own app; "Add Providers" = catalog
+  // rows that still need Tenon's config window.
+  const configuredChoices = useMemo(
+    () => providerChoices.filter((choice) => choice.configured || choice.quickEnable),
     [providerChoices],
   );
   const availableChoices = useMemo(
-    () => providerChoices.filter((choice) => !choice.hasCredential),
+    () => providerChoices.filter((choice) => !choice.configured && !choice.quickEnable),
     [providerChoices],
   );
 
@@ -681,6 +720,29 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
     void runProviderMutation(() => api.agentSetActiveProvider(providerId), t.settings.providers.setActiveNotice);
   }
 
+  function refreshProviderModels(providerId: string) {
+    void runProviderMutation(() => api.agentRefreshProviderModels(providerId), t.settings.providers.modelsRefreshedNotice);
+  }
+
+  function toggleProviderEnabled(providerId: string, enabled: boolean) {
+    const provider = settings?.providers.find((candidate) => candidate.providerId === providerId);
+    const catalogEntry = providerCatalog.get(providerId);
+    if (!provider && !enabled) return;
+    if (!provider && !catalogEntry?.defaultBaseUrl) {
+      void window.lin?.openProviderConfig?.({ providerId, mode: 'configure' });
+      return;
+    }
+    const notice = enabled ? t.settings.providers.enabledNotice : t.settings.providers.disabledNotice;
+    void runProviderMutation(
+      () => api.agentUpsertProviderConfig({
+        providerId,
+        baseUrl: provider?.baseUrl ?? catalogEntry?.defaultBaseUrl ?? null,
+        enabled,
+      }),
+      notice,
+    );
+  }
+
   function deleteProviderFor(providerId: string) {
     void runProviderMutation(() => api.agentDeleteProviderConfig(providerId), t.settings.providers.removedNotice, true);
   }
@@ -754,12 +816,14 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
   // Stable per-row handlers via a latest-ref so the memoized provider rows keep a
   // constant identity and never re-render while another row's menu toggles. The ref
   // always points at the freshest closures (no stale reads).
-  const rowHandlersImpl = { openProviderConfig, activateProvider, deleteProviderFor, setOpenRowMenu };
+  const rowHandlersImpl = { openProviderConfig, activateProvider, refreshProviderModels, toggleProviderEnabled, deleteProviderFor, setOpenRowMenu };
   const rowHandlersRef = useRef(rowHandlersImpl);
   rowHandlersRef.current = rowHandlersImpl;
   const rowHandlers = useMemo<ProviderRowHandlers>(() => ({
     onConfigure: (id) => rowHandlersRef.current.openProviderConfig(id),
     onActivate: (id) => rowHandlersRef.current.activateProvider(id),
+    onRefreshModels: (id) => rowHandlersRef.current.refreshProviderModels(id),
+    onToggleEnabled: (id, enabled) => rowHandlersRef.current.toggleProviderEnabled(id, enabled),
     onRemove: (id) => rowHandlersRef.current.deleteProviderFor(id),
     onMenuOpenChange: (id, open) => rowHandlersRef.current.setOpenRowMenu(open ? id : null),
   }), []);
@@ -937,11 +1001,11 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                     The other panes were migrated onto this idiom. */}
                 {/* No "Providers" title — the selected rail category already names
                     the pane. Custom providers are added from the last row of the
-                    Available list (no separate floating add control). */}
+                    add-provider list (no separate floating add control). */}
                 <div className="settings-provider-groups">
-                  {connectedChoices.length > 0 ? (
+                  {configuredChoices.length > 0 ? (
                     <InsetGroup ariaLabel={t.settings.providers.connectedAriaLabel} label={t.settings.providers.connectedGroup}>
-                      {connectedChoices.map(renderProviderRow)}
+                      {configuredChoices.map(renderProviderRow)}
                     </InsetGroup>
                   ) : null}
                   <InsetGroup ariaLabel={t.settings.providers.availableAriaLabel} label={t.settings.providers.availableGroup}>
@@ -1362,27 +1426,39 @@ function buildProviderChoices(
       active: provider.providerId === activeProviderId,
       enabled: provider.enabled,
       hasCredential: providerHasCredential(provider, providerCatalog),
+      detected: providerCatalog?.detected,
+      defaultBaseUrl: providerCatalog?.defaultBaseUrl,
+      canRefreshModels: provider.providerId === CC_SWITCH_LOCAL_PROVIDER_ID && provider.enabled,
     });
   }
 
   for (const provider of settings.availableProviders) {
     if (choices.has(provider.providerId)) continue;
+    const quickEnable = provider.providerId === CC_SWITCH_LOCAL_PROVIDER_ID && Boolean(provider.detected && provider.defaultBaseUrl);
     choices.set(provider.providerId, {
       providerId: provider.providerId,
       configured: false,
       active: provider.providerId === activeProviderId,
-      enabled: true,
-      hasCredential: Boolean(provider.hasEnvApiKey),
+      enabled: !quickEnable,
+      hasCredential: providerHasCredential(undefined, provider),
+      detected: provider.detected,
+      quickEnable,
+      defaultBaseUrl: provider.defaultBaseUrl,
     });
   }
 
   if (draftProviderId && !choices.has(draftProviderId)) {
+    const providerCatalog = catalog.get(draftProviderId);
+    const quickEnable = draftProviderId === CC_SWITCH_LOCAL_PROVIDER_ID && Boolean(providerCatalog?.detected && providerCatalog.defaultBaseUrl);
     choices.set(draftProviderId, {
       providerId: draftProviderId,
       configured: false,
       active: draftProviderId === activeProviderId,
-      enabled: true,
-      hasCredential: Boolean(catalog.get(draftProviderId)?.hasEnvApiKey),
+      enabled: !quickEnable,
+      hasCredential: providerHasCredential(undefined, providerCatalog),
+      detected: providerCatalog?.detected,
+      quickEnable,
+      defaultBaseUrl: providerCatalog?.defaultBaseUrl,
     });
   }
 
@@ -1406,8 +1482,10 @@ function compareProviderChoices(left: ProviderChoice, right: ProviderChoice): nu
 // Module-level helper (can't call useT) — the component passes `t` in.
 function providerStatusLabel(provider: ProviderChoice, t: Messages): string {
   const s = t.settings.providers.status;
+  if (!provider.configured && provider.detected) return s.detected;
   if (!provider.configured) return provider.hasCredential ? s.ready : s.addKey;
   if (!provider.enabled) return s.disabled;
+  if (provider.providerId === CC_SWITCH_LOCAL_PROVIDER_ID && !provider.hasCredential) return s.unavailable;
   if (!provider.hasCredential) return s.needsKey;
   return provider.active ? s.active : s.ready;
 }

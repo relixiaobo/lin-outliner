@@ -38,4 +38,57 @@ describe('provider usability', () => {
 
     expect(providerHasCredential(provider, undefined)).toBe(false);
   });
+
+  test('treats a detected keyless catalog gateway as credentialed before it is configured', () => {
+    expect(providerHasCredential(undefined, {
+      providerId: 'cc-switch',
+      authKind: 'api-key',
+      credentialed: true,
+      detected: true,
+      hasEnvApiKey: false,
+      envKeyNames: [],
+      defaultBaseUrl: 'http://127.0.0.1:15721/v1',
+      models: [],
+    })).toBe(true);
+  });
+
+  test('does not treat a detected but stopped catalog gateway as credentialed', () => {
+    expect(providerHasCredential(undefined, {
+      providerId: 'cc-switch',
+      authKind: 'api-key',
+      credentialed: false,
+      detected: true,
+      hasEnvApiKey: false,
+      envKeyNames: [],
+      defaultBaseUrl: 'http://127.0.0.1:15721/v1',
+      models: [],
+    })).toBe(false);
+  });
+
+  test('does not treat a configured but stopped CC Switch local gateway as usable', () => {
+    const view = settings();
+    view.activeProviderId = 'cc-switch';
+    view.providers = [{
+      providerId: 'cc-switch',
+      baseUrl: 'http://127.0.0.1:15721/v1',
+      enabled: true,
+      hasApiKey: false,
+      auth: { authKind: 'api-key', credentialed: false, hasStoredKey: false },
+    }];
+    view.availableProviders = [{
+      providerId: 'cc-switch',
+      authKind: 'api-key',
+      credentialed: false,
+      detected: true,
+      hasEnvApiKey: false,
+      envKeyNames: [],
+      defaultBaseUrl: 'http://127.0.0.1:15721/v1',
+      models: [],
+    }];
+
+    const provider = view.providers[0]!;
+    expect(providerHasCredential(provider, view.availableProviders[0])).toBe(false);
+    expect(isProviderUsable(view, provider)).toBe(false);
+    expect(resolveUsableActiveProvider(view)).toBeUndefined();
+  });
 });

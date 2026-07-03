@@ -28,6 +28,7 @@ const {
   getAgentRuntimeSettings,
   getProviderSettings,
   reconcileProviderConfig,
+  setActiveProvider,
   upsertProviderConfig,
   ensureProviderConfig,
   setProviderApiKey,
@@ -132,6 +133,34 @@ describe('provider config startup reconcile (Part A)', () => {
     expect(openai).toBeDefined();
     expect(openai?.hasApiKey).toBe(true);
     expect(view.activeProviderId).toBe('openai');
+  });
+
+  test('disabling a provider keeps credentials but removes it from active/runtime candidates', async () => {
+    await setProviderApiKey('openai', 'sk-openai');
+    await setProviderApiKey('anthropic', 'sk-anthropic');
+    await upsertProviderConfig({ providerId: 'openai', enabled: true });
+    await upsertProviderConfig({ providerId: 'anthropic', enabled: true });
+    await setActiveProvider('openai');
+
+    await upsertProviderConfig({ providerId: 'openai', enabled: false });
+
+    const view = await getProviderSettings();
+    const openai = view.providers.find((p) => p.providerId === 'openai');
+    expect(openai?.enabled).toBe(false);
+    expect(openai?.hasApiKey).toBe(true);
+    expect(view.activeProviderId).toBeUndefined();
+    expect(await getActiveProviderRuntimeConfig()).toMatchObject({
+      providerId: 'anthropic',
+      enabled: true,
+    });
+  });
+
+  test('a disabled provider cannot be set active', async () => {
+    await setProviderApiKey('openai', 'sk-openai');
+    await upsertProviderConfig({ providerId: 'openai', enabled: false });
+
+    await expect(setActiveProvider('openai')).rejects.toThrow('provider is disabled: openai');
+    expect((await getProviderSettings()).activeProviderId).toBeUndefined();
   });
 
   test('oauth login (credential then ensureProviderConfig) reconciles to active', async () => {

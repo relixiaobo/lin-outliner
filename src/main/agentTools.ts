@@ -17,6 +17,7 @@ import { createAgentDelegationTools, type AgentDelegationRuntime } from './agent
 import { normalizeAgentToolNames } from './agentToolRules';
 import { createPastChatsTool, type PastChatsToolRuntime } from './agentPastChatsTool';
 import { createAskUserQuestionTool, type AgentAskUserQuestionRuntime } from './agentAskUserQuestionTool';
+import { createDataImportTool } from './agentDataImportTool';
 import {
   agentToolResult,
   errorEnvelope,
@@ -245,6 +246,12 @@ function buildAgentToolCatalog(
       chatSourceValidator: options.chatSourceValidator,
       localFileRoot: options.localFileRoot,
     }) : [],
+  }, {
+    precondition: !!outliner,
+    create: () => outliner ? [createDataImportTool(outliner, {
+      localFileRoot: options.localFileRoot,
+      workspace: options.localWorkspace,
+    })] : [],
   }, {
     precondition: true,
     create: () => createLocalTools({

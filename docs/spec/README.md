@@ -15,15 +15,25 @@ For general product work:
 1. `architecture.md`
 2. `commands.md`
 3. `workspace-layout.md`
-4. `design-system.md`
+4. `design-system.md` + the smallest owning `design-system/*.md` layer
 5. `ui-behavior.md`
 
 For outliner interaction work:
 
 1. `ui-behavior.md`
 2. `outliner-parity-matrix.md`
-3. `design-system.md`
+3. `design-system.md` + `design-system/surfaces.md`
 4. `commands.md`
+
+For design-system work:
+
+1. `design-system.md` ← read first: the kernel, decision map, exceptions, and
+   validation summary.
+2. `design-system/foundations.md`
+3. `design-system/components.md`
+4. `design-system/patterns.md`
+5. `design-system/surfaces.md`
+6. `design-system/implementation.md`
 
 For agent work:
 
@@ -43,7 +53,12 @@ For agent work:
 | `architecture.md` | Runtime boundaries, command flow, renderer/main/core ownership. | Changing broad architecture or deciding where logic belongs. |
 | `commands.md` | Electron IPC document and agent command surface. | Adding, renaming, or auditing commands. |
 | `workspace-layout.md` | Shell, tabs, workspace canvas, tiled panels, sidebar, and agent dock layout. | Changing app frame or panel layout behavior. |
-| `design-system.md` | Visual system, density, typography, tokens, surfaces, components, and UI contracts. | Changing UI visuals, primitives, overlay styling, outliner row rhythm, or agent dock styling. |
+| `design-system.md` | Design-system kernel: product intent, principles, decision routing, source map, exception registry, and validation summary. | Starting any UI visual/interaction change, or deciding which design-system layer owns a rule. |
+| `design-system/foundations.md` | Foundation layer: tokens, colour, materials, typography, spacing, elevation, radius, icons, and motion. | Changing token values, theme behavior, material rules, type scale, spacing, radius, shadows, icons, or motion. |
+| `design-system/components.md` | Reusable UI primitive contracts. | Changing shared controls, menu/dialog primitives, form primitives, feedback states, or other cross-surface components. |
+| `design-system/patterns.md` | Cross-component interaction states, content states, accessibility, drag/drop, and native-feel boundaries. | Changing hover/focus/selection/loading/error behavior, keyboard/accessibility patterns, drag/drop, or native desktop affordances. |
+| `design-system/surfaces.md` | Product-specific surface contracts: shell, workspace, outliner, references, fields, overlays, agent, and settings. | Changing app frame, panels, outliner row rhythm, references, menus, agent dock/composer, or settings surfaces. |
+| `design-system/implementation.md` | Design-system maintenance, versioning, and validation rules. | Adding/removing tokens, changing spec guard scope, or deciding which checks prove a visual/system change. |
 | `ui-behavior.md` | Compact outliner keyboard, pointer, trailing input, field row, selection, and trigger behavior. | Making everyday outliner interaction changes. |
 | `error-observability.md` | Local structured diagnostic logging, error reporting, safety nets, and Settings export/reveal actions. | Changing runtime failure reporting, diagnostic log storage, renderer/main error bridges, or diagnostics export. |
 | `outliner-parity-matrix.md` | Behavioral parity with nodex: pointer, keyboard, selection, trigger semantics, and the tests that pin them. | Checking exact nodex-style selection/editing parity. |
@@ -71,8 +86,9 @@ For agent work:
   contracts and must move with behavior changes.
 - Prefer one canonical document per concern. Do not add a new spec if an
   existing file owns that area.
-- Keep `design-system.md` as a single file. It is optimized for agents reading
-  source context, not for a browsable design site.
+- Keep `design-system.md` as the design-system kernel and route detailed rules to
+  the smallest owning `design-system/*.md` layer. Do not duplicate a rule across
+  layers; link to the owner instead.
 - Keep outliner behavior in `ui-behavior.md` unless the change needs detailed
   nodex parity evidence; then update `outliner-parity-matrix.md` too.
 - Keep durable agent architecture in `agent-event-log-rendering.md`. Other
@@ -86,6 +102,10 @@ When changing specs, run the smallest relevant checks:
 
 - `bun run typecheck`
 - `bunx playwright test tests/e2e/typography-tokens.spec.ts --project=chromium`
-  for design-system token changes.
+  for design-system token changes or design-system spec-example changes.
+- `bun scripts/design-system-metrics.ts --json` for design-system compression,
+  decision derivation, component coverage, exception evidence, and raw-hex/token
+  discipline across renderer CSS/TS/TSX. Use `--check` before publishing
+  design-system compression work.
 - Focused Playwright or core tests for the behavior being documented.
 - `git diff --check`

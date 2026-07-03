@@ -2637,14 +2637,14 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-message-row.assistant', { hasText: 'Adjacent answer has no anchor.' }).locator('.agent-reply-anchor')).toHaveCount(0);
   });
 
-  // The composer no longer renders a model chip (provider-connection-model-ownership
-  // #256): a DM is a conversation with an agent identity, not with a model, so the
-  // footer carries no model identity and no inline model menu. Model/effort live on
-  // the agent profile; model/provider stay visible in details/run-debug surfaces.
-  test('the composer footer shows no model identity control', async ({ page }) => {
+  // The composer model chip is a profile shortcut, not a per-conversation model
+  // identity: it edits Neva's standing model/effort through the agent profile path
+  // and stays out of provider connection settings.
+  test('the composer footer shows the profile model shortcut without provider settings chrome', async ({ page }) => {
+    const modelButton = page.locator('.agent-composer-model-button');
+    await expect(modelButton).toBeVisible();
+    await expect(modelButton).toContainText('GPT-5.4');
     await expect(page.getByRole('button', { name: 'Open model settings' })).toHaveCount(0);
-    await expect(page.locator('.agent-composer-model-button')).toHaveCount(0);
-    await expect(page.locator('.agent-composer-model-menu')).toHaveCount(0);
     await expect(page.locator('.agent-composer-thinking-row')).toHaveCount(0);
   });
 

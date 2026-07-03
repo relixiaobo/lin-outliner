@@ -3,6 +3,7 @@ import type {
   Backlink,
   AgentProviderConfigInput,
   AgentProviderSecretStatus,
+  AgentProviderStoredApiKey,
   AgentProviderSettingsView,
   AgentRuntimeSettingsInput,
   AgentConversation,
@@ -396,6 +397,8 @@ export const api = {
     command<AgentSlashCommandView[]>('agent_list_slash_commands', { conversationId }),
   agentGetProviderSettings: () =>
     command<AgentProviderSettingsView>('agent_get_provider_settings'),
+  agentRefreshProviderModels: (providerId: string) =>
+    command<AgentProviderSettingsView>('agent_refresh_provider_models', { providerId }),
   agentUpdateRuntimeSettings: (settings: AgentRuntimeSettingsInput) =>
     command<AgentProviderSettingsView>('agent_update_runtime_settings', { settings }),
   agentGetToolPermissionSettings: () =>
@@ -418,6 +421,8 @@ export const api = {
     command<AgentProviderSecretStatus>('agent_delete_provider_api_key', { providerId }),
   agentGetProviderSecretStatus: (providerId: string) =>
     command<AgentProviderSecretStatus>('agent_get_provider_secret_status', { providerId }),
+  agentGetProviderApiKey: (providerId: string) =>
+    bridge((lin) => lin.getProviderApiKey(providerId)),
   agentOAuthLogin: (providerId: string) =>
     command<AgentProviderSettingsView>('agent_oauth_login', { providerId }),
   agentOAuthLogout: (providerId: string) =>

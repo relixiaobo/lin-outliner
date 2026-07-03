@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { CheckIcon, HideIcon, ICON_SIZE, LoaderIcon, OpenIcon, PasswordIcon, ShowIcon } from '../icons';
+import { CheckIcon, CopyIcon, HideIcon, ICON_SIZE, LoaderIcon, OpenIcon, PasswordIcon, ShowIcon } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
 import { ErrorState } from '../primitives/FeedbackState';
@@ -35,7 +35,8 @@ interface ProviderConfigFormProps {
   defaultBaseUrl?: string;
   baseUrlPlaceholder: string;
   initial: { providerId: string; baseUrl: string };
-  hasSavedKey: boolean;
+  hasCredential: boolean;
+  hasStoredKey: boolean;
   isActive: boolean;
   /** Managed-credential providers (e.g. AWS Bedrock) show a note instead of a key field. */
   authNote?: AuthNote;
@@ -43,6 +44,7 @@ interface ProviderConfigFormProps {
   titleId: string;
   onValidate: (draft: ProviderConfigDraft) => Promise<ProviderConfigValidation>;
   onSubmit: (draft: ProviderConfigDraft) => Promise<void>;
+  onLoadStoredApiKey?: () => Promise<string | undefined>;
   onSetActive?: () => void;
   onRemoveProvider?: () => void;
   onOpenExternal: (url: string) => void;
@@ -67,13 +69,15 @@ export function ProviderConfigForm({
   defaultBaseUrl,
   baseUrlPlaceholder,
   initial,
-  hasSavedKey,
+  hasCredential,
+  hasStoredKey,
   isActive,
   authNote,
   docsUrl,
   titleId,
   onValidate,
   onSubmit,
+  onLoadStoredApiKey,
   onSetActive,
   onRemoveProvider,
   onOpenExternal,
@@ -87,8 +91,10 @@ export function ProviderConfigForm({
   const [providerId, setProviderId] = useState(initial.providerId);
   const [baseUrl, setBaseUrl] = useState(initial.baseUrl);
   const [apiKey, setApiKey] = useState('');
+  const [storedApiKey, setStoredApiKey] = useState<string | null>(null);
   const [reveal, setReveal] = useState(false);
   const [status, setStatus] = useState<FormStatus>('idle');
+  const [keyLoading, setKeyLoading] = useState(false);
   const [message, setMessage] = useState('');
 
   // The window owns focus, so autofocus the first field on mount (the Dialog used
@@ -99,7 +105,7 @@ export function ProviderConfigForm({
 
   const validating = status === 'validating';
   const saving = status === 'saving';
-  const busy = validating || saving;
+  const busy = validating || saving || keyLoading;
 
   const trimmedProviderId = providerId.trim();
   const showKeyField = !authNote;
@@ -113,17 +119,58 @@ export function ProviderConfigForm({
   // endpoint. A keyless remote proxy has no way to authenticate, so we block
   // saving one rather than persist an unusable connection (startup reconcile
   // keeps any baseUrl row it finds — it does not prune keyless-remote).
-  const hasConnection = Boolean(draft.apiKey) || hasSavedKey || isLocalBaseUrl(draft.baseUrl);
+  const hasConnection = Boolean(draft.apiKey) || hasCredential || isLocalBaseUrl(draft.baseUrl);
   const canSave = Boolean(draft.providerId)
     && (authNote ? true : hasConnection)
     && !busy;
   const canValidate = Boolean(draft.providerId) && !busy;
+  const showingStoredKey = reveal && !apiKey && storedApiKey !== null;
+  const apiKeyDisplayValue = apiKey || (showingStoredKey ? storedApiKey : '');
 
   function clearResult() {
     validationToken.current += 1;
     if (status !== 'idle' && status !== 'saving') {
       setStatus('idle');
       setMessage('');
+    }
+  }
+
+  async function loadStoredApiKey(): Promise<string | null> {
+    if (storedApiKey !== null) return storedApiKey;
+    if (!hasStoredKey || !onLoadStoredApiKey) return null;
+    setKeyLoading(true);
+    try {
+      const key = await onLoadStoredApiKey();
+      if (!key) throw new Error(t.providerConfig.savedKeyUnavailable);
+      setStoredApiKey(key);
+      return key;
+    } catch (caught) {
+      setStatus('error');
+      setMessage(caught instanceof Error ? caught.message : String(caught));
+      return null;
+    } finally {
+      setKeyLoading(false);
+    }
+  }
+
+  async function toggleReveal() {
+    if (!reveal && hasStoredKey && !apiKey) {
+      const key = await loadStoredApiKey();
+      if (!key) return;
+    }
+    setReveal((current) => !current);
+  }
+
+  async function copyApiKey() {
+    const key = apiKey.trim() || (await loadStoredApiKey());
+    if (!key) return;
+    try {
+      await navigator.clipboard.writeText(key);
+      setStatus('success');
+      setMessage(t.providerConfig.keyCopied);
+    } catch (caught) {
+      setStatus('error');
+      setMessage(caught instanceof Error ? caught.message : String(caught));
     }
   }
 
@@ -216,17 +263,30 @@ export function ProviderConfigForm({
                   className="settings-sheet-row-input"
                   label={t.providerConfig.apiKeyLabel}
                   onChange={(event) => { setApiKey(event.target.value); clearResult(); }}
-                  placeholder={hasSavedKey ? t.providerConfig.apiKeySavedPlaceholder : t.providerConfig.apiKeyPlaceholder}
+                  placeholder={hasStoredKey ? t.providerConfig.apiKeySavedPlaceholder : t.providerConfig.apiKeyPlaceholder}
+                  readOnly={showingStoredKey}
                   ref={isCustom ? undefined : firstFieldRef}
                   type={reveal ? 'text' : 'password'}
-                  value={apiKey}
+                  value={apiKeyDisplayValue}
                   variant="bare"
                 />
+                {apiKey || hasStoredKey ? (
+                  <button
+                    aria-label={t.providerConfig.copyKey}
+                    className="settings-sheet-reveal"
+                    disabled={busy}
+                    onClick={() => void copyApiKey()}
+                    type="button"
+                  >
+                    {keyLoading ? <LoaderIcon size={ICON_SIZE.menu} /> : <CopyIcon size={ICON_SIZE.menu} />}
+                  </button>
+                ) : null}
                 <button
                   aria-label={reveal ? t.providerConfig.hideKey : t.providerConfig.showKey}
                   aria-pressed={reveal}
                   className="settings-sheet-reveal"
-                  onClick={() => setReveal((current) => !current)}
+                  disabled={busy}
+                  onClick={() => void toggleReveal()}
                   type="button"
                 >
                   {reveal ? <HideIcon size={ICON_SIZE.menu} /> : <ShowIcon size={ICON_SIZE.menu} />}
@@ -246,7 +306,7 @@ export function ProviderConfigForm({
             />
           </label>
         </div>
-        {!authNote && !hasSavedKey && docsUrl ? (
+        {!authNote && !hasCredential && docsUrl ? (
           <button className="agent-settings-doc-link settings-sheet-getkey" onClick={() => onOpenExternal(docsUrl)} type="button">
             <span>{t.providerConfig.getApiKey}</span>
             <OpenIcon size={ICON_SIZE.tiny} />

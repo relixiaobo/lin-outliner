@@ -7,7 +7,7 @@ import { useT } from '../../i18n/I18nProvider';
 import { Field } from '../primitives/Field';
 import { Input } from '../primitives/Input';
 import { SelectControl } from '../primitives/SelectControl';
-import { isProviderUsable } from './providerUsability';
+import { isProviderUsable, resolveUsableActiveProvider } from './providerUsability';
 
 // Capability-driven model + effort picker for an agent profile (provider-connection-
 // model-ownership #256). A provider is a connection; the model/effort that runs is
@@ -68,7 +68,7 @@ export function AgentModelEffortSelector({
   const reasoningCopy = t.agent.composer.reasoningLevels;
   const reasoningLabel = (level: AgentReasoningLevel) => reasoningCopy[reasoningLevelLabelKey(level)];
 
-  const activeProviderId = settings?.activeProviderId ?? '';
+  const activeProviderId = settings ? resolveUsableActiveProvider(settings)?.providerId ?? '' : '';
   // A provider id is "known" (eligible for the `:` qualifier split) when it is a
   // catalog or configured provider — so a bare colon-bearing model id is not
   // mis-read as a provider/model pair.
@@ -94,21 +94,16 @@ export function AgentModelEffortSelector({
       models: settings?.availableProviders.find((option) => option.providerId === provider.providerId)?.models ?? [],
     }));
 
-  // Keep an already-saved provider visible even if it is not currently usable, so an
-  // existing selection never silently disappears from the dropdown.
-  if (providerId && !usableProviders.some((provider) => provider.providerId === providerId)) {
-    usableProviders.push({
-      providerId,
-      models: settings?.availableProviders.find((option) => option.providerId === providerId)?.models ?? [],
-    });
-  }
+  const savedProviderUnavailable = Boolean(selection.providerId)
+    && !usableProviders.some((provider) => provider.providerId === selection.providerId);
+  const effectiveProviderId = savedProviderUnavailable ? pendingProvider : providerId;
 
-  const selectedProvider = usableProviders.find((provider) => provider.providerId === providerId);
+  const selectedProvider = usableProviders.find((provider) => provider.providerId === effectiveProviderId);
   const catalogModels = selectedProvider?.models ?? [];
   const selectedModelOption = catalogModels.find((option) => option.id === selection.modelId);
   // Catalog providers list ranked models; a custom OpenAI-compatible connection has
   // no catalog, so its model is entered as free text.
-  const useFreeTextModel = Boolean(providerId) && catalogModels.length === 0;
+  const useFreeTextModel = Boolean(effectiveProviderId) && catalogModels.length === 0;
   // A saved model the catalog no longer lists must still appear (and stay selected),
   // or the <select> would silently render an unrelated first option as if chosen.
   const savedModelMissing = Boolean(selection.modelId)
@@ -140,6 +135,18 @@ export function AgentModelEffortSelector({
     // including it would re-fire the effect in a loop.
   }, [model, effort, selectedModelOption?.id]);
 
+  // A disabled provider can still have a saved key and a stale profile model. It is
+  // not a runnable capability, so clear that model to inherit instead of keeping a
+  // hidden provider/model pair that the user cannot select again.
+  useEffect(() => {
+    if (!savedProviderUnavailable) return;
+    setPendingProvider('');
+    onModelChange('');
+    if (effort) onEffortChange('');
+    // `onModelChange`/`onEffortChange` are fresh closures in the editor; including
+    // them would re-run this one-shot reconciliation after every local form update.
+  }, [savedProviderUnavailable, selection.providerId, effort]);
+
   function changeProvider(nextProviderId: string) {
     if (!nextProviderId) {
       setPendingProvider('');
@@ -165,7 +172,7 @@ export function AgentModelEffortSelector({
 
   function changeModel(nextModelId: string) {
     reconcileEffort(catalogModels.find((option) => option.id === nextModelId));
-    onModelChange(composeProviderQualifiedModel(providerId, nextModelId));
+    onModelChange(composeProviderQualifiedModel(effectiveProviderId, nextModelId));
   }
 
   return (
@@ -176,7 +183,7 @@ export function AgentModelEffortSelector({
           disabled={disabled}
           label={providerLabel}
           onChange={(event) => changeProvider(event.target.value)}
-          value={providerId}
+          value={effectiveProviderId}
           variant="popup"
         >
           <option value="">{inheritLabel}</option>
@@ -186,7 +193,7 @@ export function AgentModelEffortSelector({
         </SelectControl>
       </Field>
 
-      {providerId ? (
+      {effectiveProviderId ? (
         <Field as="label" className="settings-sheet-row" label={modelLabel} labelClassName="settings-sheet-row-label">
           {useFreeTextModel ? (
             <Input

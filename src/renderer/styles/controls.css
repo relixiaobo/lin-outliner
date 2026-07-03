@@ -24,10 +24,10 @@
 }
 
 .checkbox-mark.checked {
-  border-color: var(--semantic-success);
-  background: var(--semantic-success);
-  /* The check glyph is white on the fill in BOTH themes (--panel-bg flips dark in
-     dark mode, which would render a near-black tick on the green box). */
+  border-color: var(--control-on);
+  background: var(--control-on);
+  /* The check glyph is white on the control-on fill in BOTH themes (--panel-bg
+     flips dark in dark mode, which would render a near-black tick). */
   color: var(--text-on-accent);
 }
 
@@ -51,7 +51,7 @@
 }
 
 .switch-mark.checked {
-  background: var(--semantic-success);
+  background: var(--control-on);
 }
 
 .switch-mark-thumb {

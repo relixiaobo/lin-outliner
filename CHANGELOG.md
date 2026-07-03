@@ -12,6 +12,52 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Data cleanup import workflow (PR #370, codex-4)** — added `/data-cleanup`
+  as a resource-backed built-in skill plus Import Pack v1 validation, preview,
+  and `data_import` staging writes. Tana exports now have a deterministic
+  cleanup route with coverage accounting, dry-run preview confirmation,
+  staging-root materialization, and post-import verification; Roam EDN is
+  profiled only in this release. **Gate (main):** code review found one
+  permission-registration blocker for `data_import`; codex-4 fixed it before
+  merge. Verified with targeted permission tests plus the PR's typecheck,
+  docs-check, import-tool/script suites, real Tana-export import evidence, and
+  `git diff --check`.
+- **CC Switch Codex mirror provider (PR #369, codex-2)** — added CC
+  Switch Local Gateway as an externally configured provider that mirrors Codex
+  credentials and generated model catalog support from `~/.codex/config.toml` /
+  `~/.codex/auth.json`, with Local Proxy fallback. Provider settings now use
+  Configured / Add Providers grouping, explicit enable/disable state for
+  configured and external rows, disabled-provider filtering from model pickers
+  and runtime fallback, masked saved keys, and no show/copy path for externally
+  managed secrets. The merge also preserves custom OpenAI-compatible model
+  metadata so CC Switch/catalog-backed endpoints route through Responses or Chat
+  Completions correctly. **Gate (main):** code review found two P2 issues around
+  raw-key IPC exposure and runtime provider validation; codex-2 fixed both before
+  merge. Verified with typecheck, targeted provider/runtime/renderer suites,
+  provider settings E2E, `docs:check`, and `git diff --check`.
+- **Design-system compression metrics (PR #368, codex)** — added
+  `docs/spec/design-system/decision-audit.md` and
+  `scripts/design-system-metrics.ts` so the layered design-system contract now
+  has measurable checks for surface compression, decision derivation, component
+  coverage, exception evidence, renderer-wide raw-hex discipline, and
+  documented-component drift. The PR compresses `surfaces.md` into a thinner
+  surface model, promotes reusable rules into components and patterns, tokenizes
+  tag color presets through identity tint tokens, and pins the provider-ready
+  agent blank state to executable onboarding E2E coverage. **Gate (main):**
+  deep review found audit/spec and metrics false-negative issues; codex fixed
+  all findings before merge. Verified with the metrics gate, docs check,
+  typecheck, focused typography-token and agent-onboarding E2E specs, and
+  `git diff --check`.
+- **Layered design-system contract (PR #367, codex)** — refactored
+  `docs/spec/design-system.md` into a kernel/index with layered contracts for
+  foundations, components, patterns, surfaces, and implementation. `docs:check`
+  now validates local spec Markdown links and heading anchors, and the typography
+  guard scans CSS examples across the split design-system spec tree. The merge
+  also tokenized related CSS drift around control-on state, link hover, danger
+  solid hover, vertical resize cursors, shared material backdrop use, and the
+  agent composer profile model shortcut. **Gate (main):** code review found no
+  reportable issues; verified with docs/typecheck/design-system guard and focused
+  composer E2E coverage.
 - **Expanded packaged linlab artifact skills** — packaged builds now stage
   `/data-analysis`, `/document`, `/pdf`, `/presentation`, and `/spreadsheet`
   from the sibling `linlab-skills` checkout into `Resources/built-in-skills`.
