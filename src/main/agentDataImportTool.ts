@@ -328,7 +328,6 @@ async function materializeImportPack(
   });
   const stagingRootId = focusNodeId(outcome);
   if (!stagingRootId) throw new Error('Import did not create a staging root.');
-  await applyImportDescriptions(host, stagingRootId, pack);
   return { createdRootIds: [stagingRootId] };
 }
 
@@ -342,6 +341,7 @@ function importNodeToCreateNodeTree(node: ImportNode): CreateNodeTree {
   if (node.code) {
     return {
       content: plainText(node.code.text),
+      ...(node.description?.trim() ? { description: node.description } : {}),
       children: (node.children ?? []).map(importNodeToCreateNodeTree),
       type: 'codeBlock',
       codeLanguage: node.code.language,
@@ -352,6 +352,7 @@ function importNodeToCreateNodeTree(node: ImportNode): CreateNodeTree {
   }
   return {
     content: plainText(node.title),
+    ...(node.description?.trim() ? { description: node.description } : {}),
     children: (node.children ?? []).map(importNodeToCreateNodeTree),
     tags: node.tags ?? [],
     fields: fieldRows(node),
@@ -369,36 +370,6 @@ function treeNode(title: string, children: CreateNodeTree[]): CreateNodeTree {
 function fieldRows(node: ImportNode): CreateNodeTree['fields'] {
   return (node.fields ?? []).flatMap((field) =>
     field.values.map((value) => ({ name: field.name, value })));
-}
-
-async function applyImportDescriptions(host: OutlinerToolHost, stagingRootId: string, pack: ImportPack): Promise<void> {
-  let index = indexProjection(host.getProjection());
-  const sectionIds = normalChildIds(index, stagingRootId, false);
-  for (let sectionIndex = 0; sectionIndex < pack.sections.length; sectionIndex += 1) {
-    const section = pack.sections[sectionIndex];
-    const sectionId = sectionIds[sectionIndex];
-    if (!section || !sectionId) continue;
-    await applyNodeDescriptions(host, sectionId, section.nodes);
-    index = indexProjection(host.getProjection());
-  }
-}
-
-async function applyNodeDescriptions(host: OutlinerToolHost, parentId: string, nodes: ImportNode[]): Promise<void> {
-  const index = indexProjection(host.getProjection());
-  const childIds = normalChildIds(index, parentId, false);
-  for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex += 1) {
-    const source = nodes[nodeIndex];
-    const nodeId = childIds[nodeIndex];
-    if (!source || !nodeId) continue;
-    if (source.description?.trim()) {
-      await host.handle('update_node_description', { nodeId, description: source.description }, {
-        origin: 'agent',
-        tool: DATA_IMPORT_TOOL,
-        summary: 'Applied imported node description.',
-      });
-    }
-    if (source.children?.length) await applyNodeDescriptions(host, nodeId, source.children);
-  }
 }
 
 function focusNodeId(outcome: unknown): string | null {

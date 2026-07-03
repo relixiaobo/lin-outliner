@@ -721,6 +721,8 @@ export interface PasteRowMeta {
 
 export interface CreateNodeTree extends PasteRowMeta {
   content: RichText;
+  /** Optional node description/caption to materialize with the row. */
+  description?: string;
   children: CreateNodeTree[];
   /** Optional node type for the materialized node. Paste only emits `codeBlock`. */
   type?: NodeType;

@@ -299,8 +299,9 @@ oversized packs, and invalid destinations before mutation.
 Successful non-dry-run imports create one explicit staging root
 (`Import: <source-name>`) under the destination and then materialize section
 headings and imported nodes below it. The implementation uses the existing
-`create_nodes_from_tree` bulk command for the large tree and applies imported
-descriptions afterward. Post-import verification reads the created staging
+`create_nodes_from_tree` bulk command for the large tree, including imported
+descriptions, so the import is a single bulk mutation rather than a long series
+of per-node description edits. Post-import verification reads the created staging
 subtree and compares section, node, description, tag, field, and checked counts
 against the pack. A mismatch returns `verification_failed` with the created ids
 and recovery instructions rather than reporting success.

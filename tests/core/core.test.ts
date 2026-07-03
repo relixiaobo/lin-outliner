@@ -289,6 +289,27 @@ describe('Core', () => {
     });
   });
 
+  test('materializes tree node descriptions with the created nodes', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const outcome = core.createNodesFromTree(today, [
+      {
+        content: plainText('Node with description'),
+        description: 'Imported description',
+        children: [{
+          content: plainText('Child with description'),
+          description: 'Child description',
+          children: [],
+        }],
+      },
+    ]);
+    const nodeId = outcome.focus!.nodeId;
+    const childId = core.state().nodes[nodeId].children[0]!;
+
+    expect(core.state().nodes[nodeId].description).toBe('Imported description');
+    expect(core.state().nodes[childId].description).toBe('Child description');
+  });
+
   test('materializes a codeBlock tree node with its language', () => {
     const core = Core.new();
     const today = core.projection().todayId;

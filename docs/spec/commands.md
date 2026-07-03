@@ -30,6 +30,10 @@ The renderer calls them through `window.lin.invoke(...)` via
 `update_node_description`, `merge_node_into`, `move_node`, `batch_move_nodes`,
 `indent_node`, `outdent_node`.
 
+`create_nodes_from_tree` materializes a typed `CreateNodeTree` recursively,
+including content, optional descriptions, code block language, tags, fields, and
+task checkbox state. It is the bulk structural path for paste and import.
+
 `create_capture` atomically creates one launcher-capture node: a plain node
 carrying a hidden, typed `capture` provenance sidecar (`CaptureNodeMetadata` on
 `NodeBase.capture`) plus the source projected into native outline shape — a

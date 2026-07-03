@@ -307,9 +307,8 @@ export class LoroOutlinerDocument {
     type: NodeType | undefined,
     configure: (node: T) => void,
   ) {
-    const state = this.materializeState();
-    if (parentId && !state.nodes[parentId]) throw CoreError.parentNotFound(parentId);
-    const parentTreeNode = parentId ? this.requiredTreeNode(parentId) : undefined;
+    const parentTreeNode = parentId ? this.treeNodeOrUndefined(parentId) : undefined;
+    if (parentId && !parentTreeNode) throw CoreError.parentNotFound(parentId);
     const parentTreeId = parentTreeNode?.id;
     const targetIndex = parentTreeNode
       ? clampInsertIndex(index, parentTreeNode.children()?.length ?? 0)
