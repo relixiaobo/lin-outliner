@@ -1268,6 +1268,10 @@ commandPalette: {
       stopping: 'Stopping...',
       subRunProgress: ({ completed, total }: { completed: number; total: number }) =>
         total === 1 ? `Sub-run ${completed}/${total}` : `Sub-runs ${completed}/${total}`,
+      relativeJustNow: 'just now',
+      relativeMinutesAgo: ({ count }: { count: number }) => count === 1 ? '1 minute ago' : `${count} minutes ago`,
+      relativeHoursAgo: ({ count }: { count: number }) => count === 1 ? '1 hour ago' : `${count} hours ago`,
+      relativeDaysAgo: ({ count }: { count: number }) => count === 1 ? '1 day ago' : `${count} days ago`,
       messages: ({ count }: { count: number }) => count === 1 ? '1 message' : `${count} messages`,
       memoryChanges: ({ count }: { count: number }) => count === 1 ? '1 memory change' : `${count} memory changes`,
       status: {

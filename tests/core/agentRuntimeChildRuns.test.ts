@@ -247,6 +247,22 @@ function textFromContext(context: Context): string {
   });
 }
 
+function lastContextMessageText(context: Context): string {
+  const messages = context.messages ?? [];
+  const last = messages[messages.length - 1] as { content?: unknown } | undefined;
+  const content = last?.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part) => (
+      part && typeof part === 'object' && 'type' in part && part.type === 'text' && 'text' in part && typeof part.text === 'string'
+        ? part.text
+        : ''
+    ))
+    .filter(Boolean)
+    .join('\n');
+}
+
 describe('agent runtime childRuns', () => {
   let roots: string[] = [];
 
@@ -256,6 +272,57 @@ describe('agent runtime childRuns', () => {
 
   afterEach(async () => {
     await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  test('submits completed turn run final assistant text as the canonical result', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-result-fallback-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-result-fallback-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const script = scriptedStream(
+      [fauxAssistantMessage(fauxText('Final visible result.'))],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({ providerId: 'openai', enabled: true, apiKey: 'test-key' }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await runtime.sendMessage(conversation.conversationId, 'Answer directly.');
+
+    const metas = await conversationRunMetas(dataRoot, conversation.conversationId);
+    const rootRun = metas.find((run) => !run.parentRunId);
+    expect(rootRun).toBeDefined();
+    expect(typeof rootRun?.objective?.latestSubmissionSeq).toBe('number');
+    const ledgerEvents = await new AgentEventStore(dataRoot).readRunStreamEvents(rootRun!.id);
+    const submissionIndex = ledgerEvents.findIndex((event) => event.type === 'run.result.submitted');
+    const terminalIndex = ledgerEvents.findIndex((event) => event.type === 'run.completed');
+    expect(submissionIndex).toBeGreaterThanOrEqual(0);
+    expect(terminalIndex).toBeGreaterThan(submissionIndex);
+    expect(ledgerEvents[submissionIndex]).toMatchObject({
+      type: 'run.result.submitted',
+      seq: rootRun?.objective?.latestSubmissionSeq,
+      summary: 'Final visible result.',
+      source: 'final_assistant_message',
+    });
+    const detail = await runtime.agentRunDetail(rootRun!.id, conversation.conversationId);
+    expect(detail).toMatchObject({
+      title: 'Answer directly.',
+      result: {
+        summary: 'Final visible result.',
+        source: 'final_assistant_message',
+      },
+    });
   });
 
   test('a default sub-run leaves its gated approval unattributed', async () => {
@@ -484,12 +551,16 @@ describe('agent runtime childRuns', () => {
     expect(projection?.entities.runs[childRunId]).toMatchObject({
       runProfile: 'research',
       runProfileLabel: 'Research',
+      title: 'Collect sources.',
     });
 
     const metas = await conversationRunMetas(dataRoot, conversation.conversationId);
-    expect(workerRunsWithObjective(metas, 'Collect sources.')[0]).toMatchObject({
+    const worker = workerRunsWithObjective(metas, 'Collect sources.')[0];
+    expect(worker).toMatchObject({
       runProfile: 'research',
     });
+    const detail = worker ? await runtime.agentRunDetail(worker.id, conversation.conversationId) : null;
+    expect(detail?.title).toBe('Collect sources.');
   });
 
   test('slims large child run tool outputs before the child continues', async () => {
@@ -1417,7 +1488,526 @@ describe('agent runtime childRuns', () => {
     expect(afterOpen[afterOpen.length - 1]?.unreadCount).toBe(0);
   });
 
-  test('lists Work runs across channels with parent turn groups', async () => {
+  test('returns direct sibling background childRuns as separate conversation replies', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-sibling-notify-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-sibling-notify-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const notificationContexts: string[] = [];
+    const streamFn = respondingStream((context) => {
+      const lastText = lastContextMessageText(context);
+      const text = textFromContext(context);
+      if (lastText.includes('<agent-run-notification>')) {
+        notificationContexts.push(lastText);
+        return fauxAssistantMessage(fauxText(`Consumed sibling notification ${notificationContexts.length}.`));
+      }
+      if (lastText.includes('First sibling work.')) {
+        return fauxAssistantMessage(fauxText('First sibling result.'));
+      }
+      if (lastText.includes('Second sibling work.')) {
+        return fauxAssistantMessage(fauxText('Second sibling result.'));
+      }
+      if (lastText.includes('Start two direct background siblings.')) {
+        return fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'first sibling',
+            objective: 'First sibling work.',
+            verify: false,
+            detach: true,
+            name: 'sibling-one',
+          }, { id: 'tool-sibling-one' }),
+          fauxToolCall('spawn_run', {
+            description: 'second sibling',
+            objective: 'Second sibling work.',
+            verify: false,
+            detach: true,
+            name: 'sibling-two',
+          }, { id: 'tool-sibling-two' }),
+        ], { stopReason: 'toolUse' });
+      }
+      if (text.includes('tool-sibling-one') && text.includes('tool-sibling-two')) {
+        return fauxAssistantMessage(fauxText('Sibling runs launched.'));
+      }
+      return fauxAssistantMessage([], { stopReason: 'error', errorMessage: `Unexpected context: ${lastText}` });
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start two direct background siblings.', sink);
+    await waitFor(() => notificationContexts.length === 2, 2000);
+
+    const firstNotification = notificationContexts.find((context) => context.includes('sibling-one'));
+    const secondNotification = notificationContexts.find((context) => context.includes('sibling-two'));
+    expect(firstNotification).toContain('First sibling result.');
+    expect(firstNotification).not.toContain('sibling-two');
+    expect(secondNotification).toContain('Second sibling result.');
+    expect(secondNotification).not.toContain('sibling-one');
+
+    const replay = await new AgentEventStore(dataRoot).replay(conversation.conversationId);
+    const notifications = Object.values(replay.notifications);
+    expect(notifications).toHaveLength(2);
+  });
+
+  test('a controller run folds detached child results before submitting its final result', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-nested-background-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-nested-background-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const continuationContexts: string[] = [];
+    const script = scriptedStream(
+      [
+        fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'nested controller',
+            objective: 'Coordinate a nested background result.',
+            verify: false,
+          }, { id: 'tool-agent-controller' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'nested worker',
+            objective: 'Produce the nested worker fact.',
+            verify: false,
+            detach: true,
+            name: 'nested-worker',
+          }, { id: 'tool-agent-worker' }),
+        ], { stopReason: 'toolUse' }),
+        fauxAssistantMessage(fauxText('Nested worker final fact.')),
+        fauxAssistantMessage(fauxText('I started the nested worker.')),
+        (context) => {
+          continuationContexts.push(textFromContext(context));
+          return fauxAssistantMessage(fauxText('Controller final result uses Nested worker final fact.'));
+        },
+        fauxAssistantMessage(fauxText('Top-level accepted nested controller result.')),
+      ],
+      () => undefined,
+    );
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn: script.streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a nested background controller.', sink);
+
+    expect(script.pendingCount()).toBe(0);
+    const continuationText = continuationContexts.join('\n');
+    expect(continuationText).toContain('<detached-sub-run-results>');
+    expect(continuationText).toContain('Nested worker final fact.');
+
+    const store = new AgentEventStore(dataRoot);
+    const runMetas = await store.listConversationRunMetaProjections(conversation.conversationId);
+    const controller = runMetas.find((run) => run.objective?.text === 'Coordinate a nested background result.');
+    expect(controller).toBeDefined();
+    if (!controller) throw new Error('Expected controller run metadata.');
+
+    const detail = await runtime.agentRunDetail(controller.id, conversation.conversationId);
+    expect(detail?.result?.summary).toBe('Controller final result uses Nested worker final fact.');
+    expect(detail?.subRuns).toHaveLength(1);
+    expect(detail?.subRuns[0]).toMatchObject({
+      title: 'Produce the nested worker fact.',
+      status: 'completed',
+    });
+
+    const controllerEvents = await store.readRunStreamEvents(controller.id);
+    const submissions = controllerEvents.filter((event) => event.type === 'run.result.submitted');
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0]).toMatchObject({
+      summary: 'Controller final result uses Nested worker final fact.',
+      source: 'final_assistant_message',
+    });
+  });
+
+  test('nested detached worker runs notify their parent run, not the conversation', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-nested-detached-notify-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-nested-detached-notify-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const notificationContexts: string[] = [];
+    const coordinatorContinuationContexts: string[] = [];
+    const streamFn = respondingStream((context) => {
+      const lastText = lastContextMessageText(context);
+      const text = textFromContext(context);
+      if (lastText.includes('<agent-run-notification>')) {
+        notificationContexts.push(lastText);
+        return fauxAssistantMessage(fauxText('Conversation consumed coordinator notification.'));
+      }
+      if (lastText.includes('<detached-sub-run-results>')) {
+        coordinatorContinuationContexts.push(lastText);
+        return fauxAssistantMessage(fauxText('Combined weather result from Beijing and Chengdu.'));
+      }
+      if (lastText.includes('Fetch Beijing weather.')) {
+        return fauxAssistantMessage(fauxText('Beijing weather result.'));
+      }
+      if (lastText.includes('Fetch Chengdu weather.')) {
+        return fauxAssistantMessage(fauxText('Chengdu weather result.'));
+      }
+      if (lastText.includes('Coordinate two weather workers.')) {
+        return fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'nested Beijing worker',
+            objective: 'Fetch Beijing weather.',
+            verify: false,
+            detach: true,
+            name: 'nested-beijing',
+          }, { id: 'tool-worker-beijing' }),
+          fauxToolCall('spawn_run', {
+            description: 'nested Chengdu worker',
+            objective: 'Fetch Chengdu weather.',
+            verify: false,
+            detach: true,
+            name: 'nested-chengdu',
+          }, { id: 'tool-worker-chengdu' }),
+        ], { stopReason: 'toolUse' });
+      }
+      if (text.includes('tool-worker-beijing') && text.includes('tool-worker-chengdu')) {
+        return fauxAssistantMessage(fauxText('Nested workers launched.'));
+      }
+      if (lastText.includes('Start a detached weather coordinator.')) {
+        return fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'weather coordinator',
+            objective: 'Coordinate two weather workers.',
+            verify: false,
+            detach: true,
+            name: 'weather-coordinator',
+          }, { id: 'tool-agent-controller' }),
+        ], { stopReason: 'toolUse' });
+      }
+      if (text.includes('tool-agent-controller')) {
+        return fauxAssistantMessage(fauxText('Coordinator launched.'));
+      }
+      return fauxAssistantMessage([], { stopReason: 'error', errorMessage: `Unexpected context: ${lastText}` });
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a detached weather coordinator.', sink);
+    await waitFor(() => notificationContexts.length > 0, 2000);
+
+    const coordinatorContext = coordinatorContinuationContexts.join('\n');
+    expect(coordinatorContext).toContain('<detached-sub-run-results>');
+    expect(coordinatorContext).toContain('Beijing weather result.');
+    expect(coordinatorContext).toContain('Chengdu weather result.');
+
+    const notificationText = notificationContexts.join('\n');
+    expect(notificationText).toContain('weather-coordinator');
+    expect(notificationText).toContain('Combined weather result from Beijing and Chengdu.');
+    expect(notificationText).not.toContain('nested-beijing');
+    expect(notificationText).not.toContain('nested-chengdu');
+
+    const store = new AgentEventStore(dataRoot);
+    const runMetas = await store.listConversationRunMetaProjections(conversation.conversationId);
+    const coordinator = runMetas.find((run) => run.objective?.text === 'Coordinate two weather workers.');
+    expect(coordinator).toBeDefined();
+    if (!coordinator) throw new Error('Expected coordinator run metadata.');
+    const workerMetas = runMetas.filter((run) => run.parentRunId === coordinator.id);
+    expect(workerMetas.map((run) => run.objective?.text).sort()).toEqual([
+      'Fetch Beijing weather.',
+      'Fetch Chengdu weather.',
+    ]);
+
+    const detail = await runtime.agentRunDetail(coordinator.id, conversation.conversationId);
+    expect(detail?.result?.summary).toBe('Combined weather result from Beijing and Chengdu.');
+    expect(detail?.subRuns.map((run) => run.title).sort()).toEqual([
+      'Fetch Beijing weather.',
+      'Fetch Chengdu weather.',
+    ]);
+
+    const replay = await store.replay(conversation.conversationId);
+    const notifications = Object.values(replay.notifications);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.title).toContain('weather coordinator');
+    expect(notifications[0]?.title).not.toContain('nested Beijing worker');
+    expect(notifications[0]?.title).not.toContain('nested Chengdu worker');
+  });
+
+  test('a controller waits for verified detached child replacement before folding results', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-detached-replacement-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-detached-replacement-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const coordinatorContinuationContexts: string[] = [];
+    const streamFn = respondingStream((context) => {
+      const lastText = lastContextMessageText(context);
+      const text = textFromContext(context);
+      if (lastText.includes('<detached-sub-run-results>')) {
+        coordinatorContinuationContexts.push(lastText);
+        return fauxAssistantMessage(fauxText('Controller summary uses final verified worker fact.'));
+      }
+      if (lastText.includes('Worker result:\nfinal verified worker fact')) {
+        return fauxAssistantMessage(fauxText('{"verdict":"pass","gap":""}'));
+      }
+      if (lastText.includes('Worker result:\nstale worker fact')) {
+        return fauxAssistantMessage(fauxText('{"verdict":"fail","gap":"missing final verified worker fact"}'));
+      }
+      if (lastText.includes('Verifier gap from the previous worker attempt: missing final verified worker fact')) {
+        return fauxAssistantMessage(fauxText('final verified worker fact'));
+      }
+      if (lastText.includes('Produce replacement-aware fact.')) {
+        return fauxAssistantMessage(fauxText('stale worker fact'));
+      }
+      if (lastText.includes('Coordinate replacement-aware worker.')) {
+        return fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'replacement-aware worker',
+            objective: 'Produce replacement-aware fact.',
+            criteria: ['The final result must include final verified worker fact.'],
+            detach: true,
+            name: 'replacement-aware-worker',
+          }, { id: 'tool-replacement-aware-worker' }),
+        ], { stopReason: 'toolUse' });
+      }
+      if (lastText.includes('Start a replacement-aware controller.')) {
+        return fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'replacement-aware controller',
+            objective: 'Coordinate replacement-aware worker.',
+            verify: false,
+          }, { id: 'tool-replacement-aware-controller' }),
+        ], { stopReason: 'toolUse' });
+      }
+      if (text.includes('tool-replacement-aware-worker')) {
+        return fauxAssistantMessage(fauxText('Replacement-aware worker launched.'));
+      }
+      if (text.includes('tool-replacement-aware-controller')) {
+        return fauxAssistantMessage(fauxText('Top accepted replacement-aware controller.'));
+      }
+      return fauxAssistantMessage([], { stopReason: 'error', errorMessage: `Unexpected context: ${lastText}` });
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a replacement-aware controller.', sink);
+    await waitFor(() => coordinatorContinuationContexts.length > 0, 2000);
+
+    const coordinatorContext = coordinatorContinuationContexts.join('\n');
+    expect(coordinatorContext).toContain('<detached-sub-run-results>');
+    expect(coordinatorContext).toContain('final verified worker fact');
+    expect(coordinatorContext).not.toContain('"result": "stale worker fact"');
+
+    const store = new AgentEventStore(dataRoot);
+    const runMetas = await store.listConversationRunMetaProjections(conversation.conversationId);
+    const controller = runMetas.find((run) => run.objective?.text === 'Coordinate replacement-aware worker.');
+    expect(controller).toBeDefined();
+    if (!controller) throw new Error('Expected replacement-aware controller run metadata.');
+    const workers = workerRunsWithObjective(runMetas, 'Produce replacement-aware fact.');
+    expect(workers).toHaveLength(2);
+    expect(workers[0]?.objective?.status).toBe('blocked');
+    expect(workers[1]?.objective?.status).toBe('verified');
+
+    const detail = await runtime.agentRunDetail(controller.id, conversation.conversationId);
+    expect(detail?.result?.summary).toBe('Controller summary uses final verified worker fact.');
+  });
+
+  test('a controller folds a failed detached verified child as a blocker', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-detached-failed-child-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-detached-failed-child-data-'));
+    roots.push(localRoot, dataRoot);
+
+    const coordinatorContinuationContexts: string[] = [];
+    const streamFn = respondingStream((context) => {
+      const lastText = lastContextMessageText(context);
+      const text = textFromContext(context);
+      if (lastText.includes('<detached-sub-run-results>')) {
+        coordinatorContinuationContexts.push(lastText);
+        return fauxAssistantMessage(fauxText('Controller reported the detached worker crash.'));
+      }
+      if (lastText.includes('Failing detached verified worker.')) {
+        throw new Error('worker crashed before verification');
+      }
+      if (lastText.includes('Coordinate a failing detached worker.')) {
+        return fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'failing detached worker',
+            objective: 'Failing detached verified worker.',
+            criteria: ['Return a successful worker fact.'],
+            detach: true,
+            name: 'failing-detached-worker',
+          }, { id: 'tool-failing-detached-worker' }),
+        ], { stopReason: 'toolUse' });
+      }
+      if (lastText.includes('Start a failing detached controller.')) {
+        return fauxAssistantMessage([
+          fauxToolCall('spawn_run', {
+            description: 'failing detached controller',
+            objective: 'Coordinate a failing detached worker.',
+            verify: false,
+          }, { id: 'tool-failing-detached-controller' }),
+        ], { stopReason: 'toolUse' });
+      }
+      if (text.includes('tool-failing-detached-worker')) {
+        return fauxAssistantMessage(fauxText('Failing detached worker launched.'));
+      }
+      if (text.includes('tool-failing-detached-controller')) {
+        return fauxAssistantMessage(fauxText('Top accepted failing detached controller.'));
+      }
+      return fauxAssistantMessage([], { stopReason: 'error', errorMessage: `Unexpected context: ${lastText}` });
+    });
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a failing detached controller.', sink);
+    await waitFor(() => coordinatorContinuationContexts.length > 0, 2000);
+
+    const coordinatorContext = coordinatorContinuationContexts.join('\n');
+    expect(coordinatorContext).toContain('<detached-sub-run-results>');
+    expect(coordinatorContext).toContain('"status": "failed"');
+    expect(coordinatorContext).toContain('"error": "worker crashed before verification"');
+
+    const store = new AgentEventStore(dataRoot);
+    const runMetas = await store.listConversationRunMetaProjections(conversation.conversationId);
+    const controller = runMetas.find((run) => run.objective?.text === 'Coordinate a failing detached worker.');
+    expect(controller).toBeDefined();
+    if (!controller) throw new Error('Expected failing detached controller run metadata.');
+    const detail = await runtime.agentRunDetail(controller.id, conversation.conversationId);
+    expect(detail?.result?.summary).toBe('Controller reported the detached worker crash.');
+  });
+
+  test('keeps a background run notification pending when response generation fails', async () => {
+    const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-notification-retry-root-'));
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-notification-retry-data-'));
+    roots.push(localRoot, dataRoot);
+
+    let failedNotificationAttempts = 0;
+    const notificationContexts: string[] = [];
+    const streamFn = ((model: Model<Api>, context: Context, options?: SimpleStreamOptions) => {
+      const lastText = lastContextMessageText(context);
+      if (lastText.includes('<agent-run-notification>') && failedNotificationAttempts === 0) {
+        failedNotificationAttempts += 1;
+        throw new Error('transient notification response failure');
+      }
+      return respondingStream((innerContext) => {
+        const innerLastText = lastContextMessageText(innerContext);
+        const text = textFromContext(innerContext);
+        if (innerLastText.includes('<agent-run-notification>')) {
+          notificationContexts.push(innerLastText);
+          return fauxAssistantMessage(fauxText('Consumed retried notification.'));
+        }
+        if (innerLastText.includes('Retry notification worker.')) {
+          return fauxAssistantMessage(fauxText('Retry notification result.'));
+        }
+        if (innerLastText.includes('Start a retryable background run.')) {
+          return fauxAssistantMessage([
+            fauxToolCall('spawn_run', {
+              description: 'retryable background worker',
+              objective: 'Retry notification worker.',
+              verify: false,
+              detach: true,
+              name: 'retryable-background-worker',
+            }, { id: 'tool-retryable-background-worker' }),
+          ], { stopReason: 'toolUse' });
+        }
+        if (text.includes('tool-retryable-background-worker')) {
+          return fauxAssistantMessage(fauxText('Retryable background worker launched.'));
+        }
+        return fauxAssistantMessage([], { stopReason: 'error', errorMessage: `Unexpected context: ${innerLastText}` });
+      })(model, context, options);
+    }) as StreamFn;
+
+    const { AgentRuntime } = await loadRuntimeModule();
+    const sink = createWindowSink();
+    const runtime = new AgentRuntime(
+      () => sink.window as never,
+      hostFor(Core.new()),
+      {
+        agentDataRoot: dataRoot,
+        localFileRoot: localRoot,
+        providerConfigLoader: async () => ({
+          providerId: 'openai',
+          enabled: true,
+          apiKey: 'test-key',
+        }),
+        streamFn,
+      },
+    );
+
+    const conversation = await runtime.restoreLatestConversation();
+    await sendMessageApprovingAgent(runtime, conversation.conversationId, 'Start a retryable background run.', sink);
+    await waitFor(() => failedNotificationAttempts === 1, 2000);
+    await waitFor(() => notificationContexts.length === 1, 2000);
+    expect(notificationContexts[0]).toContain('retryable-background-worker');
+    expect(notificationContexts[0]).toContain('Retry notification result.');
+  });
+
+  test('lists Work runs across channels without conversation turn wrappers', async () => {
     const localRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-list-root-'));
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'lin-agent-run-list-data-'));
     roots.push(localRoot, dataRoot);
@@ -1472,13 +2062,10 @@ describe('agent runtime childRuns', () => {
 
     expect(script.pendingCount()).toBe(0);
     const runs = await runtime.listRuns();
-    expect(runs).toHaveLength(4);
+    expect(runs).toHaveLength(2);
     expect(runs.every((run) => run.status === 'completed')).toBe(true);
-    const turnRuns = runs.filter((run) => run.kind === 'turn');
     const delegationRuns = runs.filter((run) => run.kind === 'delegation');
-    expect(turnRuns).toHaveLength(2);
     expect(delegationRuns).toHaveLength(2);
-    expect(turnRuns.every((run) => run.parentRunId === null)).toBe(true);
     expect(delegationRuns.every((run) => Boolean(run.parentRunId))).toBe(true);
     expect(delegationRuns.every((run) => run.runProfile === 'default')).toBe(true);
     expect(delegationRuns.every((run) => run.runProfileLabel === 'Default')).toBe(true);
@@ -1489,12 +2076,7 @@ describe('agent runtime childRuns', () => {
     expect(byTitle.get('Index alpha work.')?.conversationTitle).toBe('Alpha Work');
     expect(byTitle.get('Index beta work.')?.conversationId).toBe(beta.conversationId);
     expect(byTitle.get('Index beta work.')?.conversationTitle).toBe('Beta Work');
-    const alphaParent = turnRuns.find((run) => run.runId === byTitle.get('Index alpha work.')?.parentRunId);
-    const betaParent = turnRuns.find((run) => run.runId === byTitle.get('Index beta work.')?.parentRunId);
-    expect(alphaParent?.title).toBe('Start the alpha indexed run.');
-    expect(alphaParent?.conversationTitle).toBe('Alpha Work');
-    expect(betaParent?.title).toBe('Start the beta indexed run.');
-    expect(betaParent?.conversationTitle).toBe('Beta Work');
+    expect(runs.some((run) => run.kind === 'turn')).toBe(false);
     await expect(runtime.listRuns({ limit: 1 })).resolves.toHaveLength(1);
   });
 

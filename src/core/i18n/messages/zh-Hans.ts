@@ -1173,6 +1173,10 @@ commandPalette: {
       stopRun: '停止运行',
       stopping: '正在停止……',
       subRunProgress: ({ completed, total }) => `子运行 ${completed}/${total}`,
+      relativeJustNow: '刚刚',
+      relativeMinutesAgo: ({ count }) => `${count} 分钟前`,
+      relativeHoursAgo: ({ count }) => `${count} 小时前`,
+      relativeDaysAgo: ({ count }) => `${count} 天前`,
       messages: ({ count }) => `${count} 条消息`,
       memoryChanges: ({ count }) => `${count} 条记忆变更`,
       status: {

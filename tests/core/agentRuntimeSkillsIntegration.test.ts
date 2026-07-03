@@ -1506,13 +1506,8 @@ describe('agent runtime skill integration', () => {
       runProfileLabel: 'Research',
       status: 'completed',
     });
-    const parentRun = runs.find((run) => run.runId === researchRun?.parentRunId);
-    expect(parentRun).toMatchObject({
-      conversationId: created.conversationId,
-      title: '/research map the agent run detail UI',
-      kind: 'turn',
-      status: 'completed',
-    });
+    expect(researchRun?.parentRunId).toBe(directSlashSubRun?.parentRunId);
+    expect(runs.some((run) => run.kind === 'turn')).toBe(false);
     expect(parentContexts.join('\n')).toContain('Slash research result.');
     expect(sink.events.some((event) => event.type === 'error')).toBe(false);
   });

@@ -5,6 +5,7 @@ import type { AgentRenderRunStatus } from '../../../core/agentRenderProjection';
 import { useT } from '../../i18n/I18nProvider';
 import {
   ClockIcon,
+  ChevronRightIcon,
   ICON_SIZE,
   LoaderIcon,
   RunSpawnToolIcon,
@@ -65,7 +66,7 @@ function runStatusIcon(status: AgentRunDisplayStatus): AppIcon {
   return ClockIcon;
 }
 
-function runStatusLabel(status: AgentRunDisplayStatus, labels: Messages['agent']['run']['status']): string {
+export function runStatusLabel(status: AgentRunDisplayStatus, labels: Messages['agent']['run']['status']): string {
   if (status === 'budget_exhausted') return labels.budgetExhausted;
   if (status === 'blocked') return labels.blocked;
   if (status === 'verified') return labels.verified;
@@ -91,6 +92,22 @@ export function runWorkLabel(
   return labels.workedFor({ duration });
 }
 
+function relativeRunTimeLabel(timestamp: number, labels: Messages['agent']['run']): string {
+  const deltaMs = Math.max(0, Date.now() - timestamp);
+  if (deltaMs < 60_000) return labels.relativeJustNow;
+  const minutes = Math.floor(deltaMs / 60_000);
+  if (minutes < 60) return labels.relativeMinutesAgo({ count: minutes });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return labels.relativeHoursAgo({ count: hours });
+  return labels.relativeDaysAgo({ count: Math.floor(hours / 24) });
+}
+
+function completedRunSummary(run: AgentRunRowData, labels: Messages['agent']['run']): string {
+  const duration = formatRunDuration((run.completedAt ?? run.updatedAt) - run.startedAt);
+  const completedAt = run.completedAt ?? run.updatedAt;
+  return `${relativeRunTimeLabel(completedAt, labels)} · ${duration}`;
+}
+
 function runSummary(run: AgentRunRowData, status: AgentRunDisplayStatus, t: Messages): string {
   if (status === 'blocked' && run.blockedReason) return `${t.agent.run.status.blocked}: ${run.blockedReason}`;
   if (status === 'failed' && run.error) return `${t.agent.run.status.failed}: ${run.error}`;
@@ -100,6 +117,7 @@ function runSummary(run: AgentRunRowData, status: AgentRunDisplayStatus, t: Mess
   if (status === 'blocked' || status === 'failed' || status === 'budget_exhausted' || status === 'verifying') {
     return runStatusLabel(status, t.agent.run.status);
   }
+  if (isCompletedRunStatus(status)) return completedRunSummary(run, t.agent.run);
   return runWorkLabel(run, t.agent.process);
 }
 
@@ -167,22 +185,27 @@ export function AgentRunRow({ action, className, onOpen, run, showSummary = true
       tabIndex={onOpen ? 0 : undefined}
     >
       <AgentRunStatusMarker status={status} />
-      <span className="agent-run-main">
-        <span className="agent-run-title-row">
-          <span className="agent-run-title">{run.title}</span>
-        </span>
+      <div className="agent-run-main">
+        <div className="agent-run-title-row">
+          <span className="agent-run-title" title={run.title}>{run.title}</span>
+        </div>
         {childProgressLabel || summary ? (
-          <span className="agent-run-meta-row">
+          <div className="agent-run-meta-row">
             {childProgressLabel ? (
               <span className="agent-run-branch-chip" aria-label={childProgressLabel} title={childProgressLabel}>
                 <RunSpawnToolIcon size={ICON_SIZE.menu} />
                 <span>{completedChildRunCount}/{childRunCount}</span>
               </span>
             ) : null}
-            {summary ? <span className="agent-run-meta-chip">{summary}</span> : null}
-          </span>
+            {summary ? <span className="agent-run-meta-chip" title={summary}>{summary}</span> : null}
+          </div>
         ) : null}
-      </span>
+      </div>
+      {onOpen ? (
+        <span className="agent-run-open-affordance" aria-hidden="true">
+          <ChevronRightIcon size={ICON_SIZE.rowChevron} strokeWidth={2} />
+        </span>
+      ) : null}
       {action ? (
         <div className="agent-run-row-actions">
           {action}

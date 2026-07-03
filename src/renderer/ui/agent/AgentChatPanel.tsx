@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -518,6 +519,7 @@ export function AgentChatPanel({
   const runIndexRefreshTimerRef = useRef<number | null>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const bottomScrollFrameRef = useRef<number | null>(null);
+  const suppressHeaderClickRef = useRef(false);
   const revealAfterDockOpenTimerRef = useRef<number | null>(null);
   const highlightTimerRef = useRef<number | null>(null);
   const rowHeightsRef = useRef(new Map<string, number>());
@@ -1046,6 +1048,25 @@ export function AgentChatPanel({
     setRunDetailStack([]);
   }, []);
 
+  const handleDockHeaderMouseDownCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+    if (!selectedRunTarget) return;
+    suppressHeaderClickRef.current = true;
+    window.setTimeout(() => {
+      suppressHeaderClickRef.current = false;
+    }, 500);
+    event.preventDefault();
+    event.stopPropagation();
+    closeRunDetailDrawer();
+  }, [closeRunDetailDrawer, selectedRunTarget]);
+
+  const handleDockHeaderClickCapture = useCallback((event: ReactMouseEvent<HTMLElement>) => {
+    if (!suppressHeaderClickRef.current && !selectedRunTarget) return;
+    suppressHeaderClickRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+    if (selectedRunTarget) closeRunDetailDrawer();
+  }, [closeRunDetailDrawer, selectedRunTarget]);
+
   const goBackInRunDetailDrawer = useCallback(() => {
     setRunDetailStack((stack) => stack.length > 1 ? stack.slice(0, -1) : []);
   }, []);
@@ -1201,6 +1222,9 @@ export function AgentChatPanel({
     if (row.entry.kind === 'dream') {
       return <AgentDreamBoundary entry={row.entry} />;
     }
+    if (row.entry.kind === 'hidden-turn-boundary') {
+      return null;
+    }
 
     const systemText = systemLineText(row.entry);
     if (systemText) {
@@ -1316,8 +1340,19 @@ export function AgentChatPanel({
     getRestoreTarget: () => historyButtonRef.current,
   });
   return (
-    <div className="agent-chat-panel" data-turn-phase={turnPhase}>
-      <header className="agent-dock-header" ref={headerRef}>
+    <div
+      className="agent-chat-panel"
+      data-run-detail-open={selectedRunTarget ? 'true' : undefined}
+      data-turn-phase={turnPhase}
+      data-work-panel-open={workPanelOpen ? 'true' : undefined}
+    >
+      <header
+        className="agent-dock-header"
+        data-run-detail-open={selectedRunTarget ? 'true' : undefined}
+        onClickCapture={handleDockHeaderClickCapture}
+        onMouseDownCapture={handleDockHeaderMouseDownCapture}
+        ref={headerRef}
+      >
         {workPanelOpen ? (
           <ButtonControl
             aria-label={t.agent.run.backToChat}
@@ -1506,7 +1541,6 @@ export function AgentChatPanel({
                 runUpdatedAt={selectedRunEntry?.updatedAt}
                 onNodeReferenceOpen={onOpenNodeReference}
                 onOpenRun={openRunInDetailDrawer}
-                onOpenRuns={closeRunDetailDrawer}
               />
             </Dialog>
           ) : null}

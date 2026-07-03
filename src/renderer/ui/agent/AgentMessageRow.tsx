@@ -97,6 +97,8 @@ interface AgentMessageRowProps {
   toolResults: Map<string, AgentToolResultWithPayloads>;
   /** True in a Channel: turns deliver atomically and fold result-first rather than surfacing resultless process inline. */
   isChannel?: boolean;
+  showProcessStatus?: boolean;
+  showFinalMessages?: boolean;
   turnPhase?: AgentTurnPhase;
   speakerLabel?: string | null;
   speakerMention?: string | null;
@@ -496,6 +498,8 @@ function AgentMessageRowComponent({
   pendingToolCallIds,
   conversationId,
   streaming: streamingOverride,
+  showFinalMessages = true,
+  showProcessStatus = true,
   subRunsByParentToolCallId,
   toolResults,
   isChannel = false,
@@ -752,10 +756,12 @@ function AgentMessageRowComponent({
     isChannel,
     entry.runDurationMs,
     entry.runStartedAtMs,
+    showProcessStatus,
+    showFinalMessages,
     entry.directSubRuns,
     entry.toolCallOutcomes,
   );
-  const showToolbar = nodeId !== null && !turnActive && isLastInTurn;
+  const showToolbar = !turnActive && isLastInTurn;
   const openAssistantDetails = () => {
     setUsageHoverOpen(false);
     if (entry.runId && onOpenRunDetails) {
@@ -921,6 +927,8 @@ function sameAgentMessageRowProps(prev: AgentMessageRowProps, next: AgentMessage
     && sameReadonlySet(prev.pendingToolCallIds, next.pendingToolCallIds)
     && prev.conversationId === next.conversationId
     && prev.streaming === next.streaming
+    && prev.showFinalMessages === next.showFinalMessages
+    && prev.showProcessStatus === next.showProcessStatus
     && sameReadonlyMap(prev.subRunsByParentToolCallId ?? EMPTY_SUB_RUN_MAP, next.subRunsByParentToolCallId ?? EMPTY_SUB_RUN_MAP)
     && sameReadonlyMap(prev.toolResults, next.toolResults)
     && prev.isChannel === next.isChannel

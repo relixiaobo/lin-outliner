@@ -30,6 +30,8 @@ interface AgentTranscriptMessageListProps {
   onNodeReferenceOpen?: AgentNodeReferenceOpenHandler;
   onOpenRunTranscript?: (runId: string) => void;
   pendingToolCallIds: ReadonlySet<string>;
+  showFinalMessages?: boolean;
+  showProcessStatus?: boolean;
   toolResults: Map<string, AgentToolResultWithPayloads>;
 }
 
@@ -156,6 +158,8 @@ export function AgentTranscriptMessageList({
   onNodeReferenceOpen,
   onOpenRunTranscript,
   pendingToolCallIds,
+  showFinalMessages = true,
+  showProcessStatus = true,
   toolResults,
 }: AgentTranscriptMessageListProps) {
   const assistantToolCallIds = useMemo(() => {
@@ -193,6 +197,8 @@ export function AgentTranscriptMessageList({
             onNodeReferenceOpen={onNodeReferenceOpen}
             onOpenRunTranscript={onOpenRunTranscript}
             pendingToolCallIds={pendingToolCallIds}
+            showFinalMessages={showFinalMessages}
+            showProcessStatus={showProcessStatus}
             streaming={messageActive}
             subRunsByParentToolCallId={subRunsByParentToolCallId}
             toolResults={toolResults}

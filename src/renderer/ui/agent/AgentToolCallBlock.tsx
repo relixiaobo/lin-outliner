@@ -28,6 +28,7 @@ import {
 } from './AgentInlineReferenceText';
 import { PlainReadOnlyCodeBlock, ReadOnlyCodeBlock } from '../editor/CodeBlockSurface';
 import { AgentToolCallDisclosure } from './AgentToolCallDisclosure';
+import { displayRunStatus } from './AgentRunRow';
 import { getToolIcon } from './agentToolPresentation';
 
 interface AgentToolCallBlockProps {
@@ -249,8 +250,9 @@ function isRunControlTool(toolName: string): boolean {
 }
 
 export function runToolStatus(run: AgentRenderRunEntity): ToolStatus {
-  if (run.status === 'running') return 'pending';
-  if (run.status === 'failed' || run.status === 'stopped') return 'error';
+  const status = displayRunStatus(run);
+  if (status === 'running' || status === 'active' || status === 'verifying') return 'pending';
+  if (status === 'failed' || status === 'stopped' || status === 'blocked' || status === 'budget_exhausted') return 'error';
   return 'done';
 }
 

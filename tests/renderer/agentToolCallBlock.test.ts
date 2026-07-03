@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentToolResultWithPayloads, ToolCall } from '../../src/core/agentTypes';
-import { getToolCallStatus, summarizeToolCall } from '../../src/renderer/ui/agent/AgentToolCallBlock';
+import type { AgentRenderRunEntity } from '../../src/core/agentRenderProjection';
+import { getToolCallStatus, runToolStatus, summarizeToolCall } from '../../src/renderer/ui/agent/AgentToolCallBlock';
 import {
   agentToolPresentation,
   getToolIcon,
@@ -38,6 +39,24 @@ import {
 import { getMessages } from '../../src/core/i18n';
 
 const labels = getMessages('en').agent.toolCall;
+
+function runEntity(overrides: Partial<AgentRenderRunEntity> = {}): AgentRenderRunEntity {
+  return {
+    id: 'run-1',
+    agentId: 'built-in:tenon:assistant',
+    anchor: { type: 'conversation', agentId: 'built-in:tenon:assistant', conversationId: 'conversation-1' },
+    conversationId: 'conversation-1',
+    title: 'Child run',
+    runProfile: 'default',
+    runProfileLabel: 'Default',
+    status: 'completed',
+    context: 'brief',
+    startedAt: 1000,
+    updatedAt: 2000,
+    completedAt: 2000,
+    ...overrides,
+  };
+}
 
 function recallToolCall(args: Record<string, unknown>): ToolCall {
   return {
@@ -102,6 +121,16 @@ describe('agent tool call block', () => {
     expect(getToolCallStatus('tool-done', okResult, new Set(), false, 'failed')).toBe('done');
     // No outcome yet (still executing) keeps the active-turn spinner.
     expect(getToolCallStatus('tool-exec', undefined, new Set(['tool-exec']), true, undefined)).toBe('pending');
+  });
+
+  test('maps child run process status through the same display status as run rows', () => {
+    expect(runToolStatus(runEntity({ status: 'running' }))).toBe('pending');
+    expect(runToolStatus(runEntity({ objectiveStatus: 'verifying' }))).toBe('pending');
+    expect(runToolStatus(runEntity({ objectiveStatus: 'verified' }))).toBe('done');
+    expect(runToolStatus(runEntity({ objectiveStatus: 'blocked' }))).toBe('error');
+    expect(runToolStatus(runEntity({ objectiveStatus: 'budget_exhausted' }))).toBe('error');
+    expect(runToolStatus(runEntity({ status: 'failed' }))).toBe('error');
+    expect(runToolStatus(runEntity({ status: 'stopped' }))).toBe('error');
   });
 
   test('uses memory icon and summarizes recall', () => {

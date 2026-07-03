@@ -117,6 +117,11 @@ The old mutable chat snapshot store is no longer part of the runtime.
   message context menu's Details action opens an anchored popover with speaker,
   timestamp, model/provider, and token usage. These details are derived from the
   event log; no separate metadata store is introduced.
+- A sealed assistant transcript row keeps read-only actions even when it has no
+  editable outliner node id (for example archived messages, active placeholders
+  that later seal, or assistant-only background-run notifications). `nodeId`
+  gates mutating actions such as retry/regenerate; it must not gate Copy or
+  Details.
 - The composer footer's model control edits the **agent profile**, not a
   per-conversation model identity. A conversation talks to an agent identity
   (Neva), not to a single model, so the quick model/effort chip
@@ -1008,39 +1013,56 @@ Rules:
   closes Work directly; the index refreshes on open and from agent runtime events,
   so it does not expose a persistent manual refresh button. Opening a row overlays
   a run detail drawer on the list rather than navigating the Work header. The
-  first level lists
-  root non-turn, non-Dream runs across channels as compact task rows derived from
-  `parentRunId`: child runs stay hidden at this level. Each row uses the shared
-  Run row grammar: status icon on the left, the user-facing title as primary
-  text, one timing/status summary line, and a child-progress chip such as `1/2`
-  when direct sub-runs exist. The chip is informational, not an inline tree
-  disclosure. Clicking the row opens a Run detail drawer above the list, leaving
-  the first-level list in place behind it. Running root rows reveal a Stop action
-  on hover/focus.
+  first level hides ordinary conversation turn wrappers and reflective/Dream
+  runs. A detached Run spawned directly by a chat turn therefore appears as its
+  own first-level compact task row even though its persisted `parentRunId` points
+  at the hidden turn wrapper. Runs nested under another visible Run stay hidden at
+  this level and are reached from the parent detail drawer. Each row uses the
+  shared Run row grammar: status icon on the left, the user-facing title as
+  primary text, one timing/status summary line, and a child-progress chip such as
+  `1/2` when direct sub-runs exist. When both are present, the progress chip and
+  the summary are separated by the same muted middle dot used between summary
+  fields, so blocked/failed rows do not visually merge `1/1` with their status.
+  The title is derived from the Run objective (with research `ARGUMENTS:` parsed
+  when present), not from the conversation/channel title or run profile label.
+  The chip is informational, not an inline tree disclosure. Clicking the row opens
+  a Run detail drawer above the list, leaving the first-level list in place behind
+  it. Running visible delegation rows reveal a Stop action on hover/focus.
 
   The detail drawer is a read-only drill-in, not a second chat surface: it uses a
   Todoist-style narrow drawer surface inside the agent rail. By default the drawer
-  occupies the Work/Runs content area under the Work header with a transparent
-  backdrop, so the parent list keeps its normal color rather than being dimmed.
-  Only sub-run navigation advances inside the drawer. The top grabber is
-  functional: pointer drag and keyboard up/down resize the drawer within the Work
-  surface. The drawer header always includes the back button before the
-  breadcrumb; it is disabled, not removed, when there is no deeper drawer stack to
-  pop. The header carries a one-line breadcrumb above the selected run title,
-  using the same segment/divider/button grammar as outliner pane breadcrumbs. The
-  breadcrumb root is the channel/conversation name rendered with the channel hash
-  icon (for example `# General`), followed by ancestor runs only; the selected run
-  itself is the title below it. Long segments truncate instead of wrapping. The
-  selected run title sits below the breadcrumb with the shared Run status marker as
-  its leading icon; status text is kept out of the primary title and remains
-  available in Details. The body begins with one `Working for ...` / `Worked for ...`
+  occupies 80% of the Work/Runs content area under the Work header with a
+  transparent backdrop, so the parent list keeps its normal color rather than
+  being dimmed. The user's last dragged drawer height is remembered as a
+  content-height ratio and reused on later openings. Only sub-run navigation
+  advances inside the drawer. The top grabber is functional: pointer drag and
+  keyboard up/down resize the drawer within the Work surface. The drawer header
+  always includes the same page-back control used by outliner pane breadcrumbs
+  before the breadcrumb; it is disabled, not removed, when there is no deeper
+  drawer stack to pop. The header carries a one-line
+  breadcrumb above the selected run title, using the same segment/divider/button
+  grammar as outliner pane breadcrumbs. The breadcrumb root is the
+  channel/conversation name rendered with the channel hash icon (for example
+  `# General`), followed by ancestor runs only; the selected run itself is the
+  title below it. Ancestor breadcrumb segments always keep the muted breadcrumb
+  style; only the selected run title may become the current-color breadcrumb
+  segment, and only after it scrolls out of the header and docks to the end of
+  the breadcrumb. Long segments truncate instead of wrapping. The selected run
+  title sits below the breadcrumb with the shared Run status marker as its leading
+  icon; status text is kept out of the primary title and remains available in
+  Details. The header and body share the same text column: body rows start at the
+  selected run title's text edge, not at the drawer edge or status icon. The body
+  begins with one `Working for ...` / `Worked for ...`
   process disclosure row. That row defaults collapsed and reuses the conversation
   stream work-divider visual grammar; expanding it reveals the transcript/process.
   The run duration appears there only once for the selected run. The result
   content follows directly without a `Result` heading and uses a quieter detail
-  text register than assistant-chat answer prose; long results may collapse behind
-  a local Show more/Show less control so direct child structure remains
-  discoverable. Detail body sections use spacing and disclosure chevrons rather
+  text register than assistant-chat answer prose. The detail result reads
+  `run.result.submitted` first and falls back to the selected completed Run's
+  final assistant text when no structured submission exists; running Runs do not
+  synthesize a result. Long results may collapse behind a local Show more/Show
+  less control so direct child structure remains discoverable. Detail body
+  sections use spacing and disclosure chevrons rather
   than horizontal divider lines. The `Sub-runs {completed}/{total}` disclosure
   lists the selected run's direct children, including verifier runs, using the same
   Run rows and their status icons. Child rows open their own detail view instead
@@ -1261,7 +1283,10 @@ Rules:
   panel header/actions. The Run-detail adapter also threads the run terminal
   status and wall-clock into the last assistant row, skips hidden-only context
   user rows, and renders orphan tool results as capped plain text rather than
-  markdown. This keeps the differences at the data-adapter boundary instead of
+  markdown. Hidden notification-only user rows remain invisible, but they are
+  preserved as logical turn boundaries so the resulting assistant continuation
+  renders as a separate response without a visible query row. This keeps the
+  differences at the data-adapter boundary instead of
   forking presentation behavior.
 - Large details are refs, not row payloads.
 - **Context slimming is invisible to the transcript.** Budget offload and

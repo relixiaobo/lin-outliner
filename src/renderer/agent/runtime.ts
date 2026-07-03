@@ -99,6 +99,14 @@ export interface AgentContextClearEntry {
   contextClear: AgentRenderContextClearEntity;
 }
 
+export interface AgentHiddenTurnBoundaryEntry {
+  id: string;
+  kind: 'hidden-turn-boundary';
+  timestamp: number;
+  sourceSeq?: number;
+  sourceSeqs?: number[];
+}
+
 export interface AgentCompletedDreamEntry {
   id: string;
   kind: 'dream';
@@ -119,6 +127,7 @@ export type AgentConversationEntry =
   | AgentMessageEntry
   | AgentCompactionEntry
   | AgentContextClearEntry
+  | AgentHiddenTurnBoundaryEntry
   | AgentDreamEntry;
 
 export type AgentTurnPhase = 'idle' | 'streaming_text' | 'waiting_for_tool' | 'resuming_after_tool';
@@ -286,7 +295,16 @@ function buildEntries(projection: AgentRenderProjection, toolResults: Map<string
 
     const entity = projection.entities.messages[row.messageId];
     if (!entity || (entity.role !== 'user' && entity.role !== 'assistant')) continue;
-    if (entity.role === 'user' && isHiddenOnlySystemReminder(entity)) continue;
+    if (entity.role === 'user' && isHiddenOnlySystemReminder(entity)) {
+      entries.push({
+        id: `hidden-turn-boundary:${entity.id}`,
+        kind: 'hidden-turn-boundary',
+        timestamp: entity.createdAt,
+        sourceSeq: entity.sourceSeq,
+        sourceSeqs: entity.sourceSeqs?.slice(),
+      });
+      continue;
+    }
     const streaming = projection.streaming?.messageId === entity.id;
     const message = conversationMessageFromEntity(entity);
     const runId = entity.runId ?? null;

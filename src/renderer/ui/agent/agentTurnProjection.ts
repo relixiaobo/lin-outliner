@@ -57,6 +57,7 @@ export interface ProjectAssistantTurnInput {
   isChannel: boolean;
   message: AssistantMessage;
   runStartedAtMs: number | null;
+  showProcessStatus?: boolean;
   streaming: boolean;
   subRunsByParentToolCallId?: ReadonlyMap<string, AgentRenderRunEntity>;
   toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>;
@@ -169,6 +170,7 @@ export function projectAssistantTurn({
   isChannel,
   message,
   runStartedAtMs,
+  showProcessStatus = true,
   streaming,
   subRunsByParentToolCallId,
   toolCallOutcomes,
@@ -212,10 +214,12 @@ export function projectAssistantTurn({
     };
   });
 
-  const showWorkDivider = turnActive
+  const showWorkDivider = showProcessStatus && (
+    turnActive
     || stopped
-    || (workedForMs !== null && finalIsProse && !turnInterruptedAndSettled);
-  const showSummaryRow = lastProcessIndex >= 0 && !showWorkDivider && !turnFailedWithoutProse;
+    || (workedForMs !== null && finalIsProse && !turnInterruptedAndSettled)
+  );
+  const showSummaryRow = showProcessStatus && lastProcessIndex >= 0 && !showWorkDivider && !turnFailedWithoutProse;
   const directSubRunItems = directSubRuns.map(directSubRunProcessItem);
 
   if (lastProcessIndex < 0 && !showWorkDivider && directSubRunItems.length === 0) {

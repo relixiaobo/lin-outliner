@@ -428,6 +428,7 @@ interface DelegationRunState extends DelegationDetail {
   verifierGapSignatures: string[];
   latestSubmission?: AgentRunSubmissionProjection;
   submittedResult?: string;
+  summarizedDetachedChildRunKey?: string;
   autoCompactConsecutiveFailures: number;
   autoCompactInProgress: boolean;
   skillRuntime?: AgentSkillRuntime;
@@ -1180,16 +1181,23 @@ export class AgentDelegationRuntime {
       ? await captureWorkingSetSnapshot(this.localRoot, run.scope).catch(() => undefined)
       : undefined;
     try {
-      if (run.status === 'running') await agent.prompt(messages);
-      if (run.agent !== agent) return;
-      const terminalAssistant = lastAssistantMessage(agent.state.messages as AgentMessage[]);
-      if (terminalAssistant && isContextOverflow(terminalAssistant, agent.state.model.contextWindow)) {
-        const compacted = await this.compactRunMessages(run, agent.state.messages as AgentMessage[], 'reactive', signal);
-        if (compacted) {
-          await agent.continue();
-          if (run.agent !== agent) return;
+      let nextMessages = messages;
+      while (run.status === 'running') {
+        await agent.prompt(nextMessages);
+        if (run.agent !== agent) return;
+        const terminalAssistant = lastAssistantMessage(agent.state.messages as AgentMessage[]);
+        if (terminalAssistant && isContextOverflow(terminalAssistant, agent.state.model.contextWindow)) {
+          const compacted = await this.compactRunMessages(run, agent.state.messages as AgentMessage[], 'reactive', signal);
+          if (compacted) {
+            await agent.continue();
+            if (run.agent !== agent) return;
+          }
         }
+        const detachedChildSummary = await this.completedDetachedChildRunContinuation(run, agent, signal);
+        if (!detachedChildSummary) break;
+        nextMessages = detachedChildSummary;
       }
+      if (run.agent !== agent) return;
       if (run.status === 'running') {
         const errorMessage = agent.state.errorMessage;
         if (errorMessage) {
@@ -1263,6 +1271,39 @@ export class AgentDelegationRuntime {
         error,
       });
     }
+  }
+
+  private async completedDetachedChildRunContinuation(
+    run: DelegationRunState,
+    agent: Agent,
+    signal: AbortSignal | undefined,
+  ): Promise<AgentMessage[] | null> {
+    const detachedChildren = () => this.directChildrenOf(run).filter((child) => (
+      child.purpose !== 'verify' && child.disposition === 'detached'
+    ));
+    let children = detachedChildren();
+    if (children.length === 0) return null;
+
+    while (
+      run.agent === agent
+      && run.status === 'running'
+      && children.some((child) => !isDetachedChildReadyForParentSummary(child))
+    ) {
+      throwIfAborted(signal);
+      await delay(50);
+      children = detachedChildren();
+    }
+    if (run.agent !== agent || run.status !== 'running') return null;
+
+    const summaryChildren = children.filter((child) => !isSupersededDetachedChildAttempt(child));
+    if (summaryChildren.length === 0) return null;
+
+    for (const child of summaryChildren) await this.hydrateLatestSubmission(child);
+    const summaryKey = detachedChildRunSummaryKey(summaryChildren);
+    if (run.summarizedDetachedChildRunKey === summaryKey) return null;
+    run.summarizedDetachedChildRunKey = summaryKey;
+
+    return [createHiddenUserMessage(buildDetachedChildRunCompletionPrompt(summaryChildren))];
   }
 
   private async verifyCompletedRun(
@@ -1427,11 +1468,8 @@ export class AgentDelegationRuntime {
     signal: AbortSignal | undefined,
     detached: boolean,
   ): Promise<AgentDelegateToolData | void> {
-    run.objectiveStatus = 'blocked';
-    run.blockedReason = `Verifier rejected this worker attempt: ${verifierGap || 'unspecified gap'}`;
-    run.updatedAt = Date.now();
+    const blockedReason = `Verifier rejected this worker attempt: ${verifierGap || 'unspecified gap'}`;
     settleRunBudget(run);
-    await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
 
     const releaseStartupSlot = this.reserveRunningSlot();
     const objective = run.objective ?? run.prompt ?? run.description ?? 'Continue the verified run objective.';
@@ -1459,7 +1497,8 @@ export class AgentDelegationRuntime {
         inheritedVerifierRunIds: run.verifierRunIds,
         unattended: run.unattended,
       }, releaseStartupSlot, signal, run.parentToolCallId);
-      run.blockedReason = `${run.blockedReason}; replacement run ${replacement.runId} started.`;
+      run.objectiveStatus = 'blocked';
+      run.blockedReason = `${blockedReason}; replacement run ${replacement.runId} started.`;
       // The replacement carries the objective forward and will fire its own
       // terminal notification; suppress this superseded attempt's so the user is
       // not told a rejected run "completed" and then notified again.
@@ -1469,6 +1508,7 @@ export class AgentDelegationRuntime {
       return replacement;
     } catch (error) {
       releaseStartupSlot();
+      run.objectiveStatus = 'blocked';
       run.blockedReason = `Verifier rejected this worker attempt, and replacement failed to start: ${errorMessage(error)}`;
       run.updatedAt = Date.now();
       await this.host.runStatusChanged(snapshotRun(run)).catch(() => undefined);
@@ -2450,6 +2490,67 @@ function waitWithTimeout(promise: Promise<unknown>, timeoutMs: number): Promise<
       resolve();
     });
   });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function detachedChildRunSummaryKey(children: readonly DelegationRunState[]): string {
+  return children
+    .map((child) => [
+      child.id,
+      child.status,
+      child.objectiveStatus ?? '',
+      child.updatedAt,
+      child.latestSubmission?.seq ?? '',
+    ].join(':'))
+    .join('|');
+}
+
+function isDetachedChildReadyForParentSummary(child: DelegationRunState): boolean {
+  if (child.status === 'running') return false;
+  if (child.status === 'failed' || child.status === 'cancelled') return true;
+  if (!child.verify) return true;
+  switch (child.objectiveStatus) {
+    case 'verified':
+    case 'blocked':
+    case 'budget_exhausted':
+    case 'stopped':
+      return true;
+    case 'active':
+    case 'verifying':
+      return false;
+    default:
+      return child.status !== 'completed';
+  }
+}
+
+function isSupersededDetachedChildAttempt(child: DelegationRunState): boolean {
+  return child.objectiveStatus === 'blocked'
+    && /\breplacement run \S+ started\b/.test(child.blockedReason ?? '');
+}
+
+function buildDetachedChildRunCompletionPrompt(children: readonly DelegationRunState[]): string {
+  const childResults = children.map((child) => ({
+    runId: child.id,
+    name: child.name,
+    description: child.description,
+    objective: child.objective,
+    status: child.status,
+    objective_status: child.objectiveStatus,
+    result: latestRunSubmissionSummary(child) ?? child.result ?? null,
+    error: child.error ?? null,
+  }));
+  return [
+    'Detached sub-runs launched by this Run have now reached their parent-summary state.',
+    'Use their results below to continue the original Run objective.',
+    'Do not report only that sub-runs were started. Produce the final parent Run result, or explain the blocker if any sub-run failed or returned no usable result.',
+    '',
+    '<detached-sub-run-results>',
+    JSON.stringify(childResults, null, 2),
+    '</detached-sub-run-results>',
+  ].join('\n');
 }
 
 function normalizeAgentName(name: string): string {

@@ -10,6 +10,7 @@ import { AgentToolCallBlock } from '../../src/renderer/ui/agent/AgentToolCallBlo
 import { AgentToolActivityGroup } from '../../src/renderer/ui/agent/AgentToolActivityGroup';
 import { AgentRunDetailsPanel } from '../../src/renderer/ui/agent/AgentRunDetailsPanel';
 import { AgentRunsPanel } from '../../src/renderer/ui/agent/AgentRunsPanel';
+import { AgentRunStatusMarker } from '../../src/renderer/ui/agent/AgentRunRow';
 import { renderAssistantBlocks } from '../../src/renderer/ui/agent/AgentAssistantTurnContent';
 import type { AgentExpandState } from '../../src/renderer/ui/agent/agentProcessTypes';
 
@@ -84,6 +85,7 @@ describe('agent child run UI', () => {
     const runningSubRun = {
       ...renderRunEntity(),
       completedAt: undefined,
+      objectiveStatus: 'active' as const,
       status: 'running' as const,
     };
     const rendered = renderComponent(
@@ -174,7 +176,8 @@ describe('agent child run UI', () => {
     await waitForText(rendered, 'Inspect the current UI.');
     expect(processDisclosure(rendered).hasAttribute('open')).toBe(false);
     expect(rendered.container.querySelector('.agent-run-detail-title-marker .checkbox-mark.checked')).not.toBeNull();
-    expect(rendered.container.textContent).toContain('The UI path is ready.');
+    expect(rendered.container.textContent).toContain('Found the relevant UI path.');
+    expect(rendered.container.textContent).not.toContain('The UI path is ready.');
     expect(rendered.container.textContent).not.toContain('Daily note content.');
     // The thinking's first line shows as the dim gist beside the "Thought" label
     // (Codex `reasoning` preview); the full body is one click away.
@@ -349,6 +352,13 @@ describe('agent child run UI', () => {
           'child-1': runDetailPayload({
             updatedAt: completedRun.updatedAt,
             completedAt: completedRun.completedAt,
+            result: {
+              runId: 'child-1',
+              seq: 1,
+              submittedAt: completedRun.completedAt,
+              summary: 'The UI path is ready.',
+              source: 'final_assistant_message',
+            },
           }),
         },
         payloads: {
@@ -386,6 +396,10 @@ describe('agent child run UI', () => {
     );
 
     await waitForText(completed, 'Worked for 1m 3s');
+    expect(textOccurrenceCount(completed, 'Worked for 1m 3s')).toBe(1);
+    await waitForText(completed, 'The UI path is ready.');
+    expect(textOccurrenceCount(completed, 'The UI path is ready.')).toBe(1);
+    expect(completed.container.querySelector('.agent-run-detail-transcript-list')?.textContent ?? '').not.toContain('The UI path is ready.');
 
     const failedRun = {
       ...childRunEntity(),
@@ -636,8 +650,11 @@ describe('agent child run UI', () => {
     expect(rendered.container.textContent).not.toContain('General ·');
     expect(rendered.container.textContent).not.toContain('Verified ·');
     expect(rendered.container.querySelector('.agent-run-child-toggle')).toBeNull();
+    const runningRunRow = textRoleButton(rendered, 'Inspect Run UI');
+    expect(runningRunRow.querySelector('.agent-run-marker.is-running .agent-run-status-spinner')).not.toBeNull();
+    expect(runningRunRow.querySelector('.agent-run-open-affordance')).not.toBeNull();
 
-    await click(rendered, textRoleButton(rendered, 'Inspect Run UI'));
+    await click(rendered, runningRunRow);
     expect(openedRunId).toBe('child-1');
 
     await click(rendered, ariaButton(rendered, 'Stop run'));
@@ -653,11 +670,14 @@ describe('agent child run UI', () => {
   });
 
   test('shows a completed run as complete even when its objective is still active', () => {
+    const completedAt = Date.now() - 60_000;
     const completed = {
       ...runEntry({
         ...childRunEntity(),
         status: 'completed',
-        completedAt: 260,
+        startedAt: completedAt - 63_000,
+        updatedAt: completedAt,
+        completedAt,
       }),
       objectiveStatus: 'active' as const,
     };
@@ -673,7 +693,33 @@ describe('agent child run UI', () => {
 
     expect(rendered.container.querySelector('.agent-run-marker.is-completed')).not.toBeNull();
     expect(rendered.container.querySelector('.agent-run-marker .checkbox-mark.checked')).not.toBeNull();
-    expect(rendered.container.textContent).toContain('Worked for');
+    expect(rendered.container.textContent).toContain('1 minute ago · 1m 3s');
+    expect(rendered.container.textContent).not.toContain('Worked for');
+  });
+
+  test('maps all run states to distinct status markers', () => {
+    const rendered = renderComponent(
+      <div>
+        <AgentRunStatusMarker status="running" />
+        <AgentRunStatusMarker status="active" />
+        <AgentRunStatusMarker status="verifying" />
+        <AgentRunStatusMarker status="completed" />
+        <AgentRunStatusMarker status="verified" />
+        <AgentRunStatusMarker status="blocked" />
+        <AgentRunStatusMarker status="budget_exhausted" />
+        <AgentRunStatusMarker status="failed" />
+        <AgentRunStatusMarker status="stopped" />
+      </div>,
+    );
+
+    expect(rendered.container.querySelector('.agent-run-marker.is-running .agent-run-status-spinner')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-run-marker.is-active .agent-run-status-spinner')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-run-marker.is-verifying .agent-run-status-spinner')).not.toBeNull();
+    expect(rendered.container.querySelectorAll('.agent-run-marker .checkbox-mark.checked')).toHaveLength(2);
+    expect(rendered.container.querySelector('.agent-run-marker.is-blocked svg')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-run-marker.is-budget-exhausted svg')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-run-marker.is-failed svg')).not.toBeNull();
+    expect(rendered.container.querySelector('.agent-run-marker.is-stopped svg')).not.toBeNull();
   });
 
   test('an open panel refetches the transcript when the run index entry changes', async () => {
@@ -956,6 +1002,11 @@ function processDisclosure(rendered: RenderedComponent): HTMLDetailsElement {
   const found = rendered.document.querySelector<HTMLDetailsElement>('.agent-run-detail-disclosure-section.is-process');
   if (!found) throw new Error('Missing process disclosure');
   return found;
+}
+
+function textOccurrenceCount(rendered: RenderedComponent, text: string): number {
+  const chunks = rendered.container.textContent?.split(text);
+  return chunks ? chunks.length - 1 : 0;
 }
 
 function firstToolCallToggle(rendered: RenderedComponent): HTMLButtonElement {

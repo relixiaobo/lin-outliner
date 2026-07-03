@@ -28,6 +28,8 @@ export function renderAssistantBlocks(
   isChannel: boolean,
   workedForMs: number | null,
   runStartedAtMs: number | null,
+  showProcessStatus = true,
+  showFinalMessages = true,
   directSubRuns?: readonly AgentRenderRunEntity[],
   toolCallOutcomes?: ReadonlyMap<string, AgentToolCallOutcome>,
 ) {
@@ -38,6 +40,7 @@ export function renderAssistantBlocks(
     message,
     directSubRuns,
     runStartedAtMs,
+    showProcessStatus,
     streaming,
     subRunsByParentToolCallId,
     toolCallOutcomes,
@@ -67,20 +70,22 @@ export function renderAssistantBlocks(
     );
   }
 
-  // Trailing answer prose. The projection owns the result-first split; rendering
-  // here is just the final assistant-message items.
-  turn.finalMessages.forEach((block) => {
-    rendered.push(
-      <AgentMarkdown
-        index={documentIndex}
-        key={block.id}
-        keyPrefix={block.id}
-        onNodeReferenceOpen={onNodeReferenceOpen}
-        streaming={block.streaming}
-        text={block.text}
-      />,
-    );
-  });
+  if (showFinalMessages) {
+    // Trailing answer prose. The projection owns the result-first split; rendering
+    // here is just the final assistant-message items.
+    turn.finalMessages.forEach((block) => {
+      rendered.push(
+        <AgentMarkdown
+          index={documentIndex}
+          key={block.id}
+          keyPrefix={block.id}
+          onNodeReferenceOpen={onNodeReferenceOpen}
+          streaming={block.streaming}
+          text={block.text}
+        />,
+      );
+    });
+  }
 
   return rendered;
 }

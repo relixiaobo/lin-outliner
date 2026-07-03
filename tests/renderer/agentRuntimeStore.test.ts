@@ -597,7 +597,7 @@ describe('agent runtime store', () => {
     unsubscribe();
   });
 
-  test('filters hidden system reminder user rows from the visible conversation', async () => {
+  test('keeps hidden system reminder user rows as invisible turn boundaries', async () => {
     const restored = conversation('saved', projection([
       { nodeId: 'system-notification', message: userMessage(systemReminder('Background Run completed.')), branches: null },
       { nodeId: 'a1', message: assistantMessage('handled notification'), branches: null },
@@ -608,7 +608,11 @@ describe('agent runtime store', () => {
 
     await flushMicrotasks();
 
-    expect(store.getSnapshot().entries.map((entry) => entry.nodeId)).toEqual(['a1']);
+    expect(store.getSnapshot().entries.map((entry) => entry.kind)).toEqual([
+      'hidden-turn-boundary',
+      'message',
+    ]);
+    expect(store.getSnapshot().entries[1]?.kind === 'message' ? store.getSnapshot().entries[1].nodeId : null).toBe('a1');
     unsubscribe();
   });
 

@@ -509,8 +509,18 @@ Field behavior:
   when requested by the model.
 - `context`: `full` copies the parent context, `brief` provides a compact parent
   excerpt, and `none` starts clean. Verifier Runs are always `none`.
-- `detach`: if true, return immediately and notify the parent conversation when
-  done.
+- `detach`: if true, return immediately to the current model turn and notify
+  when done. If the detached run was spawned by another run, the detached child
+  is still part of that direct parent's work: before the parent run submits its
+  final result, the runtime waits for its detached direct children to reach their
+  parent-summary state and injects their status/results back into the parent run
+  as a hidden continuation. An unverified child reaches that state once its
+  execution is terminal. A verified child reaches that state only after its
+  objective is verified, blocked, budget-exhausted, stopped, or its execution
+  itself has failed/cancelled. A failed worker attempt that has started a
+  replacement is treated as superseded and is not included in the parent summary;
+  the replacement carries the objective forward. The parent result must be the
+  synthesized final result, not merely "I started background runs."
 - `description`: optional short Work/Runs view summary.
 - `model`: optional per-call model override. Resolution order is request override
   → the running agent's owned model (user/project `AgentDefinition.model`, or the
@@ -575,10 +585,22 @@ Background launch:
 }
 ```
 
-When a background run reaches `completed`, `failed`, or `cancelled`, Lin appends
-a hidden `<agent-run-notification>` message to the parent conversation and
-starts a parent continuation when the parent agent is idle. The parent agent
-should not poll `run_status` for ordinary result retrieval.
+When a terminal detached run is a direct child of a conversation turn, Lin
+appends one hidden `<agent-run-notification>` message for that run to the parent
+conversation and starts a parent continuation when the parent agent is idle. Two
+direct sibling detached runs therefore create two hidden notification turns and
+two independent assistant-only transcript replies; the runtime must not batch
+them into one model prompt. The hidden notification is not rendered as a query
+row, but the renderer preserves it as an invisible turn boundary so the
+continuation's assistant response appears as its own transcript message instead
+of merging into the previous assistant turn. The notification remains queued
+until its delivery continuation completes; a transient delivery failure keeps the
+notification pending and retries with a bounded backoff instead of dropping the
+background result. A nested detached run whose parent is another run does not
+notify the conversation directly; it first reports to its direct parent run
+through a hidden `<detached-sub-run-results>` continuation so the parent run can
+produce the single aggregate result for its own terminal notification. The parent
+agent should not poll `run_status` for ordinary result retrieval.
 
 ### `run_status`
 
@@ -846,8 +868,11 @@ Run's ledger.
 answer. It is written to the run ledger before the terminal lifecycle event when
 the run has model-visible final text. The Run index stores the pointer as
 `objective.latestSubmissionSeq`; verifier evidence, durable notification bodies,
-and the current drill-in result section read the same submission projection.
-Runs without meaningful final text may complete without a submission event.
+and the current drill-in result section read the same submission projection. A
+completed Run detail may fall back to the final assistant text in that Run's own
+ledger when no structured submission event exists; running Runs still show no
+stable result until a submission or terminal assistant text exists. Runs without
+meaningful final text may complete without a submission event.
 
 Run lifecycle events (`run.started`, `run.completed`, `run.failed`,
 `run.cancelled`) record status transitions in the run ledger. The Run index folds
@@ -1216,27 +1241,36 @@ Implemented for the current first-class surfaces.
   `Agent` blocks remain render-compatible for persisted history.
 - The agent header exposes a Work/Runs button. It opens the global Run index
   backed by `agent_list_runs`, ordered with running work first. The first-level
-  list shows only top-level runs; each row shows status, title, timing, and
-  direct child progress from Run metadata. Sub-runs are not expanded inline from
-  the index.
+  list hides ordinary conversation turn wrappers and reflective/Dream runs, so a
+  detached Run spawned directly by a chat turn appears as its own first-level row.
+  Nested child Runs remain attached to their nearest visible parent and are
+  discovered from the detail drawer. Each row shows status, title, timing, and
+  direct child progress from Run metadata. The row title is the Run objective
+  text (or a parsed research argument when present), never the channel name or
+  run profile label. Sub-runs are not expanded inline from the index.
 - Run rows open a Todoist-style Run details drawer above the list; the drawer
   covers the Work/Runs content area but leaves the Work header visible, and the
-  list remains the parent layer behind it. Running rows can stop the selected Run
-  through `run_stop`.
+  list remains the parent layer behind it. The drawer defaults to 80% of the
+  available Work/Runs content height and remembers the user's last dragged height
+  as a ratio for later openings. Running rows can stop the selected Run through
+  `run_stop`.
 - The Run details drawer is a read-only drill-in with the same row grammar for
   every run and sub-run. Its header shows a single-line parent breadcrumb above
   the selected run title, using the same segment/divider/button grammar as
-  outliner pane breadcrumbs. The breadcrumb is `Runs / ... / parent`; the current
-  run is represented by the title below it, not duplicated in the breadcrumb. The
-  header also shows the selected run's status badge. The body starts with one
+  outliner pane breadcrumbs. The header always keeps the same disabled-or-enabled
+  page-back control used by outliner panes before the breadcrumb. The breadcrumb
+  starts at the channel/conversation root, for example `# General`, then lists
+  ancestor runs only; the current run is represented by the title below it, not
+  duplicated in the breadcrumb. The selected run title uses the shared Run status
+  marker as its leading icon, and the body content aligns to that title text
+  column. The body starts with one
   `Working for ...` / `Worked for ...` process disclosure above the unheaded,
   detail-sized result content, direct sub-runs in one `Sub-runs` section, and
   collapsed Technical details in one scroll flow. The process disclosure defaults
   collapsed and uses the same work-divider visual grammar as the conversation
   stream. Verifier runs are ordinary child rows in that section. Completed and
-  verified child rows use the shared Done/checkbox mark; the selected run's
-  completion state is represented by the drawer header status badge. Child rows
-  advance to the drawer's next detail level instead of expanding in place; nested
+  verified rows use the shared Done/checkbox mark. Child rows advance to the
+  drawer's next detail level instead of expanding in place; nested
   descendants appear as direct-child progress on the row until the user drills in.
   It loads `agent_run_detail` and
   `agent_run_transcript`, so Work/Runs selection no longer depends on the
@@ -1273,9 +1307,10 @@ Review against cc-2.1 and OpenClaw leaves these follow-ups:
 - On app restart, stale running child runs should be marked interrupted or
   recoverable from persisted sidechain transcripts. They should not silently
   remain "running" without a live process.
-- Background child runs should always provide a durable output reference and a
-  completion/failure/stopped notification. The parent model should not need to
-  poll repeatedly to discover completion.
+- Conversation-facing detached runs should provide a durable output reference and
+  a completion/failure/stopped notification. Nested detached runs report to their
+  direct parent run instead; no parent model should need to poll repeatedly to
+  discover completion.
 - Background child runs should fail closed when they need interactive permission
   and no approval channel is available. If a permission prompt can be surfaced,
   the parent should receive a clear blocked/waiting notification.
@@ -1295,6 +1330,10 @@ Core tests:
 - full-context `spawn_run` does not inject child tool output into parent context;
 - recursive `spawn_run` is bounded by depth;
 - detached `spawn_run` launches and later notifies parent;
+- sibling direct detached `spawn_run` completions notify the conversation as
+  separate assistant-only replies;
+- nested detached `spawn_run` completions notify their direct parent Run, not the
+  conversation;
 - verifier Run pass/fail, retry, and blocked/budget-exhausted paths;
 - `run_status` list, get, wait, and timeout;
 - `run_steer` resumes from sidechain transcript;
@@ -1304,8 +1343,8 @@ Core tests:
 - child run compact preserves its own continuity;
 - app restart can inspect/resume completed sidechain transcripts;
 - app restart marks stale running child runs as interrupted or recoverable;
-- background child run completion creates a durable output reference and model
-  notification;
+- direct detached run completion creates a durable output reference and model
+  notification, while nested detached run completion resumes its direct parent;
 - background child run needing unavailable approval fails closed;
 - skill `execution: isolated` uses the child-run runtime.
 - built-in `/research` creates a same-agent fork whose child model request omits

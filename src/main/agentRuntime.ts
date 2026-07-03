@@ -369,6 +369,8 @@ const MEMORY_DREAM_ALLOWED_TOOLS = [
 ] as const;
 const RUN_TRANSCRIPT_CACHE_LIMIT = 16;
 const DEBUG_RUN_CACHE_LIMIT = 64;
+const RUN_NOTIFICATION_FLUSH_RETRY_DELAY_MS = 100;
+const RUN_NOTIFICATION_FLUSH_RETRY_LIMIT = 3;
 
 /**
  * Conversation-stream events the run-grounded debug view ([[agent-debug-run-grounded]])
@@ -588,6 +590,8 @@ interface AgentConversationState {
   reactiveCompactRequested: boolean;
   revision: number;
   runNotificationFlushInProgress: boolean;
+  runNotificationFlushRetryCount: number;
+  runNotificationFlushRetryTimer: ReturnType<typeof setTimeout> | null;
   runtimeSettings: AgentRuntimeSettings;
   skillRuntime: AgentSkillRuntime;
   delegationRuntime: AgentDelegationRuntime;
@@ -1254,11 +1258,8 @@ export class AgentRuntime {
       // a 250ms debounce during streaming) only to recover those same fields was
       // O(conversations × stream-size) of redundant disk I/O.
       const metas = await store.listConversationRunMetaProjections(conversation.id, { limit: perConversationLimit });
-      const visibleParentRunIds = visibleWorkParentRunIds(metas);
       for (const meta of metas) {
-        const entry = runListEntryFromMeta(meta, conversation, {
-          includeTurn: visibleParentRunIds.has(meta.id),
-        });
+        const entry = runListEntryFromMeta(meta, conversation);
         if (entry) runs.push(entry);
       }
     }
@@ -1568,7 +1569,7 @@ export class AgentRuntime {
       ? await this.getEventStore().listConversationRunMetaProjections(conversationId)
       : [meta];
     const childMetas = conversationRunMetas.filter((candidate) => candidate.parentRunId === runId);
-    const result = await this.readLatestRunSubmission(runId);
+    const result = await this.readRunDetailResult(runId, meta);
     const transcriptMessageCount = await this.runTranscriptMessageCount(runId);
     return runDetailPayloadFromMeta(meta, {
       allMetas: conversationRunMetas,
@@ -1948,6 +1949,7 @@ export class AgentRuntime {
       conversation.agent.abort();
       conversation.unsubscribe?.();
       clearPendingProjection(conversation);
+      this.clearRunNotificationFlushRetry(conversation);
       this.conversations.delete(conversationId);
       this.userViewContextReminderTracker.reset(conversationId);
       this.emitConversationRuntimeEvent(conversationId, { type: 'closed' });
@@ -2316,6 +2318,7 @@ export class AgentRuntime {
       conversation.activeRun = null;
       conversation.lastRun = null;
       conversation.pendingChildRunNotifications.length = 0;
+      this.clearRunNotificationFlushRetry(conversation);
       conversation.queuedFollowUpSkillListingReservation = null;
       conversation.reactiveCompactRequested = false;
       conversation.localWorkspace.readFileState.clear();
@@ -2337,6 +2340,7 @@ export class AgentRuntime {
     conversation.agent.abort();
     conversation.unsubscribe?.();
     clearPendingProjection(conversation);
+    this.clearRunNotificationFlushRetry(conversation);
     this.conversations.delete(conversationId);
     this.userViewContextReminderTracker.reset(conversationId);
     this.cleanupProviderConversationResources(conversationId);
@@ -2676,6 +2680,8 @@ export class AgentRuntime {
       reactiveCompactRequested: false,
       revision: 0,
       runNotificationFlushInProgress: false,
+      runNotificationFlushRetryCount: 0,
+      runNotificationFlushRetryTimer: null,
       runtimeSettings,
       skillRuntime,
       delegationRuntime,
@@ -2996,12 +3002,14 @@ export class AgentRuntime {
     snapshot: AgentRunSnapshot,
   ): Promise<void> {
     if (snapshot.status === 'running') return;
+    if (!await this.shouldNotifyConversationForTerminalRun(snapshot, conversation)) return;
+    let latestSubmission: AgentRunSubmissionProjection | undefined;
     // A user-initiated stop (cancelled) is the user's own action — it raises no
     // badge/OS banner (the durable notification below is for completion/failure
     // only). The live model-injection still fires so a foreground agent learns
     // its child stopped.
     if (snapshot.status !== 'cancelled') {
-      const latestSubmission = snapshot.status === 'completed'
+      latestSubmission = snapshot.status === 'completed'
         ? await this.readLatestRunSubmission(snapshot.id).catch((error) => {
             this.reportWarn(
               'persistence',
@@ -3029,10 +3037,22 @@ export class AgentRuntime {
         actor: this.delegatedRunActor(snapshot),
       });
     }
-    conversation.pendingChildRunNotifications.push(formatRunNotification(snapshot));
+    conversation.pendingChildRunNotifications.push(formatRunNotification(snapshot, latestSubmission));
+    conversation.runNotificationFlushRetryCount = 0;
     void this.flushChildRunNotifications(conversationId, conversation).catch((error) => {
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
     });
+  }
+
+  private async shouldNotifyConversationForTerminalRun(
+    snapshot: AgentRunSnapshot,
+    conversation: AgentConversationState,
+  ): Promise<boolean> {
+    if (!snapshot.parentRunId) return true;
+    const parent = conversation.runMetas.find((run) => run.id === snapshot.parentRunId)
+      ?? await this.getEventStore().readRunMetaProjection(snapshot.parentRunId).catch(() => null);
+    if (!parent) return true;
+    return deriveAgentRunKind(parent) === 'turn';
   }
 
   private async readLatestRunSubmission(runId: string): Promise<AgentRunSubmissionProjection | undefined> {
@@ -3041,6 +3061,15 @@ export class AgentRuntime {
       this.getEventStore().readRunStreamEvents(runId),
     ]);
     return latestRunSubmissionFromEvents(events, meta?.objective?.latestSubmissionSeq);
+  }
+
+  private async readRunDetailResult(
+    runId: string,
+    meta: AgentRunMetaProjection,
+  ): Promise<AgentRunSubmissionProjection | undefined> {
+    const events = await this.getEventStore().readRunStreamEvents(runId);
+    return latestRunSubmissionFromEvents(events, meta.objective?.latestSubmissionSeq)
+      ?? (meta.execution.status === 'running' ? undefined : latestAssistantMessageSubmissionFromEvents(events, runId));
   }
 
   private async runTranscriptMessageCount(runId: string): Promise<number> {
@@ -3103,11 +3132,12 @@ export class AgentRuntime {
     try {
       while (conversation.pendingChildRunNotifications.length > 0) {
         if (this.hasActiveRuns(conversation)) break;
-        const notifications = conversation.pendingChildRunNotifications.splice(0);
+        const notification = conversation.pendingChildRunNotifications[0];
+        if (!notification) break;
         const prompt: UserMessage = {
           role: 'user',
           timestamp: Date.now(),
-          content: [{ type: 'text', text: systemReminder(notifications.join('\n\n')) }],
+          content: [{ type: 'text', text: systemReminder(notification) }],
         };
         conversation.skillRuntime.resetRunPermissionRules();
         await this.appendSystemPromptEvent(conversationId, conversation, prompt);
@@ -3115,13 +3145,35 @@ export class AgentRuntime {
         await conversation.agent.prompt(prompt);
         await this.contextManager.runReactiveCompactRetryIfNeeded(conversationId, conversation);
         await this.persistAndEmitIdle(conversationId, conversation, { flushChildRunNotifications: false });
+        if (conversation.eventState.runs[startedRunId]?.status !== 'completed') {
+          this.scheduleChildRunNotificationFlushRetry(conversationId, conversation);
+          break;
+        }
+        if (conversation.pendingChildRunNotifications[0] === notification) {
+          conversation.pendingChildRunNotifications.shift();
+        }
+        conversation.runNotificationFlushRetryCount = 0;
       }
     } catch (error) {
-      await this.recoverFromRunError(conversationId, startedRunId);
+      await this.recoverFromRunError(conversationId, startedRunId, { force: true });
       this.emitError(conversationId, error instanceof Error ? error.message : String(error));
+      this.scheduleChildRunNotificationFlushRetry(conversationId, conversation);
     } finally {
       conversation.runNotificationFlushInProgress = false;
     }
+  }
+
+  private scheduleChildRunNotificationFlushRetry(conversationId: string, conversation: AgentConversationState): void {
+    if (conversation.pendingChildRunNotifications.length === 0) return;
+    if (conversation.runNotificationFlushRetryTimer) return;
+    if (conversation.runNotificationFlushRetryCount >= RUN_NOTIFICATION_FLUSH_RETRY_LIMIT) return;
+    conversation.runNotificationFlushRetryCount += 1;
+    conversation.runNotificationFlushRetryTimer = setTimeout(() => {
+      conversation.runNotificationFlushRetryTimer = null;
+      void this.flushChildRunNotifications(conversationId, conversation).catch((error) => {
+        this.emitError(conversationId, error instanceof Error ? error.message : String(error));
+      });
+    }, RUN_NOTIFICATION_FLUSH_RETRY_DELAY_MS);
   }
 
   private async persistToolOutputPayload(
@@ -5597,12 +5649,13 @@ export class AgentRuntime {
    * id match also makes a double-entered recovery idempotent: the first
    * clears the slot, the second no-ops.
    */
-  private async recoverFromRunError(conversationId: string, runId: string | null) {
+  private async recoverFromRunError(conversationId: string, runId: string | null, options: { force?: boolean } = {}) {
     if (!runId) return;
     const conversation = this.conversations.get(conversationId);
     if (!conversation) return;
     const activeRun = conversation.activeRuns.get(runId);
-    if (!activeRun || activeRun.agent.state.isStreaming) return;
+    if (!activeRun || (!options.force && activeRun.agent.state.isStreaming)) return;
+    if (activeRun.agent.state.isStreaming) activeRun.agent.abort();
     const scoped = this.scopedConversation(conversation, activeRun);
     try {
       await this.appendConversationEvents(conversationId, scoped, [{
@@ -5832,6 +5885,7 @@ export class AgentRuntime {
     conversation.lastRun = null;
     conversation.activeRuns.clear();
     conversation.pendingChildRunNotifications.length = 0;
+    this.clearRunNotificationFlushRetry(conversation);
     this.releaseQueuedFollowUpSkillListing(conversation);
     conversation.agent.clearFollowUpQueue();
     conversation.agent.clearSteeringQueue();
@@ -5841,6 +5895,14 @@ export class AgentRuntime {
     conversation.skillRuntime.resetConversationState();
     conversation.skillRuntime.resetRunPermissionRules();
     this.cleanupProviderConversationResources(conversationId);
+  }
+
+  private clearRunNotificationFlushRetry(conversation: AgentConversationState) {
+    if (conversation.runNotificationFlushRetryTimer) {
+      clearTimeout(conversation.runNotificationFlushRetryTimer);
+      conversation.runNotificationFlushRetryTimer = null;
+    }
+    conversation.runNotificationFlushRetryCount = 0;
   }
 
   private async handlePiAgentEvent(conversationId: string, conversation: AgentConversationState, event: PiAgentEvent) {
@@ -5894,13 +5956,27 @@ export class AgentRuntime {
       const contextOverflow = terminalAssistant
         ? isContextOverflow(terminalAssistant, conversation.agent.state.model.contextWindow)
         : false;
-      await this.appendConversationEvents(conversationId, conversation, [{
+      const terminalEvents: AgentEventInput[] = [];
+      if (!cancelled && !errorMessage) {
+        const result = latestNonEmptyAssistantTextForRun(conversation.eventState, activeRun.id);
+        if (result) {
+          terminalEvents.push({
+            type: 'run.result.submitted',
+            actor: { type: 'agent', agentId: activeRun.executingAgentId as AgentId },
+            runId: activeRun.id,
+            summary: result,
+            source: 'final_assistant_message',
+          });
+        }
+      }
+      terminalEvents.push({
         type: cancelled ? 'run.cancelled' : errorMessage ? 'run.failed' : 'run.completed',
         actor: systemActor(),
         runId: activeRun.id,
         errorMessage: cancelled ? undefined : errorMessage ?? undefined,
         usage: sumRunUsage(conversation.eventState, activeRun.id),
-      }]);
+      });
+      await this.appendConversationEvents(conversationId, conversation, terminalEvents);
       conversation.reactiveCompactRequested = Boolean(!cancelled && contextOverflow);
       if (!conversation.reactiveCompactRequested) activeRun.lastSubmittedUserPrompt = null;
       conversation.lastRun = activeRun;
@@ -7316,6 +7392,19 @@ function latestAssistantTextForRun(eventState: AgentEventReplayState, runId: str
   return record ? persistedTextContent(record.content) : '';
 }
 
+function latestNonEmptyAssistantTextForRun(eventState: AgentEventReplayState, runId: string): string {
+  const records = Object.values(eventState.messages)
+    .filter((record): record is AgentEventMessageRecord & { role: 'assistant' } => (
+      record.role === 'assistant' && record.runId === runId
+    ))
+    .sort((left, right) => right.createdAt - left.createdAt || right.id.localeCompare(left.id));
+  for (const record of records) {
+    const text = persistedTextContent(record.content);
+    if (text) return text;
+  }
+  return '';
+}
+
 /** Id of the run's last assistant message — the addressing boundary for its hand-off targets. */
 function latestAssistantMessageIdForRun(eventState: AgentEventReplayState, runId: string): string | null {
   return latestAssistantRecordForRun(eventState, runId)?.id ?? null;
@@ -8101,6 +8190,35 @@ function latestRunSubmissionFromEvents(
   };
 }
 
+function latestAssistantMessageSubmissionFromEvents(
+  events: readonly AgentEvent[],
+  runId: string,
+): AgentRunSubmissionProjection | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]!;
+    if (event.type !== 'assistant_message.completed') continue;
+    const summary = assistantCompletedText(event.content);
+    if (!summary) continue;
+    return {
+      runId,
+      seq: event.seq,
+      submittedAt: event.createdAt,
+      summary,
+      source: 'final_assistant_message',
+    };
+  }
+  return undefined;
+}
+
+function assistantCompletedText(content: readonly AgentPersistedContent[]): string {
+  return content
+    .filter((part): part is Extract<AgentPersistedContent, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text.trim())
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
+}
+
 function runNotificationKind(
   // 'cancelled' is gated out before this (a user-initiated stop raises no
   // notification — see notifyRun), so only failed/completed reach here.
@@ -8121,8 +8239,9 @@ function runNotificationTitle(snapshot: AgentRunSnapshot): string {
   return `Agent run "${snapshot.description}" completed.`;
 }
 
-function formatRunNotification(snapshot: AgentRunSnapshot): string {
+function formatRunNotification(snapshot: AgentRunSnapshot, latestSubmission?: AgentRunSubmissionProjection): string {
   const summary = runNotificationTitle(snapshot);
+  const result = latestSubmission?.summary ?? snapshot.result;
   return [
     '<agent-run-notification>',
     `<runId>${escapeXml(snapshot.id)}</runId>`,
@@ -8132,7 +8251,7 @@ function formatRunNotification(snapshot: AgentRunSnapshot): string {
     `<context_mode>${escapeXml(snapshot.contextMode)}</context_mode>`,
     `<status>${escapeXml(snapshot.status)}</status>`,
     `<summary>${escapeXml(summary)}</summary>`,
-    snapshot.result ? `<result>${escapeXml(snapshot.result)}</result>` : null,
+    result ? `<result>${escapeXml(result)}</result>` : null,
     snapshot.error ? `<error>${escapeXml(snapshot.error)}</error>` : null,
     '</agent-run-notification>',
   ].filter((line): line is string => line !== null).join('\n');
@@ -8374,7 +8493,7 @@ function runProfileLabelsForRender(runs: readonly AgentRunMetaProjection[]): Par
 function runTitlesForRender(runs: readonly AgentRunMetaProjection[]): Record<string, string> {
   const titles: Record<string, string> = {};
   for (const run of runs) {
-    titles[run.id] = compactRunListTitle(run.objective?.text) ?? run.id;
+    titles[run.id] = runListTitleFromMeta(run) ?? run.id;
   }
   return titles;
 }
@@ -8402,10 +8521,7 @@ function runListEntryFromMeta(
     ?? sanitizeConversationTitle(conversation.goal)
     ?? null;
   const profile = getRunProfile(run.runProfile);
-  const title = runListTitleFromMeta(run)
-    || conversationTitle
-    || profile.label
-    || run.id;
+  const title = runListTitleFromMeta(run) || run.id;
   return {
     runId: run.id,
     conversationId: run.anchor.conversationId,
@@ -8423,17 +8539,6 @@ function runListEntryFromMeta(
     updatedAt: run.updatedAt,
     completedAt: status === 'running' ? undefined : run.updatedAt,
   };
-}
-
-function visibleWorkParentRunIds(runs: readonly AgentRunMetaProjection[]): Set<string> {
-  const parentIds = new Set<string>();
-  for (const run of runs) {
-    if (!run.parentRunId) continue;
-    if (deriveAgentRunKind(run) === 'reflective') continue;
-    if (run.runProfile === 'verify' || run.objective?.role === 'verifier') continue;
-    parentIds.add(run.parentRunId);
-  }
-  return parentIds;
 }
 
 function runObjectiveFromPrompt(prompt: UserMessage | null): string | undefined {
@@ -8454,7 +8559,7 @@ function runObjectiveFromPrompt(prompt: UserMessage | null): string | undefined 
 function runListTitleFromMeta(run: AgentRunMetaProjection): string | null {
   if (run.runProfile === 'research') {
     return researchQuestionFromObjective(run.objective?.text)
-      ?? getRunProfile(run.runProfile).label;
+      ?? compactRunListTitle(run.objective?.text);
   }
   return compactRunListTitle(run.objective?.text);
 }

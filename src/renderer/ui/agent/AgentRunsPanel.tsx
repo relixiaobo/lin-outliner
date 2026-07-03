@@ -136,11 +136,7 @@ export function AgentRunsPanel({
         <div className="agent-run-list" aria-label={t.agent.run.treeAriaLabel}>
           {tree.map((node) => {
             const { run } = node;
-            // Only root runs are directly owned by the conversation runtime that
-            // agentRunStop routes to; nested runs are observedOnly there and a Stop
-            // would always throw "Cannot stop run … from this controller". Gate the
-            // action so sub-runs don't render an action that can only error.
-            const canStop = run.status === 'running' && run.parentRunId === null;
+            const canStop = run.status === 'running' && run.kind === 'delegation' && run.purpose !== 'verify';
             const stopping = stoppingRunId === run.runId;
             const title = run.purpose === 'verify' ? t.agent.run.kind.verifier : run.title;
             return (
