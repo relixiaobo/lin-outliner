@@ -12,6 +12,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Data cleanup import workflow (PR #370, codex-4)** — added `/data-cleanup`
+  as a resource-backed built-in skill plus Import Pack v1 validation, preview,
+  and `data_import` staging writes. Tana exports now have a deterministic
+  cleanup route with coverage accounting, dry-run preview confirmation,
+  staging-root materialization, and post-import verification; Roam EDN is
+  profiled only in this release. **Gate (main):** code review found one
+  permission-registration blocker for `data_import`; codex-4 fixed it before
+  merge. Verified with targeted permission tests plus the PR's typecheck,
+  docs-check, import-tool/script suites, real Tana-export import evidence, and
+  `git diff --check`.
 - **CC Switch Codex mirror provider (PR #369, codex-2)** — added CC
   Switch Local Gateway as an externally configured provider that mirrors Codex
   credentials and generated model catalog support from `~/.codex/config.toml` /
