@@ -401,6 +401,36 @@ describe('agent permissions', () => {
     expect(allowed.behavior).toBe('allow');
   });
 
+  test('data import is a local document write governed by tool preapproval', () => {
+    const args = { pack_file: 'tmp/import-pack.json', dry_run: true };
+    const trusted = evaluateAgentToolPermission({
+      toolName: 'data_import',
+      args,
+      policy: { workspaceRoot },
+    });
+    expect(trusted.behavior).toBe('allow');
+    expect(trusted.access).toBe('write');
+    expect(trusted.descriptor?.actionKind).toBe('outline.edit');
+
+    const restricted = evaluateAgentToolPermission({
+      toolName: 'data_import',
+      args,
+      policy: { workspaceRoot, mode: 'restricted' },
+    });
+    expect(restricted).toMatchObject({ behavior: 'deny', code: 'tool_not_preapproved' });
+    expect(restricted.access).toBe('write');
+    expect(restricted.descriptors?.[0]?.actionKind).toBe('outline.edit');
+
+    const preapproved = evaluateAgentToolPermission({
+      toolName: 'data_import',
+      args,
+      policy: { workspaceRoot, mode: 'restricted', preapprovedToolRules: ['data_import'] },
+    });
+    expect(preapproved.behavior).toBe('allow');
+    expect(preapproved.access).toBe('write');
+    expect(preapproved.descriptor?.actionKind).toBe('outline.edit');
+  });
+
   test('parses blocks, soft-block allows, and legacy grants', () => {
     const config = parseGlobalToolPermissionSettings({
       grants: ['Scope(read:/tmp/project)', 'Action(web.fetch)'],

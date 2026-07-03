@@ -26,7 +26,7 @@ re-plan them:
 | Inline chat / agent message panel inside the document | lin runs agents through a separate dock (`AgentDock.tsx`) with a real provider runtime. Bringing chat back into the document blurs the outliner/agent boundary we deliberately drew. |
 | `JOURNAL` system node + journal date-nav UI | Replaced by `DAILY_NOTES_ID` and `PanelDateNavigation.tsx`. Different concept, same coverage. |
 | `CLIPS` web-clip system node + content-script highlight pipeline | Local app, not a browser extension. Page capture is out of scope; if it returns, it returns as a separate plan. |
-| Tana import (nodex `services/tana-import.ts`) | No active user demand. Reconsider if a real migration request appears. |
+| Tana import (nodex `services/tana-import.ts`) | Not a nodex-parity port. The active direction is a broader data-cleanup/import skill with Tana as the first deterministic route; see [[agent-import-skill]]. |
 | `Filter` rules as child nodes of `viewDef` | lin keeps **view** config typed (filter fields with typed enums), now on the dedicated `FilterRuleNode` union variant rather than the god-record (PR #18, A-full). Note: **definition** config (tag/field knobs) *did* move to child nodes as of PR #18 (`defConfig` subtrees) — config-as-nodes reverses this decision for definition config only; view config stays typed. |
 | Chat panel as workspace panel kind (`isChatPanel`, `CHAT_PANEL_PREFIX`) | Same reason as "inline chat". |
 | Wider trigger characters (`>` for create-field, `!` actions, `[[` wikilink) | Only `>`/`#`/`@`/`/` are in lin today. Open to per-trigger additions if a real workflow needs them, but no blanket parity. |

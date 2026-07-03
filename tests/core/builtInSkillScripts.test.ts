@@ -14,14 +14,67 @@ const python = '/usr/bin/python3';
 const presentationSkillRoot = path.join(linlabSkillsRoot, 'presentation');
 const documentSkillRoot = path.join(linlabSkillsRoot, 'document');
 const spreadsheetSkillRoot = path.join(linlabSkillsRoot, 'spreadsheet');
+const dataCleanupSkillRoot = path.join(root, 'src', 'main', 'builtInSkills', 'data-cleanup');
 const htmlTool = path.join(presentationSkillRoot, 'scripts', 'html_tool.mjs');
 const htmlTemplate = path.join(presentationSkillRoot, 'assets', 'templates', 'html-deck', 'index.html');
 const markdownTool = path.join(documentSkillRoot, 'scripts', 'markdown_tool.mjs');
 const pptxTool = path.join(presentationSkillRoot, 'scripts', 'pptx_tool.py');
 const docxTool = path.join(documentSkillRoot, 'scripts', 'docx_tool.py');
 const tableTool = path.join(spreadsheetSkillRoot, 'scripts', 'table_tool.py');
+const tanaToImportPackTool = path.join(dataCleanupSkillRoot, 'scripts', 'tana-to-import-pack.ts');
+const validateImportPackTool = path.join(dataCleanupSkillRoot, 'scripts', 'validate-import-pack.ts');
+const importPackPreviewTool = path.join(dataCleanupSkillRoot, 'scripts', 'import-pack-preview.ts');
 
 describe('built-in skill helper scripts', () => {
+  test('data-cleanup Tana adapter emits a validated Import Pack preview', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lin-data-cleanup-tana-'));
+    const fixture = path.join(dataCleanupSkillRoot, 'fixtures', 'tana-fields-and-tags.json');
+    const packFile = path.join(dir, 'pack.json');
+    const coverageFile = path.join(dir, 'coverage.json');
+    const validationFile = path.join(dir, 'validation.json');
+    const previewFile = path.join(dir, 'preview.md');
+
+    await execFile('bun', [tanaToImportPackTool, fixture, '--out', packFile, '--coverage-out', coverageFile, '--fidelity', 'full']);
+    await execFile('bun', [validateImportPackTool, packFile, '--out', validationFile]);
+    await execFile('bun', [importPackPreviewTool, packFile, '--out', previewFile]);
+
+    const pack = JSON.parse(await readFile(packFile, 'utf8'));
+    const coverage = JSON.parse(await readFile(coverageFile, 'utf8'));
+    const validation = JSON.parse(await readFile(validationFile, 'utf8'));
+    const preview = await readFile(previewFile, 'utf8');
+
+    expect(pack).toMatchObject({
+      version: 1,
+      source: { kind: 'tana' },
+      stats: {
+        sourceRecords: 14,
+        sections: 1,
+        nodes: 4,
+        descriptions: 1,
+        tags: 1,
+        fields: 1,
+        checked: 1,
+        dropped: 4,
+      },
+      coverage: {
+        unaccounted: 0,
+      },
+    });
+    expect(pack.sections[0].nodes[0].children[0].fields).toEqual([{
+      name: 'Status',
+      values: ['Active', 'Review'],
+    }]);
+    expect(Array.isArray(coverage)).toBe(true);
+    expect(coverage).toHaveLength(pack.stats.sourceRecords);
+    expect(coverage.every((entry: { status?: string }) => entry.status !== 'unaccounted')).toBe(true);
+    expect(validation).toMatchObject({ ok: true, errors: [] });
+    expect(preview).toContain('# Import Preview: tana');
+    expect(preview).toContain('Unaccounted: 0');
+    expect(preview).toContain('Fields: 1');
+    expect(preview).toContain('Home');
+    expect(preview).toContain('trash_node');
+  });
+
   test('presentation html inspector reports template warnings without failing structurally', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'lin-presentation-skill-html-template-'));
     const out = path.join(dir, 'report.json');

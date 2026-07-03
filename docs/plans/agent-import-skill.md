@@ -1,240 +1,552 @@
-# Agent Data-Import Skill
+# Agent Data Cleanup and Import Skill
 
-Give the in-app agent a first-class capability to import data from other products
-(Tana / Roam / Obsidian / generic markdown) into the workspace, with user
-fine-tuning — and, for formats we don't have an adapter for, let the agent
-explore the export, talk to the user, and author a suitable parser on the fly.
+Give Neva a built-in workflow for turning messy external data into clean Tenon
+outline content. Importing is the final step of the workflow, not the product
+identity: the skill profiles a source, cleans and normalizes it, asks the user
+which shape to preserve, previews the result, then stages the cleaned outline for
+review.
+
+Tana is the first deterministic route because we have real export evidence and a
+clear migration use case. Roam, Obsidian, OPML, CSV/JSON, and one-off unknown
+formats can reuse the same cleanup workflow later.
 
 ## Goal
 
-- Known formats import via bundled **deterministic adapters** (fast, correct at
-  scale — 10MB / 36k-record exports).
-- **Unknown formats**: the agent reproduces the human workflow Claude used to
-  bootstrap the Tana importer — probe the file structure, converse with the user
-  about intent (fidelity / date alignment / what to drop / where to place),
-  author a transform script, run + preview stats, iterate, then write.
-- **Safe landing**: imported content lands in a **staging container** first; the
-  user reviews, then accepts to merge into targets. Date-bearing content aligns
-  to Tenon's native date nodes on accept.
-- **The user decides how much detail comes across** — fidelity is a first-class,
-  user-controlled choice (preset tiers + per-dimension toggles), not a fixed MVP
-  decision. See "Fidelity is the user's choice" below.
-- A working ad-hoc parser can be saved as a new adapter (self-extending; see
-  [[agent-self-modification]]).
+- Ship one complete feature in one PR: a built-in **data-cleanup/import** skill
+  with a versioned Tana route, deterministic cleanup scripts, a preview report,
+  and one generic `data_import` interface that writes cleaned data into Tenon.
+- Treat the skill as a data-wrangling workflow:
+  source profile -> cleanup plan -> user choices -> normalized preview -> Import
+  Pack -> direct import -> user review.
+- Keep public tool coupling low. The skill depends on one semantic write
+  boundary: clean source data into Import Pack v1, then call the generic import
+  interface. It must not stitch large imports together through many low-level
+  node tools.
+- Preserve the user-visible dimensions that mattered in the real Tana export:
+  outline text, descriptions, code blocks, date grouping, tags, checkbox/done
+  state, inline references when resolvable, and fields when the user asks for
+  high fidelity.
+- Make large-source handling deterministic and bounded: sample before loading,
+  write normalized Import Pack artifacts to files, validate the pack before
+  writing, and report stats/warnings before any document mutation.
+- Keep deterministic work in scripts and judgment work in the model. Scripts
+  inspect, transform, validate, and preview; the model coordinates the workflow,
+  explains choices, and asks the user for cleanup intent.
+- Make the import interface format-agnostic. Tana, Roam, Obsidian, CSV/JSON, and
+  future unknown-format cleanup routes all converge on the same Import Pack
+  contract before they can write to the document.
+- Require coverage accounting for every source record so imported, merged,
+  dropped, unsupported, and empty records are all explainable before write.
 
-M0/M1 dependency: build this on the target `ask_user_question` interaction
-contract, skill audit events, and command/node mutation surfaces. Do not add a
-temporary plain-turn fallback or importer-specific answer back-channel.
+## Non-goals
 
-## Non-goals (MVP)
-
-- Breadth beyond a **Tana** reference adapter. Roam/Obsidian/OPML adapters come
-  after the loop is proven. (The Tana adapter DOES implement all fidelity tiers —
-  that is the user-facing point of this plan, not a follow-up.)
-- Service/API import (OAuth) — orthogonal; see `agent-oauth-providers.md`.
-- A dedicated import UI panel. MVP fine-tuning is conversational through
-  `agent-ask-user-question-tool.md`; this plan waits for that contract instead of
-  adding a temporary plain-turn fallback.
-- **Content tier** changes no core protocol. **Medium/Full** need a per-node
-  id back-channel that does not exist today — this is a real, called-out decision
-  in §2 ("the id-correlation problem"), not a free ride.
+- No dedicated import UI panel. The MVP is a built-in skill workflow in the agent
+  surface.
+- No Tana-specific import tool. The write boundary is a generic `data_import`
+  interface that accepts Import Pack v1 and destination/staging options.
+- No direct document writes from adapter scripts. Scripts may inspect, clean,
+  normalize, and emit Import Packs; only the import interface mutates Tenon.
+- No service/API import or OAuth import. File exports only.
+- No automatic unknown-format write path. Unknown formats may be profiled and
+  cleaned into a preview artifact later, but this PR only writes via the Tana
+  deterministic route.
+- No agent-authored adapter persistence in this PR. Saving a working ad-hoc
+  parser as a reusable adapter belongs with the governed skill-authoring /
+  self-modification track.
+- No hidden cross-clone handoff from `tmp/`. All reusable adapter code, fixtures,
+  and schema notes needed by the building clone must be versioned in the repo or
+  in an enabled built-in skill resource.
+- No model-managed low-level node creation for bulk imports. The agent should not
+  create a 10k-node import by looping over `node_create`; the import interface is
+  responsible for validation, batching, document transactions, progress, and
+  rollback semantics.
 
 ## Design
 
-Three layers + one new agent tool.
+### 1. Built-in skill shape
 
-### 0. Fidelity is the user's choice
+Add a resource-backed built-in skill, tentatively `/data-cleanup`, with
+Tana-import guidance as one route. The skill name should describe the broad job
+instead of the first adapter.
 
-How much of the source comes across is decided by the user, not baked in. Three
-**preset tiers**, each overridable by **per-dimension toggles** so the user can
-tune freely in conversation. The tiers and dimensions below are **validated
-against the real `b8AyeCJNsefK@2026-03-01` export** (10,627-node import set):
+The skill should trigger when the user asks to import, clean up, normalize,
+organize, migrate, or reshape exported notes/data for Tenon. It should not
+trigger for ordinary spreadsheet analysis, charting, or statistical exploration;
+those stay with `/data-analysis`.
 
-| Tier | outline+text | description | code | date-align | tags | done/checkbox | inline-refs | fields |
+The skill body should avoid baking in implementation-specific tool contracts.
+Write it in capability terms:
+
+- inspect files and sample large sources;
+- run the deterministic adapter script for known formats;
+- ask the user for cleanup choices;
+- write normalized preview artifacts;
+- call the import interface with the validated Import Pack;
+- stop before any irreversible or ambiguous write.
+
+In Tenon today those capabilities map to local file access, script execution,
+user-question flow, and the generic import interface, but the skill should
+remain readable if individual tool names evolve.
+
+### 2. Workflow
+
+The skill runs the same high-level workflow for every route.
+
+1. **Identify and bound the source.** Resolve the user-provided file/folder,
+   confirm it is inside an allowed file root, and inspect top-level file names,
+   sizes, extensions, and a bounded sample. Never read a large export wholesale
+   into model context.
+2. **Profile.** Produce a compact source profile: detected format, record/node
+   counts, date range, likely text fields, tags/classes, field-like metadata,
+   media/link counts, unsupported structures, and confidence.
+3. **Ask for cleanup intent.** Use `ask_user_question` for real choices:
+   destination/staging parent when not obvious, fidelity tier, date handling,
+   tag/field handling, and whether to proceed after preview. Keep the fallback as
+   ordinary conversation only for non-Tenon-compatible future hosts, not as a
+   Tenon MVP path.
+4. **Normalize.** Run the adapter into a repo-owned Import Pack JSON plus a human
+   preview Markdown report and coverage report. The model reads the reports, not
+   the full pack.
+5. **Preview.** Call `data_import` in `dry_run` mode to validate the pack and
+   receive a preview id, then show stats, warnings, dropped content, and
+   representative samples. The user approves the write after seeing the cleaned
+   shape. This is product confirmation for the cleaned import shape, not a
+   substitute for tool permission approval.
+6. **Import.** Pass the validated Import Pack path to the generic import
+   interface. The interface creates a staging root such as
+   `Import: tana-export (2026-07-03)`, writes the cleaned sections, records stats, and
+   returns created roots/warnings/progress. Prefer a user-chosen parent or a
+   discoverable Library/Imports parent; otherwise use today's journal node and
+   make the staging root explicit.
+7. **Review and refine.** The staged content is normal Tenon outline content, so
+   the user and agent can use existing node tools to move, edit, delete, tag, or
+   re-run at a different fidelity.
+
+### 3. Program/model responsibility split
+
+The skill must not rely on the model to parse large exports, count records, or
+decide whether every item was preserved. The model coordinates the data-cleanup
+workflow; scripts and the import interface perform deterministic data work.
+
+Program-owned responsibilities:
+
+- sample and profile source files without loading large exports into context;
+- parse known formats and produce Import Pack v1;
+- maintain source-record coverage accounting;
+- validate Import Pack schema, bounds, references, and invariants;
+- generate compact preview reports and representative samples;
+- compare dry-run, pack, and post-import counts.
+
+Model-owned responsibilities:
+
+- infer the user's cleanup goal from the request and source profile;
+- explain fidelity choices and tradeoffs in user language;
+- ask for destination, fidelity, date, tag, field, and proceed/stop choices;
+- summarize warnings and dropped/unsupported structures from reports;
+- choose the deterministic route when confidence is high, or stop with a clear
+  unsupported/unknown-format recommendation when it is not.
+
+The model may author or revise an exploratory parser only outside this MVP's
+write path. For this release, any data that writes to Tenon must come from a
+tracked deterministic adapter and must pass Import Pack validation.
+
+### 4. Tana deterministic route
+
+Ship Tana as the first known-format adapter.
+
+The adapter is versioned code, not a copied `tmp/` artifact. Move the useful
+logic from the historical `tmp/tana-import/import-tana.ts` experiment into a
+tracked adapter script and add small anonymized fixtures that exercise the real
+shapes.
+
+The route supports three presets, each implemented as adapter options and
+reported in the preview:
+
+| Tier | Text/outline | Descriptions | Code | Date grouping | Tags | Done/checkbox | Inline refs | Fields |
 |---|---|---|---|---|---|---|---|---|
-| **Content** | ✓ | ✓ | ✓ | ✓ | — | — | flattened | — |
-| **Medium** | ✓ | ✓ | ✓ | ✓ | → tagDef+apply_tag | → completedAt | → InlineRef | downgraded to text |
-| **Full** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | → fieldDef+fieldEntry |
+| Content | Yes | Yes | Yes | Yes | No | Optional text | Flattened | No |
+| Clean | Yes | Yes | Yes | Yes | Normalized tags | Checkbox state | Flattened/resolved when safe | Text children |
+| Full | Yes | Yes | Yes | Yes | Normalized tags | Checkbox state | Resolved when safe | Field rows |
 
-Measured usage in the real export (drives which dimensions are worth a toggle):
-**tags 1,488 nodes** (card/highlight/task/article/prompt/product/model…),
-**fields 646 nodes / 1,059 instances** (Source/Status/prices/Context Window…),
-**description 221 nodes** (real body text — maps to Tenon `description`; the
-current `tmp/tana-import` run DROPS these — fix), **done/checkbox 157 nodes**
-(maps to `completedAt`), **inline-refs only 24** (minor — fold in, not a headline
-toggle), images 5 / urls 16 (negligible — handled quietly, not user dimensions).
-`description` is text, not structure, so it rides with content at every tier.
-Interaction: day/week supertags (134+35) overlap `date-align` — at the tag tiers
-do NOT re-apply them as user tags (native date nodes already carry day/week).
+The historical real-export measurements still explain the defaults:
+tags are common, descriptions are real body text, checkbox/done state is worth
+preserving, inline refs are rare enough to handle quietly, and images/URLs are
+low-volume. Do not preserve Tana internals for their own sake; preserve the user
+meaning in Tenon's model.
 
-The agent surfaces the tier at import time (default **ask**, via
-`agent-ask-user-question-tool.md`) — "how much detail?" — then lets the user
-adjust any single dimension ("keep tags but not fields", "don't align dates").
-Tier + toggles are just `options` passed to the adapter; the adapter emits only
-what the chosen fidelity asks for. Tana's metanode/tuple/tagDef/attrDef decoding
-(already reverse-engineered in the nodex reference) powers the higher tiers;
-content+description is an extension of the proven `tmp/tana-import` path.
+Tana cleanup rules:
 
-### 1. Adapter library (deterministic parsers)
+- decode HTML/entities and trim generated noise;
+- preserve descriptions as Tenon descriptions when they are metadata/body text,
+  not as arbitrary child notes;
+- represent code blocks as code rows with language when known;
+- group journal/date-bearing content under explicit `YYYY-MM-DD` staging
+  headings;
+- skip day/week tags when date grouping already carries that meaning;
+- normalize tag names and report collisions;
+- map done/checkbox to Tenon checkbox state for imported tasks;
+- for fields, prefer Tenon `Field:: value` rows only at the Full tier; Clean
+  tier degrades fields to readable child text;
+- record unsupported or dropped structures in warnings.
 
-Each adapter exposes one pure function:
+### 5. Import Pack
 
-```
-parse(exportPath, options) -> NormalizedImport {
-  libraryForest: ImportNode[]              // non-dated content
-  dayBuckets: { y, m, d, children: ImportNode[] }[]  // date-aligned content
-  tagDefs?:   { srcId, name, color? }[]        // emitted at Medium/Full
-  fieldDefs?: { srcId, name, type, options? }[] // emitted at Full
-  stats: { nodes, code, desc, days, tags, fields, droppedEmpty, dateRange }
-  warnings: string[]
+Adapters emit an Import Pack owned by this skill and the import interface, not by
+`src/core/types.ts`. The runtime schema can live in main-process import code and
+be documented in the skill resource; it should not become a core document
+protocol unless a later measured implementation proves that is necessary.
+
+```ts
+interface ImportPack {
+  version: 1;
+  source: {
+    kind: string; // adapter/source family, e.g. "tana"
+    path: string;
+    sourceId?: string;
+  };
+  options: ImportOptions;
+  stats: ImportStats;
+  coverage: ImportCoverage;
+  warnings: ImportWarning[];
+  sections: ImportSection[];
+}
+
+interface ImportSection {
+  id: string;
+  title: string;
+  kind: "library" | "date" | "other";
+  date?: string; // YYYY-MM-DD for kind "date"
+  nodes: ImportNode[];
+}
+
+interface ImportNode {
+  title: string;
+  description?: string;
+  tags?: string[];
+  checked?: boolean;
+  code?: { language?: string; text: string };
+  fields?: { name: string; values: string[] }[];
+  children?: ImportNode[];
+  sourceId?: string;
+}
+
+interface ImportOptions {
+  fidelity: "content" | "clean" | "full";
+  dateGrouping: "stage_headings" | "none";
+  tags: boolean;
+  fields: "omit" | "text_children" | "field_rows";
+  doneState: boolean;
+}
+
+interface ImportStats {
+  sourceRecords: number;
+  sections: number;
+  nodes: number;
+  descriptions: number;
+  tags: number;
+  fields: number;
+  checked: number;
+  dropped: number;
+}
+
+interface ImportCoverage {
+  imported: number;
+  merged: number;
+  dropped: number;
+  unsupported: number;
+  empty: number;
+  unaccounted: number; // must be 0 before dry-run can pass
+  entriesFile?: string; // sourceId -> status report for large imports
+}
+
+interface ImportWarning {
+  code: string;
+  message: string;
+  sourceId?: string;
+  count?: number;
 }
 ```
 
-`NormalizedImport` and `ImportNode` are the **adapter's own internal types**, NOT
-`CreateNodeTree` / a `src/core/types.ts` change. `ImportNode` is a superset —
-`{ content, children, type?, codeLanguage?, description?, tags?: srcId[],
-fieldEntries?: {...} }` — because `CreateNodeTree` (`types.ts:563`) carries only
-`content / children / type? / codeLanguage?` and has nowhere to hang
-tags/fields/description. The Content slice of `ImportNode` is exactly
-`CreateNodeTree`; the extra fields are consumed by `import_apply` (§2), not by
-`create_nodes_from_tree`.
+The pack intentionally mirrors Tenon's importable outline model rather than core
+command types. Keeping the pack skill-local avoids making every source format a
+protocol-surface change while still giving tests and the import interface a
+stable adapter contract.
 
-`options = { fidelity: 'full'|'medium'|'content', dimensions?: { tags, fields,
-dateAlign, inlineRefs, doneState }, sections? }`. Seed the Tana adapter from
-`tmp/tana-import/import-tana.ts` (content tier + description — HTML/entity
-cleaning, inline-ref handling, journal→day buckets) and layer the metanode/tuple
-decoding for the tag/field tiers. **Handoff:** that seed is gitignored and lives
-only in the main clone — the building clone must copy it into its branch as the
-Content-tier starting point (it does not travel with the repo).
+Coverage rules:
 
-### 2. `import_apply` agent tool (the keystone)
+- every source record with a stable source id must be classified as `imported`,
+  `merged`, `dropped`, `unsupported`, or `empty`;
+- `dropped` and `unsupported` entries require structured warning codes and
+  counts, with representative source ids in the preview report;
+- `merged` entries must identify the imported node or structure they were folded
+  into, such as description text, a field row, a tag, or a date heading;
+- `unaccounted` must be zero for dry-run and write paths;
+- large imports may keep the full sourceId -> status table in a sidecar file,
+  but the pack must carry aggregate counts and the sidecar path.
 
-An agent bash script runs in its own Core and **cannot mutate the live document**
-— it can only emit a `NormalizedImport` JSON. `import_apply` is the bridge:
+### 6. Integrity and validation gates
 
-- Input: a `NormalizedImport` (inline or a path the adapter/agent wrote).
-- Applies into a **staging container** `Library / Imports / <source>-<date>`; on
-  accept, day buckets merge into native date nodes via `ensure_date_node`
-  (`src/core/core.ts:1705`) and the rest moves to user-chosen parents.
-- Wrapped in one undo group (operation journal) → one-click rollback; returns
-  stats for the agent to show the user.
+The import is not successful merely because some nodes were created. Success
+requires four explicit gates:
 
-#### The id-correlation problem (resolve before ratify)
+1. **Source profile gate.** `inspect-source` records file size, source record
+   count, format confidence, date range, likely tags/fields/descriptions/code,
+   and unsupported structures before the adapter runs.
+2. **Transform gate.** The adapter emits Import Pack v1, a preview report, and a
+   coverage report. The sum of `imported + merged + dropped + unsupported +
+   empty` must equal `sourceRecords`, and `unaccounted` must be zero.
+3. **Dry-run gate.** `data_import` validates schema, bounds, destination, pack
+   hash, coverage totals, and invariant rules before returning a `previewId`.
+   Dry-run must not mutate the document.
+4. **Post-import verification gate.** After a write, the interface reads back the
+   created staging subtree and compares created sections/nodes plus
+   descriptions, tags, fields, code blocks, checkbox states, warnings, and
+   operation-history behavior against the pack and dry-run result.
 
-The **Content** tier is genuinely zero-protocol: `create_nodes_from_tree`
-(`core.ts:460`) builds the forest in one transaction. **Medium/Full** must attach
-tags / field-entries / done-state **per source node**, which needs an
-input-position → created-`nodeId` map — and `create_nodes_from_tree` returns only
-`CommandOutcome { projection, focus? }`, no such map. Design space:
+Validation failures block mutation when they happen before write. Post-import
+verification failures return an explicit failed-verification result with created
+ids and rollback/cleanup guidance; they must not be reported as a clean import.
 
-- **A. Extend `create_nodes_from_tree`** to return the created-id tree → touches
-  the `src/core/commands.ts` / `types.ts` **protocol surface** → coordinated,
-  interface-first PR + PM ratification (A4/A7).
-- **B. A dedicated `import_apply` *core* command** that builds the forest and
-  applies tags/fields/done atomically, returning stats → also protocol surface →
-  same interface-first + ratify path. Cleanest for an in-app *live* apply
-  (atomic, one IPC round-trip, no renderer-side id juggling).
-- **C. Position-recovery, no protocol change**: after the bulk tree write, read
-  state once and pair source forest ↔ created children by position (order is
-  exact because `create_nodes_from_tree` neither drops nor reorders;
-  `applyChildTagsDirect` adds tags, not nodes), then call `apply_tag` /
-  field-entry / done commands per recovered id.
+### 7. Generic `data_import` interface
 
-**Recommendation:** ship MVP on **C** — it is already *proven and measured*: the
-`tmp/tana-import` description back-fill IS option C (single post-write
-`core.state()` read → position-match → 221 `update_node_description` calls), and
-the whole 10,627-node import + back-fill runs in **~8s** headless. Promote to **B**
-only if the in-app live-apply path or perf demands it; if so, treat B as a
-coordinated protocol change (interface-first + ratify), do not slip it in. Either
-way, **§Non-goals is now honest: Content = zero-protocol, Medium/Full = C (or a
-ratified B).**
+All imported data writes go through one generic `data_import` interface. The
+interface is not a Tana adapter and not a general-purpose node batch editor; it
+is the boundary that turns a validated Import Pack into Tenon nodes.
 
-#### Perf & batching (A9 — measure before done)
+Model-facing shape:
 
-Baseline measured headless on the real `b8AyeCJNsefK` set: ~8s for the full
-content+date+description import (one transaction per `create_nodes_from_tree`
-call). Risks to address in-app, not assume away: (1) a 10k-node apply as one undo
-group is ~10k+ journal events in one operation — confirm the journal handles that
-volume and the **accept** is one coherent undo step; (2) the in-app path adds IPC
-+ the UI thread — batch by section/day, **report progress**, and **re-measure the
-in-app apply on the real set before calling it done** (the ~8s is headless Core,
-not the live renderer round-trip).
+```ts
+interface DataImportInput {
+  pack_file: string;
+  mode?: "stage"; // v1 only
+  parent_id?: string; // default: today's journal node
+  dry_run?: boolean;
+  confirmed_preview_id?: string;
+}
 
-Lives alongside the other node tools (`src/main/agentTools.ts:188`,
-`src/main/agentNodeTools.ts`); permissioned through `agentPermissions.ts`
-(default **ask** on bulk apply).
+interface DataImportResult {
+  importId: string;
+  previewId?: string;
+  stagingRootId?: string;
+  sectionCount: number;
+  nodeCount: number;
+  createdRootIds: string[];
+  warnings: ImportWarning[];
+  stats: ImportStats;
+  operationId?: string;
+}
+```
 
-### 3. Playbook `SKILL.md`
+Interface responsibilities:
 
-A methodology skill (`docs/spec/agent-skills.md` format) teaching the loop:
-detect-format → (known? run adapter : probe + converse + author parser) →
-preview → fine-tune → `import_apply` to staging → user accepts. Frontmatter:
-`allowed-tools: [file_read, file_glob, file_grep, bash, file_write, file_edit,
-node_search, import_apply]`; `arguments` for source / file path / fidelity /
-date-align. Codify a **sampling strategy** for large files (never load whole —
-`jq`/`node` for top-level keys, type distribution, sampled records) so
-`file_read` limits aren't hit.
+- read the Import Pack from a path instead of accepting huge inline JSON;
+- resolve `pack_file` through the same realpath-based local-root / scratch /
+  handed-scope boundary as the typed file tools, so the interface is not a file
+  read bypass;
+- validate pack version, schema, bounds, and destination before mutating;
+- reject packs with missing or inconsistent coverage accounting;
+- return a `previewId` from dry-run validation and require it as
+  `confirmed_preview_id` for non-dry-run writes, after the skill shows the
+  preview and the user approves it;
+- bind `previewId` to the pack hash, import options, destination parent, and run
+  scope so a stale confirmation cannot approve different content;
+- create one explicit staging root;
+- materialize descriptions, tags, fields, checkbox state, code blocks, and
+  section/date headings using TypeScript-owned parsing/application;
+- batch internally and report progress without exposing low-level node operations
+  to the model;
+- verify the created staging subtree after write and report any mismatch between
+  pack counts, dry-run counts, and actual created content;
+- wrap the import in a coherent document transaction where the current operation
+  history can support it, or return an explicit rollback limitation in the
+  preview/result;
+- register permission/action metadata as `outline.edit`, with permission copy
+  that names this as a bulk local document import;
+- keep the interface format-agnostic so future adapters reuse it unchanged.
 
-**Dependency order:** the fidelity "default ask" UX wants
-`ask_user_question`, which **now ships** (v1 landed in #153 —
-`src/main/agentAskUserQuestionTool.ts`). It can use it directly; or it
-**degrades to plain conversational turns** (the agent asks in prose, the user
-replies). Keep it a soft dependency — the skill must not list `ask_user_question`
-in `allowed-tools` or assume it. Treat it as an enhancement, not a hard dependency.
+Implementation route:
 
-### Safety
+- Prefer implementing the interface in main-process TypeScript beside the agent
+  node tools, backed by existing document commands and host transactions.
+- Keep the model-visible result compact: ids, counts, warnings, and next actions;
+  the full Import Pack and source paths stay in tool details or files, not echoed
+  wholesale into the model-visible payload.
+- Do not change `src/core/commands.ts` or `src/core/types.ts` unless a measured
+  implementation proves a core command is required for correctness or acceptable
+  performance.
+- If a core command becomes necessary, stop for ratification and land the
+  interface/protocol change first.
 
-Staging-first (no dirty data in the main tree until accepted); bash / file_write
-/ import_apply gated by allow/ask/deny; everything undoable.
+### 8. Skill resources and packaging
+
+Ship this as a resource-backed built-in skill so adapter code versions with the
+app and works in packaged builds.
+
+Expected layout:
+
+```text
+src/main/builtInSkills/data-cleanup/
+  SKILL.md
+  references/
+    import-pack.md
+    validation-and-coverage.md
+    tana-export-notes.md
+  scripts/
+    import-pack-lib.ts
+    inspect-source.ts
+    tana-to-import-pack.ts
+    validate-import-pack.ts
+    import-pack-preview.ts
+  fixtures/
+    tana-minimal.json
+    tana-fields-and-tags.json
+```
+
+If the scripts are broadly reusable outside Tenon, they may later move to
+`linlab-skills` and be enabled through the existing built-in skill staging list.
+For this first Tenon-specific route, keep them in the Tenon repo so the app,
+tests, and plan evolve together.
+
+Script responsibilities:
+
+- `inspect-source.ts` profiles files and produces a compact source profile.
+- `tana-to-import-pack.ts` converts Tana exports to Import Pack v1 plus coverage
+  accounting.
+- `validate-import-pack.ts` validates schema, invariants, bounds, and coverage.
+- `import-pack-preview.ts` produces a human/model-readable preview report so the
+  full pack does not need to enter model context.
+
+### 9. Tests and verification
+
+Adapter tests:
+
+- Tana fixture -> Import Pack stats and warnings.
+- Description, code block, tag, checkbox, inline reference, date section, and
+  field downgrade/full-field cases.
+- Large-file sampling path does not load the whole export into model context.
+- Source-record coverage sums exactly to sourceRecords, with zero unaccounted
+  records.
+
+Import interface tests:
+
+- Import Pack dry-run validates stats and warnings without document mutation.
+- Import Pack import creates staged outline content with descriptions, tags,
+  fields, code, date headings, and checkbox state.
+- Invalid pack versions, oversized sections, malformed fields, and invalid
+  destinations fail before mutation.
+- Missing, inconsistent, or non-zero-unaccounted coverage fails before mutation.
+- Post-import verification detects mismatched node, description, tag, field,
+  code, checkbox, and warning counts.
+- Mid-import failures either roll back coherently or report the precise rollback
+  limitation and created staging root.
+
+End-to-end smoke:
+
+- User invokes `/data-cleanup` for a fixture Tana export.
+- The skill profiles the export, asks fidelity/date choices, produces a preview,
+  calls the import interface after approval, and reports created staging stats.
+
+Real-export measurement:
+
+- Re-run against the historical `b8AyeCJNsefK@2026-03-01` class of export when
+  available to the building agent.
+- Record node count, sections, runtime, dropped structures, operation-history
+  behavior, and whether the generic import interface meets the acceptance bar.
+
+## Requirements and acceptance criteria
+
+- **FR-1 — Cleanup output boundary.** Every supported source route must emit
+  Import Pack v1 before it can write to Tenon.
+- **FR-2 — Generic import interface.** `data_import` is the only bulk document
+  mutation path for cleaned import data; adapters and skill scripts never mutate
+  the document directly.
+- **FR-3 — Tana first route.** The first shipped route converts Tana exports into
+  Import Pack v1 with the Content, Clean, and Full fidelity options.
+- **FR-4 — Preview confirmation.** Non-dry-run imports require a dry-run preview
+  id bound to the same pack hash, options, destination, and run scope.
+- **FR-5 — Staging-first result.** The import writes an explicit staging root and
+  returns created ids, stats, warnings, and next actions for review.
+- **FR-6 — Program/model split.** Scripts own deterministic profiling,
+  transformation, validation, preview generation, and coverage accounting; the
+  model owns user intent, explanation, choice collection, and workflow
+  coordination.
+- **FR-7 — Coverage accounting.** Every source record must be accounted for as
+  imported, merged, dropped, unsupported, or empty before dry-run can pass.
+- **NFR-1 — Bounded large-source handling.** The skill samples and profiles large
+  exports, keeps full packs in files, and keeps model-visible output compact.
+- **NFR-2 — Verifiable import integrity.** Dry-run and post-import verification
+  compare source, pack, and created-content counts; mismatches are reported as
+  failed verification, not as successful imports.
+
+Acceptance:
+
+- **AC-1:** Given a Tana fixture, the adapter writes a valid Import Pack v1 and a
+  preview report without mutating the document.
+- **AC-2:** Given a valid pack, `data_import` dry-run returns stats, warnings, and
+  a preview id without creating nodes.
+- **AC-3:** Given the same pack/options/destination and user confirmation,
+  `data_import` non-dry-run creates one staging root with representative
+  descriptions, tags, fields, date headings, code, and checkbox state preserved.
+- **AC-4:** Given a stale or mismatched `confirmed_preview_id`, `data_import`
+  refuses to mutate.
+- **AC-5:** Given malformed, oversized, or out-of-scope pack input, `data_import`
+  fails before mutation and returns a recoverable error.
+- **AC-6:** On the real-export class, measurement records runtime, node count,
+  warnings, rollback/operation-history behavior, and any dropped structures.
+- **AC-7:** Given any supported source fixture, the transform output includes
+  coverage totals whose statuses sum to `sourceRecords`, with `unaccounted = 0`;
+  otherwise dry-run refuses to produce a preview id.
+- **AC-8:** Given a successful non-dry-run import, post-import verification
+  reports matching section/node and preserved-structure counts; if counts differ,
+  the result is marked failed verification with created ids and recovery guidance.
 
 ## Open questions
 
-- Where do bundled adapters ship — in-repo `.agents/skills/import/adapters/` vs
-  the user `~/.agents/skills` dir? (Leaning in-repo so they version with the app.)
-- Is "accept from staging → targets" a second `import_apply` mode, a separate
-  tool, or a manual user action? (Leaning: a mode of `import_apply`.)
-- Reliability bar for agent-authored parsers on unknown formats — acceptance is
-  "user previews & accepts", but do we cap node count / require a dry-run first?
-- Re-import / fidelity change: if a user re-imports the same export (e.g. at a
-  higher tier), do we de-dup against a prior import or always stage fresh?
-- Medium tier: what exactly "downgraded fields" become — a plain child line
-  `name: value`, or the value as a child node under a label?
+- Default staging parent: should the skill always ask, or should Tenon expose
+  Library/Imports in the outliner context reminder so the skill can default there
+  without search?
+- Native date-node merge: is date grouping in staging enough for the first
+  cleanup/import release, or does the user need an explicit accept step that
+  moves date sections into daily notes?
+- Re-import behavior: always stage fresh, or detect prior imports by source hash
+  and offer replace/update?
+- Import Pack storage: keep preview/pack files in the agent scratch area only, or
+  preserve them as local audit artifacts next to the source when the user asks?
 
 ## Collision check
 
-Last refreshed 2026-07-01: no open PR currently claims this import surface. The
-historical adjacent PRs that existed when this plan was drafted have all merged:
-#92/#96 (OAuth) and #97 (field-value rows). They are still adjacent background,
-not active blockers.
-Adjacent plans are complementary, not conflicting: [[agent-self-modification]]
-(skill authoring — enables save-as-adapter), `agent-ask-user-question-tool.md`
-(the dialog mechanism — soft dependency, see §2), `lazy-like-global-launcher.md`
-(a future UI entry point). MVP touches new files + `src/main/agentTools.ts` +
-`docs/spec/agent-*`. Protocol surface (`src/core/commands.ts`/`types.ts`): **not
-touched if Medium/Full use option C** (recommended); if the build later chooses
-option B, that becomes a coordinated, interface-first protocol change requiring
-its own ratification — flag it then, do not bundle it here.
+Last refreshed 2026-07-03. No open PR currently claims the import/data-cleanup
+surface. The only open adjacent PR is #365 (`agent-run-index-completeness`),
+which rewrites run/tool vocabulary and agent specs; wait for it to merge or
+rebase before finalizing tool names, built-in skill wording, and spec anchors.
+
+This plan touches new built-in skill resources, adapter scripts, tests, the
+generic import interface, permission metadata, and agent-skill/tool specs. It
+should not touch `src/core/commands.ts` or `src/core/types.ts` unless a measured
+implementation proves a core command is required and that protocol change is
+ratified first.
 
 ## Build checklist
 
-- [ ] **Handoff:** building clone copies `tmp/tana-import/import-tana.ts` (already
-      does content + date-align + 221 descriptions, measured ~8s) into its branch
-      as the Content-tier seed — it is gitignored / main-clone-only.
-- [ ] Define `NormalizedImport` / `ImportNode` (adapter-internal, NOT a `types.ts`
-      change) + adapter contract incl. `options.fidelity`/`dimensions`.
-- [ ] Tana adapter: content tier + `description` from the seed; then layer
-      metanode/tuple decoding for tags + done-state (Medium) and fields (Full).
-- [ ] Decide the id-correlation approach (§2): default **C** (position-recovery,
-      no protocol change). Only if going **B**, raise a separate interface-first
-      protocol PR + ratify first.
-- [ ] `import_apply` tool: staging-write (forest + per-node tags/fields/done via
-      the chosen approach); accept-mode date-merge via `ensure_date_node`; one undo
-      group; **progress reporting**; stats out.
-- [ ] Measure the in-app apply on the real `b8AyeCJNsefK` set (A9) before "done".
-- [ ] Agent surfaces the fidelity choice (preset + per-dimension); degrade to
-      conversational turns until `ask_user_question` exists.
-- [ ] Register + permission the tool (`agentTools.ts`, `agentPermissions.ts`).
-- [ ] Author the playbook `SKILL.md` (loop + large-file sampling + tuning).
-- [ ] Spec updates: `docs/spec/agent-tool-design.md` (import_apply),
-      `docs/spec/agent-skills.md` (the import skill).
-- [ ] E2E: a fixture Tana export → staging → accept → date nodes align.
+- [ ] Create the resource-backed `/data-cleanup` built-in skill with frontmatter,
+      trigger guidance, and the source-profile -> cleanup -> preview -> stage
+      workflow.
+- [ ] Add tracked Tana adapter resources. Do not depend on `tmp/tana-import`.
+- [ ] Define and document Import Pack v1 as a skill-local contract.
+- [ ] Implement `inspect-source`, `tana-to-import-pack`,
+      `validate-import-pack`, and `import-pack-preview` scripts.
+- [ ] Add anonymized Tana fixtures for descriptions, tags, fields, done state,
+      date grouping, code, and inline refs.
+- [ ] Add coverage accounting for imported, merged, dropped, unsupported, empty,
+      and unaccounted source records, with sidecar support for large sourceId
+      tables.
+- [ ] Implement the generic import interface over Import Pack v1 with dry-run,
+      staging write, pack-file boundary checks, preview confirmation, validation,
+      coverage checks, permission metadata, progress, post-import verification,
+      and operation history behavior.
+- [ ] Add adapter, Import Pack validation, import-interface integration, and e2e
+      smoke tests.
+- [ ] Update `docs/spec/agent-skills.md`, `docs/spec/agent-tool-design.md`, and
+      `docs/spec/agent-tool-permissions.md` for the new built-in skill and import
+      interface.
+- [ ] Measure the real Tana export class before marking the plan shipped.

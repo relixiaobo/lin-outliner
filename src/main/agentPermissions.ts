@@ -645,6 +645,18 @@ export function deriveAgentToolActionDescriptors(input: {
     })];
   }
 
+  if (toolName === 'data_import') {
+    return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'outline.edit'), {
+      accessScope: 'allowed_file_area',
+      title: 'local document import',
+      summary: 'Bulk import cleaned external data into the local outliner document.',
+      consequence: 'This creates staged local document content inside Lin.',
+      reversible: true,
+      externalEffect: false,
+      highConsequence: false,
+    })];
+  }
+
   if (toolName === 'node_delete') {
     return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'outline.delete'), {
       accessScope: 'allowed_file_area',
@@ -2082,7 +2094,7 @@ export function toolPathArgumentName(toolNameInput: string): string | null {
 function classifyToolAccess(toolName: string, args?: unknown): AgentPermissionAccess {
   if (toolName === 'bash') return 'execute';
   if (toolName === 'task_stop' || toolName === 'spawn' || toolName === 'run_status' || toolName === 'run_steer' || toolName === 'run_amend' || toolName === 'run_stop' || toolName === 'skill' || toolName === 'ask_user_question') return 'control';
-  if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete') return 'write';
+  if (toolName === 'file_edit' || toolName === 'file_write' || toolName === 'file_delete' || toolName === 'node_create' || toolName === 'node_edit' || toolName === 'node_delete' || toolName === 'data_import') return 'write';
   if (toolName === 'operation_history') {
     return agentToolActionKindProfile(toolName, args)?.some((actionKind) => !isReadOnlyActionKind(actionKind)) ? 'write' : 'read';
   }

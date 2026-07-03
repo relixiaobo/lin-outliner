@@ -175,6 +175,7 @@ export const AGENT_TOOL_ACTION_KIND_PROFILES = {
   node_create: ['outline.edit'],
   node_edit: ['outline.edit'],
   node_delete: ['outline.delete'],
+  data_import: ['outline.edit'],
   operation_history: ['outline.read', 'outline.edit'],
   past_chats: ['agent.memory.recall'],
   ask_user_question: ['agent.user_question.ask'],

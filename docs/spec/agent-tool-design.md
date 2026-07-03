@@ -42,6 +42,7 @@ These tools are required for the first useful local agent.
 | `node_edit` | outliner | Yes | Usually yes | Edit one known node's own content, fields, field values, or saved-search config using exact string replacement, or perform explicit by-id operations such as move and merge. |
 | `node_delete` | outliner | Yes | Usually yes | Trash or restore one or more nodes. |
 | `operation_history` | outliner | Yes for undo/redo | Usually yes | Inspect, undo, or redo user and agent operations. |
+| `data_import` | outliner | Yes | Usually yes | Stage a validated Import Pack v1 produced by a data-cleanup adapter. |
 | `file_read` | local | No | Usually no | Read local files with bounded output. |
 | `file_glob` | local | No | No | Find files by glob or path pattern. |
 | `file_grep` | local | No | No | Search file contents under allowed roots. |
@@ -239,6 +240,70 @@ answer validation, resolves the tool call with `answers: []` plus
 clarifying question in the normal conversation. If structured input is still
 needed after discussion, the agent must call `ask_user_question` again with a
 fresh request.
+
+## `data_import`
+
+`data_import` is the only bulk document mutation path for cleaned import data.
+Format adapters and skills must not create nodes directly. They first write an
+Import Pack v1 JSON file, validate it, generate a preview report, call
+`data_import` with `dry_run: true`, show the returned stats/warnings/preview id
+to the user, and only then call `data_import` again with the matching
+`confirmed_preview_id`.
+
+Input:
+
+```ts
+interface DataImportInput {
+  pack_file: string;
+  mode?: "stage"; // default; v1 supports only staging
+  parent_id?: string; // default: today's journal node
+  dry_run?: boolean;
+  confirmed_preview_id?: string;
+}
+```
+
+The pack file is resolved through the same realpath-based local read boundary as
+typed file tools. It must be a bounded JSON file under an allowed read root.
+Dry-run validates the pack schema, stats, coverage, destination, and pack hash
+without mutating the document. Non-dry-run requires a preview id produced by a
+matching dry-run for the same pack path, pack hash, destination, and mode. Preview
+ids expire after a short window and are single-use.
+
+Import Pack v1 is main-process import-tool data, not core document state:
+
+```ts
+interface ImportPack {
+  version: 1;
+  source: { kind: string; path: string; sourceId?: string };
+  options: {
+    fidelity: "content" | "clean" | "full";
+    dateGrouping: "stage_headings" | "none";
+    tags: boolean;
+    fields: "omit" | "text_children" | "field_rows";
+    doneState: boolean;
+  };
+  stats: ImportStats;
+  coverage: ImportCoverage;
+  warnings: ImportWarning[];
+  sections: ImportSection[];
+}
+```
+
+`coverage.imported + coverage.merged + coverage.dropped +
+coverage.unsupported + coverage.empty` must equal `stats.sourceRecords`, and
+`coverage.unaccounted` must be `0`. Known adapters should also write a coverage
+sidecar with one source id per source record so no source item is silently
+omitted or duplicated. `data_import` rejects malformed stats, invalid coverage,
+oversized packs, and invalid destinations before mutation.
+
+Successful non-dry-run imports create one explicit staging root
+(`Import: <source-name>`) under the destination and then materialize section
+headings and imported nodes below it. The implementation uses the existing
+`create_nodes_from_tree` bulk command for the large tree and applies imported
+descriptions afterward. Post-import verification reads the created staging
+subtree and compares section, node, description, tag, field, and checked counts
+against the pack. A mismatch returns `verification_failed` with the created ids
+and recovery instructions rather than reporting success.
 
 ## Tool Description Style
 
