@@ -1,0 +1,31 @@
+{
+  "currentWorkspaceId": "workspace-root",
+  "formatVersion": 1,
+  "docs": [
+    {
+      "id": "workspace-root",
+      "props": {
+        "created": 1,
+        "name": "Root node for file:workspace-root"
+      }
+    },
+    {
+      "id": "home",
+      "props": {
+        "created": 2,
+        "name": "Home",
+        "_docType": "home",
+        "_ownerId": "workspace-root"
+      }
+    },
+    {
+      "id": "note-1",
+      "props": {
+        "created": 3,
+        "name": "Project plan #work",
+        "description": "Draft the import path.",
+        "_ownerId": "home"
+      }
+    }
+  ]
+}

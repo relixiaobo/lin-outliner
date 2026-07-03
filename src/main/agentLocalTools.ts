@@ -402,7 +402,7 @@ interface PdfPageRange {
   lastPage: number;
 }
 
-class LocalToolFailure extends Error {
+export class LocalToolFailure extends Error {
   constructor(
     readonly code: string,
     message: string,
@@ -2743,6 +2743,10 @@ function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string, ac
     throw new LocalToolFailure('path_outside_local_root', `Path is outside the allowed file area: ${requestedPath}`, 'Use a path under the allowed file area.');
   }
   return requestedPath;
+}
+
+export function resolveAgentLocalReadPath(workspace: AgentLocalWorkspaceContext, inputPath: string): string {
+  return resolveWorkspacePath(workspace, inputPath, 'read');
 }
 
 // The real paths a file tool may touch for the given access: the workdir always, handed

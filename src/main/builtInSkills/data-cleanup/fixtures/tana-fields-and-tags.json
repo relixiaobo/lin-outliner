@@ -1,0 +1,125 @@
+{
+  "currentWorkspaceId": "workspace-root",
+  "formatVersion": 1,
+  "docs": [
+    {
+      "id": "SYS_0",
+      "props": {
+        "created": 1,
+        "name": "System Nodes"
+      }
+    },
+    {
+      "id": "SYS_T01",
+      "props": {
+        "created": 2,
+        "name": "supertag",
+        "_docType": "tagDef",
+        "_ownerId": "SYS_0"
+      }
+    },
+    {
+      "id": "workspace-root",
+      "props": {
+        "created": 3,
+        "name": "Root node for file:workspace-root"
+      }
+    },
+    {
+      "id": "home",
+      "props": {
+        "created": 4,
+        "name": "Home",
+        "_docType": "home",
+        "_ownerId": "workspace-root"
+      }
+    },
+    {
+      "id": "task-1",
+      "props": {
+        "created": 5,
+        "name": "Ship importer #project",
+        "description": "Keep the write path generic.",
+        "_done": 1783081052636,
+        "_ownerId": "home"
+      }
+    },
+    {
+      "id": "code-1",
+      "props": {
+        "created": 8,
+        "name": "console.log(\"ok\")",
+        "_docType": "codeblock",
+        "_ownerId": "task-1"
+      }
+    },
+    {
+      "id": "field-status-tuple",
+      "props": {
+        "created": 6,
+        "_docType": "tuple",
+        "_ownerId": "task-1"
+      },
+      "children": ["field-status", "field-value-active"]
+    },
+    {
+      "id": "field-status",
+      "props": {
+        "created": 6,
+        "name": "Status",
+        "_docType": "attrDef",
+        "_ownerId": "field-status-tuple"
+      }
+    },
+    {
+      "id": "field-value-active",
+      "props": {
+        "created": 7,
+        "name": "Active",
+        "_ownerId": "field-status-tuple"
+      }
+    },
+    {
+      "id": "field-status-tuple-2",
+      "props": {
+        "created": 7,
+        "_docType": "tuple",
+        "_ownerId": "task-1"
+      },
+      "children": ["field-status-2", "field-value-review"]
+    },
+    {
+      "id": "field-status-2",
+      "props": {
+        "created": 7,
+        "name": "Status",
+        "_docType": "attrDef",
+        "_ownerId": "field-status-tuple-2"
+      }
+    },
+    {
+      "id": "field-value-review",
+      "props": {
+        "created": 7,
+        "name": "Review",
+        "_ownerId": "field-status-tuple-2"
+      }
+    },
+    {
+      "id": "workspace-root_TRASH",
+      "props": {
+        "created": 9,
+        "name": "Deleted Nodes",
+        "_ownerId": "workspace-root"
+      }
+    },
+    {
+      "id": "trash-note",
+      "props": {
+        "created": 10,
+        "name": "Discarded note",
+        "_ownerId": "workspace-root_TRASH"
+      }
+    }
+  ]
+}
