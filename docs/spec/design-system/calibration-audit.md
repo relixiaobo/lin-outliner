@@ -78,6 +78,7 @@ standard change that only hides one local violation is not accepted.
 | CA44 | Increased contrast had a central token layer, but no guard stopped component styles from adding unregistered local `prefers-contrast: more` branches. | Code drift | Token/static CSS coverage now fails unregistered increased-contrast media rules, preserving the central accessibility layer and the named system-launcher glass exception. | `tests/e2e/typography-tokens.spec.ts`; `a11y.css` |
 | CA45 | The z-index ladder existed as `--z-*` tokens, but new global stacking values could still be hard-coded in product styles. | Code drift | Token/static CSS coverage now fails raw global z-index values while preserving local 0/1/2 stacking-context layers. | `tests/e2e/typography-tokens.spec.ts`; `tokens.css` |
 | CA46 | The document outline mini-rail intentionally hid its tiny scrollbar, but the exception was not named and no guard stopped content scroll containers from doing the same. | Named exception | The kernel now names the mini-rail scrollbar exception, and token/static CSS coverage fails hidden scrollbars anywhere else. | `design-system.md`; `tests/e2e/typography-tokens.spec.ts` |
+| CA47 | Typography rules prohibited viewport-driven font sizing, but the guard did not check font token declarations for viewport/container units. | Code drift | Token/static CSS coverage now fails viewport or container units in `font-size` declarations and `--font-*` token declarations. | `tests/e2e/typography-tokens.spec.ts`; `foundations.md` Typography |
 
 ## Named Exceptions Kept
 

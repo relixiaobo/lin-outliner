@@ -215,6 +215,13 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
+  test('keeps font sizing independent of viewport units', () => {
+    const viewportUnitPattern = /\b(?:font-size|--font-[\w-]+)\s*:[^;]*(?:dvw|dvh|svw|svh|lvw|lvh|vw|vh|vmin|vmax|cqw|cqh|cqi|cqb|cqmin|cqmax)\b/;
+    const violations = collectCssTextViolations(viewportUnitPattern);
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps product foundation styling tokenized outside layout geometry', () => {
     const violations = [
       ...collectDeclarationViolations(

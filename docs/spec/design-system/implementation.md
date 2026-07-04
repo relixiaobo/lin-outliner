@@ -99,12 +99,12 @@ Expected checks for design-system changes:
 - `tests/e2e/typography-tokens.spec.ts` for token discipline, the no renderer
   `[data-theme]` bridge rule, the registered dark-media rule allowlist, the
   registered reduced-motion / reduced-transparency / increased-contrast rule
-  allowlists, the absent `--primary` token family, and the static no-scale
-  feedback guard; it keeps global z-index values on the `--z-*` ladder, and it
-  keeps hidden scrollbars limited to the registered document-outline mini-rail
-  exception. It also keeps functional-state fills, borders, and rings from using
-  brand, link, or status colour tokens outside the solid destructive-confirmation
-  exception.
+  allowlists, the absent `--primary` token family, viewport-independent font
+  sizing, and the static no-scale feedback guard; it keeps global z-index values
+  on the `--z-*` ladder, and it keeps hidden scrollbars limited to the registered
+  document-outline mini-rail exception. It also keeps functional-state fills,
+  borders, and rings from using brand, link, or status colour tokens outside the
+  solid destructive-confirmation exception.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
   interaction affordances change.
 - `tests/e2e/window-material.spec.ts` for window-material and inactive-window
