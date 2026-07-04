@@ -24,16 +24,17 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372**) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370, data-import-performance #371) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370, data-import-performance #371, local-tool-output-responsiveness #373) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-04).** Open PR queue: none. Recently merged: #372
-(`codex-3/run-transcript-turn-coalescing`) merged 2026-07-04 after main
-review; see *Recently completed*. #371
+**In flight (2026-07-04).** Open PR queue: none. Recently merged: #373
+(`codex-4/skill-performance-audit`) merged 2026-07-04 after main review;
+see *Recently completed*. #372 (`codex-3/run-transcript-turn-coalescing`)
+merged 2026-07-04 after main review; see *Recently completed*. #371
 (`codex-4/data-import-performance`) merged 2026-07-04 after main review;
 see *Recently completed*. #365 (`codex-3/agent-run-index-completeness`)
 merged 2026-07-04 after main review; see *Recently completed*. #370
@@ -459,6 +460,22 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **local-tool-output-responsiveness** (`codex-4/skill-performance-audit`,
+  PR #373, codex-4, merged 2026-07-04, fast-track) — streams `file_grep`
+  pagination directly from ripgrep output so high offsets no longer depend on a
+  capped stdout buffer, and moves `bash` output capture to bounded file-first
+  stdout/stderr streams with foreground/background output watchdogs. Bash
+  timeout, cancellation, `task_stop`, and watchdog termination now stop the
+  shell process tree; foreground/background completion waits for stdio `close`
+  so no-wait descendants that inherit stdout/stderr remain blocked or stoppable
+  instead of being misreported as completed. **Gate (main):** deep review found
+  the first-round `exit`-based completion could leave descendants running while
+  marking tasks completed; codex-4 fixed it with pipe-based capture and
+  no-wait descendant regressions before merge. Verified on the final PR head and
+  merge result with manual foreground/background descendant reproductions,
+  typecheck, `test:core`, targeted local-tool tests, docs check, and
+  `git diff --check`. Fast-track, **shape (a)**, *no plan file*.
 
 - **run-transcript-turn-coalescing** (`codex-3/run-transcript-turn-coalescing`,
   PR #372, codex-3, merged 2026-07-04, fast-track) — adapts Run Details raw

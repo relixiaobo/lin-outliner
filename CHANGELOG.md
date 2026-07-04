@@ -12,6 +12,20 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Local tool output responsiveness and process-tree cleanup (PR #373,
+  codex-4)** — `file_grep` now streams ripgrep output and applies pagination
+  while reading, so large result sets and high offsets no longer depend on a
+  capped stdout buffer. `bash` now captures stdout/stderr through bounded
+  file-first streams, persists large foreground output with compact previews,
+  and enforces foreground/background output watchdogs. Timeout, cancellation,
+  `task_stop`, and watchdog termination now stop the shell process tree, and
+  bash completion waits for stdio `close` so no-wait descendants that inherit
+  output remain blocked or stoppable instead of being misreported as completed.
+  **Gate (main):** deep review found the first-round `exit`-based completion
+  could leave descendants running while tasks were marked complete; codex-4
+  fixed it before merge. Verified with manual foreground/background descendant
+  reproductions, typecheck, `test:core`, targeted local-tool tests,
+  `docs:check`, and `git diff --check`.
 - **Data import performance and cooperative scheduling (PR #371, codex-4)** —
   materializes imported descriptions directly through `create_nodes_from_tree`,
   caches tag/field definition lookup during bulk tree writes, and adds
