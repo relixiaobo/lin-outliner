@@ -85,8 +85,9 @@ Expected checks for design-system changes:
   design-system compression or contract PR.
 - Focused Playwright tests for touched surfaces.
 - `tests/e2e/design-system-runtime.spec.ts` for representative shell, settings,
-  overlay, outliner trigger, code-block, file-preview, agent-process, and
-  run-detail surfaces staying bounded and OS-theme-native in light and dark.
+  overlay, outliner trigger, menu, floating-tool, code-block, file-preview,
+  agent-process, and run-detail surfaces staying bounded and OS-theme-native in
+  light and dark.
 - `tests/e2e/typography-tokens.spec.ts` for token discipline.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
   interaction affordances change.

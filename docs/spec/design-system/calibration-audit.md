@@ -46,6 +46,7 @@ standard change that only hides one local violation is not accepted.
 | CA12 | Material surfaces relied on convention that every `backdrop-filter` uses the shared material token. | Code drift | Token guard now fails any local backdrop filter outside `var(--material-backdrop)` or explicit `none`. | `tests/e2e/typography-tokens.spec.ts` |
 | CA13 | Some comments still described historical rollout phases instead of the current shared-token system. | Spec drift | Comments now describe current shared material fallback and current SettingsInsetList reuse. | `src/renderer/styles/a11y.css`, `agent-dock.css`, `outliner.css`, `popover-command.css`, `shell.css`, `SettingsInsetList.tsx` |
 | CA14 | Outliner trigger popovers and code-block chrome were high-interaction surfaces but not represented in the shared runtime guard. | Code drift | Runtime guard now opens tag suggestions, slash commands, reference suggestions, and the code-block language menu in light/dark without changing outliner layout behavior. | `tests/e2e/design-system-runtime.spec.ts` |
+| CA15 | Shared menu and floating-tool chrome was implemented through primitives but not opened by the runtime design-system guard. | Code drift | Runtime guard now opens row/sidebar context menus, batch tag selector, floating text toolbar, file-preview pill menu, and image-row action menu in light/dark. | `tests/e2e/design-system-runtime.spec.ts` |
 
 ## Named Exceptions Kept
 

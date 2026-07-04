@@ -5,9 +5,12 @@ import {
   emitAgentProjection,
   installElectronMock,
   ids,
+  multiSelect,
   nodeById,
   openMockRunDetailsFromAssistantDetailsButton,
   row,
+  rowBody,
+  rowEditor,
   trailingEditor,
 } from './outlinerMock';
 
@@ -94,6 +97,45 @@ async function showCodeBlockLanguageMenu(page: Page) {
   await page.getByRole('menuitemradio', { name: 'Plain text', exact: true }).waitFor({ state: 'visible' });
 }
 
+async function showRowContextMenu(page: Page) {
+  await rowBody(page, ids.alpha).click({ button: 'right' });
+  await page.getByRole('menu', { name: 'Node actions' }).waitFor({ state: 'visible' });
+  await expect(page.getByRole('menuitem', { name: 'Trash' })).toBeVisible();
+}
+
+async function showSidebarContextMenu(page: Page) {
+  await page.getByRole('button', { name: 'Open Root' }).click({ button: 'right' });
+  await page.getByRole('menu', { name: 'Node actions' }).waitFor({ state: 'visible' });
+  await expect(page.getByRole('menuitem', { name: 'Open in split pane' })).toBeVisible();
+}
+
+async function showBatchTagSelector(page: Page) {
+  await multiSelect(page, [ids.alpha, ids.beta]);
+  await page.keyboard.type('#');
+  await page.locator('.batch-tag-selector').waitFor({ state: 'visible' });
+}
+
+async function placeCursor(page: Page, nodeId: string, placement: 'start' | 'end') {
+  const editor = rowEditor(page, nodeId);
+  await editor.click();
+  await editor.evaluate((element, targetPlacement) => {
+    if (element instanceof HTMLElement) element.focus();
+    const selection = window.getSelection();
+    const range = document.createRange();
+    const paragraph = element.querySelector('p') ?? element;
+    range.selectNodeContents(paragraph);
+    range.collapse(targetPlacement === 'start');
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, placement);
+}
+
+async function showFloatingTextToolbar(page: Page) {
+  await placeCursor(page, ids.alpha, 'end');
+  await page.keyboard.press('Shift+ArrowLeft');
+  await page.locator('body > .floating-editor-toolbar').waitFor({ state: 'visible' });
+}
+
 async function createAttachmentRowPreview(page: Page) {
   const beforeChildren = await todayChildren(page);
   await trailingEditor(page).click();
@@ -107,6 +149,28 @@ async function createAttachmentRowPreview(page: Page) {
   await attachmentRow.locator('> .row').first().hover();
   await attachmentRow.locator('.row-chevron-button').first().click();
   await attachmentRow.locator('.file-node-row-preview .file-node-preview.collapsed').waitFor({ state: 'visible' });
+}
+
+async function showFilePreviewPillMenu(page: Page) {
+  await createAttachmentRowPreview(page);
+  await page.locator('.file-node-row-preview .file-preview-pill-more').click();
+  await page.getByRole('menu', { name: 'Preview actions' }).waitFor({ state: 'visible' });
+}
+
+async function showImageRowActionMenu(page: Page) {
+  const beforeChildren = await todayChildren(page);
+  await trailingEditor(page).click();
+  await page.keyboard.type('/image');
+  await expect(page.getByRole('option', { name: /Image/ })).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+  const imageId = (await todayChildren(page)).at(-1);
+  if (!imageId) throw new Error('Missing image node');
+  const imageRow = row(page, imageId);
+  await imageRow.locator('.file-node-image-button img').waitFor({ state: 'visible' });
+  await imageRow.locator('.file-node-image-actions .file-node-card-menu-trigger').click();
+  await page.getByRole('menu', { name: 'File actions' }).waitFor({ state: 'visible' });
+  await expect(page.getByRole('menuitem', { name: 'Maximize' })).toBeVisible();
 }
 
 async function createImagePreviewPage(page: Page) {
@@ -334,10 +398,46 @@ const surfaces: SurfaceCase[] = [
     beforeProbe: showCodeBlockLanguageMenu,
   },
   {
+    name: 'row context menu',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showRowContextMenu,
+  },
+  {
+    name: 'sidebar context menu',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showSidebarContextMenu,
+  },
+  {
+    name: 'batch tag selector',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showBatchTagSelector,
+  },
+  {
+    name: 'floating text toolbar',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showFloatingTextToolbar,
+  },
+  {
     name: 'file row preview',
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: createAttachmentRowPreview,
+  },
+  {
+    name: 'file preview pill menu',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showFilePreviewPillMenu,
+  },
+  {
+    name: 'image row action menu',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showImageRowActionMenu,
   },
   {
     name: 'image preview page',
