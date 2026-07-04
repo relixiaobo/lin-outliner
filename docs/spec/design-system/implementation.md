@@ -120,15 +120,15 @@ Expected checks for design-system changes:
   system docs from copying a second `:root` token table, and keeps foundation
   token definitions unique in `tokens.css`.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
-  interaction affordances change, including pointer-cursor scope and forced
-  `user-select: none !important` suppression staying limited to active drag /
-  resize gestures. It also keeps renderer drag regions from selecting chrome
-  text, keeps the shared bare input primitive from suppressing the global
-  keyboard focus ring, keeps local `:focus-visible` ring suppressions explicitly
-  named, keeps explicit `:focus-visible` indicator declarations routed through
-  focus-named tokens, keeps resize cursors routed through the shared cursor
-  tokens, and keeps named chrome icon controls colour-only on hover, focus, and
-  press.
+  interaction affordances change, including pointer-cursor scope, help-cursor
+  diagnostics scope, and forced `user-select: none !important` suppression
+  staying limited to active drag / resize gestures. It also keeps renderer drag
+  regions from selecting chrome text, keeps the shared bare input primitive from
+  suppressing the global keyboard focus ring, keeps local `:focus-visible` ring
+  suppressions explicitly named, keeps explicit `:focus-visible` indicator
+  declarations routed through focus-named tokens, keeps resize cursors routed
+  through the shared cursor tokens, and keeps named chrome icon controls
+  colour-only on hover, focus, and press.
 - `tests/e2e/window-material.spec.ts` for window-material and inactive-window
   behavior when material rules change.
 - `git diff --check`

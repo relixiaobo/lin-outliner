@@ -12,6 +12,10 @@ const pointerCursorSelectors = new Set([
   '.inline-ref:hover',
   '.row-editor .inline-ref:hover',
 ]);
+const helpCursorSelectors = new Map([
+  ['src/renderer/styles/agent-debug.css|.agent-debug-cost', 'Debug cost diagnostic tooltip.'],
+  ['src/renderer/styles/outliner.css|.field-value-hint', 'Field-value validation hint uses a native title tooltip.'],
+]);
 const chromeIconControlSelectors = [
   '.agent-dock-run-back',
   '.agent-dock-title-button',
@@ -75,6 +79,37 @@ function collectPointerCursorViolations() {
       if (pointerCursorSelectors.has(selector)) continue;
       violations.push(`${file}:${lineNumber} ${selector}`);
     }
+  }
+
+  return violations;
+}
+
+function collectHelpCursorViolations() {
+  const violations: string[] = [];
+  const seen = new Set<string>();
+
+  for (const file of styleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim().replace(/\s+/g, ' ');
+      const body = match[2] ?? '';
+      if (!/\bcursor\s*:\s*help\s*;/.test(body)) continue;
+
+      const key = `${file}|${selector}`;
+      seen.add(key);
+      if (helpCursorSelectors.has(key)) continue;
+
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      violations.push(`${file}:${lineNumber} ${selector}`);
+    }
+  }
+
+  for (const [key, reason] of helpCursorSelectors) {
+    if (seen.has(key)) continue;
+    violations.push(`${key} is registered as a help cursor selector but no longer exists (${reason})`);
   }
 
   return violations;
@@ -263,6 +298,10 @@ function collectChromeIconHoverBoxViolations() {
 test.describe('cursor affordances', () => {
   test('reserves pointer cursor declarations for inline content references', () => {
     expect(collectPointerCursorViolations()).toEqual([]);
+  });
+
+  test('keeps help cursor declarations limited to named diagnostics', () => {
+    expect(collectHelpCursorViolations()).toEqual([]);
   });
 
   test('keeps forced text-selection suppression limited to active gestures', () => {
