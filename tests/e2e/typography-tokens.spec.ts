@@ -604,6 +604,26 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
+  test('keeps raw functional colors inside token declarations', () => {
+    const violations: string[] = [];
+
+    for (const file of productStyleFiles) {
+      const text = readFileSync(file, 'utf8').replace(
+        /\/\*[\s\S]*?\*\//g,
+        (block) => block.replace(/[^\n]/g, ' '),
+      );
+      const lines = text.split('\n');
+      for (const [index, line] of lines.entries()) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('--')) continue;
+        if (!/\b(?:rgba?|hsla?)\s*\(/i.test(line)) continue;
+        violations.push(`${file}:${index + 1} ${trimmed}`);
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps token aliases from referencing themselves', () => {
     const violations: string[] = [];
 

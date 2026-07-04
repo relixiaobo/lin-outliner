@@ -353,9 +353,10 @@ Use these default desktop tokens before adding component-specific values:
 
 ### Token Rules
 
-- Product CSS keeps raw hex colors inside token declarations only.
-- Component CSS may use `rgba()` or `color-mix()` for alpha states, but the base
-  color should come from a token whenever the value is semantic.
+- Product CSS keeps raw hex and raw functional color literals (`rgb()`, `rgba()`,
+  `hsl()`, `hsla()`) inside token declarations only.
+- Component CSS may use `color-mix()` for local alpha states, but the base color
+  comes from a token.
 - Primary text parity matters: outliner row text, field values, agent assistant
   prose, user bubbles, and the agent composer use
   `--font-content / --line-content`.
