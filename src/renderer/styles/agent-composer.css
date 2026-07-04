@@ -198,7 +198,7 @@
   gap: var(--space-4);
   overflow: auto;
   border-radius: var(--radius-overlay-sm);
-  background: var(--overlay-bg);
+  background: var(--bg-elevated);
   box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-6);
 }

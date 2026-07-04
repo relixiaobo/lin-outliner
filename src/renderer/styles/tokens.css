@@ -231,7 +231,6 @@
   --surface-inverse: #2e2e32;
   --surface-inverse-strong: #1f1f23;
   --surface-disabled: var(--fill-3);
-  --overlay-bg: var(--bg-elevated);
   --overlay-backdrop: rgba(26, 26, 26, 0.30);
   --overlay-backdrop-strong: rgba(0, 0, 0, 0.82);
   --space-hairline: 1px;

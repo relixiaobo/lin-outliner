@@ -480,7 +480,7 @@
 
 /* Portaled to document.body; position/left/top/width/maxHeight come from
    useAnchoredOverlay (position: fixed) so the popover flips and clamps to the
-   viewport instead of running off a short window. Opaque --overlay-bg is
+   viewport instead of running off a short window. Opaque --bg-elevated is
    deliberate: the old translucent material let transcript text bleed through. */
 .agent-channel-working-detail {
   --channel-activity-pad: var(--space-4);             /* 8px */
@@ -496,7 +496,7 @@
   flex-direction: column;
   gap: var(--channel-activity-header-list-gap);
   border-radius: var(--radius-overlay-sm);
-  background: var(--overlay-bg);
+  background: var(--bg-elevated);
   box-shadow: var(--overlay-shadow-level-1);
   padding: var(--channel-activity-pad);
   overflow: hidden;
