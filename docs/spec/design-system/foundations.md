@@ -179,17 +179,16 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   `--bg-content` is the opaque content panel; `--bg-elevated` is menus / popovers
   / HUD — in dark mode it is *lighter* than content so floating surfaces read as
   elevated.
-- **Status.** `--status-success` (Sage), `--status-warning` (Mustard),
-  `--status-info` (Sapphire), `--status-danger`. Status colour is reserved for
-  genuine semantic state, not decoration. **It must never leak into interactive
-  meaning** — status colours never paint selection, hover, active rows, focus, or
-  any non-link clickable affordance. In particular `--status-info` (Sapphire) is
-  for an *informational status* only; it is not a selection or accent colour, and
-  painting functional state with it would read as a smuggled-in system accent
-  (which we deliberately avoid — selection/focus stay neutral per B3). It is a
-  distinct blue from `--link`: status blue marks state, the native link blue marks
-  a clickable link, and the two never swap roles. The app has one accent (rose)
-  and one link colour (the native link blue). Destructive confirmation buttons
+- **Status.** The current status token set is the product-used set:
+  `--status-success` (Sage), `--status-warning` (Mustard), and
+  `--status-danger`. Status colour is reserved for genuine semantic state, not
+  decoration. **It must never leak into interactive meaning** — status colours
+  never paint selection, hover, active rows, focus, or any non-link clickable
+  affordance. Do not add an informational status blue without a current surface
+  that needs it; otherwise it duplicates the native link blue's perceptual slot
+  and broadens the colour model without reusable evidence. The app has one
+  accent (rose) and one link colour (the native link blue). Destructive
+  confirmation buttons
   may use a solid danger fill (`--status-danger` with
   `--status-danger-solid-hover`) only when the command itself is destructive;
   ordinary destructive affordance hover remains neutral per the state table.

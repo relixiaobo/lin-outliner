@@ -5,7 +5,7 @@ confirmed **no hardcoded hex outside `tokens.css` / `theme-dark.css`** (the only
 `#…` in component CSS is a GitHub-issue number in a comment), every classic
 invert-trap already carries an explicit fix (white tick on green via
 `--text-on-accent`; `pm-highlight` forcing `color: inherit`;
-`--status-success-strong` and `--status-info` lifted for dark; the agent-dock
+`--status-success-strong` lifted for dark; the agent-dock
 rail icons bumped off the 0.30 tier because 0.30 read "blurry" on the dark rail).
 So this is **not** a mechanism change. It is a **visual confirm + nudge pass**:
 run the app in both themes, eyeball the residual contrast risks the static review
@@ -81,8 +81,8 @@ Every confirmed fix is one of two shapes, in priority order:
    to dark. Use for the high-volume text-tier and separator risks.
 2. **Single-token dark literal lift.** For a per-theme literal already living in
    the dark block (status colors, materials), add/raise its dark value the way
-   `--status-success-strong` → `#5fc88a` and `--status-info` → `#5aa0e0` are
-   already done. Use for status colors and any material/scrollbar adjustment.
+   `--status-success-strong` → `#5fc88a` is already done. Use for status colors
+   and any material/scrollbar adjustment.
 
 A site-level edit is the fix **only** when the run shows a single misassigned tier
 (a body label wearing `--text-quaternary`), and even then the edit is "move it to

@@ -139,7 +139,6 @@
   --status-danger: #e5484d;
   --status-danger-solid-hover: color-mix(in srgb, var(--status-danger) 88%, #000000);
   --status-danger-muted: #9a3f34;
-  --status-info: #3b82c4;
   /* control state — checked/on controls, separate from semantic status */
   --control-on: #3f9e6a;
 

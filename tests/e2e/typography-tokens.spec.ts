@@ -940,6 +940,7 @@ test.describe('typography tokens', () => {
       'agent-composer-radius',
       'agent-composer-corner-radius',
       'outline-panel-ideal-width',
+      'status-info',
       'semantic-success',
       'semantic-success-strong',
       'semantic-warning',
