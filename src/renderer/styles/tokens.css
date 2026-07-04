@@ -214,7 +214,6 @@
         focus-ring / outline tokens instead of the rose accent. ── */
   --panel-bg: var(--bg-content);
   --window-material-frost: color-mix(in srgb, var(--bg-window) 62%, transparent);
-  --surface-soft: var(--bg-elevated);
   --text-main: var(--text-primary);
   --text-strong: var(--text-primary);
   --text-sub: var(--text-secondary);
@@ -426,7 +425,7 @@
   --scrollbar-thumb: rgb(var(--ink) / 0.22);
   --scrollbar-thumb-hover: rgb(var(--ink) / 0.34);
   --agent-accent: var(--accent);
-  --bg: var(--surface-soft);
+  --bg: var(--bg-elevated);
   --surface: var(--panel-bg);
   --surface-2: var(--bg-window);
   --border-emphasis: rgb(var(--ink) / 0.18);

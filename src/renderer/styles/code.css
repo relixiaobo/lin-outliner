@@ -9,7 +9,7 @@
   margin: var(--space-1) 0;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--surface-soft);
+  background: var(--bg-elevated);
   --code-block-content-inset: var(--space-5);
   --code-block-scrollbar-gutter: var(--space-4);
 }
