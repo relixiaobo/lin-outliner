@@ -21,6 +21,14 @@ function hostFor(core: Core): OutlinerToolHost {
     getProjection: () => core.projection(),
     getTextSearchIndex: () => buildTextSearchIndex(core.projection()),
     transaction: async (meta, fn) => core.transaction(meta.origin ?? 'agent', fn, meta),
+    createNodesFromTreeYielding: async (parentId, nodes, meta, options) => {
+      const focus = await core.transaction(meta.origin ?? 'agent', () =>
+        core.createNodesFromTreeYieldingFocus(parentId, nodes, {
+          yieldEveryNodes: options?.yieldEveryNodes,
+          commitEveryNodes: options?.commitEveryNodes,
+        }), meta);
+      return focus ? { focus } : {};
+    },
     handle: async (command, args = {}, meta = {}) => {
       const run = () => {
         if (command === 'create_node') return core.createNode(String(args.parentId), nullableNumber(args.index), String(args.text ?? ''));

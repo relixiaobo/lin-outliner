@@ -108,6 +108,7 @@ import {
 import type { CaptureFieldDef, CreateCaptureInput } from './launcher/sources';
 
 type Mutator = () => FocusHint | undefined;
+type AsyncMutator = () => Promise<FocusHint | undefined>;
 type FocusOptions = Omit<FocusHint, 'nodeId' | 'selectAll'> & { selectAll?: boolean };
 type MoveDirection = 'up' | 'down';
 type CommitOrigin = 'user' | 'agent' | 'system' | '__seed__';
@@ -135,6 +136,15 @@ interface TreeMaterializeContext {
   tagDefByName: Map<string, NodeId>;
   fieldDefByName: Map<string, NodeId>;
   fieldTypeById: Map<NodeId, FieldType>;
+}
+
+interface TreeYieldContext {
+  created: number;
+  total: number;
+  yieldEveryNodes: number;
+  yield: () => Promise<void>;
+  commitEveryNodes?: number;
+  commit: () => void;
 }
 
 interface CoreTransaction {
@@ -383,12 +393,12 @@ export class Core {
     }
   }
 
-  beginUndoGroup() {
-    this.loro.beginUndoGroup();
+  beginUndoGroup(): boolean {
+    return this.loro.beginUndoGroup();
   }
 
-  endUndoGroup() {
-    this.loro.endUndoGroup();
+  endUndoGroup(): boolean {
+    return this.loro.endUndoGroup();
   }
 
   async transaction<T>(origin: CommitOrigin, fn: () => T | Promise<T>, metadata: CoreTransactionMetadata = {}): Promise<T> {
@@ -425,6 +435,12 @@ export class Core {
       this.refreshStateFromLoro();
       throw error;
     }
+  }
+
+  private commitActiveTransactionChunk(): void {
+    const transaction = this.activeTransaction;
+    if (!transaction) return;
+    this.loro.commit(transaction.origin);
   }
 
   createNode(
@@ -600,6 +616,42 @@ export class Core {
       let lastCreatedId: string | undefined;
       for (const node of nodes) {
         const createdId = this.insertNodeTreeDirect(parentId, node, undefined, context);
+        lastCreatedId = createdId;
+      }
+      return lastCreatedId ? focus(lastCreatedId, { parentId, placement: { kind: 'end' } }) : undefined;
+    });
+  }
+
+  async createNodesFromTreeYielding(
+    parentId: string,
+    nodes: CreateNodeTree[],
+    options: { yieldEveryNodes?: number; commitEveryNodes?: number; yield?: () => Promise<void> } = {},
+  ): Promise<CommandOutcome> {
+    const focusHint = await this.createNodesFromTreeYieldingFocus(parentId, nodes, options);
+    return { projection: this.projection(), ...(focusHint ? { focus: focusHint } : {}) };
+  }
+
+  async createNodesFromTreeYieldingFocus(
+    parentId: string,
+    nodes: CreateNodeTree[],
+    options: { yieldEveryNodes?: number; commitEveryNodes?: number; yield?: () => Promise<void> } = {},
+  ): Promise<FocusHint | undefined> {
+    return this.mutateAsyncFocus(async () => {
+      const state = this.snapshot();
+      ensureParentMutable(state, parentId);
+      const context = this.createTreeMaterializeContext(state);
+      const total = countCreateNodeTrees(nodes);
+      const yieldContext: TreeYieldContext = {
+        created: 0,
+        total,
+        yieldEveryNodes: Math.max(1, options.yieldEveryNodes ?? 250),
+        yield: options.yield ?? yieldToEventLoop,
+        commitEveryNodes: options.commitEveryNodes ? Math.max(1, options.commitEveryNodes) : undefined,
+        commit: () => this.commitActiveTransactionChunk(),
+      };
+      let lastCreatedId: string | undefined;
+      for (const node of nodes) {
+        const createdId = await this.insertNodeTreeDirectYielding(parentId, node, undefined, context, yieldContext);
         lastCreatedId = createdId;
       }
       return lastCreatedId ? focus(lastCreatedId, { parentId, placement: { kind: 'end' } }) : undefined;
@@ -2263,6 +2315,40 @@ export class Core {
     return { projection: this.projection(), ...(focusHint ? { focus: focusHint } : {}) };
   }
 
+  private async mutateAsync(mutator: AsyncMutator): Promise<CommandOutcome> {
+    const focusHint = await this.mutateAsyncFocus(mutator);
+    return { projection: this.projection(), ...(focusHint ? { focus: focusHint } : {}) };
+  }
+
+  private async mutateAsyncFocus(mutator: AsyncMutator): Promise<FocusHint | undefined> {
+    if (this.activeTransaction) {
+      return mutator();
+    }
+
+    const before = this.loro.materializeState();
+    this.loro.clearTouchedNodeIds();
+    const rollbackFrontiers = this.loro.frontiers();
+    try {
+      const focusHint = await mutator();
+      const after = this.loro.materializeState();
+      const affectedNodeIds = this.loro.drainTouchedNodeIds();
+      if (changedTouchedNodes(affectedNodeIds, before, after)) {
+        this.commitCurrentTransaction(this.currentCommitOrigin(), before, after, this.currentCommitMetadata(), affectedNodeIds);
+        this.patchProjectionCache(affectedNodeIds, after);
+        this.bumpRevision(affectedNodeIds, false);
+        this.verifyCaches();
+      }
+      this.stateValue = after;
+      return focusHint;
+    } catch (error) {
+      this.loro.revertTo(rollbackFrontiers, SYSTEM_COMMIT_ORIGIN);
+      this.loro.clearTouchedNodeIds();
+      this.invalidateProjectionCache();
+      this.refreshStateFromLoro();
+      throw error;
+    }
+  }
+
   private currentTodayNodeId(): string {
     const today = new Date();
     const year = today.getFullYear();
@@ -2854,6 +2940,36 @@ export class Core {
     index?: number | null,
     context = this.createTreeMaterializeContext(this.snapshot()),
   ): string {
+    const id = this.insertNodeTreeNodeDirect(parentId, tree, index, context);
+    for (const child of tree.children) this.insertNodeTreeDirect(id, child, undefined, context);
+    return id;
+  }
+
+  private async insertNodeTreeDirectYielding(
+    parentId: string,
+    tree: CreateNodeTree,
+    index: number | null | undefined,
+    context: TreeMaterializeContext,
+    yieldContext: TreeYieldContext,
+  ): Promise<string> {
+    const id = this.insertNodeTreeNodeDirect(parentId, tree, index, context);
+    yieldContext.created += 1;
+    if (yieldContext.commitEveryNodes && yieldContext.created % yieldContext.commitEveryNodes === 0 && yieldContext.created < yieldContext.total) {
+      yieldContext.commit();
+    }
+    if (yieldContext.created % yieldContext.yieldEveryNodes === 0) await yieldContext.yield();
+    for (const child of tree.children) {
+      await this.insertNodeTreeDirectYielding(id, child, undefined, context, yieldContext);
+    }
+    return id;
+  }
+
+  private insertNodeTreeNodeDirect(
+    parentId: string,
+    tree: CreateNodeTree,
+    index: number | null | undefined,
+    context: TreeMaterializeContext,
+  ): string {
     const id = freshId('node');
     // Paste trees may carry a node type; only `codeBlock` is honored so the
     // materialization surface stays narrow and predictable.
@@ -2870,7 +2986,6 @@ export class Core {
     });
     this.applyChildTagsDirect(parentId, id);
     this.applyPasteMetadataDirect(id, tree.tags, tree.fields, context);
-    for (const child of tree.children) this.insertNodeTreeDirect(id, child, undefined, context);
     return id;
   }
 
@@ -3548,6 +3663,21 @@ function cycleNodeDoneState(node: Node, tagDriven: boolean) {
 
 function freshId(prefix: string): string {
   return `${prefix}:${crypto.randomUUID()}`;
+}
+
+function countCreateNodeTrees(nodes: readonly CreateNodeTree[]): number {
+  let count = 0;
+  const stack = [...nodes];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    count += 1;
+    stack.push(...node.children);
+  }
+  return count;
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 // Re-exported so existing importers of `core` keep resolving these; the shape

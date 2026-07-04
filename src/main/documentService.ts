@@ -20,7 +20,9 @@ import { TRASH_ID } from '../core/types';
 import type {
   CommandResult,
   BatchMoveNodeInput,
+  CreateNodeTree,
   DocumentProjectionChangedEvent,
+  FocusHint,
   ProjectionSnapshot,
   ProjectionUpdate,
   DisplayPlacement,
@@ -247,6 +249,37 @@ export class DocumentService {
         this.emitProjectionChanged(meta.origin ?? 'user');
       }
       return result;
+    });
+    this.mutationQueue = task.then(() => undefined, () => undefined);
+    return task;
+  }
+
+  async createNodesFromTreeYielding(
+    parentId: string,
+    nodes: CreateNodeTree[],
+    meta: DocumentMutationMeta,
+    options: { yieldEveryNodes?: number; commitEveryNodes?: number } = {},
+  ): Promise<{ focus?: FocusHint }> {
+    const task = this.mutationQueue.then(async () => {
+      await this.flushTextEditGroupNow();
+      const revisionBefore = this.core.revision();
+      const undoGroupStarted = this.core.beginUndoGroup();
+      let focus: FocusHint | undefined;
+      try {
+        focus = await this.core.transaction(meta.origin ?? 'agent', async () =>
+          this.core.createNodesFromTreeYieldingFocus(parentId, nodes, {
+            yieldEveryNodes: options.yieldEveryNodes,
+            commitEveryNodes: options.commitEveryNodes,
+          }), transactionMetadata({ ...meta, command: meta.command ?? 'create_nodes_from_tree' }));
+      } finally {
+        if (undoGroupStarted) this.core.endUndoGroup();
+      }
+      if (this.core.revision() !== revisionBefore) {
+        await this.refreshTextSearchIndexFromCoreDeltaYielding({ yieldEveryNodes: options.yieldEveryNodes });
+        this.scheduleCoreSave();
+        this.emitProjectionChanged(meta.origin ?? 'agent');
+      }
+      return focus ? { focus } : {};
     });
     this.mutationQueue = task.then(() => undefined, () => undefined);
     return task;
@@ -781,6 +814,77 @@ export class DocumentService {
     this.textSearchRevision = delta.revision;
   }
 
+  private async refreshTextSearchIndexFromCoreDeltaYielding(options: { yieldEveryNodes?: number; yield?: () => Promise<void> } = {}) {
+    const yieldEveryNodes = Math.max(1, options.yieldEveryNodes ?? 250);
+    const yieldFn = options.yield ?? yieldToEventLoop;
+    let processed = 0;
+    const yieldIfNeeded = async () => {
+      processed += 1;
+      if (processed % yieldEveryNodes === 0) await yieldFn();
+    };
+
+    if (!this.textSearchIndex) {
+      this.rebuildTextSearchIndex(this.core.projection());
+      return;
+    }
+
+    const delta = this.core.revisionDelta();
+    if (delta.revision === this.textSearchRevision) return;
+    if (
+      delta.requiresFullSearchRebuild
+      || delta.revision !== this.core.revision()
+      || delta.revision !== this.textSearchRevision + 1
+    ) {
+      this.rebuildTextSearchIndex(this.core.projection());
+      return;
+    }
+
+    const changedNodeIds = new Set(delta.changedNodeIds);
+    if (changedNodeIds.size === 0) {
+      this.rebuildTextSearchIndex(this.core.projection());
+      return;
+    }
+
+    const previousNodes = this.textSearchNodes;
+    const currentChangedNodes = this.core.projectionNodesFor([...changedNodeIds]);
+    const nextNodes = new Map(previousNodes);
+    for (const nodeId of changedNodeIds) {
+      const current = currentChangedNodes.get(nodeId);
+      if (current) nextNodes.set(nodeId, current);
+      else nextNodes.delete(nodeId);
+      await yieldIfNeeded();
+    }
+
+    const refreshIds = new Set<string>(changedNodeIds);
+    for (const nodeId of changedNodeIds) {
+      const before = previousNodes.get(nodeId);
+      const after = nextNodes.get(nodeId);
+      this.addDependentRefreshIds(refreshIds, nodeId, before, after);
+
+      if (before && !after) {
+        for (const descendantId of collectDescendantIds(previousNodes, nodeId)) {
+          refreshIds.add(descendantId);
+          nextNodes.delete(descendantId);
+        }
+        await yieldIfNeeded();
+        continue;
+      }
+
+      if (before && after && isInProjectionTrash(previousNodes, nodeId) !== isInProjectionTrash(nextNodes, nodeId)) {
+        for (const descendantId of collectDescendantIds(previousNodes, nodeId)) refreshIds.add(descendantId);
+        for (const descendantId of collectDescendantIds(nextNodes, nodeId)) refreshIds.add(descendantId);
+      }
+      await yieldIfNeeded();
+    }
+
+    this.textSearchNodes = nextNodes;
+    for (const nodeId of refreshIds) {
+      this.refreshTextSearchRecord(nodeId);
+      await yieldIfNeeded();
+    }
+    this.textSearchRevision = delta.revision;
+  }
+
   private addDependentRefreshIds(
     refreshIds: Set<string>,
     nodeId: string,
@@ -908,6 +1012,10 @@ function isNotFound(error: unknown) {
 function nullableString(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   return String(value);
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 function nullableNumber(value: unknown): number | null {

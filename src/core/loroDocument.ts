@@ -233,20 +233,22 @@ export class LoroOutlinerDocument {
     return this.undoManagerFor(scope).topRedoValue();
   }
 
-  beginUndoGroup() {
-    if (this.undoGroupActive) return;
+  beginUndoGroup(): boolean {
+    if (this.undoGroupActive) return false;
     this.undoManager.groupStart();
     this.aiUndoManager.groupStart();
     this.userUndoManager.groupStart();
     this.undoGroupActive = true;
+    return true;
   }
 
-  endUndoGroup() {
-    if (!this.undoGroupActive) return;
+  endUndoGroup(): boolean {
+    if (!this.undoGroupActive) return false;
     this.undoManager.groupEnd();
     this.aiUndoManager.groupEnd();
     this.userUndoManager.groupEnd();
     this.undoGroupActive = false;
+    return true;
   }
 
   frontiers() {

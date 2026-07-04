@@ -1,5 +1,5 @@
 import type { DocumentCommand } from '../core/commands';
-import type { DocumentProjection, NodeProjection, SearchQueryExpr } from '../core/types';
+import type { CreateNodeTree, DocumentProjection, FocusHint, NodeProjection, SearchQueryExpr } from '../core/types';
 import type { TextSearchIndex } from '../core/textSearchIndex';
 import type { NodeAccessSource } from '../core/nodeAccessRanking';
 import type { TransientSearchOptions } from '../core/searchEngine';
@@ -18,6 +18,12 @@ export interface OutlinerToolHost {
     meta: { origin?: 'user' | 'agent' | 'system'; command?: string; tool?: string; summary?: string },
     fn: () => Promise<T>,
   ): Promise<T>;
+  createNodesFromTreeYielding?(
+    parentId: string,
+    nodes: CreateNodeTree[],
+    meta: { origin?: 'user' | 'agent' | 'system'; command?: string; tool?: string; summary?: string },
+    options?: { yieldEveryNodes?: number; commitEveryNodes?: number },
+  ): Promise<{ focus?: FocusHint }>;
   operationHistory?(query: OperationHistoryParams): Promise<OperationHistoryData> | OperationHistoryData;
 }
 

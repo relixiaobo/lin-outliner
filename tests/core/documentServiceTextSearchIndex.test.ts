@@ -178,6 +178,29 @@ describe('DocumentService text search index', () => {
     expect(searchResultTargetIds(service, searchId)).toEqual([exact, loose]);
   });
 
+  test('keeps search fresh after yielding bulk tree creates', async () => {
+    const service = await createService();
+    const todayId = service.getProjection().todayId;
+    const result = await service.createNodesFromTreeYielding(todayId, [{
+      content: plainText('Imported alpha root'),
+      children: [
+        { content: plainText('Imported beta child'), children: [] },
+        { content: plainText('Imported gamma child'), children: [] },
+      ],
+    }], { origin: 'agent', tool: 'data_import', summary: 'Imported test nodes.' }, {
+      yieldEveryNodes: 2,
+      commitEveryNodes: 2,
+    });
+    const rootId = focusNodeId(result);
+
+    expect(await searchNodeIds(service, 'imported beta')).toHaveLength(1);
+
+    const undo = await service.operationHistory({ action: 'undo', origin: 'agent' });
+    expect(undo.count).toBe(1);
+    expect(service.getProjection().nodes.some((node) => node.id === rootId)).toBe(false);
+    expect(await searchNodeIds(service, 'imported beta')).toEqual([]);
+  });
+
   test('rebuilds the text index when core revision deltas skip ahead', async () => {
     const service = await createService();
     const rootId = service.getProjection().rootId;

@@ -67,6 +67,7 @@ interface PreviewRecord {
 const DATA_IMPORT_TOOL = 'data_import';
 const MAX_PACK_BYTES = 50 * 1024 * 1024;
 const PREVIEW_TTL_MS = 30 * 60 * 1000;
+const IMPORT_YIELD_EVERY_NODES = 50;
 const previewRecordsByHost = new WeakMap<OutlinerToolHost, Map<string, PreviewRecord>>();
 
 export const DATA_IMPORT_PARAMETERS = {
@@ -168,10 +169,12 @@ export function createDataImportTool(host: OutlinerToolHost, options: DataImport
           }));
         }
 
-        const apply = async () => materializeImportPack(host, loaded.pack, parentId);
-        const materialized = host.transaction
-          ? await host.transaction({ origin: 'agent', tool: DATA_IMPORT_TOOL, summary: `Imported ${loaded.pack.stats.nodes} cleaned nodes.` }, apply)
-          : await apply();
+        const materialized = host.createNodesFromTreeYielding
+          ? await materializeImportPack(host, loaded.pack, parentId)
+          : host.transaction
+            ? await host.transaction({ origin: 'agent', tool: DATA_IMPORT_TOOL, summary: `Imported ${loaded.pack.stats.nodes} cleaned nodes.` }, async () =>
+              materializeImportPack(host, loaded.pack, parentId))
+            : await materializeImportPack(host, loaded.pack, parentId);
         const stagingRootId = materialized.createdRootIds[0];
         if (!stagingRootId) throw new Error('Import did not create a staging root.');
         const verification = verifyImportedSubtree(host, stagingRootId, loaded.pack.stats);
@@ -321,11 +324,17 @@ async function materializeImportPack(
   parentId: string,
 ): Promise<{ createdRootIds: string[] }> {
   const rootTree = importPackToCreateNodeTree(pack);
-  const outcome = await host.handle('create_nodes_from_tree', { parentId, nodes: [rootTree] }, {
+  const meta = {
     origin: 'agent',
     tool: DATA_IMPORT_TOOL,
     summary: `Created import staging tree for ${pack.stats.nodes} cleaned nodes.`,
-  });
+  } as const;
+  const outcome = host.createNodesFromTreeYielding
+    ? await host.createNodesFromTreeYielding(parentId, [rootTree], meta, {
+      yieldEveryNodes: IMPORT_YIELD_EVERY_NODES,
+      commitEveryNodes: IMPORT_YIELD_EVERY_NODES,
+    })
+    : await host.handle('create_nodes_from_tree', { parentId, nodes: [rootTree] }, meta);
   const stagingRootId = focusNodeId(outcome);
   if (!stagingRootId) throw new Error('Import did not create a staging root.');
   return { createdRootIds: [stagingRootId] };
