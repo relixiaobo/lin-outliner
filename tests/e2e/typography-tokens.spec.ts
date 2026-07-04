@@ -959,6 +959,7 @@ test.describe('typography tokens', () => {
       'muted',
       'muted-2',
       'row-selection-bg',
+      'z-base',
       'window-material-frost',
       'surface-disabled',
       'overlay-bg',
