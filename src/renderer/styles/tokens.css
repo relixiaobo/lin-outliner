@@ -191,7 +191,6 @@
   --tag-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--tag-text, currentColor) 22%, transparent);
   --inline-ref-selection-shadow: inset 0 0 0 1px var(--row-selection-border);
   --inline-ref-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--inline-ref-accent, var(--inline-ref-default)) 22%, transparent);
-  --agent-side-panel-shadow: -18px 0 48px rgba(0, 0, 0, 0.12);
   --view-radio-shadow: inset 0 0 0 1.5px var(--separator-opaque);
   --view-radio-checked-shadow: inset 0 0 0 1.5px var(--text-primary);
   /* Selected colour swatch: a strong ink ring with a surface-coloured gap so the

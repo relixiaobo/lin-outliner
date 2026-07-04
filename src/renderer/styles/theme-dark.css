@@ -40,7 +40,6 @@
     /* drop shadows deepen so elevation still reads on a dark backdrop */
     --overlay-shadow-level-1: 0 8px 22px -12px rgba(0, 0, 0, 0.55), 0 2px 8px -4px rgba(0, 0, 0, 0.40);
     --overlay-shadow-level-2: 0 18px 50px -20px rgba(0, 0, 0, 0.60), 0 6px 18px -10px rgba(0, 0, 0, 0.45);
-    --agent-side-panel-shadow: -18px 0 48px rgba(0, 0, 0, 0.55);
 
     --overlay-backdrop: rgba(0, 0, 0, 0.45);
   }

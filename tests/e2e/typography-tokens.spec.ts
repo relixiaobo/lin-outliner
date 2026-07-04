@@ -935,6 +935,7 @@ test.describe('typography tokens', () => {
     const retiredAliases = [
       'app-bg',
       'accent-brand',
+      'agent-side-panel-shadow',
       'semantic-success',
       'semantic-success-strong',
       'semantic-warning',
