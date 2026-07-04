@@ -3232,15 +3232,17 @@ test.describe('agent composer controls', () => {
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Back to runs' })).toHaveCount(0);
     await expect(page.locator('.agent-dock-header').getByRole('button', { name: 'Close Work' })).toBeVisible();
     await expect(details.getByRole('button', { name: 'Back to runs' })).toBeDisabled();
-    await expect(details.locator('.agent-run-detail-title-block h3')).toHaveText('Inspect Run UI');
+    const detailHeading = details.getByRole('heading', { name: 'Inspect Run UI', level: 3 });
+    await expect(detailHeading).toBeVisible();
     await expect(details.locator('.agent-run-detail-current-row')).toHaveCount(0);
     await expect(details.getByText(/4 messages ·/)).toHaveCount(0);
-    await expect(details.getByRole('button', { name: 'Neva' })).toBeVisible();
+    const breadcrumb = details.getByRole('navigation', { name: 'Run details' });
+    await expect(breadcrumb).toContainText('Neva');
     await expect(details.locator('.agent-run-breadcrumb-root-icon')).toBeVisible();
-    await expect(details.locator('.agent-run-breadcrumb')).toHaveCSS('flex-wrap', 'nowrap');
+    await expect(breadcrumb).toHaveCSS('flex-wrap', 'nowrap');
     const [breadcrumbBox, titleBox] = await Promise.all([
-      details.locator('.agent-run-detail-title-block .agent-run-breadcrumb').boundingBox(),
-      details.locator('.agent-run-detail-title-block h3').boundingBox(),
+      breadcrumb.boundingBox(),
+      detailHeading.boundingBox(),
     ]);
     expect(breadcrumbBox).toBeTruthy();
     expect(titleBox).toBeTruthy();
@@ -3254,7 +3256,8 @@ test.describe('agent composer controls', () => {
 
     await processSummary.click();
     await expect(details.getByText('Inspect the current UI.')).toBeVisible();
-    await expect(details.getByText('Thought · Read node "today"')).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Thought · Read the visible outline before summarizing.' })).toBeVisible();
+    await expect(details.getByRole('button', { name: 'Read node "today"' })).toBeVisible();
 
     await details.locator('.agent-tool-call-toggle').first().click();
     await expect(details.getByText('Daily note content from the Run.')).toBeVisible();
@@ -3276,7 +3279,7 @@ test.describe('agent composer controls', () => {
       },
     ]);
 
-    await details.getByRole('button', { name: 'Neva' }).click();
+    await details.getByRole('button', { name: 'Close run details' }).click();
     await expect(details).toHaveCount(0);
     await expect(detailDialog).toHaveCount(0);
     await expect(runs).toBeVisible();

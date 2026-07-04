@@ -333,7 +333,9 @@ the JOINED run logs listed in `conversations/<id>/runs.json` (turn/background
 runs), then sorts by seq before replay. Runs the index marks `delegation` are
 EXCLUDED from this join — a delegated run's ledger is its own stream with its
 own seq space ([[agent-run-unification]]), so interleaving it would mix two seq
-spaces; the conversation carries only its slim `child_run.*` markers.
+spaces. Delegated run lifecycle and detail are surfaced through the Run index
+and each delegated run's own ledger; conversation logs carry no `child_run.*`
+lifecycle markers.
 
 ## Event Store
 

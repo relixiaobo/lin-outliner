@@ -62,7 +62,7 @@ surface.
 |---|---|---:|---|---|
 | `past_chats` | agent | No | No | Read/search visible prior conversation history and raw cited spans. |
 | `ask_user_question` | agent | No | No | Pause the active run for structured user input, including refs/attachments or an explicit discuss outcome. |
-| `spawn` | agent | No document mutation | No | Start a scoped child Run for a focused objective, with criteria unless `verify:false`. |
+| `spawn_run` | agent | No document mutation | No | Start a scoped child Run for a focused objective, with criteria unless `verify:false`. |
 | `run_status` | agent | No | No | Inspect a same-session background or child Run by `runId`/name. |
 | `run_steer` | agent | No | No | Send soft execution guidance to a live Run without changing its contract. |
 | `run_amend` | agent | No document mutation | No | Hard-amend a Run's objective, criteria, or budget; invalidates verifier conclusions. |
@@ -73,7 +73,7 @@ agent tool, so there are no channel-management tools on the surface.
 
 ## Run Delegation Tools
 
-`spawn` is the only downward delegation primitive. It forks Neva into an isolated
+`spawn_run` is the only downward delegation primitive. It forks Neva into an isolated
 child Run and takes:
 
 ```ts
