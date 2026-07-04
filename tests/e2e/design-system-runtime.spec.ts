@@ -378,6 +378,16 @@ async function showAgentModelMenu(page: Page) {
   await expect(menu.getByRole('menuitem', { name: /Reasoning/ })).toBeVisible();
 }
 
+async function showAgentModelSubmenu(page: Page) {
+  await page.getByRole('button', { name: 'Model and reasoning' }).click();
+  const parentMenu = page.getByRole('menu', { name: 'Model and reasoning' });
+  await parentMenu.waitFor({ state: 'visible' });
+  await parentMenu.locator('.agent-composer-model-row').last().hover();
+  const modelMenu = page.getByRole('menu', { name: 'Model', exact: true });
+  await modelMenu.waitFor({ state: 'visible' });
+  await expect(modelMenu.getByRole('menuitemradio').first()).toBeVisible();
+}
+
 async function showAgentReasoningMenu(page: Page) {
   await page.getByRole('button', { name: 'Model and reasoning' }).click();
   const parentMenu = page.getByRole('menu', { name: 'Model and reasoning' });
@@ -919,6 +929,12 @@ const surfaces: SurfaceCase[] = [
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: showAgentModelMenu,
+  },
+  {
+    name: 'agent model submenu',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showAgentModelSubmenu,
   },
   {
     name: 'agent reasoning menu',

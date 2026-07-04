@@ -66,6 +66,7 @@ standard change that only hides one local violation is not accepted.
 | CA32 | Agent debug usage tooltips were behavior-tested but absent from the shared runtime design-system guard. | Code drift | Runtime guard now opens the debug run details pane and hovers the Call details usage tooltip in light/dark. | `tests/e2e/design-system-runtime.spec.ts` |
 | CA33 | Selected option field-value popovers were behavior-tested, while runtime coverage only opened the empty-field option picker. | Code drift | Runtime guard now selects an option value and opens the selected-field-options popover in light/dark through the real field-value row. | `tests/e2e/design-system-runtime.spec.ts` |
 | CA34 | Inline file hover previews were behavior-tested but absent from the shared runtime design-system guard, which only opened the inline file context menu. | Code drift | Runtime guard now inserts a local-file mention and opens its hover preview popover in light/dark through the real composer flow. | `tests/e2e/design-system-runtime.spec.ts` |
+| CA35 | The composer model submenu was behavior-tested through model selection flows, while runtime coverage only opened the parent model menu and reasoning submenu. | Code drift | Runtime guard now opens the model submenu in light/dark through the real composer model control. | `tests/e2e/design-system-runtime.spec.ts` |
 
 ## Named Exceptions Kept
 
