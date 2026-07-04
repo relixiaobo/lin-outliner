@@ -167,6 +167,6 @@
   min-width: 0;
   min-height: 0;
   align-items: stretch;
-  /* Same rail↔content gap as the main shell (--shell-gap). */
+  /* Same rail↔content gap as the main shell. */
   gap: var(--layout-gap);
 }

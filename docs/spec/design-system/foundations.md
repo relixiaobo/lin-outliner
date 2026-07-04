@@ -365,7 +365,7 @@ scale font size with viewport width.
 
 - **Base unit:** `2px` atomic (`--space-1`) on a `4 / 8` rhythm
   (`--space-4 = 8px`). Compose spacing from tokens; no one-off pixel values.
-- **Layout gap:** shell gaps and insets use `--layout-gap` (`--space-sm`, 8px).
+- **Layout gap:** shell gaps and insets use `--layout-gap` (`--space-4`, 8px).
 - **Alignment spine:** the outliner leading grid (`--row-leading-*`, columns
   `15px 4px 15px 8px`) is the shared spine. Breadcrumb, normal rows, reference
   rows, and field rows all align text-start to it.

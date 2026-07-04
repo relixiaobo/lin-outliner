@@ -199,7 +199,6 @@
      --border-emphasis border). Two layers, so it must live as a token to satisfy
      the box-shadow token guard. */
   --swatch-selected-ring: 0 0 0 2px var(--panel-bg), 0 0 0 3.5px var(--text-primary);
-  --search-builder-focus-shadow: var(--focus-ring-shadow);
   --typed-field-section-shadow: inset 0 1px 0 var(--separator);
   --segmented-track-shadow: inset 0 0 0 1px var(--separator);
   /* Grouped-card edge: a 0.5px inset hairline instead of a heavy border, so a
@@ -237,9 +236,6 @@
   --space-5: 10px;
   --space-6: 12px;
   --space-8: 16px;
-  --space-micro: var(--space-2);
-  --space-sm: var(--space-4);
-  --space-md: var(--space-8);
   --space-lg: 24px;
   --space-xl: 32px;
   --layout-gap: var(--space-4);
@@ -329,17 +325,12 @@
   );
   --outline-panel-min-width: 360px;
   --outline-panel-ideal-width: 520px;
-  --shell-padding-x: var(--layout-gap);
-  --shell-padding-top: var(--layout-gap);
-  --shell-padding-bottom: var(--layout-gap);
-  --shell-gap: var(--layout-gap);
   --panel-gap: var(--layout-gap);
   /* Control box sizes — a tight 4-step ladder (20 / 22 / 24 / 28). */
   --control-size-xs: 20px;
   --control-size-sm: 22px;
   --control-size-md: 24px;
   --control-size-xl: 28px;
-  --breadcrumb-height: var(--control-size-xl);
   /* List-row height tier: each surface picks a deliberate density step. Agent
      process rows are compact by line/padding geometry, not a fixed row height,
      so they consume no rung here. */
@@ -353,8 +344,6 @@
   --icon-size-sm: 14px;
   --icon-size-md: 16px;
   --icon-size-lg: 18px;
-  --workspace-tab-close-size: var(--control-size-xs);
-  --workspace-tab-icon-slot: var(--icon-size-md);
   --switch-mark-height: var(--icon-size-lg);
   --switch-mark-thumb-size: var(--icon-size-sm);
   --switch-mark-inset: var(--space-1);
@@ -420,7 +409,6 @@
   --tab-hover-bg: rgb(var(--ink) / 0.07);
   --control-hover: var(--fill-2);
   --control-active: var(--fill-3);
-  --focus-border: var(--focus-ring);
   --scrollbar-thumb: rgb(var(--ink) / 0.22);
   --scrollbar-thumb-hover: rgb(var(--ink) / 0.34);
   --bg: var(--bg-elevated);

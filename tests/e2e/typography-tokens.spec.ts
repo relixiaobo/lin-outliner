@@ -922,6 +922,18 @@ test.describe('typography tokens', () => {
       'surface-soft',
       'surface-user-bubble',
       'agent-accent',
+      'breadcrumb-height',
+      'focus-border',
+      'search-builder-focus-shadow',
+      'shell-padding-x',
+      'shell-padding-top',
+      'shell-padding-bottom',
+      'shell-gap',
+      'space-micro',
+      'space-sm',
+      'space-md',
+      'workspace-tab-close-size',
+      'workspace-tab-icon-slot',
     ].join('|');
     const violations = collectCssTextViolations(
       new RegExp(`(?:--(?:${retiredAliases})\\\\s*:|var\\\\(--(?:${retiredAliases})\\\\))`),
