@@ -396,7 +396,6 @@
   --inline-ref-hover: var(--link-hover);
   --row-hover: var(--fill-2);
   --row-selected: var(--fill-3);
-  --row-selection-bg: var(--row-selected);
   --row-selection-frame-bg: color-mix(in srgb, var(--row-selected) 72%, transparent);
   --row-selection-border: color-mix(in srgb, var(--text-primary) 18%, transparent);
   --z-base: 0;

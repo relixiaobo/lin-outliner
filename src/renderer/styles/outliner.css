@@ -1146,7 +1146,7 @@
   z-index: 0;
   border: 1px solid color-mix(in srgb, var(--row-selection-border) 34%, transparent);
   border-radius: var(--radius-row);
-  background: var(--row-selection-bg);
+  background: var(--row-selected);
   content: "";
   pointer-events: none;
 }
