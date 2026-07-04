@@ -58,7 +58,8 @@
   }
 }
 
-/* Reduced motion: a single global reset replaces the previous per-file overrides.
+/* Reduced motion: the global baseline collapses motion app-wide. Registered
+   local rules may replace perpetual activity indicators with static states.
    0.01ms (not 0) keeps transitionend/animationend events firing; the iteration
    cap collapses infinite loops (e.g. the reference-conversion pulse) to one. */
 @media (prefers-reduced-motion: reduce) {

@@ -41,6 +41,12 @@ const darkMediaRuleFiles = new Map([
   ['src/renderer/styles/code.css', 'Generated Shiki token stream resolves --shiki-dark.'],
   ['src/renderer/styles/panel.css', 'Documented blend-mode correction for panel header icons.'],
 ]);
+const reducedMotionRuleFiles = new Map([
+  ['src/renderer/styles/a11y.css', 'Central reduced-motion baseline.'],
+  ['src/renderer/styles/feedback-state.css', 'Loading spinner becomes a static loading state.'],
+  ['src/renderer/styles/agent-message.css', 'Working dots become a static working state.'],
+  ['src/renderer/styles/outliner.css', 'Command run spinner becomes a static processing state.'],
+]);
 
 function markdownFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -239,6 +245,22 @@ test.describe('typography tokens', () => {
       if (!/@media\s*\(\s*prefers-color-scheme:\s*dark\s*\)/.test(text)) continue;
       if (darkMediaRuleFiles.has(file)) continue;
       violations.push(`${file} has an unregistered prefers-color-scheme: dark rule`);
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  test('keeps reduced-motion rules centralized or explicitly scoped', () => {
+    const violations: string[] = [];
+
+    for (const file of productStyleFiles) {
+      const text = readFileSync(file, 'utf8').replace(
+        /\/\*[\s\S]*?\*\//g,
+        (block) => block.replace(/[^\n]/g, ' '),
+      );
+      if (!/@media\s*\(\s*prefers-reduced-motion:\s*reduce\s*\)/.test(text)) continue;
+      if (reducedMotionRuleFiles.has(file)) continue;
+      violations.push(`${file} has an unregistered prefers-reduced-motion: reduce rule`);
     }
 
     expect(violations).toEqual([]);
