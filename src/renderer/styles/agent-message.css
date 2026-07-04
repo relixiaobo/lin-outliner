@@ -625,7 +625,7 @@
 
 .agent-channel-working-item-stop.agent-composer-action-button:disabled {
   background: transparent;
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }
 
 @media (prefers-reduced-motion: reduce) {

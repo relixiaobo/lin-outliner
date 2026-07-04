@@ -433,7 +433,7 @@
 }
 
 .agent-approval-button:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
   cursor: default;
 }
 
@@ -1124,7 +1124,7 @@
 }
 
 .agent-composer-tool-button:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
   cursor: default;
 }
 

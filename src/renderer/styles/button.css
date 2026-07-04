@@ -83,7 +83,7 @@
 }
 
 .button:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }
 
 .button-primary:disabled,

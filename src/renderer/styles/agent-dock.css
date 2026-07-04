@@ -392,7 +392,7 @@ button.panel-resize-handle {
 }
 
 .agent-conversation-section-action:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }
 
 .agent-conversation-list {
@@ -574,7 +574,7 @@ button.panel-resize-handle {
 }
 
 .agent-conversation-row-menu-item:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }
 
 .agent-conversation-section-header {

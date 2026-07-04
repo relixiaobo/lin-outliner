@@ -213,7 +213,6 @@
   --text-strong: var(--text-primary);
   --text-soft: var(--text-secondary);
   --text-faint: var(--text-tertiary);
-  --text-disabled: var(--text-quaternary);
   /* a strong control border (view-radio ring, etc.) — NOT the hairline divider;
      keep it a visible neutral that inverts with the theme */
   --border-strong: rgb(var(--ink) / 0.30);

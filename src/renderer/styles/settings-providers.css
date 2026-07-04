@@ -304,5 +304,5 @@
 }
 
 .settings-row-menu-item:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }

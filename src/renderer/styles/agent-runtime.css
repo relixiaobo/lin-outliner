@@ -84,7 +84,7 @@
   align-items: center;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
   font-size: var(--font-ui-sm);
   margin-bottom: 0;
   padding: 0 var(--space-6);

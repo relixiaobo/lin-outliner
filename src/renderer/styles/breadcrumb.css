@@ -101,7 +101,7 @@
 }
 
 .panel-page-back-button:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
   cursor: default;
 }
 
@@ -155,7 +155,7 @@
 
 .panel-breadcrumb-divider {
   flex: 0 0 auto;
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
   margin: 0 var(--space-3);
 }
 

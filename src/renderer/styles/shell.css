@@ -132,7 +132,7 @@
    history to traverse; the main window's toggles never disable). Still no box —
    the glyph just dims, consistent with the colour-only chrome idiom (B6). */
 .rail-toggle:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
 }
 
 /* When a rail is collapsed its zone sits over the pane (not the rail), so give it an
@@ -233,7 +233,7 @@
 }
 
 .top-chrome-more-item:disabled {
-  color: var(--text-disabled);
+  color: var(--text-quaternary);
   cursor: default;
 }
 

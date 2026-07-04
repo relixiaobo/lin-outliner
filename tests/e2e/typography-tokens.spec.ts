@@ -952,6 +952,7 @@ test.describe('typography tokens', () => {
       'text-muted',
       'text-sub',
       'text-main',
+      'text-disabled',
       'text',
       'muted',
       'muted-2',
