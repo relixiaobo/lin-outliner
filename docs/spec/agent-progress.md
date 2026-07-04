@@ -69,10 +69,10 @@ truth.
     to detect available local tooling, install the dependency without assuming
     Homebrew, then retry the same file tool call
   - `file_glob` and `file_grep` return local-root-relative paths
-  - `file_grep` backed by ripgrep with paginated output modes
+  - `file_grep` backed by ripgrep with streamed paginated output modes
   - `file_edit` narrowed to exact non-empty replacements after a full read
     with compact local hunks
-  - `bash` background task output files with live status headers
+  - `bash` file-first bounded output capture and background task output files
 - [x] Web read tools:
   - `web_search`
   - `web_fetch`

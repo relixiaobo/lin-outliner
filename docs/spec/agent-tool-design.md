@@ -2115,8 +2115,10 @@ Result behavior:
   output.
 - `content` mode should include file paths and line numbers when useful.
 - Multiline search should be explicit because it is more expensive.
-- TypeScript must enforce hard output caps even when `head_limit` is `0`. If Lin needs
-  to expose hard-cap truncation beyond `appliedLimit`, put it in the common
+- TypeScript streams ripgrep output and applies `offset` while reading, so large
+  result sets do not need to be buffered before pagination. `head_limit: 0` means
+  "use the hard maximum page size", not truly unbounded output. If Lin needs to
+  expose hard-page truncation beyond `appliedLimit`, put it in the common
   `ToolResult.metrics`, not inside `FileGrepData`.
 
 ### `file_edit`
@@ -2265,8 +2267,17 @@ Result behavior:
   `backgroundTaskId`. The agent should not append `&`.
 - Foreground commands that outlive Lin's blocking budget may be auto-backgrounded
   and return `assistantAutoBackgrounded: true` with a task output file path.
-- Output must be bounded. Large output should be persisted and referenced by
-  `persistedOutputPath`, which the agent can read with `file_read`.
+- Output must be bounded and file-first. The runner captures stdout/stderr to
+  files instead of accumulating unbounded strings in the main process; foreground
+  output is read inline only when it is under the inline cap. Large output is
+  persisted and referenced by `persistedOutputPath`, which the agent can read
+  with `file_read`. Foreground and background output have a disk-size watchdog
+  that fails and terminates runaway commands before output can grow without
+  bound.
+- Background task output is written to the returned output file directly, with a
+  final status footer appended when the task completes, fails, or is stopped.
+- `bash` timeout, cancellation, `task_stop`, and output watchdog termination must
+  stop the shell process tree, not only the shell wrapper process.
 - Completion of a background command should be surfaced through the agent
   runtime event stream with the same output path. Do not add a polling-first
   `TaskOutput` equivalent unless real usage proves `file_read` is insufficient.
@@ -2822,7 +2833,7 @@ coverage maps as follows:
 | `operation_history` | Loro UndoManager-backed `undo`/`redo` plus operation journal listing with origin metadata. |
 | `file_read` | Implemented TypeScript file read command with path normalization, text pagination, image content/dimensions, PDF page rendering, notebook parsing, and freshness tracking. |
 | `file_glob` | Implemented TypeScript glob command under allowed roots with local-root-relative output paths. |
-| `file_grep` | Implemented ripgrep-backed search command under allowed roots with relative paths, output modes, pagination, and output caps. |
+| `file_grep` | Implemented ripgrep-backed search command under allowed roots with relative paths, output modes, and streamed pagination. |
 | `file_edit` | Implemented TypeScript exact-replacement command with read-before-edit freshness checks. |
 | `file_write` | Implemented TypeScript create/rewrite command with read-before-write freshness checks for existing files. |
 | `bash` | Implemented TypeScript command runner with timeout, output caps, background task support, and output persistence. |

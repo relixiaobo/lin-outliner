@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -63,6 +63,7 @@ const pdfTextTest = hasPdfTextTools ? test : test.skip;
 // binary is not on PATH (mirrors the pdfTest pattern).
 const hasRipgrep = commandExists('rg');
 const ripgrepTest = hasRipgrep ? test : test.skip;
+const posixBashProcessTest = process.platform === 'win32' ? test.skip : test;
 
 function commandExists(command: string): boolean {
   return !spawnSync(command, ['--version'], { stdio: 'ignore' }).error;
@@ -134,6 +135,47 @@ async function waitForFileContent(filePath: string, predicate: (content: string)
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   return lastContent;
+}
+
+async function waitForCondition(predicate: () => boolean, timeoutMs = 1000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return predicate();
+}
+
+function isProcessAlive(pid: number): boolean {
+  return Number.isFinite(pid) && spawnSync('ps', ['-p', String(pid)], { stdio: 'ignore' }).status === 0;
+}
+
+function killProcessIfAlive(pid: number | undefined) {
+  if (pid === undefined || !Number.isFinite(pid)) return;
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    // Process may already be gone.
+  }
+}
+
+async function withEnv<T>(overrides: Record<string, string>, fn: () => Promise<T>): Promise<T> {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(overrides)) {
+    previous.set(key, process.env[key]);
+    process.env[key] = value;
+  }
+  try {
+    return await fn();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
 }
 
 function makePng(width: number, height: number): Buffer {
@@ -1665,6 +1707,28 @@ describe('agent local tools', () => {
     });
   });
 
+  ripgrepTest('file_grep streams large result sets so high offsets do not silently drop matches', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const content = Array.from({ length: 25_000 }, (_, index) => (
+        `needle-${String(index).padStart(5, '0')}-${'x'.repeat(80)}`
+      )).join('\n');
+      await writeFile(path.join(workspaceRoot, 'big.txt'), `${content}\n`, 'utf8');
+
+      const grep = await executeTool<{ content: string; numLines: number; appliedOffset?: number }>(workspaceRoot, 'file_grep', {
+        pattern: 'needle',
+        path: 'big.txt',
+        output_mode: 'content',
+        offset: 20_000,
+        head_limit: 1,
+      });
+
+      expect(grep.ok).toBe(true);
+      expect(grep.data!.content).toContain('20001:needle-20000-');
+      expect(grep.data!.numLines).toBe(1);
+      expect(grep.data!.appliedOffset).toBe(20_000);
+    });
+  });
+
   test('file_glob prefers rg --files candidates before falling back to directory walks', async () => {
     await withWorkspace(async (workspaceRoot) => {
       await mkdir(path.join(workspaceRoot, 'src'), { recursive: true });
@@ -1845,6 +1909,71 @@ describe('agent local tools', () => {
     });
   });
 
+  test('bash persists large foreground output and returns bounded previews', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const script = "process.stdout.write('x'.repeat(40000));process.stderr.write('e'.repeat(12000));";
+      const result = await executeTool<{
+        stdout: string;
+        stderr: string;
+        persistedOutputPath?: string;
+        persistedOutputSize?: number;
+      }>(workspaceRoot, 'bash', {
+        command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(typeof result.data!.persistedOutputPath).toBe('string');
+      expect(result.data!.persistedOutputSize).toBe(52000);
+      expect(result.data!.stdout.length).toBeLessThanOrEqual(21000);
+      expect(result.data!.stderr.length).toBeLessThanOrEqual(9000);
+      expect(result.data!.stdout).toContain('full output saved to file');
+      expect(result.data!.stderr).toContain('full output saved to file');
+
+      const outputPath = result.data!.persistedOutputPath!;
+      expect((await stat(outputPath)).size).toBe(52000);
+      const persisted = await readFile(outputPath, 'utf8');
+      expect(persisted).toBe(`${'x'.repeat(40000)}${'e'.repeat(12000)}`);
+    });
+  });
+
+  posixBashProcessTest('bash timeout kills descendant processes', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const pidFile = path.join(workspaceRoot, 'child.pid');
+      let childPid: number | undefined;
+      try {
+        const result = await executeTool(workspaceRoot, 'bash', {
+          command: `sleep 60 & printf %s $! > ${JSON.stringify(pidFile)}; wait`,
+          timeout: 100,
+        });
+        expect(result.ok).toBe(false);
+        expect(result.error?.code).toBe('command_interrupted');
+
+        childPid = Number((await readFile(pidFile, 'utf8')).trim());
+        expect(await waitForCondition(() => !isProcessAlive(childPid!), 2000)).toBe(true);
+      } finally {
+        killProcessIfAlive(childPid);
+      }
+    });
+  });
+
+  test('bash foreground output watchdog kills runaway output', async () => {
+    await withEnv({
+      LIN_AGENT_BASH_MAX_OUTPUT_BYTES: '4096',
+      LIN_AGENT_BASH_OUTPUT_WATCHDOG_INTERVAL_MS: '20',
+    }, async () => {
+      await withWorkspace(async (workspaceRoot) => {
+        const script = "setInterval(() => process.stdout.write('x'.repeat(1024)), 1);";
+        const result = await executeTool(workspaceRoot, 'bash', {
+          command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+        });
+
+        expect(result.ok).toBe(false);
+        expect(result.error?.code).toBe('command_interrupted');
+        expect(result.error?.message).toContain('output exceeded');
+      });
+    });
+  });
+
   test('bash background tasks can be stopped with task_stop', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const started = await executeTool<{ backgroundTaskId: string; persistedOutputPath: string; taskStatus: string }>(workspaceRoot, 'bash', {
@@ -1865,6 +1994,36 @@ describe('agent local tools', () => {
     });
   });
 
+  posixBashProcessTest('bash task_stop kills descendant processes', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const pidFile = path.join(workspaceRoot, 'child.pid');
+      let childPid: number | undefined;
+      try {
+        const started = await executeTool<{ backgroundTaskId: string; persistedOutputPath: string }>(workspaceRoot, 'bash', {
+          command: `sleep 60 & printf %s $! > ${JSON.stringify(pidFile)}; wait`,
+          run_in_background: true,
+        });
+        expect(started.ok).toBe(true);
+        const pidReady = await waitForCondition(() => {
+          const text = spawnSync('cat', [pidFile], { encoding: 'utf8' }).stdout.trim();
+          if (!/^\d+$/.test(text)) return false;
+          childPid = Number(text);
+          return true;
+        }, 2000);
+        expect(pidReady).toBe(true);
+        expect(isProcessAlive(childPid!)).toBe(true);
+
+        const stopped = await executeTool(workspaceRoot, 'task_stop', {
+          task_id: started.data!.backgroundTaskId,
+        });
+        expect(stopped.ok).toBe(true);
+        expect(await waitForCondition(() => !isProcessAlive(childPid!), 2000)).toBe(true);
+      } finally {
+        killProcessIfAlive(childPid);
+      }
+    });
+  });
+
   test('bash background tasks write status and output to the returned file', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const started = await executeTool<{ backgroundTaskId: string; persistedOutputPath: string }>(workspaceRoot, 'bash', {
@@ -1880,6 +2039,30 @@ describe('agent local tools', () => {
       expect(output).toContain(`task_id: ${started.data!.backgroundTaskId}`);
       expect(output).toContain('status: completed');
       expect(output).toContain('[stdout]\ndone');
+    });
+  });
+
+  test('bash background output watchdog kills runaway output', async () => {
+    await withEnv({
+      LIN_AGENT_BASH_MAX_OUTPUT_BYTES: '4096',
+      LIN_AGENT_BASH_OUTPUT_WATCHDOG_INTERVAL_MS: '20',
+    }, async () => {
+      await withWorkspace(async (workspaceRoot) => {
+        const script = "setInterval(() => process.stdout.write('x'.repeat(1024)), 1);";
+        const started = await executeTool<{ backgroundTaskId: string; persistedOutputPath: string }>(workspaceRoot, 'bash', {
+          command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+          run_in_background: true,
+        });
+        expect(started.ok).toBe(true);
+
+        const output = await waitForFileContent(
+          started.data!.persistedOutputPath,
+          (content) => content.includes('status: failed') && content.includes('output exceeded'),
+          3000,
+        );
+        expect(output).toContain('status: failed');
+        expect(output).toContain('Background command killed: output exceeded');
+      });
     });
   });
 
