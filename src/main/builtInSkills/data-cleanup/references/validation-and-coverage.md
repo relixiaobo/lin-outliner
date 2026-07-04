@@ -19,7 +19,8 @@ Validation gates:
 
 1. Source profile: bounded sampling and format confidence.
 2. Transform: Import Pack plus coverage sidecar.
-3. Dry-run: `data_import` validates schema, bounds, destination, pack hash, and
-   coverage before returning a preview id.
-4. Post-import verification: `data_import` reads back the created staging
-   subtree and compares section/node/preserved-structure counts.
+3. Preview: `tenon-import preview` validates schema, bounds, destination, pack
+   hash, and coverage through the app import API before returning a preview id.
+4. Post-import verification: `tenon-import commit` asks the app import service
+   to read back the created staging subtree and compare section/node/preserved
+   structure counts.

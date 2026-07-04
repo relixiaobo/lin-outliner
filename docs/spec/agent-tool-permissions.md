@@ -98,10 +98,12 @@ The boundary is asymmetric:
 - Relative file-tool paths still resolve against workdir; handed folders are
   reached through explicit absolute paths.
 
-`data_import` uses this same read boundary for its `pack_file` input. The pack is
-local data read, but the tool's consequence is a bulk outliner mutation, so its
-action-kind profile is `outline.edit`. Approval/blocking decisions therefore
-follow outline edit policy after the pack path has passed the local read jail.
+`tenon-import preview` and `tenon-import commit` run through `bash`, but commit
+is classified as an `outline.edit` consequence. The CLI reads local Import Pack
+files under the shell/file permission model, then sends bounded pack JSON content
+to the running app import API. The API never accepts arbitrary pack file paths.
+Approval/blocking decisions therefore keep the shell execution gate while making
+the final document write visible as an outline edit.
 
 The self-definition roots only extend where typed file tools may execute; they
 do not bypass the content gateway. Skill writes are validated as skill content,
@@ -120,8 +122,8 @@ These run silently unless a hard redline, built-in soft block, restricted
 sandbox, or user blocklist rule matches:
 
 - local file read/write/edit/delete inside the allowed file area;
-- `data_import` staging writes from a validated Import Pack, audited as
-  `outline.edit`;
+- `tenon-import commit` staging writes from a validated Import Pack, audited as
+  an `outline.edit` consequence;
 - local code execution such as Python, Node, shell scripts, build tools, tests,
   converters, and project scripts;
 - dependency installs;
@@ -268,10 +270,9 @@ It narrows a run's available tool surface before blocklist decisions run:
 - Even when preapproved, the call still goes through descriptor projection, hard
   redlines, user blocks, and built-in soft blocks.
 
-`data_import` is not part of the read-only base set because it mutates the
-outliner. A restricted data-cleanup skill must declare `data_import` in
-`allowed-tools` before it can stage cleaned data, and the call still records
-`outline.edit`.
+`tenon-import commit` is not read-only because it mutates the outliner. The
+restricted data-cleanup skill declares `bash` in `allowed-tools`; command
+classification still records the commit as `outline.edit`.
 
 Skill content-hash ratification is separate from permission rules.
 

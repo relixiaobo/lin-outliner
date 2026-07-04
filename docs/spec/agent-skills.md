@@ -49,12 +49,12 @@ cleaning external note/data exports into Tenon's import shape before any
 document write. It is source-agnostic at the skill level: the model profiles the
 source, explains fidelity tradeoffs, asks for destination/approval when needed,
 and runs deterministic scripts for known formats. Supported write routes emit
-Import Pack v1, validate schema and coverage, generate a compact preview, call
-`data_import` with `dry_run: true`, and only call `data_import` again with the
-returned preview id after user approval. Tana JSON is the first deterministic
-write route. Roam EDN backups are currently profile-only: the skill can inspect
-counts and samples, but must not write Roam data until a deterministic Roam
-adapter emits a valid Import Pack.
+Import Pack v1, validate schema and coverage, generate a compact preview with
+`tenon-import preview`, and run `tenon-import commit` with the returned preview
+id after user approval. Tana JSON is the first deterministic write route. Roam
+EDN backups are currently profile-only: the skill can inspect counts and
+samples, but must not write Roam data until a deterministic Roam adapter emits a
+valid Import Pack.
 
 `/data-analysis`, `/document`, `/pdf`, `/presentation`, and `/spreadsheet` are
 user-visible resource-backed built-ins sourced from the sibling
@@ -440,7 +440,7 @@ implementation where it maps cleanly onto `pi-agent-core`:
 | Managed/policy skills | Built-in skills are supported as the immutable app-managed floor. Lin has no separate admin-managed policy skill layer. |
 | `skillify` | Supported as the built-in user- and model-invocable Skillify v2 workflow (`when_to_use`-gated to explicit user save requests). It uses the Tenon `.agents/skills/<skill-name>/SKILL.md` shape, previews the complete file or focused update diff, confirms through the instruction-layer `ask_user_question` path when available, and writes with existing file write/edit tools. |
 | `research` | Supported as a built-in user- and model-invocable `execution: isolated` workflow with no `agent` override. It starts an isolated sub-run of the current agent, filters its declared read tools through the `AgentToolActionKind` read-only catalog, and returns a compact findings/evidence report. |
-| `data-cleanup` | Supported as a Tenon-owned resource-backed built-in. It profiles local exports, runs deterministic adapters for known sources, emits Import Pack v1, validates coverage, produces a preview report, and uses `data_import` as the only bulk document write path. Tana JSON is supported as the first write route; Roam EDN is profile-only until a deterministic adapter is added. |
+| `data-cleanup` | Supported as a Tenon-owned resource-backed built-in. It profiles local exports, runs deterministic adapters for known sources through `tenon-import`, emits Import Pack v1, validates coverage, produces an API-backed preview id, and uses `tenon-import commit` as the only bulk document write path. Tana JSON is supported as the first write route; Roam EDN is profile-only until a deterministic adapter is added. |
 | `data-analysis`, `document`, `pdf`, `presentation`, `spreadsheet` | Supported as immutable resource-backed built-ins sourced from enabled `linlab-skills` folders and staged into the packaged app. They are goal-oriented workflows; PPTX, DOCX, XLSX, Markdown, HTML, PDF, CSV, and JSON are handled as input/output routes rather than skill identities. `/presentation` keeps explicit PowerPoint/PPTX requests on the PPTX route: missing PPTX libraries or office automation should be installed/enabled when allowed, and HTML/PDF/hand-authored OOXML are lower-fidelity fallbacks that require an explained blocker. `/document` includes archetype/form-factor guidance plus DOCX/Markdown semantic QA, and explicit Word/DOCX requests stay on the DOCX route before Markdown/plain-text/PDF or hand-authored WordprocessingML fallbacks. `/pdf` keeps PDF-native operations on fixed-layout structural/render/OCR/form/redaction routes while preferring editable source changes when source exists. `/spreadsheet` keeps workbook/formula/modeling work on spreadsheet-native routes and preserves formulas, validation, named ranges, tables, and source-first generation artifacts. `/data-analysis` keeps dependency-backed pandas/DuckDB/script workflows explicit. |
 | Automatic skill improvement | Supported only as user-directed or accepted-review skill maintenance in the first self-modification release. Background conversation review that silently rewrites skills is not supported. |
 | Per-skill invocation permission suggestions | Not supported as a dedicated UI. The `skill` tool still goes through the global runtime permission policy, and the skill's own `allowed-tools` narrow downstream tool calls. |

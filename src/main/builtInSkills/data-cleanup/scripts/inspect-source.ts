@@ -138,7 +138,9 @@ function unescapeEdnString(value: string): string {
   return value.replace(/\\"/gu, '"').replace(/\\\\/gu, '\\').replace(/\\n/gu, '\n');
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+if ((import.meta as ImportMeta & { main?: boolean }).main) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}

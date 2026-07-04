@@ -67,7 +67,7 @@ describe('agent permission model', () => {
     ]);
     expect(agentToolActionKindProfile('operation_history', { action: 'list' })).toEqual(['outline.read']);
     expect(agentToolActionKindProfile('operation_history', { action: 'undo' })).toEqual(['outline.edit']);
-    expect(agentToolActionKindProfile('data_import')).toEqual(['outline.edit']);
+    expect(agentToolActionKindProfile('data_import')).toBeNull();
     expect(readOnlyAgentToolNames()).not.toContain('data_import');
   });
 

@@ -42,7 +42,6 @@ These tools are required for the first useful local agent.
 | `node_edit` | outliner | Yes | Usually yes | Edit one known node's own content, fields, field values, or saved-search config using exact string replacement, or perform explicit by-id operations such as move and merge. |
 | `node_delete` | outliner | Yes | Usually yes | Trash or restore one or more nodes. |
 | `operation_history` | outliner | Yes for undo/redo | Usually yes | Inspect, undo, or redo user and agent operations. |
-| `data_import` | outliner | Yes | Usually yes | Stage a validated Import Pack v1 produced by a data-cleanup adapter. |
 | `file_read` | local | No | Usually no | Read local files with bounded output. |
 | `file_glob` | local | No | No | Find files by glob or path pattern. |
 | `file_grep` | local | No | No | Search file contents under allowed roots. |
@@ -241,35 +240,38 @@ clarifying question in the normal conversation. If structured input is still
 needed after discussion, the agent must call `ask_user_question` again with a
 fresh request.
 
-## `data_import`
+## Import Pack CLI/API
 
-`data_import` is the only bulk document mutation path for cleaned import data.
-Format adapters and skills must not create nodes directly. They first write an
-Import Pack v1 JSON file, validate it, generate a preview report, call
-`data_import` with `dry_run: true`, show the returned stats/warnings/preview id
-to the user, and only then call `data_import` again with the matching
-`confirmed_preview_id`.
+Bulk cleaned-data import is a Tenon-owned CLI/API workflow, not a default
+model-visible tool. `/data-cleanup` and future local clients produce an Import
+Pack v1 JSON file, validate it, generate a preview report, run
+`tenon-import preview`, show the returned stats/warnings/preview id to the user,
+and only then run `tenon-import commit --preview-id <preview:id>` after user
+approval.
 
-Input:
+Canonical CLI surface:
 
-```ts
-interface DataImportInput {
-  pack_file: string;
-  mode?: "stage"; // default; v1 supports only staging
-  parent_id?: string; // default: today's journal node
-  dry_run?: boolean;
-  confirmed_preview_id?: string;
-}
+```bash
+tenon-import inspect <source> --out <profile.json>
+tenon-import tana <tana-export.json> --out <pack.json> --coverage-out <coverage.json> [--fidelity content|clean|full]
+tenon-import validate <pack.json> [--out <report.json>]
+tenon-import preview <pack.json> --out <preview.md> [--parent-id <node-id>] [--json]
+tenon-import commit <pack.json> --preview-id <preview:id> [--parent-id <node-id>] [--json]
 ```
 
-The pack file is resolved through the same realpath-based local read boundary as
-typed file tools. It must be a bounded JSON file under an allowed read root.
-Dry-run validates the pack schema, stats, coverage, destination, and pack hash
-without mutating the document. Non-dry-run requires a preview id produced by a
-matching dry-run for the same pack path, pack hash, destination, and mode. Preview
-ids expire after a short window and are single-use.
+`preview` and `commit` call a local app-owned import API exposed by the running
+main process. The CLI sends bounded Import Pack JSON content to the API; the API
+does not accept arbitrary filesystem paths. If the app API is unavailable,
+`preview` and `commit` fail with structured `app_unavailable` output unless
+`preview` is explicitly run with the offline preview flag. `commit` is API-backed
+only and never writes Tenon storage directly.
 
-Import Pack v1 is main-process import-tool data, not core document state:
+The import service revalidates the pack at preview and commit time. Preview ids
+bind to pack hash, destination, and mode; they expire after a short window and
+are single-use. `tenon-import commit` is audited as an `outline.edit`
+consequence and records operation history with `tool: "tenon-import"`.
+
+Import Pack v1 is import-service data, not core document state:
 
 ```ts
 interface ImportPack {
@@ -293,8 +295,8 @@ interface ImportPack {
 coverage.unsupported + coverage.empty` must equal `stats.sourceRecords`, and
 `coverage.unaccounted` must be `0`. Known adapters should also write a coverage
 sidecar with one source id per source record so no source item is silently
-omitted or duplicated. `data_import` rejects malformed stats, invalid coverage,
-oversized packs, and invalid destinations before mutation.
+omitted or duplicated. The import service rejects malformed stats, invalid
+coverage, oversized packs, and invalid destinations before mutation.
 
 Successful non-dry-run imports create one explicit staging root
 (`Import: <source-name>`) under the destination and then materialize section

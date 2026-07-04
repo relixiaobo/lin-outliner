@@ -17,11 +17,12 @@
     "dev:anti": "ELECTRON_USER_DATA_DIR=\"$HOME/.lin-outliner-anti\" electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",
     "skills:sync": "bun scripts/sync-built-in-skills.ts",
+    "import-cli:build": "bun build src/main/builtInSkills/data-cleanup/scripts/tenon-import.ts --outfile build/generated/tenon-import/tenon-import.mjs --target node --format esm",
     "preview": "vite preview",
     "app:dev": "electron-vite dev",
     "renderer:dev": "vite --host 127.0.0.1",
     "build:native": "node-gyp rebuild --directory=native/window-corner --runtime=electron --target=$(node -p \"require('electron/package.json').version\") --dist-url=https://electronjs.org/headers && node-gyp rebuild --directory=native/browser-tab --runtime=electron --target=$(node -p \"require('electron/package.json').version\") --dist-url=https://electronjs.org/headers",
-    "app:build": "bun run build:native && electron-vite build && bun run skills:sync && electron-builder",
+    "app:build": "bun run build:native && electron-vite build && bun run skills:sync && bun run import-cli:build && electron-builder",
     "typecheck": "tsc --noEmit",
     "docs:check": "bun scripts/docs-check.ts",
     "test:core": "bun test --path-ignore-patterns 'tmp/**' tests/core",
@@ -101,6 +102,13 @@
       {
         "from": "build/generated/built-in-skills",
         "to": "built-in-skills",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "build/generated/tenon-import",
+        "to": "tenon-import",
         "filter": [
           "**/*"
         ]

@@ -10,6 +10,9 @@ import { pathToFileURL } from 'node:url';
 import { DocumentService } from './documentService';
 import { AssetService, mimeTypeForFilename } from './assetService';
 import { AgentRuntime } from './agentRuntime';
+import { AgentImportService } from './agentImportService';
+import { AgentImportApiServer } from './agentImportApi';
+import { configureTenonImportRuntime } from './tenonImportRuntime';
 import { isRendererPermissionAllowed } from './rendererPermissions';
 import { MAC_TRAFFIC_LIGHT_POSITION, MAC_WINDOW_CORNER_RADIUS } from '../core/chromeGeometry';
 import { windowMaterialKind } from '../core/windowMaterial';
@@ -239,6 +242,15 @@ const APP_ICON_PNG_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icon.png')
   : join(__dirname, '../../build/icon.png');
 const documentService = new DocumentService();
+const importService = new AgentImportService(documentService, { toolName: 'tenon-import' });
+const importApiServer = new AgentImportApiServer(importService, { userDataDir: app.getPath('userData') });
+configureTenonImportRuntime({
+  isPackaged: app.isPackaged,
+  moduleDir: __dirname,
+  resourcesPath: process.resourcesPath,
+  processExecPath: process.execPath,
+  descriptorPath: importApiServer.descriptorPath,
+});
 const nodeAccessStore = new NodeAccessStore(join(app.getPath('userData'), 'node-access-stats.json'), {
   onError: (error, operation) => reportError({
     domain: 'node-access',
@@ -2793,6 +2805,16 @@ if (!app.requestSingleInstanceLock()) {
         error,
       });
     });
+    await importApiServer.start().catch((error) => {
+      reportError({
+        domain: 'agent',
+        severity: 'warn',
+        code: 'tenon-import-api-startup',
+        message: 'Tenon import API startup failed',
+        context: { operation: 'startup' },
+        error,
+      });
+    });
     const icon = nativeImage.createFromPath(APP_ICON_PNG_PATH);
     if (process.platform === 'darwin' && !icon.isEmpty()) app.dock?.setIcon(icon);
     app.setAboutPanelOptions({
@@ -2882,6 +2904,7 @@ if (!app.requestSingleInstanceLock()) {
       Promise.allSettled([
         documentService.flushPendingChanges(),
         nodeAccessStore.flushNow(),
+        importApiServer.stop(),
         agentRuntime.drainPendingWrites(),
       ]),
       new Promise((resolve) => setTimeout(resolve, 2500)),

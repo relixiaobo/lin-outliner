@@ -19,7 +19,7 @@ async function main() {
   console.log(JSON.stringify({ ok: true, out, stats: validation.pack.stats, warnings: validation.pack.warnings }, null, 2));
 }
 
-function renderPreview(pack: ImportPack, sampleLimit: number): string {
+export function renderPreview(pack: ImportPack, sampleLimit: number): string {
   const lines: string[] = [
     `# Import Preview: ${pack.source.kind}`,
     '',
@@ -84,7 +84,9 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.trunc(value)));
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+if ((import.meta as ImportMeta & { main?: boolean }).main) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}

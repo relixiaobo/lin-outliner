@@ -1241,6 +1241,37 @@ function classifyShellSegment(segmentInput: string, fullCommand: string, workspa
     });
   }
 
+  if ((head === 'tenon-import' || head === 'tenon_import') && second === 'commit') {
+    return descriptor('bash', 'outline.edit', {
+      accessScope: 'allowed_file_area',
+      title: 'local document import commit',
+      summary: fullCommand,
+      consequence: 'This commits a validated Import Pack through the running Tenon app and creates staged local document content.',
+      reversible: true,
+      externalEffect: false,
+      highConsequence: false,
+      command: fullCommand,
+      code: 'tenon_import_commit',
+      requestTitle: 'Approve import commit?',
+      requestTarget: fullCommand,
+    });
+  }
+
+  if (head === 'tenon-import' || head === 'tenon_import') {
+    return descriptor('bash', 'shell.local_code_execution', {
+      accessScope: 'allowed_file_area',
+      title: 'local import CLI',
+      summary: fullCommand,
+      consequence: 'This runs the Tenon import CLI for local inspection, conversion, validation, or preview.',
+      reversible: true,
+      externalEffect: false,
+      highConsequence: false,
+      command: fullCommand,
+      code: 'tenon_import_cli',
+      requestTarget: fullCommand,
+    });
+  }
+
   if (packageManager && isDependencyInstallCommand(head, words)) {
     return descriptor('bash', 'shell.dependency_install', {
       accessScope: 'allowed_file_area',

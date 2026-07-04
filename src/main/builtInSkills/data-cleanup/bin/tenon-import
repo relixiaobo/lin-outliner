@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+if [ -z "${TENON_IMPORT_CLI_RUNTIME:-}" ] || [ -z "${TENON_IMPORT_CLI_ENTRY:-}" ]; then
+  printf '%s\n' '{"ok":false,"error":{"code":"cli_not_configured","message":"Tenon import CLI runtime is not configured by the running app."}}' >&2
+  exit 1
+fi
+
+if [ "${TENON_IMPORT_RUN_AS_NODE:-}" = "1" ]; then
+  ELECTRON_RUN_AS_NODE=1 exec "$TENON_IMPORT_CLI_RUNTIME" "$TENON_IMPORT_CLI_ENTRY" "$@"
+fi
+
+exec "$TENON_IMPORT_CLI_RUNTIME" "$TENON_IMPORT_CLI_ENTRY" "$@"
