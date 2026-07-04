@@ -298,12 +298,20 @@ oversized packs, and invalid destinations before mutation.
 
 Successful non-dry-run imports create one explicit staging root
 (`Import: <source-name>`) under the destination and then materialize section
-headings and imported nodes below it. The implementation uses the existing
-`create_nodes_from_tree` bulk command for the large tree and applies imported
-descriptions afterward. Post-import verification reads the created staging
-subtree and compares section, node, description, tag, field, and checked counts
-against the pack. A mismatch returns `verification_failed` with the created ids
-and recovery instructions rather than reporting success.
+headings and imported nodes below it. Hosts that support the internal
+yield-aware tree materializer use it instead of routing import through a long
+series of normal document commands: node creation, Loro commits, and search-index
+refresh are chunked with event-loop breaks while remaining one logical import
+operation. The import is still grouped as a single agent undo step and a single
+operation-history entry. Fallback hosts may use `create_nodes_from_tree`, which
+has the same document shape but not the cooperative scheduling guarantees.
+
+The bulk materializer includes imported descriptions directly on created nodes,
+so the import is not followed by a long series of per-node description edits.
+Post-import verification reads the created staging subtree and compares section,
+node, description, tag, field, and checked counts against the pack. A mismatch
+returns `verification_failed` with the created ids and recovery instructions
+rather than reporting success.
 
 ## Tool Description Style
 

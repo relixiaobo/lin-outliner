@@ -67,6 +67,7 @@ interface PreviewRecord {
 const DATA_IMPORT_TOOL = 'data_import';
 const MAX_PACK_BYTES = 50 * 1024 * 1024;
 const PREVIEW_TTL_MS = 30 * 60 * 1000;
+const IMPORT_YIELD_EVERY_NODES = 50;
 const previewRecordsByHost = new WeakMap<OutlinerToolHost, Map<string, PreviewRecord>>();
 
 export const DATA_IMPORT_PARAMETERS = {
@@ -168,10 +169,12 @@ export function createDataImportTool(host: OutlinerToolHost, options: DataImport
           }));
         }
 
-        const apply = async () => materializeImportPack(host, loaded.pack, parentId);
-        const materialized = host.transaction
-          ? await host.transaction({ origin: 'agent', tool: DATA_IMPORT_TOOL, summary: `Imported ${loaded.pack.stats.nodes} cleaned nodes.` }, apply)
-          : await apply();
+        const materialized = host.createNodesFromTreeYielding
+          ? await materializeImportPack(host, loaded.pack, parentId)
+          : host.transaction
+            ? await host.transaction({ origin: 'agent', tool: DATA_IMPORT_TOOL, summary: `Imported ${loaded.pack.stats.nodes} cleaned nodes.` }, async () =>
+              materializeImportPack(host, loaded.pack, parentId))
+            : await materializeImportPack(host, loaded.pack, parentId);
         const stagingRootId = materialized.createdRootIds[0];
         if (!stagingRootId) throw new Error('Import did not create a staging root.');
         const verification = verifyImportedSubtree(host, stagingRootId, loaded.pack.stats);
@@ -321,14 +324,19 @@ async function materializeImportPack(
   parentId: string,
 ): Promise<{ createdRootIds: string[] }> {
   const rootTree = importPackToCreateNodeTree(pack);
-  const outcome = await host.handle('create_nodes_from_tree', { parentId, nodes: [rootTree] }, {
+  const meta = {
     origin: 'agent',
     tool: DATA_IMPORT_TOOL,
     summary: `Created import staging tree for ${pack.stats.nodes} cleaned nodes.`,
-  });
+  } as const;
+  const outcome = host.createNodesFromTreeYielding
+    ? await host.createNodesFromTreeYielding(parentId, [rootTree], meta, {
+      yieldEveryNodes: IMPORT_YIELD_EVERY_NODES,
+      commitEveryNodes: IMPORT_YIELD_EVERY_NODES,
+    })
+    : await host.handle('create_nodes_from_tree', { parentId, nodes: [rootTree] }, meta);
   const stagingRootId = focusNodeId(outcome);
   if (!stagingRootId) throw new Error('Import did not create a staging root.');
-  await applyImportDescriptions(host, stagingRootId, pack);
   return { createdRootIds: [stagingRootId] };
 }
 
@@ -342,6 +350,7 @@ function importNodeToCreateNodeTree(node: ImportNode): CreateNodeTree {
   if (node.code) {
     return {
       content: plainText(node.code.text),
+      ...(node.description?.trim() ? { description: node.description } : {}),
       children: (node.children ?? []).map(importNodeToCreateNodeTree),
       type: 'codeBlock',
       codeLanguage: node.code.language,
@@ -352,6 +361,7 @@ function importNodeToCreateNodeTree(node: ImportNode): CreateNodeTree {
   }
   return {
     content: plainText(node.title),
+    ...(node.description?.trim() ? { description: node.description } : {}),
     children: (node.children ?? []).map(importNodeToCreateNodeTree),
     tags: node.tags ?? [],
     fields: fieldRows(node),
@@ -369,36 +379,6 @@ function treeNode(title: string, children: CreateNodeTree[]): CreateNodeTree {
 function fieldRows(node: ImportNode): CreateNodeTree['fields'] {
   return (node.fields ?? []).flatMap((field) =>
     field.values.map((value) => ({ name: field.name, value })));
-}
-
-async function applyImportDescriptions(host: OutlinerToolHost, stagingRootId: string, pack: ImportPack): Promise<void> {
-  let index = indexProjection(host.getProjection());
-  const sectionIds = normalChildIds(index, stagingRootId, false);
-  for (let sectionIndex = 0; sectionIndex < pack.sections.length; sectionIndex += 1) {
-    const section = pack.sections[sectionIndex];
-    const sectionId = sectionIds[sectionIndex];
-    if (!section || !sectionId) continue;
-    await applyNodeDescriptions(host, sectionId, section.nodes);
-    index = indexProjection(host.getProjection());
-  }
-}
-
-async function applyNodeDescriptions(host: OutlinerToolHost, parentId: string, nodes: ImportNode[]): Promise<void> {
-  const index = indexProjection(host.getProjection());
-  const childIds = normalChildIds(index, parentId, false);
-  for (let nodeIndex = 0; nodeIndex < nodes.length; nodeIndex += 1) {
-    const source = nodes[nodeIndex];
-    const nodeId = childIds[nodeIndex];
-    if (!source || !nodeId) continue;
-    if (source.description?.trim()) {
-      await host.handle('update_node_description', { nodeId, description: source.description }, {
-        origin: 'agent',
-        tool: DATA_IMPORT_TOOL,
-        summary: 'Applied imported node description.',
-      });
-    }
-    if (source.children?.length) await applyNodeDescriptions(host, nodeId, source.children);
-  }
 }
 
 function focusNodeId(outcome: unknown): string | null {

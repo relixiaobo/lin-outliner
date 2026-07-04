@@ -108,6 +108,7 @@ import {
 import type { CaptureFieldDef, CreateCaptureInput } from './launcher/sources';
 
 type Mutator = () => FocusHint | undefined;
+type AsyncMutator = () => Promise<FocusHint | undefined>;
 type FocusOptions = Omit<FocusHint, 'nodeId' | 'selectAll'> & { selectAll?: boolean };
 type MoveDirection = 'up' | 'down';
 type CommitOrigin = 'user' | 'agent' | 'system' | '__seed__';
@@ -131,10 +132,27 @@ interface TemplateFieldRef {
   templateOriginId: NodeId;
 }
 
+interface TreeMaterializeContext {
+  tagDefByName: Map<string, NodeId>;
+  fieldDefByName: Map<string, NodeId>;
+  fieldTypeById: Map<NodeId, FieldType>;
+}
+
+interface TreeYieldContext {
+  created: number;
+  total: number;
+  yieldEveryNodes: number;
+  yield: () => Promise<void>;
+  commitEveryNodes?: number;
+  commit: () => void;
+}
+
 interface CoreTransaction {
   origin: string;
   before: DocumentState;
   metadata: CoreTransactionMetadata;
+  chunkedCommits: number;
+  chunkUndoValue?: OperationHistoryEntry;
 }
 
 interface SerializedLoroState extends SerializedLoroDocumentState {
@@ -377,12 +395,12 @@ export class Core {
     }
   }
 
-  beginUndoGroup() {
-    this.loro.beginUndoGroup();
+  beginUndoGroup(): boolean {
+    return this.loro.beginUndoGroup();
   }
 
-  endUndoGroup() {
-    this.loro.endUndoGroup();
+  endUndoGroup(): boolean {
+    return this.loro.endUndoGroup();
   }
 
   async transaction<T>(origin: CommitOrigin, fn: () => T | Promise<T>, metadata: CoreTransactionMetadata = {}): Promise<T> {
@@ -394,6 +412,7 @@ export class Core {
       origin: commitOriginFor(origin),
       before,
       metadata,
+      chunkedCommits: 0,
     };
     try {
       const result = await fn();
@@ -419,6 +438,32 @@ export class Core {
       this.refreshStateFromLoro();
       throw error;
     }
+  }
+
+  private commitActiveTransactionChunk(): void {
+    const transaction = this.activeTransaction;
+    if (!transaction) return;
+    this.loro.commit(transaction.origin, this.chunkUndoValueForTransaction(transaction));
+    transaction.chunkedCommits += 1;
+  }
+
+  private chunkUndoValueForTransaction(transaction: CoreTransaction): OperationHistoryEntry | undefined {
+    if (transaction.chunkUndoValue) return transaction.chunkUndoValue;
+    const origin = operationHistoryOriginForCommitOrigin(transaction.origin);
+    if (origin === 'system') return undefined;
+    transaction.metadata.operationId ??= `op:${crypto.randomUUID()}`;
+    const action = transaction.metadata.tool ?? transaction.metadata.command ?? 'document_operation';
+    transaction.chunkUndoValue = {
+      operationId: transaction.metadata.operationId,
+      origin,
+      command: transaction.metadata.command,
+      tool: transaction.metadata.tool,
+      action,
+      summary: transaction.metadata.summary ?? summarizeOperationHistoryAction(origin, action),
+      affectedNodeIds: [],
+      createdAt: new Date().toISOString(),
+    };
+    return transaction.chunkUndoValue;
   }
 
   createNode(
@@ -590,9 +635,46 @@ export class Core {
     return this.mutate(() => {
       const state = this.snapshot();
       ensureParentMutable(state, parentId);
+      const context = this.createTreeMaterializeContext(state);
       let lastCreatedId: string | undefined;
       for (const node of nodes) {
-        const createdId = this.insertNodeTreeDirect(parentId, node);
+        const createdId = this.insertNodeTreeDirect(parentId, node, undefined, context);
+        lastCreatedId = createdId;
+      }
+      return lastCreatedId ? focus(lastCreatedId, { parentId, placement: { kind: 'end' } }) : undefined;
+    });
+  }
+
+  async createNodesFromTreeYielding(
+    parentId: string,
+    nodes: CreateNodeTree[],
+    options: { yieldEveryNodes?: number; commitEveryNodes?: number; yield?: () => Promise<void> } = {},
+  ): Promise<CommandOutcome> {
+    const focusHint = await this.createNodesFromTreeYieldingFocus(parentId, nodes, options);
+    return { projection: this.projection(), ...(focusHint ? { focus: focusHint } : {}) };
+  }
+
+  async createNodesFromTreeYieldingFocus(
+    parentId: string,
+    nodes: CreateNodeTree[],
+    options: { yieldEveryNodes?: number; commitEveryNodes?: number; yield?: () => Promise<void> } = {},
+  ): Promise<FocusHint | undefined> {
+    return this.mutateAsyncFocus(async () => {
+      const state = this.snapshot();
+      ensureParentMutable(state, parentId);
+      const context = this.createTreeMaterializeContext(state);
+      const total = countCreateNodeTrees(nodes);
+      const yieldContext: TreeYieldContext = {
+        created: 0,
+        total,
+        yieldEveryNodes: Math.max(1, options.yieldEveryNodes ?? 250),
+        yield: options.yield ?? yieldToEventLoop,
+        commitEveryNodes: options.commitEveryNodes ? Math.max(1, options.commitEveryNodes) : undefined,
+        commit: () => this.commitActiveTransactionChunk(),
+      };
+      let lastCreatedId: string | undefined;
+      for (const node of nodes) {
+        const createdId = await this.insertNodeTreeDirectYielding(parentId, node, undefined, context, yieldContext);
         lastCreatedId = createdId;
       }
       return lastCreatedId ? focus(lastCreatedId, { parentId, placement: { kind: 'end' } }) : undefined;
@@ -698,13 +780,14 @@ export class Core {
       this.loro.writeNode(node);
       // The first pasted block merges into this row; apply its harvested tags
       // and fields here since it is not materialized via insertNodeTreeDirect.
-      this.applyPasteMetadataDirect(nodeId, firstMeta.tags, firstMeta.fields);
+      const context = this.createTreeMaterializeContext(state);
+      this.applyPasteMetadataDirect(nodeId, firstMeta.tags, firstMeta.fields, context);
 
-      for (const child of children) this.insertNodeTreeDirect(nodeId, child);
+      for (const child of children) this.insertNodeTreeDirect(nodeId, child, undefined, context);
 
       let focusId = nodeId;
       siblingsAfter.forEach((sibling, offset) => {
-        focusId = this.insertNodeTreeDirect(parentId, sibling, siblingIndex + offset);
+        focusId = this.insertNodeTreeDirect(parentId, sibling, siblingIndex + offset, context);
       });
       return focus(focusId);
     });
@@ -2255,6 +2338,40 @@ export class Core {
     return { projection: this.projection(), ...(focusHint ? { focus: focusHint } : {}) };
   }
 
+  private async mutateAsync(mutator: AsyncMutator): Promise<CommandOutcome> {
+    const focusHint = await this.mutateAsyncFocus(mutator);
+    return { projection: this.projection(), ...(focusHint ? { focus: focusHint } : {}) };
+  }
+
+  private async mutateAsyncFocus(mutator: AsyncMutator): Promise<FocusHint | undefined> {
+    if (this.activeTransaction) {
+      return mutator();
+    }
+
+    const before = this.loro.materializeState();
+    this.loro.clearTouchedNodeIds();
+    const rollbackFrontiers = this.loro.frontiers();
+    try {
+      const focusHint = await mutator();
+      const after = this.loro.materializeState();
+      const affectedNodeIds = this.loro.drainTouchedNodeIds();
+      if (changedTouchedNodes(affectedNodeIds, before, after)) {
+        this.commitCurrentTransaction(this.currentCommitOrigin(), before, after, this.currentCommitMetadata(), affectedNodeIds);
+        this.patchProjectionCache(affectedNodeIds, after);
+        this.bumpRevision(affectedNodeIds, false);
+        this.verifyCaches();
+      }
+      this.stateValue = after;
+      return focusHint;
+    } catch (error) {
+      this.loro.revertTo(rollbackFrontiers, SYSTEM_COMMIT_ORIGIN);
+      this.loro.clearTouchedNodeIds();
+      this.invalidateProjectionCache();
+      this.refreshStateFromLoro();
+      throw error;
+    }
+  }
+
   private currentTodayNodeId(): string {
     const today = new Date();
     const year = today.getFullYear();
@@ -2354,9 +2471,15 @@ export class Core {
     return {
       canUndo: this.loro.canUndo(origin),
       canRedo: this.loro.canRedo(origin),
-      topUndo: operationHistoryEntryFromValue(this.loro.topUndoValue(origin)),
-      topRedo: operationHistoryEntryFromValue(this.loro.topRedoValue(origin)),
+      topUndo: this.resolveOperationHistoryStackValue(this.loro.topUndoValue(origin)),
+      topRedo: this.resolveOperationHistoryStackValue(this.loro.topRedoValue(origin)),
     };
+  }
+
+  private resolveOperationHistoryStackValue(value: unknown): OperationHistoryEntry | undefined {
+    const entry = operationHistoryEntryFromValue(value);
+    if (!entry) return undefined;
+    return this.history.findByOperationId(entry.operationId) ?? entry;
   }
 
   private snapshot() {
@@ -2840,7 +2963,42 @@ export class Core {
     return id;
   }
 
-  private insertNodeTreeDirect(parentId: string, tree: CreateNodeTree, index?: number | null): string {
+  private insertNodeTreeDirect(
+    parentId: string,
+    tree: CreateNodeTree,
+    index?: number | null,
+    context = this.createTreeMaterializeContext(this.snapshot()),
+  ): string {
+    const id = this.insertNodeTreeNodeDirect(parentId, tree, index, context);
+    for (const child of tree.children) this.insertNodeTreeDirect(id, child, undefined, context);
+    return id;
+  }
+
+  private async insertNodeTreeDirectYielding(
+    parentId: string,
+    tree: CreateNodeTree,
+    index: number | null | undefined,
+    context: TreeMaterializeContext,
+    yieldContext: TreeYieldContext,
+  ): Promise<string> {
+    const id = this.insertNodeTreeNodeDirect(parentId, tree, index, context);
+    yieldContext.created += 1;
+    if (yieldContext.commitEveryNodes && yieldContext.created % yieldContext.commitEveryNodes === 0 && yieldContext.created < yieldContext.total) {
+      yieldContext.commit();
+    }
+    if (yieldContext.created % yieldContext.yieldEveryNodes === 0) await yieldContext.yield();
+    for (const child of tree.children) {
+      await this.insertNodeTreeDirectYielding(id, child, undefined, context, yieldContext);
+    }
+    return id;
+  }
+
+  private insertNodeTreeNodeDirect(
+    parentId: string,
+    tree: CreateNodeTree,
+    index: number | null | undefined,
+    context: TreeMaterializeContext,
+  ): string {
     const id = freshId('node');
     // Paste trees may carry a node type; only `codeBlock` is honored so the
     // materialization surface stays narrow and predictable.
@@ -2848,15 +3006,32 @@ export class Core {
     const completedAt = pasteCompletedAt(tree);
     this.loro.createNodeWithId(id, parentId, index, type, (node) => {
       node.content = clone(tree.content);
+      const description = normalizeOptionalText(tree.description);
+      if (description !== undefined) node.description = description;
       if (type === 'codeBlock') {
         (node as CodeBlockNode).codeLanguage = normalizeCodeLanguage(tree.codeLanguage) || undefined;
       }
       if (completedAt !== undefined) node.completedAt = completedAt;
     });
     this.applyChildTagsDirect(parentId, id);
-    this.applyPasteMetadataDirect(id, tree.tags, tree.fields);
-    for (const child of tree.children) this.insertNodeTreeDirect(id, child);
+    this.applyPasteMetadataDirect(id, tree.tags, tree.fields, context);
     return id;
+  }
+
+  private createTreeMaterializeContext(state: DocumentState): TreeMaterializeContext {
+    const tagDefByName = new Map<string, NodeId>();
+    const fieldDefByName = new Map<string, NodeId>();
+    const fieldTypeById = new Map<NodeId, FieldType>();
+    for (const node of Object.values(state.nodes)) {
+      const key = definitionNameKey(node.content.text);
+      if (!key) continue;
+      if (isActiveTagDefinition(state, node.id)) tagDefByName.set(key, node.id);
+      if (node.parentId === SCHEMA_ID && isActiveFieldDefinition(state, node.id)) {
+        fieldDefByName.set(key, node.id);
+        fieldTypeById.set(node.id, fieldTypeOf(state, node.id));
+      }
+    }
+    return { tagDefByName, fieldDefByName, fieldTypeById };
   }
 
   private insertFieldDefNodeDirect(parentId: string, name: string, fieldType: FieldType) {
@@ -2887,36 +3062,61 @@ export class Core {
     nodeId: string,
     tags: string[] | undefined,
     fields: ParsedPasteField[] | undefined,
+    context?: TreeMaterializeContext,
   ): void {
     for (const rawName of tags ?? []) {
       const name = rawName.trim();
       if (!name) continue;
-      const tagId = findTagByName(this.snapshot(), name) ?? this.createTagDefDirect(name);
+      const key = definitionNameKey(name);
+      let tagId = context?.tagDefByName.get(key);
+      if (!tagId) {
+        tagId = findTagByName(this.snapshot(), name) ?? this.createTagDefDirect(name);
+        context?.tagDefByName.set(key, tagId);
+      }
       this.applyTagNoHistoryDirect(nodeId, tagId);
     }
     for (const field of fields ?? []) {
       const name = field.name.trim();
       const value = field.value.trim();
       if (!name || !value) continue;
-      const fieldDefId = findFieldDefByName(this.snapshot(), name)
-        ?? this.insertFieldDefNodeDirect(SCHEMA_ID, name, 'plain');
+      const key = definitionNameKey(name);
+      let fieldDefId = context?.fieldDefByName.get(key);
+      if (!fieldDefId) {
+        fieldDefId = findFieldDefByName(this.snapshot(), name);
+        if (!fieldDefId) {
+          fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, name, 'plain');
+          context?.fieldTypeById.set(fieldDefId, 'plain');
+        }
+        context?.fieldDefByName.set(key, fieldDefId);
+      }
       const entryId = this.reuseOrCreateFieldEntryDirect(nodeId, fieldDefId);
       // An existing `options` field find-or-creates+selects the option (smart
       // select); every other type (incl. a freshly created `plain` field) stores
       // the value as a plain content child, the same shape free-text values use.
-      if (fieldTypeOf(this.snapshot(), fieldDefId) === 'options') {
+      let fieldType = context?.fieldTypeById.get(fieldDefId);
+      if (!fieldType) {
+        fieldType = fieldTypeOf(this.snapshot(), fieldDefId);
+        context?.fieldTypeById.set(fieldDefId, fieldType);
+      }
+      if (fieldType === 'options') {
         const optionId = this.ensureOptionNodeDirect(fieldDefId, value);
         this.selectFieldOptionDirect(entryId, fieldDefId, optionId);
       } else {
         // Fill an empty value child a reused entry (e.g. a tag template's) already
         // owns, instead of stacking a second value beside it; create one only when
         // there is no empty slot to reuse.
-        const emptySlot = this.snapshot().nodes[entryId]?.children.find((childId) => {
-          const child = this.snapshot().nodes[childId];
+        const entry = this.loro.materializeNode(entryId);
+        const emptySlot = entry?.children.find((childId) => {
+          const child = this.loro.materializeNode(childId);
           return child?.type === undefined && child.content.text.trim().length === 0;
         });
         if (emptySlot) {
-          this.patchNodeData(emptySlot, (node) => { node.content = plainText(value); });
+          const slot = this.loro.materializeNode(emptySlot);
+          if (!slot) throw CoreError.nodeNotFound(emptySlot);
+          const next = clone(slot);
+          next.content = plainText(value);
+          next.updatedAt = nowMs();
+          this.loro.writeNode(next);
         } else {
           this.loro.createNodeWithId(freshId('value'), entryId, undefined, undefined, (node) => {
             node.content = plainText(value);
@@ -2930,9 +3130,10 @@ export class Core {
   // template just instantiated) so a pasted `field::` fills it instead of
   // stacking a second empty entry; otherwise create one.
   private reuseOrCreateFieldEntryDirect(nodeId: string, fieldDefId: string): string {
-    const state = this.snapshot();
-    const existing = state.nodes[nodeId]?.children.find((childId) => {
-      const child = state.nodes[childId];
+    const node = this.loro.materializeNode(nodeId);
+    if (!node) throw CoreError.nodeNotFound(nodeId);
+    const existing = node.children.find((childId) => {
+      const child = this.loro.materializeNode(childId);
       return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
     });
     return existing ?? this.insertFieldEntryNodeDirect(nodeId, undefined, fieldDefId);
@@ -3009,8 +3210,10 @@ export class Core {
   }
 
   private applyChildTagsDirect(parentId: string, childId: string) {
+    const parent = this.loro.materializeNode(parentId);
+    const tagIds = parent?.tags ?? [];
+    if (tagIds.length === 0) return;
     const state = this.snapshot();
-    const tagIds = state.nodes[parentId]?.tags ?? [];
     for (const tagId of tagIds) {
       if (!isActiveTagDefinition(state, tagId)) continue;
       const childSupertag = configRefTarget(state, tagId, 'childSupertag');
@@ -3447,6 +3650,18 @@ function commitOriginFor(origin: CommitOrigin) {
   return DEFAULT_COMMIT_ORIGIN;
 }
 
+function operationHistoryOriginForCommitOrigin(origin: string): 'agent' | 'user' | 'system' {
+  if (origin.startsWith('agent:')) return 'agent';
+  if (origin.startsWith('user:')) return 'user';
+  return 'system';
+}
+
+function summarizeOperationHistoryAction(origin: 'agent' | 'user' | 'system', action: string) {
+  if (origin === 'agent') return `Agent ${action.replace(/_/g, ' ')}.`;
+  if (origin === 'user') return `User ${action.replace(/_/g, ' ')}.`;
+  return `System ${action.replace(/_/g, ' ')}.`;
+}
+
 function focus(nodeId: string, options: FocusOptions = {}): FocusHint {
   return {
     nodeId,
@@ -3489,6 +3704,21 @@ function cycleNodeDoneState(node: Node, tagDriven: boolean) {
 
 function freshId(prefix: string): string {
   return `${prefix}:${crypto.randomUUID()}`;
+}
+
+function countCreateNodeTrees(nodes: readonly CreateNodeTree[]): number {
+  let count = 0;
+  const stack = [...nodes];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    count += 1;
+    stack.push(...node.children);
+  }
+  return count;
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 // Re-exported so existing importers of `core` keep resolving these; the shape
@@ -4179,18 +4409,22 @@ function findNodesWithTag(state: DocumentState, tagId: string) {
 }
 
 function findTagByName(state: DocumentState, name: string) {
-  const needle = name.trim().toLowerCase();
+  const needle = definitionNameKey(name);
   return Object.values(state.nodes).find((node) =>
     isActiveTagDefinition(state, node.id)
-    && node.content.text.trim().toLowerCase() === needle)?.id;
+    && definitionNameKey(node.content.text) === needle)?.id;
 }
 
 function findFieldDefByName(state: DocumentState, name: string) {
-  const needle = name.trim().toLowerCase();
+  const needle = definitionNameKey(name);
   return Object.values(state.nodes).find((node) =>
     isActiveFieldDefinition(state, node.id)
     && node.parentId === SCHEMA_ID
-    && node.content.text.trim().toLowerCase() === needle)?.id;
+    && definitionNameKey(node.content.text) === needle)?.id;
+}
+
+function definitionNameKey(name: string): string {
+  return name.trim().toLowerCase();
 }
 
 // A pasted task-list row's `completedAt` sentinel: undefined → no checkbox,

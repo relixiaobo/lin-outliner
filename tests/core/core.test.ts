@@ -21,6 +21,7 @@ import {
   plainText,
   replaceAllRichTextPatch,
   type CreateNodeTree,
+  type FocusHint,
   type RichText,
 } from '../../src/core/types';
 
@@ -287,6 +288,88 @@ describe('Core', () => {
       parentId: today,
       placement: { kind: 'end' },
     });
+  });
+
+  test('materializes tree node descriptions with the created nodes', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const outcome = core.createNodesFromTree(today, [
+      {
+        content: plainText('Node with description'),
+        description: 'Imported description',
+        children: [{
+          content: plainText('Child with description'),
+          description: 'Child description',
+          children: [],
+        }],
+      },
+    ]);
+    const nodeId = outcome.focus!.nodeId;
+    const childId = core.state().nodes[nodeId].children[0]!;
+
+    expect(core.state().nodes[nodeId].description).toBe('Imported description');
+    expect(core.state().nodes[childId].description).toBe('Child description');
+  });
+
+  test('yielding tree materialization gives large creates cooperative breaks', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    let yields = 0;
+    const outcome = await core.createNodesFromTreeYielding(today, [{
+      content: plainText('Root'),
+      children: Array.from({ length: 5 }, (_value, index) => ({
+        content: plainText(`Child ${index + 1}`),
+        children: [],
+      })),
+    }], {
+      yieldEveryNodes: 2,
+      yield: async () => { yields += 1; },
+    });
+    const rootId = outcome.focus!.nodeId;
+
+    expect(yields).toBe(3);
+    expect(core.state().nodes[rootId].children).toHaveLength(5);
+  });
+
+  test('yielding tree materialization can flush commits while remaining one agent undo', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    let yields = 0;
+
+    const undoGroupStarted = core.beginUndoGroup();
+    let focus: FocusHint | undefined;
+    try {
+      focus = await core.transaction('agent', () =>
+        core.createNodesFromTreeYieldingFocus(today, [{
+          content: plainText('Imported root'),
+          children: Array.from({ length: 5 }, (_value, index) => ({
+            content: plainText(`Imported child ${index + 1}`),
+            children: [],
+          })),
+        }], {
+          yieldEveryNodes: 2,
+          commitEveryNodes: 2,
+          yield: async () => { yields += 1; },
+        }), { tool: 'data_import', operationId: 'op:import-test', summary: 'Imported test nodes.' });
+    } finally {
+      if (undoGroupStarted) core.endUndoGroup();
+    }
+
+    const rootId = focus!.nodeId;
+    expect(yields).toBe(3);
+    expect(core.state().nodes[rootId].children).toHaveLength(5);
+
+    const history = core.operationHistory({ action: 'list', origin: 'agent' });
+    const item = history.items?.find((entry) => entry.operationId === 'op:import-test');
+    expect(item).toBeDefined();
+    expect(item?.canUndo).toBe(true);
+    expect(history.cursor?.topUndoOperationId).toBe('op:import-test');
+    expect(core.operationHistory({ action: 'undo', origin: 'agent', operationId: 'op:not-top' }).count).toBe(0);
+
+    const undo = core.operationHistory({ action: 'undo', origin: 'agent', operationId: 'op:import-test' });
+    expect(undo.count).toBe(1);
+    expect(undo.undone?.[0]?.affectedNodeIds).toContain(rootId);
+    expect(core.state().nodes[rootId]).toBeUndefined();
   });
 
   test('materializes a codeBlock tree node with its language', () => {

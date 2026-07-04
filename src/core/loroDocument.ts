@@ -233,20 +233,22 @@ export class LoroOutlinerDocument {
     return this.undoManagerFor(scope).topRedoValue();
   }
 
-  beginUndoGroup() {
-    if (this.undoGroupActive) return;
+  beginUndoGroup(): boolean {
+    if (this.undoGroupActive) return false;
     this.undoManager.groupStart();
     this.aiUndoManager.groupStart();
     this.userUndoManager.groupStart();
     this.undoGroupActive = true;
+    return true;
   }
 
-  endUndoGroup() {
-    if (!this.undoGroupActive) return;
+  endUndoGroup(): boolean {
+    if (!this.undoGroupActive) return false;
     this.undoManager.groupEnd();
     this.aiUndoManager.groupEnd();
     this.userUndoManager.groupEnd();
     this.undoGroupActive = false;
+    return true;
   }
 
   frontiers() {
@@ -307,9 +309,8 @@ export class LoroOutlinerDocument {
     type: NodeType | undefined,
     configure: (node: T) => void,
   ) {
-    const state = this.materializeState();
-    if (parentId && !state.nodes[parentId]) throw CoreError.parentNotFound(parentId);
-    const parentTreeNode = parentId ? this.requiredTreeNode(parentId) : undefined;
+    const parentTreeNode = parentId ? this.treeNodeOrUndefined(parentId) : undefined;
+    if (parentId && !parentTreeNode) throw CoreError.parentNotFound(parentId);
     const parentTreeId = parentTreeNode?.id;
     const targetIndex = parentTreeNode
       ? clampInsertIndex(index, parentTreeNode.children()?.length ?? 0)
