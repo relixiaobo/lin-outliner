@@ -71,6 +71,28 @@ function collectForcedUserSelectViolations() {
   return violations;
 }
 
+function collectSelectableDragRegionViolations() {
+  const violations: string[] = [];
+
+  for (const file of styleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const body = match[2] ?? '';
+      if (!/-webkit-app-region\s*:\s*drag\s*;/.test(body)) continue;
+      if (/\buser-select\s*:\s*none\s*;/.test(body)) continue;
+
+      const selector = match[1]!.trim().replace(/\s+/g, ' ');
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      violations.push(`${file}:${lineNumber} ${selector}`);
+    }
+  }
+
+  return violations;
+}
+
 function collectBareInputFocusSuppressionViolations() {
   const violations: string[] = [];
 
@@ -153,6 +175,10 @@ test.describe('cursor affordances', () => {
 
   test('keeps forced text-selection suppression limited to active gestures', () => {
     expect(collectForcedUserSelectViolations()).toEqual([]);
+  });
+
+  test('keeps renderer drag regions from selecting chrome text', () => {
+    expect(collectSelectableDragRegionViolations()).toEqual([]);
   });
 
   test('keeps shared bare inputs inheriting the keyboard focus ring', () => {

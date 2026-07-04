@@ -30,6 +30,7 @@
   z-index: var(--z-popover);
   height: var(--chrome-height);
   -webkit-app-region: drag;
+  user-select: none;
 }
 
 /* Back / forward (‹ ›) toolbar group, like macOS System Settings. The buttons

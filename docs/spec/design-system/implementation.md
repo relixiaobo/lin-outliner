@@ -120,10 +120,11 @@ Expected checks for design-system changes:
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
   interaction affordances change, including pointer-cursor scope and forced
   `user-select: none !important` suppression staying limited to active drag /
-  resize gestures. It also keeps the shared bare input primitive from suppressing
-  the global keyboard focus ring, keeps resize cursors routed through the shared
-  cursor tokens, and keeps named chrome icon controls colour-only on hover,
-  focus, and press.
+  resize gestures. It also keeps renderer drag regions from selecting chrome
+  text, keeps the shared bare input primitive from suppressing the global
+  keyboard focus ring, keeps resize cursors routed through the shared cursor
+  tokens, and keeps named chrome icon controls colour-only on hover, focus, and
+  press.
 - `tests/e2e/window-material.spec.ts` for window-material and inactive-window
   behavior when material rules change.
 - `git diff --check`
