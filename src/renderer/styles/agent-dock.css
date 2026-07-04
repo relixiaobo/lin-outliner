@@ -357,7 +357,7 @@ button.panel-resize-handle {
   max-height: min(420px, calc(100vh - 128px));
   overflow: hidden;
   border-radius: var(--radius-overlay-sm);
-  /* Menu glass (design-system B5 / D2). --material-backdrop carries the PR-B
+  /* Menu glass (design-system B5 / D2). --material-backdrop carries the shared
      reduced-transparency / high-contrast opaque fallback. */
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);

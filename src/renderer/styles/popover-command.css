@@ -4,8 +4,8 @@
   z-index: var(--z-popover);
   min-width: 220px;
   border-radius: var(--radius-overlay-sm);
-  /* Overlay glass (design-system B5 / D2). --material-backdrop carries the PR-B
-     reduced-transparency / high-contrast opaque fallback for free. */
+  /* Overlay glass (design-system B5 / D2). --material-backdrop carries the shared
+     reduced-transparency / high-contrast opaque fallback. */
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);

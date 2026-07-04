@@ -200,8 +200,8 @@
   gap: var(--space-1);
   overflow: hidden;
   border-radius: var(--radius-lg);
-  /* Menu glass (design-system B5 / D2). --material-backdrop carries the PR-B
-     reduced-transparency / high-contrast opaque fallback for free. */
+  /* Menu glass (design-system B5 / D2). --material-backdrop carries the shared
+     reduced-transparency / high-contrast opaque fallback. */
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);

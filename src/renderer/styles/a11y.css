@@ -10,8 +10,8 @@
    alpha-on-ink system (text, separators, outlines, focus) inverts correctly in
    both light and dark for free — no component rules, no per-theme literals. The
    material fallback is a single --material-* swap, so any surface that opts into
-   `var(--material-*)` + `var(--material-backdrop)` (the rails today, popovers in
-   PR-C) gets the opaque fallback with no @media block of its own.
+   `var(--material-*)` + `var(--material-backdrop)` gets the opaque fallback with
+   no @media block of its own.
 
    IMPORT ORDER: this file MUST be @imported AFTER theme-dark.css. Its overrides
    share :root specificity with the dark block, so when both match (e.g. dark +
