@@ -29,7 +29,7 @@
 
 .button-primary {
   background: var(--surface-inverse);
-  color: var(--panel-bg);
+  color: var(--bg-content);
 }
 
 .button-primary:hover:not(:disabled),

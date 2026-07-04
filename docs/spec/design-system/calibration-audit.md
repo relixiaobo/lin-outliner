@@ -126,6 +126,8 @@ standard change that only hides one local violation is not accepted.
 | CA92 | `--agent-dock-inset-x` duplicated the shared `--rail-pad` token inside the `--agent-content-x` formula, adding a second name for the same rail inset. | Code drift | Routed the agent content-column formula directly through `--rail-pad`, removed `--agent-dock-inset-x`, and expanded retired-alias coverage. | `tokens.css`; `tests/e2e/typography-tokens.spec.ts` |
 | CA93 | Foundations documented stale dock widths that no longer matched the live rail tokens and responsive-layout constants. | Spec drift | Updated the dock-width contract to `--sidebar-*` / `--agent-*` live values and added static coverage that fails future prose/token drift. | `foundations.md`; `tests/e2e/typography-tokens.spec.ts` |
 | CA94 | Rail width values are duplicated between design tokens and responsive-layout constants, but only the prose was guarded against drift. | Code drift | Added renderer unit coverage that fails if `workspaceResponsiveLayout` rail constants diverge from `--sidebar-*` / `--agent-*` tokens. | `tests/renderer/workspaceResponsiveLayout.test.ts` |
+| CA95 | Button primary foreground still used legacy `--panel-bg` even though the owning content surface token is `--bg-content`. | Code drift | Routed the primary button foreground to `--bg-content` without changing the visual value. | `button.css` |
+| CA96 | The Button component contract named the legacy `--panel-bg` alias as part of the filled-default idiom. | Spec drift | Updated the component contract to name the owning `--bg-content` token, keeping the primitive spec aligned with the semantic surface layer. | `components.md` |
 
 ## Named Exceptions Kept
 
