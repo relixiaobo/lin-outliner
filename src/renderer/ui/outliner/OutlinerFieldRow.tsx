@@ -47,11 +47,11 @@ import { FieldEntryGrid } from './FieldEntryGrid';
 import { FieldNameReusePopover } from './FieldNameReusePopover';
 import { animateOutlinerRowMovementAfterNextCommit } from './rowMoveAnimation';
 import type { FieldReuseCandidate } from '../interactions/fieldReuseCandidates';
-import { fieldChoiceLabel } from '../../state/outlinerRows';
 import {
   COMMAND_SCHEDULE_FIELD_ID,
   isSystemFieldId,
   systemFieldDisplay,
+  systemFieldLabel as getSystemFieldLabel,
   type SystemFieldDisplay,
 } from '../../../core/systemFields';
 import { SystemFieldValue } from './SystemFieldValue';
@@ -258,7 +258,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const drillDownId = field?.id ?? props.entryId;
   const fieldOwnerColor = resolveFieldOwnerColor(entry, field, props.index.byId);
 
-  const systemFieldLabel = systemFieldId ? fieldChoiceLabel(systemFieldId, props.index.byId) : '';
+  const systemFieldLabel = systemFieldId ? getSystemFieldLabel(systemFieldId) ?? '' : '';
 
   // Both kinds resolve to a real target id (a def node, or a `sys:*` id core
   // accepts as read-only), so reuse is a single relink either way.
