@@ -1,5 +1,13 @@
 import { expect, test, type Page } from '@playwright/test';
-import { installElectronMock, ids } from './outlinerMock';
+import { DEFAULT_GENERAL_CHANNEL_ID } from '../../src/core/agentChannel';
+import {
+  e2eProjection,
+  emitAgentProjection,
+  installElectronMock,
+  ids,
+  row,
+  trailingEditor,
+} from './outlinerMock';
 
 interface SurfaceProbe {
   bodyTextLength: number;
@@ -22,6 +30,122 @@ interface SurfaceCase {
   options?: Parameters<typeof installElectronMock>[1];
   beforeInstall?: (page: Page) => Promise<void>;
   beforeProbe?: (page: Page) => Promise<void>;
+}
+
+const usage = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 0,
+  },
+};
+
+async function todayChildren(page: Page) {
+  const projection = await e2eProjection(page);
+  return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
+}
+
+async function createAttachmentRowPreview(page: Page) {
+  const beforeChildren = await todayChildren(page);
+  await trailingEditor(page).click();
+  await page.keyboard.type('/attachment');
+  await expect(page.getByRole('option', { name: /Attachment/ })).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+  const attachmentId = (await todayChildren(page)).at(-1);
+  if (!attachmentId) throw new Error('Missing attachment node');
+  const attachmentRow = row(page, attachmentId);
+  await attachmentRow.locator('> .row').first().hover();
+  await attachmentRow.locator('.row-chevron-button').first().click();
+  await attachmentRow.locator('.file-node-row-preview .file-node-preview.collapsed').waitFor({ state: 'visible' });
+}
+
+async function createImagePreviewPage(page: Page) {
+  const beforeChildren = await todayChildren(page);
+  await trailingEditor(page).click();
+  await page.keyboard.type('/image');
+  await expect(page.getByRole('option', { name: /Image/ })).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+  const imageId = (await todayChildren(page)).at(-1);
+  if (!imageId) throw new Error('Missing image node');
+  const imageRow = row(page, imageId);
+  await imageRow.locator('.file-node-image-button img').waitFor({ state: 'visible' });
+  await imageRow.locator('.file-node-image-actions .file-node-card-menu-trigger').click();
+  await page.getByRole('menuitem', { name: 'Maximize' }).click();
+  await page.locator('.outline-panel-surface.active-panel .file-node-body').waitFor({ state: 'visible' });
+}
+
+async function showCompletedAgentProcess(page: Page) {
+  const assistant = {
+    role: 'assistant',
+    api: 'responses',
+    provider: 'openai',
+    model: 'gpt-5.4',
+    usage,
+    stopReason: 'stop',
+    timestamp: 1_800_000_000_100,
+    content: [
+      {
+        type: 'thinking',
+        thinking: [
+          'Identify relevant outline nodes and tag patterns.',
+          'Compare current Agent rules with the existing tag layout decision before answering.',
+        ].join('\n'),
+      },
+      {
+        type: 'toolCall',
+        id: 'tool-read',
+        name: 'node_read',
+        arguments: { node_id: 'node-alpha' },
+      },
+      {
+        type: 'text',
+        text: 'Current outline focuses on design-system inventory.',
+      },
+    ],
+  };
+
+  await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
+    conversationTitle: 'Agent System',
+    systemPrompt: '',
+    model: { id: 'gpt-5.4', provider: 'openai' },
+    thinkingLevel: 'medium',
+    messages: [
+      assistant,
+      {
+        role: 'toolResult',
+        toolCallId: 'tool-read',
+        toolName: 'node_read',
+        content: [{ type: 'text', text: 'Alpha node content' }],
+        isError: false,
+        timestamp: 1_800_000_000_101,
+      },
+    ],
+    conversation: [{
+      nodeId: 'assistant-node',
+      message: assistant,
+      branches: null,
+    }],
+    streamingMessage: null,
+    isStreaming: false,
+    pendingToolCallIds: [],
+    errorMessage: null,
+  });
+
+  const process = page.locator('.agent-process-block').first();
+  await process.locator('.agent-process-summary-row').waitFor({ state: 'visible' });
+  const reasoningToggle = process.locator('.agent-reasoning-toggle').first();
+  if (await reasoningToggle.count() > 0) await reasoningToggle.click();
+  const activityToggle = process.locator('.agent-tool-activity-toggle').first();
+  if (await activityToggle.count() > 0) await activityToggle.click();
 }
 
 const surfaces: SurfaceCase[] = [
@@ -106,6 +230,24 @@ const surfaces: SurfaceCase[] = [
       await page.keyboard.press('Space');
       await page.getByRole('dialog', { name: 'Date picker' }).waitFor({ state: 'visible' });
     },
+  },
+  {
+    name: 'file row preview',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: createAttachmentRowPreview,
+  },
+  {
+    name: 'image preview page',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: createImagePreviewPage,
+  },
+  {
+    name: 'agent process details',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showCompletedAgentProcess,
   },
 ];
 
