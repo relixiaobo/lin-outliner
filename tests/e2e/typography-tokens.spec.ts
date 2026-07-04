@@ -47,6 +47,10 @@ const reducedMotionRuleFiles = new Map([
   ['src/renderer/styles/agent-message.css', 'Working dots become a static working state.'],
   ['src/renderer/styles/outliner.css', 'Command run spinner becomes a static processing state.'],
 ]);
+const reducedTransparencyRuleFiles = new Map([
+  ['src/renderer/styles/a11y.css', 'Central material fallback token layer.'],
+  ['src/renderer/styles/launcher.css', 'System launcher transparent glass collapses to an opaque elevated surface.'],
+]);
 
 function markdownFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -261,6 +265,22 @@ test.describe('typography tokens', () => {
       if (!/@media\s*\(\s*prefers-reduced-motion:\s*reduce\s*\)/.test(text)) continue;
       if (reducedMotionRuleFiles.has(file)) continue;
       violations.push(`${file} has an unregistered prefers-reduced-motion: reduce rule`);
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  test('keeps reduced-transparency rules centralized or explicitly scoped', () => {
+    const violations: string[] = [];
+
+    for (const file of productStyleFiles) {
+      const text = readFileSync(file, 'utf8').replace(
+        /\/\*[\s\S]*?\*\//g,
+        (block) => block.replace(/[^\n]/g, ' '),
+      );
+      if (!/@media[^{]*prefers-reduced-transparency:\s*reduce/.test(text)) continue;
+      if (reducedTransparencyRuleFiles.has(file)) continue;
+      violations.push(`${file} has an unregistered prefers-reduced-transparency: reduce rule`);
     }
 
     expect(violations).toEqual([]);

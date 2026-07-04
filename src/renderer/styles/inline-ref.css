@@ -242,11 +242,3 @@
 .inline-file-preview-warning {
   color: var(--text-soft);
 }
-
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .inline-file-preview-popover {
-    background: var(--bg-elevated);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
-}
