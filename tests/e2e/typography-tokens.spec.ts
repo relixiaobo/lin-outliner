@@ -935,6 +935,7 @@ test.describe('typography tokens', () => {
       'workspace-tab-close-size',
       'workspace-tab-icon-slot',
       'panel-gap',
+      'checkbox-mark-radius',
     ].join('|');
     const retiredAliasPattern = new RegExp(
       `(?:--(?:${retiredAliases})\\\\s*:|var\\\\(--(?:${retiredAliases})\\\\)|['"\`]--(?:${retiredAliases})['"\`])`,

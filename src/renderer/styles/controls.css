@@ -17,7 +17,7 @@
   align-items: center;
   justify-content: center;
   border: 1.5px solid color-mix(in srgb, var(--text) 28%, transparent);
-  border-radius: var(--checkbox-mark-radius);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--panel-bg);
   transition: background var(--motion-fast), border-color var(--motion-fast);

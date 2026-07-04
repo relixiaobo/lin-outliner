@@ -367,7 +367,6 @@
      (see the OS-window geometry note above). This literal is the preview fallback. */
   --radius-window: 24px;
   --radius-pill: 999px;
-  --checkbox-mark-radius: var(--radius-xs);
   /* concentric chain in code: rail = window − gap; composer = rail − gap. */
   --workspace-surface-radius: calc(var(--radius-window) - var(--layout-gap));
   --panel-radius: var(--workspace-surface-radius);
