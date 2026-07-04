@@ -170,6 +170,15 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
+  test('keeps material backdrop filters routed through the shared token', () => {
+    const violations = collectDeclarationViolations(
+      /(-webkit-backdrop-filter|backdrop-filter):\s*([^;]+);/,
+      (value) => value === 'var(--material-backdrop)' || value === 'none',
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps design-system spec css examples tokenized outside token declarations', () => {
     const violations = extractDesignSystemCssCodeBlocks().flatMap(({ file, css, startLine }) => [
       ...collectCssDeclarationViolations(
