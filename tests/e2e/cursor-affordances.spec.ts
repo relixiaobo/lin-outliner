@@ -175,6 +175,37 @@ function collectFocusVisibleRingSuppressionViolations() {
   return violations;
 }
 
+function collectFocusVisibleIndicatorTokenViolations() {
+  const violations: string[] = [];
+  const focusIndicatorProperty = /\b(outline(?:-color)?|border(?:-(?:top|right|bottom|left))?(?:-color)?|box-shadow)\s*:\s*([^;]+);/g;
+  const focusToken = /--[\w-]*focus[\w-]*/;
+
+  for (const file of styleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim().replace(/\s+/g, ' ');
+      if (!/:focus-visible\b/.test(selector)) continue;
+      if (/:not\(:focus-visible\)/.test(selector)) continue;
+
+      const body = match[2] ?? '';
+      for (const declaration of body.matchAll(focusIndicatorProperty)) {
+        const property = declaration[1]!;
+        const value = declaration[2]!.trim();
+        if (/^(none|0|transparent)$/.test(value)) continue;
+        if (focusToken.test(value)) continue;
+
+        const lineNumber = source.slice(0, match.index).split('\n').length;
+        violations.push(`${file}:${lineNumber} ${selector} -> ${property}: ${value}`);
+      }
+    }
+  }
+
+  return violations;
+}
+
 function collectRawResizeCursorViolations() {
   const violations: string[] = [];
   const rawResizeCursor = /(?:^|[;\s])cursor\s*:\s*(?:ew-resize|ns-resize|col-resize|row-resize)\s*;/;
@@ -248,6 +279,10 @@ test.describe('cursor affordances', () => {
 
   test('keeps focus-visible ring suppressions explicitly named', () => {
     expect(collectFocusVisibleRingSuppressionViolations()).toEqual([]);
+  });
+
+  test('keeps focus-visible indicators routed through focus tokens', () => {
+    expect(collectFocusVisibleIndicatorTokenViolations()).toEqual([]);
   });
 
   test('keeps resize cursors routed through shared tokens', () => {

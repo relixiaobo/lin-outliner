@@ -164,7 +164,7 @@
 }
 
 .definition-color-swatch:focus-visible {
-  outline: 2px solid var(--border-emphasis);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
 
@@ -193,7 +193,7 @@
 }
 
 :root[data-input-modality="keyboard"] .definition-text-input.input-bare:focus-visible {
-  border-color: var(--border-emphasis);
+  border-color: var(--focus-ring);
   background: var(--fill-2);
 }
 

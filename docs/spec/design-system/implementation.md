@@ -123,8 +123,10 @@ Expected checks for design-system changes:
   resize gestures. It also keeps renderer drag regions from selecting chrome
   text, keeps the shared bare input primitive from suppressing the global
   keyboard focus ring, keeps local `:focus-visible` ring suppressions explicitly
-  named, keeps resize cursors routed through the shared cursor tokens, and keeps
-  named chrome icon controls colour-only on hover, focus, and press.
+  named, keeps explicit `:focus-visible` indicator declarations routed through
+  focus-named tokens, keeps resize cursors routed through the shared cursor
+  tokens, and keeps named chrome icon controls colour-only on hover, focus, and
+  press.
 - `tests/e2e/window-material.spec.ts` for window-material and inactive-window
   behavior when material rules change.
 - `git diff --check`

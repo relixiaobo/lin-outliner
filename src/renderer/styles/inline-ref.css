@@ -1,5 +1,6 @@
 .inline-ref {
   --inline-file-ref-hover-shadow: 0 0 0 var(--space-1) var(--fill-1);
+  --inline-file-ref-focus-shadow: var(--inline-file-ref-hover-shadow);
 
   display: inline;
   border-radius: var(--radius-xs);
@@ -23,8 +24,15 @@
 .inline-ref[data-inline-ref-kind="local-file"]:hover,
 .inline-ref[data-inline-ref-kind="local-file"]:focus-visible {
   background: var(--fill-1);
-  box-shadow: var(--inline-file-ref-hover-shadow);
   color: var(--text-strong);
+}
+
+.inline-ref[data-inline-ref-kind="local-file"]:hover {
+  box-shadow: var(--inline-file-ref-hover-shadow);
+}
+
+.inline-ref[data-inline-ref-kind="local-file"]:focus-visible {
+  box-shadow: var(--inline-file-ref-focus-shadow);
 }
 
 .inline-ref.ProseMirror-selectednode {
