@@ -225,7 +225,6 @@
   --text-faint: var(--text-tertiary);
   --text-disabled: var(--text-quaternary);
   --border-subtle: var(--separator);
-  --border-muted: var(--separator);
   /* a strong control border (view-radio ring, etc.) — NOT the hairline divider;
      keep it a visible neutral that inverts with the theme */
   --border-strong: rgb(var(--ink) / 0.30);
@@ -434,7 +433,7 @@
   --bg: var(--surface-soft);
   --surface: var(--panel-bg);
   --surface-2: var(--bg-window);
-  --border: var(--border-muted);
+  --border: var(--separator);
   --border-emphasis: rgb(var(--ink) / 0.18);
   --muted: var(--text-secondary);
   --muted-2: var(--text-tertiary);

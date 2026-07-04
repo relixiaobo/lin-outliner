@@ -473,7 +473,7 @@
 }
 
 .agent-debug-message-row.is-response {
-  border-color: var(--border-muted);
+  border-color: var(--separator);
 }
 
 .agent-debug-message-row + .agent-debug-message-row {

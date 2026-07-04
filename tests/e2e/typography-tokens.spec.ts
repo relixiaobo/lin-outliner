@@ -913,6 +913,7 @@ test.describe('typography tokens', () => {
       'semantic-danger-muted',
       'semantic-info',
       'overlay-active-bg',
+      'border-muted',
     ].join('|');
     const violations = collectCssTextViolations(
       new RegExp(`(?:--(?:${retiredAliases})\\\\s*:|var\\\\(--(?:${retiredAliases})\\\\))`),
