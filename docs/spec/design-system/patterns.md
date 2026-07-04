@@ -20,7 +20,7 @@ Per-component contracts only note deviations from this table.
 | Focus (keyboard) | `--outline-focus` + `--focus-ring-shadow`. Always visible, neutral — never brand or system accent. Text controls (`input` / `textarea` / `select`) carry that ring only after keyboard navigation (`:root[data-input-modality="keyboard"]`); pointer focus relies on the caret or local editing affordance so ordinary clicks do not turn into web-form boxes. Borderless inputs inside clipped inset cards move the keyboard ring to the **row** (`:focus-within`) because an outer ring would be cropped by the card's `overflow:hidden`. |
 | Disabled | `--text-disabled` / `--text-quaternary`; no hover; reduced-intensity fill. |
 | Loading | Reserve one measured slot so the label and size do not jump; spinner uses `--text-secondary`. |
-| Error / destructive | `--status-danger` text/outline marks the resting destructive affordance. Its **hover stays neutral** (`--control-hover`), not a status tint — functional state is neutral (B3); the status colour rides on the label, not the hover fill. |
+| Error / destructive | `--status-danger` text/outline marks the resting destructive affordance. Ordinary destructive hover stays neutral (`--control-hover`), not a status tint — functional state is neutral (B3); the status colour rides on the label, not the hover fill. Solid destructive confirmations follow the Button contract and may use the status-danger fill because the command itself is destructive. |
 
 Rules:
 
