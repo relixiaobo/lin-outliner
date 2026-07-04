@@ -36,10 +36,17 @@ const STYLES_DIR = 'src/renderer/styles';
 const productStyleFiles = readdirSync(STYLES_DIR)
   .filter((file) => file.endsWith('.css'))
   .map((file) => join(STYLES_DIR, file));
+const rendererSourceFiles = collectFiles('src/renderer', ['.css', '.ts', '.tsx']);
 const darkMediaRuleFiles = new Map([
   ['src/renderer/styles/theme-dark.css', 'Central OS-driven dark theme token layer.'],
   ['src/renderer/styles/code.css', 'Generated Shiki token stream resolves --shiki-dark.'],
   ['src/renderer/styles/panel.css', 'Documented blend-mode correction for panel header icons.'],
+]);
+const colorSchemeDeclarationFiles = new Map([
+  ['src/renderer/styles/tokens.css', 'Root advertises light/dark native controls to the OS.'],
+  ['src/renderer/styles/theme-dark.css', 'Central dark-theme token layer flips native controls dark.'],
+  ['src/renderer/styles/file-preview.css', 'Document-preview iframe chrome follows the light-canvas exception.'],
+  ['src/renderer/ui/preview/EpubPreview.tsx', 'EPUB iframe document content follows the light-canvas exception.'],
 ]);
 const reducedMotionRuleFiles = new Map([
   ['src/renderer/styles/a11y.css', 'Central reduced-motion baseline.'],
@@ -65,6 +72,14 @@ function markdownFiles(dir: string): string[] {
     const filePath = join(dir, entry.name);
     if (entry.isDirectory()) return markdownFiles(filePath);
     return entry.isFile() && entry.name.endsWith('.md') ? [filePath] : [];
+  }).sort();
+}
+
+function collectFiles(dir: string, extensions: readonly string[]): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const filePath = join(dir, entry.name);
+    if (entry.isDirectory()) return collectFiles(filePath, extensions);
+    return entry.isFile() && extensions.some((extension) => entry.name.endsWith(extension)) ? [filePath] : [];
   }).sort();
 }
 
@@ -283,6 +298,22 @@ test.describe('typography tokens', () => {
 
   test('keeps renderer theming OS-driven without data-theme selectors', () => {
     const violations = collectCssTextViolations(/\[data-theme\b/);
+
+    expect(violations).toEqual([]);
+  });
+
+  test('keeps color-scheme declarations centralized or registered document exceptions', () => {
+    const violations: string[] = [];
+
+    for (const file of rendererSourceFiles) {
+      const text = readFileSync(file, 'utf8').replace(
+        /\/\*[\s\S]*?\*\//g,
+        (block) => block.replace(/[^\n]/g, ' '),
+      );
+      if (!/(?:^|\n)\s*color-scheme\s*:/.test(text)) continue;
+      if (colorSchemeDeclarationFiles.has(file)) continue;
+      violations.push(`${file} has an unregistered color-scheme declaration`);
+    }
 
     expect(violations).toEqual([]);
   });
