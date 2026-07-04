@@ -114,8 +114,9 @@ Expected checks for design-system changes:
   `--shadow` alias so surfaces name the actual elevation tier they use, keeps
   raw functional color literals inside token declarations, fails undefined live
   token references outside named runtime/generated inputs, keeps motion timing
-  literals routed through motion tokens outside zero delays, and keeps
-  foundation token definitions unique in `tokens.css`.
+  literals routed through motion tokens outside zero delays, prevents design
+  system docs from copying a second `:root` token table, and keeps foundation
+  token definitions unique in `tokens.css`.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
   interaction affordances change, including pointer-cursor scope and forced
   `user-select: none !important` suppression staying limited to active drag /

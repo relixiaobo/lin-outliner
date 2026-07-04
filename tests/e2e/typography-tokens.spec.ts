@@ -648,6 +648,15 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
+  test('keeps foundation token values sourced from live CSS', () => {
+    const violations = extractDesignSystemCssCodeBlocks().flatMap(({ file, css, startLine }) => {
+      if (!/^\s*:root\s*\{/m.test(css)) return [];
+      return [`${file}:${startLine} duplicates the live :root token table instead of linking to tokens.css`];
+    });
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps raw hex colors inside token declarations', () => {
     const violations: string[] = [];
 
