@@ -1,6 +1,7 @@
 import type { CSSProperties, HTMLAttributes, MouseEventHandler, ReactNode } from 'react';
 import { OutlinerRowShell } from './OutlinerRowShell';
 import { RowLeading, type RowLeadingVariant } from './RowLeading';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { MAX_OUTLINE_INDENT_DEPTH } from '../workspaceResponsiveLayout';
 
 interface OutlinerPreviewRowProps {
@@ -74,8 +75,7 @@ export function OutlinerPreviewRow({
             }}
             onDrillDown={onDrillDown}
           />
-          <button
-            type="button"
+          <ButtonControl
             className="outliner-preview-content"
             aria-label={openLabel}
             onClick={onOpen}
@@ -85,7 +85,7 @@ export function OutlinerPreviewRow({
               {meta && <span className="outliner-preview-meta">{meta}</span>}
             </span>
             {description && <span className="outliner-preview-description">{description}</span>}
-          </button>
+          </ButtonControl>
           {action && <span className="outliner-preview-action">{action}</span>}
         </>
       )}

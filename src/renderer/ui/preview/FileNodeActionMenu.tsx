@@ -2,6 +2,7 @@ import { useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../../i18n/I18nProvider';
 import { CopyIcon, FolderIcon, ICON_SIZE, MoreIcon, OpenIcon, ShowIcon } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
@@ -43,7 +44,7 @@ export function FileNodeActionMenu({ node, primaryLabel, onPrimary }: FileNodeAc
 
   return (
     <>
-      <button
+      <ButtonControl
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label={ta.menuLabel}
@@ -60,10 +61,9 @@ export function FileNodeActionMenu({ node, primaryLabel, onPrimary }: FileNodeAc
           setOpen((value) => !value);
         }}
         ref={anchorRef}
-        type="button"
       >
         <MoreIcon size={ICON_SIZE.menu} />
-      </button>
+      </ButtonControl>
       {open ? (
         <FloatingActionMenu
           anchorRef={anchorRef}

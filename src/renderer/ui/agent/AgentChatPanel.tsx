@@ -183,22 +183,22 @@ function ConversationRowMoreMenu({
 
   return (
     <>
-      <button
+      <IconButton
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-label={label}
-        className="icon-button icon-button-message agent-message-action-button agent-conversation-more-button"
+        className="agent-message-action-button agent-conversation-more-button"
         disabled={disabled}
+        icon={MoreIcon}
+        iconSize={ICON_SIZE.menu}
+        label={label}
         onClick={(event) => {
           event.stopPropagation();
           onOpenChange(!open);
         }}
         ref={anchorRef}
         title={label}
-        type="button"
-      >
-        <MoreIcon size={ICON_SIZE.menu} />
-      </button>
+        variant="message"
+      />
       {open ? (
         <AnchoredActionMenu
           actions={actions}

@@ -7,6 +7,8 @@ import { CalendarIcon, LoaderIcon } from '../icons';
 import { DateValuePicker } from '../outliner/DateValuePicker';
 import { scheduleChipSummary } from '../outliner/dateRecurrence';
 import { Button } from '../primitives/Button';
+import { ButtonControl } from '../primitives/ButtonControl';
+import { Textarea } from '../primitives/Textarea';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
 
 interface DreamLauncherProps {
@@ -185,9 +187,8 @@ function DreamScheduleField({ onChange, schedule, summary }: DreamScheduleFieldP
 
   return (
     <div className="dream-schedule-field">
-      <button
+      <ButtonControl
         ref={anchorRef}
-        type="button"
         className={`dream-schedule-trigger ${open ? 'is-open' : ''} ${summary ? '' : 'is-empty'}`.trim()}
         aria-expanded={open}
         aria-haspopup="dialog"
@@ -197,7 +198,7 @@ function DreamScheduleField({ onChange, schedule, summary }: DreamScheduleFieldP
           {summary || t.agent.chat.dreamSchedulePlaceholder}
         </span>
         <CalendarIcon size={13} strokeWidth={1.8} />
-      </button>
+      </ButtonControl>
       <DateValuePicker
         anchorRef={anchorRef}
         value={schedule}
@@ -280,9 +281,10 @@ function ManualRunPopover({
       </label>
       <label className="dream-manual-field">
         <span className="dream-manual-label">{t.agent.chat.dreamManualFocusLabel}</span>
-        <textarea
+        <Textarea
           ref={textareaRef}
           className="dream-manual-guidance"
+          label={t.agent.chat.dreamManualFocusLabel}
           value={guidance}
           onChange={(event) => onGuidanceChange(event.currentTarget.value)}
           placeholder={t.agent.chat.dreamManualFocusPlaceholder}
@@ -321,9 +323,8 @@ function DreamManualDateField({ endDate, maxDate, onChange, startDate }: DreamMa
 
   return (
     <>
-      <button
+      <ButtonControl
         ref={anchorRef}
-        type="button"
         className={`dream-manual-date-trigger ${open ? 'is-open' : ''}`.trim()}
         aria-expanded={open}
         aria-haspopup="dialog"
@@ -333,7 +334,7 @@ function DreamManualDateField({ endDate, maxDate, onChange, startDate }: DreamMa
           {label || 'YYYY-MM-DD'}
         </span>
         <CalendarIcon size={13} strokeWidth={1.8} />
-      </button>
+      </ButtonControl>
       <DateValuePicker
         anchorRef={anchorRef}
         value={value}

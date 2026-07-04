@@ -58,9 +58,12 @@ decision routing, exceptions, and validation.
   2). The main agent records notable system changes in `CHANGELOG.md` on merge.
 - **Native-control exceptions.** Product surfaces prefer shared primitives over
   raw native controls. Direct `button`, `input`, `textarea`, and `select` usages
-  outside primitive implementations must either migrate to a primitive or appear
+  outside component implementations must either migrate to a primitive or appear
   in `scripts/design-system-metrics.ts` with a named reason. The reason must be a
-  real semantic/native requirement, not a styling shortcut.
+  real semantic/native requirement, not a styling shortcut. The metrics script
+  reports component-implementation native controls separately from product-surface
+  direct native controls, so a reusable primitive can own its internal semantics
+  without hiding product-surface drift.
 - **Raw-hex exceptions.** Renderer raw hex belongs in token declarations. Any
   unavoidable source literal must be named in `scripts/design-system-metrics.ts`
   and in the kernel Exception Registry, with a narrow scope and evidence.

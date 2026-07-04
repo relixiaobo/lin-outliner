@@ -1,6 +1,7 @@
 import { api } from '../../api/client';
 import type { NodeProjection } from '../../api/types';
 import { plainText } from '../../api/types';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { CheckboxMark } from '../primitives/CheckboxMark';
 import type { CommandRunner } from '../shared';
 import { useT } from '../../i18n/I18nProvider';
@@ -29,8 +30,7 @@ export function CheckboxFieldControl({ entryId, run, valueNode }: CheckboxFieldC
   };
 
   return (
-    <button
-      type="button"
+    <ButtonControl
       className={`typed-field-boolean typed-field-checkbox ${checked ? 'checked' : ''}`}
       role="checkbox"
       aria-checked={checked}
@@ -38,7 +38,7 @@ export function CheckboxFieldControl({ entryId, run, valueNode }: CheckboxFieldC
     >
       <CheckboxMark checked={checked} />
       <span>{checked ? t.outliner.field.booleanYes : t.outliner.field.booleanNo}</span>
-    </button>
+    </ButtonControl>
   );
 }
 

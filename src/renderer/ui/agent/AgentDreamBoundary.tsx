@@ -9,6 +9,7 @@ import {
 } from '../icons';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
+import { ButtonControl } from '../primitives/ButtonControl';
 
 function dreamTriggerLabel(
   trigger: AgentDreamEntry['dream']['trigger'],
@@ -68,12 +69,11 @@ export function AgentDreamBoundary({
             <small>{meta}</small>
           </div>
         ) : (
-          <button
+          <ButtonControl
             aria-expanded={expanded}
             className="agent-compaction-toggle"
             disabled={!hasDetails}
             onClick={() => setExpanded((open) => !open)}
-            type="button"
           >
             {entry.dream.status === 'failed' ? (
               <WarningIcon size={ICON_SIZE.tiny} />
@@ -87,7 +87,7 @@ export function AgentDreamBoundary({
             )}
             <span>{statusLabel}</span>
             <small>{meta}</small>
-          </button>
+          </ButtonControl>
         )}
       </div>
       <div className="agent-compaction-line" aria-hidden="true" />

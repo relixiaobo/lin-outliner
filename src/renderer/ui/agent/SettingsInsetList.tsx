@@ -1,4 +1,5 @@
 import { memo, type ReactNode } from 'react';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { cx } from '../primitives/cx';
 
 // The macOS System Settings *interaction* idiom, rendered in our own design
@@ -92,16 +93,15 @@ export const InsetRow = memo(function InsetRow({
       role="listitem"
     >
       {onSelect ? (
-        <button
+        <ButtonControl
           aria-current={selected ? 'true' : undefined}
           aria-label={ariaLabel}
           className="inset-row-main"
           disabled={disabled}
           onClick={onSelect}
-          type="button"
         >
           {body}
-        </button>
+        </ButtonControl>
       ) : (
         <div className="inset-row-main is-static">{body}</div>
       )}

@@ -25,27 +25,125 @@ const DECISION_DERIVATION_TARGET = 0.8;
 const RAW_HEX_PATTERN = /#(?:[0-9a-fA-F]{3,8})\b/g;
 
 const componentContracts = [
-  { docNames: ['CheckboxMark'], jsxTags: ['CheckboxMark'] },
-  { docNames: ['CheckboxControl'], jsxTags: ['CheckboxControl'] },
-  { docNames: ['SwitchControl', 'SwitchMark'], jsxTags: ['SwitchControl', 'SwitchMark'] },
-  { docNames: ['IconButton'], jsxTags: ['IconButton'] },
-  { docNames: ['MenuSurface'], jsxTags: ['MenuSurface'] },
-  { docNames: ['MenuItem'], jsxTags: ['MenuItem'] },
-  { docNames: ['useAnchoredOverlay', 'AnchoredActionMenu'], jsxTags: ['AnchoredActionMenu'] },
+  {
+    docNames: ['CheckboxMark'],
+    jsxTags: ['CheckboxMark'],
+    implementationFiles: ['src/renderer/ui/primitives/CheckboxMark.tsx'],
+  },
+  {
+    docNames: ['CheckboxControl'],
+    jsxTags: ['CheckboxControl'],
+    implementationFiles: ['src/renderer/ui/primitives/CheckboxControl.tsx'],
+  },
+  {
+    docNames: ['SwitchControl', 'SwitchMark'],
+    jsxTags: ['SwitchControl', 'SwitchMark'],
+    implementationFiles: [
+      'src/renderer/ui/primitives/SwitchControl.tsx',
+      'src/renderer/ui/primitives/SwitchMark.tsx',
+    ],
+  },
+  {
+    docNames: ['IconButton'],
+    jsxTags: ['IconButton'],
+    implementationFiles: ['src/renderer/ui/primitives/IconButton.tsx'],
+  },
+  {
+    docNames: ['MenuSurface'],
+    jsxTags: ['MenuSurface'],
+    implementationFiles: ['src/renderer/ui/primitives/MenuSurface.tsx'],
+  },
+  {
+    docNames: ['MenuItem'],
+    jsxTags: ['MenuItem'],
+    implementationFiles: ['src/renderer/ui/primitives/MenuItem.tsx'],
+  },
+  {
+    docNames: ['useAnchoredOverlay', 'AnchoredActionMenu'],
+    jsxTags: ['AnchoredActionMenu'],
+    implementationFiles: [
+      'src/renderer/ui/primitives/useAnchoredOverlay.ts',
+      'src/renderer/ui/primitives/AnchoredActionMenu.tsx',
+    ],
+  },
   {
     docNames: ['PopoverListbox', 'PopoverListItem', 'PopoverEmpty'],
     jsxTags: ['PopoverListbox', 'PopoverListItem', 'PopoverEmpty'],
+    implementationFiles: ['src/renderer/ui/outliner/PopoverList.tsx'],
   },
-  { docNames: ['Dialog', 'ConfirmDialog'], jsxTags: ['Dialog', 'ConfirmDialog'] },
-  { docNames: ['Button'], jsxTags: ['Button'] },
-  { docNames: ['ButtonControl'], jsxTags: ['ButtonControl'] },
-  { docNames: ['Input', 'Textarea', 'Field'], jsxTags: ['Input', 'Textarea', 'Field'] },
-  { docNames: ['SelectControl'], jsxTags: ['SelectControl'] },
-  { docNames: ['FeedbackState', 'EmptyState', 'ErrorState'], jsxTags: ['EmptyState', 'ErrorState'] },
-  { docNames: ['TextInputControl', 'NumberInputControl'], jsxTags: ['TextInputControl', 'NumberInputControl'] },
-  { docNames: ['PanelSurface', 'WorkspacePanelSurface'], jsxTags: ['WorkspacePanelSurface'] },
-  { docNames: ['ResizeHandle'], jsxTags: ['ResizeHandle'] },
-  { docNames: ['AppliedTag'], jsxTags: ['AppliedTag'] },
+  {
+    docNames: ['Dialog', 'ConfirmDialog'],
+    jsxTags: ['Dialog', 'ConfirmDialog'],
+    implementationFiles: [
+      'src/renderer/ui/primitives/Dialog.tsx',
+      'src/renderer/ui/primitives/ConfirmDialog.tsx',
+    ],
+  },
+  {
+    docNames: ['Button'],
+    jsxTags: ['Button'],
+    implementationFiles: ['src/renderer/ui/primitives/Button.tsx'],
+  },
+  {
+    docNames: ['ButtonControl'],
+    jsxTags: ['ButtonControl'],
+    implementationFiles: ['src/renderer/ui/primitives/ButtonControl.tsx'],
+  },
+  {
+    docNames: ['Input', 'Textarea', 'Field'],
+    jsxTags: ['Input', 'Textarea', 'Field'],
+    implementationFiles: [
+      'src/renderer/ui/primitives/Input.tsx',
+      'src/renderer/ui/primitives/Textarea.tsx',
+      'src/renderer/ui/primitives/Field.tsx',
+    ],
+  },
+  {
+    docNames: ['SelectControl'],
+    jsxTags: ['SelectControl'],
+    implementationFiles: ['src/renderer/ui/primitives/SelectControl.tsx'],
+  },
+  {
+    docNames: ['SegmentedControl'],
+    jsxTags: ['SegmentedControl'],
+    implementationFiles: ['src/renderer/ui/primitives/SegmentedControl.tsx'],
+  },
+  {
+    docNames: ['FeedbackState', 'EmptyState', 'ErrorState'],
+    jsxTags: ['EmptyState', 'ErrorState'],
+    implementationFiles: ['src/renderer/ui/primitives/FeedbackState.tsx'],
+  },
+  {
+    docNames: ['TextInputControl', 'NumberInputControl'],
+    jsxTags: ['TextInputControl', 'NumberInputControl'],
+    implementationFiles: [
+      'src/renderer/ui/primitives/TextInputControl.tsx',
+      'src/renderer/ui/primitives/NumberInputControl.tsx',
+    ],
+  },
+  {
+    docNames: ['InsetGroup', 'InsetRow', 'SettingsRowMenu'],
+    jsxTags: ['InsetGroup', 'InsetRow', 'SettingsRowMenu'],
+    implementationFiles: [
+      'src/renderer/ui/agent/SettingsInsetList.tsx',
+      'src/renderer/ui/agent/SettingsRowMenu.tsx',
+    ],
+  },
+  {
+    docNames: ['PanelSurface', 'WorkspacePanelSurface'],
+    jsxTags: ['WorkspacePanelSurface'],
+    implementationFiles: ['src/renderer/ui/WorkspacePanelSurface.tsx'],
+  },
+  {
+    docNames: ['ResizeHandle'],
+    jsxTags: ['ResizeHandle'],
+    implementationFiles: ['src/renderer/ui/primitives/ResizeHandle.tsx'],
+  },
+  {
+    docNames: ['AppliedTag'],
+    jsxTags: ['AppliedTag'],
+    implementationFiles: ['src/renderer/ui/tags/AppliedTag.tsx'],
+  },
 ] as const;
 
 // Specialized native controls that are implementation details, not new visual
@@ -159,14 +257,22 @@ function decisionAuditMetrics() {
 function componentCoverageMetrics() {
   const files = sourceFiles(UI_DIR);
   const componentTags = new Set(componentContracts.flatMap((contract) => contract.jsxTags));
+  const componentImplementationFiles = new Set(
+    componentContracts.flatMap((contract) => contract.implementationFiles),
+  );
   const documentedNames = documentedComponentNames();
   const mappedDocNames = new Set(componentContracts.flatMap((contract) => contract.docNames));
   const unmappedDocumentedContracts = [...documentedNames].filter((name) => !mappedDocNames.has(name)).sort();
   const mappedContractsMissingFromDocs = [...mappedDocNames].filter((name) => !documentedNames.has(name)).sort();
+  const componentImplementationFilesMissing = [...componentImplementationFiles]
+    .filter((file) => !existsSync(join(ROOT, file)))
+    .sort();
   let primitiveUses = 0;
   let nativeUses = 0;
   let exceptedNativeUses = 0;
+  let componentImplementationNativeUses = 0;
   const directNativeFiles = new Map<string, number>();
+  const componentImplementationNativeFiles = new Map<string, number>();
   const nativeTags = new Set(['button', 'input', 'textarea', 'select']);
 
   for (const file of files) {
@@ -180,6 +286,8 @@ function componentCoverageMetrics() {
       file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
     );
     let directNativeCount = 0;
+    let componentImplementationNativeCount = 0;
+    const isComponentImplementation = componentImplementationFiles.has(rel) || rel.startsWith('src/renderer/ui/primitives/');
 
     function visit(node: ts.Node) {
       if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
@@ -188,14 +296,22 @@ function componentCoverageMetrics() {
         if (componentTags.has(tagName) || componentTags.has(baseTagName)) {
           primitiveUses += 1;
         }
-        if (!rel.startsWith('src/renderer/ui/primitives/') && nativeTags.has(tagName)) {
-          directNativeCount += 1;
+        if (nativeTags.has(tagName)) {
+          if (isComponentImplementation) {
+            componentImplementationNativeCount += 1;
+          } else {
+            directNativeCount += 1;
+          }
         }
       }
       ts.forEachChild(node, visit);
     }
 
     visit(sourceFile);
+    if (componentImplementationNativeCount > 0) {
+      componentImplementationNativeUses += componentImplementationNativeCount;
+      componentImplementationNativeFiles.set(rel, componentImplementationNativeCount);
+    }
     if (directNativeCount === 0) continue;
     if (nativeControlExceptions[rel]) {
       exceptedNativeUses += directNativeCount;
@@ -210,10 +326,13 @@ function componentCoverageMetrics() {
     primitiveUses,
     directNativeUses: nativeUses,
     exceptedNativeUses,
+    componentImplementationNativeUses,
     componentCoverage: accountableControls === 0 ? 1 : Number((primitiveUses / accountableControls).toFixed(3)),
     componentContractRows: componentContracts.length,
     componentTagNames: [...componentTags].sort(),
     directNativeFiles: Object.fromEntries([...directNativeFiles.entries()].sort()),
+    componentImplementationNativeFiles: Object.fromEntries([...componentImplementationNativeFiles.entries()].sort()),
+    componentImplementationFilesMissing,
     mappedContractsMissingFromDocs,
     unmappedDocumentedContracts,
   };
@@ -333,6 +452,7 @@ function main() {
     console.log(`  surface compression: ${(metrics.designSystem.surfaceCompressionRatio * 100).toFixed(1)}%`);
     console.log(`  decision derivation: ${(metrics.decisionAudit.decisionDerivationCoverage * 100).toFixed(1)}%`);
     console.log(`  component coverage: ${(metrics.components.componentCoverage * 100).toFixed(1)}%`);
+    console.log(`  component implementation native: ${metrics.components.componentImplementationNativeUses}`);
     console.log(`  exception evidence: ${(metrics.exceptions.exceptionEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  raw hex outside tokens: ${metrics.tokens.rawHexOutsideTokenDeclarations}`);
     console.log(`  named raw hex exceptions: ${metrics.tokens.rawHexExceptionUses.length}`);
@@ -356,6 +476,9 @@ function main() {
     }
     if (metrics.components.mappedContractsMissingFromDocs.length > 0) {
       failures.push(`component metric contracts missing from docs: ${metrics.components.mappedContractsMissingFromDocs.join(', ')}`);
+    }
+    if (metrics.components.componentImplementationFilesMissing.length > 0) {
+      failures.push(`component implementation files missing: ${metrics.components.componentImplementationFilesMissing.join(', ')}`);
     }
     if (metrics.exceptions.exceptionEvidenceCoverage < 1) {
       failures.push(`exception evidence ${metrics.exceptions.exceptionEvidenceCoverage} < 1`);

@@ -33,6 +33,7 @@ import { CC_SWITCH_LOCAL_PROVIDER_ID } from '../../../core/localGatewayProviders
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
 import { Button } from '../primitives/Button';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { EmptyState } from '../primitives/FeedbackState';
 import { IconButton } from '../primitives/IconButton';
 import { Input } from '../primitives/Input';
@@ -888,12 +889,11 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                 const cat = t.settings.categories[id];
                 const CategoryIcon = SETTINGS_CATEGORY_ICONS[id];
                 return (
-                  <button
+                  <ButtonControl
                     aria-current={category === id ? 'page' : undefined}
                     className={`settings-nav-item ${category === id ? 'is-active' : ''}`}
                     key={id}
                     onClick={() => navigateCategory(id)}
-                    type="button"
                   >
                     <span className="settings-nav-icon" aria-hidden="true">
                       <CategoryIcon size={ICON_SIZE.menu} strokeWidth={1.75} />
@@ -901,7 +901,7 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                     <span className="settings-nav-copy">
                       <span className="settings-nav-label">{cat.label}</span>
                     </span>
-                  </button>
+                  </ButtonControl>
                 );
               })}
             </nav>
@@ -1140,10 +1140,12 @@ export function AgentSettingsView({ onApplied, onClose, conversationId, initialT
                     label={t.settings.memory.dreamScheduleLabel}
                     sublabel={t.settings.memory.dreamScheduleSublabel}
                     trailing={(
-                      <input
+                      <Input
                         className="settings-sheet-row-input"
+                        label={t.settings.memory.dreamScheduleLabel}
                         value={draft.dreamSchedule}
-                        onChange={(event) => setDraft((current) => ({ ...current, dreamSchedule: event.currentTarget.value }))}
+                        onChange={(event) => setDraft((current) => ({ ...current, dreamSchedule: event.target.value }))}
+                        variant="bare"
                       />
                     )}
                     wrap

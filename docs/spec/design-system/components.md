@@ -25,8 +25,10 @@ and non-goals; product behavior stays with the owning surface.
 | `ButtonControl` | `ButtonControl.tsx` | Low-level native button wrapper with default `type="button"` and ref forwarding. Use it for icon-only or highly custom controls whose visual contract is owned by the surrounding component. |
 | `Input` / `Textarea` / `Field` | `Input.tsx`, `Textarea.tsx`, `Field.tsx`, `styles/input.css` | Shared form-control skin. `boxed` is the tokenized neutral control surface, `bare` inherits the surrounding inset-row focus model. `Field` is the single label/control wrapper: it can provide the default field stack, or accept caller layout classes for inset rows. Helper text, parsing, draft/commit behavior, and validation stay caller-owned. |
 | `SelectControl` | `SelectControl.tsx` | Native select wrapper. `plain` stays caller-styled, `popup` is the compact settings pop-up control, and `boxed` / `bare` share the `Input` visual skin with a passive chevron affordance. Options and value coercion stay caller-owned. |
+| `SegmentedControl` | `SegmentedControl.tsx` | Compact mutually-exclusive option group with roving tabindex and neutral selected fill. Caller owns options, persistence, and any value coercion. |
 | `FeedbackState` / `EmptyState` / `ErrorState` | `FeedbackState.tsx`, `styles/feedback-state.css` | Shared quiet empty/loading/error state. It reserves a stable inline or panel slot, uses muted neutral text by default, spins only for loading, honors reduced motion, and pairs error color with text/icon/action rather than color alone. `EmptyState` and `ErrorState` are the JSX exports. |
 | `TextInputControl` / `NumberInputControl` | `TextInputControl.tsx`, `NumberInputControl.tsx` | Legacy thin native wrappers retained for specialized call sites during migration. New shared form surfaces use `Input` / `Textarea`. |
+| `InsetGroup` / `InsetRow` / `SettingsRowMenu` | `SettingsInsetList.tsx`, `SettingsRowMenu.tsx`, `styles/settings-inset-list.css` | Grouped preference-list primitive: sentence-case section header, one rounded elevated card, content-aligned row separators, split row main/trailing interaction, and an optional `...` row action menu. Product copy, row selection, persistence, and action contents stay caller-owned. |
 | `PanelSurface` / `WorkspacePanelSurface` | `WorkspacePanelSurface.tsx` | Opaque content pane (`--bg-content`), flush within the content base — no card radius, no gap. Panes are divided by a 1px `--separator` (the resize handle), not a per-pane border. Active pane indication is a subtle neutral control-state cue, never a box outline. `WorkspacePanelSurface` is the JSX implementation. |
 | `ResizeHandle` | `ResizeHandle.tsx` | Shared resize button structure. Pointer behavior stays in `useResizableLayout`. |
 | `AppliedTag` | `AppliedTag.tsx` | Fixed measured tag pill using tag palette background/text colors. Hover/focus must not shift row width. |
@@ -94,12 +96,13 @@ the ring is not clipped.
 
 ### Inset Groups And Rows
 
-`SettingsInsetList.tsx` (`InsetGroup` + `InsetRow`) is the grouped-list primitive
-for preference-like surfaces. It renders a sentence-case section header above one
-rounded `--bg-elevated` card whose rows are split by content-aligned hairlines.
-Rows use `--row-h-comfortable`, text-led layout, optional non-interactive
-`leading`, `label`, optional `sublabel`, and a sibling `trailing` interactive
-control. A switch/select/segmented control never nests inside the row button.
+`SettingsInsetList.tsx` (`InsetGroup` + `InsetRow`) and `SettingsRowMenu.tsx` are
+the grouped-list primitive for preference-like surfaces. They render a
+sentence-case section header above one rounded `--bg-elevated` card whose rows
+are split by content-aligned hairlines. Rows use `--row-h-comfortable`, text-led
+layout, optional non-interactive `leading`, `label`, optional `sublabel`, and a
+sibling `trailing` interactive control. A switch/select/segmented control never
+nests inside the row button.
 
 Inset rows carry no row-wide hover fill by default. Hover or keyboard focus
 reveals the row action affordance (`Configure`, `...`, etc.); selected/focused

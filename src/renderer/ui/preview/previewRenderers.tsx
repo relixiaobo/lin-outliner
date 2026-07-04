@@ -45,6 +45,7 @@ import {
 import { inlineFileIconKind, INLINE_FILE_ICON_CLASS } from '../editor/inlineFileIcon';
 import { highlightCode, isKnownCodeLanguage, plainCodeHtml } from '../editor/shikiHighlighter';
 import { normalizeCodeLanguage } from '../editor/codeLanguages';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { wantsNewPaneFromClick } from '../shared';
 import type { FilePreviewNavigationOptions } from '../workspaceLayoutTypes';
 import { formatBytes } from './fileNode';
@@ -484,11 +485,10 @@ function DirectoryPreview({ onOpenTarget, source }: PreviewRendererProps) {
       </div>
       <div className="file-preview-directory-list">
         {state.entries.map((entry) => (
-          <button
+          <ButtonControl
             className="file-preview-directory-row"
             key={`${entry.entryKind}:${entry.name}:${entry.lastModified ?? ''}`}
             onClick={(event) => onOpenTarget(entry.target, { newPane: wantsNewPaneFromClick(event) })}
-            type="button"
           >
             <span
               aria-hidden="true"
@@ -503,7 +503,7 @@ function DirectoryPreview({ onOpenTarget, source }: PreviewRendererProps) {
             <span className="file-preview-directory-meta">
               {entry.entryKind === 'directory' ? labels.directory : formatBytes(entry.sizeBytes)}
             </span>
-          </button>
+          </ButtonControl>
         ))}
       </div>
     </div>
@@ -829,22 +829,20 @@ function HtmlPreview({ source }: PreviewRendererProps) {
   return (
     <div className={`file-preview-html ${showSource ? 'file-preview-html--source' : 'file-preview-html--render'}`}>
       <div className="file-preview-html-mode" role="group" aria-label="HTML preview mode">
-        <button
+        <ButtonControl
           aria-pressed={!showSource}
           className="file-preview-html-mode-button"
           onClick={() => setShowSource(false)}
-          type="button"
         >
           {labels.htmlRenderMode}
-        </button>
-        <button
+        </ButtonControl>
+        <ButtonControl
           aria-pressed={showSource}
           className="file-preview-html-mode-button"
           onClick={() => setShowSource(true)}
-          type="button"
         >
           {labels.htmlSourceMode}
-        </button>
+        </ButtonControl>
       </div>
       {showSource ? (
         <div className="file-preview-code file-preview-html-source" data-preserve-selection data-preview-text dangerouslySetInnerHTML={{ __html: sourceHtml }} />

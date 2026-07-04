@@ -171,18 +171,17 @@ function AgentComposerModelControlImpl({
   function renderModelItem(providerId: string, option: AgentModelOption) {
     const selected = providerId === effectiveProviderId && option.id === effectiveModelId;
     return (
-      <button
+      <ButtonControl
         key={`${providerId}:${option.id}`}
         aria-checked={selected}
         className={`agent-composer-model-item${selected ? ' is-selected' : ''}`}
         onClick={() => selectModel(providerId, option)}
         role="menuitemradio"
-        type="button"
       >
         <span className="agent-composer-model-item-label">{option.name || option.id}</span>
         <span className="agent-composer-model-spacer" />
         <span className="agent-composer-model-check">{selected ? <CheckIcon size={ICON_SIZE.menu} /> : null}</span>
-      </button>
+      </ButtonControl>
     );
   }
 
@@ -212,7 +211,7 @@ function AgentComposerModelControlImpl({
             style={overlayStyle}
           >
             {supportsReasoning ? (
-              <button
+              <ButtonControl
                 ref={effortRowRef}
                 aria-expanded={submenu === 'effort'}
                 aria-haspopup="menu"
@@ -220,16 +219,15 @@ function AgentComposerModelControlImpl({
                 onClick={() => toggleSubmenu('effort')}
                 onMouseEnter={() => setSubmenu('effort')}
                 role="menuitem"
-                type="button"
               >
                 <span className="agent-composer-model-item-label">{composer.reasoningHeading}</span>
                 <span className="agent-composer-model-spacer" />
                 <span className="agent-composer-model-item-meta">{effortRowLabel}</span>
                 <ChevronRightIcon className="agent-composer-model-item-caret" size={ICON_SIZE.menu} />
-              </button>
+              </ButtonControl>
             ) : null}
             {modelCount > 0 ? (
-              <button
+              <ButtonControl
                 ref={modelRowRef}
                 aria-expanded={submenu === 'model'}
                 aria-haspopup="menu"
@@ -237,12 +235,11 @@ function AgentComposerModelControlImpl({
                 onClick={() => toggleSubmenu('model')}
                 onMouseEnter={() => setSubmenu('model')}
                 role="menuitem"
-                type="button"
               >
                 <span className="agent-composer-model-item-label">{modelName}</span>
                 <span className="agent-composer-model-spacer" />
                 <ChevronRightIcon className="agent-composer-model-item-caret" size={ICON_SIZE.menu} />
-              </button>
+              </ButtonControl>
             ) : null}
           </div>,
           document.body,
@@ -261,13 +258,12 @@ function AgentComposerModelControlImpl({
             {reasoningLevels.map((level) => {
               const selected = effort === level;
               return (
-                <button
+                <ButtonControl
                   key={level}
                   aria-checked={selected}
                   className={`agent-composer-model-item${selected ? ' is-selected' : ''}`}
                   onClick={() => selectEffort(level)}
                   role="menuitemradio"
-                  type="button"
                 >
                   <span className="agent-composer-model-item-label">{reasoningLabel(level)}</span>
                   {level === defaultLevel ? (
@@ -275,7 +271,7 @@ function AgentComposerModelControlImpl({
                   ) : null}
                   <span className="agent-composer-model-spacer" />
                   <span className="agent-composer-model-check">{selected ? <CheckIcon size={ICON_SIZE.menu} /> : null}</span>
-                </button>
+                </ButtonControl>
               );
             })}
           </div>,
@@ -302,24 +298,22 @@ function AgentComposerModelControlImpl({
                   ) : null}
                   {visible.map((option) => renderModelItem(group.providerId, option))}
                   {group.models.length > visible.length ? (
-                    <button
+                    <ButtonControl
                       className="agent-composer-model-item agent-composer-model-expander"
                       onClick={() => expandProvider(group.providerId)}
-                      type="button"
                     >
                       <span className="agent-composer-model-item-label">{composer.showAllModels({ count: group.models.length })}</span>
                       <span className="agent-composer-model-spacer" />
                       <ChevronDownIcon className="agent-composer-model-item-caret" size={ICON_SIZE.menu} />
-                    </button>
+                    </ButtonControl>
                   ) : null}
                   {expanded && group.models.length > RECENT_MODEL_COUNT ? (
-                    <button
+                    <ButtonControl
                       className="agent-composer-model-item agent-composer-model-expander"
                       onClick={() => collapseProvider(group.providerId)}
-                      type="button"
                     >
                       <span className="agent-composer-model-item-label">{composer.showFewerModels}</span>
-                    </button>
+                    </ButtonControl>
                   ) : null}
                 </div>
               );

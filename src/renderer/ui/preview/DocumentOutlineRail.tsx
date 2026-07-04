@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from 'react';
 import { useT } from '../../i18n/I18nProvider';
+import { ButtonControl } from '../primitives/ButtonControl';
 
 export type DocumentOutlineItem = {
   id: string;
@@ -147,28 +148,27 @@ export function DocumentOutlineRail({
     >
       <div className="document-outline-rail-track" ref={trackRef}>
         {markers.map((marker, index) => (
-          <button
+          <ButtonControl
+            children={null}
             aria-label={labels.documentOutlineJump({ title: marker.title })}
             className={`document-outline-rail-marker ${index === activeIndex ? 'active' : ''}`}
             key={marker.id}
             onClick={() => jumpToMarker(index)}
             title={marker.title}
-            type="button"
           />
         ))}
       </div>
       <div className="document-outline-popover" ref={popoverRef}>
         {markers.map((marker, index) => (
-          <button
+          <ButtonControl
             className={`document-outline-item ${index === activeIndex ? 'active' : ''}`}
             key={`${marker.id}:label`}
             onClick={() => jumpToMarker(index)}
             style={{ '--document-outline-level': marker.level } as CSSProperties}
             title={marker.title}
-            type="button"
           >
             <span className="document-outline-item-title">{marker.title}</span>
-          </button>
+          </ButtonControl>
         ))}
       </div>
     </nav>

@@ -19,6 +19,7 @@ import { buildPanelBreadcrumb } from './panelBreadcrumb';
 import { replaceRichTextRangeWithInlineRef } from './editor/richTextCodec';
 import { ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from './icons';
 import { OutlinerPreviewRow } from './outliner/OutlinerPreviewRow';
+import { ButtonControl } from './primitives/ButtonControl';
 import { useT } from '../i18n/I18nProvider';
 import { outlinerChildParentId, resolveReferenceTargetId, type DocumentIndex } from '../state/document';
 import { referenceSummaryForExpandedTarget } from '../state/referenceSummary';
@@ -128,8 +129,7 @@ function BacklinksSectionContent(props: BacklinksSectionProps) {
 
   return (
     <section className="backlinks-section" aria-label={labels.title}>
-      <button
-        type="button"
+      <ButtonControl
         className="backlinks-section-toggle"
         aria-expanded={expanded}
         aria-label={expanded ? labels.collapse : labels.expand}
@@ -140,7 +140,7 @@ function BacklinksSectionContent(props: BacklinksSectionProps) {
         {expanded
           ? <ChevronDownIcon className="backlinks-section-chevron" size={ICON_SIZE.tiny} aria-hidden />
           : <ChevronRightIcon className="backlinks-section-chevron" size={ICON_SIZE.tiny} aria-hidden />}
-      </button>
+      </ButtonControl>
       {expanded && (
         <div className="backlinks-section-body">
           {groups.linked.length > 0 && (
@@ -332,8 +332,7 @@ function ReferenceOutlineRow({
       description={description}
       referenceFrame
       action={linkAction && (
-        <button
-          type="button"
+        <ButtonControl
           className="backlinks-link-action"
           title={labels.linkMentionTitle({ title: linkAction.targetTitle ?? labels.untitledSource })}
           onClick={(event) => {
@@ -343,7 +342,7 @@ function ReferenceOutlineRow({
           }}
         >
           {labels.linkMention}
-        </button>
+        </ButtonControl>
       )}
       onOpen={(event) => onOpenSource(event, openId)}
       onToggleExpand={() => onToggleRowExpansion(rowKey)}
@@ -399,14 +398,13 @@ function BreadcrumbPath({
       {nodes.map((node, index) => (
         <span key={node.id} className="backlinks-row-path-part">
           {index > 0 && <span className="backlinks-row-path-separator">/</span>}
-          <button
-            type="button"
+          <ButtonControl
             className="backlinks-row-path-button"
             title={nodeTitle(node, labels.untitledSource)}
             onClick={(event) => onOpenSource(event, node.id)}
           >
             {nodeTitle(node, labels.untitledSource)}
-          </button>
+          </ButtonControl>
         </span>
       ))}
     </div>

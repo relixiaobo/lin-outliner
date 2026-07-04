@@ -114,6 +114,7 @@ import {
   DROP_TARGET_CHANGE_EVENT,
   useOutlinerRowInteraction,
 } from './useOutlinerRowInteraction';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import {
   PopoverBulletIcon,
@@ -2317,17 +2318,15 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                 </span>
               )}
               {fieldValueHref && (
-                <button
-                  type="button"
+                <ButtonControl
                   className="field-value-affordance field-value-open"
                   aria-label={tf.openLink}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => void api.openExternalUrl(fieldValueHref)}
-                ><OpenIcon size={12} strokeWidth={1.8} /></button>
+                ><OpenIcon size={12} strokeWidth={1.8} /></ButtonControl>
               )}
               {showDateTrigger && (
-                <button
-                  type="button"
+                <ButtonControl
                   className="field-value-affordance field-value-date-trigger"
                   aria-label={tf.pickADate}
                   aria-expanded={dateOverlayOpen}
@@ -2335,7 +2334,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
                   onClick={() => setDateOverlayOpen((open) => !open)}
                 >
                   <CalendarIcon size={13} strokeWidth={1.8} />
-                </button>
+                </ButtonControl>
               )}
             </span>
           )}

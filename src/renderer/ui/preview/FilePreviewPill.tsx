@@ -2,6 +2,7 @@ import { useMemo, useRef, useState, type ComponentType, type RefObject } from 'r
 import { createPortal } from 'react-dom';
 import { useT } from '../../i18n/I18nProvider';
 import { ICON_SIZE, MoreIcon, OpenIcon } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
@@ -87,8 +88,7 @@ export function FilePreviewPill({
       onMouseDown={(event) => event.stopPropagation()}
     >
       {hasPrimary ? (
-        <button
-          type="button"
+        <ButtonControl
           className="file-preview-pill-primary"
           title={primaryTitle}
           aria-label={primaryTitle}
@@ -99,13 +99,12 @@ export function FilePreviewPill({
           }}
         >
           {primaryLabel}
-        </button>
+        </ButtonControl>
       ) : null}
       {allMenuActions.length > 0 ? (
         <>
-          <button
+          <ButtonControl
             ref={triggerRef}
-            type="button"
             className="file-preview-pill-more"
             aria-haspopup="menu"
             aria-expanded={open}
@@ -128,7 +127,7 @@ export function FilePreviewPill({
             }}
           >
             <MoreIcon size={ICON_SIZE.menu} />
-          </button>
+          </ButtonControl>
           {open ? (
             <PillMenu
               actions={allMenuActions}

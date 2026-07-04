@@ -5,6 +5,7 @@ import { autoInitStrategiesForFieldType } from '../../../core/autoInit';
 import { resolveFieldOptions } from '../interactions/fieldOptions';
 import { fieldTypeLabel } from '../outliner/fieldTypePresentation';
 import { NodeValuePicker, type NodeValuePickerMarker } from '../outliner/NodeValuePicker';
+import { ButtonControl } from '../primitives/ButtonControl';
 import { Input } from '../primitives/Input';
 import { SwitchControl } from '../primitives/SwitchControl';
 import { SwitchMark } from '../primitives/SwitchMark';
@@ -272,8 +273,8 @@ export function DefinitionColorControl(props: {
   const selected = props.value ?? null;
   return (
     <span className="definition-color-control" role="radiogroup" aria-label={props.label}>
-      <button
-        type="button"
+      <ButtonControl
+        children={null}
         className={`definition-color-swatch definition-color-swatch-none ${selected ? '' : 'selected'}`}
         role="radio"
         aria-checked={!selected}
@@ -284,9 +285,9 @@ export function DefinitionColorControl(props: {
       {TAG_COLOR_PRESETS.map((preset) => {
         const isSelected = selected === preset.token;
         return (
-          <button
+          <ButtonControl
+            children={null}
             key={preset.token}
-            type="button"
             className={`definition-color-swatch ${isSelected ? 'selected' : ''}`}
             role="radio"
             aria-checked={isSelected}
