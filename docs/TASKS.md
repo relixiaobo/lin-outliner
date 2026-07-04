@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369; authored ratified plan agent-process-stable-disclosure #297) |
-| Codex 3 | `lin-outliner-codex-3/` | `codex-3/agent-run-index-completeness` | PR #365 ready for gate (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364**) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,10 +31,10 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-03).** Open PR queue: #365
-(`codex-3/agent-run-index-completeness`). Recently merged: #370
-(`codex-4/data-cleanup-import`) merged 2026-07-03 after main review; see
-*Recently completed*. #369
+**In flight (2026-07-04).** Open PR queue: none. Recently merged: #365
+(`codex-3/agent-run-index-completeness`) merged 2026-07-04 after main
+review; see *Recently completed*. #370 (`codex-4/data-cleanup-import`)
+merged 2026-07-03 after main review; see *Recently completed*. #369
 (`codex-2/cc-switch-local-gateway`), #368
 (`codex/design-system-compression-target`), #367
 (`codex/design-system-contract-refactor`), #366
@@ -114,10 +114,7 @@ the plan first), `launcher-provider-expansion`, the directional agent tails
 (`agent-self-modification` · `agent-generative-ui` — escalate the capability
 boundary), `agent-browser-control` / `agent-computer-control` (plans merged #361; settle the hard
 prohibition, browser-adoption, and helper-packaging decisions before implementation), and
-`browser-extension-integration` (record-only, **not approved to build**), and
-`agent-run-graph-cleanup` (plan merged #364; implementation PRs must keep each
-step complete and preserve the storage clean-cut / notification bookkeeping
-constraints).
+`browser-extension-integration` (record-only, **not approved to build**).
 
 The **agent program** (`agent-program`, `meta`) is PM-ratified and its whole arc — foundation
 through the multi-agent spine, **M0 → M3** — has fully landed (M0/M0.5 foundation · M1
@@ -272,18 +269,6 @@ before any directional/security-sensitive build.
   annotated captures as payload-backed image tool results. Directional/security-
   sensitive: implementation still needs helper-packaging and hard-prohibition
   decisions before code. See `docs/plans/agent-computer-control.md`.
-- **agent-run-graph-cleanup** (P1, plan merged #364, implementation pending) —
-  clean terminal architecture for agent execution: a single event-sourced Run
-  graph where a sub-run is only a Run with `parentRunId`, task/delegation/
-  verifier/background concepts are views or policies, and specialization is
-  `runProfile` rather than a second agent identity. Implementation PRs should
-  converge the storage, runtime, IPC, renderer projection, Work/Runs detail, and
-  tool vocabulary onto Run-centered seams while preserving current durable
-  contracts (`anchor`, `fingerprint`, `retention`, timestamps, latest seq,
-  notification attention bookkeeping) and using `STORAGE_LAYOUT_VERSION` +
-  sentinel wipe for incompatible pre-release shape changes. See
-  `docs/plans/agent-run-graph-cleanup.md`.
-
 Standalone agent items (not part of the program):
 
 - **third-party-skill-import** (P2, *no plan file yet — draft, to be drafted*) —
@@ -550,6 +535,20 @@ anything.
   tests, `bun run typecheck`, `bun run docs:check`, and `git diff --check`.
   Fast-track, **shape (a)**, *no plan file*.
 
+- **agent-run-graph-cleanup** (`codex-3/agent-run-index-completeness`, PR #365,
+  codex-3, merged 2026-07-04, plan-track) — implemented the Run graph cleanup
+  plan: Run metadata/result submission became the shared execution record,
+  legacy `agent_child_run_*` IPC and conversation `child_run.*` lifecycle events
+  left the active path, `spawn_run` replaced the remaining `spawn` tool
+  contract, and Work/Runs, Run detail drawers, turn folding, detached delivery,
+  notifications, and restored runtime state now read from Run index + per-Run
+  ledgers. **Gate (main):** adversarial review found one Work/Runs e2e selector
+  mismatch and two stale active-spec statements; codex-3 fixed all before merge.
+  Verified on the final PR head with `bun run typecheck`, `bun run docs:check`,
+  `git diff --check`, `bun run test:core`, `bun run test:renderer`, and the
+  focused Work/Runs e2e. Shape (a), plan archived:
+  `docs/plans/archive/agent-run-graph-cleanup.md`.
+
 - **agent-run-graph-cleanup-plan** (`codex-3/agent-run-graph-cleanup-plan`, PR #364,
   codex-3, merged 2026-07-02, plan-track) — adds an active P1 design plan for
   cleaning the agent execution model into a single event-sourced Run graph. The
@@ -563,7 +562,8 @@ anything.
   that would have removed restart-safe `notification.created` / `notification.read`
   attention bookkeeping; codex-3 fixed all before merge. Verified on the final PR
   head: `bun run docs:check`, `bun run typecheck`, and `git diff --check`. Shape
-  (b), active plan file: `docs/plans/agent-run-graph-cleanup.md`.
+  (b); implementation shipped as #365, and the plan is now archived at
+  `docs/plans/archive/agent-run-graph-cleanup.md`.
 
 - **tool-lucide-icon-audit** (`codex-2/tool-lucide-icon-audit`, PR #363,
   codex-2, merged 2026-07-02, fast-track) — centralizes renderer tool-call

@@ -12,6 +12,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Run graph cleanup implementation (PR #365, codex-3)** — completed the
+  Run-centered execution cleanup: durable Run metadata/result submission now drive
+  Work/Runs, detail drawers, verifier evidence, restored runtime state, and
+  terminal notifications; legacy `agent_child_run_*` IPC and conversation
+  `child_run.*` lifecycle events are gone from the active path; and the
+  model-facing delegation tool is now `spawn_run`. The Work/Runs UI now uses one
+  Run list plus read-only detail drawers with Run-index breadcrumbs, per-Run
+  ledger transcripts, direct sub-run drill-in, stored drawer height, neutral row
+  affordances, and shared status markers. **Gate (main):** adversarial review
+  found a stale e2e selector and two spec drift issues; codex-3 fixed all before
+  merge. Verified with typecheck, docs check, diff check, core/renderer suites,
+  and focused Work/Runs e2e coverage.
 - **Data cleanup import workflow (PR #370, codex-4)** — added `/data-cleanup`
   as a resource-backed built-in skill plus Import Pack v1 validation, preview,
   and `data_import` staging writes. Tana exports now have a deterministic
