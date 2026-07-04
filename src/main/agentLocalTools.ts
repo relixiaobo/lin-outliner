@@ -444,6 +444,13 @@ export const POPPLER_RECOVERY_INSTRUCTIONS = [
   'If no supported package manager is available, report that Poppler must be installed so pdfinfo, pdftotext, and pdftoppm are on PATH.',
   'After installation, retry the same file_read call.',
 ].join(' ');
+export const RIPGREP_RECOVERY_INSTRUCTIONS = [
+  'ripgrep is required for file_grep.',
+  'Run bash to detect an available package manager and install ripgrep.',
+  'Do not assume Homebrew is available: use an installed manager such as `brew install ripgrep`, `sudo port install ripgrep`, `sudo apt-get update && sudo apt-get install -y ripgrep`, `sudo dnf install -y ripgrep`, or `sudo pacman -S --noconfirm ripgrep`.',
+  'If rg already exists outside this app, restart Tenon with LIN_AGENT_EXTRA_TOOL_PATH pointing at the directory that contains rg.',
+  'After installation or restart, retry the same file_grep call.',
+].join(' ');
 const IGNORED_DIRECTORIES = new Set(['.agent-trash', '.git', '.svn', '.hg', '.bzr', '.jj', '.sl', 'node_modules', 'dist', 'out', 'release', 'target']);
 const IMAGE_MEDIA_TYPES = new Map<string, FileReadImageData['file']['type']>([
   ['.jpg', 'image/jpeg'],
@@ -1472,7 +1479,7 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
   const args = buildRipgrepArgs(workspace, target, params);
   const result = await runProcess('rg', args, workspace.root);
   if (result.error) {
-    throw new LocalToolFailure('ripgrep_unavailable', result.error.message, 'Install ripgrep or make sure rg is available on PATH.');
+    throw new LocalToolFailure('ripgrep_unavailable', result.error.message, RIPGREP_RECOVERY_INSTRUCTIONS);
   }
   if (result.exitCode !== 0 && result.exitCode !== 1) {
     const message = result.stderr.trim() || `rg exited with code ${result.exitCode}.`;

@@ -8,6 +8,7 @@ import {
   createAgentLocalWorkspaceContext,
   createLocalTools,
   POPPLER_RECOVERY_INSTRUCTIONS,
+  RIPGREP_RECOVERY_INSTRUCTIONS,
   restorePostCompactReadFiles,
   scratchRootForWorkdir,
   setAgentLocalPermissionRoots,
@@ -123,6 +124,16 @@ test('Poppler recovery instructions tell the agent to install with bash and retr
   expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('If no supported package manager is available');
   expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('pdftotext');
   expect(POPPLER_RECOVERY_INSTRUCTIONS).toContain('retry the same file_read call');
+});
+
+test('ripgrep recovery instructions tell the agent to install or expose rg and retry', () => {
+  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('Run bash to detect an available package manager');
+  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('Do not assume Homebrew is available');
+  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('`brew install ripgrep`');
+  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('`sudo port install ripgrep`');
+  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('`sudo apt-get update && sudo apt-get install -y ripgrep`');
+  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('LIN_AGENT_EXTRA_TOOL_PATH');
+  expect(RIPGREP_RECOVERY_INSTRUCTIONS).toContain('retry the same file_grep call');
 });
 
 async function waitForFileContent(filePath: string, predicate: (content: string) => boolean, timeoutMs = 1000): Promise<string> {

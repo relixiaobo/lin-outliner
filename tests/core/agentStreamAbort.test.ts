@@ -49,6 +49,15 @@ const CUSTOM_RESPONSES_MODEL: Model<Api> = {
   reasoning: true,
 };
 
+const OPENAI_RESPONSES_MODEL: Model<Api> = {
+  ...MODEL,
+  id: 'gpt-5.5',
+  provider: 'openai',
+  api: 'openai-responses',
+  baseUrl: 'https://api.openai.com/v1',
+  reasoning: true,
+};
+
 describe('agent stream abort settling', () => {
   test('settles a silent stream immediately when aborted', async () => {
     const source = createAssistantMessageEventStream();
@@ -121,6 +130,79 @@ describe('agent stream abort settling', () => {
     if (event.value.type !== 'error') throw new Error('Expected error event.');
     expect(event.value.error.stopReason).toBe('error');
     expect(event.value.error.errorMessage).toBe('stream setup failed');
+  });
+
+  test('retries thinking-only OpenAI Responses stream termination once', async () => {
+    let attempts = 0;
+    const streamFn = createAbortSettledStreamFn((() => {
+      attempts += 1;
+      const source = createAssistantMessageEventStream();
+      const message = attempts === 1
+        ? normalizeAssistant({
+          ...fauxAssistantMessage([], {
+            stopReason: 'error',
+            errorMessage: 'OpenAI Responses stream ended before a terminal response event',
+          }),
+          content: [{ type: 'thinking', thinking: 'partial thinking' }],
+        } as any, OPENAI_RESPONSES_MODEL)
+        : normalizeAssistant(fauxAssistantMessage(fauxText('retry answer')), OPENAI_RESPONSES_MODEL);
+
+      queueMicrotask(() => {
+        source.push({ type: 'start', partial: message });
+        if (attempts === 1) {
+          source.push({ type: 'thinking_start', contentIndex: 0, partial: message });
+          source.push({ type: 'thinking_delta', contentIndex: 0, delta: 'partial thinking', partial: message });
+          source.push({ type: 'thinking_end', contentIndex: 0, content: 'partial thinking', partial: message });
+          source.push({ type: 'error', reason: 'error', error: message });
+          source.end(message);
+          return;
+        }
+        source.push({ type: 'text_start', contentIndex: 0, partial: message });
+        source.push({ type: 'text_delta', contentIndex: 0, delta: 'retry answer', partial: message });
+        source.push({ type: 'text_end', contentIndex: 0, content: 'retry answer', partial: message });
+        source.push({ type: 'done', reason: 'stop', message });
+        source.end(message);
+      });
+      return source;
+    }) as StreamFn);
+
+    const stream = streamFn(OPENAI_RESPONSES_MODEL, { messages: [], tools: [] });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(attempts).toBe(2);
+    expect(events.map((event) => event.type)).toEqual(['start', 'text_start', 'text_delta', 'text_end', 'done']);
+    expect(JSON.stringify(events)).not.toContain('partial thinking');
+    await expect(stream.result()).resolves.toMatchObject({ stopReason: 'stop' });
+  });
+
+  test('does not retry OpenAI Responses termination after material output starts', async () => {
+    let attempts = 0;
+    const streamFn = createAbortSettledStreamFn((() => {
+      attempts += 1;
+      const source = createAssistantMessageEventStream();
+      const message = normalizeAssistant(fauxAssistantMessage(fauxText('partial answer'), {
+        stopReason: 'error',
+        errorMessage: 'OpenAI Responses stream ended before a terminal response event',
+      }), OPENAI_RESPONSES_MODEL);
+
+      queueMicrotask(() => {
+        source.push({ type: 'start', partial: message });
+        source.push({ type: 'text_start', contentIndex: 0, partial: message });
+        source.push({ type: 'text_delta', contentIndex: 0, delta: 'partial answer', partial: message });
+        source.push({ type: 'error', reason: 'error', error: message });
+        source.end(message);
+      });
+      return source;
+    }) as StreamFn);
+
+    const stream = streamFn(OPENAI_RESPONSES_MODEL, { messages: [], tools: [] });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(attempts).toBe(1);
+    expect(events.map((event) => event.type)).toEqual(['start', 'text_start', 'text_delta', 'error']);
+    await expect(stream.result()).resolves.toMatchObject({ stopReason: 'error' });
   });
 
   test('salvages completed custom Responses tool calls when the stream terminates before response.completed', async () => {
