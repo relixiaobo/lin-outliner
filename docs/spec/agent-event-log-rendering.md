@@ -1285,11 +1285,14 @@ Rules:
   panel header/actions. The Run-detail adapter also threads the run terminal
   status and wall-clock into the last assistant row, skips hidden-only context
   user rows, and renders orphan tool results as capped plain text rather than
-  markdown. Hidden notification-only user rows remain invisible, but they are
-  preserved as logical turn boundaries so the resulting assistant continuation
-  renders as a separate response without a visible query row. This keeps the
-  differences at the data-adapter boundary instead of
-  forking presentation behavior.
+  markdown. Matching tool results are process data, not visible transcript
+  boundaries: an `assistant(toolCall) -> toolResult -> assistant(text)` raw run
+  transcript adapts into one assistant turn, with the tool/skill call in the
+  process block and the text in the final response. Hidden notification-only user
+  rows remain invisible, but they are preserved as logical turn boundaries so the
+  resulting assistant continuation renders as a separate response without a
+  visible query row. This keeps the differences at the data-adapter boundary
+  instead of forking presentation behavior.
 - Large details are refs, not row payloads.
 - **Context slimming is invisible to the transcript.** Budget offload and
   time-based microcompact shrink only the *model's* copy of a tool result: a

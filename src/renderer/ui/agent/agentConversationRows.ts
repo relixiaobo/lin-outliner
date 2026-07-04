@@ -6,8 +6,7 @@ import type {
   AgentTurnPhase,
 } from '../../agent/runtime';
 
-// Internal to row-building; not part of the module's public surface.
-type AssistantEntry = AgentMessageEntry & { message: AssistantMessage };
+export type AssistantEntry = AgentMessageEntry & { message: AssistantMessage };
 
 export interface AgentConversationRenderRow {
   key: string;
@@ -55,14 +54,14 @@ function isHiddenTurnBoundaryEntry(entry: AgentConversationEntry): entry is Agen
 // Channel relay puts back-to-back assistant turns from DIFFERENT agents in the
 // transcript; merging across that seam would attribute one agent's words to
 // another. The streaming placeholder (actor null) merges with anything.
-function sameAssistantActor(left: AssistantEntry, right: AssistantEntry): boolean {
+export function sameAssistantActor(left: AssistantEntry, right: AssistantEntry): boolean {
   const leftAgentId = left.actor?.type === 'agent' ? left.actor.agentId : null;
   const rightAgentId = right.actor?.type === 'agent' ? right.actor.agentId : null;
   if (leftAgentId === null || rightAgentId === null) return true;
   return leftAgentId === rightAgentId;
 }
 
-function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {
+export function mergeAssistantEntries(entries: AssistantEntry[]): AgentMessageEntry {
   const lastEntry = entries[entries.length - 1]!;
   // A multi-run turn (e.g. reactive-compaction retry: run-1 overflows, run-2
   // produces the answer) merges into one row, so its "Worked for …" must reflect
