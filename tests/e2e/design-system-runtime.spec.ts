@@ -743,6 +743,16 @@ async function showAgentUsageTooltip(page: Page) {
   await expect(tooltip).toContainText('Cost');
 }
 
+async function showAgentDebugUsageTooltip(page: Page) {
+  await openMockRunDetailsFromAssistantDetailsButton(page);
+  const debugPanel = page.locator('.outline-panel-surface.is-agent-debug');
+  await debugPanel.waitFor({ state: 'visible' });
+  await debugPanel.getByRole('button', { name: 'Call details' }).hover();
+  const tooltip = debugPanel.getByRole('tooltip', { name: 'Call details' });
+  await tooltip.waitFor({ state: 'visible' });
+  await expect(tooltip).toContainText('Cost');
+}
+
 const surfaces: SurfaceCase[] = [
   {
     name: 'main app',
@@ -1115,6 +1125,12 @@ const surfaces: SurfaceCase[] = [
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: showAgentUsageTooltip,
+  },
+  {
+    name: 'agent debug usage tooltip',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showAgentDebugUsageTooltip,
   },
   {
     name: 'agent debug run details',
