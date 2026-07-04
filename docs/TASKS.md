@@ -23,7 +23,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped single-agent-collapse #294, agent-dock-ui #296, file-convert-removal #331; authored plans #302/#303, both shipped 2026-06-19) |
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369; authored ratified plan agent-process-stable-disclosure #297) |
-| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365**) |
+| Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372**) |
 | Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370, data-import-performance #371) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
@@ -31,7 +31,9 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 
 ## In progress
 
-**In flight (2026-07-04).** Open PR queue: none. Recently merged: #371
+**In flight (2026-07-04).** Open PR queue: none. Recently merged: #372
+(`codex-3/run-transcript-turn-coalescing`) merged 2026-07-04 after main
+review; see *Recently completed*. #371
 (`codex-4/data-import-performance`) merged 2026-07-04 after main review;
 see *Recently completed*. #365 (`codex-3/agent-run-index-completeness`)
 merged 2026-07-04 after main review; see *Recently completed*. #370
@@ -457,6 +459,19 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **run-transcript-turn-coalescing** (`codex-3/run-transcript-turn-coalescing`,
+  PR #372, codex-3, merged 2026-07-04, fast-track) — adapts Run Details raw
+  transcripts into the same assistant-turn row model as the main conversation
+  renderer. Matching tool results are treated as process data, so
+  `assistant(toolCall) -> toolResult -> assistant(text)` renders as one
+  assistant turn with the skill/tool call in the process block and the final
+  response attached to that turn. Hidden-only user notifications still split
+  turns without rendering a visible query row, and unmatched tool results remain
+  visible as capped plain-text orphan rows. **Gate (main):** code review found
+  no reportable findings. Verified on the PR head with typecheck, docs check,
+  diff check, targeted transcript/row tests, and the full renderer suite.
+  Fast-track, **shape (a)**, *no plan file*.
 
 - **data-import-performance** (`codex-4/data-import-performance`, PR #371,
   codex-4, merged 2026-07-04, fast-track) — moves data-import description

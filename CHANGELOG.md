@@ -220,6 +220,14 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Fixed
 
+- **Run Details transcript turn coalescing (PR #372, codex-3)** — Run Details
+  now adapts raw `assistant(toolCall) -> toolResult -> assistant(text)`
+  transcripts into one assistant turn instead of visually splitting the final
+  answer away from its tool/skill process. Matching tool results remain process
+  data, hidden-only user notifications still split turns invisibly, and orphan
+  tool results continue to render as capped plain text. **Gate (main):** code
+  review found no reportable findings. Verified with typecheck, docs check, diff
+  check, targeted transcript/row tests, and the full renderer suite.
 - **Disclosure anchor scroll-release spec synced (PR #366, codex-4)** —
   `docs/spec/ui-behavior.md` now explicitly records that immediate user scroll
   input releases the temporary disclosure scroll anchor, so delayed virtual-row
