@@ -786,6 +786,17 @@ const surfaces: SurfaceCase[] = [
     waitFor: '.settings-window .inset-row',
   },
   {
+    name: 'settings provider row menu',
+    path: '/?surface=settings',
+    waitFor: '.settings-window .inset-row',
+    beforeProbe: async (page) => {
+      await page.getByRole('button', { name: 'OpenAI actions' }).click();
+      const menu = page.getByRole('menu', { name: 'Provider actions' });
+      await menu.waitFor({ state: 'visible' });
+      await expect(menu.getByRole('menuitem', { name: /Configure/ })).toBeVisible();
+    },
+  },
+  {
     name: 'settings security',
     path: '/?surface=settings',
     waitFor: '.settings-window .inset-row',

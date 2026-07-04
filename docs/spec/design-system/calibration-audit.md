@@ -62,6 +62,7 @@ standard change that only hides one local violation is not accepted.
 | CA28 | View-toolbar display and group configuration popovers were behavior-tested, while the shared runtime design-system guard only opened sort and filter. | Code drift | Runtime guard now opens display, group, sort, and filter view-configuration popovers in light/dark through the real toolbar. | `tests/e2e/design-system-runtime.spec.ts` |
 | CA29 | Full preview header action menus used the shared menu primitive and focused file-preview behavior tests, but runtime design-system coverage only opened inline preview menus. | Code drift | Runtime guard now opens a file reader split pane and its header action menu in light/dark through the real preview flow. | `tests/e2e/design-system-runtime.spec.ts` |
 | CA30 | View-toolbar tooltips were behavior-tested but absent from the shared runtime design-system guard. | Code drift | Runtime guard now opens a view-toolbar tooltip in light/dark through hover on the real toolbar. | `tests/e2e/design-system-runtime.spec.ts` |
+| CA31 | Settings row action menus used the shared anchored menu primitive and behavior-tested triggers, but runtime design-system coverage only rendered settings rows closed. | Code drift | Runtime guard now opens a configured-provider row action menu in light/dark through the real Settings Providers surface. | `tests/e2e/design-system-runtime.spec.ts` |
 
 ## Named Exceptions Kept
 
