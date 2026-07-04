@@ -225,7 +225,6 @@
   /* a strong control border (view-radio ring, etc.) — NOT the hairline divider;
      keep it a visible neutral that inverts with the theme */
   --border-strong: rgb(var(--ink) / 0.30);
-  --surface-user-bubble: var(--fill-3);
   --surface-inverse: #2e2e32;
   --surface-inverse-strong: #1f1f23;
   --surface-disabled: var(--fill-3);

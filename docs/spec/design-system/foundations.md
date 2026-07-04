@@ -114,9 +114,11 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   only guaranteed legible on the neutral surfaces they were designed for:
   `--bg-window`, `--bg-content`, `--bg-elevated`, and the material tints. They are
   **not** valid on colored semantic surfaces. Any colored surface — tag
-  backgrounds, status badges, the inverse chip, text over a strong material, user
-  bubbles — must define its **own** foreground/background pair, not reach for the
-  neutral ink levels.
+  backgrounds, status badges, the inverse chip, text over a strong material —
+  must define its **own** foreground/background pair, not reach for the neutral
+  ink levels. Neutral user bubbles stay on the foundation ladder
+  (`--fill-3` + `--text-strong`) so transcript content shares the same reusable
+  text/fill model as the rest of the opaque content layer.
 - **Appearance.** `color-scheme: light dark` on `:root`; dark mode is one
   `@media (prefers-color-scheme: dark)` block. The in-app light/dark/system control
   (Settings › General › Theme) drives it through `nativeTheme.themeSource` (which

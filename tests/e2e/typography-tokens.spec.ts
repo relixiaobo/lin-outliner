@@ -920,6 +920,7 @@ test.describe('typography tokens', () => {
       'overlay-backdrop-strong',
       'deck-bg',
       'surface-soft',
+      'surface-user-bubble',
     ].join('|');
     const violations = collectCssTextViolations(
       new RegExp(`(?:--(?:${retiredAliases})\\\\s*:|var\\\\(--(?:${retiredAliases})\\\\))`),
