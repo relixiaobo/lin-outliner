@@ -279,6 +279,12 @@ before any directional/security-sensitive build.
   decisions before code. See `docs/plans/agent-computer-control.md`.
 Standalone agent items (not part of the program):
 
+- **ask-user-question-stepper** (P2, PM-ratified 2026-07-04, build-ready) —
+  replace the stacked multi-question `ask_user_question` card with one stepper
+  interaction that shows one question at a time, preserves drafts across
+  Back/Next navigation, and submits the existing structured result once at the
+  end. Do not keep a batch form mode. See
+  `docs/plans/ask-user-question-stepper.md`.
 - **third-party-skill-import** (P2, *no plan file yet — draft, to be drafted*) —
   the **frontmatter-conformance + importer** half of "standard skills" that
   `bundled-built-in-skill-resources` deliberately scopes out. Goal: let Lin import
