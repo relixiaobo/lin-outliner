@@ -641,7 +641,9 @@ export function deriveAgentToolActionDescriptors(input: {
   if (toolName === 'data_import') {
     return [descriptor(toolName, firstActionKindForTool(toolName, input.args, 'outline.edit'), {
       accessScope: 'allowed_file_area',
-      title: 'local document import',
+      // Do not end this literal with `import`: electron-vite 5's ESM shim
+      // regex can mistake the bundled string for a side-effect import.
+      title: 'local document import operation',
       summary: 'Bulk import cleaned external data into the local outliner document.',
       consequence: 'This creates staged local document content inside Lin.',
       reversible: true,
