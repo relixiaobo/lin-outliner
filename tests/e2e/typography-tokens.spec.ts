@@ -51,6 +51,10 @@ const reducedTransparencyRuleFiles = new Map([
   ['src/renderer/styles/a11y.css', 'Central material fallback token layer.'],
   ['src/renderer/styles/launcher.css', 'System launcher transparent glass collapses to an opaque elevated surface.'],
 ]);
+const contrastRuleFiles = new Map([
+  ['src/renderer/styles/a11y.css', 'Central increased-contrast token layer.'],
+  ['src/renderer/styles/launcher.css', 'System launcher transparent glass collapses to an opaque elevated surface.'],
+]);
 
 function markdownFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -281,6 +285,22 @@ test.describe('typography tokens', () => {
       if (!/@media[^{]*prefers-reduced-transparency:\s*reduce/.test(text)) continue;
       if (reducedTransparencyRuleFiles.has(file)) continue;
       violations.push(`${file} has an unregistered prefers-reduced-transparency: reduce rule`);
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  test('keeps increased-contrast rules centralized or explicitly scoped', () => {
+    const violations: string[] = [];
+
+    for (const file of productStyleFiles) {
+      const text = readFileSync(file, 'utf8').replace(
+        /\/\*[\s\S]*?\*\//g,
+        (block) => block.replace(/[^\n]/g, ' '),
+      );
+      if (!/@media[^{]*prefers-contrast:\s*more/.test(text)) continue;
+      if (contrastRuleFiles.has(file)) continue;
+      violations.push(`${file} has an unregistered prefers-contrast: more rule`);
     }
 
     expect(violations).toEqual([]);
