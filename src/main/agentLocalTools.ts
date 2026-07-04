@@ -1,10 +1,11 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { randomUUID } from 'node:crypto';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, realpathSync, statSync } from 'node:fs';
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { createReadStream, createWriteStream, existsSync, realpathSync, statSync } from 'node:fs';
+import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import {
   AgentFileIngestionFailure,
   ingestRichDocumentAsMarkdown,
@@ -346,19 +347,42 @@ interface TextFileRead {
 interface BackgroundTask {
   taskId: string;
   command: string;
-  process: ChildProcessWithoutNullStreams;
+  process: BashProcessHandle;
   outputPath: string;
-  stdout: string;
-  stderr: string;
+  stdoutPath?: string;
+  stderrPath?: string;
+  outputBytes: number;
   startedAt: number;
   status: BackgroundTaskStatus;
   exitCode?: number | null;
   returnCodeInterpretation?: string;
+  errorMessage?: string;
+  outputLimitExceeded?: boolean;
+  outputLimitBytes?: number;
   completedAt?: number;
   outputWriteChain?: Promise<void>;
+  outputClosed?: Promise<void>;
+  outputWatchdog?: ReturnType<typeof setInterval>;
 }
 
 export type BackgroundTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
+
+interface BashProcessHandle {
+  child: ChildProcess;
+  killEscalationTimer?: ReturnType<typeof setTimeout>;
+}
+
+interface ForegroundOutputCapture {
+  id: string;
+  stdoutPath: string;
+  stderrPath: string;
+  outputClosed?: Promise<void>;
+}
+
+interface OutputWatchdogHandle {
+  timer: ReturnType<typeof setInterval>;
+  stopped: boolean;
+}
 
 interface ImageDimensions {
   width: number;
@@ -397,6 +421,15 @@ interface ProcessItemsResult {
   error?: Error;
 }
 
+interface ProcessLinesPageResult {
+  lines: string[];
+  stderr: string;
+  exitCode: number | null;
+  truncated: boolean;
+  timedOut: boolean;
+  error?: Error;
+}
+
 interface PdfPageRange {
   firstPage: number;
   lastPage: number;
@@ -423,10 +456,15 @@ const DEFAULT_GLOB_LIMIT = 100;
 const FILE_GLOB_CANDIDATE_LIMIT = 5000;
 const DEFAULT_GREP_HEAD_LIMIT = 250;
 const HARD_GREP_OUTPUT_LIMIT = 5000;
+const GREP_STDERR_CAPTURE_CHARS = 60_000;
 const BASH_DEFAULT_TIMEOUT_MS = 120_000;
 const BASH_MAX_TIMEOUT_MS = 600_000;
 const BASH_AUTO_BACKGROUND_MS = 15_000;
 const BASH_INLINE_OUTPUT_LIMIT = 30_000;
+const BASH_MAX_OUTPUT_BYTES = 5 * 1024 * 1024 * 1024;
+const BASH_OUTPUT_WATCHDOG_INTERVAL_MS = 5_000;
+const BASH_MAX_OUTPUT_BYTES_ENV = 'LIN_AGENT_BASH_MAX_OUTPUT_BYTES';
+const BASH_OUTPUT_WATCHDOG_INTERVAL_ENV = 'LIN_AGENT_BASH_OUTPUT_WATCHDOG_INTERVAL_MS';
 const BACKGROUND_TASK_HISTORY_LIMIT = 20;
 const BACKGROUND_TASK_TTL_MS = 30 * 60_000;
 const PDF_MAX_EXTRACT_SIZE = 100 * 1024 * 1024;
@@ -1363,8 +1401,10 @@ function createTaskStopTool(): AgentTool<any, ToolEnvelope<TaskStopData>> {
         }
         task.status = 'stopped';
         task.completedAt = Date.now();
-        task.process.kill('SIGTERM');
-        await appendTaskOutput(task);
+        clearBackgroundOutputWatchdog(task);
+        killBashProcessTree(task.process, 'SIGKILL');
+        await waitForOutputClosed(task.outputClosed);
+        await finalizeBackgroundTaskOutput(task);
         pruneBackgroundTasks();
         const data: TaskStopData = {
           message: `Successfully stopped task: ${task.taskId} (${task.command})`,
@@ -1477,57 +1517,58 @@ async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Pro
 
   const mode = params.output_mode ?? 'files_with_matches';
   const args = buildRipgrepArgs(workspace, target, params);
-  const result = await runProcess('rg', args, workspace.root);
+  const page = grepPageParams(params.head_limit, params.offset);
+  const result = await runProcessLinesPage('rg', args, workspace.root, page.offset, page.limit, 60_000);
   if (result.error) {
     throw new LocalToolFailure('ripgrep_unavailable', result.error.message, RIPGREP_RECOVERY_INSTRUCTIONS);
   }
-  if (result.exitCode !== 0 && result.exitCode !== 1) {
+  if (result.exitCode !== 0 && result.exitCode !== 1 && !result.truncated) {
     const message = result.stderr.trim() || `rg exited with code ${result.exitCode}.`;
     throw new LocalToolFailure('ripgrep_failed', message, 'Fix the regular expression, path, glob, or type filter and retry.');
   }
 
-  const rawLines = splitProcessLines(result.stdout);
+  const rawLines = result.lines.slice(0, page.limit);
+  const appliedLimit = result.truncated || result.lines.length > page.limit ? page.limit : undefined;
+  const appliedOffset = page.offset > 0 ? page.offset : undefined;
 
   if (mode === 'content') {
-    const page = applyHeadLimit(rawLines.map((line) => relativizeRipgrepLine(workspace, line, 'content')), params.head_limit, params.offset);
+    const items = rawLines.map((line) => relativizeRipgrepLine(workspace, line, 'content'));
     return {
       mode: 'content',
       numFiles: 0,
       filenames: [],
-      content: page.items.join('\n'),
-      numLines: page.items.length,
-      ...(page.appliedLimit !== undefined ? { appliedLimit: page.appliedLimit } : {}),
-      ...(page.appliedOffset !== undefined ? { appliedOffset: page.appliedOffset } : {}),
+      content: items.join('\n'),
+      numLines: items.length,
+      ...(appliedLimit !== undefined ? { appliedLimit } : {}),
+      ...(appliedOffset !== undefined ? { appliedOffset } : {}),
     };
   }
 
   if (mode === 'count') {
-    const countLines = rawLines.map((line) => relativizeRipgrepLine(workspace, line, 'count'));
-    const page = applyHeadLimit(countLines, params.head_limit, params.offset);
-    const numMatches = page.items.reduce((sum, line) => {
+    const items = rawLines.map((line) => relativizeRipgrepLine(workspace, line, 'count'));
+    const numMatches = items.reduce((sum, line) => {
       const colonIndex = line.lastIndexOf(':');
       const parsed = colonIndex >= 0 ? Number(line.slice(colonIndex + 1)) : Number.NaN;
       return Number.isFinite(parsed) ? sum + parsed : sum;
     }, 0);
     return {
       mode: 'count',
-      numFiles: page.items.length,
+      numFiles: items.length,
       filenames: [],
-      content: page.items.join('\n'),
+      content: items.join('\n'),
       numMatches,
-      ...(page.appliedLimit !== undefined ? { appliedLimit: page.appliedLimit } : {}),
-      ...(page.appliedOffset !== undefined ? { appliedOffset: page.appliedOffset } : {}),
+      ...(appliedLimit !== undefined ? { appliedLimit } : {}),
+      ...(appliedOffset !== undefined ? { appliedOffset } : {}),
     };
   }
 
   const filenames = rawLines.map((line) => relativeToWorkspace(workspace, path.resolve(workspace.root, line)));
-  const page = applyHeadLimit(filenames, params.head_limit, params.offset);
   return {
     mode: 'files_with_matches',
-    numFiles: page.items.length,
-    filenames: page.items,
-    ...(page.appliedLimit !== undefined ? { appliedLimit: page.appliedLimit } : {}),
-    ...(page.appliedOffset !== undefined ? { appliedOffset: page.appliedOffset } : {}),
+    numFiles: filenames.length,
+    filenames,
+    ...(appliedLimit !== undefined ? { appliedLimit } : {}),
+    ...(appliedOffset !== undefined ? { appliedOffset } : {}),
   };
 }
 
@@ -1581,12 +1622,6 @@ function splitGlobPatterns(glob: string): string[] {
   return patterns;
 }
 
-function splitProcessLines(stdout: string): string[] {
-  const normalized = normalizeLineEndings(stdout);
-  if (!normalized.trim()) return [];
-  return normalized.endsWith('\n') ? normalized.slice(0, -1).split('\n') : normalized.split('\n');
-}
-
 function relativizeRipgrepLine(workspace: WorkspaceContext, line: string, mode: 'content' | 'count'): string {
   const colonIndex = mode === 'count' ? line.lastIndexOf(':') : line.indexOf(':');
   if (colonIndex <= 0) return line;
@@ -1599,6 +1634,13 @@ function relativizeRipgrepLine(workspace: WorkspaceContext, line: string, mode: 
 function relativeTarget(workspace: WorkspaceContext, target: string): string {
   const relative = path.relative(workspace.root, target);
   return relative ? normalizePathSeparators(relative) : '.';
+}
+
+function grepPageParams(rawLimit: number | undefined, rawOffset: number | undefined): { limit: number; offset: number } {
+  return {
+    limit: rawLimit === 0 ? HARD_GREP_OUTPUT_LIMIT : clampInteger(rawLimit, 1, HARD_GREP_OUTPUT_LIMIT, DEFAULT_GREP_HEAD_LIMIT),
+    offset: clampInteger(rawOffset, 0, Number.MAX_SAFE_INTEGER, 0),
+  };
 }
 
 function relativeToWorkspace(workspace: WorkspaceContext, filePath: string): string {
@@ -1658,7 +1700,7 @@ async function runProcessItems(
     const stopForLimit = () => {
       if (truncated) return;
       truncated = true;
-      child.kill('SIGTERM');
+      safeKillChildProcess(child, 'SIGTERM');
     };
     const pushItem = (item: string) => {
       if (!item) return;
@@ -1671,7 +1713,7 @@ async function runProcessItems(
     };
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGTERM');
+      safeKillChildProcess(child, 'SIGTERM');
     }, timeoutMs);
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -1690,6 +1732,75 @@ async function runProcessItems(
     child.once('close', (code) => {
       if (pending && !truncated && !timedOut) pushItem(pending);
       finish({ items, stderr, exitCode: code, truncated, timedOut });
+    });
+  });
+}
+
+async function runProcessLinesPage(
+  command: string,
+  args: string[],
+  cwd: string,
+  offset: number,
+  limit: number,
+  timeoutMs: number,
+): Promise<ProcessLinesPageResult> {
+  return await new Promise<ProcessLinesPageResult>((resolve) => {
+    const child = spawn(command, args, { cwd, env: buildAgentLocalToolProcessEnv(), shell: false });
+    const lines: string[] = [];
+    let stderr = '';
+    let pending = '';
+    let seen = 0;
+    let truncated = false;
+    let timedOut = false;
+    let settled = false;
+    const maxLines = limit + 1;
+    const finish = (result: ProcessLinesPageResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const stopForLimit = () => {
+      if (truncated) return;
+      truncated = true;
+      safeKillChildProcess(child, 'SIGTERM');
+    };
+    const pushLine = (line: string) => {
+      if (seen < offset) {
+        seen += 1;
+        return;
+      }
+      if (lines.length >= maxLines) {
+        stopForLimit();
+        return;
+      }
+      lines.push(line);
+      seen += 1;
+      if (lines.length >= maxLines) stopForLimit();
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      safeKillChildProcess(child, 'SIGTERM');
+    }, timeoutMs);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      const parts = normalizeLineEndings(`${pending}${chunk}`).split('\n');
+      pending = parts.pop() ?? '';
+      for (const part of parts) {
+        pushLine(part);
+        if (truncated) break;
+      }
+    });
+    child.stderr.on('data', (chunk: string) => {
+      stderr = appendBoundedText(stderr, chunk, GREP_STDERR_CAPTURE_CHARS);
+    });
+    child.once('error', (error) => {
+      finish({ lines, stderr, exitCode: null, truncated, timedOut, error });
+    });
+    child.once('close', (code) => {
+      if (pending && !truncated && !timedOut) pushLine(pending);
+      finish({ lines, stderr, exitCode: code, truncated, timedOut });
     });
   });
 }
@@ -1740,77 +1851,94 @@ function extractBaseCommand(command: string): string {
 
 async function runForegroundCommand(workspace: WorkspaceContext, params: BashParams, signal?: AbortSignal): Promise<BashData> {
   const timeoutMs = clampInteger(params.timeout, 1, BASH_MAX_TIMEOUT_MS, BASH_DEFAULT_TIMEOUT_MS);
-  const child = spawn(params.command, {
-    cwd: workspace.root,
-    shell: true,
-    env: buildAgentLocalToolProcessEnv(),
-  });
-  let stdout = '';
-  let stderr = '';
+  const capture = await createForegroundOutputCapture(workspace);
+  let processHandle: BashProcessHandle;
+  try {
+    const child = spawn(params.command, {
+      cwd: workspace.root,
+      shell: true,
+      env: buildAgentLocalToolProcessEnv(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+      windowsHide: true,
+    });
+    processHandle = { child };
+    attachSplitOutputCapture(child, capture);
+  } catch (error) {
+    await cleanupForegroundOutputCapture(capture);
+    throw error;
+  }
+
   let interrupted = false;
   let timedOut = false;
+  let outputLimitExceededBytes: number | undefined;
   let resolved = false;
   const timeoutTimer = setTimeout(() => {
     timedOut = true;
     interrupted = true;
-    child.kill('SIGTERM');
+    requestBashProcessStop(processHandle);
   }, timeoutMs);
   const onAbort = () => {
     interrupted = true;
-    child.kill('SIGTERM');
+    requestBashProcessStop(processHandle);
   };
   signal?.addEventListener('abort', onAbort, { once: true });
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk: string) => { stdout += chunk; });
-  child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+  const foregroundOutputWatchdog = startForegroundOutputWatchdog(capture, processHandle, (limitBytes) => {
+    outputLimitExceededBytes = limitBytes;
+    interrupted = true;
+  });
 
   return await new Promise<BashData>((resolve, reject) => {
     const autoBackgroundTimer = setTimeout(() => {
       if (resolved || interrupted || !shouldAutoBackground(params.command)) return;
       resolved = true;
       clearTimeout(timeoutTimer);
+      clearOutputWatchdog(foregroundOutputWatchdog);
       signal?.removeEventListener('abort', onAbort);
-      void registerBackgroundTask(workspace, params, child, {
-        initialStdout: stdout,
-        initialStderr: stderr,
+      void registerBackgroundTask(workspace, params, {
+        process: processHandle,
+        foregroundCapture: capture,
         assistantAutoBackgrounded: true,
       }).then((data) => resolve(data), reject);
     }, BASH_AUTO_BACKGROUND_MS);
 
-    child.once('error', (error) => {
+    processHandle.child.once('error', (error) => {
       if (resolved) return;
       resolved = true;
       clearTimeout(timeoutTimer);
       clearTimeout(autoBackgroundTimer);
+      clearOutputWatchdog(foregroundOutputWatchdog);
+      clearBashKillEscalation(processHandle);
       signal?.removeEventListener('abort', onAbort);
-      reject(error);
+      void cleanupForegroundOutputCapture(capture).finally(() => reject(error));
     });
-    child.once('close', (code) => {
+    processHandle.child.once('close', (code) => {
       if (resolved) return;
       resolved = true;
       clearTimeout(timeoutTimer);
       clearTimeout(autoBackgroundTimer);
+      clearOutputWatchdog(foregroundOutputWatchdog);
+      clearBashKillEscalation(processHandle);
       signal?.removeEventListener('abort', onAbort);
       void (async () => {
-        const persisted = await persistLargeOutput(workspace, stdout, stderr);
-        const display = persisted
-          ? truncateShellOutput(stdout, stderr)
-          : { stdout, stderr };
-        const interpretation = timedOut
-          ? { isError: true, message: `Command timed out after ${timeoutMs}ms.` }
-          : interpretCommandResult(params.command, code);
+        await waitForOutputClosed(capture.outputClosed);
+        const output = await finalizeForegroundOutput(workspace, capture);
+        const interpretation = outputLimitExceededBytes !== undefined
+          ? { isError: true, message: `Command killed: output exceeded ${formatBytes(outputLimitExceededBytes)}.` }
+          : timedOut
+            ? { isError: true, message: `Command timed out after ${timeoutMs}ms.` }
+            : interpretCommandResult(params.command, code);
         resolve({
-          stdout: display.stdout,
-          stderr: display.stderr,
+          stdout: output.stdout,
+          stderr: output.stderr,
           interrupted,
           exitCode: code,
           command: params.command,
           returnCodeInterpretation: interpretation.message,
           noOutputExpected: isSilentCommand(params.command),
           dangerouslyDisableSandbox: params.dangerouslyDisableSandbox,
-          persistedOutputPath: persisted?.path,
-          persistedOutputSize: persisted?.size,
+          persistedOutputPath: output.persistedOutputPath,
+          persistedOutputSize: output.persistedOutputSize,
         });
       })().catch(reject);
     });
@@ -1818,21 +1946,15 @@ async function runForegroundCommand(workspace: WorkspaceContext, params: BashPar
 }
 
 async function startBackgroundCommand(workspace: WorkspaceContext, params: BashParams): Promise<BashData> {
-  const child = spawn(params.command, {
-    cwd: workspace.root,
-    shell: true,
-    env: buildAgentLocalToolProcessEnv(),
-  });
-  return registerBackgroundTask(workspace, params, child, { backgroundedByUser: true });
+  return registerBackgroundTask(workspace, params, { backgroundedByUser: true });
 }
 
 async function registerBackgroundTask(
   workspace: WorkspaceContext,
   params: BashParams,
-  child: ChildProcessWithoutNullStreams,
   options: {
-    initialStdout?: string;
-    initialStderr?: string;
+    process?: BashProcessHandle;
+    foregroundCapture?: ForegroundOutputCapture;
     backgroundedByUser?: boolean;
     assistantAutoBackgrounded?: boolean;
   } = {},
@@ -1840,42 +1962,68 @@ async function registerBackgroundTask(
   pruneBackgroundTasks();
   const taskId = `task_${randomUUID()}`;
   const outputPath = taskOutputPath(workspace, taskId);
+  const startedAt = Date.now();
+  await mkdir(path.dirname(outputPath), { recursive: true });
+
+  let processHandle = options.process;
+  let stdoutPath: string | undefined;
+  let stderrPath: string | undefined;
+  let outputClosed: Promise<void> | undefined;
+
+  if (options.foregroundCapture) {
+    if (!processHandle) {
+      await cleanupForegroundOutputCapture(options.foregroundCapture);
+      throw new Error('Cannot background a foreground capture without a child process.');
+    }
+    stdoutPath = options.foregroundCapture.stdoutPath;
+    stderrPath = options.foregroundCapture.stderrPath;
+    outputClosed = options.foregroundCapture.outputClosed;
+  } else {
+    const capture = await createForegroundOutputCapture(workspace);
+    stdoutPath = capture.stdoutPath;
+    stderrPath = capture.stderrPath;
+    try {
+      const child = spawn(params.command, {
+        cwd: workspace.root,
+        shell: true,
+        env: buildAgentLocalToolProcessEnv(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: process.platform !== 'win32',
+        windowsHide: true,
+      });
+      processHandle = { child };
+      attachSplitOutputCapture(child, capture);
+      outputClosed = capture.outputClosed;
+    } catch (error) {
+      await cleanupForegroundOutputCapture(capture);
+      throw error;
+    }
+  }
+
+  if (!processHandle) throw new Error('Background task did not create a child process.');
+
   const task: BackgroundTask = {
     taskId,
     command: params.command,
-    process: child,
+    process: processHandle,
     outputPath,
-    stdout: options.initialStdout ?? '',
-    stderr: options.initialStderr ?? '',
-    startedAt: Date.now(),
+    stdoutPath,
+    stderrPath,
+    outputBytes: 0,
+    startedAt,
     status: 'running',
+    outputClosed,
   };
   backgroundTasks.set(taskId, task);
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk: string) => {
-    task.stdout += chunk;
-    void appendTaskOutput(task);
-  });
-  child.stderr.on('data', (chunk: string) => {
-    task.stderr += chunk;
-    void appendTaskOutput(task);
-  });
-  child.once('close', (code) => {
-    const interpretation = interpretCommandResult(params.command, code);
-    if (task.status === 'running') task.status = interpretation.isError ? 'failed' : 'completed';
-    task.exitCode = code;
-    task.returnCodeInterpretation = interpretation.message;
-    task.completedAt = Date.now();
-    void appendTaskOutput(task).finally(() => pruneBackgroundTasks());
-  });
-  child.once('error', (error) => {
-    task.status = 'failed';
-    task.completedAt = Date.now();
-    task.stderr += `\n${errorMessage(error)}`;
-    void appendTaskOutput(task).finally(() => pruneBackgroundTasks());
-  });
-  await appendTaskOutput(task);
+
+  await writeSplitBackgroundInitialOutput(task);
+
+  attachBackgroundTaskHandlers(task, params);
+  startBackgroundOutputWatchdog(task);
+  if (processHandle.child.exitCode !== null || processHandle.child.signalCode !== null) {
+    void completeBackgroundTask(task, params, processHandle.child.exitCode);
+  }
+
   return {
     stdout: '',
     stderr: '',
@@ -1889,7 +2037,7 @@ async function registerBackgroundTask(
     noOutputExpected: isSilentCommand(params.command),
     dangerouslyDisableSandbox: params.dangerouslyDisableSandbox,
     persistedOutputPath: outputPath,
-    persistedOutputSize: new TextEncoder().encode(task.stdout + task.stderr).byteLength,
+    persistedOutputSize: task.outputBytes,
   };
 }
 
@@ -2478,37 +2626,6 @@ async function writeTextFile(
   await writeFile(filePath, Buffer.from(withBom, metadata.encoding));
 }
 
-function applyHeadLimit<T>(items: T[], rawLimit: number | undefined, rawOffset: number | undefined): { items: T[]; appliedLimit?: number; appliedOffset?: number } {
-  const offset = clampInteger(rawOffset, 0, Number.MAX_SAFE_INTEGER, 0);
-  const limit = rawLimit === 0 ? HARD_GREP_OUTPUT_LIMIT : clampInteger(rawLimit, 1, HARD_GREP_OUTPUT_LIMIT, DEFAULT_GREP_HEAD_LIMIT);
-  const sliced = items.slice(offset, offset + limit);
-  const wasTruncated = items.length - offset > limit;
-  return {
-    items: sliced,
-    ...(wasTruncated ? { appliedLimit: limit } : {}),
-    ...(offset > 0 ? { appliedOffset: offset } : {}),
-  };
-}
-
-async function persistLargeOutput(workspace: WorkspaceContext, stdout: string, stderr: string): Promise<{ path: string; size: number } | null> {
-  const combined = `${stdout}${stderr}`;
-  const size = new TextEncoder().encode(combined).byteLength;
-  if (size <= BASH_INLINE_OUTPUT_LIMIT) return null;
-  const outputPath = taskOutputPath(workspace, randomUUID());
-  await mkdir(path.dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, combined, 'utf8');
-  return { path: outputPath, size };
-}
-
-function truncateShellOutput(stdout: string, stderr: string): { stdout: string; stderr: string } {
-  const stdoutBudget = Math.floor(BASH_INLINE_OUTPUT_LIMIT * 0.7);
-  const stderrBudget = BASH_INLINE_OUTPUT_LIMIT - stdoutBudget;
-  return {
-    stdout: truncateMiddle(stdout, stdoutBudget),
-    stderr: truncateMiddle(stderr, stderrBudget),
-  };
-}
-
 function taskOutputPath(workspace: WorkspaceContext, id: string): string {
   return path.join(toolOutputDir(workspace), `${id}.log`);
 }
@@ -2536,31 +2653,377 @@ function pruneBackgroundTasks(now = Date.now()) {
   }
 }
 
-async function appendTaskOutput(task: BackgroundTask) {
-  const write = async () => {
-    const header = [
-      `task_id: ${task.taskId}`,
-      `status: ${task.status}`,
-      ...(task.exitCode !== undefined ? [`exit_code: ${task.exitCode}`] : []),
-      ...(task.returnCodeInterpretation ? [`return_code_interpretation: ${task.returnCodeInterpretation}`] : []),
-      `command: ${task.command}`,
-      `started_at: ${new Date(task.startedAt).toISOString()}`,
-      ...(task.completedAt ? [`completed_at: ${new Date(task.completedAt).toISOString()}`] : []),
+async function createForegroundOutputCapture(workspace: WorkspaceContext): Promise<ForegroundOutputCapture> {
+  const id = `fg_${randomUUID()}`;
+  const outputDir = toolOutputDir(workspace);
+  await mkdir(outputDir, { recursive: true });
+  const stdoutPath = path.join(outputDir, `${id}.stdout.log`);
+  const stderrPath = path.join(outputDir, `${id}.stderr.log`);
+  return { id, stdoutPath, stderrPath };
+}
+
+async function cleanupForegroundOutputCapture(capture: ForegroundOutputCapture) {
+  await Promise.allSettled([
+    rm(capture.stdoutPath, { force: true }),
+    rm(capture.stderrPath, { force: true }),
+  ]);
+}
+
+function attachSplitOutputCapture(child: ChildProcess, capture: ForegroundOutputCapture) {
+  const writes = [
+    child.stdout
+      ? pipeline(child.stdout, createWriteStream(capture.stdoutPath, { flags: 'w' }))
+      : writeFile(capture.stdoutPath, '', 'utf8'),
+    child.stderr
+      ? pipeline(child.stderr, createWriteStream(capture.stderrPath, { flags: 'w' }))
+      : writeFile(capture.stderrPath, '', 'utf8'),
+  ];
+  capture.outputClosed = Promise.allSettled(writes).then(() => {});
+}
+
+async function waitForOutputClosed(outputClosed: Promise<void> | undefined) {
+  if (!outputClosed) return;
+  await outputClosed;
+}
+
+function startForegroundOutputWatchdog(
+  capture: ForegroundOutputCapture,
+  processHandle: BashProcessHandle,
+  onLimitExceeded: (limitBytes: number) => void,
+): OutputWatchdogHandle {
+  const maxBytes = bashMaxOutputBytes();
+  const intervalMs = bashOutputWatchdogIntervalMs();
+  const watchdog: OutputWatchdogHandle = {
+    timer: setInterval(() => {
+      if (watchdog.stopped) return;
+      void foregroundCaptureOutputSize(capture).then((size) => {
+        if (watchdog.stopped || size <= maxBytes) return;
+        watchdog.stopped = true;
+        clearInterval(watchdog.timer);
+        onLimitExceeded(maxBytes);
+        killBashProcessTree(processHandle, 'SIGKILL');
+      }, () => {});
+    }, intervalMs),
+    stopped: false,
+  };
+  watchdog.timer.unref?.();
+  return watchdog;
+}
+
+function clearOutputWatchdog(watchdog: OutputWatchdogHandle) {
+  if (watchdog.stopped) return;
+  watchdog.stopped = true;
+  clearInterval(watchdog.timer);
+}
+
+async function foregroundCaptureOutputSize(capture: ForegroundOutputCapture): Promise<number> {
+  const sizes = await Promise.all([
+    fileSizeOrZero(capture.stdoutPath),
+    fileSizeOrZero(capture.stderrPath),
+  ]);
+  return sizes.reduce((sum, size) => sum + size, 0);
+}
+
+async function finalizeForegroundOutput(
+  workspace: WorkspaceContext,
+  capture: ForegroundOutputCapture,
+): Promise<{ stdout: string; stderr: string; persistedOutputPath?: string; persistedOutputSize?: number }> {
+  const [stdoutSize, stderrSize] = await Promise.all([
+    fileSizeOrZero(capture.stdoutPath),
+    fileSizeOrZero(capture.stderrPath),
+  ]);
+  const totalSize = stdoutSize + stderrSize;
+  if (totalSize <= BASH_INLINE_OUTPUT_LIMIT) {
+    const [stdout, stderr] = await Promise.all([
+      readTextPreview(capture.stdoutPath, stdoutSize, stdoutSize),
+      readTextPreview(capture.stderrPath, stderrSize, stderrSize),
+    ]);
+    await cleanupForegroundOutputCapture(capture);
+    return { stdout, stderr };
+  }
+
+  const outputPath = taskOutputPath(workspace, capture.id);
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, '', 'utf8');
+  await appendFileFromPath(outputPath, capture.stdoutPath);
+  await appendFileFromPath(outputPath, capture.stderrPath);
+
+  const stdoutBudget = Math.floor(BASH_INLINE_OUTPUT_LIMIT * 0.7);
+  const stderrBudget = BASH_INLINE_OUTPUT_LIMIT - stdoutBudget;
+  const [stdout, stderr] = await Promise.all([
+    readTextPreview(capture.stdoutPath, stdoutSize, stdoutBudget),
+    readTextPreview(capture.stderrPath, stderrSize, stderrBudget),
+  ]);
+  await cleanupForegroundOutputCapture(capture);
+  return {
+    stdout,
+    stderr,
+    persistedOutputPath: outputPath,
+    persistedOutputSize: totalSize,
+  };
+}
+
+function attachBackgroundTaskHandlers(task: BackgroundTask, params: BashParams) {
+  task.process.child.once('close', (code) => {
+    void completeBackgroundTask(task, params, code);
+  });
+  task.process.child.once('error', (error) => {
+    void failBackgroundTask(task, error);
+  });
+}
+
+async function completeBackgroundTask(task: BackgroundTask, params: BashParams, code: number | null) {
+  if (task.completedAt) return;
+  await waitForOutputClosed(task.outputClosed);
+  clearBackgroundOutputWatchdog(task);
+  clearBashKillEscalation(task.process);
+  const interpretation = interpretCommandResult(params.command, code);
+  if (task.outputLimitExceeded) {
+    task.status = 'failed';
+    task.returnCodeInterpretation = `Background command killed: output exceeded ${formatBytes(task.outputLimitBytes ?? bashMaxOutputBytes())}.`;
+  } else if (task.status === 'running') {
+    task.status = interpretation.isError ? 'failed' : 'completed';
+    task.returnCodeInterpretation = interpretation.message;
+  }
+  task.exitCode = code;
+  task.completedAt = Date.now();
+  await finalizeBackgroundTaskOutput(task);
+  pruneBackgroundTasks();
+}
+
+async function failBackgroundTask(task: BackgroundTask, error: unknown) {
+  if (task.completedAt) return;
+  await waitForOutputClosed(task.outputClosed);
+  clearBackgroundOutputWatchdog(task);
+  clearBashKillEscalation(task.process);
+  task.status = 'failed';
+  task.errorMessage = errorMessage(error);
+  task.completedAt = Date.now();
+  await finalizeBackgroundTaskOutput(task);
+  pruneBackgroundTasks();
+}
+
+function startBackgroundOutputWatchdog(task: BackgroundTask) {
+  const maxBytes = bashMaxOutputBytes();
+  const intervalMs = bashOutputWatchdogIntervalMs();
+  task.outputWatchdog = setInterval(() => {
+    void backgroundTaskOutputSize(task).then((size) => {
+      if (task.completedAt || task.outputWatchdog === undefined || size <= maxBytes) return;
+      task.outputLimitExceeded = true;
+      task.outputLimitBytes = maxBytes;
+      task.status = 'failed';
+      task.returnCodeInterpretation = `Background command killed: output exceeded ${formatBytes(maxBytes)}.`;
+      clearBackgroundOutputWatchdog(task);
+      killBashProcessTree(task.process, 'SIGKILL');
+    }, () => {});
+  }, intervalMs);
+  task.outputWatchdog.unref?.();
+}
+
+function clearBackgroundOutputWatchdog(task: BackgroundTask) {
+  if (!task.outputWatchdog) return;
+  clearInterval(task.outputWatchdog);
+  task.outputWatchdog = undefined;
+}
+
+async function backgroundTaskOutputSize(task: BackgroundTask): Promise<number> {
+  const sizes = await Promise.all([
+    fileSizeOrZero(task.outputPath),
+    task.stdoutPath ? fileSizeOrZero(task.stdoutPath) : 0,
+    task.stderrPath ? fileSizeOrZero(task.stderrPath) : 0,
+  ]);
+  return sizes.reduce((sum, size) => sum + size, 0);
+}
+
+async function writeSplitBackgroundInitialOutput(task: BackgroundTask) {
+  await queueTaskOutputWrite(task, async () => {
+    await mkdir(path.dirname(task.outputPath), { recursive: true });
+    await writeFile(task.outputPath, [
+      ...backgroundTaskMetadataLines(task),
+      ...(task.stdoutPath ? [`stdout_path: ${task.stdoutPath}`] : []),
+      ...(task.stderrPath ? [`stderr_path: ${task.stderrPath}`] : []),
+      '',
+      '[output]',
+      'The command is still running. Output is being captured directly into the stdout_path and stderr_path files above.',
+      'This file will contain the combined output when the task finishes.',
+      '',
+    ].join('\n'), 'utf8');
+  });
+}
+
+async function finalizeBackgroundTaskOutput(task: BackgroundTask) {
+  await composeSplitBackgroundOutput(task);
+}
+
+async function composeSplitBackgroundOutput(task: BackgroundTask) {
+  await queueTaskOutputWrite(task, async () => {
+    await mkdir(path.dirname(task.outputPath), { recursive: true });
+    await writeFile(task.outputPath, `${[
+      ...backgroundTaskMetadataLines(task),
       '',
       '[stdout]',
-      task.stdout,
-      '',
-      '[stderr]',
-      task.stderr,
-    ].join('\n');
-    await mkdir(path.dirname(task.outputPath), { recursive: true });
-    await writeFile(task.outputPath, header, 'utf8');
-  };
+    ].join('\n')}\n`, 'utf8');
+    if (task.stdoutPath) await appendFileFromPath(task.outputPath, task.stdoutPath);
+    await appendFile(task.outputPath, '\n\n[stderr]\n', 'utf8');
+    if (task.stderrPath) await appendFileFromPath(task.outputPath, task.stderrPath);
+    await appendFile(task.outputPath, backgroundTaskStatusFooter(task), 'utf8');
+    await cleanupBackgroundSplitFiles(task);
+  });
+}
+
+async function cleanupBackgroundSplitFiles(task: BackgroundTask) {
+  await Promise.allSettled([
+    task.stdoutPath ? rm(task.stdoutPath, { force: true }) : Promise.resolve(),
+    task.stderrPath ? rm(task.stderrPath, { force: true }) : Promise.resolve(),
+  ]);
+}
+
+function backgroundTaskMetadataLines(task: BackgroundTask): string[] {
+  return [
+    `task_id: ${task.taskId}`,
+    `status: ${task.status}`,
+    ...(task.exitCode !== undefined ? [`exit_code: ${task.exitCode}`] : []),
+    ...(task.returnCodeInterpretation ? [`return_code_interpretation: ${task.returnCodeInterpretation}`] : []),
+    ...(task.errorMessage ? [`error: ${task.errorMessage}`] : []),
+    `command: ${task.command}`,
+    `started_at: ${new Date(task.startedAt).toISOString()}`,
+    ...(task.completedAt ? [`completed_at: ${new Date(task.completedAt).toISOString()}`] : []),
+  ];
+}
+
+function backgroundTaskStatusFooter(task: BackgroundTask): string {
+  return `\n\n${[
+    '[task_status]',
+    ...backgroundTaskMetadataLines(task),
+  ].join('\n')}\n`;
+}
+
+async function queueTaskOutputWrite(task: BackgroundTask, write: () => Promise<void>) {
   task.outputWriteChain = (task.outputWriteChain ?? Promise.resolve())
     .catch(() => {})
     .then(write)
+    .then(async () => {
+      task.outputBytes = await fileSizeOrZero(task.outputPath);
+    })
     .catch(() => {});
   await task.outputWriteChain;
+}
+
+function requestBashProcessStop(processHandle: BashProcessHandle) {
+  killBashProcessTree(processHandle, 'SIGTERM');
+  clearBashKillEscalation(processHandle);
+  processHandle.killEscalationTimer = setTimeout(() => {
+    killBashProcessTree(processHandle, 'SIGKILL');
+    processHandle.killEscalationTimer = undefined;
+  }, 1_000);
+  processHandle.killEscalationTimer.unref?.();
+}
+
+function clearBashKillEscalation(processHandle: BashProcessHandle) {
+  if (!processHandle.killEscalationTimer) return;
+  clearTimeout(processHandle.killEscalationTimer);
+  processHandle.killEscalationTimer = undefined;
+}
+
+function killBashProcessTree(processHandle: BashProcessHandle, signal: NodeJS.Signals) {
+  clearBashKillEscalation(processHandle);
+  const pid = processHandle.child.pid;
+  if (!pid) {
+    safeKillChildProcess(processHandle.child, signal);
+    return;
+  }
+  if (process.platform === 'win32') {
+    const args = ['/pid', String(pid), '/t'];
+    if (signal === 'SIGKILL') args.push('/f');
+    try {
+      const killer = spawn('taskkill', args, { stdio: 'ignore', windowsHide: true });
+      killer.unref();
+    } catch {
+      safeKillChildProcess(processHandle.child, signal);
+    }
+    return;
+  }
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    safeKillChildProcess(processHandle.child, signal);
+  }
+}
+
+function safeKillChildProcess(child: ChildProcess, signal: NodeJS.Signals) {
+  try {
+    child.kill(signal);
+  } catch {
+    // The child may already have exited between the watchdog/timeout and kill.
+  }
+}
+
+function bashMaxOutputBytes(): number {
+  return positiveIntegerEnv(BASH_MAX_OUTPUT_BYTES_ENV, BASH_MAX_OUTPUT_BYTES, 1);
+}
+
+function bashOutputWatchdogIntervalMs(): number {
+  return positiveIntegerEnv(BASH_OUTPUT_WATCHDOG_INTERVAL_ENV, BASH_OUTPUT_WATCHDOG_INTERVAL_MS, 20);
+}
+
+function positiveIntegerEnv(name: string, fallback: number, min: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.floor(parsed));
+}
+
+function appendBoundedText(current: string, chunk: string, maxChars: number): string {
+  if (current.length >= maxChars) return current;
+  const remaining = maxChars - current.length;
+  return chunk.length <= remaining ? `${current}${chunk}` : `${current}${chunk.slice(0, remaining)}`;
+}
+
+async function fileSizeOrZero(filePath: string): Promise<number> {
+  try {
+    return (await stat(filePath)).size;
+  } catch {
+    return 0;
+  }
+}
+
+async function appendFileFromPath(targetPath: string, sourcePath: string) {
+  if (await fileSizeOrZero(sourcePath) === 0) return;
+  await pipeline(
+    createReadStream(sourcePath),
+    createWriteStream(targetPath, { flags: 'a' }),
+  );
+}
+
+async function readTextPreview(filePath: string, size: number, maxBytes: number): Promise<string> {
+  if (size <= 0 || maxBytes <= 0) return '';
+  if (size <= maxBytes) return readFile(filePath, 'utf8');
+
+  const marker = `\n...[${size - maxBytes} bytes omitted; full output saved to file]...\n`;
+  const markerBytes = Buffer.byteLength(marker);
+  const contentBudget = Math.max(0, maxBytes - markerBytes);
+  if (contentBudget <= 0) return marker.slice(0, maxBytes);
+
+  const headBytes = Math.ceil(contentBudget / 2);
+  const tailBytes = contentBudget - headBytes;
+  const [head, tail] = await Promise.all([
+    readFileSliceText(filePath, 0, headBytes),
+    readFileSliceText(filePath, Math.max(0, size - tailBytes), tailBytes),
+  ]);
+  return `${head}${marker}${tail}`;
+}
+
+async function readFileSliceText(filePath: string, start: number, length: number): Promise<string> {
+  if (length <= 0) return '';
+  const handle = await open(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, start);
+    return buffer.subarray(0, bytesRead).toString('utf8');
+  } finally {
+    await handle.close();
+  }
 }
 
 function visibleFileEdit(data: FileEditData) {
@@ -3010,13 +3473,6 @@ function formatBytes(bytes: number): string {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[|\\{}()[\]^$+?.]/g, '\\$&');
-}
-
-function truncateMiddle(value: string, maxChars: number): string {
-  if (value.length <= maxChars) return value;
-  const head = Math.max(0, Math.floor(maxChars * 0.6));
-  const tail = Math.max(0, maxChars - head - 80);
-  return `${value.slice(0, head)}\n...[truncated ${value.length - head - tail} chars]...\n${value.slice(value.length - tail)}`;
 }
 
 function isSilentCommand(command: string): boolean {
