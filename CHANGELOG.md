@@ -12,6 +12,19 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Data import CLI/API boundary (PR #375, codex-4)** — moves bulk import from
+  the default model-visible `data_import` tool to a Tenon-owned Import Pack
+  CLI/API workflow. `/data-cleanup` now runs `tenon-import` for inspect,
+  conversion, validation, preview, and commit; preview/commit use a local
+  main-process import API backed by the shared import service, so final writes
+  keep one undo/history entry, search-index refresh, verification, and
+  single-use preview ids inside the app. Packaged builds now include the CLI
+  wrapper and generated Node bundle, and ordinary agent runs no longer expose
+  `data_import` by default. **Gate (main):** code review found no reportable
+  findings. Verified with targeted import-service/API/permission/skill/CLI
+  tests, typecheck, docs check, generated CLI smoke, `app:build`, packaged
+  resource checks, packaged CLI runtime smoke, and `codesign --verify --deep
+  --strict`.
 - **Bundled ripgrep provider for local agent search (PR #374, codex-4)** —
   ships ripgrep 15.1.0 as a packaged Tenon resource so `file_grep`,
   `file_glob`'s fast path, main local filename search, and agent Bash `rg`

@@ -24,20 +24,23 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365, run-transcript-turn-coalescing #372**) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370, data-import-performance #371, local-tool-output-responsiveness #373) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370, data-import-performance #371, local-tool-output-responsiveness #373, agent-bundled-search-tools #374, data-import-cli-api-boundary #375) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-04).** Open PR queue: none. Recently merged: #373
-(`codex-4/skill-performance-audit`) merged 2026-07-04 after main review;
-see *Recently completed*. #372 (`codex-3/run-transcript-turn-coalescing`)
-merged 2026-07-04 after main review; see *Recently completed*. #371
-(`codex-4/data-import-performance`) merged 2026-07-04 after main review;
-see *Recently completed*. #365 (`codex-3/agent-run-index-completeness`)
-merged 2026-07-04 after main review; see *Recently completed*. #370
+**In flight (2026-07-04).** Open PR queue: none. Recently merged: #375
+(`codex-4/data-import-cli-api-boundary`) merged 2026-07-04 after main review;
+see *Recently completed*. #374 (`codex-4/agent-bundled-search-tools`)
+merged 2026-07-04 after main review; see *Recently completed*. #373
+(`codex-4/skill-performance-audit`) merged 2026-07-04 after main review; see
+*Recently completed*. #372 (`codex-3/run-transcript-turn-coalescing`) merged
+2026-07-04 after main review; see *Recently completed*. #371
+(`codex-4/data-import-performance`) merged 2026-07-04 after main review; see
+*Recently completed*. #365 (`codex-3/agent-run-index-completeness`) merged
+2026-07-04 after main review; see *Recently completed*. #370
 (`codex-4/data-cleanup-import`) merged 2026-07-03 after main review; see
 *Recently completed*. #369
 (`codex-2/cc-switch-local-gateway`), #368
@@ -274,14 +277,6 @@ before any directional/security-sensitive build.
   annotated captures as payload-backed image tool results. Directional/security-
   sensitive: implementation still needs helper-packaging and hard-prohibition
   decisions before code. See `docs/plans/agent-computer-control.md`.
-- **data-import-cli-api-boundary** (P1, PM-ratified 2026-07-04, build-ready) —
-  move data import from the default model-visible `data_import` tool to a
-  Tenon-owned Import Pack CLI/API boundary. `/data-cleanup` should run
-  `tenon-import` through bash; final commit still goes through the main-process
-  import service so transaction, undo, history, search-index refresh, and
-  verification guarantees stay inside the app. The same Import Pack CLI/API
-  becomes the future local interface for other agents and services. See
-  `docs/plans/data-import-cli-api-boundary.md`.
 Standalone agent items (not part of the program):
 
 - **third-party-skill-import** (P2, *no plan file yet — draft, to be drafted*) —
@@ -468,6 +463,22 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **data-import-cli-api-boundary** (`codex-4/data-import-cli-api-boundary`,
+  PR #375, codex-4, merged 2026-07-04, plan-track) — moves bulk data import
+  from the default model-visible `data_import` tool to a Tenon-owned
+  Import Pack CLI/API boundary. `/data-cleanup` now drives the workflow through
+  `tenon-import` commands, while preview and commit go through a local
+  main-process import API backed by the shared import service. The final write
+  remains an app-owned transaction with one undo/history entry, search-index
+  refresh, verification, single-use preview ids, and packaged CLI resources;
+  ordinary agent runs no longer expose `data_import` by default. **Gate
+  (main):** code review found no reportable findings. Verified on the final PR
+  head and merge result with targeted import-service/API/permission/skill/CLI
+  tests, typecheck, docs check, generated CLI Node smoke, `app:build`, packaged
+  wrapper/resource checks, packaged CLI runtime smoke, and
+  `codesign --verify --deep --strict`. Plan archived `done`:
+  `docs/plans/archive/data-import-cli-api-boundary.md`.
 
 - **agent-bundled-search-tools** (`codex-4/agent-bundled-search-tools`,
   PR #374, codex-4, merged 2026-07-04, plan-track) — ships Tenon's bundled
