@@ -151,7 +151,7 @@
   gap: var(--space-3);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--material-popover);
+  background: var(--fill-1);
   color: var(--text-strong);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
@@ -161,7 +161,7 @@
 
 .agent-user-file-chip[href]:hover {
   border-color: var(--border-strong);
-  background: var(--fill-1);
+  background: var(--fill-2);
   color: var(--text-strong);
 }
 
@@ -189,7 +189,7 @@
   max-height: 220px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--material-popover);
+  background: var(--fill-1);
   object-fit: contain;
 }
 
@@ -311,7 +311,7 @@
   gap: var(--space-4);
   border: 1px solid var(--border-emphasis);
   border-radius: var(--radius-md);
-  background: var(--material-popover);
+  background: var(--bg-elevated);
   padding: var(--space-5);
   transition:
     background var(--motion-slow),

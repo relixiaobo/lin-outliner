@@ -196,6 +196,31 @@ function collectCssRuleDeclarationViolations(
   return violations;
 }
 
+function collectMaterialBackdropPairViolations() {
+  const violations: string[] = [];
+
+  for (const file of productStyleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim();
+      const body = match[2] ?? '';
+      if (!/\bbackground(?:-color)?\s*:\s*var\(--material-/.test(body)) continue;
+
+      const hasBackdrop = /(?:^|[;\s])backdrop-filter\s*:\s*var\(--material-backdrop\)\s*;/.test(body);
+      const hasWebkitBackdrop = /-webkit-backdrop-filter\s*:\s*var\(--material-backdrop\)\s*;/.test(body);
+      if (hasBackdrop && hasWebkitBackdrop) continue;
+
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      violations.push(`${file}:${lineNumber} ${selector} uses a material background without both standard backdrop filters`);
+    }
+  }
+
+  return violations;
+}
+
 test.describe('typography tokens', () => {
   test('keeps product font declarations tokenized outside proportional glyph exceptions', () => {
     const allowedValues = new Set([
@@ -395,6 +420,10 @@ test.describe('typography tokens', () => {
     );
 
     expect(violations).toEqual([]);
+  });
+
+  test('keeps material backgrounds paired with shared backdrop filters', () => {
+    expect(collectMaterialBackdropPairViolations()).toEqual([]);
   });
 
   test('keeps design-system spec css examples tokenized outside token declarations', () => {

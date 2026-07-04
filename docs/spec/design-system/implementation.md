@@ -101,10 +101,12 @@ Expected checks for design-system changes:
   registered reduced-motion / reduced-transparency / increased-contrast rule
   allowlists, the absent `--primary` token family, viewport-independent font
   sizing, neutral letter-spacing, and the static no-scale feedback guard; it
-  keeps global z-index values on the `--z-*` ladder, and it keeps hidden
-  scrollbars limited to the registered document-outline mini-rail exception. It
-  also keeps functional-state fills, borders, and rings from using brand, link,
-  or status colour tokens outside the solid destructive-confirmation exception.
+  keeps global z-index values on the `--z-*` ladder, keeps hidden scrollbars
+  limited to the registered document-outline mini-rail exception, and keeps every
+  `--material-*` background paired with the shared `--material-backdrop` filter.
+  It also keeps functional-state fills, borders, and rings from using brand,
+  link, or status colour tokens outside the solid destructive-confirmation
+  exception.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
   interaction affordances change.
 - `tests/e2e/window-material.spec.ts` for window-material and inactive-window
