@@ -192,11 +192,11 @@
   border-radius: var(--file-preview-frame-radius);
   background: transparent;
   box-shadow: var(--inset-hairline);
-  color: var(--text-main);
+  color: var(--text-primary);
   --media-background-color: transparent;
-  --media-primary-color: var(--text-main);
+  --media-primary-color: var(--text-primary);
   --media-secondary-color: transparent;
-  --media-text-color: var(--text-main);
+  --media-text-color: var(--text-primary);
   --media-control-background: transparent;
   --media-control-hover-background: transparent;
   --media-control-height: var(--control-size-xl);
@@ -212,8 +212,8 @@
   --media-range-padding-right: var(--space-2);
   --media-range-track-height: 3px;
   --media-range-track-background: var(--selection-bg);
-  --media-range-bar-color: var(--text-main);
-  --media-range-thumb-background: var(--text-main);
+  --media-range-bar-color: var(--text-primary);
+  --media-range-thumb-background: var(--text-primary);
   --media-range-thumb-width: 10px;
   --media-range-thumb-height: 10px;
   --media-volume-range-width: 58px;
@@ -1269,7 +1269,7 @@
 /* The filename is a read-only caret surface: it wraps like a locked/reference row
    and participates in node keyboard commands, but text input never renames it. */
 .file-node-row-name {
-  color: var(--text-main);
+  color: var(--text-primary);
   line-height: var(--line-content);
   overflow-wrap: anywhere;
   white-space: normal;
@@ -1326,7 +1326,7 @@
 
 .file-node-card-menu-trigger:hover,
 .file-node-card-menu-trigger[aria-expanded='true'] {
-  color: var(--text-main);
+  color: var(--text-primary);
 }
 
 .file-node-card-menu-trigger:focus-visible {
@@ -1429,7 +1429,7 @@
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
   box-shadow: var(--overlay-shadow-level-1);
-  color: var(--text-main);
+  color: var(--text-primary);
 }
 
 /* Image file rows have no filename editor; this focusable, visually-hidden anchor

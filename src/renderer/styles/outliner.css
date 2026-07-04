@@ -580,7 +580,7 @@
 
 .view-toolbar-radio.checked {
   box-shadow: var(--view-radio-checked-shadow);
-  background: radial-gradient(circle at center, var(--text-main) 0 3.5px, transparent 4px);
+  background: radial-gradient(circle at center, var(--text-primary) 0 3.5px, transparent 4px);
 }
 
 .view-toolbar-rules {
@@ -1722,7 +1722,7 @@
   border-radius: var(--radius-sm);
   background: transparent;
   box-shadow: var(--outline-faint);
-  color: var(--text-main);
+  color: var(--text-primary);
   font: inherit;
   padding: 0 var(--space-4);
   text-align: left;
@@ -1745,7 +1745,7 @@
   min-width: 0;
   border: 0;
   background: transparent;
-  color: var(--text-main);
+  color: var(--text-primary);
   font: inherit;
   font-size: var(--font-ui-md);
   font-weight: 500;
@@ -1765,7 +1765,7 @@
   border-radius: var(--radius-sm);
   background: transparent;
   box-shadow: var(--outline-faint);
-  color: var(--text-main);
+  color: var(--text-primary);
   font: inherit;
   font-size: var(--font-ui-md);
   line-height: var(--line-ui-md);
@@ -1835,7 +1835,7 @@
 .typed-field-date-actions button:hover,
 .typed-field-date-actions button:focus-visible {
   background: var(--control-hover);
-  color: var(--text-main);
+  color: var(--text-primary);
 }
 
 .typed-field-date-recurrence {
@@ -2191,7 +2191,7 @@
   text-align: left;
   cursor: text;
   outline: none;
-  caret-color: var(--text-main);
+  caret-color: var(--text-primary);
 }
 
 .node-description:hover {
@@ -2199,7 +2199,7 @@
 }
 
 .node-description::placeholder {
-  color: color-mix(in srgb, var(--text-main) 22%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 22%, transparent);
   opacity: 1;
 }
 

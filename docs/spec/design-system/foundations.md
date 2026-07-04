@@ -197,8 +197,8 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
 - **Dark-mode rules.** Avoid pure `#000`/`#fff`; lean on the alpha-on-ink levels
   and the `#1e1e1e` / `#2a2a2c` / `#2e2e30` surface seeds. Separators and outlines
   invert with `--ink` automatically; drop shadows deepen.
-- **Legacy aliases.** Remaining aliases such as `--text-main` are mapped onto
-  this layer so existing components keep working; migrate to the semantic tokens
+- **Legacy aliases.** Remaining compatibility aliases are mapped onto this layer
+  so existing components keep working; migrate to semantic tokens
   opportunistically. Retired aliases stay guarded by the token tests rather than
   reintroduced as shims.
 - **There is no `--primary` token — do not reintroduce it.** Its name implies a

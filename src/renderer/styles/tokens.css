@@ -37,7 +37,7 @@
   --title-group: var(--font-ui-sm);
   font-family: var(--font-family-sans);
   font-size: var(--font-scale);
-  color: var(--text-main);
+  color: var(--text-primary);
   background: var(--bg-window);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -55,8 +55,8 @@
      SEMANTIC FOUNDATION (design-system.md). Two themes over one ink base: every
      text/fill/separator/outline value is an alpha over --ink (black in light,
      white in dark), so the dark @media block at the end only flips --ink + a few
-     opaque/material literals. Remaining legacy aliases (--text-main, …) are
-     re-pointed onto this layer below so existing component CSS keeps working.
+     opaque/material literals. Remaining legacy role aliases are re-pointed onto
+     this layer below so existing component CSS keeps working.
      ════════════════════════════════════════════════════════════════════════ */
   --ink: 0 0 0;
 
@@ -212,7 +212,6 @@
         There is no --primary family: action surfaces use neutral fill /
         focus-ring / outline tokens instead of the rose accent. ── */
   --window-material-frost: color-mix(in srgb, var(--bg-window) 62%, transparent);
-  --text-main: var(--text-primary);
   --text-strong: var(--text-primary);
   --text-soft: var(--text-secondary);
   --text-faint: var(--text-tertiary);

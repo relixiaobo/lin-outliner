@@ -155,7 +155,7 @@
   display: block;
   min-width: 0;
   overflow: hidden;
-  color: var(--text-main);
+  color: var(--text-primary);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
