@@ -153,7 +153,7 @@ The colour system is **two themes over one semantic layer**, aligned with macOS.
   Native feel comes from materials, layout, and behaviour, not from coloured
   selection. The toggle / checkbox **on**-state carries `--control-on` (the macOS
   on-switch idiom) with a fixed-white knob / check glyph (`--text-on-accent`) in
-  BOTH themes. It is deliberately separate from `--semantic-success`, so status
+  BOTH themes. It is deliberately separate from `--status-success`, so status
   green does not leak into non-status controls.
 - **Text selection is neutral too.** The editor text-selection highlight
   (`::selection`, `--text-selection-bg`) is a neutral ink alpha — the one place

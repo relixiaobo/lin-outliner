@@ -312,7 +312,7 @@
 
 .agent-debug-status-pill.is-completed {
   background: color-mix(in srgb, var(--status-success) 12%, transparent);
-  color: var(--semantic-success-strong);
+  color: var(--status-success-strong);
 }
 
 .agent-debug-status-pill.is-error,

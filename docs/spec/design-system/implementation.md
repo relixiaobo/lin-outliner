@@ -116,7 +116,7 @@ Expected checks for design-system changes:
   exception, and fails overlay `box-shadow` declarations that mix level-1/2
   shadow tokens with outline tokens. It also rejects the legacy generic
   `--shadow` and `--danger` aliases so surfaces name the actual elevation tier
-  and semantic status role they use, keeps retired unused aliases out of live CSS,
+  and semantic status role they use, keeps retired legacy aliases out of live CSS,
   keeps raw functional color literals inside token declarations, fails undefined
   live token references outside named runtime/generated inputs, keeps motion
   timing literals routed through motion tokens outside zero delays, prevents

@@ -194,7 +194,7 @@
 
 .agent-run-marker.is-completed,
 .agent-run-marker.is-verified {
-  color: var(--semantic-success-strong);
+  color: var(--status-success-strong);
 }
 
 .agent-run-marker.is-blocked,
@@ -660,7 +660,7 @@
 .agent-transcript-tool-result-row {
   min-width: 0;
   border-left: 2px solid var(--border-subtle);
-  border-left-color: var(--semantic-warning);
+  border-left-color: var(--status-warning);
   color: var(--text-soft);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
@@ -744,7 +744,7 @@
 }
 
 .agent-pov-inspector-message.is-toolResult {
-  border-left-color: var(--semantic-warning);
+  border-left-color: var(--status-warning);
 }
 
 .agent-pov-inspector-part {

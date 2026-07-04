@@ -257,8 +257,8 @@ button.panel-resize-handle {
 }
 
 .agent-dock-run-status.is-completed {
-  background: color-mix(in srgb, var(--semantic-success) 12%, transparent);
-  color: var(--semantic-success-strong);
+  background: color-mix(in srgb, var(--status-success) 12%, transparent);
+  color: var(--status-success-strong);
 }
 
 .agent-dock-run-status.is-failed,

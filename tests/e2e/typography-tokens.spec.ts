@@ -903,10 +903,13 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
-  test('keeps retired unused aliases out of live CSS', () => {
+  test('keeps retired legacy aliases out of live CSS', () => {
     const retiredAliases = [
       'app-bg',
       'accent-brand',
+      'semantic-success',
+      'semantic-success-strong',
+      'semantic-warning',
       'semantic-danger-muted',
       'semantic-info',
       'overlay-active-bg',
