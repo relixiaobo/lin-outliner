@@ -507,6 +507,22 @@ async function showFilePreviewPillMenu(page: Page) {
   await page.getByRole('menu', { name: 'Preview actions' }).waitFor({ state: 'visible' });
 }
 
+async function showFilePreviewHeaderMenu(page: Page) {
+  await pasteClipboardFileAndOpenPreview(page, {
+    name: 'runtime-reader.md',
+    mimeType: 'text/markdown',
+    text: '# Runtime reader\n\nHeader actions surface.',
+  });
+  await page.locator('.file-node-row-preview .file-preview-pill-more').click();
+  await page.getByRole('menuitem', { name: 'Open in split pane' }).click();
+  const readerPane = page.locator('.outline-panel-surface.active-panel');
+  await readerPane.locator('.file-preview-panel--reader').waitFor({ state: 'visible' });
+  await readerPane.getByRole('button', { name: 'Preview actions' }).click();
+  const readerMenu = page.getByRole('menu', { name: 'Preview actions' });
+  await readerMenu.waitFor({ state: 'visible' });
+  await expect(readerMenu.getByRole('menuitem', { name: 'Open with default app' })).toBeVisible();
+}
+
 async function showDocumentOutlineRail(page: Page) {
   await pasteClipboardFileAndOpenPreview(page, {
     name: 'runtime-book.epub',
@@ -1033,6 +1049,12 @@ const surfaces: SurfaceCase[] = [
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: showFilePreviewPillMenu,
+  },
+  {
+    name: 'file preview header menu',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showFilePreviewHeaderMenu,
   },
   {
     name: 'document outline rail',
