@@ -50,6 +50,7 @@ standard change that only hides one local violation is not accepted.
 | CA16 | Agent composer interaction chrome had static coverage but not runtime coverage for its menus and suggestion surfaces. | Code drift | Runtime guard now opens the channel picker, channel options menu, mention suggestions, model menu, and reasoning flyout in light/dark. | `tests/e2e/design-system-runtime.spec.ts` |
 | CA17 | View configuration and schema definition surfaces were covered by focused behavior specs but absent from the shared runtime design-system guard. | Code drift | Runtime guard now opens view-toolbar sort/filter popovers, the definition config panel, and the definition picker in light/dark. | `tests/e2e/design-system-runtime.spec.ts` |
 | CA18 | Document preview outline navigation had focused behavior coverage but no shared runtime design-system coverage. | Code drift | Runtime guard now opens an EPUB full preview and its document outline rail/popover in light/dark. | `tests/e2e/design-system-runtime.spec.ts` |
+| CA19 | Shared confirm, inline-file menu, and composer error surfaces were implemented through product paths but absent from the shared runtime design-system guard. | Code drift | Runtime guard now opens the destructive confirm dialog, inline-file context menu, and composer attachment error status in light/dark through real UI entry points. | `tests/e2e/design-system-runtime.spec.ts` |
 
 ## Named Exceptions Kept
 

@@ -133,6 +133,82 @@ async function showReferenceSuggestions(page: Page) {
   await expect(listbox.getByRole('option', { name: /Alpha/ }).first()).toBeVisible();
 }
 
+async function installLocalFileMentionFixture(page: Page) {
+  await page.evaluate(() => {
+    const win = window as typeof window & {
+      lin?: {
+        prepareLocalFile?: (options: { id: string }) => Promise<{
+          file: {
+            entryKind?: 'file' | 'directory';
+            path: string;
+            name: string;
+            mimeType: string;
+            sizeBytes: number;
+            lastModified: number;
+          } | null;
+        }>;
+        searchLocalFiles?: (options: { query: string; limit?: number }) => Promise<{
+          files: Array<{
+            entryKind: 'file' | 'directory';
+            id: string;
+            path: string;
+            name: string;
+            parentPath: string;
+            mimeType: string;
+            sizeBytes: number;
+            lastModified: number;
+          }>;
+          query: string;
+        }>;
+      };
+    };
+    if (!win.lin) return;
+    win.lin.searchLocalFiles = async (options) => ({
+      files: options.query.toLowerCase().includes('report')
+        ? [{
+            entryKind: 'file',
+            id: 'local-file-report',
+            path: '/Users/test/Documents/Project Report.md',
+            name: 'Project Report.md',
+            parentPath: '/Users/test/Documents',
+            mimeType: 'text/markdown',
+            sizeBytes: 2048,
+            lastModified: 1_800_000_000_000,
+          }]
+        : [],
+      query: options.query,
+    });
+    win.lin.prepareLocalFile = async (options) => ({
+      file: options.id === 'local-file-report'
+        ? {
+            entryKind: 'file',
+            path: '/Users/test/Documents/Project Report.md',
+            name: 'Project Report.md',
+            mimeType: 'text/markdown',
+            sizeBytes: 2048,
+            lastModified: 1_800_000_000_000,
+          }
+        : null,
+    });
+  });
+}
+
+async function showInlineFileContextMenu(page: Page) {
+  await installLocalFileMentionFixture(page);
+  const input = page.getByLabel('Agent message');
+  await input.click();
+  await page.keyboard.type('@report');
+  const option = page.getByRole('listbox', { name: 'Agent mention suggestions' })
+    .getByRole('option', { name: /Project Report\.md/ });
+  await option.click();
+  const inlineFile = page.locator('[data-agent-file-ref]', { hasText: 'Project Report.md' });
+  await inlineFile.waitFor({ state: 'visible' });
+  await inlineFile.click({ button: 'right' });
+  const menu = page.getByRole('menu', { name: 'File actions' });
+  await menu.waitFor({ state: 'visible' });
+  await expect(menu.getByRole('menuitem', { name: 'Add to Today' })).toBeVisible();
+}
+
 async function showCodeBlockLanguageMenu(page: Page) {
   const beforeChildren = await todayChildren(page);
   await trailingEditor(page).click();
@@ -200,6 +276,16 @@ async function showRowContextMenu(page: Page) {
   await expect(page.getByRole('menuitem', { name: 'Trash' })).toBeVisible();
 }
 
+async function showDeleteForeverConfirmDialog(page: Page) {
+  await invokeDocumentCommand(page, 'trash_node', { nodeId: ids.alpha });
+  await page.getByRole('button', { name: 'Trash', exact: true }).click();
+  await rowBody(page, ids.alpha).click({ button: 'right' });
+  await page.getByRole('menu', { name: 'Node actions' }).getByRole('menuitem', { name: 'Delete forever' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete forever?' });
+  await dialog.waitFor({ state: 'visible' });
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+}
+
 async function showSidebarContextMenu(page: Page) {
   await page.getByRole('button', { name: 'Open Root' }).click({ button: 'right' });
   await page.getByRole('menu', { name: 'Node actions' }).waitFor({ state: 'visible' });
@@ -246,6 +332,38 @@ async function createAttachmentRowPreview(page: Page) {
   await attachmentRow.locator('> .row').first().hover();
   await attachmentRow.locator('.row-chevron-button').first().click();
   await attachmentRow.locator('.file-node-row-preview .file-node-preview.collapsed').waitFor({ state: 'visible' });
+}
+
+async function showComposerAttachmentError(page: Page) {
+  await page.evaluate(() => {
+    const win = window as typeof window & {
+      lin?: {
+        pickLocalFiles?: () => Promise<{
+          canceled: boolean;
+          files: Array<{
+            path: string;
+            name: string;
+            mimeType: string;
+            sizeBytes: number;
+            lastModified: number;
+          }>;
+        }>;
+      };
+    };
+    if (!win.lin) return;
+    win.lin.pickLocalFiles = async () => ({
+      canceled: false,
+      files: [{
+        path: '/Users/test/Pictures/huge.png',
+        name: 'huge.png',
+        mimeType: 'image/png',
+        sizeBytes: 11 * 1024 * 1024,
+        lastModified: 1_800_000_000_000,
+      }],
+    });
+  });
+  await page.getByRole('button', { name: 'Add attachment' }).click();
+  await expect(page.getByRole('status')).toContainText('huge.png is larger than 10 MB');
 }
 
 async function pasteClipboardFile(page: Page, file: { name: string; mimeType: string; text: string }) {
@@ -587,6 +705,12 @@ const surfaces: SurfaceCase[] = [
     beforeProbe: showReferenceSuggestions,
   },
   {
+    name: 'inline file context menu',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showInlineFileContextMenu,
+  },
+  {
     name: 'code block language menu',
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
@@ -597,6 +721,12 @@ const surfaces: SurfaceCase[] = [
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: showRowContextMenu,
+  },
+  {
+    name: 'delete forever confirm dialog',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showDeleteForeverConfirmDialog,
   },
   {
     name: 'sidebar context menu',
@@ -621,6 +751,12 @@ const surfaces: SurfaceCase[] = [
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: createAttachmentRowPreview,
+  },
+  {
+    name: 'composer attachment error',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showComposerAttachmentError,
   },
   {
     name: 'file preview pill menu',
