@@ -903,6 +903,14 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
+  test('keeps preview HUD action shadow routed through the shared contrast token', () => {
+    const violations = collectCssTextViolations(
+      /box-shadow:\s*var\(--shadow-thumb-strong\),\s*inset 0 0 0 1px var\(--preview-action-outline\)/,
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps primary reading text aligned across outliner and agent surfaces', async ({ page }) => {
     await openMockedApp(page);
 

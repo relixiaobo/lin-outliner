@@ -128,7 +128,8 @@ hairline edge, and concentric inner document-page corners. Preview pages scroll
 inside the viewport content box; pages never render into the frame inset. The
 bottom-center preview action bar is a fixed-width primary capsule plus a separate
 circular `...` action, never a segmented control. It uses `--preview-action-*`
-HUD tokens because it floats over arbitrary document/image pixels.
+HUD tokens, including `--preview-action-shadow`, because it floats over
+arbitrary document/image pixels.
 
 External document pixels may force a light document canvas inside the preview
 iframe/page renderer. That exception is confined to document pixels; preview

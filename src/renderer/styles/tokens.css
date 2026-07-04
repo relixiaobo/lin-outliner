@@ -93,6 +93,7 @@
   --preview-action-hover-bg: rgba(31, 31, 35, 0.88);
   --preview-action-fg: rgba(255, 255, 255, 0.94);
   --preview-action-outline: rgba(255, 255, 255, 0.12);
+  --preview-action-shadow: var(--shadow-thumb-strong), inset 0 0 0 1px var(--preview-action-outline);
   /* The shared backdrop-filter for every translucent material surface. Surfaces
      opt in with `background: var(--material-*)` + `backdrop-filter:
      var(--material-backdrop)`; the a11y layer (a11y.css) then swaps both tokens

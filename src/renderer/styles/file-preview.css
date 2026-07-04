@@ -1191,7 +1191,7 @@
   background: var(--preview-action-bg);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow-thumb-strong), inset 0 0 0 1px var(--preview-action-outline);
+  box-shadow: var(--preview-action-shadow);
   color: inherit;
   font: inherit;
   font-size: var(--font-ui-sm);
@@ -1217,7 +1217,7 @@
   background: var(--preview-action-bg);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow-thumb-strong), inset 0 0 0 1px var(--preview-action-outline);
+  box-shadow: var(--preview-action-shadow);
   color: inherit;
   transition: color var(--motion-fast), background var(--motion-fast);
 }
