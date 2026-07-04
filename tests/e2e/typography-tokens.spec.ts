@@ -144,6 +144,35 @@ function collectCssTextViolations(pattern: RegExp) {
   return violations;
 }
 
+function collectCssRuleDeclarationViolations(
+  selectorPattern: RegExp,
+  declarationPattern: RegExp,
+  isAllowed: (value: string, property: string, selector: string) => boolean,
+) {
+  const violations: string[] = [];
+
+  for (const file of productStyleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim();
+      if (!selectorPattern.test(selector)) continue;
+      const body = match[2] ?? '';
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      for (const declaration of body.matchAll(declarationPattern)) {
+        const property = declaration[1]!.trim();
+        const value = declaration[2]!.trim();
+        if (isAllowed(value, property, selector)) continue;
+        violations.push(`${file}:${lineNumber} ${selector} { ${property}: ${value}; }`);
+      }
+    }
+  }
+
+  return violations;
+}
+
 test.describe('typography tokens', () => {
   test('keeps product font declarations tokenized outside proportional glyph exceptions', () => {
     const allowedValues = new Set([
@@ -197,6 +226,20 @@ test.describe('typography tokens', () => {
   test('keeps the primary token family absent from live CSS', () => {
     const violations = collectCssTextViolations(
       /(?:--primary(?:-[\w-]+)?\s*:|var\(\s*--primary(?:-[\w-]+)?\b)/,
+    );
+
+    expect(violations).toEqual([]);
+  });
+
+  test('keeps functional-state fills neutral', () => {
+    const chromaticSemanticToken = /var\(--(?:accent|accent-strong|status-[\w-]+|danger|semantic-[\w-]+|link|link-hover)\)/;
+    const violations = collectCssRuleDeclarationViolations(
+      /(:hover|:active|:focus|:focus-visible|:focus-within|\.is-selected|\.selected|\.is-active|\[aria-selected)/,
+      /\b(background(?:-color)?|border(?:-[\w-]+)?|box-shadow|outline(?:-color)?):\s*([^;]+);/g,
+      (value, _property, selector) => (
+        !chromaticSemanticToken.test(value)
+        || /\.button-danger\.button-solid:(?:hover|active)/.test(selector)
+      ),
     );
 
     expect(violations).toEqual([]);

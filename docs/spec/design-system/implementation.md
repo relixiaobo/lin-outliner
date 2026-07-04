@@ -98,7 +98,9 @@ Expected checks for design-system changes:
   OS-theme-native in light and dark.
 - `tests/e2e/typography-tokens.spec.ts` for token discipline, the no renderer
   `[data-theme]` bridge rule, the absent `--primary` token family, and the static
-  no-scale feedback guard.
+  no-scale feedback guard; it also keeps functional-state fills, borders, and
+  rings from using brand, link, or status colour tokens outside the solid
+  destructive-confirmation exception.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
   interaction affordances change.
 - `tests/e2e/window-material.spec.ts` for window-material and inactive-window
