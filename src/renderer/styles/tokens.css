@@ -216,7 +216,6 @@
   --text-strong: var(--text-primary);
   --text-sub: var(--text-secondary);
   --text-soft: var(--text-secondary);
-  --text-muted: var(--text-tertiary);
   --text-faint: var(--text-tertiary);
   --text-disabled: var(--text-quaternary);
   --border-subtle: var(--separator);

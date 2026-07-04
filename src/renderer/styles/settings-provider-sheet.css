@@ -348,7 +348,7 @@
 
 .settings-sheet-oauth-countdown {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
 }
@@ -417,7 +417,7 @@
 
 .settings-sheet-oauth-connected-sub {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }

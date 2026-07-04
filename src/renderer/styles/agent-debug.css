@@ -760,7 +760,7 @@
 
 .agent-debug-inline-note {
   margin: 0 0 var(--space-3);
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-sm);
   line-height: var(--line-ui-sm);
 }

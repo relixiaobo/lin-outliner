@@ -228,7 +228,7 @@
   width: var(--sidebar-tree-icon-size);
   height: var(--sidebar-tree-icon-size);
   flex: 0 0 var(--sidebar-tree-icon-size);
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .sidebar-root-section {
@@ -322,7 +322,7 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-row);
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   padding: 0;
 }
 
@@ -359,7 +359,7 @@
 }
 
 .workspace-tree-row.trashed .workspace-tree-label-text {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, currentColor 68%, transparent);
 }
