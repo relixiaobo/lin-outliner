@@ -129,6 +129,13 @@ async function showViewToolbarGroupPopover(page: Page) {
   await expect(dialog.getByRole('radio', { name: 'Done', exact: true })).toBeVisible();
 }
 
+async function showViewToolbarTooltip(page: Page) {
+  await showViewToolbar(page);
+  const toolbar = page.locator('.view-toolbar').first();
+  await toolbar.getByRole('button', { name: 'Display', exact: true }).hover();
+  await page.getByRole('tooltip', { name: 'Display' }).waitFor({ state: 'visible' });
+}
+
 async function showViewToolbarSortPopover(page: Page) {
   await showViewToolbar(page);
   const toolbar = page.locator('.view-toolbar').first();
@@ -900,6 +907,12 @@ const surfaces: SurfaceCase[] = [
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: showViewToolbarGroupPopover,
+  },
+  {
+    name: 'view toolbar tooltip',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showViewToolbarTooltip,
   },
   {
     name: 'view toolbar sort popover',
