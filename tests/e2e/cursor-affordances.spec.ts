@@ -7,6 +7,11 @@ const STYLES_DIR = 'src/renderer/styles';
 const styleFiles = readdirSync(STYLES_DIR)
   .filter((file) => file.endsWith('.css'))
   .map((file) => join(STYLES_DIR, file));
+const pointerCursorSelectors = new Set([
+  '.inline-ref.agent-message-inline-ref[href]',
+  '.inline-ref:hover',
+  '.row-editor .inline-ref:hover',
+]);
 
 function collectPointerCursorViolations() {
   const violations: string[] = [];
@@ -21,7 +26,7 @@ function collectPointerCursorViolations() {
       const body = match[2] ?? '';
       if (!/\bcursor\s*:\s*pointer\s*;/.test(body)) continue;
       const lineNumber = source.slice(0, match.index).split('\n').length;
-      if (selector.includes('.inline-ref')) continue;
+      if (pointerCursorSelectors.has(selector)) continue;
       violations.push(`${file}:${lineNumber} ${selector}`);
     }
   }
