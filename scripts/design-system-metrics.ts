@@ -272,6 +272,7 @@ function componentCoverageMetrics() {
   let exceptedNativeUses = 0;
   let componentImplementationNativeUses = 0;
   const directNativeFiles = new Map<string, number>();
+  const exceptedNativeFiles = new Map<string, { count: number; reason: string }>();
   const componentImplementationNativeFiles = new Map<string, number>();
   const nativeTags = new Set(['button', 'input', 'textarea', 'select']);
 
@@ -313,14 +314,22 @@ function componentCoverageMetrics() {
       componentImplementationNativeFiles.set(rel, componentImplementationNativeCount);
     }
     if (directNativeCount === 0) continue;
-    if (nativeControlExceptions[rel]) {
+    const exceptionReason = nativeControlExceptions[rel];
+    if (exceptionReason) {
       exceptedNativeUses += directNativeCount;
+      exceptedNativeFiles.set(rel, {
+        count: directNativeCount,
+        reason: exceptionReason,
+      });
     } else {
       nativeUses += directNativeCount;
       directNativeFiles.set(rel, directNativeCount);
     }
   }
 
+  const staleNativeControlExceptions = Object.keys(nativeControlExceptions)
+    .filter((file) => !exceptedNativeFiles.has(file))
+    .sort();
   const accountableControls = primitiveUses + nativeUses;
   return {
     primitiveUses,
@@ -331,7 +340,9 @@ function componentCoverageMetrics() {
     componentContractRows: componentContracts.length,
     componentTagNames: [...componentTags].sort(),
     directNativeFiles: Object.fromEntries([...directNativeFiles.entries()].sort()),
+    exceptedNativeFiles: Object.fromEntries([...exceptedNativeFiles.entries()].sort()),
     componentImplementationNativeFiles: Object.fromEntries([...componentImplementationNativeFiles.entries()].sort()),
+    staleNativeControlExceptions,
     componentImplementationFilesMissing,
     mappedContractsMissingFromDocs,
     unmappedDocumentedContracts,
@@ -452,6 +463,7 @@ function main() {
     console.log(`  surface compression: ${(metrics.designSystem.surfaceCompressionRatio * 100).toFixed(1)}%`);
     console.log(`  decision derivation: ${(metrics.decisionAudit.decisionDerivationCoverage * 100).toFixed(1)}%`);
     console.log(`  component coverage: ${(metrics.components.componentCoverage * 100).toFixed(1)}%`);
+    console.log(`  native control exceptions: ${metrics.components.exceptedNativeUses}`);
     console.log(`  component implementation native: ${metrics.components.componentImplementationNativeUses}`);
     console.log(`  exception evidence: ${(metrics.exceptions.exceptionEvidenceCoverage * 100).toFixed(1)}%`);
     console.log(`  raw hex outside tokens: ${metrics.tokens.rawHexOutsideTokenDeclarations}`);
@@ -479,6 +491,9 @@ function main() {
     }
     if (metrics.components.componentImplementationFilesMissing.length > 0) {
       failures.push(`component implementation files missing: ${metrics.components.componentImplementationFilesMissing.join(', ')}`);
+    }
+    if (metrics.components.staleNativeControlExceptions.length > 0) {
+      failures.push(`stale native control exceptions: ${metrics.components.staleNativeControlExceptions.join(', ')}`);
     }
     if (metrics.exceptions.exceptionEvidenceCoverage < 1) {
       failures.push(`exception evidence ${metrics.exceptions.exceptionEvidenceCoverage} < 1`);

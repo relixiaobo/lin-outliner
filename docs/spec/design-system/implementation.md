@@ -61,9 +61,10 @@ decision routing, exceptions, and validation.
   outside component implementations must either migrate to a primitive or appear
   in `scripts/design-system-metrics.ts` with a named reason. The reason must be a
   real semantic/native requirement, not a styling shortcut. The metrics script
-  reports component-implementation native controls separately from product-surface
-  direct native controls, so a reusable primitive can own its internal semantics
-  without hiding product-surface drift.
+  reports named exception files and reasons in `--json`, fails stale exception
+  entries, and reports component-implementation native controls separately from
+  product-surface direct native controls, so a reusable primitive can own its
+  internal semantics without hiding product-surface drift.
 - **Raw-hex exceptions.** Renderer raw hex belongs in token declarations. Any
   unavoidable source literal must be named in `scripts/design-system-metrics.ts`
   and in the kernel Exception Registry, with a narrow scope and evidence.
