@@ -5,6 +5,7 @@ import {
   emitAgentProjection,
   installElectronMock,
   ids,
+  openMockRunDetailsFromAssistantDetailsButton,
   row,
   trailingEditor,
 } from './outlinerMock';
@@ -248,6 +249,15 @@ const surfaces: SurfaceCase[] = [
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: showCompletedAgentProcess,
+  },
+  {
+    name: 'agent debug run details',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: async (page) => {
+      await openMockRunDetailsFromAssistantDetailsButton(page);
+      await page.locator('.outline-panel-surface.is-agent-debug').waitFor({ state: 'visible' });
+    },
   },
 ];
 
