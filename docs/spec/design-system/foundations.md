@@ -7,10 +7,13 @@ routing, exceptions, and validation.
 
 ## Foundations
 
-The live foundation token values live in `src/renderer/styles/tokens.css`.
-This document owns the contracts, naming model, and allowed roles; it does not
-copy the full token table. When an exact value matters, read the live token file.
-When a token's meaning changes, update this prose in the same change.
+The live foundation token values are layered in renderer CSS: base values live in
+`src/renderer/styles/tokens.css`, dark overrides live in
+`src/renderer/styles/theme-dark.css`, and accessibility preference overrides live
+in `src/renderer/styles/a11y.css`. This document owns the contracts, naming
+model, and allowed roles; it does not copy the full token table. When an exact
+value matters, read the live token layer. When a token's meaning changes, update
+this prose in the same change.
 
 Core token families:
 
