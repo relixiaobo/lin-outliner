@@ -895,6 +895,14 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
+  test('keeps danger styling on semantic status tokens instead of legacy aliases', () => {
+    const violations = collectCssTextViolations(
+      /(?:--danger\s*:|var\(--danger\))/,
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps rail chrome shadow routed through the shared surface token', () => {
     const violations = collectCssTextViolations(
       /box-shadow:\s*var\(--shadow-rail\),\s*inset 0 0 0 0\.5px var\(--rail-edge\)/,

@@ -29,7 +29,7 @@
 }
 
 .agent-process-block.is-error {
-  color: var(--danger);
+  color: var(--status-danger);
 }
 
 .agent-disclosure-indicator {
@@ -325,8 +325,8 @@
   gap: var(--space-4);
   max-width: 100%;
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  color: var(--danger);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  color: var(--status-danger);
   padding: var(--space-5) var(--space-6);
 }
 
@@ -340,7 +340,7 @@
 }
 
 .agent-tool-call.is-error {
-  color: var(--danger);
+  color: var(--status-danger);
 }
 
 /* A never-settled (declared-but-not-completed) step is neutral and dimmed — the
@@ -544,7 +544,7 @@
 }
 
 .agent-tool-call-section-title span {
-  color: var(--danger);
+  color: var(--status-danger);
 }
 
 .agent-tool-call-copy {

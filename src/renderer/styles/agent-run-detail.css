@@ -92,7 +92,7 @@
   align-items: center;
   gap: var(--space-3);
   border-bottom: 1px solid var(--border-subtle);
-  color: var(--danger);
+  color: var(--status-danger);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   padding: var(--space-4) var(--space-6);
@@ -200,7 +200,7 @@
 .agent-run-marker.is-blocked,
 .agent-run-marker.is-budget-exhausted,
 .agent-run-marker.is-failed {
-  color: var(--danger);
+  color: var(--status-danger);
 }
 
 .agent-run-marker.is-stopped {
@@ -325,7 +325,7 @@
 
 .agent-run-icon-button.is-danger:hover:not(:disabled),
 .agent-run-icon-button.is-danger:focus-visible:not(:disabled) {
-  color: var(--danger);
+  color: var(--status-danger);
 }
 
 .agent-run-detail-metadata dt {
@@ -477,7 +477,7 @@
   align-items: center;
   gap: var(--space-3);
   border-bottom: 1px solid var(--border-subtle);
-  color: var(--danger);
+  color: var(--status-danger);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   padding: var(--space-3) var(--space-6);
@@ -925,7 +925,7 @@
 }
 
 .agent-tool-persisted-actions small.is-error {
-  color: var(--danger);
+  color: var(--status-danger);
 }
 
 .agent-tool-persisted-load {

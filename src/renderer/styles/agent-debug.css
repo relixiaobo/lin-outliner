@@ -318,7 +318,7 @@
 .agent-debug-status-pill.is-error,
 .agent-debug-status-pill.is-aborted {
   background: color-mix(in srgb, var(--status-danger) 12%, transparent);
-  color: var(--danger);
+  color: var(--status-danger);
 }
 
 .agent-debug-query-stack,
@@ -593,7 +593,7 @@
 }
 
 .agent-debug-block-button.is-error {
-  color: var(--danger);
+  color: var(--status-danger);
 }
 
 .agent-debug-copy-button:focus-visible,
@@ -606,7 +606,7 @@
   border: 1px solid color-mix(in srgb, var(--status-danger-muted) 22%, transparent);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--status-danger-muted) 7.5%, transparent);
-  color: var(--danger);
+  color: var(--status-danger);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   padding: var(--space-6);
@@ -794,7 +794,7 @@
 }
 
 .agent-debug-part-details.is-error > .agent-debug-part-head strong {
-  color: var(--danger);
+  color: var(--status-danger);
 }
 
 .agent-debug-detail-section {

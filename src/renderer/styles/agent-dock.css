@@ -263,8 +263,8 @@ button.panel-resize-handle {
 
 .agent-dock-run-status.is-failed,
 .agent-dock-run-status.is-stopped {
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  color: var(--danger);
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
+  color: var(--status-danger);
 }
 
 .agent-dock-title {

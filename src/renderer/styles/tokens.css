@@ -450,8 +450,6 @@
   /* the one link colour — native link blue (design-system.md: exactly one) */
   --inline-ref-default: var(--link);
   --inline-ref-hover: var(--link-hover);
-  /* danger affordances use the genuine status red, not brand rose */
-  --danger: var(--status-danger);
   --row-hover: var(--fill-2);
   --row-selected: var(--fill-3);
   --row-selection-bg: var(--row-selected);
