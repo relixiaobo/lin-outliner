@@ -274,6 +274,14 @@ before any directional/security-sensitive build.
   annotated captures as payload-backed image tool results. Directional/security-
   sensitive: implementation still needs helper-packaging and hard-prohibition
   decisions before code. See `docs/plans/agent-computer-control.md`.
+- **data-import-cli-api-boundary** (P1, PM-ratified 2026-07-04, build-ready) —
+  move data import from the default model-visible `data_import` tool to a
+  Tenon-owned Import Pack CLI/API boundary. `/data-cleanup` should run
+  `tenon-import` through bash; final commit still goes through the main-process
+  import service so transaction, undo, history, search-index refresh, and
+  verification guarantees stay inside the app. The same Import Pack CLI/API
+  becomes the future local interface for other agents and services. See
+  `docs/plans/data-import-cli-api-boundary.md`.
 Standalone agent items (not part of the program):
 
 - **third-party-skill-import** (P2, *no plan file yet — draft, to be drafted*) —
