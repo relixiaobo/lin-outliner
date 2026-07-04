@@ -70,6 +70,36 @@ const layoutTransitionAllowlist = new Map([
   ['src/renderer/styles/canvas.css|.workspace-canvas|padding', 'Workspace canvas pads around rails during open/close layout motion.'],
   ['src/renderer/styles/outliner.css|.indent-guide-line|width', 'Absolute decorative guide stroke thickens without changing row layout.'],
 ]);
+const materialSurfaceSelectors = new Map([
+  ['src/renderer/styles/agent-composer.css|.agent-composer-file-preview-popover', 'Inline file preview popover.'],
+  ['src/renderer/styles/agent-composer.css|.agent-composer-model-popover', 'Composer model/effort overlay.'],
+  ['src/renderer/styles/agent-debug.css|.agent-debug-cost::after', 'Debug cost tooltip.'],
+  ['src/renderer/styles/agent-debug.css|.agent-debug-usage-popover', 'Debug usage tooltip.'],
+  ['src/renderer/styles/agent-dock.css|:root[data-window-material] .agent-dock', 'Agent rail chrome material.'],
+  ['src/renderer/styles/agent-dock.css|.agent-conversation-menu', 'Agent conversation section menu.'],
+  ['src/renderer/styles/agent-dock.css|.agent-conversation-row-menu', 'Agent conversation row menu.'],
+  ['src/renderer/styles/agent-message.css|.agent-message-details-popover', 'Agent message details popover.'],
+  ['src/renderer/styles/agent-message.css|.agent-message-usage-hover-card', 'Agent message usage tooltip.'],
+  ['src/renderer/styles/code.css|.agent-code-header > span', 'Floating code-block language label chrome.'],
+  ['src/renderer/styles/code.css|.agent-code-copy, .code-block-copy', 'Floating code-block copy chrome.'],
+  ['src/renderer/styles/code.css|.code-block-language', 'Floating code-block language trigger.'],
+  ['src/renderer/styles/code.css|.code-block-language-menu', 'Code-block language menu.'],
+  ['src/renderer/styles/file-preview.css|.document-outline-popover', 'Document outline popover.'],
+  ['src/renderer/styles/file-preview.css|.file-node-image-actions .file-node-card-menu-trigger', 'Floating image-row menu trigger over arbitrary pixels.'],
+  ['src/renderer/styles/inline-ref.css|.inline-file-preview-popover', 'Inline file hover preview popover.'],
+  ['src/renderer/styles/outliner.css|.batch-tag-selector', 'Batch tag selector popover.'],
+  ['src/renderer/styles/outliner.css|.node-context-menu', 'Node context menu.'],
+  ['src/renderer/styles/outliner.css|.node-picker-popover', 'Node picker popover.'],
+  ['src/renderer/styles/outliner.css|.tag-context-menu', 'Tag context menu.'],
+  ['src/renderer/styles/outliner.css|.typed-field-date-popover', 'Field date picker popover.'],
+  ['src/renderer/styles/outliner.css|.view-toolbar-popover', 'View toolbar popover.'],
+  ['src/renderer/styles/outliner.css|.view-toolbar-tooltip', 'View toolbar tooltip.'],
+  ['src/renderer/styles/panel.css|.panel-date-popover', 'Panel date popover.'],
+  ['src/renderer/styles/popover-command.css|.trigger-popover', 'Trigger/reference/slash popover shell.'],
+  ['src/renderer/styles/settings-providers.css|.settings-row-menu', 'Settings provider row menu.'],
+  ['src/renderer/styles/shell.css|.top-chrome-more-menu', 'Top chrome menu.'],
+  ['src/renderer/styles/sidebar.css|:root[data-window-material] .sidebar-dock', 'Sidebar rail chrome material.'],
+]);
 const runtimeTokenInputs = new Map([
   ['src/renderer/styles/agent-message.css|--segment-size', 'Usage hover bars receive per-segment widths from the message usage renderer.'],
   ['src/renderer/styles/code.css|--shiki-light', 'Generated Shiki token colour stream for light code themes.'],
@@ -272,6 +302,37 @@ function collectMaterialBackdropPairViolations() {
       const lineNumber = source.slice(0, match.index).split('\n').length;
       violations.push(`${file}:${lineNumber} ${selector} uses a material background without both standard backdrop filters`);
     }
+  }
+
+  return violations;
+}
+
+function collectMaterialSurfaceScopeViolations() {
+  const violations: string[] = [];
+  const seen = new Set<string>();
+
+  for (const file of productStyleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim().replace(/\s+/g, ' ');
+      const body = match[2] ?? '';
+      if (!/\bbackground(?:-color)?\s*:\s*var\(--material-/.test(body)) continue;
+
+      const key = `${file}|${selector}`;
+      seen.add(key);
+      if (materialSurfaceSelectors.has(key)) continue;
+
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      violations.push(`${file}:${lineNumber} ${selector} uses a material background outside the registered chrome/overlay surface set`);
+    }
+  }
+
+  for (const [key, reason] of materialSurfaceSelectors) {
+    if (seen.has(key)) continue;
+    violations.push(`${key} is registered as a material surface but no longer exists (${reason})`);
   }
 
   return violations;
@@ -589,6 +650,10 @@ test.describe('typography tokens', () => {
 
   test('keeps material backgrounds paired with shared backdrop filters', () => {
     expect(collectMaterialBackdropPairViolations()).toEqual([]);
+  });
+
+  test('keeps material backgrounds scoped to registered chrome and overlay surfaces', () => {
+    expect(collectMaterialSurfaceScopeViolations()).toEqual([]);
   });
 
   test('keeps level-2 focused overlays on the opaque elevated tier', () => {

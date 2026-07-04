@@ -105,8 +105,9 @@ Expected checks for design-system changes:
   layout-transition allowlist; it keeps global z-index values on the `--z-*`
   ladder, keeps hidden scrollbars limited to the registered document-outline
   mini-rail exception, and keeps every `--material-*` background paired with the
-  shared `--material-backdrop` filter. It also keeps level-2
-  focused overlays on the opaque elevated tier, not the material popover tier.
+  shared `--material-backdrop` filter and scoped to registered chrome / overlay
+  surfaces. It also keeps level-2 focused overlays on the opaque elevated tier,
+  not the material popover tier.
   It also keeps functional-state fills, borders, and rings from using brand,
   link, or status colour tokens outside the solid destructive-confirmation
   exception, and fails overlay `box-shadow` declarations that mix level-1/2
