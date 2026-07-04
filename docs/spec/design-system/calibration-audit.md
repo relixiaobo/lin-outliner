@@ -98,6 +98,7 @@ standard change that only hides one local violation is not accepted.
 | CA64 | Pointer-cursor coverage allowed any selector containing `.inline-ref`, so a future non-link control could inherit the hand cursor by naming alone. | Code drift | Cursor-affordance coverage now allows only the exact content-link inline-reference selectors that intentionally use the pointer cursor. | `tests/e2e/cursor-affordances.spec.ts` |
 | CA65 | B6 was documented and spot-checked at runtime, but static validation did not stop named chrome icon controls from regaining hover/focus/press background boxes. | Code drift | Cursor-affordance coverage now fails non-transparent hover, focus, or press backgrounds on named chrome icon controls, and stale rail-collapse prose now describes colour deepening instead of a fill tint. | `tests/e2e/cursor-affordances.spec.ts`; `agent-dock.css`; `implementation.md` |
 | CA66 | The Settings frameless drag region carried chrome title text but did not suppress text selection like the main window and pane breadcrumb drag regions. | Code drift | Settings drag chrome now has `user-select: none`, and cursor-affordance coverage fails any renderer `-webkit-app-region: drag` rule that remains selectable. | `settings-base.css`; `tests/e2e/cursor-affordances.spec.ts` |
+| CA67 | Local `:focus-visible` rules suppressed the shared focus-ring shadow in editor-owned and structural-control paths, but those suppressions were implicit and could grow without review. | Named exception | Patterns now name the valid local focus mechanisms, and cursor-affordance coverage fails any unregistered `:focus-visible` `box-shadow: none` rule. | `patterns.md`; `tests/e2e/cursor-affordances.spec.ts` |
 
 ## Named Exceptions Kept
 
@@ -115,6 +116,7 @@ These are intentional after calibration. They stay narrow and evidence-backed.
 | Document outline mini-rail hides its scrollbar. | EPUB/document outline mini-rail track only; content scroll containers keep native lightweight scrollbars. | Kernel Exception Registry; hidden-scrollbar guard |
 | Native window rounding depends on compiled addon output. | macOS app-window corner visual verification. | Kernel Exception Registry; window-material checks |
 | Model-upload JPEG alpha matting may force a white canvas. | Agent composer image resizing for model upload only. | Raw-hex named exception in metrics |
+| Local focus-ring suppression uses a named replacement indicator. | Editor-owned text canvases, clipped inset-card row inputs, non-tabstop outliner structural controls, and one compact text stop action only. | `focusVisibleRingSuppressionExceptions`; cursor-affordance guard |
 
 ## Native-Control Exceptions
 

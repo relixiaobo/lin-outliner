@@ -24,6 +24,40 @@ const chromeIconControlSelectors = [
   '.rail-toggle',
   '.settings-row-menu-trigger',
 ];
+const focusVisibleRingSuppressionExceptions = new Map([
+  [
+    'src/renderer/styles/agent-message.css|.agent-channel-working-stop-all:focus-visible',
+    'Compact text action uses underline as its keyboard-focus indicator.',
+  ],
+  [
+    'src/renderer/styles/code.css|.code-block-textarea:focus-visible',
+    'Code editor textarea is a transparent caret plane over syntax-highlighted text.',
+  ],
+  [
+    'src/renderer/styles/launcher.css|.launcher-input:focus, .launcher-input:focus-visible',
+    'Single-field launcher focus is carried by the caret and active launcher surface.',
+  ],
+  [
+    'src/renderer/styles/outliner.css|.indent-guide:focus, .indent-guide:focus-visible, .indent-guide:active',
+    'Outliner indent guide is a non-tabstop structural hit target.',
+  ],
+  [
+    'src/renderer/styles/outliner.css|.field-name-input:focus-visible',
+    'Outliner field-name editing uses the row/editor focus model.',
+  ],
+  [
+    'src/renderer/styles/outliner.css|.row-chevron-button:focus, .row-chevron-button:focus-visible, .row-chevron-button:active, .row-bullet-button:focus, .row-bullet-button:focus-visible, .row-bullet-button:active',
+    'Outliner marker controls are non-tabstop structural controls.',
+  ],
+  [
+    'src/renderer/styles/outliner.css|.node-description:focus-visible',
+    'Outliner description editing uses the caret and local description surface.',
+  ],
+  [
+    'src/renderer/styles/settings-provider-sheet.css|.inset-card .settings-sheet-row-input:focus-visible',
+    'Clipped inset-card inputs transfer the keyboard ring to the row.',
+  ],
+]);
 
 function collectPointerCursorViolations() {
   const violations: string[] = [];
@@ -114,6 +148,33 @@ function collectBareInputFocusSuppressionViolations() {
   return violations;
 }
 
+function collectFocusVisibleRingSuppressionViolations() {
+  const violations: string[] = [];
+
+  for (const file of styleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim().replace(/\s+/g, ' ');
+      if (!/:focus-visible\b/.test(selector)) continue;
+      if (/:not\(:focus-visible\)/.test(selector)) continue;
+
+      const body = match[2] ?? '';
+      if (!/\bbox-shadow\s*:\s*none\s*;/.test(body)) continue;
+
+      const key = `${file}|${selector}`;
+      if (focusVisibleRingSuppressionExceptions.has(key)) continue;
+
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      violations.push(`${file}:${lineNumber} ${selector}`);
+    }
+  }
+
+  return violations;
+}
+
 function collectRawResizeCursorViolations() {
   const violations: string[] = [];
   const rawResizeCursor = /(?:^|[;\s])cursor\s*:\s*(?:ew-resize|ns-resize|col-resize|row-resize)\s*;/;
@@ -183,6 +244,10 @@ test.describe('cursor affordances', () => {
 
   test('keeps shared bare inputs inheriting the keyboard focus ring', () => {
     expect(collectBareInputFocusSuppressionViolations()).toEqual([]);
+  });
+
+  test('keeps focus-visible ring suppressions explicitly named', () => {
+    expect(collectFocusVisibleRingSuppressionViolations()).toEqual([]);
   });
 
   test('keeps resize cursors routed through shared tokens', () => {
