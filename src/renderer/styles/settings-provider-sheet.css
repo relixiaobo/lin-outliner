@@ -118,7 +118,7 @@
 
 .settings-sheet-subtitle {
   margin: 0;
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }
@@ -197,7 +197,7 @@
   min-width: 0;
   align-items: center;
   gap: var(--space-3);
-  color: var(--muted-2);
+  color: var(--text-tertiary);
 }
 
 .settings-sheet-key > svg {

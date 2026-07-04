@@ -140,7 +140,7 @@
 .agent-settings-section-header > span {
   min-width: 0;
   overflow: hidden;
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
   text-overflow: ellipsis;

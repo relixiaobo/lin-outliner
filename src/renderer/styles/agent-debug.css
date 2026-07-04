@@ -90,7 +90,7 @@
 .agent-debug-section-header > span {
   min-width: 0;
   overflow: hidden;
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-xs);
   line-height: var(--line-ui-xs);
   text-overflow: ellipsis;

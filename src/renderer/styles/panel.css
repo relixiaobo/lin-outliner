@@ -34,7 +34,7 @@
   justify-content: center;
   border-radius: var(--radius-sm);
   background: var(--fill-1);
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   margin-top: 1px;
   mix-blend-mode: multiply;
 }
@@ -126,7 +126,7 @@
   align-items: center;
   gap: var(--space-1);
   margin-top: var(--space-5);
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }
@@ -244,7 +244,7 @@
 .calendar-month-weekdays {
   column-gap: var(--calendar-day-gap);
   margin-top: var(--space-4);
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-2xs);
   font-weight: 600;
   line-height: var(--line-meta);
@@ -338,7 +338,7 @@
   justify-content: center;
   border-radius: var(--radius-pill);
   background: transparent;
-  color: var(--muted);
+  color: var(--text-secondary);
   transition: background var(--motion-fast), color var(--motion-fast);
 }
 

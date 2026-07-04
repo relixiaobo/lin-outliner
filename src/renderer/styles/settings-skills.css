@@ -4,7 +4,7 @@
    (settings-inset-list.css); behaviour toggles, skills, and permission rows all
    render as inset rows, so there is no bespoke row / card styling here anymore. */
 .settings-section-desc {
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }

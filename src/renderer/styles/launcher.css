@@ -76,7 +76,7 @@ body {
 
 .launcher-input-icon {
   flex-shrink: 0;
-  color: var(--muted-2);
+  color: var(--text-tertiary);
 }
 
 .launcher-input {

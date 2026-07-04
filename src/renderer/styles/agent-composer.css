@@ -837,14 +837,14 @@
 }
 
 .agent-composer-mention-section {
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-xs);
   font-weight: 650;
   padding: var(--space-2) var(--space-3) var(--space-1);
 }
 
 .agent-composer-mention-status {
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-xs);
   padding: var(--space-2) var(--space-3);
 }

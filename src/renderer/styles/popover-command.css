@@ -41,7 +41,7 @@
   gap: var(--space-5);
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--muted);
+  color: var(--text-secondary);
   min-height: 32px;
   padding: var(--space-2) var(--space-4);
   text-align: left;
@@ -63,11 +63,11 @@
 .popover-item.disabled:hover,
 .popover-item.disabled.active {
   background: transparent;
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 
 .command-group-heading {
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-meta);
   font-weight: 500;
   padding: var(--space-3) var(--space-5) calc(var(--space-2) + var(--space-hairline));
@@ -82,7 +82,7 @@
   flex: 0 0 16px;
   align-items: center;
   justify-content: center;
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 
 .popover-node-emoji {
@@ -144,7 +144,7 @@
 
 .popover-item-meta {
   overflow: hidden;
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-ui-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -152,12 +152,12 @@
 
 .command-item-type {
   flex: 0 0 auto;
-  color: var(--muted-2);
+  color: var(--text-tertiary);
   font-size: var(--font-meta);
   white-space: nowrap;
 }
 
 .popover-empty {
-  color: var(--muted);
+  color: var(--text-secondary);
   padding: calc(var(--space-3) + var(--space-hairline)) var(--space-4);
 }
