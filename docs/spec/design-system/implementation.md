@@ -100,9 +100,9 @@ Expected checks for design-system changes:
   `[data-theme]` bridge rule, the registered dark-media rule allowlist, the
   registered reduced-motion / reduced-transparency / increased-contrast rule
   allowlists, the absent `--primary` token family, and the static no-scale
-  feedback guard; it also keeps functional-state fills, borders, and rings from
-  using brand, link, or status colour tokens outside the solid
-  destructive-confirmation exception.
+  feedback guard; it keeps global z-index values on the `--z-*` ladder, and it
+  also keeps functional-state fills, borders, and rings from using brand, link,
+  or status colour tokens outside the solid destructive-confirmation exception.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
   interaction affordances change.
 - `tests/e2e/window-material.spec.ts` for window-material and inactive-window

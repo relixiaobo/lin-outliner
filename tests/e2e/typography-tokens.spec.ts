@@ -337,6 +337,20 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
+  test('keeps global z-index values on the token ladder', () => {
+    const localStackingValues = new Set(['0', '1', '2']);
+    const violations = collectDeclarationViolations(
+      /\b(z-index):\s*([^;]+);/,
+      (value) => (
+        value.startsWith('var(--z-')
+        || value.startsWith('calc(var(--z-')
+        || localStackingValues.has(value)
+      ),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps material backdrop filters routed through the shared token', () => {
     const violations = collectDeclarationViolations(
       /(-webkit-backdrop-filter|backdrop-filter):\s*([^;]+);/,
