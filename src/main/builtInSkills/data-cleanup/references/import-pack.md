@@ -1,8 +1,8 @@
 # Import Pack v1
 
-Import Pack v1 is the boundary between source adapters and Tenon's generic
-`data_import` interface. Adapters emit this file; `data_import` validates and
-stages it.
+Import Pack v1 is the boundary between source adapters and Tenon's import
+CLI/API. Adapters emit this file; `tenon-import preview` validates it and
+`tenon-import commit` stages it through the running Tenon app.
 
 Required top-level fields:
 

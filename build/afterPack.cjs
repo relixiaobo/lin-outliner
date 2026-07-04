@@ -23,6 +23,8 @@ exports.default = async function afterPack(context) {
       if (existsSync(rgPath)) chmodSync(rgPath, 0o755);
     }
   }
+  const tenonImportPath = path.join(appPath, 'Contents', 'Resources', 'built-in-skills', 'data-cleanup', 'bin', 'tenon-import');
+  if (existsSync(tenonImportPath)) chmodSync(tenonImportPath, 0o755);
   execFileSync('codesign', ['--force', '--deep', '--sign', '-', appPath], {
     stdio: 'inherit',
   });

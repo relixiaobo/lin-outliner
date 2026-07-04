@@ -401,33 +401,34 @@ describe('agent permissions', () => {
     expect(allowed.behavior).toBe('allow');
   });
 
-  test('data import is a local document write governed by tool preapproval', () => {
-    const args = { pack_file: 'tmp/import-pack.json', dry_run: true };
+  test('tenon-import commit is audited as an outliner edit consequence', () => {
+    const args = { command: 'tenon-import commit tmp/import-pack.json --preview-id preview:123' };
     const trusted = evaluateAgentToolPermission({
-      toolName: 'data_import',
+      toolName: 'bash',
       args,
       policy: { workspaceRoot },
     });
     expect(trusted.behavior).toBe('allow');
-    expect(trusted.access).toBe('write');
+    expect(trusted.access).toBe('execute');
     expect(trusted.descriptor?.actionKind).toBe('outline.edit');
+    expect(trusted.descriptor?.code).toBe('tenon_import_commit');
 
     const restricted = evaluateAgentToolPermission({
-      toolName: 'data_import',
+      toolName: 'bash',
       args,
       policy: { workspaceRoot, mode: 'restricted' },
     });
     expect(restricted).toMatchObject({ behavior: 'deny', code: 'tool_not_preapproved' });
-    expect(restricted.access).toBe('write');
+    expect(restricted.access).toBe('execute');
     expect(restricted.descriptors?.[0]?.actionKind).toBe('outline.edit');
 
     const preapproved = evaluateAgentToolPermission({
-      toolName: 'data_import',
+      toolName: 'bash',
       args,
-      policy: { workspaceRoot, mode: 'restricted', preapprovedToolRules: ['data_import'] },
+      policy: { workspaceRoot, mode: 'restricted', preapprovedToolRules: ['bash'] },
     });
     expect(preapproved.behavior).toBe('allow');
-    expect(preapproved.access).toBe('write');
+    expect(preapproved.access).toBe('execute');
     expect(preapproved.descriptor?.actionKind).toBe('outline.edit');
   });
 

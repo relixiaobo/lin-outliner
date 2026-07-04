@@ -21,9 +21,7 @@ const markdownTool = path.join(documentSkillRoot, 'scripts', 'markdown_tool.mjs'
 const pptxTool = path.join(presentationSkillRoot, 'scripts', 'pptx_tool.py');
 const docxTool = path.join(documentSkillRoot, 'scripts', 'docx_tool.py');
 const tableTool = path.join(spreadsheetSkillRoot, 'scripts', 'table_tool.py');
-const tanaToImportPackTool = path.join(dataCleanupSkillRoot, 'scripts', 'tana-to-import-pack.ts');
-const validateImportPackTool = path.join(dataCleanupSkillRoot, 'scripts', 'validate-import-pack.ts');
-const importPackPreviewTool = path.join(dataCleanupSkillRoot, 'scripts', 'import-pack-preview.ts');
+const tenonImportTool = path.join(dataCleanupSkillRoot, 'scripts', 'tenon-import.ts');
 
 describe('built-in skill helper scripts', () => {
   test('data-cleanup Tana adapter emits a validated Import Pack preview', async () => {
@@ -34,9 +32,9 @@ describe('built-in skill helper scripts', () => {
     const validationFile = path.join(dir, 'validation.json');
     const previewFile = path.join(dir, 'preview.md');
 
-    await execFile('bun', [tanaToImportPackTool, fixture, '--out', packFile, '--coverage-out', coverageFile, '--fidelity', 'full']);
-    await execFile('bun', [validateImportPackTool, packFile, '--out', validationFile]);
-    await execFile('bun', [importPackPreviewTool, packFile, '--out', previewFile]);
+    await execFile('bun', [tenonImportTool, 'tana', fixture, '--out', packFile, '--coverage-out', coverageFile, '--fidelity', 'full']);
+    await execFile('bun', [tenonImportTool, 'validate', packFile, '--out', validationFile]);
+    await execFile('bun', [tenonImportTool, 'preview', packFile, '--out', previewFile, '--offline-preview']);
 
     const pack = JSON.parse(await readFile(packFile, 'utf8'));
     const coverage = JSON.parse(await readFile(coverageFile, 'utf8'));
@@ -67,12 +65,31 @@ describe('built-in skill helper scripts', () => {
     expect(Array.isArray(coverage)).toBe(true);
     expect(coverage).toHaveLength(pack.stats.sourceRecords);
     expect(coverage.every((entry: { status?: string }) => entry.status !== 'unaccounted')).toBe(true);
-    expect(validation).toMatchObject({ ok: true, errors: [] });
+    expect(validation).toMatchObject({ ok: true, stats: pack.stats, warnings: pack.warnings });
     expect(preview).toContain('# Import Preview: tana');
     expect(preview).toContain('Unaccounted: 0');
     expect(preview).toContain('Fields: 1');
     expect(preview).toContain('Home');
     expect(preview).toContain('trash_node');
+  });
+
+  test('data-cleanup preview requires the running app import API by default', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'lin-data-cleanup-api-required-'));
+    const fixture = path.join(dataCleanupSkillRoot, 'fixtures', 'tana-minimal.json');
+    const packFile = path.join(dir, 'pack.json');
+    const previewFile = path.join(dir, 'preview.md');
+
+    await execFile('bun', [tenonImportTool, 'tana', fixture, '--out', packFile]);
+    const failed = await execFile('bun', [tenonImportTool, 'preview', packFile, '--out', previewFile])
+      .then(
+        () => null,
+        (error: { stdout?: string }) => JSON.parse(error.stdout ?? '{}') as { ok?: boolean; error?: { code?: string } },
+      );
+
+    expect(failed).toMatchObject({
+      ok: false,
+      error: { code: 'app_unavailable' },
+    });
   });
 
   test('presentation html inspector reports template warnings without failing structurally', async () => {

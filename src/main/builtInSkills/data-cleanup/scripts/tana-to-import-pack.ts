@@ -114,7 +114,11 @@ async function main() {
 
 let packCoverageEntries: CoverageEntry[] = [];
 
-async function convertTanaExport(
+export function lastTanaPackCoverageEntries(): CoverageEntry[] {
+  return packCoverageEntries;
+}
+
+export async function convertTanaExport(
   raw: unknown,
   config: {
     source: string;
@@ -419,7 +423,9 @@ function createdAt(doc: TanaDoc): number {
   return typeof doc.props?.created === 'number' ? doc.props.created : 0;
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+if ((import.meta as ImportMeta & { main?: boolean }).main) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}

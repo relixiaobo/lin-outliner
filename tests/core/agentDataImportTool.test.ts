@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
+import { request as httpRequest } from 'node:http';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import { buildTextSearchIndex } from '../../src/core/searchEngine';
-import { createDataImportTool } from '../../src/main/agentDataImportTool';
 import type { ImportPack } from '../../src/main/agentDataImportPack';
+import { AgentImportApiServer, type ImportApiDescriptor, type ImportApiResponse } from '../../src/main/agentImportApi';
+import { AgentImportService } from '../../src/main/agentImportService';
 import { createAgentLocalWorkspaceContext } from '../../src/main/agentLocalTools';
 import {
   checkedState,
@@ -14,7 +16,6 @@ import {
   normalChildIds,
 } from '../../src/main/agentNodeToolProjection';
 import type { OutlinerToolHost } from '../../src/main/agentNodeTools';
-import type { ToolEnvelope } from '../../src/main/agentToolEnvelope';
 
 function hostFor(core: Core): OutlinerToolHost {
   return {
@@ -66,13 +67,40 @@ async function writePack(root: string, pack: ImportPack): Promise<string> {
   return filePath;
 }
 
-function createImportToolExecutor(core: Core, root: string): (params: unknown) => Promise<ToolEnvelope<any>> {
+async function callImportApi(descriptor: ImportApiDescriptor, pathname: '/preview' | '/commit', body: Record<string, unknown>): Promise<ImportApiResponse> {
+  const payload = `${JSON.stringify(body)}\n`;
+  return await new Promise<ImportApiResponse>((resolve, reject) => {
+    const request = httpRequest({
+      socketPath: descriptor.socketPath,
+      path: pathname,
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${descriptor.token}`,
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(payload),
+      },
+    }, (response) => {
+      let text = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk: string) => {
+        text += chunk;
+      });
+      response.on('end', () => {
+        try {
+          resolve(JSON.parse(text) as ImportApiResponse);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    request.once('error', reject);
+    request.end(payload);
+  });
+}
+
+function createImportService(core: Core, root: string): AgentImportService {
   const workspace = createAgentLocalWorkspaceContext(root);
-  const tool = createDataImportTool(hostFor(core), { workspace });
-  return async (params: unknown) => {
-    const result = await (tool.execute as any)('test-call', params);
-    return result.details as ToolEnvelope<any>;
-  };
+  return new AgentImportService(hostFor(core), { workspace, toolName: 'tenon-import' });
 }
 
 function samplePack(): ImportPack {
@@ -137,49 +165,50 @@ function samplePack(): ImportPack {
   };
 }
 
-describe('data_import agent tool', () => {
+describe('Tenon import service', () => {
   test('requires a matching dry-run preview and stages a validated Import Pack', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'tenon-data-import-'));
     try {
       const packFile = await writePack(root, samplePack());
       const core = Core.new();
-      const executeImportTool = createImportToolExecutor(core, root);
+      const importService = createImportService(core, root);
 
-      const withoutPreview = await executeImportTool({ pack_file: 'pack.json' });
-      expect(withoutPreview.ok).toBe(false);
-      expect(withoutPreview.error?.code).toBe('preview_required');
+      await expect(importService.commitFromFile({ packFile: 'pack.json' }))
+        .rejects.toMatchObject({ code: 'preview_required' });
 
-      const dryRun = await executeImportTool({ pack_file: 'pack.json', dry_run: true });
-      expect(dryRun.ok).toBe(true);
-      expect(dryRun.status).toBe('unchanged');
-      expect(dryRun.data).toMatchObject({
+      const dryRun = await importService.previewFromFile({ packFile: 'pack.json' });
+      expect(dryRun).toMatchObject({
         sectionCount: 1,
         nodeCount: 3,
         createdRootIds: [],
         stats: samplePack().stats,
       });
-      expect(dryRun.data.previewId).toStartWith('preview:');
+      expect(dryRun.previewId).toStartWith('preview:');
 
       const otherParentId = core.createNode(core.projection().todayId, null, 'Other destination').focus!.nodeId;
-      const mismatch = await executeImportTool({
-        pack_file: 'pack.json',
-        parent_id: otherParentId,
-        confirmed_preview_id: dryRun.data.previewId,
-      });
-      expect(mismatch.ok).toBe(false);
-      expect(mismatch.error?.code).toBe('preview_mismatch');
+      await expect(importService.commitFromFile({
+        packFile: 'pack.json',
+        parentId: otherParentId,
+        previewId: dryRun.previewId,
+      })).rejects.toMatchObject({ code: 'preview_mismatch' });
 
-      const secondDryRun = await executeImportTool({ pack_file: 'pack.json', dry_run: true });
-      const imported = await executeImportTool({
-        pack_file: 'pack.json',
-        confirmed_preview_id: secondDryRun.data.previewId,
+      const secondDryRun = await importService.previewFromFile({ packFile: 'pack.json' });
+      const imported = await importService.commitFromFile({
+        packFile: 'pack.json',
+        previewId: secondDryRun.previewId,
       });
-      expect(imported.ok).toBe(true);
-      expect(imported.data.verification).toMatchObject({ ok: true });
-      expect(imported.data.createdRootIds).toHaveLength(1);
+      expect(imported.verification).toMatchObject({ ok: true });
+      expect(imported.createdRootIds).toHaveLength(1);
+
+      const history = core.operationHistory({ action: 'list', origin: 'agent' });
+      expect(history.items?.[0]).toMatchObject({
+        tool: 'tenon-import',
+        summary: 'Created import staging tree for 3 cleaned nodes.',
+        canUndo: true,
+      });
 
       const index = indexProjection(core.projection());
-      const stagingRoot = index.nodes.get(imported.data.stagingRootId)!;
+      const stagingRoot = index.nodes.get(imported.stagingRootId!)!;
       expect(stagingRoot.content.text).toBe('Import: sample.tana');
 
       const sectionId = normalChildIds(index, stagingRoot.id, false)[0]!;
@@ -216,12 +245,49 @@ describe('data_import agent tool', () => {
       const pack = samplePack();
       pack.stats.nodes = 99;
       await writePack(root, pack);
-      const executeImportTool = createImportToolExecutor(Core.new(), root);
-      const result = await executeImportTool({ pack_file: 'pack.json', dry_run: true });
-      expect(result.ok).toBe(false);
-      expect(result.error?.code).toBe('stats_mismatch');
+      const importService = createImportService(Core.new(), root);
+      await expect(importService.previewFromFile({ packFile: 'pack.json' }))
+        .rejects.toMatchObject({ code: 'stats_mismatch' });
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('local API previews and commits bounded pack content through the import service', async () => {
+    const userData = await mkdtemp(path.join(tmpdir(), 'tenon-data-import-api-user-data-'));
+    try {
+      const packContent = `${JSON.stringify(samplePack(), null, 2)}\n`;
+      const core = Core.new();
+      const service = new AgentImportService(hostFor(core), { toolName: 'tenon-import' });
+      const api = new AgentImportApiServer(service, { userDataDir: userData });
+      const descriptor = await api.start();
+      try {
+        const preview = await callImportApi(descriptor, '/preview', { packContent, packLabel: 'sample.tana.json' });
+        expect(preview.ok).toBe(true);
+        const previewData = preview.data as { previewId?: string; createdRootIds?: string[] };
+        expect(previewData.previewId).toStartWith('preview:');
+        expect(previewData.createdRootIds).toEqual([]);
+
+        const commit = await callImportApi(descriptor, '/commit', {
+          packContent,
+          packLabel: 'sample.tana.json',
+          previewId: previewData.previewId,
+        });
+        expect(commit.ok).toBe(true);
+        expect((commit.data as { verification?: { ok?: boolean } }).verification?.ok).toBe(true);
+
+        const reused = await callImportApi(descriptor, '/commit', {
+          packContent,
+          packLabel: 'sample.tana.json',
+          previewId: previewData.previewId,
+        });
+        expect(reused.ok).toBe(false);
+        expect(reused.error?.code).toBe('preview_expired');
+      } finally {
+        await api.stop();
+      }
+    } finally {
+      await rm(userData, { recursive: true, force: true });
     }
   });
 });

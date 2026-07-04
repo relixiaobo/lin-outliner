@@ -1043,6 +1043,17 @@ describe('agent skills', () => {
     ]);
   });
 
+  test('ships data-cleanup as a tenon-import CLI workflow', async () => {
+    const runtime = new AgentSkillRuntime({ includeUserSkills: false });
+    const skill = await runtime.getSkill('data-cleanup');
+
+    expect(skill?.allowedTools).toContain('bash');
+    expect(skill?.allowedTools).not.toContain('data_import');
+    expect(skill?.body).toContain('tenon-import preview');
+    expect(skill?.body).toContain('tenon-import commit');
+    expect(skill?.body).not.toContain('Call `data_import`');
+  });
+
   test('resolves bundled built-in resource roots for dev and packaged modes', () => {
     const repoRoot = path.join(path.sep, 'repo');
     const moduleDir = path.join(repoRoot, 'out', 'main');
