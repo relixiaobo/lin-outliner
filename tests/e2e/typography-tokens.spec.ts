@@ -55,6 +55,10 @@ const contrastRuleFiles = new Map([
   ['src/renderer/styles/a11y.css', 'Central increased-contrast token layer.'],
   ['src/renderer/styles/launcher.css', 'System launcher transparent glass collapses to an opaque elevated surface.'],
 ]);
+const hiddenScrollbarSelectors = new Set([
+  '.document-outline-rail-track',
+  '.document-outline-rail-track::-webkit-scrollbar',
+]);
 
 function markdownFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -347,6 +351,23 @@ test.describe('typography tokens', () => {
         || localStackingValues.has(value)
       ),
     );
+
+    expect(violations).toEqual([]);
+  });
+
+  test('keeps hidden scrollbars limited to registered non-content rails', () => {
+    const violations = [
+      ...collectCssRuleDeclarationViolations(
+        /./,
+        /\b(scrollbar-width):\s*([^;]+);/g,
+        (value, _property, selector) => value !== 'none' || hiddenScrollbarSelectors.has(selector),
+      ),
+      ...collectCssRuleDeclarationViolations(
+        /::-webkit-scrollbar/,
+        /\b(display):\s*([^;]+);/g,
+        (value, _property, selector) => value !== 'none' || hiddenScrollbarSelectors.has(selector),
+      ),
+    ];
 
     expect(violations).toEqual([]);
   });

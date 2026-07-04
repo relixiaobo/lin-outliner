@@ -77,6 +77,7 @@ standard change that only hides one local violation is not accepted.
 | CA43 | Inline file previews carried a local reduced-transparency fallback even though they already used the shared material tokens owned by the central accessibility layer. | Code drift | Removed the redundant local fallback and added a reduced-transparency media allowlist limited to the central accessibility layer plus the named system-launcher glass exception. | `inline-ref.css`; `tests/e2e/typography-tokens.spec.ts` |
 | CA44 | Increased contrast had a central token layer, but no guard stopped component styles from adding unregistered local `prefers-contrast: more` branches. | Code drift | Token/static CSS coverage now fails unregistered increased-contrast media rules, preserving the central accessibility layer and the named system-launcher glass exception. | `tests/e2e/typography-tokens.spec.ts`; `a11y.css` |
 | CA45 | The z-index ladder existed as `--z-*` tokens, but new global stacking values could still be hard-coded in product styles. | Code drift | Token/static CSS coverage now fails raw global z-index values while preserving local 0/1/2 stacking-context layers. | `tests/e2e/typography-tokens.spec.ts`; `tokens.css` |
+| CA46 | The document outline mini-rail intentionally hid its tiny scrollbar, but the exception was not named and no guard stopped content scroll containers from doing the same. | Named exception | The kernel now names the mini-rail scrollbar exception, and token/static CSS coverage fails hidden scrollbars anywhere else. | `design-system.md`; `tests/e2e/typography-tokens.spec.ts` |
 
 ## Named Exceptions Kept
 
@@ -91,6 +92,7 @@ These are intentional after calibration. They stay narrow and evidence-backed.
 | Composer model/effort chip is a profile shortcut. | Agent composer footer only. | Kernel Exception Registry; composer tests |
 | Icon masks and provider logos are identity assets. | Inline-file masks and provider marks only. | Kernel Exception Registry; icon/token review |
 | `cursor: help` is allowed for diagnostics. | Inline diagnostic hints or native-title tooltips only. | Cursor guard |
+| Document outline mini-rail hides its scrollbar. | EPUB/document outline mini-rail track only; content scroll containers keep native lightweight scrollbars. | Kernel Exception Registry; hidden-scrollbar guard |
 | Native window rounding depends on compiled addon output. | macOS app-window corner visual verification. | Kernel Exception Registry; window-material checks |
 | Model-upload JPEG alpha matting may force a white canvas. | Agent composer image resizing for model upload only. | Raw-hex named exception in metrics |
 
