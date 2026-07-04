@@ -29,6 +29,31 @@ function collectPointerCursorViolations() {
   return violations;
 }
 
+function collectForcedUserSelectViolations() {
+  const allowedSelectors = new Set([
+    'body.drag-selecting, body.drag-selecting *',
+    'body.is-resizing-layout, body.is-resizing-layout *',
+  ]);
+  const violations: string[] = [];
+
+  for (const file of styleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim().replace(/\s+/g, ' ');
+      const body = match[2] ?? '';
+      if (!/(?:-webkit-)?user-select\s*:\s*none\s*!important\s*;/.test(body)) continue;
+      if (allowedSelectors.has(selector)) continue;
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      violations.push(`${file}:${lineNumber} ${selector}`);
+    }
+  }
+
+  return violations;
+}
+
 // Strict-native cursor policy: chrome (buttons, toggles, rows, bullets) keeps the
 // default arrow cursor the way a native macOS/Windows app does. The pointing-hand
 // cursor is reserved for genuine content hyperlinks (inline references / links in
@@ -37,6 +62,10 @@ function collectPointerCursorViolations() {
 test.describe('cursor affordances', () => {
   test('reserves pointer cursor declarations for inline content references', () => {
     expect(collectPointerCursorViolations()).toEqual([]);
+  });
+
+  test('keeps forced text-selection suppression limited to active gestures', () => {
+    expect(collectForcedUserSelectViolations()).toEqual([]);
   });
 
   test('core controls keep the native arrow cursor', async ({ page }) => {

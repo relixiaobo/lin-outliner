@@ -108,7 +108,9 @@ Expected checks for design-system changes:
   link, or status colour tokens outside the solid destructive-confirmation
   exception.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
-  interaction affordances change.
+  interaction affordances change, including pointer-cursor scope and forced
+  `user-select: none !important` suppression staying limited to active drag /
+  resize gestures.
 - `tests/e2e/window-material.spec.ts` for window-material and inactive-window
   behavior when material rules change.
 - `git diff --check`
