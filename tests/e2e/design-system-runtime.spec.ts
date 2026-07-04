@@ -224,6 +224,20 @@ async function showReferenceFieldValuePopover(page: Page) {
   await expect(listbox.getByRole('option', { name: 'Alpha' })).toBeVisible();
 }
 
+async function showSelectedFieldOptionsPopover(page: Page) {
+  await invokeDocumentCommand(page, 'select_field_option', {
+    fieldEntryId: ids.priorityEntry,
+    optionNodeId: ids.priorityLow,
+  });
+  const projection = await e2eProjection(page);
+  const valueId = projection.nodes.find((node) => node.parentId === ids.priorityEntry)?.id;
+  if (!valueId) throw new Error('missing selected option value row');
+  await rowBody(page, valueId).click();
+  const listbox = page.getByRole('listbox', { name: 'Selected field options' });
+  await listbox.waitFor({ state: 'visible' });
+  await expect(listbox.getByRole('option', { name: 'Low' })).toHaveAttribute('aria-selected', 'true');
+}
+
 async function installLocalFileMentionFixture(page: Page) {
   await page.evaluate(() => {
     const win = window as typeof window & {
@@ -284,7 +298,7 @@ async function installLocalFileMentionFixture(page: Page) {
   });
 }
 
-async function showInlineFileContextMenu(page: Page) {
+async function insertInlineFileMention(page: Page) {
   await installLocalFileMentionFixture(page);
   const input = page.getByLabel('Agent message');
   await input.click();
@@ -294,10 +308,23 @@ async function showInlineFileContextMenu(page: Page) {
   await option.click();
   const inlineFile = page.locator('[data-agent-file-ref]', { hasText: 'Project Report.md' });
   await inlineFile.waitFor({ state: 'visible' });
+  return inlineFile;
+}
+
+async function showInlineFileContextMenu(page: Page) {
+  const inlineFile = await insertInlineFileMention(page);
   await inlineFile.click({ button: 'right' });
   const menu = page.getByRole('menu', { name: 'File actions' });
   await menu.waitFor({ state: 'visible' });
   await expect(menu.getByRole('menuitem', { name: 'Add to Today' })).toBeVisible();
+}
+
+async function showInlineFilePreviewPopover(page: Page) {
+  const inlineFile = await insertInlineFileMention(page);
+  await inlineFile.hover();
+  const preview = page.locator('[data-inline-file-preview]');
+  await preview.waitFor({ state: 'visible' });
+  await expect(preview).toContainText('Project Report.md');
 }
 
 async function showCodeBlockLanguageMenu(page: Page) {
@@ -1017,6 +1044,19 @@ const surfaces: SurfaceCase[] = [
     waitFor: `[data-node-id="${ids.referencesEntry}"]`,
     options: { referenceField: true },
     beforeProbe: showReferenceFieldValuePopover,
+  },
+  {
+    name: 'selected field options popover',
+    path: '/',
+    waitFor: `[data-node-id="${ids.priorityEntry}"]`,
+    options: { optionsField: true },
+    beforeProbe: showSelectedFieldOptionsPopover,
+  },
+  {
+    name: 'inline file preview popover',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showInlineFilePreviewPopover,
   },
   {
     name: 'inline file context menu',
