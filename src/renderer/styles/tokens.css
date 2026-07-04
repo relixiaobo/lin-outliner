@@ -325,7 +325,6 @@
   );
   --outline-panel-min-width: 360px;
   --outline-panel-ideal-width: 520px;
-  --panel-gap: var(--layout-gap);
   /* Control box sizes — a tight 4-step ladder (20 / 22 / 24 / 28). */
   --control-size-xs: 20px;
   --control-size-sm: 22px;

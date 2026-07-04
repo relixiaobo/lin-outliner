@@ -934,10 +934,24 @@ test.describe('typography tokens', () => {
       'space-md',
       'workspace-tab-close-size',
       'workspace-tab-icon-slot',
+      'panel-gap',
     ].join('|');
-    const violations = collectCssTextViolations(
-      new RegExp(`(?:--(?:${retiredAliases})\\\\s*:|var\\\\(--(?:${retiredAliases})\\\\))`),
+    const retiredAliasPattern = new RegExp(
+      `(?:--(?:${retiredAliases})\\\\s*:|var\\\\(--(?:${retiredAliases})\\\\)|['"\`]--(?:${retiredAliases})['"\`])`,
     );
+    const violations: string[] = [];
+
+    for (const file of rendererSourceFiles) {
+      const text = readFileSync(file, 'utf8').replace(
+        /\/\*[\s\S]*?\*\//g,
+        (block) => block.replace(/[^\n]/g, ' '),
+      );
+      const lines = text.split('\n');
+      for (const [index, line] of lines.entries()) {
+        if (!retiredAliasPattern.test(line)) continue;
+        violations.push(`${file}:${index + 1} ${line.trim()}`);
+      }
+    }
 
     expect(violations).toEqual([]);
   });
