@@ -248,10 +248,54 @@ async function createAttachmentRowPreview(page: Page) {
   await attachmentRow.locator('.file-node-row-preview .file-node-preview.collapsed').waitFor({ state: 'visible' });
 }
 
+async function pasteClipboardFile(page: Page, file: { name: string; mimeType: string; text: string }) {
+  await page.evaluate((input) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File([input.text], input.name, { type: input.mimeType }));
+    const target = document.activeElement;
+    if (!target) throw new Error('No active paste target');
+    target.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dataTransfer,
+    }));
+  }, file);
+}
+
+async function pasteClipboardFileAndOpenPreview(page: Page, file: { name: string; mimeType: string; text: string }) {
+  const beforeChildren = await todayChildren(page);
+  await trailingEditor(page).click();
+  await pasteClipboardFile(page, file);
+  await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+  const pastedId = (await todayChildren(page)).at(-1);
+  if (!pastedId) throw new Error(`No pasted file node for ${file.name}`);
+  const pastedRow = row(page, pastedId);
+  await pastedRow.locator('> .row').first().hover();
+  await pastedRow.locator('.row-chevron-button').first().click();
+  const previewFrame = pastedRow.locator('.file-node-row-preview .file-node-preview.collapsed');
+  await previewFrame.waitFor({ state: 'visible' });
+  return previewFrame;
+}
+
 async function showFilePreviewPillMenu(page: Page) {
   await createAttachmentRowPreview(page);
   await page.locator('.file-node-row-preview .file-preview-pill-more').click();
   await page.getByRole('menu', { name: 'Preview actions' }).waitFor({ state: 'visible' });
+}
+
+async function showDocumentOutlineRail(page: Page) {
+  await pasteClipboardFileAndOpenPreview(page, {
+    name: 'runtime-book.epub',
+    mimeType: 'application/epub+zip',
+    text: 'epub bytes',
+  });
+  const epubBody = page.locator('.file-node-row-preview > .file-node-body').last();
+  await epubBody.locator('.file-preview-pill-primary').click();
+  const fullPreview = epubBody.locator('.file-node-preview.expanded .file-preview-epub--full');
+  const outlineRail = fullPreview.locator('.document-outline-rail');
+  await outlineRail.waitFor({ state: 'visible' });
+  await outlineRail.locator('.document-outline-rail-track').hover();
+  await expect(outlineRail.locator('.document-outline-item-title')).toHaveText(['Start', 'Continue']);
 }
 
 async function showImageRowActionMenu(page: Page) {
@@ -583,6 +627,12 @@ const surfaces: SurfaceCase[] = [
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: showFilePreviewPillMenu,
+  },
+  {
+    name: 'document outline rail',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showDocumentOutlineRail,
   },
   {
     name: 'image row action menu',
