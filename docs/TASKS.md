@@ -24,17 +24,19 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 | Codex | `lin-outliner-codex/` | — | idle (shipped channel-create/edit #289, skill-file-read-roots #292, file-node-preview-interactions #295, code-block-floating-toolbar #301, search-reference-sources #335, trashed-schema-definitions #338, **agent-goal #343, preview-first-links-html-renderer #345, custom OpenAI endpoint fixes #354/#355/#356, browser/computer control plans #361, remove-outliner-settings-root #362, design-system-contract-refactor #367, design-system-compression-target #368**) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped unify-transcript-process-ui #284, channel-activity-run-details-polish #291, **agent-memory-on-timeline PR1 `past_chats` #305 + PR2 node-memory #308**, native-focus-policy #332, view-toolbar-tana-polish #350, agent-compact-tail-reanchor #351, agent-work-divider-timing #357, dream-system-line-filter #360, tool-lucide-icon-audit #363, cc-switch-local-gateway #369; authored ratified plan agent-process-stable-disclosure #297) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped folder-handoff + `file_convert` #266, performance-optimization P2 #275, stable-disclosure-anchor #306, file-preview-pdf-and-mentions #318, file-ingestion-runtime #326, derived-ingestion cache #327, **epub-file-preview #339 + epub-continuous-scroll #344, agent-node-edit-behavior #353, linlab-built-in-skills #359, agent-run-graph-cleanup plan #364 + implementation #365**) |
-| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370) |
+| Codex 4 | `lin-outliner-codex-4/` | — | idle (shipped three-built-in-skills #270, skill hardening #281/#283, clear-context-boundary #352, disclosure-anchor-stability #358 + spec sync #366, data-cleanup-import #370, data-import-performance #371) |
 | Anti | `lin-outliner-anti/` | — | idle |
 
 *(Snapshot, refreshed by the main agent on merge. The authoritative live state is the set of open PRs + each item's status tag below.)*
 
 ## In progress
 
-**In flight (2026-07-04).** Open PR queue: none. Recently merged: #365
-(`codex-3/agent-run-index-completeness`) merged 2026-07-04 after main
-review; see *Recently completed*. #370 (`codex-4/data-cleanup-import`)
-merged 2026-07-03 after main review; see *Recently completed*. #369
+**In flight (2026-07-04).** Open PR queue: none. Recently merged: #371
+(`codex-4/data-import-performance`) merged 2026-07-04 after main review;
+see *Recently completed*. #365 (`codex-3/agent-run-index-completeness`)
+merged 2026-07-04 after main review; see *Recently completed*. #370
+(`codex-4/data-cleanup-import`) merged 2026-07-03 after main review; see
+*Recently completed*. #369
 (`codex-2/cc-switch-local-gateway`), #368
 (`codex/design-system-compression-target`), #367
 (`codex/design-system-contract-refactor`), #366
@@ -455,6 +457,19 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **data-import-performance** (`codex-4/data-import-performance`, PR #371,
+  codex-4, merged 2026-07-04, fast-track) — moves data-import description
+  writes into `create_nodes_from_tree`, adds cooperative yielding for bulk tree
+  materialization / chunk commits / search-index refresh, and caches tag/field
+  definition lookups in the core materializer. Large Import Pack writes now avoid
+  per-description command loops and stay responsive while preserving one logical
+  agent undo/operation-history entry. **Gate (main):** review found that chunked
+  commits broke `operation_history`'s `operation_id` stack-top guard; codex-4
+  fixed the undo value before merge. Verified on the final PR head with focused
+  operation-history reproduction, the chunked tree-materialization core test,
+  typecheck, targeted core suites, docs check, and `git diff --check`.
+  Fast-track, **shape (a)**, *no plan file*.
 
 - **data-cleanup-import** (`codex-4/data-cleanup-import`, PR #370, codex-4,
   merged 2026-07-03, plan-track) — ships the agent data-cleanup/import workflow

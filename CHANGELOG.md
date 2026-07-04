@@ -12,6 +12,16 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Data import performance and cooperative scheduling (PR #371, codex-4)** —
+  materializes imported descriptions directly through `create_nodes_from_tree`,
+  caches tag/field definition lookup during bulk tree writes, and adds
+  yield-aware chunking for node creation, Loro commits, and search-index refresh.
+  Large Import Pack writes now avoid one command per description while remaining
+  one logical agent undo / operation-history entry. **Gate (main):** code review
+  found one operation-history regression in chunked undo metadata; codex-4 fixed
+  it before merge. Verified with focused operation-history reproduction, the
+  chunked materialization core test, typecheck, targeted core suites,
+  `docs:check`, and `git diff --check`.
 - **Run graph cleanup implementation (PR #365, codex-3)** — completed the
   Run-centered execution cleanup: durable Run metadata/result submission now drive
   Work/Runs, detail drawers, verifier evidence, restored runtime state, and
