@@ -935,8 +935,10 @@ test.describe('typography tokens', () => {
     const retiredAliases = [
       'app-bg',
       'accent-brand',
+      'agent-collapsed-width',
       'agent-side-panel-shadow',
       'agent-composer-corner-radius',
+      'outline-panel-ideal-width',
       'semantic-success',
       'semantic-success-strong',
       'semantic-warning',
@@ -961,6 +963,7 @@ test.describe('typography tokens', () => {
       'focus-border',
       'search-builder-focus-shadow',
       'shell-padding-x',
+      'sidebar-collapsed-width',
       'shell-padding-top',
       'shell-padding-bottom',
       'shell-gap',
