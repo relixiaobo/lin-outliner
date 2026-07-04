@@ -37,7 +37,7 @@
   --sidebar-tree-label-gap: var(--space-3);
   border-radius: var(--panel-radius);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
+  box-shadow: var(--rail-surface-shadow);
   transform: translate3d(0, 0, 0);
   transition:
     transform var(--motion-layout),

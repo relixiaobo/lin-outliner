@@ -21,7 +21,7 @@
   overflow: hidden;
   border-radius: var(--panel-radius);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-rail), inset 0 0 0 0.5px var(--rail-edge);
+  box-shadow: var(--rail-surface-shadow);
   padding: 0;
   transform: translate3d(0, 0, 0);
   transition:
@@ -67,9 +67,9 @@ button.panel-resize-handle {
 
 /* No grab pill anywhere. A handle is an INVISIBLE hit strip whose only affordance
    is the ew-resize cursor on hover (inherited from the base rule above): you hover
-   the edge / divider line itself and drag it. The visible "line" is the rail's own
-   --rail-edge ring (sidebar / agent) or the 1px inter-pane divider (the panel slot
-   below) — the handle just widens that line's grab target. */
+   the edge / divider line itself and drag it. The visible "line" is the shared
+   --rail-surface-shadow edge ring (sidebar / agent) or the 1px inter-pane divider
+   (the panel slot below) — the handle just widens that line's grab target. */
 
 /* Rails clip overflow, so the handles sit just INSIDE each rail's outer edge
    (a hit strip flush against the resizable edge) rather than poking into the gap. */

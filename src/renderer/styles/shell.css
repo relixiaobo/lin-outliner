@@ -4,8 +4,8 @@
      • LOWER — a full-bleed opaque content base (.workspace-canvas) that fills the
        window edge to edge and extends UNDER the floating rails.
      • UPPER — the sidebar + agent rails float on top: inset by --layout-gap,
-       rounded --panel-radius, soft --shadow-rail, --material-sidebar tint +
-       backdrop-filter + a --rail-edge hairline ring.
+       rounded --panel-radius, --rail-surface-shadow, --material-sidebar tint +
+       backdrop-filter.
    Persistent window chrome (traffic lights + two symmetric rail toggles) is fixed
    to the window, not the rails.
    ════════════════════════════════════════════════════════════════════════════ */

@@ -107,8 +107,9 @@ Expected checks for design-system changes:
   mini-rail exception, and keeps every `--material-*` background paired with the
   shared `--material-backdrop` filter and scoped to registered chrome / overlay
   surfaces; backdrop filters stay scoped to those material surfaces plus the
-  registered preview-HUD exception. It also keeps level-2 focused overlays on
-  the opaque elevated tier, not the material popover tier.
+  registered preview-HUD exception, while rail chrome uses the shared
+  `--rail-surface-shadow`. It also keeps level-2 focused overlays on the opaque
+  elevated tier, not the material popover tier.
   It also keeps functional-state fills, borders, and rings from using brand,
   link, or status colour tokens outside the solid destructive-confirmation
   exception, and fails overlay `box-shadow` declarations that mix level-1/2

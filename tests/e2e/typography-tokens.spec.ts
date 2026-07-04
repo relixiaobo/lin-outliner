@@ -895,6 +895,14 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
+  test('keeps rail chrome shadow routed through the shared surface token', () => {
+    const violations = collectCssTextViolations(
+      /box-shadow:\s*var\(--shadow-rail\),\s*inset 0 0 0 0\.5px var\(--rail-edge\)/,
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps primary reading text aligned across outliner and agent surfaces', async ({ page }) => {
     await openMockedApp(page);
 

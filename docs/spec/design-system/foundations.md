@@ -319,11 +319,11 @@ Window material mapping:
 | Window / surface | Native material | Renderer material contract |
 | --- | --- | --- |
 | Main app window | macOS `vibrancy: 'under-window'`; Windows `backgroundMaterial: 'mica'` when available | Root receives the detected `data-window-material`; rails and in-app material overlays use `--material-*` + `--material-backdrop` over the window material. |
-| Sidebar and agent rails | Same main-window material underneath | Floating CSS rail surfaces use `--material-sidebar`, `--material-backdrop`, and `--rail-edge`. |
+| Sidebar and agent rails | Same main-window material underneath | Floating CSS rail surfaces use `--material-sidebar`, `--material-backdrop`, and `--rail-surface-shadow`. |
 | Menus / popovers inside the app | Same main-window material underneath | CSS elevated-overlay tier: `--material-popover` + `--material-backdrop` + level-1 shadow. |
 | Dialogs / in-app command palette | Same main-window material underneath | Opaque `--bg-elevated` + level-2 shadow; never translucent. |
 | Global launcher window | macOS `vibrancy: 'hud'` | Transparent launcher surface over HUD material; functional fills tint the glass, no second `backdrop-filter`. |
-| Settings / provider / agent / channel child windows | No OS material | Opaque preferences/config surfaces; no `data-window-material` glass contract. |
+| Settings / provider / agent / channel child windows | No OS material | Opaque preferences/config surfaces; Settings rail may reuse `--rail-surface-shadow` without material; no `data-window-material` glass contract. |
 
 There is no separate full-width toolbar material: the top strip is the window's
 drag region; over the content base it is transparent, over a rail it is the
@@ -387,10 +387,10 @@ scale font size with viewport width.
 
 - **Elevation:** two drop-shadow levels — level 1 (menus, popovers, tooltips) and
   level 2 (dialogs, command palette). Shadows are pure drop shadows; floating
-  surfaces carry no real outer border. Dark mode deepens them. The glass rails
-  carry their own *soft, low* elevation (they float above the content base) —
-  `--shadow-rail`, the softest tier (rail < level-1 menus < level-2 dialogs), not
-  a level-1/2 overlay shadow and not a hairline.
+  surfaces carry no real outer border. Dark mode deepens them. Floating rails
+  carry their own *soft, low* elevation plus a subtle edge ring
+  (`--rail-surface-shadow`) — the softest tier (rail < level-1 menus < level-2
+  dialogs), not a level-1/2 overlay shadow and not a hand-written hairline.
 - **Radius:** a deliberately short ladder. The everyday step is **5 / 6 / 8** —
   rows `--radius-row` (5), controls/chips/icon-buttons `--radius-sm` (6), small
   surfaces & composer `--radius-md` (8). Above it sit the structural radii: menus
