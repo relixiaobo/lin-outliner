@@ -222,6 +222,15 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
+  test('keeps product letter spacing neutral', () => {
+    const violations = collectDeclarationViolations(
+      /\b(letter-spacing):\s*([^;]+);/,
+      (value) => value === '0',
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps product foundation styling tokenized outside layout geometry', () => {
     const violations = [
       ...collectDeclarationViolations(

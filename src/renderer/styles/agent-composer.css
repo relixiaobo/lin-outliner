@@ -1093,7 +1093,7 @@
   color: var(--text-faint);
   font-size: var(--font-meta);
   line-height: var(--line-meta-tight);
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 

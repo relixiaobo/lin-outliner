@@ -79,6 +79,7 @@ standard change that only hides one local violation is not accepted.
 | CA45 | The z-index ladder existed as `--z-*` tokens, but new global stacking values could still be hard-coded in product styles. | Code drift | Token/static CSS coverage now fails raw global z-index values while preserving local 0/1/2 stacking-context layers. | `tests/e2e/typography-tokens.spec.ts`; `tokens.css` |
 | CA46 | The document outline mini-rail intentionally hid its tiny scrollbar, but the exception was not named and no guard stopped content scroll containers from doing the same. | Named exception | The kernel now names the mini-rail scrollbar exception, and token/static CSS coverage fails hidden scrollbars anywhere else. | `design-system.md`; `tests/e2e/typography-tokens.spec.ts` |
 | CA47 | Typography rules prohibited viewport-driven font sizing, but the guard did not check font token declarations for viewport/container units. | Code drift | Token/static CSS coverage now fails viewport or container units in `font-size` declarations and `--font-*` token declarations. | `tests/e2e/typography-tokens.spec.ts`; `foundations.md` Typography |
+| CA48 | The typography rule only prohibited CJK letter-spacing, leaving room for local tracked labels and codes that split the type rhythm. | Spec drift | Foundations now require product `letter-spacing: 0`, the remaining nonzero declarations were removed, and token/static CSS coverage fails future nonzero letter-spacing. | `foundations.md`; `tests/e2e/typography-tokens.spec.ts` |
 
 ## Named Exceptions Kept
 

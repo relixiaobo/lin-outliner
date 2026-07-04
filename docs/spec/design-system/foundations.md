@@ -672,8 +672,9 @@ weight alone — pair it with color or fill. The system font stack supplies nati
 weights (SF on macOS).
 
 CJK + Latin mixing: line-height tokens are tuned so Latin and CJK glyph boxes
-share a stable visual line, so mixed runs do not change row height. Do not apply
-letter-spacing to CJK text.
+share a stable visual line, so mixed runs do not change row height. Product CSS
+keeps `letter-spacing: 0`; do not introduce tracking for labels, headings, codes,
+or CJK text.
 
 Scale: `--font-scale` on `:root` scales the whole system through `rem`. Never
 scale font size with viewport width.

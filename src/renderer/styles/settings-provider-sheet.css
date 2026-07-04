@@ -341,7 +341,7 @@
   font-family: var(--font-family-mono);
   font-size: var(--font-heading-lg);
   line-height: var(--line-heading-lg);
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
   color: var(--text-strong);
   user-select: text;
 }
