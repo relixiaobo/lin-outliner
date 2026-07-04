@@ -252,8 +252,8 @@ button.panel-resize-handle {
 }
 
 .agent-dock-run-status.is-running {
-  background: color-mix(in srgb, var(--agent-accent) 12%, transparent);
-  color: var(--agent-accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
 }
 
 .agent-dock-run-status.is-completed {

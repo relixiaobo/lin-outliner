@@ -921,6 +921,7 @@ test.describe('typography tokens', () => {
       'deck-bg',
       'surface-soft',
       'surface-user-bubble',
+      'agent-accent',
     ].join('|');
     const violations = collectCssTextViolations(
       new RegExp(`(?:--(?:${retiredAliases})\\\\s*:|var\\\\(--(?:${retiredAliases})\\\\))`),
