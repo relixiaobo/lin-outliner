@@ -198,7 +198,7 @@
      pick reads clearly over a coloured swatch in both themes (replaces the too-faint
      --border-emphasis border). Two layers, so it must live as a token to satisfy
      the box-shadow token guard. */
-  --swatch-selected-ring: 0 0 0 2px var(--panel-bg), 0 0 0 3.5px var(--text-primary);
+  --swatch-selected-ring: 0 0 0 2px var(--bg-content), 0 0 0 3.5px var(--text-primary);
   --typed-field-section-shadow: inset 0 1px 0 var(--separator);
   --segmented-track-shadow: inset 0 0 0 1px var(--separator);
   /* Grouped-card edge: a 0.5px inset hairline instead of a heavy border, so a
@@ -409,7 +409,7 @@
   --scrollbar-thumb: rgb(var(--ink) / 0.22);
   --scrollbar-thumb-hover: rgb(var(--ink) / 0.34);
   --bg: var(--bg-elevated);
-  --surface: var(--panel-bg);
+  --surface: var(--bg-content);
   --surface-2: var(--bg-window);
   --border-emphasis: rgb(var(--ink) / 0.18);
   --muted: var(--text-secondary);

@@ -167,7 +167,7 @@ button.panel-resize-handle {
 
 .agent-chat-panel[data-work-panel-open="true"],
 .agent-chat-panel[data-work-panel-open="true"] .agent-dock-header {
-  background: var(--panel-bg);
+  background: var(--bg-content);
 }
 
 .agent-dock-header[data-run-detail-open="true"] {

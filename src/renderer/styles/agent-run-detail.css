@@ -50,7 +50,7 @@
   flex: 1;
   flex-direction: column;
   overflow: hidden;
-  background: var(--panel-bg);
+  background: var(--bg-content);
 }
 
 .agent-run-detail-drawer-backdrop {

@@ -326,7 +326,7 @@
 
 .calendar-month-day.is-selected {
   background: var(--surface-inverse);
-  color: var(--panel-bg);
+  color: var(--bg-content);
 }
 
 .panel-title-more-button {
