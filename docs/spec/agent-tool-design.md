@@ -2274,8 +2274,15 @@ Result behavior:
   with `file_read`. Foreground and background output have a disk-size watchdog
   that fails and terminates runaway commands before output can grow without
   bound.
-- Background task output is written to the returned output file directly, with a
-  final status footer appended when the task completes, fails, or is stopped.
+- Bash stdout/stderr capture must use pipes streamed into files, not shell-owned
+  file descriptors, so Node can observe descendants that inherit stdio.
+- Foreground and background bash completion is based on process `close` (stdio
+  closed), not shell `exit`. A shell wrapper exiting while a descendant still
+  owns stdout/stderr must leave the foreground call blocked/auto-backgrounded or
+  the background task running and stoppable.
+- Running background task files record the stdout/stderr capture file paths; when
+  the task completes, fails, or is stopped, Lin composes the returned output file
+  with stdout, stderr, and a final status footer.
 - `bash` timeout, cancellation, `task_stop`, and output watchdog termination must
   stop the shell process tree, not only the shell wrapper process.
 - Completion of a background command should be surfaced through the agent

@@ -2,7 +2,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createReadStream, createWriteStream, existsSync, realpathSync, statSync } from 'node:fs';
-import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile, type FileHandle } from 'node:fs/promises';
+import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -349,7 +349,6 @@ interface BackgroundTask {
   command: string;
   process: BashProcessHandle;
   outputPath: string;
-  outputMode: 'live-combined' | 'split-files';
   stdoutPath?: string;
   stderrPath?: string;
   outputBytes: number;
@@ -362,6 +361,7 @@ interface BackgroundTask {
   outputLimitBytes?: number;
   completedAt?: number;
   outputWriteChain?: Promise<void>;
+  outputClosed?: Promise<void>;
   outputWatchdog?: ReturnType<typeof setInterval>;
 }
 
@@ -376,8 +376,7 @@ interface ForegroundOutputCapture {
   id: string;
   stdoutPath: string;
   stderrPath: string;
-  stdoutHandle: FileHandle;
-  stderrHandle: FileHandle;
+  outputClosed?: Promise<void>;
 }
 
 interface OutputWatchdogHandle {
@@ -1397,6 +1396,7 @@ function createTaskStopTool(): AgentTool<any, ToolEnvelope<TaskStopData>> {
         task.completedAt = Date.now();
         clearBackgroundOutputWatchdog(task);
         killBashProcessTree(task.process, 'SIGKILL');
+        await waitForOutputClosed(task.outputClosed);
         await finalizeBackgroundTaskOutput(task);
         pruneBackgroundTasks();
         const data: TaskStopData = {
@@ -1851,17 +1851,16 @@ async function runForegroundCommand(workspace: WorkspaceContext, params: BashPar
       cwd: workspace.root,
       shell: true,
       env: buildAgentLocalToolProcessEnv(),
-      stdio: ['ignore', capture.stdoutHandle.fd, capture.stderrHandle.fd],
+      stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
       windowsHide: true,
     });
     processHandle = { child };
+    attachSplitOutputCapture(child, capture);
   } catch (error) {
-    await closeForegroundOutputHandles(capture);
     await cleanupForegroundOutputCapture(capture);
     throw error;
   }
-  await closeForegroundOutputHandles(capture);
 
   let interrupted = false;
   let timedOut = false;
@@ -1906,7 +1905,7 @@ async function runForegroundCommand(workspace: WorkspaceContext, params: BashPar
       signal?.removeEventListener('abort', onAbort);
       void cleanupForegroundOutputCapture(capture).finally(() => reject(error));
     });
-    processHandle.child.once('exit', (code) => {
+    processHandle.child.once('close', (code) => {
       if (resolved) return;
       resolved = true;
       clearTimeout(timeoutTimer);
@@ -1915,6 +1914,7 @@ async function runForegroundCommand(workspace: WorkspaceContext, params: BashPar
       clearBashKillEscalation(processHandle);
       signal?.removeEventListener('abort', onAbort);
       void (async () => {
+        await waitForOutputClosed(capture.outputClosed);
         const output = await finalizeForegroundOutput(workspace, capture);
         const interpretation = outputLimitExceededBytes !== undefined
           ? { isError: true, message: `Command killed: output exceeded ${formatBytes(outputLimitExceededBytes)}.` }
@@ -1959,41 +1959,38 @@ async function registerBackgroundTask(
   await mkdir(path.dirname(outputPath), { recursive: true });
 
   let processHandle = options.process;
-  let outputMode: BackgroundTask['outputMode'] = 'live-combined';
   let stdoutPath: string | undefined;
   let stderrPath: string | undefined;
+  let outputClosed: Promise<void> | undefined;
 
   if (options.foregroundCapture) {
     if (!processHandle) {
       await cleanupForegroundOutputCapture(options.foregroundCapture);
       throw new Error('Cannot background a foreground capture without a child process.');
     }
-    outputMode = 'split-files';
     stdoutPath = options.foregroundCapture.stdoutPath;
     stderrPath = options.foregroundCapture.stderrPath;
+    outputClosed = options.foregroundCapture.outputClosed;
   } else {
-    await writeFile(outputPath, backgroundTaskHeader({
-      taskId,
-      status: 'running',
-      command: params.command,
-      startedAt,
-    }), 'utf8');
-    const outputHandle = await open(outputPath, 'a');
+    const capture = await createForegroundOutputCapture(workspace);
+    stdoutPath = capture.stdoutPath;
+    stderrPath = capture.stderrPath;
     try {
       const child = spawn(params.command, {
         cwd: workspace.root,
         shell: true,
         env: buildAgentLocalToolProcessEnv(),
-        stdio: ['ignore', outputHandle.fd, outputHandle.fd],
+        stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
         windowsHide: true,
       });
       processHandle = { child };
+      attachSplitOutputCapture(child, capture);
+      outputClosed = capture.outputClosed;
     } catch (error) {
-      await outputHandle.close();
+      await cleanupForegroundOutputCapture(capture);
       throw error;
     }
-    await outputHandle.close();
   }
 
   if (!processHandle) throw new Error('Background task did not create a child process.');
@@ -2003,20 +2000,16 @@ async function registerBackgroundTask(
     command: params.command,
     process: processHandle,
     outputPath,
-    outputMode,
     stdoutPath,
     stderrPath,
     outputBytes: 0,
     startedAt,
     status: 'running',
+    outputClosed,
   };
   backgroundTasks.set(taskId, task);
 
-  if (task.outputMode === 'split-files') {
-    await writeSplitBackgroundInitialOutput(task);
-  } else {
-    task.outputBytes = await fileSizeOrZero(task.outputPath);
-  }
+  await writeSplitBackgroundInitialOutput(task);
 
   attachBackgroundTaskHandlers(task, params);
   startBackgroundOutputWatchdog(task);
@@ -2659,18 +2652,7 @@ async function createForegroundOutputCapture(workspace: WorkspaceContext): Promi
   await mkdir(outputDir, { recursive: true });
   const stdoutPath = path.join(outputDir, `${id}.stdout.log`);
   const stderrPath = path.join(outputDir, `${id}.stderr.log`);
-  const [stdoutHandle, stderrHandle] = await Promise.all([
-    open(stdoutPath, 'w'),
-    open(stderrPath, 'w'),
-  ]);
-  return { id, stdoutPath, stderrPath, stdoutHandle, stderrHandle };
-}
-
-async function closeForegroundOutputHandles(capture: ForegroundOutputCapture) {
-  await Promise.allSettled([
-    capture.stdoutHandle.close(),
-    capture.stderrHandle.close(),
-  ]);
+  return { id, stdoutPath, stderrPath };
 }
 
 async function cleanupForegroundOutputCapture(capture: ForegroundOutputCapture) {
@@ -2678,6 +2660,23 @@ async function cleanupForegroundOutputCapture(capture: ForegroundOutputCapture) 
     rm(capture.stdoutPath, { force: true }),
     rm(capture.stderrPath, { force: true }),
   ]);
+}
+
+function attachSplitOutputCapture(child: ChildProcess, capture: ForegroundOutputCapture) {
+  const writes = [
+    child.stdout
+      ? pipeline(child.stdout, createWriteStream(capture.stdoutPath, { flags: 'w' }))
+      : writeFile(capture.stdoutPath, '', 'utf8'),
+    child.stderr
+      ? pipeline(child.stderr, createWriteStream(capture.stderrPath, { flags: 'w' }))
+      : writeFile(capture.stderrPath, '', 'utf8'),
+  ];
+  capture.outputClosed = Promise.allSettled(writes).then(() => {});
+}
+
+async function waitForOutputClosed(outputClosed: Promise<void> | undefined) {
+  if (!outputClosed) return;
+  await outputClosed;
 }
 
 function startForegroundOutputWatchdog(
@@ -2758,7 +2757,7 @@ async function finalizeForegroundOutput(
 }
 
 function attachBackgroundTaskHandlers(task: BackgroundTask, params: BashParams) {
-  task.process.child.once('exit', (code) => {
+  task.process.child.once('close', (code) => {
     void completeBackgroundTask(task, params, code);
   });
   task.process.child.once('error', (error) => {
@@ -2768,6 +2767,7 @@ function attachBackgroundTaskHandlers(task: BackgroundTask, params: BashParams) 
 
 async function completeBackgroundTask(task: BackgroundTask, params: BashParams, code: number | null) {
   if (task.completedAt) return;
+  await waitForOutputClosed(task.outputClosed);
   clearBackgroundOutputWatchdog(task);
   clearBashKillEscalation(task.process);
   const interpretation = interpretCommandResult(params.command, code);
@@ -2786,6 +2786,7 @@ async function completeBackgroundTask(task: BackgroundTask, params: BashParams, 
 
 async function failBackgroundTask(task: BackgroundTask, error: unknown) {
   if (task.completedAt) return;
+  await waitForOutputClosed(task.outputClosed);
   clearBackgroundOutputWatchdog(task);
   clearBashKillEscalation(task.process);
   task.status = 'failed';
@@ -2819,7 +2820,6 @@ function clearBackgroundOutputWatchdog(task: BackgroundTask) {
 }
 
 async function backgroundTaskOutputSize(task: BackgroundTask): Promise<number> {
-  if (task.outputMode === 'live-combined') return fileSizeOrZero(task.outputPath);
   const sizes = await Promise.all([
     fileSizeOrZero(task.outputPath),
     task.stdoutPath ? fileSizeOrZero(task.stdoutPath) : 0,
@@ -2845,11 +2845,7 @@ async function writeSplitBackgroundInitialOutput(task: BackgroundTask) {
 }
 
 async function finalizeBackgroundTaskOutput(task: BackgroundTask) {
-  if (task.outputMode === 'split-files') {
-    await composeSplitBackgroundOutput(task);
-  } else {
-    await appendLiveBackgroundTaskFooter(task);
-  }
+  await composeSplitBackgroundOutput(task);
 }
 
 async function composeSplitBackgroundOutput(task: BackgroundTask) {
@@ -2868,33 +2864,11 @@ async function composeSplitBackgroundOutput(task: BackgroundTask) {
   });
 }
 
-async function appendLiveBackgroundTaskFooter(task: BackgroundTask) {
-  await queueTaskOutputWrite(task, async () => {
-    await appendFile(task.outputPath, backgroundTaskStatusFooter(task), 'utf8');
-  });
-}
-
 async function cleanupBackgroundSplitFiles(task: BackgroundTask) {
   await Promise.allSettled([
     task.stdoutPath ? rm(task.stdoutPath, { force: true }) : Promise.resolve(),
     task.stderrPath ? rm(task.stderrPath, { force: true }) : Promise.resolve(),
   ]);
-}
-
-function backgroundTaskHeader(input: {
-  taskId: string;
-  status: BackgroundTaskStatus;
-  command: string;
-  startedAt: number;
-}): string {
-  return `${[
-    `task_id: ${input.taskId}`,
-    `status: ${input.status}`,
-    `command: ${input.command}`,
-    `started_at: ${new Date(input.startedAt).toISOString()}`,
-    '',
-    '[stdout]',
-  ].join('\n')}\n`;
 }
 
 function backgroundTaskMetadataLines(task: BackgroundTask): string[] {

@@ -1956,6 +1956,26 @@ describe('agent local tools', () => {
     });
   });
 
+  posixBashProcessTest('bash does not complete before no-wait descendant stdio closes', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const pidFile = path.join(workspaceRoot, 'child.pid');
+      let childPid: number | undefined;
+      try {
+        const result = await executeTool(workspaceRoot, 'bash', {
+          command: `sleep 60 & printf %s $! > ${JSON.stringify(pidFile)}`,
+          timeout: 100,
+        });
+        expect(result.ok).toBe(false);
+        expect(result.error?.code).toBe('command_interrupted');
+
+        childPid = Number((await readFile(pidFile, 'utf8')).trim());
+        expect(await waitForCondition(() => !isProcessAlive(childPid!), 2000)).toBe(true);
+      } finally {
+        killProcessIfAlive(childPid);
+      }
+    });
+  });
+
   test('bash foreground output watchdog kills runaway output', async () => {
     await withEnv({
       LIN_AGENT_BASH_MAX_OUTPUT_BYTES: '4096',
@@ -2012,6 +2032,42 @@ describe('agent local tools', () => {
         }, 2000);
         expect(pidReady).toBe(true);
         expect(isProcessAlive(childPid!)).toBe(true);
+
+        const stopped = await executeTool(workspaceRoot, 'task_stop', {
+          task_id: started.data!.backgroundTaskId,
+        });
+        expect(stopped.ok).toBe(true);
+        expect(await waitForCondition(() => !isProcessAlive(childPid!), 2000)).toBe(true);
+      } finally {
+        killProcessIfAlive(childPid);
+      }
+    });
+  });
+
+  posixBashProcessTest('bash background no-wait descendants remain stoppable', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const pidFile = path.join(workspaceRoot, 'child.pid');
+      let childPid: number | undefined;
+      try {
+        const started = await executeTool<{ backgroundTaskId: string; persistedOutputPath: string }>(workspaceRoot, 'bash', {
+          command: `sleep 60 & printf %s $! > ${JSON.stringify(pidFile)}`,
+          run_in_background: true,
+        });
+        expect(started.ok).toBe(true);
+
+        const pidReady = await waitForCondition(() => {
+          const text = spawnSync('cat', [pidFile], { encoding: 'utf8' }).stdout.trim();
+          if (!/^\d+$/.test(text)) return false;
+          childPid = Number(text);
+          return true;
+        }, 2000);
+        expect(pidReady).toBe(true);
+        expect(isProcessAlive(childPid!)).toBe(true);
+
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const runningOutput = await readFile(started.data!.persistedOutputPath, 'utf8');
+        expect(runningOutput).toContain('status: running');
+        expect(runningOutput).not.toContain('status: completed');
 
         const stopped = await executeTool(workspaceRoot, 'task_stop', {
           task_id: started.data!.backgroundTaskId,
