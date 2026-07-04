@@ -199,7 +199,7 @@
   overflow: auto;
   border-radius: var(--radius-overlay-sm);
   background: var(--overlay-bg);
-  box-shadow: var(--overlay-shadow-level-1), var(--outline-subtle);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-6);
 }
 

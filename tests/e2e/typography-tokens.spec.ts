@@ -513,12 +513,26 @@ test.describe('typography tokens', () => {
     const violations: string[] = [];
 
     for (const file of productStyleFiles) {
-      const text = readFileSync(file, 'utf8');
+      const text = readFileSync(file, 'utf8').replace(
+        /\/\*[\s\S]*?\*\//g,
+        (block) => block.replace(/[^\n]/g, ' '),
+      );
       const lines = text.split('\n');
       for (const [index, line] of lines.entries()) {
         if (!/--overlay-shadow-level-\d+:/.test(line)) continue;
         if (!/0\s+0\s+0\s+1px/.test(line)) continue;
         violations.push(`${file}:${index + 1} ${line.trim()}`);
+      }
+      for (const match of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        const selector = match[1]!.trim();
+        const body = match[2] ?? '';
+        for (const declaration of body.matchAll(/\bbox-shadow\s*:\s*([^;]+);/g)) {
+          const value = declaration[1]!.replace(/\s+/g, ' ').trim();
+          if (!/var\(--overlay-shadow-level-\d\)/.test(value)) continue;
+          if (!/var\(--outline-/.test(value)) continue;
+          const lineNumber = text.slice(0, match.index).split('\n').length;
+          violations.push(`${file}:${lineNumber} ${selector} { box-shadow: ${value}; }`);
+        }
       }
     }
 
