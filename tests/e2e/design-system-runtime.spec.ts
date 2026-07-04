@@ -11,6 +11,7 @@ import {
   row,
   rowBody,
   rowEditor,
+  setAgentMessageContextMenuAction,
   trailingEditor,
 } from './outlinerMock';
 
@@ -535,6 +536,64 @@ async function showCompletedAgentProcess(page: Page) {
   if (await activityToggle.count() > 0) await activityToggle.click();
 }
 
+async function showAgentMessageDetailsDialog(page: Page) {
+  const detailUsage = {
+    input: 1200,
+    output: 34,
+    cacheRead: 10,
+    cacheWrite: 0,
+    totalTokens: 1244,
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: 0,
+    },
+  };
+
+  await emitAgentProjection(page, DEFAULT_GENERAL_CHANNEL_ID, {
+    conversationTitle: 'Planning Channel',
+    members: [
+      { principal: { type: 'user', userId: 'local-user' }, mention: '', displayName: 'You' },
+      {
+        principal: { type: 'agent', agentId: 'built-in:tenon:assistant' },
+        mention: 'assistant',
+        displayName: 'Neva',
+        coordinator: true,
+      },
+      {
+        principal: { type: 'agent', agentId: 'user:mock:self' },
+        mention: 'self',
+        displayName: 'self',
+      },
+    ],
+    model: { id: 'gpt-5.4', provider: 'openai' },
+    conversation: [{
+      nodeId: 'assistant-peer-design-details',
+      actor: { type: 'agent', agentId: 'user:mock:self' },
+      message: {
+        role: 'assistant',
+        timestamp: 1_800_000_000_100,
+        api: 'openai-completions',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        usage: detailUsage,
+        stopReason: 'stop',
+        content: [{ type: 'text', text: 'Self result for runtime design details.' }],
+      },
+    }],
+  });
+
+  const messageRow = page.locator('.agent-message-row.assistant', { hasText: 'Self result for runtime design details.' });
+  await messageRow.waitFor({ state: 'visible' });
+  await setAgentMessageContextMenuAction(page, 'details');
+  await messageRow.click({ button: 'right' });
+  const dialog = page.getByRole('dialog', { name: 'Details' });
+  await dialog.waitFor({ state: 'visible' });
+  await expect(dialog).toContainText('openai/gpt-5.4');
+}
+
 const surfaces: SurfaceCase[] = [
   {
     name: 'main app',
@@ -821,6 +880,12 @@ const surfaces: SurfaceCase[] = [
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: showCompletedAgentProcess,
+  },
+  {
+    name: 'agent message details dialog',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showAgentMessageDetailsDialog,
   },
   {
     name: 'agent debug run details',
