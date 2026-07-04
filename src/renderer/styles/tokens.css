@@ -55,7 +55,7 @@
      SEMANTIC FOUNDATION (design-system.md). Two themes over one ink base: every
      text/fill/separator/outline value is an alpha over --ink (black in light,
      white in dark), so the dark @media block at the end only flips --ink + a few
-     opaque/material literals. Legacy aliases (--text-main, --panel-bg, …) are
+     opaque/material literals. Remaining legacy aliases (--text-main, …) are
      re-pointed onto this layer below so existing component CSS keeps working.
      ════════════════════════════════════════════════════════════════════════ */
   --ink: 0 0 0;
@@ -211,7 +211,6 @@
   /* ── Legacy product-token aliases → semantic layer. Migrate opportunistically.
         There is no --primary family: action surfaces use neutral fill /
         focus-ring / outline tokens instead of the rose accent. ── */
-  --panel-bg: var(--bg-content);
   --window-material-frost: color-mix(in srgb, var(--bg-window) 62%, transparent);
   --text-main: var(--text-primary);
   --text-strong: var(--text-primary);
@@ -409,8 +408,6 @@
   --scrollbar-thumb: rgb(var(--ink) / 0.22);
   --scrollbar-thumb-hover: rgb(var(--ink) / 0.34);
   --bg: var(--bg-elevated);
-  --surface: var(--bg-content);
-  --surface-2: var(--bg-window);
   --border-emphasis: rgb(var(--ink) / 0.18);
   --muted: var(--text-secondary);
   --muted-2: var(--text-tertiary);

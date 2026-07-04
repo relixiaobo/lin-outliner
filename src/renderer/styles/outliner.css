@@ -177,7 +177,7 @@
       var(--status-danger) calc(50% + 1px),
       transparent calc(50% + 1px)
     ),
-    var(--surface-2);
+    var(--bg-window);
 }
 
 .definition-text-input {
@@ -744,7 +744,7 @@
   margin: 4px 0 12px var(--row-selection-start);
   border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
   border-radius: var(--radius-md);
-  background: var(--surface);
+  background: var(--bg-content);
   box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-4);
 }
@@ -2001,7 +2001,7 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-pill);
-  background: var(--surface-2);
+  background: var(--bg-window);
   color: var(--text-secondary);
   transition: color var(--motion-fast), transform var(--motion-fast);
 }
@@ -2265,7 +2265,7 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-row);
-  color: var(--panel-bg);
+  color: var(--bg-content);
   vertical-align: top;
   transition: background var(--motion-fast);
 }
