@@ -125,6 +125,7 @@ standard change that only hides one local violation is not accepted.
 | CA91 | `--checkbox-mark-radius` renamed `--radius-xs` for a single checkbox mark declaration even though the radius ladder already names that 3px mark role. | Code drift | Routed `CheckboxMark` directly to `--radius-xs`, removed the alias, and expanded retired-alias coverage. | `controls.css`; `tokens.css`; `tests/e2e/typography-tokens.spec.ts` |
 | CA92 | `--agent-dock-inset-x` duplicated the shared `--rail-pad` token inside the `--agent-content-x` formula, adding a second name for the same rail inset. | Code drift | Routed the agent content-column formula directly through `--rail-pad`, removed `--agent-dock-inset-x`, and expanded retired-alias coverage. | `tokens.css`; `tests/e2e/typography-tokens.spec.ts` |
 | CA93 | Foundations documented stale dock widths that no longer matched the live rail tokens and responsive-layout constants. | Spec drift | Updated the dock-width contract to `--sidebar-*` / `--agent-*` live values and added static coverage that fails future prose/token drift. | `foundations.md`; `tests/e2e/typography-tokens.spec.ts` |
+| CA94 | Rail width values are duplicated between design tokens and responsive-layout constants, but only the prose was guarded against drift. | Code drift | Added renderer unit coverage that fails if `workspaceResponsiveLayout` rail constants diverge from `--sidebar-*` / `--agent-*` tokens. | `tests/renderer/workspaceResponsiveLayout.test.ts` |
 
 ## Named Exceptions Kept
 
