@@ -10,7 +10,7 @@
   gap: var(--space-5);
   border-radius: var(--radius-md);
   background: var(--bg);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   color: var(--danger);
   padding: var(--space-5) var(--space-6);
   font-size: var(--font-ui-sm);

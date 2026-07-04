@@ -698,7 +698,7 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   color: var(--text-strong);
   padding: var(--space-5);
   user-select: text;

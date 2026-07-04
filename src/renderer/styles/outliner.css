@@ -479,7 +479,7 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   color: var(--text);
   font-size: var(--font-meta);
   font-weight: 500;
@@ -500,7 +500,7 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-3);
 }
 
@@ -745,7 +745,7 @@
   border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
   border-radius: var(--radius-md);
   background: var(--surface);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-4);
 }
 
@@ -1929,7 +1929,7 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-3);
 }
 
@@ -2453,7 +2453,7 @@
   gap: var(--space-1);
   border-radius: var(--radius-md);
   background: var(--bg);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-2);
 }
 
@@ -2629,7 +2629,7 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-2);
 }
 
@@ -2643,7 +2643,7 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: calc(var(--space-2) + var(--space-hairline));
 }
 
@@ -2720,7 +2720,7 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-3);
 }
 

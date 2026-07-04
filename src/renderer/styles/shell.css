@@ -205,7 +205,7 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-3);
   -webkit-app-region: no-drag;
 }

@@ -539,6 +539,14 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
+  test('keeps the legacy generic shadow alias out of live CSS', () => {
+    const violations = collectCssTextViolations(
+      /(?:--shadow\s*:|var\(--shadow\))/,
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps primary reading text aligned across outliner and agent surfaces', async ({ page }) => {
     await openMockedApp(page);
 

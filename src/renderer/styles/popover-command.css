@@ -15,7 +15,7 @@
 /* Elevation tiers (design-system D3): menus / popovers sit at level-1; the
    command palette is a focused surface at level-2. */
 .trigger-popover {
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   overflow-y: auto;
   overscroll-behavior: contain;
 }

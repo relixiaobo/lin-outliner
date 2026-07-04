@@ -870,7 +870,7 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-1);
   pointer-events: none;
 }
@@ -975,7 +975,7 @@
   background: var(--material-popover);
   -webkit-backdrop-filter: var(--material-backdrop);
   backdrop-filter: var(--material-backdrop);
-  box-shadow: var(--shadow);
+  box-shadow: var(--overlay-shadow-level-1);
 }
 
 /* The submenu floats above its parent menu (the parent stays open behind it). */

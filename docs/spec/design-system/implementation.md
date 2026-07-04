@@ -107,7 +107,8 @@ Expected checks for design-system changes:
   It also keeps functional-state fills, borders, and rings from using brand,
   link, or status colour tokens outside the solid destructive-confirmation
   exception, and fails overlay `box-shadow` declarations that mix level-1/2
-  shadow tokens with outline tokens.
+  shadow tokens with outline tokens. It also rejects the legacy generic
+  `--shadow` alias so surfaces name the actual elevation tier they use.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
   interaction affordances change, including pointer-cursor scope and forced
   `user-select: none !important` suppression staying limited to active drag /
