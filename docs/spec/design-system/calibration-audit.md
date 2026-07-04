@@ -101,6 +101,7 @@ standard change that only hides one local violation is not accepted.
 | CA67 | Local `:focus-visible` rules suppressed the shared focus-ring shadow in editor-owned and structural-control paths, but those suppressions were implicit and could grow without review. | Named exception | Patterns now name the valid local focus mechanisms, and cursor-affordance coverage fails any unregistered `:focus-visible` `box-shadow: none` rule. | `patterns.md`; `tests/e2e/cursor-affordances.spec.ts` |
 | CA68 | A few explicit `:focus-visible` indicators used generic emphasis or hover-named tokens, making keyboard focus look correct but weakening focus-token ownership. | Code drift | Definition config focus now uses `--focus-ring`, local-file reference focus has a focus-named component token, and cursor-affordance coverage fails future focus indicators that do not reference a focus token. | `outliner.css`; `inline-ref.css`; `tests/e2e/cursor-affordances.spec.ts` |
 | CA69 | Material backgrounds were paired with the shared backdrop filter, but validation did not prove they stayed limited to chrome, popovers, menus, tooltips, and floating media/code controls. | Code drift | Token/static coverage now registers every current material-background selector and fails unregistered or stale material surfaces, preserving the two-layer chrome/overlay-only material model. | `tests/e2e/typography-tokens.spec.ts`; `implementation.md` |
+| CA70 | `backdrop-filter` scope was value-guarded but not surface-guarded, so a future content surface could add shared blur without using a registered material surface or named HUD exception. | Code drift | Token/static coverage now fails backdrop filters outside registered material surfaces and the preview-HUD action exception, and fails stale preview-HUD exception entries. | `tests/e2e/typography-tokens.spec.ts`; `implementation.md` |
 
 ## Named Exceptions Kept
 
@@ -111,7 +112,7 @@ These are intentional after calibration. They stay narrow and evidence-backed.
 | External document pixels may force a light canvas. | HTML/EPUB/PDF document content inside file previews only. | Kernel Exception Registry; file-preview visual/token guards |
 | Scoped dark-media rules are allowed for generated colour streams. | Generated colour systems such as Shiki; no renderer theme bridge. | Kernel Exception Registry; typography/token guards |
 | Global launcher uses vibrant system glass. | Separate launcher window only. | Kernel Exception Registry; launcher spec |
-| Preview HUD controls own contrast tokens. | File preview HUD over arbitrary pixels. | `--preview-action-*` tokens; file-preview checks |
+| Preview HUD controls own contrast tokens. | File preview HUD over arbitrary pixels. | `--preview-action-*` tokens; file-preview checks; backdrop-scope guard |
 | Composer model/effort chip is a profile shortcut. | Agent composer footer only. | Kernel Exception Registry; composer tests |
 | Icon masks and provider logos are identity assets. | Inline-file masks and provider marks only. | Kernel Exception Registry; icon/token review |
 | `cursor: help` is allowed for diagnostics. | Inline diagnostic hints or native-title tooltips only. | Cursor guard |

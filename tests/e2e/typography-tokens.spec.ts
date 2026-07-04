@@ -100,6 +100,10 @@ const materialSurfaceSelectors = new Map([
   ['src/renderer/styles/shell.css|.top-chrome-more-menu', 'Top chrome menu.'],
   ['src/renderer/styles/sidebar.css|:root[data-window-material] .sidebar-dock', 'Sidebar rail chrome material.'],
 ]);
+const previewHudBackdropSelectors = new Map([
+  ['src/renderer/styles/file-preview.css|.file-preview-pill-primary', 'Preview HUD primary action over arbitrary document/media pixels.'],
+  ['src/renderer/styles/file-preview.css|.file-preview-pill-more', 'Preview HUD more action over arbitrary document/media pixels.'],
+]);
 const runtimeTokenInputs = new Map([
   ['src/renderer/styles/agent-message.css|--segment-size', 'Usage hover bars receive per-segment widths from the message usage renderer.'],
   ['src/renderer/styles/code.css|--shiki-light', 'Generated Shiki token colour stream for light code themes.'],
@@ -333,6 +337,44 @@ function collectMaterialSurfaceScopeViolations() {
   for (const [key, reason] of materialSurfaceSelectors) {
     if (seen.has(key)) continue;
     violations.push(`${key} is registered as a material surface but no longer exists (${reason})`);
+  }
+
+  return violations;
+}
+
+function collectMaterialBackdropScopeViolations() {
+  const violations: string[] = [];
+  const seenPreviewHud = new Set<string>();
+
+  for (const file of productStyleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim().replace(/\s+/g, ' ');
+      const body = match[2] ?? '';
+      const backdropValues = [...body.matchAll(/(?:^|[;\s])(?:-webkit-)?backdrop-filter\s*:\s*([^;]+);/g)]
+        .map((backdrop) => backdrop[1]!.trim())
+        .filter((value) => value !== 'none');
+      if (backdropValues.length === 0) continue;
+
+      const key = `${file}|${selector}`;
+      const usesMaterialBackground = /\bbackground(?:-color)?\s*:\s*var\(--material-/.test(body);
+      if (usesMaterialBackground && materialSurfaceSelectors.has(key)) continue;
+      if (previewHudBackdropSelectors.has(key)) {
+        seenPreviewHud.add(key);
+        continue;
+      }
+
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      violations.push(`${file}:${lineNumber} ${selector} uses backdrop-filter outside material surfaces or registered preview HUD controls`);
+    }
+  }
+
+  for (const [key, reason] of previewHudBackdropSelectors) {
+    if (seenPreviewHud.has(key)) continue;
+    violations.push(`${key} is registered as a preview HUD backdrop surface but no longer exists (${reason})`);
   }
 
   return violations;
@@ -654,6 +696,10 @@ test.describe('typography tokens', () => {
 
   test('keeps material backgrounds scoped to registered chrome and overlay surfaces', () => {
     expect(collectMaterialSurfaceScopeViolations()).toEqual([]);
+  });
+
+  test('keeps backdrop filters scoped to material surfaces and preview HUD controls', () => {
+    expect(collectMaterialBackdropScopeViolations()).toEqual([]);
   });
 
   test('keeps level-2 focused overlays on the opaque elevated tier', () => {
