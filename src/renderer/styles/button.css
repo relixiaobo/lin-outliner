@@ -89,5 +89,5 @@
 .button-primary:disabled,
 .button-secondary:disabled,
 .button-danger.button-solid:disabled {
-  background: var(--surface-disabled);
+  background: var(--fill-3);
 }

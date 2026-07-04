@@ -948,6 +948,7 @@ test.describe('typography tokens', () => {
       'text-sub',
       'text-main',
       'window-material-frost',
+      'surface-disabled',
       'overlay-bg',
       'overlay-backdrop-strong',
       'deck-bg',

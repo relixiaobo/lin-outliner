@@ -438,7 +438,7 @@
 }
 
 .agent-approval-button.is-primary:disabled {
-  background: var(--surface-disabled);
+  background: var(--fill-3);
   color: var(--bg-content);
 }
 
@@ -1143,7 +1143,7 @@
 }
 
 .agent-composer-action-button:disabled {
-  background: var(--surface-disabled);
+  background: var(--fill-3);
   color: var(--bg-content);
   cursor: default;
 }

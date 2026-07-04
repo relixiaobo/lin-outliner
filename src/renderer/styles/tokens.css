@@ -221,7 +221,6 @@
   --border-strong: rgb(var(--ink) / 0.30);
   --surface-inverse: #2e2e32;
   --surface-inverse-strong: #1f1f23;
-  --surface-disabled: var(--fill-3);
   --overlay-backdrop: rgba(26, 26, 26, 0.30);
   --space-hairline: 1px;
   --space-1: 2px;
