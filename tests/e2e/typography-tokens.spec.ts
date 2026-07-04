@@ -937,6 +937,7 @@ test.describe('typography tokens', () => {
       'accent-brand',
       'agent-collapsed-width',
       'agent-side-panel-shadow',
+      'agent-composer-radius',
       'agent-composer-corner-radius',
       'outline-panel-ideal-width',
       'semantic-success',

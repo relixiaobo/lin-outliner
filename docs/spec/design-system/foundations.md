@@ -62,8 +62,7 @@ Core token families:
   highlight layer must stay synced to the textarea's horizontal and vertical
   scroll offsets.
 - `--workspace-surface-radius` is the canonical outer radius for workspace
-  structural surfaces. `--panel-radius` and `--agent-composer-radius` both map
-  to it.
+  structural surfaces; `--panel-radius` maps to it.
 - **Concentric corners.** When one rounded surface nests inside another, the
   inner radius is `parent radius − inset`, so both corners share a single centre
   and the curves stay parallel. The canonical chain is window → rail:
