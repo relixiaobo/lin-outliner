@@ -5,6 +5,7 @@ import {
   emitAgentProjection,
   installElectronMock,
   ids,
+  nodeById,
   openMockRunDetailsFromAssistantDetailsButton,
   row,
   trailingEditor,
@@ -51,6 +52,46 @@ const usage = {
 async function todayChildren(page: Page) {
   const projection = await e2eProjection(page);
   return projection.nodes.find((node) => node.id === ids.today)?.children ?? [];
+}
+
+async function showTagSuggestions(page: Page) {
+  await trailingEditor(page).click();
+  await page.keyboard.type('#project');
+  const listbox = page.getByRole('listbox', { name: 'Tag suggestions' });
+  await listbox.waitFor({ state: 'visible' });
+  await expect(listbox.getByRole('option', { name: 'project' })).toBeVisible();
+}
+
+async function showSlashCommands(page: Page) {
+  await trailingEditor(page).click();
+  await page.keyboard.type('/');
+  const listbox = page.getByRole('listbox', { name: 'Slash commands' });
+  await listbox.waitFor({ state: 'visible' });
+  await expect(listbox.getByRole('option', { name: /Field/ })).toBeVisible();
+}
+
+async function showReferenceSuggestions(page: Page) {
+  await trailingEditor(page).click();
+  await page.keyboard.type('@Alpha');
+  const listbox = page.getByRole('listbox', { name: 'Reference suggestions' });
+  await listbox.waitFor({ state: 'visible' });
+  await expect(listbox.getByRole('option', { name: /Alpha/ }).first()).toBeVisible();
+}
+
+async function showCodeBlockLanguageMenu(page: Page) {
+  const beforeChildren = await todayChildren(page);
+  await trailingEditor(page).click();
+  await page.keyboard.type('/code');
+  await expect(page.getByRole('option', { name: /Code block/ })).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
+  const codeRowId = (await todayChildren(page)).at(-1);
+  if (!codeRowId) throw new Error('Missing code block node');
+  await expect.poll(async () => (await nodeById(page, codeRowId))?.type ?? null).toBe('codeBlock');
+  const codeRow = row(page, codeRowId);
+  await codeRow.locator('.code-block-textarea').waitFor({ state: 'visible' });
+  await codeRow.locator('.code-block-language').click();
+  await page.getByRole('menuitemradio', { name: 'Plain text', exact: true }).waitFor({ state: 'visible' });
 }
 
 async function createAttachmentRowPreview(page: Page) {
@@ -267,6 +308,30 @@ const surfaces: SurfaceCase[] = [
       await page.keyboard.press('Space');
       await page.getByRole('dialog', { name: 'Date picker' }).waitFor({ state: 'visible' });
     },
+  },
+  {
+    name: 'tag suggestions overlay',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showTagSuggestions,
+  },
+  {
+    name: 'slash command overlay',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showSlashCommands,
+  },
+  {
+    name: 'reference suggestions overlay',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showReferenceSuggestions,
+  },
+  {
+    name: 'code block language menu',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showCodeBlockLanguageMenu,
   },
   {
     name: 'file row preview',
