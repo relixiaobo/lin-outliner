@@ -33,6 +33,7 @@ interface SurfaceCase {
   name: string;
   path: string;
   waitFor: string;
+  installAppMock?: boolean;
   options?: Parameters<typeof installElectronMock>[1];
   beforeInstall?: (page: Page) => Promise<void>;
   beforeProbe?: (page: Page) => Promise<void>;
@@ -67,6 +68,36 @@ async function invokeDocumentCommand(page: Page, cmd: string, args: Record<strin
     const outcome = await win.lin!.invoke<{ update: { projection: unknown } }>(cmd, args);
     win.__LIN_E2E__?.emitDocumentEvent({ type: 'projection_changed', projection: outcome.update.projection });
   }, { cmd, args });
+}
+
+async function installLauncherMock(page: Page) {
+  await page.addInitScript(() => {
+    const win = window as typeof window & {
+      lin?: Record<string, unknown>;
+    };
+    win.lin = {
+      ...(win.lin ?? {}),
+      launcher: {
+        getInitialState: async () => ({
+          commands: [
+            { id: 'open-main', title: 'Open main window' },
+            { id: 'open-settings', title: 'Open Settings' },
+          ],
+          hotkey: 'CommandOrControl+Shift+Space',
+        }),
+        onShown: () => () => {},
+        onContext: () => () => {},
+        hide: async () => {},
+        executeCommand: async () => ({ hide: true }),
+        createCapture: async () => ({ ok: true, nodeId: 'launcher-capture-e2e' }),
+        createContextCapture: async () => ({ ok: true, nodeId: 'launcher-context-capture-e2e' }),
+        searchNodes: async (query: string) => query.toLowerCase().includes('alpha')
+          ? [{ nodeId: 'node-alpha', title: 'Alpha', subtitle: '2026-05-13' }]
+          : [],
+        openNode: async () => {},
+      },
+    };
+  });
 }
 
 async function openSchema(page: Page) {
@@ -610,6 +641,19 @@ const surfaces: SurfaceCase[] = [
     options: { noProvider: true },
   },
   {
+    name: 'global launcher renderer',
+    path: '/launcher.html',
+    waitFor: '.launcher',
+    installAppMock: false,
+    beforeInstall: installLauncherMock,
+    beforeProbe: async (page) => {
+      await page.getByRole('dialog', { name: 'Tenon Launcher' }).waitFor({ state: 'visible' });
+      const results = page.getByRole('listbox', { name: 'Results' });
+      await results.waitFor({ state: 'visible' });
+      await expect(results.getByRole('option', { name: /Open main window/ })).toBeVisible();
+    },
+  },
+  {
     name: 'settings general',
     path: '/?surface=settings',
     waitFor: '.settings-window .inset-row',
@@ -948,7 +992,9 @@ test.describe('design-system runtime surfaces', () => {
       test(`${surface.name} stays bounded and theme-native in ${colorScheme}`, async ({ page }) => {
         await page.emulateMedia({ colorScheme });
         await surface.beforeInstall?.(page);
-        await installElectronMock(page, surface.options ?? {});
+        if (surface.installAppMock !== false) {
+          await installElectronMock(page, surface.options ?? {});
+        }
         await page.goto(surface.path);
         await page.locator(surface.waitFor).first().waitFor({ state: 'visible' });
         await surface.beforeProbe?.(page);

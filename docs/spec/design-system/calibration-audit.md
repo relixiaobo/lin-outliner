@@ -54,6 +54,7 @@ standard change that only hides one local violation is not accepted.
 | CA20 | Tag badge context actions hand-rolled menu DOM instead of the shared menu primitive and had no runtime design-system coverage. | Code drift | Tag badge actions now use `MenuSurface`/`MenuItem` with an accessible menu label and runtime guard coverage in light/dark. | `src/renderer/ui/tags/TagBar.tsx`; `tests/e2e/design-system-runtime.spec.ts` |
 | CA21 | Dream manual-run dialog was behavior-tested but absent from the shared runtime design-system guard. | Code drift | Runtime guard now opens the Dream channel manual-run dialog in light/dark through the channel picker and launcher surface. | `tests/e2e/design-system-runtime.spec.ts` |
 | CA22 | Agent message metadata/details popover was behavior-tested but absent from the shared runtime design-system guard. | Code drift | Runtime guard now opens an assistant message Details dialog through the native context-menu bridge in light/dark. | `tests/e2e/design-system-runtime.spec.ts` |
+| CA23 | The separate global launcher renderer used the shared token system but was absent from the shared runtime design-system guard. | Code drift | Runtime guard now opens `launcher.html` with a launcher IPC mock in light/dark while preserving the named native-glass exception for the real Electron window. | `tests/e2e/design-system-runtime.spec.ts`; `docs/spec/launcher.md` |
 
 ## Named Exceptions Kept
 

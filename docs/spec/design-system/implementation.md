@@ -85,8 +85,8 @@ Expected checks for design-system changes:
   design-system compression or contract PR.
 - Focused Playwright tests for touched surfaces.
 - `tests/e2e/design-system-runtime.spec.ts` for representative shell, settings,
-  overlay, outliner trigger, menu, tag-context, floating-tool,
-  view-configuration, schema-definition, code-block, inline-file,
+  launcher-renderer, overlay, outliner trigger, menu, tag-context,
+  floating-tool, view-configuration, schema-definition, code-block, inline-file,
   confirm-dialog, error-state, file-preview, document-outline, agent-composer,
   dream-manual, agent-message-details, agent-process, and run-detail surfaces
   staying bounded and OS-theme-native in light and dark.
