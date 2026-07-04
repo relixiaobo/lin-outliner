@@ -88,8 +88,8 @@ Expected checks for design-system changes:
   overlay, outliner trigger, menu, tag-context, floating-tool,
   view-configuration, schema-definition, code-block, inline-file,
   confirm-dialog, error-state, file-preview, document-outline, agent-composer,
-  agent-process, and run-detail surfaces staying bounded and OS-theme-native in
-  light and dark.
+  dream-manual, agent-process, and run-detail surfaces staying bounded and
+  OS-theme-native in light and dark.
 - `tests/e2e/typography-tokens.spec.ts` for token discipline.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
   interaction affordances change.

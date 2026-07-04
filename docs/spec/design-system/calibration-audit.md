@@ -52,6 +52,7 @@ standard change that only hides one local violation is not accepted.
 | CA18 | Document preview outline navigation had focused behavior coverage but no shared runtime design-system coverage. | Code drift | Runtime guard now opens an EPUB full preview and its document outline rail/popover in light/dark. | `tests/e2e/design-system-runtime.spec.ts` |
 | CA19 | Shared confirm, inline-file menu, and composer error surfaces were implemented through product paths but absent from the shared runtime design-system guard. | Code drift | Runtime guard now opens the destructive confirm dialog, inline-file context menu, and composer attachment error status in light/dark through real UI entry points. | `tests/e2e/design-system-runtime.spec.ts` |
 | CA20 | Tag badge context actions hand-rolled menu DOM instead of the shared menu primitive and had no runtime design-system coverage. | Code drift | Tag badge actions now use `MenuSurface`/`MenuItem` with an accessible menu label and runtime guard coverage in light/dark. | `src/renderer/ui/tags/TagBar.tsx`; `tests/e2e/design-system-runtime.spec.ts` |
+| CA21 | Dream manual-run dialog was behavior-tested but absent from the shared runtime design-system guard. | Code drift | Runtime guard now opens the Dream channel manual-run dialog in light/dark through the channel picker and launcher surface. | `tests/e2e/design-system-runtime.spec.ts` |
 
 ## Named Exceptions Kept
 

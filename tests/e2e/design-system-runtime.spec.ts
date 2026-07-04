@@ -270,6 +270,18 @@ async function showAgentReasoningMenu(page: Page) {
   await expect(reasoningMenu.getByRole('menuitemradio').first()).toBeVisible();
 }
 
+async function showDreamManualRunDialog(page: Page) {
+  await page.getByRole('button', { name: 'Show conversations' }).click();
+  const channels = page.getByRole('dialog', { name: 'Channels' });
+  await channels.locator('.agent-conversation-row', { hasText: 'Dream' }).getByRole('button', { name: /Dream/ }).click();
+  const launcher = page.locator('.dream-launcher');
+  await launcher.waitFor({ state: 'visible' });
+  await launcher.getByRole('button', { name: 'Manual run' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Run Dream manually' });
+  await dialog.waitFor({ state: 'visible' });
+  await expect(dialog.getByRole('button', { name: 'Run Dream' })).toBeVisible();
+}
+
 async function showRowContextMenu(page: Page) {
   await rowBody(page, ids.alpha).click({ button: 'right' });
   await page.getByRole('menu', { name: 'Node actions' }).waitFor({ state: 'visible' });
@@ -644,6 +656,12 @@ const surfaces: SurfaceCase[] = [
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: showAgentReasoningMenu,
+  },
+  {
+    name: 'dream manual run dialog',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showDreamManualRunDialog,
   },
   {
     name: 'search query builder',
