@@ -170,6 +170,15 @@ test.describe('typography tokens', () => {
     expect(violations).toEqual([]);
   });
 
+  test('keeps hover feedback from using scale transforms', () => {
+    const violations = collectDeclarationViolations(
+      /\b(transform):\s*([^;]+);/,
+      (value) => !/\bscale(?:3d|X|Y|Z)?\s*\(/.test(value),
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps material backdrop filters routed through the shared token', () => {
     const violations = collectDeclarationViolations(
       /(-webkit-backdrop-filter|backdrop-filter):\s*([^;]+);/,

@@ -96,7 +96,8 @@ Expected checks for design-system changes:
   menus/submenus, dream-manual, agent-message-details, agent/debug usage
   tooltips, agent-process, and run-detail surfaces staying bounded and
   OS-theme-native in light and dark.
-- `tests/e2e/typography-tokens.spec.ts` for token discipline.
+- `tests/e2e/typography-tokens.spec.ts` for token discipline and the static
+  no-scale feedback guard.
 - `tests/e2e/cursor-affordances.spec.ts` for native cursor/chrome rules when
   interaction affordances change.
 - `tests/e2e/window-material.spec.ts` for window-material and inactive-window
