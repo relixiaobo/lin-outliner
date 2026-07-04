@@ -16,6 +16,13 @@ const helpCursorSelectors = new Map([
   ['src/renderer/styles/agent-debug.css|.agent-debug-cost', 'Debug cost diagnostic tooltip.'],
   ['src/renderer/styles/outliner.css|.field-value-hint', 'Field-value validation hint uses a native title tooltip.'],
 ]);
+const textCursorSelectors = new Map([
+  ['src/renderer/styles/agent-composer.css|.agent-composer-editor', 'Agent composer text editor.'],
+  ['src/renderer/styles/file-preview.css|.file-preview-pdf-text-layer :is(span, br)', 'Selectable PDF text layer glyphs.'],
+  ['src/renderer/styles/outliner.css|.field-option-picker-row', 'Field option value opens into an inline filter input.'],
+  ['src/renderer/styles/outliner.css|.node-description', 'Outliner node description textarea.'],
+  ['src/renderer/styles/outliner.css|.row.ref-converting .row-editor .inline-ref:hover', 'Inline reference returns to text cursor while converting inside row text.'],
+]);
 const chromeIconControlSelectors = [
   '.agent-dock-run-back',
   '.agent-dock-title-button',
@@ -110,6 +117,37 @@ function collectHelpCursorViolations() {
   for (const [key, reason] of helpCursorSelectors) {
     if (seen.has(key)) continue;
     violations.push(`${key} is registered as a help cursor selector but no longer exists (${reason})`);
+  }
+
+  return violations;
+}
+
+function collectTextCursorViolations() {
+  const violations: string[] = [];
+  const seen = new Set<string>();
+
+  for (const file of styleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim().replace(/\s+/g, ' ');
+      const body = match[2] ?? '';
+      if (!/\bcursor\s*:\s*text\s*;/.test(body)) continue;
+
+      const key = `${file}|${selector}`;
+      seen.add(key);
+      if (textCursorSelectors.has(key)) continue;
+
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      violations.push(`${file}:${lineNumber} ${selector}`);
+    }
+  }
+
+  for (const [key, reason] of textCursorSelectors) {
+    if (seen.has(key)) continue;
+    violations.push(`${key} is registered as a text cursor selector but no longer exists (${reason})`);
   }
 
   return violations;
@@ -302,6 +340,10 @@ test.describe('cursor affordances', () => {
 
   test('keeps help cursor declarations limited to named diagnostics', () => {
     expect(collectHelpCursorViolations()).toEqual([]);
+  });
+
+  test('keeps text cursor declarations limited to text and editor surfaces', () => {
+    expect(collectTextCursorViolations()).toEqual([]);
   });
 
   test('keeps forced text-selection suppression limited to active gestures', () => {
