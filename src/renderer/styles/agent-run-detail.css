@@ -697,7 +697,7 @@
 .agent-pov-inspector-body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-7);
+  gap: var(--space-8);
 }
 
 .agent-pov-inspector-section {

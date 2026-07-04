@@ -70,6 +70,15 @@ const layoutTransitionAllowlist = new Map([
   ['src/renderer/styles/canvas.css|.workspace-canvas|padding', 'Workspace canvas pads around rails during open/close layout motion.'],
   ['src/renderer/styles/outliner.css|.indent-guide-line|width', 'Absolute decorative guide stroke thickens without changing row layout.'],
 ]);
+const runtimeTokenInputs = new Map([
+  ['src/renderer/styles/agent-message.css|--segment-size', 'Usage hover bars receive per-segment widths from the message usage renderer.'],
+  ['src/renderer/styles/code.css|--shiki-light', 'Generated Shiki token colour stream for light code themes.'],
+  ['src/renderer/styles/code.css|--shiki-dark', 'Generated Shiki token colour stream for dark code themes.'],
+  ['src/renderer/styles/file-preview.css|--file-preview-resized-height', 'File preview resizing writes the live split-pane height.'],
+  ['src/renderer/styles/outliner.css|--flat-indent-guide-top', 'Flat indent guides receive measured geometry from the outliner runtime.'],
+  ['src/renderer/styles/outliner.css|--flat-indent-guide-left', 'Flat indent guides receive measured geometry from the outliner runtime.'],
+  ['src/renderer/styles/outliner.css|--flat-indent-guide-height', 'Flat indent guides receive measured geometry from the outliner runtime.'],
+]);
 const layoutTransitionProperties = new Set([
   'all',
   'width',
@@ -293,6 +302,49 @@ function collectLayoutTransitionViolations() {
         }
       }
     }
+  }
+
+  return violations;
+}
+
+function collectUndefinedLiveTokenReferenceViolations() {
+  const violations: string[] = [];
+  const definitions = new Set<string>();
+  const observedAllowedInputs = new Set<string>();
+
+  for (const file of productStyleFiles) {
+    const text = readFileSync(file, 'utf8');
+    for (const match of text.matchAll(/--[\w-]+\s*:/g)) {
+      definitions.add(match[0]!.slice(0, -1).trim());
+    }
+  }
+
+  for (const file of productStyleFiles) {
+    const text = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    const lines = text.split('\n');
+    for (const [index, line] of lines.entries()) {
+      for (const match of line.matchAll(/var\(\s*(--[\w-]+)(\s*,)?/g)) {
+        const token = match[1]!;
+        const hasFallback = !!match[2];
+        if (hasFallback || definitions.has(token)) continue;
+
+        const key = `${file}|${token}`;
+        if (runtimeTokenInputs.has(key)) {
+          observedAllowedInputs.add(key);
+          continue;
+        }
+
+        violations.push(`${file}:${index + 1} ${token} in ${line.trim()}`);
+      }
+    }
+  }
+
+  for (const key of runtimeTokenInputs.keys()) {
+    if (observedAllowedInputs.has(key)) continue;
+    violations.push(`${key} is a stale runtime token input exception`);
   }
 
   return violations;
@@ -622,6 +674,10 @@ test.describe('typography tokens', () => {
     }
 
     expect(violations).toEqual([]);
+  });
+
+  test('keeps live token references defined or registered as runtime inputs', () => {
+    expect(collectUndefinedLiveTokenReferenceViolations()).toEqual([]);
   });
 
   test('keeps token aliases from referencing themselves', () => {

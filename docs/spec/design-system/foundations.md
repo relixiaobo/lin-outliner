@@ -277,6 +277,7 @@ Use these default desktop tokens before adding component-specific values:
   --agent-composer-radius: calc(var(--panel-radius) - var(--layout-gap));
 
   --motion-fast: 120ms ease;
+  --motion-slow: 180ms ease;
   --motion-layout-duration: 160ms;
   --motion-layout: var(--motion-layout-duration) ease;
   --chrome-zone-backing-delay: var(--motion-layout-duration);
@@ -757,6 +758,8 @@ scale font size with viewport width.
 ### Motion
 
 - **Tokens:** `--motion-fast` (120ms) for hover/press/affordance reveals;
+  `--motion-slow` (180ms) for state highlights that need to be readable without
+  feeling like content entrance animation;
   `--motion-layout-duration` / `--motion-layout` (160ms) for layout shifts
   (resize, collapse, panel changes).
   Add new durations only with a clear role.

@@ -216,7 +216,7 @@
   color: var(--text-strong);
   font-size: var(--font-ui-sm);
   font-weight: 650;
-  line-height: var(--line-ui);
+  line-height: var(--line-ui-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

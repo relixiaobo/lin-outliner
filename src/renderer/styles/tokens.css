@@ -400,6 +400,7 @@
   --agent-composer-corner-inset: var(--space-3);
   --agent-composer-corner-radius: calc(var(--agent-composer-radius) - var(--agent-composer-corner-inset));
   --motion-fast: 120ms ease;
+  --motion-slow: 180ms ease;
   --motion-layout-duration: 160ms;
   --motion-layout: var(--motion-layout-duration) ease;
   --chrome-zone-backing-delay: var(--motion-layout-duration);

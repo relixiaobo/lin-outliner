@@ -211,7 +211,7 @@
   --media-range-padding-left: var(--space-2);
   --media-range-padding-right: var(--space-2);
   --media-range-track-height: 3px;
-  --media-range-track-background: var(--fill-selected);
+  --media-range-track-background: var(--selection-bg);
   --media-range-bar-color: var(--text-main);
   --media-range-thumb-background: var(--text-main);
   --media-range-thumb-width: 10px;
@@ -219,7 +219,7 @@
   --media-volume-range-width: 58px;
   --media-font-size: var(--font-ui-xs);
   --media-font-weight: 500;
-  --media-font-family: var(--font-sans);
+  --media-font-family: var(--font-family-sans);
   --media-cursor: default;
   --media-focus-box-shadow: var(--focus-ring-shadow);
 }
@@ -251,7 +251,7 @@
   gap: var(--space-1);
   border-radius: inherit;
   padding: 2px var(--space-2);
-  background: var(--fill-hover);
+  background: var(--fill-2);
   box-shadow: none;
 }
 
