@@ -412,7 +412,7 @@
 
 .agent-run-detail-resize-handle:focus-visible {
   outline: 0;
-  box-shadow: inset var(--focus-ring-shadow);
+  box-shadow: var(--focus-ring-shadow-inset);
 }
 
 .agent-run-detail-header {
@@ -562,7 +562,7 @@
 }
 
 .agent-sub-run-row {
-  border-radius: 0;
+  border-radius: var(--radius-none);
   padding-right: 0;
   padding-left: 0;
 }

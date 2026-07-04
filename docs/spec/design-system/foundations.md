@@ -103,6 +103,7 @@ Use these default desktop tokens before adding component-specific values:
   --selection-soft: var(--fill-2);  /* multi-select / range / hover */
   --focus-ring: rgb(var(--ink) / 0.45);
   --focus-ring-shadow: 0 0 0 2px rgb(var(--ink) / 0.22);
+  --focus-ring-shadow-inset: inset var(--focus-ring-shadow);
   /* Editor text-selection highlight (::selection): NEUTRAL, not the system
      accent and not rose — a touch stronger than a selected row so glyphs stay
      legible through it. Glyph colour is unchanged under selection. */
@@ -251,6 +252,7 @@ Use these default desktop tokens before adding component-specific values:
   /* Radius is a deliberately short set. The everyday step is 5 / 6 / 8:
      rows 5, controls/chips/icon-buttons 6, small surfaces & the composer 8.
      Larger structural radii (10 menus, 12, 16 rail, 24 window) sit above it. */
+  --radius-none: 0;
   --radius-2xs: 2px;
   --radius-xs: 3px;          /* checkbox / switch marks */
   --radius-row: 5px;         /* outliner rows */

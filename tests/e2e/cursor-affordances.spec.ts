@@ -1,5 +1,33 @@
 import { expect, test } from '@playwright/test';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { ids, installElectronMock, openMockedApp, row } from './outlinerMock';
+
+const STYLES_DIR = 'src/renderer/styles';
+const styleFiles = readdirSync(STYLES_DIR)
+  .filter((file) => file.endsWith('.css'))
+  .map((file) => join(STYLES_DIR, file));
+
+function collectPointerCursorViolations() {
+  const violations: string[] = [];
+
+  for (const file of styleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim();
+      const body = match[2] ?? '';
+      if (!/\bcursor\s*:\s*pointer\s*;/.test(body)) continue;
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      if (selector.includes('.inline-ref')) continue;
+      violations.push(`${file}:${lineNumber} ${selector}`);
+    }
+  }
+
+  return violations;
+}
 
 // Strict-native cursor policy: chrome (buttons, toggles, rows, bullets) keeps the
 // default arrow cursor the way a native macOS/Windows app does. The pointing-hand
@@ -7,6 +35,10 @@ import { ids, installElectronMock, openMockedApp, row } from './outlinerMock';
 // rendered text). Changing the cursor on hoverable chrome is exactly what makes an
 // app feel like a web page, so these assertions guard against it regressing.
 test.describe('cursor affordances', () => {
+  test('reserves pointer cursor declarations for inline content references', () => {
+    expect(collectPointerCursorViolations()).toEqual([]);
+  });
+
   test('core controls keep the native arrow cursor', async ({ page }) => {
     await openMockedApp(page);
 
