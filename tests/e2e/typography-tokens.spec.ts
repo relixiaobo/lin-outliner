@@ -66,6 +66,38 @@ const hiddenScrollbarSelectors = new Set([
   '.document-outline-rail-track',
   '.document-outline-rail-track::-webkit-scrollbar',
 ]);
+const layoutTransitionAllowlist = new Map([
+  ['src/renderer/styles/canvas.css|.workspace-canvas|padding', 'Workspace canvas pads around rails during open/close layout motion.'],
+  ['src/renderer/styles/outliner.css|.indent-guide-line|width', 'Absolute decorative guide stroke thickens without changing row layout.'],
+]);
+const layoutTransitionProperties = new Set([
+  'all',
+  'width',
+  'height',
+  'min-width',
+  'max-width',
+  'min-height',
+  'max-height',
+  'padding',
+  'padding-top',
+  'padding-right',
+  'padding-bottom',
+  'padding-left',
+  'margin',
+  'margin-top',
+  'margin-right',
+  'margin-bottom',
+  'margin-left',
+  'top',
+  'right',
+  'bottom',
+  'left',
+  'inset',
+  'gap',
+  'row-gap',
+  'column-gap',
+  'flex-basis',
+]);
 
 function markdownFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -230,6 +262,36 @@ function collectMaterialBackdropPairViolations() {
 
       const lineNumber = source.slice(0, match.index).split('\n').length;
       violations.push(`${file}:${lineNumber} ${selector} uses a material background without both standard backdrop filters`);
+    }
+  }
+
+  return violations;
+}
+
+function collectLayoutTransitionViolations() {
+  const violations: string[] = [];
+
+  for (const file of productStyleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim().replace(/\s+/g, ' ');
+      const body = match[2] ?? '';
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      for (const declaration of body.matchAll(/\b(transition|transition-property):\s*([^;]+);/g)) {
+        const declarationKind = declaration[1]!;
+        const value = declaration[2]!.replace(/\s+/g, ' ').trim();
+        const properties = declarationKind === 'transition'
+          ? value.split(',').map((segment) => segment.trim().split(/\s+/)[0]!)
+          : value.split(',').map((property) => property.trim());
+        for (const property of properties) {
+          if (!layoutTransitionProperties.has(property)) continue;
+          if (layoutTransitionAllowlist.has(`${file}|${selector}|${property}`)) continue;
+          violations.push(`${file}:${lineNumber} ${selector} transitions layout property ${property}`);
+        }
+      }
     }
   }
 
@@ -411,6 +473,10 @@ test.describe('typography tokens', () => {
     );
 
     expect(violations).toEqual([]);
+  });
+
+  test('keeps layout-affecting transitions registered', () => {
+    expect(collectLayoutTransitionViolations()).toEqual([]);
   });
 
   test('keeps global z-index values on the token ladder', () => {
