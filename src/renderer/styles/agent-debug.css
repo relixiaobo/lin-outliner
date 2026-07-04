@@ -11,7 +11,7 @@
 .agent-debug-card {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--surface);
+  background: var(--bg-content);
 }
 
 .agent-debug-card {
@@ -637,7 +637,7 @@
   align-items: center;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
-  background: var(--surface);
+  background: var(--bg-content);
   color: var(--text-soft);
   font-size: var(--font-ui-xs);
   font-weight: 600;
@@ -669,7 +669,7 @@
   gap: var(--space-4);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--surface);
+  background: var(--bg-content);
 }
 
 .agent-debug-run-head {

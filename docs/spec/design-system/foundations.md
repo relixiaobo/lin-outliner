@@ -219,8 +219,8 @@ User-defined tag palette:
 - Pickable presets are Red, Orange, Amber, Green, Blue, Purple, Pink, and Gray,
   stored as canonical color tokens.
 - Chromatic tags keep a fixed accent hue for text and derive the chip background
-  with `color-mix(in srgb, <accent> 12%, var(--surface))`, so the tint follows
-  the live surface in light and dark mode.
+  with `color-mix(in srgb, <accent> 12%, var(--bg-content))`, so the tint follows
+  the live content surface in light and dark mode.
 - Gray is neutral, not a hardcoded slate chip: text uses `--text-secondary` and
   background uses `--fill-3`.
 - The palette is closed: raw-hex or alias tag values are invalid/unset and fall

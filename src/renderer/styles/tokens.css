@@ -149,7 +149,7 @@
      state), not the rose accent (B4). It therefore gets a dedicated muted palette.
      One family with the tag-chip palette (tagColors.ts) so the app reads as one
      coordinated set; like the accent/status hues these are fixed (only --ink flips
-     in dark), and the avatar mixes the hue toward --surface for a theme-aware tint. */
+     in dark), and the avatar mixes the hue toward --bg-content for a theme-aware tint. */
   --identity-tint-0: #e11d48; /* red */
   --identity-tint-1: #ea580c; /* orange */
   --identity-tint-2: #ca8a04; /* amber */

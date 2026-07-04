@@ -22,7 +22,7 @@
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: var(--surface);
+  background: var(--bg-content);
   padding: var(--space-6);
 }
 
@@ -56,7 +56,7 @@
   z-index: var(--z-popover);
   margin-top: 0;
   border-radius: var(--radius-md);
-  background: var(--surface);
+  background: var(--bg-content);
   box-shadow: var(--overlay-shadow-level-1);
   padding: var(--space-4);
 }

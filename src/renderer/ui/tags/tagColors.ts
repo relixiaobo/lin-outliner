@@ -10,16 +10,16 @@ export interface TagColor {
 }
 
 // Tag chips must follow the theme. The accent is a fixed hue, but the chip's
-// background is mixed toward the LIVE --surface token (resolved per element) so the
-// same tag reads as a soft light tint in light mode and a soft dark tint in dark
-// mode — never the baked near-white box that glared against a dark panel. The
+// background is mixed toward the live content surface token (resolved per element)
+// so the same tag reads as a soft light tint in light mode and a soft dark tint in
+// dark mode — never the baked near-white box that glared against a dark panel. The
 // accent stays the text colour (legible on both the light and dark tint).
 const TAG_SURFACE_TINT = '12%';
 
 function accentTagColor(accent: string): TagColor {
   return {
     text: accent,
-    background: `color-mix(in srgb, ${accent} ${TAG_SURFACE_TINT}, var(--surface))`,
+    background: `color-mix(in srgb, ${accent} ${TAG_SURFACE_TINT}, var(--bg-content))`,
   };
 }
 

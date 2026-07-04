@@ -503,7 +503,7 @@ button.panel-resize-handle {
   transform: translateY(-50%);
   border-radius: var(--radius-pill);
   background: var(--text-strong);
-  color: var(--surface);
+  color: var(--bg-content);
   font-size: var(--font-ui-xs);
   font-variant-numeric: tabular-nums;
   line-height: 1;

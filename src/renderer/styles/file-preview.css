@@ -154,7 +154,7 @@
   flex: 1 1 auto;
   overflow: hidden;
   border-radius: var(--file-preview-frame-radius);
-  background: var(--surface);
+  background: var(--bg-content);
   box-shadow: var(--inset-hairline);
   clip-path: inset(0 round var(--file-preview-frame-radius));
 }
@@ -175,7 +175,7 @@
   flex: 1 1 auto;
   border: 0;
   border-radius: inherit;
-  background: var(--surface);
+  background: var(--bg-content);
 }
 
 /* Audio / video players on a media file node's page. */
@@ -612,7 +612,7 @@
   max-width: 100%;
   border: 1px solid var(--border-subtle);
   border-radius: var(--file-preview-page-radius);
-  background: var(--surface);
+  background: var(--bg-content);
   box-shadow: var(--shadow-thumb);
 }
 
@@ -1370,7 +1370,7 @@
   max-height: 240px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--surface);
+  background: var(--bg-content);
   object-fit: contain;
 }
 

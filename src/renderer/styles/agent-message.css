@@ -231,12 +231,12 @@
 
 /* A keyed avatar carries its per-agent identity hue (--avatar-accent, bound by the
    is-tint-* class below). The hue is the initial; the fill is the same hue mixed
-   toward the live --surface, so it reads as a soft light tint in light mode and a
-   soft dark tint in dark mode (never a baked box that glares against a dark panel)
-   — the theme-aware treatment shared with the tag chips. A hairline ring of the
-   same hue gives the small pill definition without a hard border. */
+   toward the live content surface, so it reads as a soft light tint in light mode
+   and a soft dark tint in dark mode (never a baked box that glares against a dark
+   panel) — the theme-aware treatment shared with the tag chips. A hairline ring
+   of the same hue gives the small pill definition without a hard border. */
 .agent-identity-avatar[class*="is-tint-"] {
-  background: color-mix(in srgb, var(--avatar-accent) 18%, var(--surface));
+  background: color-mix(in srgb, var(--avatar-accent) 18%, var(--bg-content));
   color: var(--avatar-accent);
   box-shadow: var(--avatar-tint-ring);
 }

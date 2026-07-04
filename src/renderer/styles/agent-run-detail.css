@@ -25,10 +25,10 @@
   height: 14px;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--surface);
+  border: 1px solid var(--bg-content);
   border-radius: var(--radius-pill);
   background: var(--text-strong);
-  color: var(--surface);
+  color: var(--bg-content);
   font-size: var(--font-ui-xs);
   line-height: 1;
   padding: 0 var(--space-1);
