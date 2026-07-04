@@ -914,6 +914,7 @@ test.describe('typography tokens', () => {
       'semantic-info',
       'overlay-active-bg',
       'border-muted',
+      'border',
     ].join('|');
     const violations = collectCssTextViolations(
       new RegExp(`(?:--(?:${retiredAliases})\\\\s*:|var\\\\(--(?:${retiredAliases})\\\\))`),

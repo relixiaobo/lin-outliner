@@ -202,7 +202,7 @@
   width: min(100%, 680px);
   justify-self: center;
   overflow-wrap: anywhere;
-  border-left: 2px solid var(--border);
+  border-left: 2px solid var(--separator);
   color: var(--text-soft);
   font-size: var(--font-content);
   line-height: var(--line-content);

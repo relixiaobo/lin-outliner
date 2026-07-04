@@ -2,7 +2,7 @@
   --input-height: var(--control-size-xl);
   --input-pad-x: var(--space-4);
   --input-radius: var(--radius-sm);
-  --input-border: var(--border);
+  --input-border: var(--separator);
   --input-bg: var(--fill-2);
   --input-placeholder: var(--text-faint);
 }
