@@ -179,6 +179,42 @@ const surfaces: SurfaceCase[] = [
     waitFor: '.settings-window .inset-row',
   },
   {
+    name: 'settings security',
+    path: '/?surface=settings',
+    waitFor: '.settings-window .inset-row',
+    beforeProbe: async (page) => {
+      await page.getByRole('button', { name: /^Security/ }).click();
+      await page.getByRole('list', { name: 'Default' }).waitFor({ state: 'visible' });
+    },
+  },
+  {
+    name: 'settings memory',
+    path: '/?surface=settings',
+    waitFor: '.settings-window .inset-row',
+    beforeProbe: async (page) => {
+      await page.getByRole('button', { name: /^Memory/ }).click();
+      await page.getByRole('list', { name: 'Dream controls' }).waitFor({ state: 'visible' });
+    },
+  },
+  {
+    name: 'settings skills',
+    path: '/?surface=settings',
+    waitFor: '.settings-window .inset-row',
+    beforeProbe: async (page) => {
+      await page.getByRole('button', { name: 'Skills', exact: true }).click();
+      await page.locator('.inset-row', { hasText: '/workspace-review' }).waitFor({ state: 'visible' });
+    },
+  },
+  {
+    name: 'settings agent profiles',
+    path: '/?surface=settings',
+    waitFor: '.settings-window .inset-row',
+    beforeProbe: async (page) => {
+      await page.getByRole('button', { name: 'Agent Profiles', exact: true }).click();
+      await page.getByRole('list', { name: 'Agent profiles' }).waitFor({ state: 'visible' });
+    },
+  },
+  {
     name: 'provider config',
     path: '/?surface=provider-config&provider=anthropic&mode=configure',
     waitFor: '.provider-config-window',
