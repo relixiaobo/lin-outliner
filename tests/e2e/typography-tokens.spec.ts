@@ -936,6 +936,7 @@ test.describe('typography tokens', () => {
       'app-bg',
       'accent-brand',
       'agent-side-panel-shadow',
+      'agent-composer-corner-radius',
       'semantic-success',
       'semantic-success-strong',
       'semantic-warning',

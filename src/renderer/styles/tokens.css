@@ -363,7 +363,6 @@
   --panel-radius: var(--workspace-surface-radius);
   --agent-composer-radius: calc(var(--panel-radius) - var(--layout-gap));
   --agent-composer-corner-inset: var(--space-3);
-  --agent-composer-corner-radius: calc(var(--agent-composer-radius) - var(--agent-composer-corner-inset));
   --motion-fast: 120ms ease;
   --motion-slow: 180ms ease;
   --motion-layout-duration: 160ms;
