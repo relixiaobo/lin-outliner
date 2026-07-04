@@ -457,6 +457,20 @@ test.describe('typography tokens', () => {
     expect(collectMaterialBackdropPairViolations()).toEqual([]);
   });
 
+  test('keeps the in-app command palette on the opaque elevated tier', () => {
+    const violations = collectCssRuleDeclarationViolations(
+      /\.command-palette\b/,
+      /\b(background(?:-color)?|(?:-webkit-)?backdrop-filter|box-shadow):\s*([^;]+);/g,
+      (value, property) => {
+        if (property === 'background' || property === 'background-color') return value === 'var(--bg-elevated)';
+        if (property === 'box-shadow') return value === 'var(--overlay-shadow-level-2)';
+        return value === 'none';
+      },
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps design-system spec css examples tokenized outside token declarations', () => {
     const violations = extractDesignSystemCssCodeBlocks().flatMap(({ file, css, startLine }) => [
       ...collectCssDeclarationViolations(

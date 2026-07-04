@@ -104,7 +104,8 @@ Expected checks for design-system changes:
   letter-spacing, and the static no-scale feedback guard; it keeps global z-index
   values on the `--z-*` ladder, keeps hidden scrollbars limited to the registered
   document-outline mini-rail exception, and keeps every `--material-*` background
-  paired with the shared `--material-backdrop` filter.
+  paired with the shared `--material-backdrop` filter. It also keeps the in-app
+  command palette on the opaque elevated tier, not the material popover tier.
   It also keeps functional-state fills, borders, and rings from using brand,
   link, or status colour tokens outside the solid destructive-confirmation
   exception, and fails overlay `box-shadow` declarations that mix level-1/2

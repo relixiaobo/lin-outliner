@@ -1,5 +1,4 @@
-.trigger-popover,
-.command-palette {
+.trigger-popover {
   position: absolute;
   z-index: var(--z-popover);
   min-width: 220px;
@@ -21,6 +20,8 @@
 }
 
 .command-palette {
+  border-radius: var(--radius-overlay-sm);
+  background: var(--bg-elevated);
   box-shadow: var(--overlay-shadow-level-2);
 }
 
