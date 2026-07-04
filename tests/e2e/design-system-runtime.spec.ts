@@ -20,6 +20,7 @@ interface SurfaceCase {
   path: string;
   waitFor: string;
   options?: Parameters<typeof installElectronMock>[1];
+  beforeInstall?: (page: Page) => Promise<void>;
   beforeProbe?: (page: Page) => Promise<void>;
 }
 
@@ -69,6 +70,42 @@ const surfaces: SurfaceCase[] = [
     name: 'channel config',
     path: '/?surface=channel-config&conversation=lin-agent-channel-planning&mode=configure',
     waitFor: '.channel-config-window .settings-sheet-actions',
+  },
+  {
+    name: 'command palette overlay',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: async (page) => {
+      await page.keyboard.press('Meta+K');
+      await page.getByRole('dialog', { name: 'Command palette' }).waitFor({ state: 'visible' });
+    },
+  },
+  {
+    name: 'search query builder',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: async (page) => {
+      await page.locator('.sidebar-primary-nav')
+        .getByRole('button', { name: 'Recents', exact: true })
+        .click();
+      await page.getByRole('button', { name: 'Show query' }).click();
+      await page.locator('[data-search-query-builder]').waitFor({ state: 'visible' });
+    },
+  },
+  {
+    name: 'date picker overlay',
+    path: '/',
+    waitFor: `[data-node-id="${ids.dueEntry}"]`,
+    options: { dateField: true },
+    beforeInstall: async (page) => {
+      await page.clock.setFixedTime(new Date('2026-05-13T09:00:00'));
+    },
+    beforeProbe: async (page) => {
+      const draft = page.locator(`[data-trailing-parent-id="${ids.dueEntry}"] .row-editor`);
+      await draft.click();
+      await page.keyboard.press('Space');
+      await page.getByRole('dialog', { name: 'Date picker' }).waitFor({ state: 'visible' });
+    },
   },
 ];
 
@@ -121,6 +158,7 @@ test.describe('design-system runtime surfaces', () => {
     for (const surface of surfaces) {
       test(`${surface.name} stays bounded and theme-native in ${colorScheme}`, async ({ page }) => {
         await page.emulateMedia({ colorScheme });
+        await surface.beforeInstall?.(page);
         await installElectronMock(page, surface.options ?? {});
         await page.goto(surface.path);
         await page.locator(surface.waitFor).first().waitFor({ state: 'visible' });
