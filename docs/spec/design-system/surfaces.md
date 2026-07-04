@@ -215,9 +215,11 @@ not an inset card. It uses neutral fill (`--fill-1`, focus/drag `--fill-2`), top
 corners at the rail radius, and text inset to the shared agent content column. Its
 toolbar is visually unified with the textarea; attach/send controls are capsules.
 The footer model/effort chip is a profile shortcut only, never provider settings,
-conversation identity, or a per-message override. Runtime approval/tool preview
-types exist, but no renderer approval overlay is shipped; do not render fake
-approval controls before behavior exists.
+conversation identity, or a per-message override. Approval and user-question
+states render as in-composer blocking cards above the editor/toolbar, not as
+floating overlays. Their primary/submit action uses the neutral filled-default
+idiom; secondary, deny, and discussion actions stay neutral filled. The details
+disclosure stays local to the card.
 
 ### Settings Window
 

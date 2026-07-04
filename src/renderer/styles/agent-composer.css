@@ -424,12 +424,12 @@
 
 .agent-approval-button.is-primary {
   background: var(--surface-inverse);
-  color: var(--panel-bg);
+  color: var(--bg-content);
 }
 
 .agent-approval-button.is-primary:hover:not(:disabled) {
   background: var(--surface-inverse-strong);
-  color: var(--panel-bg);
+  color: var(--bg-content);
 }
 
 .agent-approval-button:disabled {
@@ -439,7 +439,7 @@
 
 .agent-approval-button.is-primary:disabled {
   background: var(--surface-disabled);
-  color: var(--panel-bg);
+  color: var(--bg-content);
 }
 
 .agent-approval-details-toggle:focus-visible,
@@ -1130,7 +1130,7 @@
 
 .agent-composer-action-button {
   background: var(--surface-inverse);
-  color: var(--panel-bg);
+  color: var(--bg-content);
 }
 
 .agent-composer-action-button.is-stop svg {
@@ -1144,7 +1144,7 @@
 
 .agent-composer-action-button:disabled {
   background: var(--surface-disabled);
-  color: var(--panel-bg);
+  color: var(--bg-content);
   cursor: default;
 }
 

@@ -19,15 +19,14 @@
   border: 1.5px solid color-mix(in srgb, var(--text) 28%, transparent);
   border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--panel-bg);
   transition: background var(--motion-fast), border-color var(--motion-fast);
 }
 
 .checkbox-mark.checked {
   border-color: var(--control-on);
   background: var(--control-on);
-  /* The check glyph is white on the control-on fill in BOTH themes (--panel-bg
-     flips dark in dark mode, which would render a near-black tick). */
+  /* The check glyph is fixed white on the control-on fill in both themes;
+     content-surface colours invert with the theme and would muddy the tick. */
   color: var(--text-on-accent);
 }
 
@@ -60,9 +59,8 @@
   inline-size: var(--switch-mark-thumb-size);
   block-size: var(--switch-mark-thumb-size);
   border-radius: var(--radius-pill);
-  /* The knob is white in BOTH themes — a native switch thumb is a fixed white
-     puck, not the panel colour (--panel-bg flips dark in dark mode, which put a
-     black knob on the green track). */
+  /* The knob is fixed white in both themes: a native switch thumb is not the
+     content-surface colour, which inverts against the green track. */
   background: var(--text-on-accent);
   box-shadow: var(--shadow-thumb);
   transition: transform var(--motion-fast);
