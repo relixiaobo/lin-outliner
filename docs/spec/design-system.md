@@ -111,6 +111,7 @@ A Tenon UI is clean, clear, simple, and elegant only when all of these are true:
 | Surfaces | Shell, workspace, outliner, references, fields, menus, agent, settings. | Foundation token definitions. | [surfaces.md](./design-system/surfaces.md) |
 | Implementation | Change discipline, token maintenance, checks, and visual verification expectations. | Product planning status. | [implementation.md](./design-system/implementation.md) |
 | Decision Audit | The sampled proof that UI decisions derive from the core system. | New rules or product behavior. | [decision-audit.md](./design-system/decision-audit.md) |
+| Calibration Audit | Current finding classification: code drift, spec drift, named exceptions, and open design decisions. | New rules or product behavior. | [calibration-audit.md](./design-system/calibration-audit.md) |
 
 ## Decision Path
 

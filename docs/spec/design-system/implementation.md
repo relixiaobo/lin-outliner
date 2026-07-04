@@ -37,6 +37,10 @@ decision routing, exceptions, and validation.
   uses, which state-model row it maps to, and which foundation tokens carry its
   visual values. If the answer needs a page-local special case, either promote a
   reusable rule or add a named exception with evidence.
+- **Calibration audit.** A design-system calibration pass records findings in
+  [calibration-audit.md](./calibration-audit.md) as code drift, spec drift, named
+  exception, or open design decision. Do not leave those classifications only in
+  PR prose.
 - **Tokens are the dev variables.** Two tiers: **foundation tokens** (the ones in
   Foundations — color, type, spacing, radius, elevation, motion) are the CSS
   custom properties in `src/renderer/styles/tokens.css` and are documented in
