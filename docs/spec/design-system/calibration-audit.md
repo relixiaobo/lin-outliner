@@ -57,6 +57,7 @@ standard change that only hides one local violation is not accepted.
 | CA23 | The separate global launcher renderer used the shared token system but was absent from the shared runtime design-system guard. | Code drift | Runtime guard now opens `launcher.html` with a launcher IPC mock in light/dark while preserving the named native-glass exception for the real Electron window. | `tests/e2e/design-system-runtime.spec.ts`; `docs/spec/launcher.md` |
 | CA24 | The day-panel date navigation calendar was distinct from field date pickers but absent from the shared runtime design-system guard. | Code drift | Runtime guard now opens the panel date calendar in light/dark through the main day panel shell. | `tests/e2e/design-system-runtime.spec.ts` |
 | CA25 | Agent usage hover cards were portaled tooltip surfaces but absent from the shared runtime design-system guard. | Code drift | Runtime guard now opens the assistant message usage tooltip in light/dark through the real Details hover path. | `tests/e2e/design-system-runtime.spec.ts` |
+| CA26 | Field-name reuse popovers were implemented through shared popover primitives and behavior-tested, but absent from the shared runtime design-system guard. | Code drift | Runtime guard now opens the field-name reuse popover in light/dark through the real outliner field creation path, without changing field-row layout or interaction behavior. | `tests/e2e/design-system-runtime.spec.ts` |
 
 ## Named Exceptions Kept
 

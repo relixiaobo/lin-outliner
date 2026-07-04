@@ -172,6 +172,18 @@ async function showReferenceSuggestions(page: Page) {
   await expect(listbox.getByRole('option', { name: /Alpha/ }).first()).toBeVisible();
 }
 
+async function showFieldNameReusePopover(page: Page) {
+  await trailingEditor(page).click();
+  await page.keyboard.type('>');
+  const fieldId = (await todayChildren(page)).at(-1);
+  if (!fieldId) throw new Error('missing field row for reuse popover surface');
+  await expect(row(page, fieldId).locator('.field-name-input')).toBeFocused();
+  await page.keyboard.type('Crea');
+  const listbox = page.getByRole('listbox', { name: 'Reuse field' });
+  await listbox.waitFor({ state: 'visible' });
+  await expect(listbox.getByRole('option', { name: 'Created' })).toBeVisible();
+}
+
 async function installLocalFileMentionFixture(page: Page) {
   await page.evaluate(() => {
     const win = window as typeof window & {
@@ -890,6 +902,12 @@ const surfaces: SurfaceCase[] = [
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: showReferenceSuggestions,
+  },
+  {
+    name: 'field name reuse popover',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showFieldNameReusePopover,
   },
   {
     name: 'inline file context menu',
