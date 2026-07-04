@@ -234,7 +234,6 @@
   --space-xl: 32px;
   --layout-gap: var(--space-4);
   --chrome-control-height: 26px;
-  --workspace-tab-width: 168px;
   /* ── OS-window geometry. SINGLE SOURCE OF TRUTH: core/chromeGeometry.ts. The
      main process reads it to build the native window; the renderer re-injects the
      same constants onto :root at boot (src/renderer/main.tsx), so layout below
@@ -394,9 +393,6 @@
   --resize-cursor: ew-resize;
   --resize-cursor-y: ns-resize;
   --resize-hit-width: 10px;
-  /* tab tokens are retained for local tab-like controls; the shell has no global tab strip. */
-  --tab-bg: rgb(var(--ink) / 0.03);
-  --tab-active-bg: rgb(var(--ink) / 0.05);
   --control-hover: var(--fill-2);
   --control-active: var(--fill-3);
   --scrollbar-thumb: rgb(var(--ink) / 0.22);
