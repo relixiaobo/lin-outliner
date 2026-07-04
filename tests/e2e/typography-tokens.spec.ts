@@ -457,9 +457,9 @@ test.describe('typography tokens', () => {
     expect(collectMaterialBackdropPairViolations()).toEqual([]);
   });
 
-  test('keeps the in-app command palette on the opaque elevated tier', () => {
+  test('keeps level-2 focused overlays on the opaque elevated tier', () => {
     const violations = collectCssRuleDeclarationViolations(
-      /\.command-palette\b/,
+      /(?:^|,\s*)(?:\.command-palette|\.confirm-dialog|\.agent-run-detail-drawer)(?:$|[\s,:])/,
       /\b(background(?:-color)?|(?:-webkit-)?backdrop-filter|box-shadow):\s*([^;]+);/g,
       (value, property) => {
         if (property === 'background' || property === 'background-color') return value === 'var(--bg-elevated)';

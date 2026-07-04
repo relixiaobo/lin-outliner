@@ -12,7 +12,7 @@
 .confirm-dialog {
   width: min(380px, calc(100vw - 32px));
   border-radius: var(--radius-overlay-sm);
-  background: var(--surface);
+  background: var(--bg-elevated);
   /* Dialogs are level-2, deeper than menus/popovers (design-system D3). The
      surface stays opaque (a modal dialog is not chrome glass). */
   box-shadow: var(--overlay-shadow-level-2);
