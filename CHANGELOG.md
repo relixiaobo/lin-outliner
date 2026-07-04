@@ -12,6 +12,18 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Added
 
+- **Bundled ripgrep provider for local agent search (PR #374, codex-4)** —
+  ships ripgrep 15.1.0 as a packaged Tenon resource so `file_grep`,
+  `file_glob`'s fast path, main local filename search, and agent Bash `rg`
+  discovery no longer depend on the user's shell `PATH`. The provider resolves
+  `LIN_AGENT_RIPGREP_COMMAND`, bundled resources, then system `rg` as a dev
+  fallback; Bash PATH appends the bundled binary after user/system paths so it
+  does not shadow an installed `rg`. Recovery guidance now treats
+  `ripgrep_unavailable` as a packaging/runtime issue instead of telling the
+  agent to install ripgrep. **Gate (main):** code review found no reportable
+  findings. Verified with targeted ripgrep/local-tool tests, typecheck,
+  `docs:check`, full `test:core`, `app:build`, packaged resource/version
+  inspection, and `codesign --verify --deep --strict`.
 - **Local tool output responsiveness and process-tree cleanup (PR #373,
   codex-4)** — `file_grep` now streams ripgrep output and applies pagination
   while reading, so large result sets and high offsets no longer depend on a

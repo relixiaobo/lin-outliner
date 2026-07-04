@@ -92,28 +92,22 @@ unassigned — future dev is not pre-committed to any clone.
 **Top of queue (2026-06-23 re-prioritization).** The agent portfolio is done, so the frontier is
 product surface + polish. Ranked candidates, tagged by build-readiness:
 
-1. **`agent-bundled-search-tools`** (P1, *build-ready now*) — remove the user-PATH
-   dependency for ripgrep-backed local search, following cc-2.1's bundled
-   ripgrep/provider model. Covers agent `file_grep`, `file_glob`'s fast path,
-   main local filename search, and Bash `rg` availability; keeps Poppler and
-   MarkItDown as separate optional conversion dependencies. See
-   `docs/plans/agent-bundled-search-tools.md`.
-2. **`unified-command-surface`** (P2, *needs a dev one-pager first*) — the largest remaining product
+1. **`unified-command-surface`** (P2, *needs a dev one-pager first*) — the largest remaining product
    item; design ratified (D1–D8), retrieval dep shipped (#111). Next step is a dev-drafted build
    one-pager (phases / file-scope / tests) → PM ratify → build. Start here for impact.
-3. **`agent-model-first-picker`** (P2, *direction ratified 2026-06-23 — needs a dev one-pager*) —
+2. **`agent-model-first-picker`** (P2, *direction ratified 2026-06-23 — needs a dev one-pager*) —
    model-first model picker (merge Provider + Model Override, provider as secondary label,
    "best available" default); renderer/UX-only, no protocol change. PM-prioritized this round.
-4. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups (residual
+3. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups (residual
    `new Map(prev.byId)` + `nextRevisions` whole-map rebuild), each a small standalone PR; no design gate.
-5. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
+4. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
    `dark-mode-contrast-pass` (runs **last**, cross-cutting light+dark pass). `keyboard-a11y` shipped #273.
-6. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
+5. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
    API-key/Claude-Pro control); presentation-only, light/dark gate.
-7. **`agent-skills-authoring` security/curation tails** (P1 tail) — Skillify v2 body, preview/confirm,
+6. **`agent-skills-authoring` security/curation tails** (P1 tail) — Skillify v2 body, preview/confirm,
    and NL save-as-skill routing shipped (#230/#271); remaining tails are executable support-file
    ratify+sandbox and opt-in curation dry-run.
-8. **`file-preview` tail** (P2) — Office best-effort renderers and any later static URL-reader extraction.
+7. **`file-preview` tail** (P2) — Office best-effort renderers and any later static URL-reader extraction.
    Media streaming, direct URL preview, preview-first links, and sandboxed local HTML shipped in #345
    (EPUB #339/#344, PDF #227, web-native basics #210 already in).
 
@@ -179,12 +173,6 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/agent-program.md`.
-- **agent-bundled-search-tools** (P1, **build-ready now**) — make local search
-  independent of user-installed ripgrep by adding a Tenon-owned ripgrep provider
-  and bundled resource path. Covers agent `file_grep`, `file_glob`'s ripgrep
-  fast path, main local filename search, and Bash `rg` availability; explicitly
-  leaves Poppler/MarkItDown as optional conversion dependencies. See
-  `docs/plans/agent-bundled-search-tools.md`.
 - **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
   `in-progress` only as the live design authority for the one deferred tail, mid-run
   `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient
@@ -472,6 +460,21 @@ anything.
   doesn't steal focus · dock icon · light+dark).
 
 ## Recently completed
+
+- **agent-bundled-search-tools** (`codex-4/agent-bundled-search-tools`,
+  PR #374, codex-4, merged 2026-07-04, plan-track) — ships Tenon's bundled
+  ripgrep provider so local search no longer depends on a user-installed `rg`.
+  `file_grep`, `file_glob`'s ripgrep fast path, the main local filename search
+  fallback, and agent Bash PATH now resolve the bundled provider while preserving
+  user/system `rg` precedence and the pure TypeScript `file_glob` fallback.
+  The macOS arm64/x64 ripgrep 15.1.0 artifacts are vendored with license and
+  checksum provenance, included via packaged app resources, chmodded before the
+  existing ad-hoc signing hook, and documented in the agent tool specs. **Gate
+  (main):** code review found no reportable findings. Verified on the final PR
+  head and merge result with targeted ripgrep/local-tool tests, typecheck,
+  `docs:check`, full `test:core`, `app:build`, packaged resource/version
+  inspection, and `codesign --verify --deep --strict`. Plan archived `done`:
+  `docs/plans/archive/agent-bundled-search-tools.md`.
 
 - **local-tool-output-responsiveness** (`codex-4/skill-performance-audit`,
   PR #373, codex-4, merged 2026-07-04, fast-track) — streams `file_grep`
