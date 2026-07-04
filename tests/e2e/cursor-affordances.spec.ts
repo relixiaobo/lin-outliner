@@ -75,6 +75,27 @@ function collectBareInputFocusSuppressionViolations() {
   return violations;
 }
 
+function collectRawResizeCursorViolations() {
+  const violations: string[] = [];
+  const rawResizeCursor = /(?:^|[;\s])cursor\s*:\s*(?:ew-resize|ns-resize|col-resize|row-resize)\s*;/;
+
+  for (const file of styleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim();
+      const body = match[2] ?? '';
+      if (!rawResizeCursor.test(body)) continue;
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      violations.push(`${file}:${lineNumber} ${selector}`);
+    }
+  }
+
+  return violations;
+}
+
 // Strict-native cursor policy: chrome (buttons, toggles, rows, bullets) keeps the
 // default arrow cursor the way a native macOS/Windows app does. The pointing-hand
 // cursor is reserved for genuine content hyperlinks (inline references / links in
@@ -91,6 +112,10 @@ test.describe('cursor affordances', () => {
 
   test('keeps shared bare inputs inheriting the keyboard focus ring', () => {
     expect(collectBareInputFocusSuppressionViolations()).toEqual([]);
+  });
+
+  test('keeps resize cursors routed through shared tokens', () => {
+    expect(collectRawResizeCursorViolations()).toEqual([]);
   });
 
   test('core controls keep the native arrow cursor', async ({ page }) => {

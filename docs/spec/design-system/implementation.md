@@ -121,7 +121,8 @@ Expected checks for design-system changes:
   interaction affordances change, including pointer-cursor scope and forced
   `user-select: none !important` suppression staying limited to active drag /
   resize gestures. It also keeps the shared bare input primitive from suppressing
-  the global keyboard focus ring.
+  the global keyboard focus ring and keeps resize cursors routed through the
+  shared cursor tokens.
 - `tests/e2e/window-material.spec.ts` for window-material and inactive-window
   behavior when material rules change.
 - `git diff --check`

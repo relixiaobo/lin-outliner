@@ -393,7 +393,7 @@
   align-items: center;
   justify-content: center;
   color: var(--text-faint);
-  cursor: ns-resize;
+  cursor: var(--resize-cursor-y);
   touch-action: none;
 }
 
