@@ -276,6 +276,16 @@ async function showRowContextMenu(page: Page) {
   await expect(page.getByRole('menuitem', { name: 'Trash' })).toBeVisible();
 }
 
+async function showTagContextMenu(page: Page) {
+  await invokeDocumentCommand(page, 'apply_tag', { nodeId: ids.alpha, tagId: ids.projectTag });
+  const tag = row(page, ids.alpha).locator('.tag-badge', { hasText: 'project' }).first();
+  await tag.waitFor({ state: 'visible' });
+  await tag.click({ button: 'right' });
+  const menu = page.getByRole('menu', { name: 'project tag actions' });
+  await menu.waitFor({ state: 'visible' });
+  await expect(menu.getByRole('menuitem', { name: 'Configure tag' })).toBeVisible();
+}
+
 async function showDeleteForeverConfirmDialog(page: Page) {
   await invokeDocumentCommand(page, 'trash_node', { nodeId: ids.alpha });
   await page.getByRole('button', { name: 'Trash', exact: true }).click();
@@ -721,6 +731,12 @@ const surfaces: SurfaceCase[] = [
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: showRowContextMenu,
+  },
+  {
+    name: 'tag context menu',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showTagContextMenu,
   },
   {
     name: 'delete forever confirm dialog',

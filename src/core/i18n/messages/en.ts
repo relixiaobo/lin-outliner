@@ -1409,6 +1409,7 @@ commandPalette: {
     openAriaLabel: ({ label }: { label: string }) => `Open ${label} tag`,
     // The tag context menu (right-click a tag badge). `#${label}` keeps the tag
     // name verbatim.
+    menuLabel: ({ label }: { label: string }) => `${label} tag actions`,
     everythingTagged: ({ label }: { label: string }) => `Everything tagged #${label}`,
     configureTag: 'Configure tag',
   },
