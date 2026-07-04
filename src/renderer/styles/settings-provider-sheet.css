@@ -271,7 +271,7 @@
 
 .settings-sheet-spinner {
   flex: 0 0 auto;
-  animation: settings-sheet-spin 0.8s linear infinite;
+  animation: settings-sheet-spin var(--motion-spin-fast-cycle) linear infinite;
 }
 
 @keyframes settings-sheet-spin {

@@ -453,15 +453,15 @@
   border-radius: var(--radius-pill);
   background: currentColor;
   opacity: 0.4;
-  animation: agent-channel-working-dot 1.2s ease-in-out infinite;
+  animation: agent-channel-working-dot var(--motion-working-cycle) ease-in-out infinite;
 }
 
 .agent-channel-working-dots > span:nth-child(2) {
-  animation-delay: 0.15s;
+  animation-delay: var(--motion-working-stagger);
 }
 
 .agent-channel-working-dots > span:nth-child(3) {
-  animation-delay: 0.3s;
+  animation-delay: calc(var(--motion-working-stagger) * 2);
 }
 
 @keyframes agent-channel-working-dot {

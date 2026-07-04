@@ -47,7 +47,7 @@
 }
 
 .feedback-state.is-loading svg {
-  animation: feedback-state-spin 0.9s linear infinite;
+  animation: feedback-state-spin var(--motion-spin-cycle) linear infinite;
 }
 
 @keyframes feedback-state-spin {

@@ -280,6 +280,14 @@ Use these default desktop tokens before adding component-specific values:
   --motion-slow: 180ms ease;
   --motion-layout-duration: 160ms;
   --motion-layout: var(--motion-layout-duration) ease;
+  --motion-reduced-duration: 0.01ms;
+  --motion-spin-fast-cycle: 800ms;
+  --motion-spin-cycle: 900ms;
+  --motion-caret-cycle: 1s;
+  --motion-working-cycle: 1.2s;
+  --motion-working-stagger: 150ms;
+  --motion-pulse-cycle: 2.5s;
+  --motion-shape-cycle: 3s;
   --chrome-zone-backing-delay: var(--motion-layout-duration);
   --z-base: 0;
   --z-raised: 10;
@@ -762,6 +770,9 @@ scale font size with viewport width.
   feeling like content entrance animation;
   `--motion-layout-duration` / `--motion-layout` (160ms) for layout shifts
   (resize, collapse, panel changes).
+  Perpetual state indicators use role tokens: spin cycles, caret cycles, working
+  dot cycles/stagger, reference pulses, and the agent shape cycle. Reduced-motion
+  collapse uses `--motion-reduced-duration`.
   Add new durations only with a clear role.
 - **Easing:** standard `ease`; motion is functional feedback, never decoration.
 - **What animates:** state and layout transitions. Content does not animate in;

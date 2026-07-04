@@ -208,7 +208,7 @@
 }
 
 .agent-run-status-spinner {
-  animation: agent-spin 900ms linear infinite;
+  animation: agent-spin var(--motion-spin-cycle) linear infinite;
 }
 
 .agent-run-title-row,

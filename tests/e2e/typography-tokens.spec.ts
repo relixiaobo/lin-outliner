@@ -531,6 +531,22 @@ test.describe('typography tokens', () => {
     expect(collectLayoutTransitionViolations()).toEqual([]);
   });
 
+  test('keeps motion timing literals tokenized outside zero delays', () => {
+    const timingLiteral = /\b\d+(?:\.\d+)?(?:ms|s)\b/g;
+    const violations = collectCssRuleDeclarationViolations(
+      /./,
+      /\b(animation(?:-duration|-delay)?|transition(?:-duration|-delay)?):\s*([^;]+);/g,
+      (value, property) => {
+        const literals = [...value.matchAll(timingLiteral)].map((match) => match[0]!);
+        if (literals.length === 0) return true;
+        if (property.endsWith('delay') && literals.every((literal) => /^(?:0ms|0s)$/.test(literal))) return true;
+        return false;
+      },
+    );
+
+    expect(violations).toEqual([]);
+  });
+
   test('keeps global z-index values on the token ladder', () => {
     const localStackingValues = new Set(['0', '1', '2']);
     const violations = collectDeclarationViolations(

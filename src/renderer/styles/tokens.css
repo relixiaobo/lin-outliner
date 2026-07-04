@@ -403,6 +403,14 @@
   --motion-slow: 180ms ease;
   --motion-layout-duration: 160ms;
   --motion-layout: var(--motion-layout-duration) ease;
+  --motion-reduced-duration: 0.01ms;
+  --motion-spin-fast-cycle: 800ms;
+  --motion-spin-cycle: 900ms;
+  --motion-caret-cycle: 1s;
+  --motion-working-cycle: 1.2s;
+  --motion-working-stagger: 150ms;
+  --motion-pulse-cycle: 2.5s;
+  --motion-shape-cycle: 3s;
   --chrome-zone-backing-delay: var(--motion-layout-duration);
   --panel-size: 1;
   --panel-content-x: 28px;

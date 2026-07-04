@@ -873,7 +873,7 @@
 }
 
 .search-query-refresh-button.is-refreshing svg {
-  animation: search-query-refresh-spin 800ms linear infinite;
+  animation: search-query-refresh-spin var(--motion-spin-fast-cycle) linear infinite;
 }
 
 @keyframes search-query-refresh-spin {
@@ -1224,11 +1224,11 @@
   background: var(--text);
   content: "";
   transform: translateY(0.12em);
-  animation: editor-caret-blink 1s steps(1, end) infinite;
+  animation: editor-caret-blink var(--motion-caret-cycle) steps(1, end) infinite;
 }
 
 .row.ref-typeahead .row-editor {
-  animation: reference-conversion-pulse 2.5s ease-in-out infinite;
+  animation: reference-conversion-pulse var(--motion-pulse-cycle) ease-in-out infinite;
 }
 
 @keyframes editor-caret-blink {
@@ -2399,7 +2399,7 @@
 }
 
 .row.ref-converting .row-editor .inline-ref {
-  animation: reference-conversion-pulse 2.5s ease-in-out infinite;
+  animation: reference-conversion-pulse var(--motion-pulse-cycle) ease-in-out infinite;
 }
 
 /* The global reduced-motion reset in a11y.css collapses this infinite pulse (and
@@ -2922,7 +2922,7 @@
 /* While the run is in flight the command bullet glyph becomes a spinner — the
    title Run button has no persistent indicator of its own. */
 .row-bullet-shape.command.is-processing svg {
-  animation: command-run-spin 800ms linear infinite;
+  animation: command-run-spin var(--motion-spin-fast-cycle) linear infinite;
 }
 
 @keyframes command-run-spin {
