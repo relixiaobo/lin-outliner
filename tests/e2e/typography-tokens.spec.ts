@@ -968,6 +968,8 @@ test.describe('typography tokens', () => {
       'panel-bg',
       'surface',
       'surface-2',
+      'bg',
+      'tab-hover-bg',
     ].join('|');
     const retiredAliasPattern = new RegExp(
       `(?:--(?:${retiredAliases})\\\\s*:|var\\\\(--(?:${retiredAliases})\\\\)|['"\`]--(?:${retiredAliases})['"\`])`,

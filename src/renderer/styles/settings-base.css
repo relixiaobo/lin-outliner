@@ -9,7 +9,7 @@
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: var(--bg);
+  background: var(--bg-elevated);
   /* Same float inset as the main shell (--layout-gap) so the rail nests
      concentrically inside the 24px native window corner — window 24 = gap 8 + rail
      16 (B9). */

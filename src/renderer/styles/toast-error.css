@@ -9,7 +9,7 @@
   align-items: start;
   gap: var(--space-5);
   border-radius: var(--radius-md);
-  background: var(--bg);
+  background: var(--bg-elevated);
   box-shadow: var(--overlay-shadow-level-1);
   color: var(--status-danger);
   padding: var(--space-5) var(--space-6);

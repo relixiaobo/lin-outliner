@@ -402,12 +402,10 @@
   /* tab tokens are retained for local tab-like controls; the shell has no global tab strip. */
   --tab-bg: rgb(var(--ink) / 0.03);
   --tab-active-bg: rgb(var(--ink) / 0.05);
-  --tab-hover-bg: rgb(var(--ink) / 0.07);
   --control-hover: var(--fill-2);
   --control-active: var(--fill-3);
   --scrollbar-thumb: rgb(var(--ink) / 0.22);
   --scrollbar-thumb-hover: rgb(var(--ink) / 0.34);
-  --bg: var(--bg-elevated);
   --border-emphasis: rgb(var(--ink) / 0.18);
   --muted: var(--text-secondary);
   --muted-2: var(--text-tertiary);
