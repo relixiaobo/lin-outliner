@@ -945,6 +945,7 @@ test.describe('typography tokens', () => {
       'border',
       'text-body',
       'text-muted',
+      'text-sub',
       'overlay-bg',
       'overlay-backdrop-strong',
       'deck-bg',

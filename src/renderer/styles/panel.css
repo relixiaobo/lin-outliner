@@ -170,18 +170,18 @@
 .panel-date-picker-button:focus-visible,
 .calendar-month-nav:hover,
 .calendar-month-nav:focus-visible {
-  color: var(--text-sub);
+  color: var(--text-secondary);
 }
 
 .panel-date-picker-button[aria-expanded="true"] {
   background: var(--control-active);
-  color: var(--text-sub);
+  color: var(--text-secondary);
 }
 
 .calendar-month-day:hover,
 .calendar-month-day:focus-visible {
   background: var(--control-hover);
-  color: var(--text-sub);
+  color: var(--text-secondary);
 }
 
 .panel-date-nav-divider {
@@ -221,7 +221,7 @@
   height: 28px;
   grid-template-columns: 28px 1fr 28px;
   align-items: center;
-  color: var(--text-sub);
+  color: var(--text-secondary);
   font-size: var(--font-ui-sm);
   font-weight: 600;
   line-height: var(--line-ui-sm);
@@ -270,7 +270,7 @@
   height: var(--calendar-day-size);
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-sub);
+  color: var(--text-secondary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }

@@ -214,7 +214,6 @@
   --window-material-frost: color-mix(in srgb, var(--bg-window) 62%, transparent);
   --text-main: var(--text-primary);
   --text-strong: var(--text-primary);
-  --text-sub: var(--text-secondary);
   --text-soft: var(--text-secondary);
   --text-faint: var(--text-tertiary);
   --text-disabled: var(--text-quaternary);
