@@ -41,8 +41,8 @@
 }
 
 /* No hover "chip": the rail slides off-screen when collapsed. Hover feedback lives
-   on the toggle itself (.rail-toggle:hover in shell.css) as a centred fill tint —
-   the rail-sized --shadow-rail on a 26px chip read as a box offset from the icon. */
+   on the toggle itself (.rail-toggle:hover in shell.css) as colour deepening, never
+   a fill box offset from the icon. */
 
 /* Material: translucent only under OS vibrancy. Applied UNCONDITIONALLY (like the
    sidebar) so the glass persists through the collapse fade instead of popping off the

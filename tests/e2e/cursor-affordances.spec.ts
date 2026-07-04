@@ -12,6 +12,18 @@ const pointerCursorSelectors = new Set([
   '.inline-ref:hover',
   '.row-editor .inline-ref:hover',
 ]);
+const chromeIconControlSelectors = [
+  '.agent-dock-run-back',
+  '.agent-dock-title-button',
+  '.agent-run-icon-button',
+  '.agent-run-panel-button',
+  '.outline-panel-close',
+  '.panel-breadcrumb-close',
+  '.panel-page-back-button',
+  '.panel-title-more-button',
+  '.rail-toggle',
+  '.settings-row-menu-trigger',
+];
 
 function collectPointerCursorViolations() {
   const violations: string[] = [];
@@ -101,6 +113,34 @@ function collectRawResizeCursorViolations() {
   return violations;
 }
 
+function collectChromeIconHoverBoxViolations() {
+  const violations: string[] = [];
+
+  for (const file of styleFiles) {
+    const source = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = match[1]!.trim().replace(/\s+/g, ' ');
+      if (!/:(?:hover|focus-visible|active)\b/.test(selector)) continue;
+      if (!chromeIconControlSelectors.some((controlSelector) => selector.includes(controlSelector))) continue;
+
+      const body = match[2] ?? '';
+      const background = body.match(/\bbackground(?:-color)?\s*:\s*([^;]+);/);
+      if (!background) continue;
+
+      const value = background[1]!.trim();
+      if (value === 'transparent' || value === 'none') continue;
+
+      const lineNumber = source.slice(0, match.index).split('\n').length;
+      violations.push(`${file}:${lineNumber} ${selector} -> ${value}`);
+    }
+  }
+
+  return violations;
+}
+
 // Strict-native cursor policy: chrome (buttons, toggles, rows, bullets) keeps the
 // default arrow cursor the way a native macOS/Windows app does. The pointing-hand
 // cursor is reserved for genuine content hyperlinks (inline references / links in
@@ -121,6 +161,10 @@ test.describe('cursor affordances', () => {
 
   test('keeps resize cursors routed through shared tokens', () => {
     expect(collectRawResizeCursorViolations()).toEqual([]);
+  });
+
+  test('keeps chrome icon hover feedback colour-only', () => {
+    expect(collectChromeIconHoverBoxViolations()).toEqual([]);
   });
 
   test('core controls keep the native arrow cursor', async ({ page }) => {
