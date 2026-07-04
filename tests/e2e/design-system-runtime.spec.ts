@@ -141,6 +141,13 @@ async function showDefinitionConfigPicker(page: Page) {
   await page.getByRole('listbox', { name: 'Extend from options' }).waitFor({ state: 'visible' });
 }
 
+async function showPanelDateCalendar(page: Page) {
+  await page.getByRole('button', { name: 'Open calendar' }).click();
+  const calendar = page.getByRole('dialog', { name: 'Calendar' });
+  await calendar.waitFor({ state: 'visible' });
+  await expect(calendar.getByRole('gridcell', { name: /Go to 2026-05-13/ })).toBeVisible();
+}
+
 async function showTagSuggestions(page: Page) {
   await trailingEditor(page).click();
   await page.keyboard.type('#project');
@@ -816,6 +823,12 @@ const surfaces: SurfaceCase[] = [
       await page.keyboard.press('Space');
       await page.getByRole('dialog', { name: 'Date picker' }).waitFor({ state: 'visible' });
     },
+  },
+  {
+    name: 'panel date calendar',
+    path: '/',
+    waitFor: `[data-node-id="${ids.alpha}"]`,
+    beforeProbe: showPanelDateCalendar,
   },
   {
     name: 'tag suggestions overlay',
