@@ -38,7 +38,7 @@
   font-family: var(--font-family-sans);
   font-size: var(--font-scale);
   color: var(--text-main);
-  background: var(--deck-bg);
+  background: var(--bg-window);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -55,7 +55,7 @@
      SEMANTIC FOUNDATION (design-system.md). Two themes over one ink base: every
      text/fill/separator/outline value is an alpha over --ink (black in light,
      white in dark), so the dark @media block at the end only flips --ink + a few
-     opaque/material literals. Legacy aliases (--text-main, --deck-bg, …) are
+     opaque/material literals. Legacy aliases (--text-main, --panel-bg, …) are
      re-pointed onto this layer below so existing component CSS keeps working.
      ════════════════════════════════════════════════════════════════════════ */
   --ink: 0 0 0;
@@ -212,7 +212,6 @@
   /* ── Legacy product-token aliases → semantic layer. Migrate opportunistically.
         There is no --primary family: action surfaces use neutral fill /
         focus-ring / outline tokens instead of the rose accent. ── */
-  --deck-bg: var(--bg-window);
   --panel-bg: var(--bg-content);
   --window-material-frost: color-mix(in srgb, var(--bg-window) 62%, transparent);
   --surface-soft: var(--bg-elevated);

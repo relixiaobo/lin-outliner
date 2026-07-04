@@ -114,6 +114,7 @@ standard change that only hides one local violation is not accepted.
 | CA80 | `--text-body` duplicated `--text-primary`, so primary text could keep using an old role name instead of the foundation text ladder. | Code drift | Routed the remaining non-outliner uses to `--text-primary`, removed `--text-body`, and expanded retired-alias coverage. | sidebar/agent/settings CSS; `tokens.css`; `tests/e2e/typography-tokens.spec.ts` |
 | CA81 | `--overlay-bg` duplicated `--bg-elevated`, so opaque agent overlays could keep using a broad legacy alias instead of the owning elevated-surface token. | Code drift | Routed both agent overlay backgrounds to `--bg-elevated`, removed `--overlay-bg`, and expanded retired-alias coverage. | agent CSS; `tokens.css`; `tests/e2e/typography-tokens.spec.ts` |
 | CA82 | `--overlay-backdrop-strong` remained defined in light/dark token layers even though no live renderer surface used it. | Code drift | Removed the unused token definitions and expanded retired-alias coverage so a future strong scrim must be named with real usage and evidence. | `tokens.css`; `theme-dark.css`; `tests/e2e/typography-tokens.spec.ts` |
+| CA83 | `--deck-bg` duplicated `--bg-window` and survived only as the root background bridge. | Code drift | Routed the root background directly to `--bg-window`, removed `--deck-bg`, and expanded retired-alias coverage. | `tokens.css`; `foundations.md`; `tests/e2e/typography-tokens.spec.ts` |
 
 ## Named Exceptions Kept
 

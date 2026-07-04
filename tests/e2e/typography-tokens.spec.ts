@@ -918,6 +918,7 @@ test.describe('typography tokens', () => {
       'text-body',
       'overlay-bg',
       'overlay-backdrop-strong',
+      'deck-bg',
     ].join('|');
     const violations = collectCssTextViolations(
       new RegExp(`(?:--(?:${retiredAliases})\\\\s*:|var\\\\(--(?:${retiredAliases})\\\\))`),
