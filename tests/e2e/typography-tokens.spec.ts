@@ -126,6 +126,24 @@ function collectDeclarationViolations(
   return violations;
 }
 
+function collectCssTextViolations(pattern: RegExp) {
+  const violations: string[] = [];
+
+  for (const file of productStyleFiles) {
+    const text = readFileSync(file, 'utf8').replace(
+      /\/\*[\s\S]*?\*\//g,
+      (block) => block.replace(/[^\n]/g, ' '),
+    );
+    const lines = text.split('\n');
+    for (const [index, line] of lines.entries()) {
+      if (!pattern.test(line)) continue;
+      violations.push(`${file}:${index + 1} ${line.trim()}`);
+    }
+  }
+
+  return violations;
+}
+
 test.describe('typography tokens', () => {
   test('keeps product font declarations tokenized outside proportional glyph exceptions', () => {
     const allowedValues = new Set([
@@ -166,6 +184,20 @@ test.describe('typography tokens', () => {
         (value) => !/\d+px/.test(value) || value.includes('var('),
       ),
     ];
+
+    expect(violations).toEqual([]);
+  });
+
+  test('keeps renderer theming OS-driven without data-theme selectors', () => {
+    const violations = collectCssTextViolations(/\[data-theme\b/);
+
+    expect(violations).toEqual([]);
+  });
+
+  test('keeps the primary token family absent from live CSS', () => {
+    const violations = collectCssTextViolations(
+      /(?:--primary(?:-[\w-]+)?\s*:|var\(\s*--primary(?:-[\w-]+)?\b)/,
+    );
 
     expect(violations).toEqual([]);
   });

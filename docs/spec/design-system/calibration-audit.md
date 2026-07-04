@@ -70,6 +70,7 @@ standard change that only hides one local violation is not accepted.
 | CA36 | The implementation validation summary lagged behind the expanded runtime surface matrix. | Spec drift | Validation now summarizes the covered categories, including row menus, selected field values, inline-file preview/context, file-preview header menus, composer submenus, and agent/debug tooltips. | `implementation.md`, `tests/e2e/design-system-runtime.spec.ts` |
 | CA37 | The runtime surface guard had many representative cases, but the metrics report could not quantify the matrix or fail when the matrix became undiscoverable. | Code drift | Metrics now report runtime surface cases and light/dark theme checks, and `--check` fails if the matrix is missing or empty. | `scripts/design-system-metrics.ts --json`; `tests/e2e/design-system-runtime.spec.ts` |
 | CA38 | The design system prohibited scale-pop feedback, but no guard stopped a renderer stylesheet from reintroducing `transform: scale(...)`. | Code drift | Token/static CSS coverage now fails any scale transform in renderer styles, keeping interaction feedback layout-stable. | `tests/e2e/typography-tokens.spec.ts` |
+| CA39 | OS-driven theming and the removed `--primary` token family were design-system rules, but live CSS could reintroduce `[data-theme]` selectors or `--primary` token references without a static failure. | Code drift | Token/static CSS coverage now fails renderer `[data-theme]` selectors and live `--primary` token definitions/references. | `tests/e2e/typography-tokens.spec.ts` |
 
 ## Named Exceptions Kept
 
